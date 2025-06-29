@@ -9,4 +9,6 @@ Run files in this order.
 - python makeServiceAssignment.py
 - python download2000.py
 
-This will leave you with 2000 .json files, one for each crypto, that can be over a half gig large that you can train an AI model with.
+This will leave you with 2000 .json files, one for each crypto, that can be over a half gig large that you can train an AI model with. All of this was designed to run on the free tier. download2000.py makes heavy use of multithreading for efficiency. 
+
+WARNING: It will take approximately 83 days to get this data from ANKR on the free tier running 24/7.
