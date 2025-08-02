@@ -7,7 +7,7 @@ from operator import itemgetter
 # -----------------------------------------------------------------------
 # 🧠 CONFIGURATION — replace with your actual values
 # -----------------------------------------------------------------------
-API_KEY = "YOUR_THEGRAPH_API_KEY" # https://thegraph.com/studio/
+API_KEY = "YOUR_API_KEY" # https://thegraph.com/studio/
 SUBGRAPH_ID = "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu" #UNISWAP V2
 URL = f"https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/{SUBGRAPH_ID}"
 OUTPUT_PATH = os.path.join("data", "pair_index_top2000.json")

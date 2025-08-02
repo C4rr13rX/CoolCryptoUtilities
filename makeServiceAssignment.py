@@ -1,10 +1,15 @@
 import os
 import json
+from datetime import datetime, timedelta
 
 PAIR_INDEX_FILE = "data/pair_index_top2000.json"
 ASSIGNMENT_FILE = "data/pair_provider_assignment.json"
 
-def assign_providers():
+# Update these to match your main script
+GRANULARITY_SECONDS = 60 * 5
+YEARS_BACK = 3
+
+def assign_ankr_only():
     if not os.path.exists(PAIR_INDEX_FILE):
         print(f"❌ File not found: {PAIR_INDEX_FILE}")
         return
@@ -14,25 +19,31 @@ def assign_providers():
     with open(PAIR_INDEX_FILE, "r") as f:
         pair_data = json.load(f)
 
-    provider_assignment = {}
-    providers = ["ankr", "thegraph"]
-    i = 0
+    # Compute ISO8601 start date for human clarity and replayability
+    utc_now = datetime.utcnow()
+    start_date = (utc_now - timedelta(days=YEARS_BACK * 365)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    assignment = {
+        "granularity_seconds": GRANULARITY_SECONDS,
+        "years_back": YEARS_BACK,
+        "start_date": start_date,
+        "pairs": {}
+    }
 
     for address, metadata in pair_data.items():
-        provider = providers[i % len(providers)]
-        provider_assignment[address] = {
+        assignment["pairs"][address] = {
             "symbol": metadata["symbol"],
             "index": metadata["index"],
-            "provider": provider,
-            "completed": False
+            "completed": False,
+            # This field records the next block to fetch, or None to start from the beginning
+            "next_block": None
         }
-        i += 1
 
     with open(ASSIGNMENT_FILE, "w") as f:
-        json.dump(provider_assignment, f, indent=2)
+        json.dump(assignment, f, indent=2)
 
-    print(f"✅ Provider assignments saved to {ASSIGNMENT_FILE}")
-    print(f"🔢 Total pairs assigned: {len(provider_assignment)}")
+    print(f"✅ Assignments saved to {ASSIGNMENT_FILE}")
+    print(f"🔢 Total pairs assigned: {len(assignment['pairs'])}")
 
 if __name__ == "__main__":
-    assign_providers()
+    assign_ankr_only()
