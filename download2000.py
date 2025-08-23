@@ -4,7 +4,7 @@ import json
 import time
 import re
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from threading import Thread, Semaphore, Lock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from web3 import Web3
@@ -58,8 +58,15 @@ PAIR_ABI = json.loads("""[
   {"inputs":[],"name":"token1","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"}
 ]""")
 
+# keep your original ABI; add tolerant variants for edge tokens
 ERC20_ABI = json.loads("""[
   {"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}
+]""")
+ERC20_ABI_U256 = json.loads("""[
+  {"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+]""")
+ERC20_ABI_UPPER = json.loads("""[
+  {"constant":true,"inputs":[],"name":"DECIMALS","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}
 ]""")
 
 # --- HELPERS ---
@@ -105,6 +112,56 @@ def chunked(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
+def _has_code(addr: str) -> bool:
+    try:
+        code = limited(web3.eth.get_code, Web3.to_checksum_address(addr))
+    except Exception:
+        return False
+    # HexBytes/bytes: length==0 means no code
+    try:
+        return len(code) > 0
+    except Exception:
+        return bool(code)
+
+def safe_decimals(addr: str):
+    """
+    Robust decimals() reader:
+      - verifies contract code exists
+      - tries uint8, then uint256, then DECIMALS()
+      - returns int on success, None on failure
+    """
+    try:
+        a = Web3.to_checksum_address(addr)
+    except Exception:
+        print(f"   ❌ Invalid token address: {addr}")
+        return None
+
+    if not _has_code(a):
+        print(f"   ❌ No contract code at {a} (not an ERC-20).")
+        return None
+
+    # try standard uint8
+    try:
+        c = web3.eth.contract(address=a, abi=ERC20_ABI)
+        return int(limited(c.functions.decimals().call))
+    except Exception:
+        pass
+    # some tokens expose uint256
+    try:
+        c = web3.eth.contract(address=a, abi=ERC20_ABI_U256)
+        return int(limited(c.functions.decimals().call))
+    except Exception:
+        pass
+    # rare uppercase variant
+    try:
+        c = web3.eth.contract(address=a, abi=ERC20_ABI_UPPER)
+        return int(limited(c.functions.DECIMALS().call))
+    except Exception:
+        pass
+
+    print(f"   ❌ Could not read decimals() from {a}.")
+    return None
+
 def parse_logs_no_ts(logs, dec0, dec1, granularity_seconds):
     # returns {bar_slot: [parsed records]}, {bar_slot: set(block_numbers)}
     records_by_bar = {}
@@ -122,7 +179,8 @@ def parse_logs_no_ts(logs, dec0, dec1, granularity_seconds):
                    "buy_volume": 0.0,    "sell_volume": a1in}
         else:
             continue
-        bar_slot = blk_num // granularity_seconds  # still just for grouping
+        # NOTE: preserve your original grouping to avoid changing output/resume behavior
+        bar_slot = blk_num // granularity_seconds
         records_by_bar.setdefault(bar_slot, []).append(rec)
         blocks_by_bar.setdefault(bar_slot, set()).add(blk_num)
     return records_by_bar, blocks_by_bar
@@ -192,7 +250,8 @@ def main():
     with open(PAIR_ASSIGNMENT_FILE) as f:
         assignment = json.load(f)
 
-    start_ts = int((datetime.utcnow() - timedelta(days=YEARS_BACK*365)).timestamp())
+    # tz-aware UTC; same epoch math, no behavior change
+    start_ts = int((datetime.now(UTC) - timedelta(days=YEARS_BACK*365)).timestamp())
     start_blk = get_block_by_timestamp(start_ts)
     end_blk   = limited(lambda: web3.eth.block_number)
     print(f"⏳ Scanning blocks {start_blk} → {end_blk}")
@@ -218,12 +277,39 @@ def main():
         else:
             pair_start_blk = int(pair_start_blk)
 
-        pair = web3.eth.contract(address=Web3.to_checksum_address(addr), abi=PAIR_ABI)
+        # Build pair contract (checksummed)
+        try:
+            pair_addr = Web3.to_checksum_address(addr)
+        except Exception as e:
+            print(f"   ❌ Invalid pair address for {sym}: {addr} ({e}). Skipping.")
+            continue
+
+        pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
         ev   = pair.events.Swap()
-        t0   = pair.functions.token0().call()
-        t1   = pair.functions.token1().call()
-        dec0 = web3.eth.contract(address=t0,   abi=ERC20_ABI).functions.decimals().call()
-        dec1 = web3.eth.contract(address=t1,   abi=ERC20_ABI).functions.decimals().call()
+
+        # Verify token0/token1 calls succeed
+        try:
+            t0_raw = limited(pair.functions.token0().call)
+            t1_raw = limited(pair.functions.token1().call)
+        except Exception as e:
+            print(f"   ❌ {sym}: address {pair_addr} does not behave like a Uniswap V2-style pool: {e}. Skipping.")
+            continue
+
+        # Checksummed token addresses
+        try:
+            t0 = Web3.to_checksum_address(t0_raw)
+            t1 = Web3.to_checksum_address(t1_raw)
+        except Exception as e:
+            print(f"   ❌ {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
+            continue
+
+        # Ensure both token addresses have code and readable decimals
+        dec0 = safe_decimals(t0)
+        dec1 = safe_decimals(t1)
+        if dec0 is None or dec1 is None:
+            print(f"   ⚠️ Skipping {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
+            continue
+
         print(f"   tokens: {t0}(dec{dec0}) / {t1}(dec{dec1})")
 
         b = pair_start_blk
@@ -241,7 +327,7 @@ def main():
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
             if logs:
                 log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
-                # Note: We group by bar_slot/block here for speed, merge later.
+                # Group by bar_slot/block here for speed; merge later.
                 chunk_records_by_bar = {}
                 chunk_blocks_by_bar = {}
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -263,7 +349,7 @@ def main():
             b = e_b
             chunk_idx += 1
 
-        # Now all intermediate chunks exist for this pair; merge, timestamp, aggregate, save
+        # Merge, timestamp, aggregate, save
         print("    ⏳ Merging intermediate data and fetching timestamps…")
         all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
         min_block_per_bar = {bar_slot: min(blocks) for bar_slot, blocks in min_block_per_bar.items() if blocks}
