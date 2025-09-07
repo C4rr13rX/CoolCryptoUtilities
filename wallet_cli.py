@@ -53,27 +53,41 @@ def _refetch_balances_parallel(bridge: UltraSwapBridge, chains: List[str]) -> No
 def _refetch_transfers_parallel(bridge: UltraSwapBridge, chains: List[str]) -> None:
     """
     Update ERC-20 transfer history since last cached block per chain in parallel.
-    Uses your existing discovery/transfers path (which already uses CacheTransfers).
+    Tries bridge._discover_via_transfers with a chain name first; if that fails,
+    tries with an RPC URL; if neither fits, falls back to discover([chain]).
     """
-    # If your code exposes a transfers-only method, prefer it; otherwise run discover per chain.
-    # We keep it tolerant to different internal signatures.
-    def _run_one(ch: str):
+    def run_one(ch: str):
         try:
-            # Prefer a dedicated transfers method if present.
             fn = getattr(bridge, "_discover_via_transfers", None)
             if callable(fn):
-                return fn(ch) if fn.__code__.co_argcount >= 2 else fn(bridge._alchemy_url(ch))
-            # Fallback: run the general discover path for that single chain
-            fn2 = getattr(bridge, "discover", None)
-            if callable(fn2):
-                return fn2([ch])
-            # Last resort: noop
+                # Try (chain)
+                try:
+                    return fn(ch)
+                except TypeError:
+                    # Try (url)
+                    try:
+                        return fn(bridge._alchemy_url(ch))
+                    except TypeError:
+                        # Try () — in case the method uses internal state only
+                        return fn()
+            # Fallback: use generic discover for just this chain
+            disc = getattr(bridge, "discover", None)
+            if callable(disc):
+                return disc([ch])
             print(f"[transfers] {ch}: no discover method found")
         except Exception as e:
             print(f"[transfers] {ch}: error {e!r}")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(chains) or 1)) as ex:
-        list(ex.map(_run_one, chains))
+    try:
+        max_workers = int(os.getenv("CLI_MAX_WORKERS", "8"))
+    except Exception:
+        max_workers = 8
+
+    workers = min(max_workers, max(1, len(chains)))
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(run_one, chains))
+
 
 def _menu():
     bridge = UltraSwapBridge()  # loads wallet/env as your code already does
