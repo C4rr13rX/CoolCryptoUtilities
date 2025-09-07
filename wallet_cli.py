@@ -53,30 +53,57 @@ def _refetch_balances_parallel(bridge: UltraSwapBridge, chains: List[str]) -> No
 def _refetch_transfers_parallel(bridge: UltraSwapBridge, chains: List[str]) -> None:
     """
     Update ERC-20 transfer history since last cached block per chain in parallel.
-    Tries bridge._discover_via_transfers with a chain name first; if that fails,
-    tries with an RPC URL; if neither fits, falls back to discover([chain]).
+    Tries (url, chain) first, then (chain), then (url), then ().
+    Prints baseline last_block before/after for visibility.
     """
     def run_one(ch: str):
         try:
+            url = None
+            try:
+                url = bridge._alchemy_url(ch)
+            except Exception:
+                pass
+
+            # show baseline from cache
+            try:
+                ct = CacheTransfers()
+                st_before = ct.get_state(bridge.acct.address, ch)
+                base_before = int(st_before.get("last_block") or 0)
+                print(f"[transfers] {ch}: baseline last_block={base_before}")
+            except Exception:
+                base_before = None
+
             fn = getattr(bridge, "_discover_via_transfers", None)
             if callable(fn):
-                # Try (chain)
+                # Preferred: (url, chain)
                 try:
-                    return fn(ch)
+                    return fn(url, ch)
                 except TypeError:
-                    # Try (url)
+                    pass
+                # Fallbacks
+                for args in ((ch,), (url,), tuple()):
                     try:
-                        return fn(bridge._alchemy_url(ch))
+                        return fn(*args)
                     except TypeError:
-                        # Try () — in case the method uses internal state only
-                        return fn()
-            # Fallback: use generic discover for just this chain
+                        continue
+
+            # As a last resort, use generic discover for this chain only
             disc = getattr(bridge, "discover", None)
             if callable(disc):
                 return disc([ch])
+
             print(f"[transfers] {ch}: no discover method found")
         except Exception as e:
             print(f"[transfers] {ch}: error {e!r}")
+        finally:
+            try:
+                ct = CacheTransfers()
+                st_after = ct.get_state(bridge.acct.address, ch)
+                base_after = int(st_after.get("last_block") or 0)
+                if base_before is not None:
+                    print(f"[transfers] {ch}: updated last_block={base_after}")
+            except Exception:
+                pass
 
     try:
         max_workers = int(os.getenv("CLI_MAX_WORKERS", "8"))
