@@ -1,10 +1,12 @@
+# cache.py
+# MIT License
+# © 2025 Your Name
 
 from __future__ import annotations
 
 import os
 import json
 import time
-import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
 
 from pathlib import Path
@@ -57,27 +59,34 @@ CHAIN_IDS: Dict[str, int] = {
 }
 
 # --- Price cache (per chain+token) -------------------------------------
-import json, time, os
-from pathlib import Path
-from typing import Dict, List, Optional, Any
 
 class CachePrices:
     """
     Simple JSON cache for USD prices keyed by (chain, token).
-    - Values: {"usd": "<str>", "source": "alchemy|0x|custom", "ts": <epoch float>}
-    - No wallet dimension (prices are global per chain+token).
-    - TTL handled by the caller; helper returns only fresh entries.
+    File shape:
+    {
+      "version": 1,
+      "networks": {
+        "<chain>": {
+          "<token_addr_lower>": {"usd": "<str>", "source": "alchemy|0x|custom", "ts": <epoch float>}
+        }
+      }
+    }
     """
-    def __init__(self, data_dir: str = ".cache", filename: str = "prices.json", cache_prices: Optional[CachePrices] = None, price_ttl_sec: Optional[int] = None, verbose: Optional[bool] = None):
+    def __init__(
+        self,
+        data_dir: str = ".cache",
+        filename: str = "prices.json",
+        cache_prices: Optional["CachePrices"] = None,   # kept for backward compat; unused
+        price_ttl_sec: Optional[int] = None,
+        verbose: Optional[bool] = None,                 # kept for compat; unused
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.data_dir / filename
-        self.cp: Optional[CachePrices] = cache_prices
-        self.price_ttl_sec = int(price_ttl_sec if price_ttl_sec is not None
-             else os.getenv("PRICE_TTL_SEC", "300"))
-        self.cp: Optional[CachePrices] = cache_prices
-        self.price_ttl_sec = int(price_ttl_sec if price_ttl_sec is not None
-                                 else os.getenv("PRICE_TTL_SEC", "300"))
+        # default TTL 300s unless overridden by ctor or env
+        env_ttl = os.getenv("PRICE_TTL_SEC")
+        self.price_ttl_sec = int(price_ttl_sec if price_ttl_sec is not None else (env_ttl if env_ttl is not None else "300"))
 
     # ---------- file IO ----------
     def _load(self) -> Dict[str, Any]:
@@ -95,30 +104,42 @@ class CachePrices:
             return {"version": 1, "networks": {}}
 
     def _save(self, data: Dict[str, Any]) -> None:
-        tmp = self.path.with_suffix(".tmp")
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
-        tmp.replace(self.path)
+        os.replace(tmp, self.path)
 
     # ---------- API ----------
-    def get_price(self, chain: str, token: str, max_age_sec: Optional[int] = None) -> Optional[Dict[str, Any]]:
-        """Return a single fresh entry or None."""
+    def get_price(
+        self,
+        chain: str,
+        token: str,
+        max_age_sec: Optional[int] = None,
+        *,
+        ttl_sec: Optional[int] = None,
+    ) -> Optional[str]:
+        """
+        Return price string for (chain, token) if fresh, else None.
+        Accepts either max_age_sec or ttl_sec (alias used by some callers).
+        """
         data = self._load()
         d = data["networks"].get(chain, {})
         ent = d.get(token.lower())
         if not ent:
             return None
-        if max_age_sec is not None:
+        age_limit = max_age_sec if max_age_sec is not None else ttl_sec
+        if age_limit is not None:
             ts = float(ent.get("ts", 0))
-            if (time.time() - ts) > max_age_sec:
+            if (time.time() - ts) > float(age_limit):
                 return None
-        return ent
+        usd = ent.get("usd")
+        return str(usd) if usd is not None else None
 
-    def get_many(self, chain: str, tokens: List[str], max_age_sec: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
-        """Return only fresh entries for the requested tokens."""
+    def get_many(self, chain: str, tokens: List[str], max_age_sec: Optional[int] = None) -> Dict[str, str]:
+        """Return only fresh USD prices (as strings) for the requested tokens."""
         data = self._load()
         d = data["networks"].get(chain, {})
-        out: Dict[str, Dict[str, Any]] = {}
+        out: Dict[str, str] = {}
         now = time.time()
         for t in tokens:
             ent = d.get(t.lower())
@@ -128,27 +149,32 @@ class CachePrices:
                 ts = float(ent.get("ts", 0))
                 if (now - ts) > max_age_sec:
                     continue
-            out[t.lower()] = ent
+            usd = ent.get("usd")
+            if usd is not None:
+                out[t.lower()] = str(usd)
         return out
+
+    def get(self, chain: str, token: str, max_age_sec: Optional[int] = None) -> Optional[str]:
+        """Alias for get_price."""
+        return self.get_price(chain, token, max_age_sec=max_age_sec)
 
     def upsert_many(self, chain: str, mapping: Dict[str, Dict[str, Any]]) -> None:
         """
-        mapping: { token: {"usd": "<str or number>", "source": "alchemy|0x|custom"} }
-        Adds ts automatically.
+        mapping: { token_addr -> {"usd": "<str|number>", "source": "alchemy|0x|custom"} }
+        Adds current epoch 'ts' automatically.
         """
         data = self._load()
         data["networks"].setdefault(chain, {})
         now = time.time()
-        for addr, ent in mapping.items():
-            if ent is None:
+        for addr, ent in (mapping or {}).items():
+            if not addr or ent is None:
                 continue
-            usd = ent.get("usd")
             try:
-                usd_str = str(usd)
+                usd_str = str(ent.get("usd"))
             except Exception:
                 usd_str = "0"
-            source = (ent.get("source") or "custom").lower()
-            data["networks"][chain][addr.lower()] = {"usd": usd_str, "source": source, "ts": now}
+            source = (ent.get("source") or "custom")
+            data["networks"][chain][addr.lower()] = {"usd": usd_str, "source": str(source).lower(), "ts": now}
         self._save(data)
 
 # ------------------------ CacheTransfers ------------------------
@@ -224,7 +250,6 @@ class CacheTransfers:
             h = t.get("hash") or t.get("transactionHash") or ""
             li = t.get("logIndex")
             if li is None:
-                # Alchemy sometimes returns uniqueId
                 uid = t.get("uniqueId")
                 if uid:
                     li = uid.split("-")[-1] if isinstance(uid, str) else uid
@@ -239,7 +264,6 @@ class CacheTransfers:
             elif h and li is not None:
                 dedupe_id = f"{h}:{li}"
             else:
-                # last resort: combine a few fields
                 rc = (((t.get("rawContract") or {}).get("address")) or
                       t.get("erc20Contract") or t.get("contract") or "")
                 ts = ((t.get("metadata") or {}).get("blockTimestamp") or
@@ -319,9 +343,12 @@ class CacheBalances:
         "updated_at": "2025-..Z",
         "tokens": {
           "0xabc...": {
-            "raw": "0x0123...", # raw hex string from RPC (or int/string)
-            "at_block": 12345678, # block height when captured (optional)
-            "updated_at": "2025-..Z"
+            "balance_hex": "0x0123...",    # raw hex string from RPC
+            "asof_block": 12345678,        # block height when captured (optional)
+            "ts": 1725640000.0,            # epoch seconds
+            "decimals": 18,                # optional
+            "quantity": "123.4567",        # optional pretty quantity
+            "usd_amount": "12.34"          # optional cached USD amount
           },
           ...
         }
@@ -343,33 +370,69 @@ class CacheBalances:
         st["tokens"] = dict(st.get("tokens") or {})
         return st
 
-    def get_hits_and_misses(
-        self,
-        wallet: str,
-        chain: str,
-        tokens: Sequence[str],
-        changed_tokens: Optional[Iterable[str]] = None,
-    ) -> Tuple[Dict[str, Any], List[str]]:
+    # ---- expected by callers ----
+    def get_token(self, wallet: str, chain: str, token: str) -> Dict[str, Any]:
         """
-        Decide which balances we can serve from cache.
-
-        - If `changed_tokens` is provided, only those addresses are considered stale.
-        - If it is None, anything present in cache is a hit.
+        Return the cached entry for `token` (lowercased) on (wallet, chain).
+        If missing, returns {}.
         """
-        changed: Set[str] = set(_lower(a) for a in (changed_tokens or []))
         st = self.get_state(wallet, chain)
-        tok_map = st.get("tokens", {})
-        hits: Dict[str, Any] = {}
-        misses: List[str] = []
-        for a in tokens:
-            key = _lower(a)
-            entry = tok_map.get(key)
-            if entry and (not changed or key not in changed):
-                hits[a] = entry.get("raw")
-            else:
-                misses.append(a)
-        return hits, misses
+        ent = st.get("tokens", {}).get(_lower(token))
+        if isinstance(ent, dict):
+            return ent
+        return {}
 
+    def upsert_many(self, wallet: str, chain: str, mapping: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Merge a dict of {token -> entry_fields} into the cache.
+        Recognized fields on each entry:
+          - balance_hex or raw
+          - asof_block or at_block
+          - ts (epoch seconds) or updated_at (ISO string)
+          - decimals, quantity, usd_amount (optional)
+        Any unknown fields are merged as-is.
+        """
+        st = self.get_state(wallet, chain)
+        tks = st["tokens"]
+        now_iso = _now_ts()
+        for addr, ent in (mapping or {}).items():
+            if not addr or ent is None:
+                continue
+            key = _lower(addr)
+            cur = dict(tks.get(key) or {})
+            # Normalize synonyms
+            balance_hex = ent.get("balance_hex")
+            if balance_hex is None:
+                raw = ent.get("raw")
+                balance_hex = raw if raw is not None else cur.get("balance_hex")
+            asof_block = ent.get("asof_block")
+            if asof_block is None:
+                asof_block = ent.get("at_block", cur.get("asof_block"))
+            ts_val = ent.get("ts")
+            updated_at_iso = ent.get("updated_at") if isinstance(ent.get("updated_at"), str) else None
+            # Build merged entry
+            merged = {**cur, **ent}
+            if balance_hex is not None:
+                merged["balance_hex"] = balance_hex
+                # keep backward-compat mirror
+                merged["raw"] = balance_hex
+            if asof_block is not None:
+                try:
+                    merged["asof_block"] = int(asof_block)
+                except Exception:
+                    pass
+            if ts_val is not None:
+                try:
+                    merged["ts"] = float(ts_val)
+                except Exception:
+                    pass
+            # maintain a human-readable ISO timestamp too
+            merged["updated_at"] = updated_at_iso or now_iso
+            tks[key] = merged
+        st["updated_at"] = now_iso
+        _atomic_write(self._file(wallet, chain), st)
+
+    # Legacy helper kept for compatibility with some callers
     def update(
         self,
         wallet: str,
@@ -387,8 +450,9 @@ class CacheBalances:
         for addr, raw in (updates or {}).items():
             key = _lower(addr)
             tks.setdefault(key, {})
+            tks[key]["balance_hex"] = raw
             tks[key]["raw"] = raw
-            tks[key]["at_block"] = int(at_block) if at_block is not None else tks[key].get("at_block")
+            tks[key]["asof_block"] = int(at_block) if at_block is not None else tks[key].get("asof_block")
             tks[key]["updated_at"] = ts
         st["updated_at"] = ts
         _atomic_write(self._file(wallet, chain), st)
@@ -445,21 +509,21 @@ from cache import CacheBalances, CacheTransfers
 cb = CacheBalances()
 ct = CacheTransfers() # optional, only if you want to refresh balances that actually changed
 
-# Suppose you already know the token list ["0x..", ...] for wallet+chain
-# Option A: naive — use whatever is cached; fetch only missing
-hits, misses = cb.get_hits_and_misses(wallet, chain, token_list)
+# For cache-only reads of a token entry:
+ent = cb.get_token(wallet, chain, token_address)
+# fields: balance_hex, asof_block, ts, decimals, quantity, usd_amount, updated_at (iso)
 
-# Option B: smarter — refresh only tokens that had NEW transfers since last balance capture
-# (Use ct.touched_tokens_since with the last_block value you remembered for this run; if you
-# don't track it, you can query ct.get_state(wallet, chain)["last_block"] as the baseline.)
-since = ct.get_state(wallet, chain)["last_block"]
-changed = ct.touched_tokens_since(wallet, chain, since_block=since)
-hits, misses = cb.get_hits_and_misses(wallet, chain, token_list, changed_tokens=changed)
-
-# Now call your existing RPC path ONLY for 'misses', e.g. via alchemy_getTokenBalances/eth_call,
-# producing a dict like: fetched = {addr: "0xTOKENBALANCEHEX", ...}
-# Optionally include a block number (e.g., latest block from your RPC) when updating:
-cb.update(wallet, chain, updates=fetched, at_block=latest_block_number)
-
-# Finally, combine:
-balances_raw = {**hits, **fetched}"""
+# To merge newly fetched balances and decorate with metadata:
+payload = {
+    token_address: {
+        "balance_hex": "0x...",
+        "asof_block": 1234,
+        "ts": time.time(),
+        "decimals": 18,
+        "quantity": "12.34",
+        "usd_amount": "34.56",
+    },
+    # ...
+}
+cb.upsert_many(wallet, chain, payload)
+"""
