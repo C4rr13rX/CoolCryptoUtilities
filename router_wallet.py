@@ -1064,6 +1064,8 @@ except NameError:
 else:
     import os, json, math
     from urllib.parse import urlencode
+from urllib.error import HTTPError
+
     from urllib.request import Request, urlopen
     from web3 import Web3
 
@@ -1083,9 +1085,20 @@ else:
         if headers: hdrs.update(headers)
         req = Request(url, headers=hdrs, method="GET")
         to = float(os.getenv("ZEROX_HTTP_TIMEOUT_SEC", "12")) if timeout_sec is None else float(timeout_sec)
-        with urlopen(req, timeout=to) as r:
-            data = r.read()
-        return json.loads(data.decode("utf-8"))
+        try:
+            with urlopen(req, timeout=to) as r:
+                data = r.read()
+            return json.loads(data.decode("utf-8"))
+        except HTTPError as e:
+            body = e.read()
+            msg = body.decode("utf-8", errors="ignore") if body else ""
+            try:
+                j = json.loads(msg) if msg else {}
+            except Exception:
+                j = {"raw": msg}
+            # Raise a descriptive error including code + 0x payload if present
+            code = j.get("code") or j.get("reason") or j.get("validationErrors") or j.get("message") or "HTTPError"
+            raise RuntimeError(f"0x {e.code} {code}: {j}") from None
 
     def get_0x_quote(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None, api_key: str | None = None) -> dict:
         """

@@ -510,22 +510,23 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
     else:
         print("[diagnose] See explorer logs. Consider increasing gas limit or using the protocol's payable method/WETH.")
 def _swap_flow():
-    import os, time
+    import os, time, traceback
     from web3 import Web3
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
     if not ch:
         return
 
+    # --- Tokens ---
     sell = input("Sell token (native or 0x...): ").strip().lower()
     buy  = input("Buy  token (native or 0x...): ").strip().lower()
     sell_is_native = (sell in ("native","eth"))
     buy_is_native  = (buy  in ("native","eth"))
     sell_id = "ETH" if sell_is_native else sell
-    buy_id  = "ETH" if buy_is_native else buy
+    buy_id  = "ETH" if buy_is_native  else buy
 
+    # decimals & amount
     sell_dec = 18 if sell_is_native else _erc20_decimals(bridge, ch, sell, default=18)
-    buy_dec  = 18 if buy_is_native else _erc20_decimals(bridge, ch, buy, default=18)
     amt = input(f"Sell amount ({'wei' if sell_is_native else 'token units'}; decimals ok): ").strip()
     try:
         sell_amount = _parse_amount(amt, 18 if sell_is_native else sell_dec)
@@ -533,30 +534,144 @@ def _swap_flow():
         print("❌ Could not parse amount.")
         return
 
-    try:
+    def _quote(chain, s_id, b_id, amount):
         slip = float(os.getenv("SWAP_SLIPPAGE", "0.01"))
-    except Exception:
-        slip = 0.01
+        return bridge.get_0x_quote(chain, s_id, b_id, int(amount), slippage=slip)
+
+    def _ensure_allowance_if_needed(chain, token_addr, allowance_target, amount):
+        cur = 0
+        try:
+            cur = bridge.erc20_allowance(chain, token_addr, bridge.acct.address, allowance_target)
+        except Exception:
+            cur = 0
+        if cur >= amount:
+            return True
+        print(f"Allowance insufficient: have {cur}, need {amount}.")
+        mode = input("Approve [E]xact amount or [U]nlimited? ").strip().lower()
+        if mode not in ("e","u"):
+            print("Cancelled.")
+            return False
+        amt_to_approve = amount if mode == "e" else int((1<<256)-1)
+        try:
+            txh = bridge.approve_erc20(chain, token_addr, allowance_target, amt_to_approve, gas=60000)
+        except Exception as e:
+            print(f"❌ approve failed: {e!r}")
+            return False
+        url = EXPLORER_TX.get(chain)
+        print(f"Approve TX: {txh}")
+        if url: print(f"Explorer: {url}{txh}")
+        # wait for receipt
+        try:
+            w3 = _rpc_for(bridge, chain, timeout=5.0)
+        except Exception:
+            w3 = None
+        t0 = time.time(); wait_sec = int(os.getenv("CLI_TX_WAIT_SEC","20"))
+        rec=None
+        while w3 and time.time()-t0 < wait_sec:
+            try:
+                rec = w3.eth.get_transaction_receipt(txh)
+                if rec: break
+            except Exception: pass
+            time.sleep(1)
+        if not rec or int(getattr(rec,"status", rec.get("status",0))) != 1:
+            print("[warn] approval may still be pending; try again once confirmed.")
+            return False
+        print("[ok] approval mined.")
+        return True
+
+    def _execute_swap(chain, quote_obj, est_gas_fallback=250000):
+        # optional EIP-1559 overrides via env
+        gas_in = input(f"Gas limit [blank={int(quote_obj.get('estimatedGas') or quote_obj.get('gas') or est_gas_fallback)}]: ").strip()
+        gas_hint = int(gas_in) if gas_in else int(quote_obj.get("estimatedGas") or quote_obj.get("gas") or est_gas_fallback)
+        tip_gwei = os.getenv("SWAP_TIP_GWEI")
+        max_gwei = os.getenv("SWAP_MAXFEE_GWEI")
+        kwargs = {"gas": gas_hint}
+        if tip_gwei: kwargs["max_priority_gwei"] = float(tip_gwei)
+        if max_gwei: kwargs["max_fee_gwei"] = float(max_gwei)
+        try:
+            txh = bridge.send_swap_via_0x(ch, quote_obj, **kwargs)
+        except Exception as e:
+            print(f"❌ swap send failed: {e!r}")
+            return None, None
+        url = EXPLORER_TX.get(ch)
+        print(f"Swap TX: {txh}")
+        if url: print(f"Explorer: {url}{txh}")
+        # wait receipt
+        try:
+            w3 = _rpc_for(bridge, ch, timeout=5.0)
+        except Exception:
+            w3 = None
+        t0 = time.time(); wait_sec = int(os.getenv("CLI_TX_WAIT_SEC","20"))
+        rec=None
+        while w3 and time.time()-t0 < wait_sec:
+            try:
+                rec = w3.eth.get_transaction_receipt(txh)
+                if rec: break
+            except Exception: pass
+            time.sleep(1)
+        if rec is None:
+            print(f"[pending] No receipt after {wait_sec}s.")
+            return txh, None
+        status = int(getattr(rec,"status", rec.get("status", -1)))
+        blk = getattr(rec,"blockNumber", rec.get("blockNumber", None))
+        gas_used = int(getattr(rec,"gasUsed", rec.get("gasUsed", 0)))
+        print(f"[receipt] status={'success' if status==1 else 'failed'} block={blk} gasUsed={gas_used}")
+        return txh, (status==1)
+
+    # --- Try direct quote first ---
     try:
-        q = bridge.get_0x_quote(ch, sell_id, buy_id, int(sell_amount), slippage=slip)
+        q = _quote(ch, sell_id, buy_id, sell_amount)
     except Exception as e:
-        print(f"❌ quote failed: {e!r}")
+        emsg = str(e)
+        print(f"❌ quote failed: {emsg}")
+        # If 0x says unsupported or no route, offer 2-step via ETH
+        if "404" in emsg or "NO_LIQUID" in emsg.upper() or "UNSUPPORTED" in emsg.upper():
+            if _confirm("Try two-step via ETH? (this executes 2 swaps)"):
+                # Step 1: sell -> ETH
+                s1_sell_id = sell_id
+                s1_buy_id  = "ETH"
+                try:
+                    q1 = _quote(ch, s1_sell_id, s1_buy_id, sell_amount)
+                except Exception as e1:
+                    print(f"❌ step1 quote failed: {e1}")
+                    return
+                # allowance for step1 if selling ERC-20
+                if s1_sell_id != "ETH":
+                    if not _ensure_allowance_if_needed(ch, sell, q1.get("allowanceTarget"), int(sell_amount)):
+                        return
+                print("\n[Step 1/2] token -> ETH")
+                if not _confirm("Proceed with step 1?"):
+                    print("Cancelled.")
+                    return
+                txh1, ok1 = _execute_swap(ch, q1)
+                if not ok1:
+                    print("Step 1 did not succeed; aborting.")
+                    return
+
+                # Step 2: ETH -> buy
+                try:
+                    # Use the quoted buyAmount from step 1, minus 1% safety
+                    s1_out = int(q1.get("buyAmount") or 0)
+                    s2_in  = max(0, int(s1_out * 0.99))
+                    q2 = _quote(ch, "ETH", buy_id, s2_in)
+                except Exception as e2:
+                    print(f"❌ step2 quote failed: {e2}")
+                    return
+                print("\n[Step 2/2] ETH -> target")
+                if not _confirm("Proceed with step 2?"):
+                    print("Cancelled after step 1; keep ETH.")
+                    return
+                txh2, ok2 = _execute_swap(ch, q2)
+                if not ok2:
+                    print("Step 2 did not succeed; final state is ETH from step 1.")
+                return
         return
 
+    # --- We have a direct quote; show summary ---
     buy_amt = int(q.get("buyAmount") or 0)
     price   = q.get("price")
     estGas  = int(q.get("estimatedGas") or q.get("gas") or 0)
     allow_t = q.get("allowanceTarget")
-
-    try:
-        w3 = _rpc_for(bridge, ch, timeout=5.0)
-        pending = w3.eth.get_block("pending")
-        base = pending.get("baseFeePerGas")
-        tip_wei = Web3.to_wei(float(os.getenv("SWAP_TIP_GWEI","2")), "gwei")
-        eff_price = (int(base) + tip_wei) if base is not None else w3.eth.gas_price
-        fee_est = (estGas or 250000) * eff_price
-    except Exception:
-        fee_est = 0
 
     sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
     buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy, default="ERC20")
@@ -571,80 +686,19 @@ BuyAmt  : {buy_amt} (raw)
 Price   : {price}
 EstGas  : {estGas}
 AllowSp : {allow_t}
-Fee est : {_wei_to_eth(fee_est)} ETH
 """)
 
+    # Allowance if selling ERC-20
     if not sell_is_native:
-        try:
-            cur = bridge.erc20_allowance(ch, sell, bridge.acct.address, allow_t)
-        except Exception:
-            cur = 0
-        need = int(sell_amount)
-        if cur < need:
-            print(f"Allowance insufficient: have {cur}, need {need}.")
-            mode = input("Approve [E]xact amount or [U]nlimited? ").strip().lower()
-            if mode not in ("e","u"):
-                print("Cancelled.")
-                return
-            amt_to_approve = need if mode=="e" else int((1<<256)-1)
-            try:
-                txh = bridge.approve_erc20(ch, sell, allow_t, amt_to_approve, gas=60000)
-            except Exception as e:
-                print(f"❌ approve failed: {e!r}")
-                return
-            url = EXPLORER_TX.get(ch)
-            print(f"Approve TX: {txh}")
-            if url: print(f"Explorer: {url}{txh}")
-            t0 = time.time(); wait_sec = int(os.getenv("CLI_TX_WAIT_SEC","20"))
-            rec=None
-            while time.time()-t0 < wait_sec:
-                try:
-                    rec = w3.eth.get_transaction_receipt(txh)
-                    if rec: break
-                except Exception: pass
-                time.sleep(1)
-            if not rec or int(getattr(rec,"status", rec.get("status",0))) != 1:
-                print("[warn] approval may still be pending; try again once confirmed.")
-                return
-            print("[ok] approval mined.")
+        if not _ensure_allowance_if_needed(ch, sell, allow_t, int(sell_amount)):
+            return
 
     if not _confirm("Proceed with swap?"):
         print("Cancelled.")
         return
 
-    gas_in = input(f"Gas limit [blank={estGas or 250000}]: ").strip()
-    gas_hint = int(gas_in) if gas_in else (estGas or 250000)
-
-    try:
-        tip_gwei = os.getenv("SWAP_TIP_GWEI")
-        max_gwei = os.getenv("SWAP_MAXFEE_GWEI")
-        kwargs = {"gas": gas_hint}
-        if tip_gwei: kwargs["max_priority_gwei"] = float(tip_gwei)
-        if max_gwei: kwargs["max_fee_gwei"] = float(max_gwei)
-        txh = bridge.send_swap_via_0x(ch, q, **kwargs)
-    except Exception as e:
-        print(f"❌ swap send failed: {e!r}")
-        return
-
-    url = EXPLORER_TX.get(ch)
-    print(f"Swap TX: {txh}")
-    if url: print(f"Explorer: {url}{txh}")
-
-    t0 = time.time(); wait_sec = int(os.getenv("CLI_TX_WAIT_SEC","20"))
-    rec=None
-    while time.time()-t0 < wait_sec:
-        try:
-            rec = w3.eth.get_transaction_receipt(txh)
-            if rec: break
-        except Exception: pass
-        time.sleep(1)
-    if rec is None:
-        print(f"[pending] No receipt after {wait_sec}s.")
-        return
-    status = int(getattr(rec,"status", rec.get("status",-1)))
-    blk = getattr(rec,"blockNumber", rec.get("blockNumber", None))
-    gas_used = int(getattr(rec,"gasUsed", rec.get("gasUsed", 0)))
-    print(f"[receipt] status={'success' if status==1 else 'failed'} block={blk} gasUsed={gas_used}")
+    # Execute
+    _execute_swap(ch, q)
 def _bridge_flow():
     bridge = UltraSwapBridge()
     src_chain = _prompt_chain(bridge)
