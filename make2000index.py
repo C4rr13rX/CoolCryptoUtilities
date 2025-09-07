@@ -1,24 +1,87 @@
 #!/usr/bin/env python3
 import os
-import requests
+import sys
 import json
+from pathlib import Path
+from typing import List
+import requests
 from operator import itemgetter
 
 # -----------------------------------------------------------------------
-# 🧠 CONFIGURATION — replace with your actual values
+# .env loader (robust, PyDroid/CLI friendly)
 # -----------------------------------------------------------------------
-API_KEY = "YOUR_API_KEY" # https://thegraph.com/studio/
-SUBGRAPH_ID = "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu" #UNISWAP V2
-URL = f"https://gateway.thegraph.com/api/{API_KEY}/subgraphs/id/{SUBGRAPH_ID}"
-OUTPUT_PATH = os.path.join("data", "pair_index_top2000.json")
+from dotenv import load_dotenv, find_dotenv, dotenv_values
+
+def load_env_robust() -> None:
+    path = find_dotenv(usecwd=True)
+    if path:
+        load_dotenv(path, override=False); return
+
+    cands: List[Path] = []
+    for p in (
+        Path.cwd() / ".env",
+        Path(sys.argv[0]).resolve().parent / ".env" if sys.argv and sys.argv[0] else None,
+        Path(__file__).resolve().parent / ".env" if "__file__" in globals() else None,
+        Path.home() / ".env",
+    ):
+        if p:
+            cands.append(p)
+
+    for p in cands:
+        try:
+            if p.is_file():
+                load_dotenv(p, override=False); return
+        except Exception:
+            pass
+
+    for p in cands:
+        try:
+            if p.is_file():
+                for k, v in (dotenv_values(p) or {}).items():
+                    os.environ.setdefault(k, v or "")
+                return
+        except Exception:
+            pass
+
+load_env_robust()
+
+# -----------------------------------------------------------------------
+# CONFIGURATION — pulled from environment (no hard-coded secrets)
+# -----------------------------------------------------------------------
+# Required: your The Graph API key (Studio/Hosted Gateway)
+THEGRAPH_API_KEY = os.getenv("THEGRAPH_API_KEY", "").strip()
+
+# Optional: override the Uniswap V2 subgraph ID via env,
+# falls back to the given default if not provided.
+UNISWAP_V2_SUBGRAPH_ID = os.getenv(
+    "UNISWAP_V2_SUBGRAPH_ID",
+    "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu"
+).strip()
+
+# Optional: allow full URL override (e.g., self-hosted/alt gateway)
+THEGRAPH_SUBGRAPH_URL = os.getenv(
+    "THEGRAPH_SUBGRAPH_URL",
+    f"https://gateway.thegraph.com/api/{THEGRAPH_API_KEY}/subgraphs/id/{UNISWAP_V2_SUBGRAPH_ID}"
+).strip()
+
+# Output path can be overridden via env if desired
+OUTPUT_PATH = os.getenv("PAIR_INDEX_OUTPUT_PATH", os.path.join("data", "pair_index_top2000.json"))
+
+if "gateway.thegraph.com" in THEGRAPH_SUBGRAPH_URL and not THEGRAPH_API_KEY:
+    raise RuntimeError(
+        "Missing THEGRAPH_API_KEY in environment for gateway.thegraph.com.\n"
+        "Set THEGRAPH_API_KEY in your .env or provide THEGRAPH_SUBGRAPH_URL to bypass."
+    )
 
 # -----------------------------------------------------------------------
 # Fetch pairs ordered by a given field (1000 + 1000 for paging)
 # -----------------------------------------------------------------------
 def fetch_pairs(order_by_field: str, batch_size: int = 1000):
+    # Use proper enum types for The Graph; orderBy varies by entity.
+    # For Uniswap V2 'pairs', the enum is Pair_orderBy, orderDirection is OrderDirection.
     query = '''
-    query($first: Int!, $skip: Int!, $orderBy: String!) {
-      pairs(first: $first, skip: $skip, orderBy: $orderBy, orderDirection: desc) {
+    query($first: Int!, $skip: Int!, $orderBy: Pair_orderBy!, $orderDirection: OrderDirection!) {
+      pairs(first: $first, skip: $skip, orderBy: $orderBy, orderDirection: $orderDirection) {
         id
         token0 { symbol }
         token1 { symbol }
@@ -26,16 +89,26 @@ def fetch_pairs(order_by_field: str, batch_size: int = 1000):
     }
     '''
     results = []
+    session = requests.Session()
     for skip in (0, batch_size):
-        resp = requests.post(
-            URL,
-            json={"query": query, "variables": {"first": batch_size, "skip": skip, "orderBy": order_by_field}}
+        resp = session.post(
+            THEGRAPH_SUBGRAPH_URL,
+            json={
+                "query": query,
+                "variables": {
+                    "first": batch_size,
+                    "skip": skip,
+                    "orderBy": order_by_field,
+                    "orderDirection": "desc",
+                },
+            },
+            headers={"Content-Type": "application/json"}
         )
         resp.raise_for_status()
         data = resp.json()
-        if "errors" in data:
-            raise RuntimeError(data["errors"])
-        batch = data["data"]["pairs"]
+        if "errors" in data and data["errors"]:
+            raise RuntimeError(json.dumps(data["errors"], indent=2))
+        batch = data.get("data", {}).get("pairs", []) or []
         print(f"Fetched {len(batch)} pairs by {order_by_field} (skip={skip})")
         results.extend(batch)
     return results
@@ -73,7 +146,7 @@ def main():
     top2000 = combined[:2000]
 
     # map symbols
-    symbol_map = {p["id"]: f"{p['token0']['symbol']}-{p['token1']['symbol']}" for p in vol_pairs + reserve_pairs}
+    symbol_map = {p["id"]: f"{p['token0']['symbol']}-{p['token1']['symbol']}" for p in (vol_pairs + reserve_pairs)}
 
     # build final index
     index = {}

@@ -1,24 +1,72 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import time
 import re
 import random
+from pathlib import Path
+from typing import List
 from datetime import datetime, timedelta, UTC
-from threading import Thread, Semaphore, Lock
+from threading import Thread, Semaphore
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from web3 import Web3
 
-# --- CONFIGURATION ---
-ANKR_API_KEY         = "YOUR_API_KEY"
-PAIR_ASSIGNMENT_FILE = "data/pair_provider_assignment.json"
-OUTPUT_DIR           = "data/historical_ohlcv"
-INTERMEDIATE_DIR     = "data/intermediate"
-YEARS_BACK           = 3
-GRANULARITY_SECONDS  = 60 * 5  # 5 min
-MAX_WORKERS          = 30
-ANKR_RPS_LIMIT       = 30
-LOGS_PER_PARSE_BATCH = 10
+# ---------- .env loader ----------
+from dotenv import load_dotenv, find_dotenv, dotenv_values
+
+def load_env_robust() -> None:
+    path = find_dotenv(usecwd=True)
+    if path:
+        load_dotenv(path, override=False); return
+
+    cands: List[Path] = []
+    for p in (
+        Path.cwd() / ".env",
+        Path(sys.argv[0]).resolve().parent / ".env" if sys.argv and sys.argv[0] else None,
+        Path(__file__).resolve().parent / ".env" if "__file__" in globals() else None,
+        Path.home() / ".env",
+    ):
+        if p:
+            cands.append(p)
+
+    for p in cands:
+        try:
+            if p.is_file():
+                load_dotenv(p, override=False); return
+        except Exception:
+            pass
+
+    for p in cands:
+        try:
+            if p.is_file():
+                for k, v in (dotenv_values(p) or {}).items():
+                    os.environ.setdefault(k, v or "")
+                return
+        except Exception:
+            pass
+
+load_env_robust()
+
+# --- CONFIGURATION (read from environment; fall back to previous defaults) ---
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+ANKR_API_KEY         = os.getenv("ANKR_API_KEY", "").strip()
+PAIR_ASSIGNMENT_FILE = os.getenv("PAIR_ASSIGNMENT_FILE", "data/pair_provider_assignment.json")
+OUTPUT_DIR           = os.getenv("OUTPUT_DIR", "data/historical_ohlcv")
+INTERMEDIATE_DIR     = os.getenv("INTERMEDIATE_DIR", "data/intermediate")
+YEARS_BACK           = _int_env("YEARS_BACK", 3)
+GRANULARITY_SECONDS  = _int_env("GRANULARITY_SECONDS", 60 * 5)   # 5 min
+MAX_WORKERS          = _int_env("MAX_WORKERS", 30)
+ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
+LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
+
+# Optional full RPC URL override (e.g., self-hosted, Alchemy, Infura, Ankr w/ key)
+RPC_URL = os.getenv("ANKR_RPC_URL", f"https://rpc.ankr.com/eth/{ANKR_API_KEY}").strip()
 
 # --- RATE LIMITER ---
 bucket = Semaphore(0)
@@ -34,9 +82,8 @@ def limited(fn, *args, **kwargs):
     return fn(*args, **kwargs)
 
 # --- WEB3 SETUP ---
-rpc_url = f"https://rpc.ankr.com/eth/{ANKR_API_KEY}"
-web3    = Web3(Web3.HTTPProvider(rpc_url))
-assert web3.is_connected(), "❌ Could not connect to Ankr RPC"
+web3 = Web3(Web3.HTTPProvider(RPC_URL))
+assert web3.is_connected(), f"❌ Could not connect to RPC at {RPC_URL}"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(INTERMEDIATE_DIR, exist_ok=True)
 
@@ -117,7 +164,6 @@ def _has_code(addr: str) -> bool:
         code = limited(web3.eth.get_code, Web3.to_checksum_address(addr))
     except Exception:
         return False
-    # HexBytes/bytes: length==0 means no code
     try:
         return len(code) > 0
     except Exception:
@@ -140,19 +186,16 @@ def safe_decimals(addr: str):
         print(f"   ❌ No contract code at {a} (not an ERC-20).")
         return None
 
-    # try standard uint8
     try:
         c = web3.eth.contract(address=a, abi=ERC20_ABI)
         return int(limited(c.functions.decimals().call))
     except Exception:
         pass
-    # some tokens expose uint256
     try:
         c = web3.eth.contract(address=a, abi=ERC20_ABI_U256)
         return int(limited(c.functions.decimals().call))
     except Exception:
         pass
-    # rare uppercase variant
     try:
         c = web3.eth.contract(address=a, abi=ERC20_ABI_UPPER)
         return int(limited(c.functions.DECIMALS().call))
@@ -179,7 +222,6 @@ def parse_logs_no_ts(logs, dec0, dec1, granularity_seconds):
                    "buy_volume": 0.0,    "sell_volume": a1in}
         else:
             continue
-        # NOTE: preserve your original grouping to avoid changing output/resume behavior
         bar_slot = blk_num // granularity_seconds
         records_by_bar.setdefault(bar_slot, []).append(rec)
         blocks_by_bar.setdefault(bar_slot, set()).add(blk_num)
@@ -221,7 +263,6 @@ def load_intermediate_chunks(pair_dir):
                 records_by_bar.setdefault(bar_slot, []).extend(records)
             for bar_slot, blocks in chunk.get("blocks_by_bar", {}).items():
                 blocks_by_bar.setdefault(bar_slot, set()).update(blocks)
-    # Fix up set-serialization
     blocks_by_bar = {k: set(v) if not isinstance(v, set) else v for k, v in blocks_by_bar.items()}
     return records_by_bar, blocks_by_bar
 
@@ -250,7 +291,6 @@ def main():
     with open(PAIR_ASSIGNMENT_FILE) as f:
         assignment = json.load(f)
 
-    # tz-aware UTC; same epoch math, no behavior change
     start_ts = int((datetime.now(UTC) - timedelta(days=YEARS_BACK*365)).timestamp())
     start_blk = get_block_by_timestamp(start_ts)
     end_blk   = limited(lambda: web3.eth.block_number)
@@ -277,7 +317,6 @@ def main():
         else:
             pair_start_blk = int(pair_start_blk)
 
-        # Build pair contract (checksummed)
         try:
             pair_addr = Web3.to_checksum_address(addr)
         except Exception as e:
@@ -287,7 +326,6 @@ def main():
         pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
         ev   = pair.events.Swap()
 
-        # Verify token0/token1 calls succeed
         try:
             t0_raw = limited(pair.functions.token0().call)
             t1_raw = limited(pair.functions.token1().call)
@@ -295,7 +333,6 @@ def main():
             print(f"   ❌ {sym}: address {pair_addr} does not behave like a Uniswap V2-style pool: {e}. Skipping.")
             continue
 
-        # Checksummed token addresses
         try:
             t0 = Web3.to_checksum_address(t0_raw)
             t1 = Web3.to_checksum_address(t1_raw)
@@ -303,7 +340,6 @@ def main():
             print(f"   ❌ {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
             continue
 
-        # Ensure both token addresses have code and readable decimals
         dec0 = safe_decimals(t0)
         dec1 = safe_decimals(t1)
         if dec0 is None or dec1 is None:
@@ -327,7 +363,6 @@ def main():
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
             if logs:
                 log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
-                # Group by bar_slot/block here for speed; merge later.
                 chunk_records_by_bar = {}
                 chunk_blocks_by_bar = {}
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -341,7 +376,6 @@ def main():
                                 chunk_blocks_by_bar.setdefault(bar_slot, set()).update(blocks)
                         except Exception as e:
                             print(f"      Parse error: {e}. Skipping one batch.")
-                # Save intermediate chunk for restartability
                 save_intermediate_chunk(pair_dir, chunk_idx, chunk_records_by_bar, chunk_blocks_by_bar)
                 update_assignment(assignment, addr, next_block=e_b)
             else:
@@ -349,7 +383,6 @@ def main():
             b = e_b
             chunk_idx += 1
 
-        # Merge, timestamp, aggregate, save
         print("    ⏳ Merging intermediate data and fetching timestamps…")
         all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
         min_block_per_bar = {bar_slot: min(blocks) for bar_slot, blocks in min_block_per_bar.items() if blocks}
