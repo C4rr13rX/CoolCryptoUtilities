@@ -510,14 +510,29 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
     else:
         print("[diagnose] See explorer logs. Consider increasing gas limit or using the protocol's payable method/WETH.")
 def _swap_flow():
-    import os, time, traceback
+    """
+    Robust swap:
+      1) Get direct quote (sell -> buy). Also consider two-step via ETH (sell->ETH->buy).
+         Choose the *lower estimated gas fee* path first.
+      2) If route fails, progressively CHUNK the order (halve until a quote succeeds),
+         bounded by SWAP_CHUNK_MAX and SWAP_MIN_CHUNK (base units).
+      3) Automatic retries with backoff (SWAP_AUTORETRY, SWAP_RETRY_SLEEP).
+    Env knobs:
+      - SWAP_SLIPPAGE         (default 0.01 for 1%)
+      - SWAP_AUTORETRY        ("1" default), SWAP_RETRY_SLEEP (default 3s)
+      - SWAP_CHUNK_MAX        (default 4), SWAP_MIN_CHUNK     (e.g. "0.001")
+      - SWAP_TIP_GWEI / SWAP_MAXFEE_GWEI (optional EIP-1559 overrides)
+      - CLI_TX_WAIT_SEC       (receipt wait)
+    """
+    import os, time, math
     from web3 import Web3
+
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
     if not ch:
         return
 
-    # --- Tokens ---
+    # --- Input tokens ---
     sell = input("Sell token (native or 0x...): ").strip().lower()
     buy  = input("Buy  token (native or 0x...): ").strip().lower()
     sell_is_native = (sell in ("native","eth"))
@@ -525,64 +540,62 @@ def _swap_flow():
     sell_id = "ETH" if sell_is_native else sell
     buy_id  = "ETH" if buy_is_native  else buy
 
-    # decimals & amount
+    # --- Amount & decimals ---
     sell_dec = 18 if sell_is_native else _erc20_decimals(bridge, ch, sell, default=18)
-    amt = input(f"Sell amount ({'wei' if sell_is_native else 'token units'}; decimals ok): ").strip()
+    amt_str = input(f"Sell amount ({'wei' if sell_is_native else 'token units'}; decimals ok): ").strip()
     try:
-        sell_amount = _parse_amount(amt, 18 if sell_is_native else sell_dec)
+        total_amount = _parse_amount(amt_str, 18 if sell_is_native else sell_dec)
     except Exception:
         print("❌ Could not parse amount.")
         return
+    if int(total_amount) <= 0:
+        print("❌ Amount must be > 0.")
+        return
 
-    def _quote(chain, s_id, b_id, amount):
-        slip = float(os.getenv("SWAP_SLIPPAGE", "0.01"))
-        return bridge.get_0x_quote(chain, s_id, b_id, int(amount), slippage=slip)
-
-    def _ensure_allowance_if_needed(chain, token_addr, allowance_target, amount):
-        cur = 0
+    # --- Config ---
+    try: slip = float(os.getenv("SWAP_SLIPPAGE", "0.01"))
+    except Exception: slip = 0.01
+    auto_retry = (os.getenv("SWAP_AUTORETRY", "1").strip() == "1")
+    try: retry_sleep = float(os.getenv("SWAP_RETRY_SLEEP", "3"))
+    except Exception: retry_sleep = 3.0
+    try: chunk_max = int(os.getenv("SWAP_CHUNK_MAX", "4"))
+    except Exception: chunk_max = 4
+    # Minimum chunk in human units -> raw base units
+    min_chunk_env = os.getenv("SWAP_MIN_CHUNK", "").strip()
+    if min_chunk_env:
         try:
-            cur = bridge.erc20_allowance(chain, token_addr, bridge.acct.address, allowance_target)
+            min_chunk = _parse_amount(min_chunk_env, 18 if sell_is_native else sell_dec)
         except Exception:
-            cur = 0
-        if cur >= amount:
-            return True
-        print(f"Allowance insufficient: have {cur}, need {amount}.")
-        mode = input("Approve [E]xact amount or [U]nlimited? ").strip().lower()
-        if mode not in ("e","u"):
-            print("Cancelled.")
-            return False
-        amt_to_approve = amount if mode == "e" else int((1<<256)-1)
+            min_chunk = 0
+    else:
+        min_chunk = 0  # disabled
+
+    # --- Helpers ---
+    def _quote(s_id, b_id, amount_raw):
         try:
-            txh = bridge.approve_erc20(chain, token_addr, allowance_target, amt_to_approve, gas=60000)
+            return bridge.get_0x_quote(ch, s_id, b_id, int(amount_raw), slippage=slip)
         except Exception as e:
-            print(f"❌ approve failed: {e!r}")
-            return False
-        url = EXPLORER_TX.get(chain)
-        print(f"Approve TX: {txh}")
-        if url: print(f"Explorer: {url}{txh}")
-        # wait for receipt
-        try:
-            w3 = _rpc_for(bridge, chain, timeout=5.0)
-        except Exception:
-            w3 = None
-        t0 = time.time(); wait_sec = int(os.getenv("CLI_TX_WAIT_SEC","20"))
-        rec=None
-        while w3 and time.time()-t0 < wait_sec:
-            try:
-                rec = w3.eth.get_transaction_receipt(txh)
-                if rec: break
-            except Exception: pass
-            time.sleep(1)
-        if not rec or int(getattr(rec,"status", rec.get("status",0))) != 1:
-            print("[warn] approval may still be pending; try again once confirmed.")
-            return False
-        print("[ok] approval mined.")
-        return True
+            return {"__error__": str(e)}
 
-    def _execute_swap(chain, quote_obj, est_gas_fallback=250000):
-        # optional EIP-1559 overrides via env
-        gas_in = input(f"Gas limit [blank={int(quote_obj.get('estimatedGas') or quote_obj.get('gas') or est_gas_fallback)}]: ").strip()
-        gas_hint = int(gas_in) if gas_in else int(quote_obj.get("estimatedGas") or quote_obj.get("gas") or est_gas_fallback)
+    def _eff_gas_fee_wei(est_gas: int) -> int:
+        try:
+            w3 = _rpc_for(bridge, ch, timeout=5.0)
+            pend = w3.eth.get_block("pending")
+            base = pend.get("baseFeePerGas")
+            tip  = Web3.to_wei(float(os.getenv("SWAP_TIP_GWEI","2")), "gwei")
+            price = (int(base) + tip) if base is not None else w3.eth.gas_price
+            return int(price) * int(est_gas)
+        except Exception:
+            return 0
+
+    def _gas_out(q) -> int:
+        return int(q.get("estimatedGas") or q.get("gas") or 0)
+
+    def _execute(quote_obj):
+        # Allow gas override
+        est_gas = _gas_out(quote_obj) or 250000
+        gin = input(f"Gas limit [blank={est_gas}]: ").strip()
+        gas_hint = int(gin) if gin else est_gas
         tip_gwei = os.getenv("SWAP_TIP_GWEI")
         max_gwei = os.getenv("SWAP_MAXFEE_GWEI")
         kwargs = {"gas": gas_hint}
@@ -596,7 +609,8 @@ def _swap_flow():
         url = EXPLORER_TX.get(ch)
         print(f"Swap TX: {txh}")
         if url: print(f"Explorer: {url}{txh}")
-        # wait receipt
+
+        # Wait for receipt
         try:
             w3 = _rpc_for(bridge, ch, timeout=5.0)
         except Exception:
@@ -612,93 +626,254 @@ def _swap_flow():
         if rec is None:
             print(f"[pending] No receipt after {wait_sec}s.")
             return txh, None
-        status = int(getattr(rec,"status", rec.get("status", -1)))
+        status = int(getattr(rec,"status", rec.get("status",-1)))
         blk = getattr(rec,"blockNumber", rec.get("blockNumber", None))
         gas_used = int(getattr(rec,"gasUsed", rec.get("gasUsed", 0)))
         print(f"[receipt] status={'success' if status==1 else 'failed'} block={blk} gasUsed={gas_used}")
         return txh, (status==1)
 
-    # --- Try direct quote first ---
-    try:
-        q = _quote(ch, sell_id, buy_id, sell_amount)
-    except Exception as e:
-        emsg = str(e)
-        print(f"❌ quote failed: {emsg}")
-        # If 0x says unsupported or no route, offer 2-step via ETH
-        if "404" in emsg or "NO_LIQUID" in emsg.upper() or "UNSUPPORTED" in emsg.upper():
-            if _confirm("Try two-step via ETH? (this executes 2 swaps)"):
-                # Step 1: sell -> ETH
-                s1_sell_id = sell_id
-                s1_buy_id  = "ETH"
-                try:
-                    q1 = _quote(ch, s1_sell_id, s1_buy_id, sell_amount)
-                except Exception as e1:
-                    print(f"❌ step1 quote failed: {e1}")
-                    return
-                # allowance for step1 if selling ERC-20
-                if s1_sell_id != "ETH":
-                    if not _ensure_allowance_if_needed(ch, sell, q1.get("allowanceTarget"), int(sell_amount)):
-                        return
-                print("\n[Step 1/2] token -> ETH")
-                if not _confirm("Proceed with step 1?"):
-                    print("Cancelled.")
-                    return
-                txh1, ok1 = _execute_swap(ch, q1)
-                if not ok1:
-                    print("Step 1 did not succeed; aborting.")
-                    return
+    def _ensure_allow(chain, token_addr, allowance_target, need_raw) -> bool:
+        # no allowance for native asset
+        if token_addr in ("ETH","native") or token_addr.lower()=="eth":
+            return True
+        try:
+            cur = bridge.erc20_allowance(chain, token_addr, bridge.acct.address, allowance_target)
+        except Exception:
+            cur = 0
+        if int(cur) >= int(need_raw):
+            return True
+        print(f"Allowance insufficient: have {cur}, need {need_raw}.")
+        mode = input("Approve [E]xact amount or [U]nlimited? ").strip().lower()
+        if mode not in ("e","u"):
+            print("Cancelled.")
+            return False
+        amt_to_approve = int(need_raw) if mode=="e" else int((1<<256)-1)
+        try:
+            txh = bridge.approve_erc20(ch, token_addr, allowance_target, amt_to_approve, gas=60000)
+        except Exception as e:
+            print(f"❌ approve failed: {e!r}")
+            return False
+        url = EXPLORER_TX.get(ch)
+        print(f"Approve TX: {txh}")
+        if url: print(f"Explorer: {url}{txh}")
+        # wait approval short
+        try:
+            w3 = _rpc_for(bridge, ch, timeout=5.0)
+        except Exception:
+            w3 = None
+        t0 = time.time(); wait_sec = int(os.getenv("CLI_TX_WAIT_SEC","20"))
+        rec=None
+        while w3 and time.time()-t0 < wait_sec:
+            try:
+                rec = w3.eth.get_transaction_receipt(txh)
+                if rec: break
+            except Exception: pass
+            time.sleep(1)
+        ok = (rec is not None) and (int(getattr(rec,"status", rec.get("status",0))) == 1)
+        print("[ok] approval mined." if ok else "[warn] approval pending.")
+        return ok
 
-                # Step 2: ETH -> buy
-                try:
-                    # Use the quoted buyAmount from step 1, minus 1% safety
-                    s1_out = int(q1.get("buyAmount") or 0)
-                    s2_in  = max(0, int(s1_out * 0.99))
-                    q2 = _quote(ch, "ETH", buy_id, s2_in)
-                except Exception as e2:
-                    print(f"❌ step2 quote failed: {e2}")
-                    return
-                print("\n[Step 2/2] ETH -> target")
-                if not _confirm("Proceed with step 2?"):
-                    print("Cancelled after step 1; keep ETH.")
-                    return
-                txh2, ok2 = _execute_swap(ch, q2)
-                if not ok2:
-                    print("Step 2 did not succeed; final state is ETH from step 1.")
-                return
-        return
+    # --- Route selection (lowest estimated gas) ---
+    direct = _quote(sell_id, buy_id, total_amount)
+    two_1 = _quote(sell_id, "ETH", total_amount)
+    two_2 = None
+    if "__error__" not in two_1 and not buy_is_native:
+        s1_out = int(two_1.get("buyAmount") or 0)
+        two_2 = _quote("ETH", buy_id, int(s1_out * 0.99))
 
-    # --- We have a direct quote; show summary ---
-    buy_amt = int(q.get("buyAmount") or 0)
-    price   = q.get("price")
-    estGas  = int(q.get("estimatedGas") or q.get("gas") or 0)
-    allow_t = q.get("allowanceTarget")
+    def _route_score(q):
+        if q is None or "__error__" in q: return None
+        return _eff_gas_fee_wei(_gas_out(q) or 0)
 
-    sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
-    buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy, default="ERC20")
+    score_direct = _route_score(direct)
+    score_two = None
+    if "__error__" not in two_1 and (buy_is_native or ("__error__" not in two_2)):
+        score_two = (_route_score(two_1) or 0) + (_route_score(two_2) or 0)
 
-    print(f"""
---- 0x Quote ---
-Chain   : {ch}
-Sell    : {sell_label} ({sell_id})
-Buy     : {buy_label} ({buy_id})
-SellAmt : {sell_amount} (raw)
-BuyAmt  : {buy_amt} (raw)
-Price   : {price}
-EstGas  : {estGas}
-AllowSp : {allow_t}
-""")
+    chosen = None
+    route = None
+    if score_direct is not None and (score_two is None or score_direct <= score_two):
+        chosen = direct; route = "direct"
+    elif score_two is not None:
+        route = "two"
 
-    # Allowance if selling ERC-20
-    if not sell_is_native:
-        if not _ensure_allowance_if_needed(ch, sell, allow_t, int(sell_amount)):
+    def _print_quote(tag, q):
+        if q is None: 
+            print(f"{tag}: (none)")
+            return
+        if "__error__" in q:
+            print(f"{tag}: ERROR {q['__error__']}")
+            return
+        price = q.get("price")
+        estg = _gas_out(q)
+        print(f"{tag}: buyAmount={q.get('buyAmount')} price={price} estGas={estg}")
+
+    print("\n[route candidates]")
+    _print_quote("direct", direct)
+    _print_quote("two-step[1]", two_1)
+    if not buy_is_native: _print_quote("two-step[2]", two_2)
+
+    # --- If neither route works, fallback to chunking ---
+    if route is None:
+        print("No routable path for full amount. Enabling chunk fallback...")
+        # progressive halving until quote succeeds or limits hit
+        chunks = []
+        remaining = int(total_amount)
+        # choose a test chunk by halving strategy
+        test = int(total_amount // 2)
+        if min_chunk and test < int(min_chunk): test = int(min_chunk)
+        success_quote = None; success_route = None
+        splits_tried = 0
+        while splits_tried < max(1, int(os.getenv("SWAP_CHUNK_MAX","4"))):
+            qd = _quote(sell_id, buy_id, test)
+            if "__error__" not in qd:
+                success_quote, success_route = qd, "direct"; break
+            q1 = _quote(sell_id, "ETH", test)
+            if "__error__" not in q1:
+                if buy_is_native:
+                    success_quote, success_route = q1, "two_eth_only"; break
+                s1_out = int(q1.get("buyAmount") or 0)
+                q2 = _quote("ETH", buy_id, int(s1_out * 0.99))
+                if "__error__" not in q2:
+                    success_quote, success_route = (q1, q2), "two"; break
+            # halve again
+            new_test = max(int(test // 2), int(min_chunk) if min_chunk else 1)
+            if new_test == test:
+                break
+            test = new_test
+            splits_tried += 1
+
+        if success_route is None:
+            print("❌ No route even after chunk fallback.")
             return
 
-    if not _confirm("Proceed with swap?"):
-        print("Cancelled.")
+        # Compute number of chunks as ceil(total/test)
+        per_chunk = test
+        n = int(math.ceil(int(total_amount) / int(per_chunk)))
+        print(f"[chunk plan] {n} chunks of ~{per_chunk} raw each; route={success_route}")
+
+        if not _confirm("Proceed with chunked execution?"):
+            print("Cancelled.")
+            return
+
+        executed_ok = 0
+        for idx in range(n):
+            this_amt = per_chunk if (idx < n-1) else (int(total_amount) - per_chunk*(n-1))
+            # fresh quotes each chunk (safer)
+            if success_route == "direct":
+                q = _quote(sell_id, buy_id, this_amt)
+                if "__error__" in q:
+                    print(f"[chunk {idx+1}/{n}] direct quote failed: {q['__error__']}")
+                    if auto_retry:
+                        time.sleep(retry_sleep); 
+                        q = _quote(sell_id, buy_id, this_amt)
+                        if "__error__" in q:
+                            print(f"[chunk {idx+1}/{n}] still failing; aborting.")
+                            break
+                # allowance for ERC-20 sells
+                if not sell_is_native:
+                    if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
+                        print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
+                        break
+                if not _confirm(f"[chunk {idx+1}/{n}] Proceed?"):
+                    print("Cancelled.")
+                    break
+                _, ok = _execute(q)
+                executed_ok += 1 if ok else 0
+            elif success_route in ("two","two_eth_only"):
+                # step1
+                q1 = _quote(sell_id, "ETH", this_amt)
+                if "__error__" in q1:
+                    print(f"[chunk {idx+1}/{n}] step1 quote failed: {q1['__error__']}")
+                    if auto_retry:
+                        time.sleep(retry_sleep); 
+                        q1 = _quote(sell_id, "ETH", this_amt)
+                        if "__error__" in q1:
+                            print(f"[chunk {idx+1}/{n}] still failing; aborting.")
+                            break
+                if sell_id != "ETH":
+                    if not _ensure_allow(ch, sell, q1.get("allowanceTarget"), int(this_amt)):
+                        print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
+                        break
+                if not _confirm(f"[chunk {idx+1}/{n}] Proceed step1 (sell->ETH)?"):
+                    print("Cancelled.")
+                    break
+                txh1, ok1 = _execute(q1)
+                if not ok1:
+                    print(f"[chunk {idx+1}/{n}] step1 not successful; aborting.")
+                    break
+                # step2 if needed
+                if success_route == "two":
+                    s1_out = int(q1.get("buyAmount") or 0)
+                    q2 = _quote("ETH", buy_id, int(s1_out * 0.99))
+                    if "__error__" in q2:
+                        print(f"[chunk {idx+1}/{n}] step2 quote failed: {q2['__error__']}")
+                        break
+                    if not _confirm(f"[chunk {idx+1}/{n}] Proceed step2 (ETH->buy)?"):
+                        print("Cancelled after step1; keeping ETH for this chunk.")
+                        break
+                    _, ok2 = _execute(q2)
+                    executed_ok += 1 if ok2 else 0
+                else:
+                    executed_ok += 1 if ok1 else 0
+
+        print(f"[summary] chunks ok: {executed_ok}/{n}")
         return
 
-    # Execute
-    _execute_swap(ch, q)
+    # --- We have at least one viable route for full amount; choose lowest gas ---
+    if route == "two":
+        # Allowance for ERC-20 sell on step1
+        if sell_id != "ETH":
+            if not _ensure_allow(ch, sell, two_1.get("allowanceTarget"), int(total_amount)):
+                return
+        sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
+        buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
+        print(f"\nChosen route: TWO-STEP via ETH (lower gas). {sell_label} -> ETH -> {buy_label}")
+        if not _confirm("Proceed with two-step swap?"):
+            print("Cancelled.")
+            return
+        # Step 1
+        txh1, ok1 = _execute(two_1)
+        if not ok1:
+            if auto_retry:
+                print("[retry] step1 failed; sleeping then re-quoting...")
+                time.sleep(retry_sleep)
+                two_1 = _quote(sell_id, "ETH", int(total_amount))
+                if "__error__" not in two_1:
+                    txh1, ok1 = _execute(two_1)
+            if not ok1:
+                print("Two-step: step1 not successful; aborting.")
+                return
+        # Step 2 if needed
+        if not buy_is_native:
+            s1_out = int(two_1.get("buyAmount") or 0)
+            two_2 = _quote("ETH", buy_id, int(s1_out * 0.99))
+            if "__error__" in two_2:
+                print(f"❌ step2 quote failed: {two_2['__error__']}")
+                return
+            txh2, ok2 = _execute(two_2)
+            if not ok2:
+                print("Two-step: step2 not successful; final state is ETH from step1.")
+        return
+    else:
+        # Direct
+        if not sell_is_native:
+            if not _ensure_allow(ch, sell, direct.get("allowanceTarget"), int(total_amount)):
+                return
+        sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
+        buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
+        print(f"\nChosen route: DIRECT (lower gas). {sell_label} -> {buy_label}")
+        if not _confirm("Proceed with direct swap?"):
+            print("Cancelled.")
+            return
+        txh, ok = _execute(direct)
+        if not ok and auto_retry:
+            print("[retry] direct failed; sleeping then re-quoting...")
+            time.sleep(retry_sleep)
+            direct = _quote(sell_id, buy_id, int(total_amount))
+            if "__error__" not in direct:
+                _execute(direct)
+        return
 def _bridge_flow():
     bridge = UltraSwapBridge()
     src_chain = _prompt_chain(bridge)
