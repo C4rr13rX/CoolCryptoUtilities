@@ -990,3 +990,68 @@ else:
     UltraSwapBridge.send_erc20 = send_erc20
 # ======== End live send helpers v2 ========
 
+
+# ======== Live send helpers v3 (ERC-20 build_transaction compat: no explicit 'to') ========
+try:
+    UltraSwapBridge
+except NameError:
+    pass
+else:
+    from web3 import Web3
+
+    def send_erc20(self, chain: str, token: str, to: str, amount: int, *, gas: int=None, gas_limit: int=None, max_priority_gwei=None, max_fee_gwei=None, nonce: int=None):
+        """
+        ERC-20 transfer compatible with web3.py v5/v6:
+        - Do NOT set 'to' in build_transaction; web3 injects the token contract.
+        - EIP-1559 fee fields if available; fallback to gasPrice.
+        """
+        self._rb__ensure_live()
+        w3 = self._rb__w3(chain)
+        token_cs = Web3.to_checksum_address(token)
+        to_cs = Web3.to_checksum_address(to)
+        sender = self.acct.address
+
+        abi = [{
+            "name": "transfer",
+            "type": "function",
+            "stateMutability": "nonpayable",
+            "inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256"}],
+            "outputs": [{"name": "", "type": "bool"}],
+        }]
+        c = w3.eth.contract(address=token_cs, abi=abi)
+
+        # base tx fields (no 'to' here; contract fn supplies it)
+        base = {
+            "chainId": w3.eth.chain_id,
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender, "pending") if nonce is None else int(nonce),
+            "value": 0,
+        }
+        base.update(self._rb__fee_fields(w3, max_priority_gwei, max_fee_gwei))
+
+        # estimate gas, then build, sign, send
+        try:
+            est = c.functions.transfer(to_cs, int(amount)).estimate_gas({"from": sender})
+        except Exception:
+            est = 100000  # conservative fallback
+        gas_final = int(gas or gas_limit or int(est * 1.2))
+
+        tx = c.functions.transfer(to_cs, int(amount)).build_transaction({**base, "gas": gas_final})
+        signed = self.acct.sign_transaction(tx)
+
+        # raw tx bytes across web3 versions
+        raw = None
+        for attr in ("rawTransaction", "raw_transaction", "raw"):
+            raw = getattr(signed, attr, None)
+            if raw is not None:
+                break
+        if raw is None:
+            raw = signed  # last resort
+
+        txh = w3.eth.send_raw_transaction(raw)
+        return w3.to_hex(txh)
+
+    # Rebind to the new version
+    UltraSwapBridge.send_erc20 = send_erc20
+# ======== End live send helpers v3 ========
+
