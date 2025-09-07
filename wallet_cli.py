@@ -14,6 +14,42 @@ from router_wallet import UltraSwapBridge, CHAINS
 from web3 import Web3
 from cache import CacheTransfers, CacheBalances
 
+import json
+
+# ---- Address book helpers (guarded top-level definition) ----
+try:
+    _ab_get
+except NameError:
+    from pathlib import Path as _AB_Path
+    def _ab_path() -> _AB_Path:
+        root = os.getenv("PORTFOLIO_CACHE_DIR", "~/.cache/mchain")
+        return _AB_Path(root).expanduser() / "addressbook.json"
+    def _ab_load() -> dict:
+        path = _ab_path()
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+    def _ab_save(d: dict) -> None:
+        path = _ab_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    def _ab_get(chain: str, addr: str) -> dict:
+        d = _ab_load()
+        return ((d.get(chain) or {}).get(addr.lower()) or {})
+    def _ab_update(chain: str, addr: str, **fields) -> None:
+        d = _ab_load()
+        d.setdefault(chain, {})
+        row = d[chain].get(addr.lower(), {})
+        row.update(fields)
+        d[chain][addr.lower()] = row
+        _ab_save(d)
+
 def _show_balances():
     """
     Reuse your existing main logic by importing the module and calling its entry function
