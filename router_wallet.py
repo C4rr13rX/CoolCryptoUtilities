@@ -1286,3 +1286,98 @@ UltraSwapBridge.get_1inch_swap_tx = get_1inch_swap_tx
 UltraSwapBridge._rb__1inch_base = _rb__1inch_base
 UltraSwapBridge._rb__http_get_json_auth = _rb__http_get_json_auth
 # ======== End 1inch v6 helpers ========
+
+# ======== OpenOcean v4 helpers (multi-chain, no API key) ========
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+import os, json
+from web3 import Web3
+import time
+
+_OO_NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"  # OpenOcean accepts this for native
+_OO_CHAINS = {
+    "ethereum": "eth",
+    "base": "base",
+    "arbitrum": "arbitrum",
+    "optimism": "optimism",
+    "polygon": "polygon",
+}
+
+def _rb__http_get_json_ua(self, url: str, headers: dict | None = None, timeout_sec: float | None = None, retries: int = 2):
+    # Same as other helpers but with UA + small retry (CF/rate-limit friendly)
+    hdrs = {"Accept": "application/json", "User-Agent": os.getenv("HTTP_UA", "Mozilla/5.0 WalletCLI/1.0")}
+    if headers: hdrs.update(headers)
+    req = Request(url, headers=hdrs, method="GET")
+    to = float(os.getenv("OO_HTTP_TIMEOUT_SEC", "12")) if timeout_sec is None else float(timeout_sec)
+    last = None
+    for a in range(retries+1):
+        try:
+            with urlopen(req, timeout=to) as r:
+                data = r.read()
+            return json.loads(data.decode("utf-8"))
+        except HTTPError as e:
+            body = e.read()
+            msg = body.decode("utf-8", errors="ignore") if body else ""
+            try:
+                j = json.loads(msg) if msg else {}
+            except Exception:
+                j = {"raw": msg}
+            # retry on 403/429 transient
+            if e.code in (403, 429) and a < retries:
+                time.sleep(1.2*(a+1))
+                last = (e.code, j)
+                continue
+            code = j.get("message") or j.get("error") or j.get("description") or "HTTPError"
+            raise RuntimeError(f"OpenOcean {e.code} {code}: {j}") from None
+        except Exception as e:
+            last = e
+            if a < retries:
+                time.sleep(0.6*(a+1))
+                continue
+            raise
+
+def get_openocean_swap_tx(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None) -> dict:
+    """
+    Ask OpenOcean /v4/{chain}/swap for an executable tx.
+    Normalized return: {to,data,value(int),estimatedGas(int),buyAmount(int)}
+    """
+    ch = (chain or "").lower()
+    oo_ch = _OO_CHAINS.get(ch)
+    if not oo_ch:
+        raise RuntimeError(f"OpenOcean not supported for '{chain}'")
+    taker_addr = taker or self.acct.address
+
+    s_id = _OO_NATIVE if (sell_token.lower() in ("eth","native")) else Web3.to_checksum_address(sell_token)
+    b_id = _OO_NATIVE if (buy_token.lower()  in ("eth","native")) else Web3.to_checksum_address(buy_token)
+
+    # OpenOcean expects slippage as percent (e.g., 1 for 1%)
+    slip_pct = f"{slippage*100:.4f}".rstrip('0').rstrip('.') if slippage else "1"
+
+    q = {
+        "inTokenAddress": s_id,
+        "outTokenAddress": b_id,
+        "amount": str(int(sell_amount_wei)),
+        "slippage": slip_pct,
+        "account": taker_addr,
+        # "gasPrice": "",          # optional
+        # "onlyDexId": "",         # optional targeting
+        # "disabledDexIds": "",    # optional blacklist
+    }
+    url = f"https://open-api.openocean.finance/v4/{oo_ch}/swap?{urlencode(q)}"
+    j = _rb__http_get_json_ua(self, url)
+
+    # Typical shape: {"data":{"to":"0x..","data":"0x..","value":"123","gasPrice":"..","gasLimit":".."},"outAmount":"..",...}
+    tx = (j.get("data") or {})
+    to_addr = tx.get("to") or j.get("to")
+    data_hex = tx.get("data") or j.get("data") or "0x"
+    value = int(tx.get("value") or j.get("value") or 0)
+    est_gas = int(tx.get("gasLimit") or j.get("gasLimit") or j.get("estimatedGas") or 0)
+    out_amt = int(j.get("outAmount") or j.get("toAmount") or 0)
+    if not to_addr or not data_hex:
+        raise RuntimeError(f"OpenOcean swap response missing tx fields: {j}")
+    return {"to": to_addr, "data": data_hex, "value": value, "estimatedGas": est_gas, "buyAmount": out_amt}
+
+# bind
+UltraSwapBridge.get_openocean_swap_tx = get_openocean_swap_tx
+# ======== End OpenOcean v4 helpers ========
