@@ -1,6 +1,3 @@
-# filter_scam_tokens.py
-# MIT License
-# © 2025 Your Name
 
 from __future__ import annotations
 

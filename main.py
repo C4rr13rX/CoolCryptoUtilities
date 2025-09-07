@@ -3,8 +3,6 @@ from router_wallet import UltraSwapBridge
 from balances import MultiChainTokenPortfolio
 from filter_scams import FilterScamTokens
 
-
-
 # ======================================================================
 # DEMO
 # ======================================================================

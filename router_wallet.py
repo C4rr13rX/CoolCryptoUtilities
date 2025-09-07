@@ -1,5 +1,3 @@
-# MIT License
-# © 2025 Your Name
 
 from __future__ import annotations
 import os, time, json, certifi, requests, sys
