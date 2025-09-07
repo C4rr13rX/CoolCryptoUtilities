@@ -346,21 +346,21 @@ Total   : { _wei_to_eth(q['total_est']) } ETH
         try:
             q = quote_fee(tip_in, max_in, q.get('gas_est'))
         except Exception as e:
-            print(f\"[warn] custom fee parse failed: {e!r}; using default.\")
+            print(f"[warn] custom fee parse failed: {e!r}; using default.")
             q = quote_fee()
 
     # Final confirmation with fee figures
     if q['mode']=='eip1559':
         proceed = _confirm(
-            f\"Proceed? Tip={Web3.from_wei(q['tip'],'gwei'):.3f} gwei, "
-            f\"MaxFee={Web3.from_wei(q['max'],'gwei'):.3f} gwei, "
-            f\"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
-            f\"Total≈{_wei_to_eth(q['total_est'])} ETH\")
+            f"Proceed? Tip={Web3.from_wei(q['tip'],'gwei'):.3f} gwei, "
+            f"MaxFee={Web3.from_wei(q['max'],'gwei'):.3f} gwei, "
+            f"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
+            f"Total≈{_wei_to_eth(q['total_est'])} ETH")
     else:
         proceed = _confirm(
-            f\"Proceed? GasPrice={Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei, "
-            f\"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
-            f\"Total≈{_wei_to_eth(q['total_est'])} ETH\")
+            f"Proceed? GasPrice={Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei, "
+            f"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
+            f"Total≈{_wei_to_eth(q['total_est'])} ETH")
     if not proceed:
         print("Cancelled.")
         return
