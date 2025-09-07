@@ -597,7 +597,7 @@ def _swap_flow():
                 q["__agg__"] = "OpenOcean"
                 return q
             except Exception as e2:
-                return {"__error__": f"{emsg}; OpenOcean: {e2}"}, slippage=slip)
+                return {"__error__": f"{emsg}; OpenOcean: {e2}"}
         except Exception as e0:
             emsg = str(e0)
 
