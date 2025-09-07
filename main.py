@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Dict
 
 from cache import CacheTransfers, CacheBalances
@@ -8,6 +9,16 @@ from router_wallet import (
 )
 from balances import MultiChainTokenPortfolio
 from filter_scams import FilterScamTokens
+
+
+def maybe_enrich(snapshot):
+    # Skip network-heavy 0x enrichment when FAST/ SKIP_0X is set
+    if os.getenv('FAST') == '1' or os.getenv('SKIP_0X') == '1':
+        print('[fast] skipping 0x enrichment')
+        return snapshot
+    from router_wallet import enrich_portfolio_with_0x
+    return maybe_enrich(snapshot)
+
 
 # ======================================================================
 # DEMO
@@ -64,7 +75,7 @@ if __name__ == "__main__":
                 continue
             addr_to_chain[addr.lower()] = ch.lower()
         try:
-            enrich_portfolio_with_0x(snapshot, addr_to_chain, qty_dp=18, usd_dp=8)
+            maybe_enrich(snapshot, addr_to_chain, qty_dp=18, usd_dp=8)
         except Exception as e:
             print(f"[pricing] 0x enrich skipped due to error: {e}")
     
