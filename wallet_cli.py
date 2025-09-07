@@ -585,7 +585,8 @@ def _swap_flow():
             emsg = str(e0)
 
             # If 1inch is available and error looks like route/validation → try it
-            try_1inch = bool(os.getenv("ONEINCH_API_KEY"))
+            key = (os.getenv("ONEINCH_API_KEY") or "").strip()
+            try_1inch = bool(key) and key.lower() not in ("your_1in_ch_key","your_1inch_key","placeholder") and len(key) >= 16
             no_route_0x = ("no route" in emsg.lower()) or ("404" in emsg) or ("unsupported" in emsg.lower())
             if try_1inch and no_route_0x:
                 try:
