@@ -1171,3 +1171,93 @@ UltraSwapBridge.approve_erc20 = approve_erc20
 UltraSwapBridge.send_swap_via_0x = send_swap_via_0x
 # ======== End 0x swap helpers v1 ========
 
+# ======== 1inch v6 helpers (multi-chain) ========
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+import os, json
+from web3 import Web3
+
+_ONEINCH_NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"
+_ONEINCH_CHAIN_IDS = {
+    "ethereum": 1,
+    "base": 8453,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "polygon": 137,
+}
+
+def _rb__1inch_base(self, chain: str) -> tuple[str,int]:
+    ch = (chain or "").lower()
+    cid = _ONEINCH_CHAIN_IDS.get(ch)
+    if not cid: return "", 0
+    return f"https://api.1inch.dev/swap/v6.0/{cid}", cid
+
+def _rb__http_get_json_auth(self, url: str, headers: dict | None = None, timeout_sec: float | None = None):
+    hdrs = {"Accept": "application/json"}
+    if headers: hdrs.update(headers)
+    req = Request(url, headers=hdrs, method="GET")
+    to = float(os.getenv("ONEINCH_HTTP_TIMEOUT_SEC", "12")) if timeout_sec is None else float(timeout_sec)
+    try:
+        with urlopen(req, timeout=to) as r:
+            data = r.read()
+        return json.loads(data.decode("utf-8"))
+    except HTTPError as e:
+        body = e.read()
+        msg = body.decode("utf-8", errors="ignore") if body else ""
+        try:
+            j = json.loads(msg) if msg else {}
+        except Exception:
+            j = {"raw": msg}
+        code = j.get("description") or j.get("error") or j.get("message") or "HTTPError"
+        raise RuntimeError(f"1inch {e.code} {code}: {j}") from None
+
+def get_1inch_swap_tx(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None, api_key: str | None = None) -> dict:
+    """
+    Ask 1inch /swap for an executable tx. Returns a dict normalized like 0x:
+      { "to": <addr>, "data": <0x...>, "value": <int>, "estimatedGas": <int>,
+        "buyAmount": <int>, "price": <str> (if provided) }
+    """
+    base, cid = _rb__1inch_base(self, chain)
+    if not base:
+        raise RuntimeError(f"1inch not supported for '{chain}'")
+    ak = api_key or os.getenv("ONEINCH_API_KEY")
+    if not ak:
+        raise RuntimeError("ONEINCH_API_KEY is not set")
+    taker_addr = taker or self.acct.address
+
+    # native token mapping
+    s_id = _ONEINCH_NATIVE if (sell_token.lower() in ("eth","native")) else Web3.to_checksum_address(sell_token)
+    b_id = _ONEINCH_NATIVE if (buy_token.lower()  in ("eth","native")) else Web3.to_checksum_address(buy_token)
+
+    q = {
+        "src": s_id,
+        "dst": b_id,
+        "amount": str(int(sell_amount_wei)),
+        "from": taker_addr,
+        "slippage": f"{slippage*100:.4f}",  # 1inch expects percent
+        # you could add: "disableEstimate": "true"  (but we want gas in response)
+    }
+    url = f"{base}/swap?{urlencode(q)}"
+    hdrs = {"Authorization": f"Bearer {ak}"}
+    j = self._rb__http_get_json_auth(url, headers=hdrs)
+
+    tx = j.get("tx") or {}
+    # Normalize to the same shape used by 0x sender
+    out = {
+        "to": tx.get("to") or j.get("to"),
+        "data": tx.get("data") or j.get("data"),
+        "value": int(tx.get("value") or j.get("value") or 0),
+        "estimatedGas": int(j.get("gas") or tx.get("gas") or 0),
+        "buyAmount": int(j.get("dstAmount") or j.get("toAmount") or 0),
+        "price": j.get("price"),
+    }
+    if not out["to"] or not out["data"]:
+        raise RuntimeError(f"1inch swap response missing tx fields: {j}")
+    return out
+
+# bind
+UltraSwapBridge.get_1inch_swap_tx = get_1inch_swap_tx
+UltraSwapBridge._rb__1inch_base = _rb__1inch_base
+UltraSwapBridge._rb__http_get_json_auth = _rb__http_get_json_auth
+# ======== End 1inch v6 helpers ========

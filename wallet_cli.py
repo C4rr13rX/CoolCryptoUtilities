@@ -572,10 +572,28 @@ def _swap_flow():
 
     # --- Helpers ---
     def _quote(s_id, b_id, amount_raw):
+        """
+        Try 0x first; if it returns a route, use it.
+        If 0x fails with 'no route' and ONEINCH_API_KEY is set, try 1inch v6 swap.
+        Returns a dict with fields like a 0x quote: to,data,value,estimatedGas,buyAmount,price
+        or {"__error__": "..."} on failure.
+        """
+        # 0x first
         try:
             return bridge.get_0x_quote(ch, s_id, b_id, int(amount_raw), slippage=slip)
-        except Exception as e:
-            return {"__error__": str(e)}
+        except Exception as e0:
+            emsg = str(e0)
+            # 0x common 'no route'
+            no_route = ("no route" in emsg.lower()) or ("404" in emsg) or ("NO_LIQUID" in emsg) or ("UNSUPPORTED" in emsg.upper())
+            # Try 1inch only if we have an API key
+            try_1inch = bool(os.getenv("ONEINCH_API_KEY"))
+            if no_route and try_1inch:
+                try:
+                    return bridge.get_1inch_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
+                except Exception as e1:
+                    return {"__error__": f"1inch: {e1}"}
+            # else just surface the 0x error
+            return {"__error__": emsg}
 
     def _eff_gas_fee_wei(est_gas: int) -> int:
         try:
