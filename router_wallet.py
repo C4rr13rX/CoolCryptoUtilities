@@ -10,6 +10,8 @@ from cache import CacheBalances, CacheTransfers
 
 
 # ---------- .env loader ----------
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 def load_env_robust() -> None:
     path = find_dotenv(usecwd=True)
     if path:
@@ -1063,10 +1065,8 @@ except NameError:
     pass
 else:
     import os, json, math
-    from urllib.parse import urlencode
 from urllib.error import HTTPError
 
-    from urllib.request import Request, urlopen
     from web3 import Web3
 
     def _rb__0x_base_url(self, chain: str) -> str:
@@ -1096,10 +1096,8 @@ from urllib.error import HTTPError
                 j = json.loads(msg) if msg else {}
             except Exception:
                 j = {"raw": msg}
-            # Raise a descriptive error including code + 0x payload if present
             code = j.get("code") or j.get("reason") or j.get("validationErrors") or j.get("message") or "HTTPError"
             raise RuntimeError(f"0x {e.code} {code}: {j}") from None
-
     def get_0x_quote(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None, api_key: str | None = None) -> dict:
         """
         GET /swap/v1/quote — returns executable tx fields for 0x swap.
