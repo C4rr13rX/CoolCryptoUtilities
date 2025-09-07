@@ -119,6 +119,14 @@ def _refetch_transfers_parallel(bridge: UltraSwapBridge, chains: List[str]) -> N
 
 
 # ----------------- EVM helpers -----------------
+EXPLORER_TX = {
+    'ethereum': 'https://etherscan.io/tx/',
+    'base': 'https://basescan.org/tx/',
+    'arbitrum': 'https://arbiscan.io/tx/',
+    'optimism': 'https://optimistic.etherscan.io/tx/',
+    'polygon': 'https://polygonscan.com/tx/',
+}
+
 _MIN_ERC20_ABI = [
     {"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},
     {"constant":True,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"},
@@ -229,19 +237,23 @@ def _confirm(prompt: str) -> bool:
     return ans == "y"
 
 def _send_flow():
+    import os, time
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
     if not ch:
         return
+
     tok, is_native = _prompt_token_or_native(bridge, ch)
     tok_dec = 18 if is_native else _erc20_decimals(bridge, ch, tok, default=18)
     to = _prompt_recipient(bridge, ch)
+
     amt = input(f"Amount ({'wei' if is_native else 'token units'}; decimals ok): ").strip()
     try:
         value = _parse_amount(amt, 18 if is_native else tok_dec)
     except Exception:
         print("❌ Could not parse amount.")
         return
+
     print("\n--- Review ---")
     print(f"Chain   : {ch}")
     print(f"Asset   : {'native' if is_native else tok}")
@@ -250,18 +262,77 @@ def _send_flow():
     if not _confirm("Proceed to send?"):
         print("Cancelled.")
         return
+
     try:
         if is_native and hasattr(bridge, "send_native"):
-            tx = bridge.send_native(chain=ch, to=to, value=value)
-            print(f"Submitted native transfer: {tx}")
+            txh = bridge.send_native(chain=ch, to=to, value=value)
         elif (not is_native) and hasattr(bridge, "send_erc20"):
-            tx = bridge.send_erc20(chain=ch, token=tok, to=to, amount=value)
-            print(f"Submitted token transfer: {tx}")
+            txh = bridge.send_erc20(chain=ch, token=tok, to=to, amount=value)
         else:
             print("Dry-run only: bridge send functions not implemented.")
+            return
     except Exception as e:
         print(f"❌ send failed: {e!r}")
+        return
 
+    # Normalize tx hash to hex string
+    try:
+        from web3 import Web3
+        if isinstance(txh, (bytes, bytearray)):
+            txh = Web3.to_hex(txh)
+    except Exception:
+        pass
+
+    # Print hash + explorer URL
+    url = EXPLORER_TX.get(ch)
+    print(f"TX hash: {txh}")
+    if url:
+        print(f"Explorer: {url}{txh}")
+
+    # Wait briefly for a receipt (configurable)
+    wait_sec = int(os.getenv("CLI_TX_WAIT_SEC", "20"))
+    try:
+        w3 = _rpc_for(bridge, ch, timeout=max(5.0, float(os.getenv('ALCHEMY_TIMEOUT_SEC', '10'))))
+    except Exception as e:
+        print(f"[warn] could not init RPC for receipt check: {e!r}")
+        return
+
+    # Poll for receipt up to wait_sec seconds
+    t0 = time.time()
+    receipt = None
+    while time.time() - t0 < wait_sec:
+        try:
+            receipt = w3.eth.get_transaction_receipt(txh)
+            if receipt:
+                break
+        except Exception:
+            pass
+        time.sleep(1.0)
+
+    if receipt is None:
+        print(f"[pending] No receipt yet after {wait_sec}s. It may still confirm shortly.")
+        return
+
+    status = getattr(receipt, "status", None) if hasattr(receipt, "status") else receipt.get("status")
+    blk = getattr(receipt, "blockNumber", None) if hasattr(receipt, "blockNumber") else receipt.get("blockNumber")
+    print(f"[receipt] status={'success' if status == 1 else 'failed' if status == 0 else status}, block={blk}")
+
+    # Native self-check: fetch tx data and compare 'to' & 'value'
+    if is_native:
+        try:
+            tx = w3.eth.get_transaction(txh)
+            tx_to = getattr(tx, "to", None) if hasattr(tx, "to") else tx.get("to")
+            tx_val = getattr(tx, "value", None) if hasattr(tx, "value") else tx.get("value")
+            # checksum compare
+            exp_to = _checksum(to)
+            ok_to = (tx_to or "").lower() == exp_to.lower()
+            ok_val = int(tx_val or 0) == int(value)
+            if ok_to and ok_val:
+                print("[verify] native transfer matches requested recipient and amount.")
+            else:
+                print(f"[verify] WARNING: on-chain tx fields differ. to={tx_to}, value={tx_val}")
+        except Exception as e:
+            print(f"[verify] could not fetch tx for self-check: {e!r}")
 def _swap_flow():
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
