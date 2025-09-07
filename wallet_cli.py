@@ -10,6 +10,7 @@ from typing import List, Tuple
 
 # project imports
 from router_wallet import UltraSwapBridge, CHAINS
+from web3 import Web3
 from cache import CacheTransfers, CacheBalances
 
 def _show_balances():
@@ -116,6 +117,242 @@ def _refetch_transfers_parallel(bridge: UltraSwapBridge, chains: List[str]) -> N
         list(ex.map(run_one, chains))
 
 
+
+# ----------------- EVM helpers -----------------
+_MIN_ERC20_ABI = [
+    {"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"},
+    {"constant":True,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"},
+    {"constant":False,"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"type":"function"},
+]
+
+def _allowed_chains(bridge: UltraSwapBridge):
+    """Only show chains that have an RPC URL configured."""
+    out = []
+    for ch in CHAINS:
+        try:
+            if bridge._alchemy_url(ch):
+                out.append(ch)
+        except Exception:
+            pass
+    return out
+
+def _rpc_for(bridge: UltraSwapBridge, chain: str, timeout=5.0):
+    url = bridge._alchemy_url(chain)
+    if not url:
+        raise RuntimeError(f"No RPC configured for {chain}")
+    try:
+        provider = Web3.HTTPProvider(url, request_kwargs={"timeout": timeout})
+    except TypeError:
+        # older web3
+        provider = Web3.HTTPProvider(url)
+    return Web3(provider)
+
+def _is_valid_address(addr: str) -> bool:
+    try:
+        return bool(Web3.is_address(addr))
+    except Exception:
+        return False
+
+def _checksum(addr: str) -> str:
+    try:
+        return Web3.to_checksum_address(addr)
+    except Exception:
+        return addr
+
+def _token_exists_on_chain(bridge: UltraSwapBridge, chain: str, token: str) -> bool:
+    try:
+        w3 = _rpc_for(bridge, chain, timeout=3.0)
+        code = w3.eth.get_code(_checksum(token))
+        return code is not None and len(code) > 0
+    except Exception:
+        return False
+
+def _erc20_decimals(bridge: UltraSwapBridge, chain: str, token: str, default=18) -> int:
+    try:
+        w3 = _rpc_for(bridge, chain, timeout=3.0)
+        c = w3.eth.contract(address=_checksum(token), abi=_MIN_ERC20_ABI)
+        return int(c.functions.decimals().call({"gas": 100_000}))
+    except Exception:
+        return default
+
+def _prompt_chain(bridge: UltraSwapBridge) -> str:
+    choices = _allowed_chains(bridge)
+    if not choices:
+        print("No chains configured. Check your RPC env vars.")
+        return ""
+    print("Available chains:", ", ".join(choices))
+    while True:
+        ch = input("Chain: ").strip().lower()
+        if ch in choices:
+            return ch
+        print("Invalid chain. Choose from:", ", ".join(choices))
+
+def _prompt_recipient(bridge: UltraSwapBridge, chain: str) -> str:
+    while True:
+        addr = input("Recipient address (0x...): ").strip()
+        if not _is_valid_address(addr):
+            print("❌ Not a valid EVM address. Try again.")
+            continue
+        cs = _checksum(addr)
+        # EOAs exist on any EVM chain; we still display the selected chain
+        print(f"Address looks valid for EVM. Chain selected: {chain}.")
+        ok = input(f"Send to {cs}? (Y/N): ").strip().lower()
+        if ok == "y":
+            return cs
+        print("Cancelled. Enter again.")
+
+def _prompt_token_or_native(bridge: UltraSwapBridge, chain: str) -> tuple[str, bool]:
+    while True:
+        kind = input("Send native coin or ERC-20? [native/token]: ").strip().lower()
+        if kind in ("native", "n"):
+            return ("native", True)
+        if kind in ("token", "t"):
+            tok = input("Token contract address (0x...): ").strip()
+            if not _is_valid_address(tok):
+                print("❌ Not a valid address.")
+                continue
+            if not _token_exists_on_chain(bridge, chain, tok):
+                print("❌ That contract does not exist on this chain (wrong chain or not deployed).")
+                continue
+            return (_checksum(tok), False)
+        print("Please type 'native' or 'token'.")
+
+def _parse_amount(amount_str: str, decimals: int) -> int:
+    """Parse user amount (accepts integers or decimals) into wei-like integer."""
+    amount_str = amount_str.replace("_", "").replace(",", "").strip()
+    if amount_str.lower().endswith("wei"):
+        return int(amount_str[:-3])
+    if "." in amount_str:
+        whole, frac = amount_str.split(".", 1)
+        frac = (frac + "0"*decimals)[:decimals]
+        return int(whole or "0") * (10**decimals) + int(frac or "0")
+    return int(amount_str) * (10**decimals)
+
+def _confirm(prompt: str) -> bool:
+    ans = input(f"{prompt} (Y/N): ").strip().lower()
+    return ans == "y"
+
+# ----------------- Flows -----------------
+
+def _send_flow():
+    bridge = UltraSwapBridge()
+    ch = _prompt_chain(bridge)
+    if not ch:
+        return
+    to, is_native = None, None
+    tok = "native"
+    tok_dec = 18
+    tok, is_native = _prompt_token_or_native(bridge, ch)
+    if not is_native:
+        tok_dec = _erc20_decimals(bridge, ch, tok, default=18)
+    to = _prompt_recipient(bridge, ch)
+    amt = input(f"Amount ({'wei' if is_native else 'token units'}; you can also use decimals): ").strip()
+    try:
+        decimals = 18 if is_native else tok_dec
+        value = _parse_amount(amt, decimals)
+    except Exception:
+        print("❌ Could not parse amount.")
+        return
+    print("
+--- Review ---")
+    print(f"Chain   : {ch}")
+    print(f"Asset   : {'native' if is_native else tok}")
+    print(f"To      : {to}")
+    print(f"Amount  : {value} (raw, decimals={decimals})")
+    if not _confirm("Proceed to send?"):
+        print("Cancelled.")
+        return
+
+    # Try to call bridge if methods exist; otherwise dry-run
+    try:
+        if is_native and hasattr(bridge, "send_native"):
+            tx = bridge.send_native(chain=ch, to=to, value=value)  # expected signature
+            print(f"Submitted native transfer: {tx}")
+        elif (not is_native) and hasattr(bridge, "send_erc20"):
+            tx = bridge.send_erc20(chain=ch, token=tok, to=to, amount=value)
+            print(f"Submitted token transfer: {tx}")
+        else:
+            print("Dry-run only: bridge send functions not implemented.")
+    except Exception as e:
+        print(f"❌ send failed: {e!r}")
+
+def _swap_flow():
+    bridge = UltraSwapBridge()
+    ch = _prompt_chain(bridge)
+    if not ch:
+        return
+    print("Enter FROM token (0x... or 'native'):")
+    src, src_native = _prompt_token_or_native(bridge, ch)
+    print("Enter TO token (0x... or 'native'):")
+    dst, dst_native = _prompt_token_or_native(bridge, ch)
+    amt = input("Amount of FROM asset: ").strip()
+    try:
+        dec = 18 if src_native else _erc20_decimals(bridge, ch, src, default=18)
+        src_amount = _parse_amount(amt, dec)
+    except Exception:
+        print("❌ Could not parse amount.")
+        return
+
+    print("
+--- Review ---")
+    print(f"Chain : {ch}")
+    print(f"Swap  : {src} -> {dst}")
+    print(f"Amount: {src_amount} (raw)")
+    if not _confirm("Proceed to swap?"):
+        print("Cancelled.")
+        return
+
+    try:
+        if hasattr(bridge, "swap"):
+            # expected signature; adapt if your bridge differs
+            tx = bridge.swap(chain=ch, src=src, dst=dst, amount=src_amount)
+            print(f"Submitted swap: {tx}")
+        else:
+            print("Dry-run only: bridge.swap not implemented.")
+    except Exception as e:
+        print(f"❌ swap failed: {e!r}")
+
+def _bridge_flow():
+    bridge = UltraSwapBridge()
+    src_chain = _prompt_chain(bridge)
+    if not src_chain:
+        return
+    dst_chain = input("Destination chain: ").strip().lower()
+    allowed = _allowed_chains(bridge)
+    if dst_chain not in allowed:
+        print(f"❌ Destination chain not configured. Allowed: {', '.join(allowed)}")
+        return
+
+    print("Enter token to bridge (0x... or 'native'):")
+    token, is_native = _prompt_token_or_native(bridge, src_chain)
+    amt = input("Amount: ").strip()
+    try:
+        dec = 18 if is_native else _erc20_decimals(bridge, src_chain, token, default=18)
+        raw_amt = _parse_amount(amt, dec)
+    except Exception:
+        print("❌ Could not parse amount.")
+        return
+
+    print("
+--- Review ---")
+    print(f"From : {src_chain}")
+    print(f"To   : {dst_chain}")
+    print(f"Asset: {'native' if is_native else token}")
+    print(f"Amt  : {raw_amt} (raw)")
+    if not _confirm("Proceed to bridge?"):
+        print("Cancelled.")
+        return
+
+    try:
+        if hasattr(bridge, "bridge"):
+            tx = bridge.bridge(src_chain=src_chain, dst_chain=dst_chain, token=token, amount=raw_amt)
+            print(f"Submitted bridge: {tx}")
+        else:
+            print("Dry-run only: bridge.bridge not implemented.")
+    except Exception as e:
+        print(f"❌ bridge failed: {e!r}")
+
+
 def _menu():
     bridge = UltraSwapBridge()  # loads wallet/env as your code already does
     cb = CacheBalances()
@@ -127,9 +364,9 @@ def _menu():
         print("1) Get balances (cached; fast)")
         print("2) Refetch balances now (rebuild/refresh cache, parallel)")
         print("3) Refetch transactions now (incremental, parallel)")
-        print("4) Send  [stub]")
-        print("5) Swap  [stub]")
-        print("6) Bridge [stub]")
+        print("4) Send")
+        print("5) Swap")
+        print("6) Bridge")
         print("0) Exit")
         choice = input("Select: ").strip().lower()
 
@@ -150,8 +387,12 @@ def _menu():
             t0 = time.time()
             _refetch_transfers_parallel(bridge, chains)
             print(f"[transfers refresh] elapsed={time.time()-t0:.2f}s")
-        elif choice in ("4", "5", "6"):
-            print("Not implemented here yet — wiring comes next so we don't touch funds accidentally.")
+        elif choice == "4":
+            _send_flow()
+        elif choice == "5":
+            _swap_flow()
+        elif choice == "6":
+            _bridge_flow()
         else:
             print("Invalid selection.")
 
