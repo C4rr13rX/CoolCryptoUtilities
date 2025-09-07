@@ -623,7 +623,7 @@ class UltraSwapBridge:
                     continue
             except Exception:
                 pass
-url = self._alchemy_url(ch)
+            url = self._alchemy_url(ch)
             if not url:
                 print(f"[discover] {ch}: no Alchemy URL")
                 continue
