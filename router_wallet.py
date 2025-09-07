@@ -12,6 +12,7 @@ from cache import CacheBalances, CacheTransfers
 # ---------- .env loader ----------
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+import time
 def load_env_robust() -> None:
     path = find_dotenv(usecwd=True)
     if path:
@@ -1060,24 +1061,36 @@ def _rb__0x_base_url(self, chain: str) -> str:
     return m.get(ch, "")
 
 def _rb__http_get_json(self, url: str, headers: dict | None = None, timeout_sec: float | None = None):
-    hdrs = {"Accept": "application/json"}
+    hdrs = {"Accept": "application/json", "User-Agent": os.getenv("HTTP_UA", "Mozilla/5.0 WalletCLI/1.0")}
     if headers: hdrs.update(headers)
     req = Request(url, headers=hdrs, method="GET")
     to = float(os.getenv("ZEROX_HTTP_TIMEOUT_SEC", "12")) if timeout_sec is None else float(timeout_sec)
-    try:
-        with urlopen(req, timeout=to) as r:
-            data = r.read()
-        return json.loads(data.decode("utf-8"))
-    except HTTPError as e:
-        body = e.read()
-        msg = body.decode("utf-8", errors="ignore") if body else ""
+    last_err = None
+    for attempt in range(3):
         try:
-            j = json.loads(msg) if msg else {}
-        except Exception:
-            j = {"raw": msg}
-        code = j.get("code") or j.get("reason") or j.get("validationErrors") or j.get("message") or "HTTPError"
-        raise RuntimeError(f"0x {e.code} {code}: {j}") from None
-
+            with urlopen(req, timeout=to) as r:
+                data = r.read()
+            return json.loads(data.decode("utf-8"))
+        except HTTPError as e:
+            body = e.read()
+            msg = body.decode("utf-8", errors="ignore") if body else ""
+            try:
+                j = json.loads(msg) if msg else {}
+            except Exception:
+                j = {"raw": msg}
+            code = j.get("code") or j.get("reason") or j.get("validationErrors") or j.get("message") or "HTTPError"
+            # retry on 403/429 once or twice (CF or rate limit)
+            if e.code in (403, 429) and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                last_err = (e.code, code, j); 
+                continue
+            raise RuntimeError(f"0x {e.code} {code}: {j}") from None
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(0.75 * (attempt + 1))
+                continue
+            raise
 def get_0x_quote(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None, api_key: str | None = None) -> dict:
     base = _rb__0x_base_url(self, chain)
     if not base:
@@ -1194,24 +1207,36 @@ def _rb__1inch_base(self, chain: str) -> tuple[str,int]:
     return f"https://api.1inch.dev/swap/v6.0/{cid}", cid
 
 def _rb__http_get_json_auth(self, url: str, headers: dict | None = None, timeout_sec: float | None = None):
-    hdrs = {"Accept": "application/json"}
+    hdrs = {"Accept": "application/json", "User-Agent": os.getenv("HTTP_UA", "Mozilla/5.0 WalletCLI/1.0")}
     if headers: hdrs.update(headers)
     req = Request(url, headers=hdrs, method="GET")
     to = float(os.getenv("ONEINCH_HTTP_TIMEOUT_SEC", "12")) if timeout_sec is None else float(timeout_sec)
-    try:
-        with urlopen(req, timeout=to) as r:
-            data = r.read()
-        return json.loads(data.decode("utf-8"))
-    except HTTPError as e:
-        body = e.read()
-        msg = body.decode("utf-8", errors="ignore") if body else ""
+    last = None
+    for attempt in range(3):
         try:
-            j = json.loads(msg) if msg else {}
-        except Exception:
-            j = {"raw": msg}
-        code = j.get("description") or j.get("error") or j.get("message") or "HTTPError"
-        raise RuntimeError(f"1inch {e.code} {code}: {j}") from None
-
+            with urlopen(req, timeout=to) as r:
+                data = r.read()
+            return json.loads(data.decode("utf-8"))
+        except HTTPError as e:
+            body = e.read()
+            msg = body.decode("utf-8", errors="ignore") if body else ""
+            try:
+                j = json.loads(msg) if msg else {}
+            except Exception:
+                j = {"raw": msg}
+            # 1inch often sits behind Cloudflare (1010); retry 403/429
+            if e.code in (403, 429) and attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                last = (e.code, j)
+                continue
+            code = j.get("description") or j.get("error") or j.get("message") or "HTTPError"
+            raise RuntimeError(f"1inch {e.code} {code}: {j}") from None
+        except Exception as e:
+            last = e
+            if attempt < 2:
+                time.sleep(0.75 * (attempt + 1))
+                continue
+            raise
 def get_1inch_swap_tx(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None, api_key: str | None = None) -> dict:
     """
     Ask 1inch /swap for an executable tx. Returns a dict normalized like 0x:
