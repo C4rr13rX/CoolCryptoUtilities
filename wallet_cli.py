@@ -573,14 +573,31 @@ def _swap_flow():
     # --- Helpers ---
     def _quote(s_id, b_id, amount_raw):
         """
-        Try 0x first; if it returns a route, use it.
-        If 0x fails with 'no route' and ONEINCH_API_KEY is set, try 1inch.
-        If still no route (or no key), try OpenOcean v4 (no key).
-        Returns normalized dict {to,data,value,estimatedGas,buyAmount} or {"__error__": "..."}.
+        Try 0x first; if it returns a route, tag it with __agg__.
+        If 0x fails and ONEINCH_API_KEY is set, try 1inch; else try OpenOcean.
         """
-        # 0x first
         try:
-            return bridge.get_0x_quote(ch, s_id, b_id, int(amount_raw), slippage=slip)
+            q = bridge.get_0x_quote(ch, s_id, b_id, int(amount_raw), slippage=slip)
+            q["__agg__"] = "0x"
+            return q
+        except Exception as e0:
+            emsg = str(e0)
+            key = (os.getenv("ONEINCH_API_KEY") or "").strip()
+            try_1inch = bool(key) and key.lower() not in ("your_1in_ch_key","your_1inch_key","placeholder") and len(key) >= 16
+            no_route_0x = ("no route" in emsg.lower()) or ("404" in emsg) or ("unsupported" in emsg.lower())
+            if try_1inch and no_route_0x:
+                try:
+                    q = bridge.get_1inch_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
+                    q["__agg__"] = "1inch"
+                    return q
+                except Exception as e1:
+                    emsg = f"0x->1inch failed: {e1}"
+            try:
+                q = bridge.get_openocean_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
+                q["__agg__"] = "OpenOcean"
+                return q
+            except Exception as e2:
+                return {"__error__": f"{emsg}; OpenOcean: {e2}"}, slippage=slip)
         except Exception as e0:
             emsg = str(e0)
 
