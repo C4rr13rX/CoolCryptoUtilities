@@ -7,6 +7,7 @@
 from __future__ import annotations
 import os, sys, time, json, concurrent.futures
 from typing import List, Tuple
+from pathlib import Path
 
 # project imports
 from router_wallet import UltraSwapBridge, CHAINS
@@ -293,9 +294,17 @@ def _send_flow():
         print("❌ Could not parse amount.")
         return
 
+    # Address book lookup (chain+recipient)
+    ab_row = _ab_get(ch, to)
+    last_gas = int(ab_row.get("last_gas_used") or 0)
+    last_type = ab_row.get("type")
+
     # Recipient type detection
     recipient_is_contract = _is_contract(bridge, ch, to)
-    print(f"Recipient type: {'Contract' if recipient_is_contract else 'EOA'}")
+    typelabel = "Contract" if recipient_is_contract else "EOA"
+    if last_type and last_type != typelabel:
+        print(f"[note] previously saw this as {last_type}, now {typelabel}.")
+    print(f"Recipient type: {typelabel}")
 
     # Preflight for native sends
     preflight_gas = 21000
@@ -305,9 +314,15 @@ def _send_flow():
             print("❌ Preflight: recipient likely cannot receive plain ETH (non-payable or reverts).")
             if "execution reverted" in reason:
                 print(f"Reason: {reason}")
-            print("Tip: If it's a protocol address (e.g., Uniswap router/pool), send the correct asset/call or send WETH via ERC-20.")
+            print("Tip: For protocol addresses, use their deposit/call flow or send WETH (ERC-20).")
             return
-        preflight_gas = max(21000, int(gas_est * 1.2))  # add 20% buffer
+        preflight_gas = max(21000, int(gas_est * 1.2))  # +20% buffer
+
+    # If we have a last good gas, suggest the larger of (preflight, last_gas*1.2)
+    suggested_gas = preflight_gas
+    if last_gas > 0:
+        suggested_gas = max(preflight_gas, int(last_gas * 1.2))
+        print(f"[memory] last successful gasUsed for this recipient on {ch}: {last_gas}; suggesting {suggested_gas}.")
 
     # ---- Fee quote (EIP-1559 preferred) ----
     def quote_fee(tip_gwei=None, maxfee_gwei=None, gas_hint=None):
@@ -319,10 +334,9 @@ def _send_flow():
             pass
         if base is not None:
             tip = int(Web3.to_wei(2 if tip_gwei is None else float(tip_gwei), 'gwei'))
-            # default max ≈ 2*base + tip
             default_max_gwei = 2*float(Web3.from_wei(base,'gwei')) + (float(tip_gwei) if tip_gwei is not None else 2.0)
             maxf = int(Web3.to_wei(default_max_gwei if maxfee_gwei is None else float(maxfee_gwei), 'gwei'))
-            gas_est = int(gas_hint or (preflight_gas if is_native else 100000))
+            gas_est = int(gas_hint or (suggested_gas if is_native else 100000))
             fee_est = gas_est * (int(base) + tip)
             total_est = fee_est + (value if is_native else 0)
             return {'mode':'eip1559','base':base,'tip':tip,'max':maxf,'gas_est':gas_est,'fee_est':fee_est,'total_est':total_est}
@@ -331,19 +345,20 @@ def _send_flow():
             gp = int(w3.eth.gas_price)
         except Exception:
             gp = int(Web3.to_wei(5,'gwei'))
-        gas_est = int(gas_hint or (preflight_gas if is_native else 100000))
+        gas_est = int(gas_hint or (suggested_gas if is_native else 100000))
         fee_est = gas_est * gp
         total_est = fee_est + (value if is_native else 0)
         return {'mode':'legacy','gas_price':gp,'gas_est':gas_est,'fee_est':fee_est,'total_est':total_est}
 
     q = quote_fee()
+
     if q['mode']=='eip1559':
         print(f"""
 --- Quote ---
 Chain   : {ch}
 Asset   : {'native' if is_native else tok}
 To      : {to}
-Type    : {'Contract' if recipient_is_contract else 'EOA'}
+Type    : {typelabel}
 Amount  : {value} (raw)
 BaseFee : {Web3.from_wei(q['base'],'gwei'):.3f} gwei
 Tip     : {Web3.from_wei(q['tip'],'gwei'):.3f} gwei
@@ -358,7 +373,7 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
 Chain   : {ch}
 Asset   : {'native' if is_native else tok}
 To      : {to}
-Type    : {'Contract' if recipient_is_contract else 'EOA'}
+Type    : {typelabel}
 Amount  : {value} (raw)
 GasPrice: {Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei
 Gas est : {q['gas_est']}
@@ -415,7 +430,7 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
         print(f"❌ send failed before broadcast: {e!r}")
         return
 
-    # Normalize and show
+    # Normalize and show explorer link
     if isinstance(txh, (bytes, bytearray)):
         txh = Web3.to_hex(txh)
     url = EXPLORER_TX.get(ch)
@@ -423,7 +438,7 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
     if url:
         print(f"Explorer: {url}{txh}")
 
-    # Wait for receipt + diagnostics (re-use previous logic)
+    # Wait for receipt
     wait_sec = int(os.getenv("CLI_TX_WAIT_SEC", "20"))
     receipt = None; t0 = time.time()
     while time.time() - t0 < wait_sec:
@@ -435,33 +450,18 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
     if receipt is None:
         print(f"[pending] No receipt yet after {wait_sec}s.")
         return
+
     status = int(getattr(receipt,"status", receipt.get("status",-1)))
     blk = getattr(receipt,"blockNumber", None) if hasattr(receipt,"blockNumber") else receipt.get("blockNumber")
     gas_used = int(getattr(receipt,"gasUsed", receipt.get("gasUsed",0)))
     print(f"[receipt] status={'success' if status==1 else 'failed'} block={blk} gasUsed={gas_used}")
 
-    if status == 0:
-        hints = []
-        if is_native:
-            # If preflight passed yet failed, likely fee/nonce replacement or contract behavior changed
-            if gas_used >= q['gas_est']:
-                hints.append("Out of gas: increase gas limit (e.g., +30-50%). Recipient may need more than estimated.")
-        # Nonce/cancel scenarios
-        hints.append("If explorer shows 'Cancelled', a replacement tx with the same nonce mined. Ensure no conflicting pending tx.")
-        # Funds sufficiency
-        try:
-            bal = int(w3.eth.get_balance(sender))
-            need_max = (value if is_native else 0) + q['gas_est'] * ((q.get('max') or q.get('gas_price')) or 0)
-            if bal < need_max:
-                hints.append("Insufficient funds for value + max fee. Reduce amount or add funds.")
-        except Exception:
-            pass
-        if hints:
-            print("[diagnose]")
-            for h in hints:
-                print(f" - {h}")
-        else:
-            print("[diagnose] No specific cause identified; check explorer logs.")
+    # Persist memory if success
+    if status == 1:
+        _ab_update(ch, to, type=typelabel, last_gas_used=gas_used)
+        print(f"[memory] saved: {typelabel}, last_gas_used={gas_used} for {to} on {ch}")
+    else:
+        print("[diagnose] See explorer logs. Consider increasing gas limit or using the protocol's payable method/WETH.")
 def _swap_flow():
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
@@ -573,3 +573,37 @@ def _menu():
             print("Invalid selection.")
 if __name__ == "__main__":
     _menu()
+
+# --------------- Address book (per chain + recipient) ---------------
+def _ab_path() -> Path:
+    root = os.getenv("PORTFOLIO_CACHE_DIR", "~/.cache/mchain")
+    return Path(root).expanduser() / "addressbook.json"
+
+def _ab_load() -> dict:
+    path = _ab_path()
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _ab_save(d: dict) -> None:
+    path = _ab_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+def _ab_get(chain: str, addr: str) -> dict:
+    d = _ab_load()
+    return ((d.get(chain) or {}).get(addr.lower()) or {})
+
+def _ab_update(chain: str, addr: str, **fields) -> None:
+    d = _ab_load()
+    d.setdefault(chain, {})
+    row = d[chain].get(addr.lower(), {})
+    row.update(fields)
+    d[chain][addr.lower()] = row
+    _ab_save(d)
