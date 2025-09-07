@@ -315,7 +315,7 @@ def _send_flow():
 
     q = quote_fee()
     if q['mode']=='eip1559':
-        print(f\"\"\"\n--- Quote ---
+        print(f"""\n--- Quote ---
 Chain   : {ch}
 Asset   : {'native' if is_native else tok}
 To      : {to}
@@ -326,9 +326,9 @@ MaxFee  : {Web3.from_wei(q['max'],'gwei'):.3f} gwei
 Gas est : {q['gas_est']}
 Fee est : { _wei_to_eth(q['fee_est']) } ETH
 Total   : { _wei_to_eth(q['total_est']) } ETH
-\"\"\")
+""")
     else:
-        print(f\"\"\"\n--- Quote ---
+        print(f"""\n--- Quote ---
 Chain   : {ch}
 Asset   : {'native' if is_native else tok}
 To      : {to}
@@ -337,7 +337,7 @@ GasPrice: {Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei
 Gas est : {q['gas_est']}
 Fee est : { _wei_to_eth(q['fee_est']) } ETH
 Total   : { _wei_to_eth(q['total_est']) } ETH
-\"\"\")
+""")
 
     # Allow fee override
     if _confirm("Edit fees?"):
