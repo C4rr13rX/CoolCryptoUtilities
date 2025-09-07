@@ -764,3 +764,122 @@ class UltraSwapBridge:
         signed = self.acct.sign_transaction(tx)
         return w3.eth.send_raw_transaction(signed.rawTransaction).hex()
 
+
+# ======== Live send helpers (appended safely) ========
+try:
+    UltraSwapBridge
+except NameError:
+    pass
+else:
+    import os
+    from web3 import Web3
+
+    def _rb__w3(self, chain: str):
+        url = self._alchemy_url(chain)
+        if not url:
+            raise RuntimeError(f"No RPC URL configured for chain '{chain}'")
+        try:
+            provider = Web3.HTTPProvider(url, request_kwargs={"timeout": float(os.getenv("ALCHEMY_TIMEOUT_SEC", "10"))})
+        except TypeError:
+            provider = Web3.HTTPProvider(url)
+        return Web3(provider)
+
+    def _rb__fee_fields(self, w3: "Web3", max_priority_gwei=None, max_fee_gwei=None):
+        # Prefer EIP-1559; fallback to legacy gasPrice
+        try:
+            pending = w3.eth.get_block("pending")
+            base = pending.get("baseFeePerGas")
+            if base is not None:
+                # defaults: tip 2 gwei, maxFee = 2*base + tip
+                tip = int(Web3.to_wei(max_priority_gwei if max_priority_gwei is not None else 2, "gwei"))
+                max_fee = int(Web3.to_wei(max_fee_gwei, "gwei")) if max_fee_gwei is not None else (2*int(base) + tip)
+                return {"maxPriorityFeePerGas": tip, "maxFeePerGas": max_fee}
+        except Exception:
+            pass
+        # legacy
+        try:
+            return {"gasPrice": w3.eth.gas_price}
+        except Exception:
+            # last resort constant 5 gwei
+            return {"gasPrice": Web3.to_wei(5, "gwei")}
+
+    def _rb__ensure_live(self):
+        if str(os.getenv("WALLET_LIVE", "0")).lower() not in ("1", "true", "yes", "y"):
+            raise RuntimeError("Live transactions disabled. Set WALLET_LIVE=1 to enable broadcasting.")
+
+    def send_native(self, chain: str, to: str, value: int, *, gas: int=None, gas_limit: int=None, max_priority_gwei=None, max_fee_gwei=None, nonce: int=None):
+        """
+        Send native currency (e.g., ETH) on `chain` to `to` with `value` (wei).
+        Requires WALLET_LIVE=1 in environment.
+        Returns tx hash hex string.
+        """
+        self._rb__ensure_live()
+        w3 = self._rb__w3(chain)
+        to_cs = Web3.to_checksum_address(to)
+        sender = self.acct.address
+        tx = {
+            "chainId": w3.eth.chain_id,
+            "nonce": w3.eth.get_transaction_count(sender, "pending") if nonce is None else int(nonce),
+            "to": to_cs,
+            "value": int(value),
+            "gas": int(gas or gas_limit or 21000),
+        }
+        tx.update(self._rb__fee_fields(w3, max_priority_gwei, max_fee_gwei))
+        signed = self.acct.sign_transaction(tx)
+        txh = w3.eth.send_raw_transaction(signed.rawTransaction)
+        return w3.to_hex(txh)
+
+    def send_erc20(self, chain: str, token: str, to: str, amount: int, *, gas: int=None, gas_limit: int=None, max_priority_gwei=None, max_fee_gwei=None, nonce: int=None):
+        """
+        Send ERC-20 `amount` on `chain` from wallet to `to`.
+        Requires WALLET_LIVE=1 in environment.
+        Returns tx hash hex string.
+        """
+        self._rb__ensure_live()
+        w3 = self._rb__w3(chain)
+        token_cs = Web3.to_checksum_address(token)
+        to_cs = Web3.to_checksum_address(to)
+        sender = self.acct.address
+
+        abi = [{
+            "name": "transfer",
+            "type": "function",
+            "stateMutability": "nonpayable",
+            "inputs": [{"name": "to", "type": "address"}, {"name": "value", "type": "uint256"}],
+            "outputs": [{"name": "", "type": "bool"}],
+        }]
+        c = w3.eth.contract(address=token_cs, abi=abi)
+
+        # base tx fields (EIP-1559 if available)
+        base = {
+            "chainId": w3.eth.chain_id,
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender, "pending") if nonce is None else int(nonce),
+            "to": token_cs,
+            "value": 0,
+        }
+        base.update(self._rb__fee_fields(w3, max_priority_gwei, max_fee_gwei))
+
+        # estimate gas, then build, sign, send
+        try:
+            est = c.functions.transfer(to_cs, int(amount)).estimate_gas({"from": sender})
+        except Exception:
+            est = 100000  # conservative fallback
+        gas_final = int(gas or gas_limit or int(est * 1.2))
+
+        tx = c.functions.transfer(to_cs, int(amount)).build_transaction({**base, "gas": gas_final})
+        signed = self.acct.sign_transaction(tx)
+        txh = w3.eth.send_raw_transaction(signed.rawTransaction)
+        return w3.to_hex(txh)
+
+    # Attach helpers if not already present
+    if not hasattr(UltraSwapBridge, "_rb__w3"):
+        UltraSwapBridge._rb__w3 = _rb__w3
+    if not hasattr(UltraSwapBridge, "_rb__fee_fields"):
+        UltraSwapBridge._rb__fee_fields = _rb__fee_fields
+    if not hasattr(UltraSwapBridge, "_rb__ensure_live"):
+        UltraSwapBridge._rb__ensure_live = _rb__ensure_live
+    UltraSwapBridge.send_native = send_native
+    UltraSwapBridge.send_erc20 = send_erc20
+# ======== End live send helpers ========
+
