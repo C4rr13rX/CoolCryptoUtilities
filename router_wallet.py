@@ -480,7 +480,7 @@ class UltraSwapBridge:
             params: List[Any] = [self.acct.address, "erc20"]
             if page_key:
                 pass
-            res = self._alchemy_post(url, "alchemy_getTokenBalances", params).get("result") or {}
+            res = self._alchemy_post(url, "alchemy_getTokenBalances", params + ([{"pageKey": page_key}] if page_key else [])).get("result") or {}
             token_balances = res.get("tokenBalances", []) or []
             for tb in token_balances:
                 addr = tb.get("contractAddress")
@@ -606,7 +606,24 @@ class UltraSwapBridge:
         out: List[Tuple[str, str]] = []
 
         for ch in chains:
-            url = self._alchemy_url(ch)
+            
+            # FAST PATH: use cached token list for this chain if available
+            try:
+                cb = CacheBalances()
+                cached_map = (cb.get_state(self.acct.address, ch) or {}).get("tokens", {}) or {}
+                if cached_map:
+                    addrs = []
+                    for a in cached_map.keys():
+                        try:
+                            addrs.append(Web3.to_checksum_address(a))
+                        except Exception:
+                            pass
+                    out.extend((ch, a) for a in addrs)
+                    print(f"[discover] {ch}: using {len(cached_map)} cached tokens (balances)")
+                    continue
+            except Exception:
+                pass
+url = self._alchemy_url(ch)
             if not url:
                 print(f"[discover] {ch}: no Alchemy URL")
                 continue

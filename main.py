@@ -49,12 +49,7 @@ if __name__ == "__main__":
         snapshot = tp.build()
         print("INPUT :", json.dumps(annotated, indent=2))
         print("OUTPUT:", json.dumps(safe_tokens, indent=2))
-
-        # 3) Hand wallet + annotated tokens to the portfolio class
-        tp = MultiChainTokenPortfolio(wallet_address=wallet, tokens=safe_tokens)
-        snapshot = tp.build()
-    
-        # ---- NEW: clean up scientific notation (formatting only)
+# ---- NEW: clean up scientific notation (formatting only)
         normalize_snapshot_numbers(snapshot, qty_dp=18, usd_dp=8)
     
         # ---- NEW: optional 0x fill-in for tokens with usd_amount == 0 (balances untouched)
