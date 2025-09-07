@@ -236,17 +236,38 @@ def _confirm(prompt: str) -> bool:
     ans = input(f"{prompt} (Y/N): ").strip().lower()
     return ans == "y"
 
+def _wei_to_eth(n: int) -> str:
+    try:
+        from web3 import Web3
+        return str(Web3.from_wei(int(n), 'ether'))
+    except Exception:
+        return f"{int(n)/1e18:.18f}"
+
+    ans = input(f"{prompt} (Y/N): ").strip().lower()
+    return ans == "y"
+
 def _send_flow():
     import os, time
+    from web3 import Web3
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
     if not ch:
         return
 
+    # Build RPC + sender
+    try:
+        w3 = _rpc_for(bridge, ch, timeout=max(5.0, float(os.getenv('ALCHEMY_TIMEOUT_SEC', '10'))))
+    except Exception as e:
+        print(f"❌ RPC init failed: {e!r}")
+        return
+    sender = bridge.acct.address
+
+    # Asset + recipient
     tok, is_native = _prompt_token_or_native(bridge, ch)
     tok_dec = 18 if is_native else _erc20_decimals(bridge, ch, tok, default=18)
     to = _prompt_recipient(bridge, ch)
 
+    # Amount
     amt = input(f"Amount ({'wei' if is_native else 'token units'}; decimals ok): ").strip()
     try:
         value = _parse_amount(amt, 18 if is_native else tok_dec)
@@ -254,52 +275,137 @@ def _send_flow():
         print("❌ Could not parse amount.")
         return
 
-    print("\n--- Review ---")
-    print(f"Chain   : {ch}")
-    print(f"Asset   : {'native' if is_native else tok}")
-    print(f"To      : {to}")
-    print(f"Amount  : {value} (raw)")
-    if not _confirm("Proceed to send?"):
+    # ---- Fee quote (EIP-1559 preferred) ----
+    def quote_fee(tip_gwei=None, maxfee_gwei=None, gas_hint=None):
+        # Base / tip / maxFee (wei)
+        base = None
+        try:
+            pending = w3.eth.get_block('pending')
+            base = pending.get('baseFeePerGas')
+        except Exception:
+            pass
+        if base is not None:
+            tip = int(Web3.to_wei(2 if tip_gwei is None else float(tip_gwei), 'gwei'))
+            maxf = int(Web3.to_wei((2*float(Web3.from_wei(base,'gwei')) + (float(tip_gwei) if tip_gwei is not None else 2)) if maxfee_gwei is None else float(maxfee_gwei), 'gwei')) if maxfee_gwei is None else int(Web3.to_wei(float(maxfee_gwei), 'gwei'))
+            # Gas estimate
+            if is_native:
+                gas_est = int(gas_hint or 21000)
+            else:
+                try:
+                    c = w3.eth.contract(address=Web3.to_checksum_address(tok), abi=_MIN_ERC20_ABI)
+                    gas_est = int(c.functions.transfer(Web3.to_checksum_address(to), int(value)).estimate_gas({'from': sender}))
+                except Exception:
+                    gas_est = int(gas_hint or 100000)
+            eff_price = int(base) + tip
+            fee_est = gas_est * eff_price
+            total_est = fee_est + (value if is_native else 0)
+            return {
+                'mode':'eip1559','base':base,'tip':tip,'max':maxf,
+                'gas_est':gas_est,'fee_est':fee_est,'total_est':total_est
+            }
+        # Legacy fallback
+        try:
+            gp = int(w3.eth.gas_price)
+        except Exception:
+            gp = int(Web3.to_wei(5,'gwei'))
+        gas_est = 21000 if is_native else int(gas_hint or 100000)
+        fee_est = gas_est * gp
+        total_est = fee_est + (value if is_native else 0)
+        return {'mode':'legacy','gas_price':gp,'gas_est':gas_est,'fee_est':fee_est,'total_est':total_est}
+
+    q = quote_fee()
+    if q['mode']=='eip1559':
+        print(f\"\"\"\n--- Quote ---
+Chain   : {ch}
+Asset   : {'native' if is_native else tok}
+To      : {to}
+Amount  : {value} (raw)
+BaseFee : {Web3.from_wei(q['base'],'gwei'):.3f} gwei
+Tip     : {Web3.from_wei(q['tip'],'gwei'):.3f} gwei
+MaxFee  : {Web3.from_wei(q['max'],'gwei'):.3f} gwei
+Gas est : {q['gas_est']}
+Fee est : { _wei_to_eth(q['fee_est']) } ETH
+Total   : { _wei_to_eth(q['total_est']) } ETH
+\"\"\")
+    else:
+        print(f\"\"\"\n--- Quote ---
+Chain   : {ch}
+Asset   : {'native' if is_native else tok}
+To      : {to}
+Amount  : {value} (raw)
+GasPrice: {Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei
+Gas est : {q['gas_est']}
+Fee est : { _wei_to_eth(q['fee_est']) } ETH
+Total   : { _wei_to_eth(q['total_est']) } ETH
+\"\"\")
+
+    # Allow fee override
+    if _confirm("Edit fees?"):
+        tip_in = input("Tip (gwei) [blank=default]: ").strip() or None
+        max_in = input("MaxFee (gwei) [blank=auto≈2*base+tip]: ").strip() or None
+        try:
+            q = quote_fee(tip_in, max_in, q.get('gas_est'))
+        except Exception as e:
+            print(f\"[warn] custom fee parse failed: {e!r}; using default.\")
+            q = quote_fee()
+
+    # Final confirmation with fee figures
+    if q['mode']=='eip1559':
+        proceed = _confirm(
+            f\"Proceed? Tip={Web3.from_wei(q['tip'],'gwei'):.3f} gwei, "
+            f\"MaxFee={Web3.from_wei(q['max'],'gwei'):.3f} gwei, "
+            f\"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
+            f\"Total≈{_wei_to_eth(q['total_est'])} ETH\")
+    else:
+        proceed = _confirm(
+            f\"Proceed? GasPrice={Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei, "
+            f\"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
+            f\"Total≈{_wei_to_eth(q['total_est'])} ETH\")
+    if not proceed:
         print("Cancelled.")
         return
 
+    # Send with overrides
     try:
         if is_native and hasattr(bridge, "send_native"):
-            txh = bridge.send_native(chain=ch, to=to, value=value)
+            kwargs = {}
+            if q['mode']=='eip1559':
+                kwargs.update({'max_priority_gwei': float(Web3.from_wei(q['tip'],'gwei')),
+                               'max_fee_gwei': float(Web3.from_wei(q['max'],'gwei'))})
+                kwargs.update({'gas': q['gas_est']})
+            else:
+                kwargs.update({'gas': q['gas_est']})
+            txh = bridge.send_native(chain=ch, to=to, value=value, **kwargs)
         elif (not is_native) and hasattr(bridge, "send_erc20"):
-            txh = bridge.send_erc20(chain=ch, token=tok, to=to, amount=value)
+            kwargs = {}
+            if q['mode']=='eip1559':
+                kwargs.update({'max_priority_gwei': float(Web3.from_wei(q['tip'],'gwei')),
+                               'max_fee_gwei': float(Web3.from_wei(q['max'],'gwei'))})
+            kwargs.update({'gas': q['gas_est']})
+            txh = bridge.send_erc20(chain=ch, token=tok, to=to, amount=value, **kwargs)
         else:
             print("Dry-run only: bridge send functions not implemented.")
             return
     except Exception as e:
-        print(f"❌ send failed: {e!r}")
+        print(f"❌ send failed before broadcast: {e!r}")
         return
 
-    # Normalize tx hash to hex string
+    # Normalize tx hash to hex
     try:
-        from web3 import Web3
         if isinstance(txh, (bytes, bytearray)):
             txh = Web3.to_hex(txh)
     except Exception:
         pass
 
-    # Print hash + explorer URL
     url = EXPLORER_TX.get(ch)
     print(f"TX hash: {txh}")
     if url:
         print(f"Explorer: {url}{txh}")
 
-    # Wait briefly for a receipt (configurable)
+    # Wait for receipt
     wait_sec = int(os.getenv("CLI_TX_WAIT_SEC", "20"))
-    try:
-        w3 = _rpc_for(bridge, ch, timeout=max(5.0, float(os.getenv('ALCHEMY_TIMEOUT_SEC', '10'))))
-    except Exception as e:
-        print(f"[warn] could not init RPC for receipt check: {e!r}")
-        return
-
-    # Poll for receipt up to wait_sec seconds
-    t0 = time.time()
     receipt = None
+    t0 = time.time()
     while time.time() - t0 < wait_sec:
         try:
             receipt = w3.eth.get_transaction_receipt(txh)
@@ -307,32 +413,68 @@ def _send_flow():
                 break
         except Exception:
             pass
-        time.sleep(1.0)
+        time.sleep(1)
 
     if receipt is None:
-        print(f"[pending] No receipt yet after {wait_sec}s. It may still confirm shortly.")
+        print(f"[pending] No receipt yet after {wait_sec}s.")
         return
 
-    status = getattr(receipt, "status", None) if hasattr(receipt, "status") else receipt.get("status")
+    status = int(getattr(receipt, "status", receipt.get("status", -1)))
     blk = getattr(receipt, "blockNumber", None) if hasattr(receipt, "blockNumber") else receipt.get("blockNumber")
-    print(f"[receipt] status={'success' if status == 1 else 'failed' if status == 0 else status}, block={blk}")
+    gas_used = int(getattr(receipt,"gasUsed", receipt.get("gasUsed", 0)))
+    print(f"[receipt] status={'success' if status==1 else 'failed'} block={blk} gasUsed={gas_used}")
 
-    # Native self-check: fetch tx data and compare 'to' & 'value'
-    if is_native:
+    if status == 0:
+        # ---- Diagnostics for common failure causes ----
         try:
             tx = w3.eth.get_transaction(txh)
-            tx_to = getattr(tx, "to", None) if hasattr(tx, "to") else tx.get("to")
-            tx_val = getattr(tx, "value", None) if hasattr(tx, "value") else tx.get("value")
-            # checksum compare
-            exp_to = _checksum(to)
-            ok_to = (tx_to or "").lower() == exp_to.lower()
-            ok_val = int(tx_val or 0) == int(value)
-            if ok_to and ok_val:
-                print("[verify] native transfer matches requested recipient and amount.")
-            else:
-                print(f"[verify] WARNING: on-chain tx fields differ. to={tx_to}, value={tx_val}")
+        except Exception:
+            tx = {}
+        tx_gas = int(getattr(tx,"gas", tx.get("gas", 0))) or q.get("gas_est", 0)
+        # Check fee sufficiency against base fee at mining time (approx: pending base)
+        try:
+            mined_block = w3.eth.get_block(blk) if blk is not None else None
+            mined_base = int(mined_block.get("baseFeePerGas")) if mined_block and "baseFeePerGas" in mined_block else None
+        except Exception:
+            mined_base = None
+
+        hints = []
+        if is_native:
+            # EOA native transfers almost never revert unless gas too low or tx replaced/cancelled
+            if gas_used >= tx_gas:
+                hints.append("Out of gas: recipient may be a contract needing more than 21k gas. Retry with gas limit 50,000–70,000.")
+        # Fee underpricing
+        if q['mode']=='eip1559' and mined_base is not None:
+            eff_needed = mined_base + int(Web3.to_wei(float(Web3.from_wei(q['tip'],'gwei')), 'gwei'))
+            if int(Web3.to_wei(float(Web3.from_wei(q['max'],'gwei')), 'gwei')) < eff_needed:
+                hints.append("MaxFee too low for base fee at inclusion. Increase MaxFee or Tip.")
+        # Nonce conflicts (Etherscan shows 'Cancelled')
+        hints.append("If explorer shows 'Cancelled', a replacement tx with same nonce likely mined. Ensure no conflicting pending tx and use fresh nonce.")
+        # Balance sufficiency check (pre-flight)
+        try:
+            bal = int(w3.eth.get_balance(sender))
+            need_max = (value if is_native else 0) + q.get('gas_est', tx_gas) * ( (q.get('max') or q.get('gas_price')) or 0 )
+            if bal < need_max:
+                hints.append("Insufficient funds for value + max fee. Reduce amount or add funds.")
+        except Exception:
+            pass
+
+        # Try eth_call to get revert reason (ERC-20 or contract recipient)
+        try:
+            if not is_native:
+                c = w3.eth.contract(address=Web3.to_checksum_address(tok), abi=_MIN_ERC20_ABI)
+                _ = c.functions.transfer(Web3.to_checksum_address(to), int(value)).call({'from': sender})
         except Exception as e:
-            print(f"[verify] could not fetch tx for self-check: {e!r}")
+            msg = str(e)
+            if "execution reverted" in msg:
+                hints.append(f"Contract revert reason: {msg}")
+
+        if hints:
+            print("[diagnose]")
+            for h in hints:
+                print(f" - {h}")
+        else:
+            print("[diagnose] No specific cause identified; check explorer logs for details.")
 def _swap_flow():
     bridge = UltraSwapBridge()
     ch = _prompt_chain(bridge)
