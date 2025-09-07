@@ -1055,3 +1055,151 @@ else:
     UltraSwapBridge.send_erc20 = send_erc20
 # ======== End live send helpers v3 ========
 
+
+# ======== 0x swap helpers v1 (multi-chain) ========
+try:
+    UltraSwapBridge
+except NameError:
+    pass
+else:
+    import os, json, math
+    from urllib.parse import urlencode
+    from urllib.request import Request, urlopen
+    from web3 import Web3
+
+    def _rb__0x_base_url(self, chain: str) -> str:
+        ch = (chain or "").lower()
+        m = {
+            "ethereum": "https://api.0x.org",
+            "base": "https://base.api.0x.org",
+            "arbitrum": "https://arbitrum.api.0x.org",
+            "optimism": "https://optimism.api.0x.org",
+            "polygon": "https://polygon.api.0x.org",
+        }
+        return m.get(ch, "")
+
+    def _rb__http_get_json(self, url: str, headers: dict | None = None, timeout_sec: float | None = None):
+        hdrs = {"Accept": "application/json"}
+        if headers: hdrs.update(headers)
+        req = Request(url, headers=hdrs, method="GET")
+        to = float(os.getenv("ZEROX_HTTP_TIMEOUT_SEC", "12")) if timeout_sec is None else float(timeout_sec)
+        with urlopen(req, timeout=to) as r:
+            data = r.read()
+        return json.loads(data.decode("utf-8"))
+
+    def get_0x_quote(self, chain: str, sell_token: str, buy_token: str, sell_amount_wei: int, slippage: float = 0.01, taker: str | None = None, api_key: str | None = None) -> dict:
+        """
+        GET /swap/v1/quote — returns executable tx fields for 0x swap.
+        - sell_token/buy_token: address (0x...) or 'ETH' for native.
+        - sell_amount_wei: int raw amount in wei (for native) or token base units.
+        - slippage: float e.g. 0.01 == 1%
+        """
+        base = self._rb__0x_base_url(chain)
+        if not base:
+            raise RuntimeError(f"0x not supported for chain '{chain}'")
+        taker_addr = taker or self.acct.address
+        q = {
+            "sellToken": sell_token,
+            "buyToken": buy_token,
+            "sellAmount": str(int(sell_amount_wei)),
+            "takerAddress": taker_addr,
+            "slippagePercentage": f"{slippage:.6f}",
+        }
+        url = f"{base}/swap/v1/quote?{urlencode(q)}"
+        headers = {}
+        api_key = api_key or os.getenv("ZEROX_API_KEY") or ""
+        if api_key:
+            headers["0x-api-key"] = api_key
+        return self._rb__http_get_json(url, headers=headers)
+
+    # --- ERC20 allowance & approval ---
+    _ERC20_APPROVE_ABI = [
+        {"name":"approve","type":"function","stateMutability":"nonpayable",
+         "inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],
+         "outputs":[{"name":"","type":"bool"}]},
+        {"name":"allowance","type":"function","stateMutability":"view",
+         "inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],
+         "outputs":[{"name":"","type":"uint256"}]},
+        {"name":"decimals","type":"function","stateMutability":"view",
+         "inputs":[],"outputs":[{"name":"","type":"uint8"}]},
+        {"name":"symbol","type":"function","stateMutability":"view",
+         "inputs":[],"outputs":[{"name":"","type":"string"}]},
+    ]
+
+    def erc20_allowance(self, chain: str, token: str, owner: str, spender: str) -> int:
+        w3 = self._rb__w3(chain)
+        c = w3.eth.contract(address=Web3.to_checksum_address(token), abi=self._ERC20_APPROVE_ABI)
+        try:
+            return int(c.functions.allowance(Web3.to_checksum_address(owner), Web3.to_checksum_address(spender)).call())
+        except Exception:
+            return 0
+
+    def approve_erc20(self, chain: str, token: str, spender: str, amount: int, *, gas: int | None = None, max_priority_gwei=None, max_fee_gwei=None, nonce: int | None = None):
+        """
+        Approve ERC20 allowance for 'spender'. WALLET_LIVE=1 required.
+        """
+        self._rb__ensure_live()
+        w3 = self._rb__w3(chain)
+        token_cs = Web3.to_checksum_address(token)
+        spend_cs = Web3.to_checksum_address(spender)
+        sender = self.acct.address
+        c = w3.eth.contract(address=token_cs, abi=self._ERC20_APPROVE_ABI)
+
+        base = {
+            "chainId": w3.eth.chain_id,
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender, "pending") if nonce is None else int(nonce),
+            "value": 0,
+        }
+        base.update(self._rb__fee_fields(w3, max_priority_gwei, max_fee_gwei))
+        # estimate gas
+        try:
+            est = c.functions.approve(spend_cs, int(amount)).estimate_gas({"from": sender})
+        except Exception:
+            est = 60000
+        gas_final = int(gas or int(est * 1.2))
+        tx = c.functions.approve(spend_cs, int(amount)).build_transaction({**base, "gas": gas_final})
+        signed = self.acct.sign_transaction(tx)
+        raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None) or getattr(signed, "raw", None) or signed
+        txh = w3.eth.send_raw_transaction(raw)
+        return w3.to_hex(txh)
+
+    def send_swap_via_0x(self, chain: str, quote: dict, *, gas: int | None = None, max_priority_gwei=None, max_fee_gwei=None, nonce: int | None = None):
+        """
+        Execute the swap using fields from 0x quote: to, data, value[, gas].
+        """
+        self._rb__ensure_live()
+        w3 = self._rb__w3(chain)
+        sender = self.acct.address
+        to = Web3.to_checksum_address(quote["to"])
+        value = int(quote.get("value") or 0)
+        data = quote.get("data") or "0x"
+        # choose gas
+        qgas = int(quote.get("gas") or quote.get("estimatedGas") or 250000)
+        gas_final = int(gas or int(qgas * 1.2))
+
+        tx = {
+            "chainId": w3.eth.chain_id,
+            "nonce": w3.eth.get_transaction_count(sender, "pending") if nonce is None else int(nonce),
+            "from": sender,
+            "to": to,
+            "value": value,
+            "data": data,
+            "gas": gas_final,
+        }
+        tx.update(self._rb__fee_fields(w3, max_priority_gwei, max_fee_gwei))
+        signed = self.acct.sign_transaction(tx)
+        raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None) or getattr(signed, "raw", None) or signed
+        txh = w3.eth.send_raw_transaction(raw)
+        return w3.to_hex(txh)
+
+    # bind helpers
+    UltraSwapBridge._rb__0x_base_url = _rb__0x_base_url
+    UltraSwapBridge._rb__http_get_json = _rb__http_get_json
+    UltraSwapBridge.get_0x_quote = get_0x_quote
+    UltraSwapBridge._ERC20_APPROVE_ABI = _ERC20_APPROVE_ABI
+    UltraSwapBridge.erc20_allowance = erc20_allowance
+    UltraSwapBridge.approve_erc20 = approve_erc20
+    UltraSwapBridge.send_swap_via_0x = send_swap_via_0x
+# ======== End 0x swap helpers v1 ========
+
