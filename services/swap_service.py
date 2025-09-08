@@ -7,6 +7,14 @@ from services.cli_utils import is_native, normalize_for_0x, to_base_units, explo
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 
 class SwapService:
+    def _is_contract(self, chain: str, addr: str) -> bool:
+        try:
+            if not addr or len(addr) != 42 or not addr.startswith('0x'): return False
+            w3 = self.bridge._rb__w3(chain)
+            code = w3.eth.get_code(w3.to_checksum_address(addr))
+            return code not in (None, b'', b'\x00', '0x', '0x0')
+        except Exception:
+            return False
     def _wrap_native(self, chain: str, wn_addr: str, amount_raw: int) -> bool:
         """Call deposit() on the wrapped-native contract with value=amount_raw."""
         try:
@@ -38,6 +46,12 @@ class SwapService:
         if is_native(sell) or is_native(buy):
             print('[UniswapV3] native not supported directly; use WETH address on this chain')
             return False
+        # Sanity: token contracts must exist on this chain
+        if sell and not is_native(sell) and not self._is_contract(ch, sell):
+            print(f"[UniswapV3] sell token not deployed on {ch}: {sell}"); return False
+        if buy and not is_native(buy) and not self._is_contract(ch, buy):
+            print(f"[UniswapV3] buy token not deployed on {ch}: {buy}"); return False
+
         uq = self.uni.quote_and_build(ch, sell, buy, int(sell_raw), slippage_bps=slippage_bps)
         if '__error__' in uq:
             print('[UniswapV3]', uq['__error__'])
