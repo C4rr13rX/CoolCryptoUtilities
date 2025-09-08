@@ -2123,6 +2123,7 @@ _ABI_V2_ROUTER = [
 # minimal ERC20 balance/allow/approve ABI (if missing)
 
 def send_prebuilt_tx(self, chain: str, to: str, data: str, *, value: int = 0, gas: int | None = None):
+
     w3 = self._rb__w3(chain)
     to_cs = w3.to_checksum_address(to)
     tx = {
@@ -2140,10 +2141,24 @@ def send_prebuilt_tx(self, chain: str, to: str, data: str, *, value: int = 0, ga
         else:
             tx["gas"] = int(gas)
     except Exception:
-        # fallback
         tx["gas"] = 250000
+    import os
+    if os.getenv("DEBUG_SWAP","0") in ("1","true","TRUE"):
+        print(f"[send_prebuilt_tx] chainId={tx['chainId']} to={tx['to']} val={tx['value']} gas={tx.get('gas')}"
+              f" mfpg={tx.get('maxFeePerGas')} mpfpg={tx.get('maxPriorityFeePerGas')} gp={tx.get('gasPrice')}"
+              f" dataLen={len((tx.get('data') or b'')) if isinstance(tx.get('data'), (bytes,bytearray)) else len((tx.get('data') or ''))}")
     signed = self.acct.sign_transaction(tx)
-    txh = w3.eth.send_raw_transaction(signed.rawTransaction)
+    raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None)
+    if raw is None:
+        if isinstance(signed, (bytes, bytearray)):
+            raw = signed
+        elif isinstance(signed, str):
+            raw = bytes.fromhex(signed[2:] if signed.startswith("0x") else signed)
+        else:
+            raise TypeError(f"Unexpected SignedTransaction type: {type(signed)}; no rawTransaction/raw_transaction")
+    txh = w3.eth.send_raw_transaction(raw)
+    return w3.to_hex(txh)
+
     return w3.to_hex(txh)
 
 def camelot_v2_quote(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int = 100):
