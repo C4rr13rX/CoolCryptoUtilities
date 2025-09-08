@@ -2242,6 +2242,15 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
     if not cid: raise ValueError(f"unsupported chain for 0x v2: {chain}")
     slip = int(slippage_bps if slippage_bps is not None else os.getenv("SWAP_SLIPPAGE_BPS","100"))
     params = {
+        # IMPORTANT: v2 requires integer base units; stringify for HTTP
+        # (we also retain the raw int in the output object for re-quotes)
+        "chainId": cid,
+        "sellToken": sell_token,
+        "buyToken": buy_token,
+        "sellAmount": str(int(sell_amount_raw)),
+        "taker": self.acct.address,
+        "slippageBps": max(0, slip),
+    }
         "chainId": cid,
         "sellToken": sell_token,
         "buyToken": buy_token,
@@ -2268,7 +2277,9 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
         "gas": gas, "gasPrice": gasp,
         "allowanceTarget": allowance,
         "sellToken": sell_token, "buyToken": buy_token,
-        "sellAmount": q.get("sellAmount"), "buyAmount": q.get("buyAmount"),
+        "sellAmountRaw": int(sell_amount_raw),
+        "sellAmount": (q.get("sellAmount") or str(int(sell_amount_raw))),
+        "buyAmount": q.get("buyAmount"),
         "issues": q.get("issues"), "route": q.get("route"),
     }
     if not out["to"] or not out["data"]:
@@ -2277,6 +2288,7 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
 
 def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, slippage_bps: int | None = None,
                                 gas=None, max_fee_gwei=None, max_priority_gwei=None, nonce=None, **_extra):
+    dbg = bool(int(os.getenv("DEBUG_SWAP","0")))
     from web3 import Web3
     def _hx(v, d=0):
         try:
@@ -2321,7 +2333,12 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
     tx.update(fees)
 
     # preflight, with auto re-quote bumps if needed
-    try:
+        try:
+        if dbg:
+            try:
+                print(f"[v2] preflight tx → to={tx['to']} value={tx['value']} gas≈{tx['gas']}")
+            except Exception:
+                pass
         w3.eth.call({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}, "latest")
     except Exception as e:
         sell_tok = q.get("sellToken") or ""
@@ -2334,7 +2351,12 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
             if b in tried: continue
             tried.add(b)
             try:
-                newq = _ultra__get_0x_quote_v2_allowance_holder(self, chain, sell_tok, buy_tok, sell_amt, slippage_bps=b)
+                        if dbg:
+            try:
+                print(f"[v2] re-quote params: chain={chain} sell={sell_tok} buy={buy_tok} sellAmount={int(sell_amt)} bps={b}")
+            except Exception:
+                pass
+        newq = _ultra__get_0x_quote_v2_allowance_holder(self, chain, sell_tok, buy_tok, int(sell_amt), slippage_bps=b)
                 to2 = Web3.to_checksum_address(newq["to"])
                 dat = newq["data"]; dat = bytes.fromhex(dat[2:]) if isinstance(dat, str) and dat.startswith("0x") else dat
                 val = _hx(newq.get("value"), 0)
