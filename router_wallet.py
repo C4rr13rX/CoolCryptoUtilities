@@ -2490,10 +2490,6 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
     if not ok:
         raise RuntimeError("0x v2: on-chain revert")
     return w3.to_hex(txh), rc
-
-
-UltraSwapBridge.send_prebuilt_tx_from_0x = send_prebuilt_tx_from_0x
-
 def send_prebuilt_tx_from_0x(self, chain: str, txobj: dict):
     """Send a tx exactly as 0x v2 returned it (to, data, value, gas, gasPrice or EIP-1559).
     Falls back to estimating gas if missing. Compatible with web3 v5/v6."""
@@ -2546,3 +2542,5 @@ def send_prebuilt_tx_from_0x(self, chain: str, txobj: dict):
             raise TypeError(f"Unexpected SignedTransaction type: {type(signed)}")
     txh = w3.eth.send_raw_transaction(raw)
     return w3.to_hex(txh)
+
+UltraSwapBridge.send_prebuilt_tx_from_0x = send_prebuilt_tx_from_0x
