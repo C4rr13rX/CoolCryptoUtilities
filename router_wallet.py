@@ -1836,6 +1836,14 @@ def _ultra__norm_quote_numbers(q: dict) -> dict:
 
 def _ultra__get_0x_quote_v1(self, chain: str, sell_token: str, buy_token: str, sell_amount_raw: int, slippage_bps: int | None = None):
     cid = _ultra__chain_id(chain)
+    # coerce sell_amount_raw into a strict positive int (base units)
+    try:
+        sar = int(sell_amount_raw)
+    except Exception:
+        # last resort if a string sneaks in like "1e18"
+        sar = int(float(str(sell_amount_raw)))
+    if sar <= 0:
+        raise ValueError("sellAmountRaw must be a positive integer (base units)")
     if not cid: raise ValueError(f"unsupported chain for 0x: {chain}")
     slip = slippage_bps if slippage_bps is not None else int(os.getenv("SWAP_SLIPPAGE_BPS","50"))  # 50 bps = 0.5%
     slip_pct = max(0, slip) / 10000.0
@@ -2238,6 +2246,8 @@ def _ultra__http_get_json_v2(path: str, params: dict, timeout=25):
     return r.json()
 
 def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, buy_token: str, sell_amount_raw: int, slippage_bps: int | None = None):
+    import os
+    dbg = bool(int(os.getenv('DEBUG_SWAP','0')))
     """
     0x Swap API v2 (Allowance-Holder) quote.
     - Uses single host https://api.0x.org, endpoint /swap/allowance-holder/quote
@@ -2246,6 +2256,14 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
     """
     import os
     cid = _ultra__chain_id(chain)
+    # coerce sell_amount_raw into a strict positive int (base units)
+    try:
+        sar = int(sell_amount_raw)
+    except Exception:
+        # last resort if a string sneaks in like "1e18"
+        sar = int(float(str(sell_amount_raw)))
+    if sar <= 0:
+        raise ValueError("sellAmountRaw must be a positive integer (base units)")
     if not cid:
         raise ValueError(f"unsupported chain for 0x v2: {chain}")
     slip = int(slippage_bps if slippage_bps is not None else os.getenv("SWAP_SLIPPAGE_BPS", "100"))
@@ -2254,10 +2272,15 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
         "sellToken": sell_token,
         "buyToken": buy_token,
         # v2 requires integer base units (string)
-        "sellAmount": str(int(sell_amount_raw)),
+        "sellAmount": str(int(sar)),
         "taker": self.acct.address,
         "slippageBps": max(0, slip),
     }
+        if dbg:
+        try:
+            safe = dict(params); safe.pop("taker", None)
+            print(f"[v2] GET /swap/allowance-holder/quote params={safe}")
+        except Exception: pass
     q = _ultra__http_get_json_v2("/swap/allowance-holder/quote", params)
 
     # Prefer 'transaction' bundle when present
@@ -2360,7 +2383,12 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
         sell_amt = q.get("sellAmountRaw")
         if sell_amt is None:
             sell_amt = _hx(q.get("sellAmount"), 0)
-        sell_amt = int(sell_amt or 0)
+        try:
+            sell_amt = int(sell_amt)
+        except Exception:
+            sell_amt = int(float(str(sell_amt)))
+        if sell_amt <= 0:
+            raise ValueError("re-quote: sellAmount must be > 0")
 
         bumps = [
             int(os.getenv("SWAP_BUMP_BPS1", "100")),

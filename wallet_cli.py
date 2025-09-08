@@ -656,6 +656,11 @@ def _swap_flow():
     if int(total_amount) <= 0:
         print("❌ Amount must be > 0.")
         return
+    if os.getenv("DEBUG_SWAP","0")=="1":
+        try:
+            print(f"[ui] parsed amount (base units) = {int(total_amount)}")
+        except Exception:
+            pass
 
     # --- Config ---
     try: slip = float(os.getenv("SWAP_SLIPPAGE", "0.01"))
@@ -1016,6 +1021,9 @@ def _swap_flow():
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
         print(f"\nChosen route: DIRECT (lower gas). {sell_label} -> {buy_label}")
+        if not _ensure_allow_from_quote(bridge, ch, direct):
+            print("[direct] allowance failed; aborting")
+            return
         txh, ok = _execute(direct)
         if not ok and auto_retry:
             print("[retry] direct failed; sleeping then re-quoting...")
@@ -1478,3 +1486,37 @@ def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
 
 
 # ## CAM_FALLBACK_MARKER
+
+
+def _ensure_allow_from_quote(bridge, chain: str, q: dict) -> bool:
+    import os
+    sell = q.get("sellToken") or ""
+    if sell.lower() in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"):
+        return True
+    spender = _spender_from_quote(q)
+    if not spender:
+        print("[approve] no spender in quote; skipping allowance check")
+        return True
+    need = int(q.get("sellAmountRaw") or q.get("sellAmount") or 0)
+    try:
+        have = bridge.erc20_allowance(chain, sell, bridge.acct.address, spender)
+    except Exception as e:
+        print(f"[approve] allowance read failed: {e!r}")
+        return False
+    if int(have) >= int(need):
+        return True
+    mode = (os.getenv("APPROVE_MODE","e").strip().lower())
+    if mode not in ("e","u"): mode = "e"
+    value = int(need) if mode == "e" else int((1<<256)-1)
+    try:
+        print(f"[approve] spender={spender} need={need} have={have} mode={'exact' if mode=='e' else 'unlimited'}")
+        txh = bridge.approve_erc20(chain, sell, spender, value)
+        print(f"[approve] tx: {txh}")
+        w3 = bridge._rb__w3(chain)
+        rc = w3.eth.wait_for_transaction_receipt(txh)
+        ok = int(rc.get("status",0)) == 1
+        print(f"[approve] receipt status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
+        return ok
+    except Exception as e:
+        print(f"[approve] failed: {e!r}")
+        return False
