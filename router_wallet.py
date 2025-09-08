@@ -2316,12 +2316,13 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
         raise RuntimeError("0x v2 quote: missing tx fields")
     return out
 
+
 def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, slippage_bps: int | None = None,
                                 gas=None, max_fee_gwei=None, max_priority_gwei=None, nonce=None, **_extra):
     """
-    Send a v2 Allowance-Holder transaction.
-    - EIP-1559 fees via _rb__fee_fields
-    - Preflight with eth_call; on revert, bump slippage and re-quote using sellAmountRaw.
+    0x v2 Allowance-Holder sender.
+    - Auto-approval if allowance < sellAmountRaw.
+    - Strict sellAmount handling; preflight + slippage bumps.
     """
     import os
     from web3 import Web3
@@ -2336,7 +2337,53 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
             return d
 
     w3 = self._rb__w3(chain)
-    q  = dict(quote)
+    q  = dict(quote or {})
+    dbg = bool(int(os.getenv("DEBUG_SWAP","0")))
+
+    # --- Resolve sell amount (strict) ---
+    sell_amt = q.get("sellAmountRaw")
+    if sell_amt is None:
+        sell_amt = _hx(q.get("sellAmount"), 0)
+    try:
+        sell_amt = int(sell_amt)
+    except Exception:
+        sell_amt = int(float(str(sell_amt)))
+    if sell_amt <= 0:
+        raise ValueError("send/v2: sellAmount must be > 0")
+
+    # --- Auto-approve if needed (ERC20 only) ---
+    sell_tok = (q.get("sellToken") or "").lower()
+    if sell_tok not in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"):
+        spender = q.get("allowanceTarget")
+        if not spender:
+            try:
+                spender = (q.get("issues") or {}).get("allowance", {}).get("spender")
+            except Exception:
+                pass
+        if not spender:
+            # last resort: tx target
+            spender = (q.get("transaction") or {}).get("to") or q.get("to")
+        if spender:
+            try:
+                have = self.erc20_allowance(chain, sell_tok, self.acct.address, spender)
+            except Exception:
+                have = 0
+            if int(have) < int(sell_amt):
+                mode = (os.getenv("APPROVE_MODE","e").strip().lower())
+                if mode not in ("e","u"): mode = "e"
+                value = int(sell_amt) if mode=="e" else int((1<<256)-1)
+                if dbg:
+                    print(f"[approve/v2] spender={spender} need={sell_amt} have={have} mode={'exact' if mode=='e' else 'unlimited'}")
+                txh = self.approve_erc20(chain, sell_tok, spender, value)
+                if dbg: print(f"[approve/v2] tx={txh}")
+                # optional wait (short)
+                try:
+                    rc = w3.eth.wait_for_transaction_receipt(txh)
+                    if dbg: print(f"[approve/v2] rc.status={rc.get('status')} gasUsed={rc.get('gasUsed')}")
+                except Exception:
+                    pass
+
+    # --- Build tx from quote
     to = Web3.to_checksum_address(q["to"])
     data = q["data"]
     if isinstance(data, str) and data.startswith("0x"):
@@ -2370,29 +2417,18 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
     fees = self._rb__fee_fields(w3, max_priority_gwei=max_priority_gwei, max_fee_gwei=max_fee_gwei)
     tx.update(fees)
 
-    dbg = bool(int(os.getenv("DEBUG_SWAP", "0")))
     if dbg:
         try:
             print(f"[v2] preflight tx → to={tx['to']} value={tx['value']} gas≈{tx['gas']}")
         except Exception:
             pass
 
-    # Preflight; if revert, bump slippage and re-quote using sellAmountRaw
+    # Preflight; if revert, bump slippage and re-quote using the same sell_amt
     try:
         w3.eth.call({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}, "latest")
     except Exception as e:
-        sell_tok = q.get("sellToken") or ""
-        buy_tok  = q.get("buyToken")  or ""
-        sell_amt = q.get("sellAmountRaw")
-        if sell_amt is None:
-            sell_amt = _hx(q.get("sellAmount"), 0)
-        try:
-            sell_amt = int(sell_amt)
-        except Exception:
-            sell_amt = int(float(str(sell_amt)))
-        if sell_amt <= 0:
-            raise ValueError("re-quote: sellAmount must be > 0")
-
+        sell_tok0 = q.get("sellToken") or ""
+        buy_tok0  = q.get("buyToken")  or ""
         bumps = [
             int(os.getenv("SWAP_BUMP_BPS1", "100")),
             int(os.getenv("SWAP_BUMP_BPS2", "150")),
@@ -2401,15 +2437,15 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
         tried = set([int(slippage_bps)] if slippage_bps is not None else [])
         why = str(e)
         for b in bumps:
-            if b in tried:
+            if b in tried: 
                 continue
             tried.add(b)
             if dbg:
                 try:
-                    print(f"[v2] re-quote params: chain={chain} sell={sell_tok} buy={buy_tok} sellAmount={int(sell_amt)} bps={b}")
+                    print(f"[v2] re-quote params: chain={chain} sell={sell_tok0} buy={buy_tok0} sellAmount={int(sell_amt)} bps={b}")
                 except Exception:
                     pass
-            newq = _ultra__get_0x_quote_v2_allowance_holder(self, chain, sell_tok, buy_tok, int(sell_amt), slippage_bps=b)
+            newq = _ultra__get_0x_quote_v2_allowance_holder(self, chain, sell_tok0, buy_tok0, int(sell_amt), slippage_bps=b)
             to2 = Web3.to_checksum_address(newq["to"])
             dat = newq["data"]; dat = bytes.fromhex(dat[2:]) if isinstance(dat, str) and dat.startswith("0x") else dat
             val = _hx(newq.get("value"), 0)
@@ -2439,6 +2475,3 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
     if not ok:
         raise RuntimeError("0x v2: on-chain revert")
     return w3.to_hex(txh), rc
-
-UltraSwapBridge.get_0x_quote = _ultra__get_0x_quote_v2_allowance_holder
-UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v2
