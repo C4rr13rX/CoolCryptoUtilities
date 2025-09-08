@@ -444,13 +444,20 @@ def _parse_amount(amount_str: str, decimals: int) -> int:
 def _confirm(prompt: str) -> bool:
 
 def _wei_to_eth(n: int) -> str:
+    """
+    Convert wei -> ETH string safely (works even if web3 import fails).
+    """
     try:
         from web3 import Web3
-        return str(Web3.from_wei(int(n), 'ether'))
+        return str(Web3.from_wei(int(n), "ether"))
     except Exception:
-        return f"{int(n)/1e18:.18f}"
-
-
+        try:
+            x = int(n)
+            s = f"{x/10**18:.18f}"
+            s = s.rstrip("0").rstrip(".")
+            return s if s else "0"
+        except Exception:
+            return str(n)
 def _send_flow():
     import os, time
     from web3 import Web3
