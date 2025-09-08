@@ -1,3 +1,4 @@
+from __future__ import annotations
 def _is_native(tok:str)->bool:
     return tok.lower() in ('eth','native')
 
@@ -7,7 +8,6 @@ def _is_native(tok:str)->bool:
 # wallet_cli.py — looped console for: get balances, refetch balances, refetch transfers.
 # Uses per-chain threading to speed up rebuilds. Respects existing caches.
 
-from __future__ import annotations
 import os, sys, time, json, concurrent.futures
 from typing import List, Tuple
 from pathlib import Path
