@@ -2492,11 +2492,15 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
     return w3.to_hex(txh), rc
 
 
+UltraSwapBridge.send_prebuilt_tx_from_0x = send_prebuilt_tx_from_0x
+
 def send_prebuilt_tx_from_0x(self, chain: str, txobj: dict):
-    \"\"\"Send a tx exactly as 0x v2 returned it (to, data, value, gas, gasPrice or EIP-1559).
-    Falls back to estimating gas if missing. Compatible with web3 v5/v6.\"\"\"
+    """Send a tx exactly as 0x v2 returned it (to, data, value, gas, gasPrice or EIP-1559).
+    Falls back to estimating gas if missing. Compatible with web3 v5/v6."""
     w3 = self._rb__w3(chain)
-    to = txobj.get("to"); data = txobj.get("data") or "0x"; value = int(txobj.get("value") or 0)
+    to = txobj.get("to")
+    data = txobj.get("data") or "0x"
+    value = int(txobj.get("value") or 0)
     if not to or not data:
         raise ValueError("0x tx missing 'to' or 'data'")
     to_cs = w3.to_checksum_address(to)
@@ -2508,19 +2512,24 @@ def send_prebuilt_tx_from_0x(self, chain: str, txobj: dict):
         "data": data,
         "value": value,
     }
-    # Prefer 0x-provided fees
+    # Prefer 0x-provided fees exactly
     if "gasPrice" in txobj:
         tx["gasPrice"] = int(txobj["gasPrice"])
     else:
-        if "maxFeePerGas" in txobj:        tx["maxFeePerGas"] = int(txobj["maxFeePerGas"])
-        if "maxPriorityFeePerGas" in txobj: tx["maxPriorityFeePerGas"] = int(txobj["maxPriorityFeePerGas"])
-    if "accessList" in txobj: tx["accessList"] = txobj["accessList"]
+        if "maxFeePerGas" in txobj:
+            tx["maxFeePerGas"] = int(txobj["maxFeePerGas"])
+        if "maxPriorityFeePerGas" in txobj:
+            tx["maxPriorityFeePerGas"] = int(txobj["maxPriorityFeePerGas"])
+    if "accessList" in txobj:
+        tx["accessList"] = txobj["accessList"]
     # Gas
     if "gas" in txobj:
         tx["gas"] = int(txobj["gas"])
     else:
-        try: tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
-        except Exception: tx["gas"] = 250000
+        try:
+            tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
+        except Exception:
+            tx["gas"] = 250000
     # Debug
     import os
     if os.getenv("DEBUG_SWAP","0") in ("1","true","TRUE"):
@@ -2529,11 +2538,11 @@ def send_prebuilt_tx_from_0x(self, chain: str, txobj: dict):
     signed = self.acct.sign_transaction(tx)
     raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None)
     if raw is None:
-        if isinstance(signed, (bytes, bytearray)): raw = signed
-        elif isinstance(signed, str): raw = bytes.fromhex(signed[2:] if signed.startswith("0x") else signed)
-        else: raise TypeError(f"Unexpected SignedTransaction type: {type(signed)}")
+        if isinstance(signed, (bytes, bytearray)):
+            raw = signed
+        elif isinstance(signed, str):
+            raw = bytes.fromhex(signed[2:] if signed.startswith("0x") else signed)
+        else:
+            raise TypeError(f"Unexpected SignedTransaction type: {type(signed)}")
     txh = w3.eth.send_raw_transaction(raw)
     return w3.to_hex(txh)
-
-
-UltraSwapBridge.send_prebuilt_tx_from_0x = send_prebuilt_tx_from_0x
