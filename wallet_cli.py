@@ -812,7 +812,8 @@ def _swap_flow():
                     if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
                         break
-                if not _confirm(f"[chunk {idx+1}/{n}] # Allowance/approve for ERC-20 sells
+        if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
+            return
         if not _is_native(sell_id):
             spender = q.get("to")
             if spender:
