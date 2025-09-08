@@ -1723,3 +1723,76 @@ else:
         UltraSwapBridge.erc20_decimals   = erc20_decimals     # type: ignore[attr-defined]
         UltraSwapBridge.erc20_symbol     = erc20_symbol       # type: ignore[attr-defined]
 # --- end injected helpers ---
+
+# === BEGIN: 0x preflight wrapper ===
+try:
+    _ULTRA_ORIG_SEND_SWAP_0X = UltraSwapBridge.send_swap_via_0x  # preserve original
+except Exception:
+    _ULTRA_ORIG_SEND_SWAP_0X = None
+
+def _rb__preflight_swap(self, chain: str, quote: dict):
+    """Dry-run the 0x tx via eth_call to surface the revert reason before sending."""
+    url = getattr(self, "_alchemy_url", lambda ch: None)(chain)
+    if not url:
+        return False, "missing RPC url for chain", None
+    try:
+        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 25}))
+    except Exception as e:
+        return False, f"rpc init failed: {e!r}", None
+
+    to_raw   = quote.get("to")
+    data     = quote.get("data")
+    val_raw  = quote.get("value", 0)
+    to_addr  = None
+    try:
+        to_addr = Web3.to_checksum_address(to_raw) if to_raw else None
+    except Exception:
+        pass
+    if not (to_addr and data):
+        return False, "quote incomplete (missing to/data)", None
+
+    tx = {
+        "from": getattr(self.acct, "address", None),
+        "to":   to_addr,
+        "data": data,
+        "value": _rb__hexint(val_raw, 0),
+    }
+
+    # Optional: rough gas estimate (helps some nodes return revert early with reason)
+    try:
+        est = w3.eth.estimate_gas(tx)
+        tx["gas"] = int(est)
+    except Exception:
+        # leave gas unset; call can still return revert reason
+        pass
+
+    # Call at latest state; if it reverts, surface the message
+    try:
+        _ = w3.eth.call(tx)
+        return True, None, tx
+    except Exception as e:
+        # Try to pull a readable reason string
+        reason = ""
+        if getattr(e, "args", None):
+            reason = str(e.args[0])
+        else:
+            reason = repr(e)
+        return False, reason, tx
+
+def _rb__wrapped_send_swap_via_0x(self, chain: str, quote: dict, *a, **kw):
+    ok, reason, pre_tx = _rb__preflight_swap(self, chain, quote)
+    if not ok:
+        # classify common issues so the CLI can react helpfully
+        if "insufficient" in (reason or "").lower() or "too little received" in (reason or "").lower():
+            raise ValueError(f"preflight: likely slippage/minOut issue — {reason}")
+        if "transfer" in (reason or "").lower():
+            raise ValueError(f"preflight: token transfer failed (fee-on-transfer/restricted?) — {reason}")
+        raise ValueError(f"preflight: revert — {reason}")
+    # delegate to original sender (it already signs and broadcasts)
+    if _ULTRA_ORIG_SEND_SWAP_0X is None:
+        raise RuntimeError("original send_swap_via_0x missing; cannot delegate")
+    return _ULTRA_ORIG_SEND_SWAP_0X(self, chain, quote, *a, **kw)
+
+# bind wrapper
+UltraSwapBridge.send_swap_via_0x = _rb__wrapped_send_swap_via_0x
+# === END: 0x preflight wrapper ===
