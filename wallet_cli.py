@@ -1,5 +1,38 @@
 from __future__ import annotations
 
+def _normalize_quote_numbers(q: dict) -> dict:
+    """
+    Coerce any hex or string number fields in aggregator quotes into ints,
+    so we never hit ValueError("invalid literal for int() with base 10: '0x...'").
+    """
+    if not isinstance(q, dict):
+        return q
+    def _coerce(x):
+        if x is None: return 0
+        if isinstance(x, int): return x
+        if isinstance(x, str):
+            xs = x.strip().lower()
+            if xs.startswith("0x"):
+                try: return int(xs, 16)
+                except Exception: return 0
+            try: return int(xs)
+            except Exception: return 0
+        try: return int(x)
+        except Exception: return 0
+
+    # common fields we see across routers/aggregators
+    for k in ("value","gas","gasLimit","gas_est","gas_estimate","gasPrice","maxFeePerGas","maxPriorityFeePerGas","nonce"):
+        if k in q:
+            q[k] = _coerce(q.get(k))
+    # sometimes nested tx dict exists
+    tx = q.get("tx") or q.get("transaction")
+    if isinstance(tx, dict):
+        for k in ("value","gas","gasLimit","gasPrice","maxFeePerGas","maxPriorityFeePerGas","nonce"):
+            if k in tx:
+                tx[k] = _coerce(tx.get(k))
+        q["tx"] = tx
+    return q
+
 # ---- numeric coercion: accepts int, decimal str, or 0x-hex str ----
 def _coerce_int(x, default=0):
     if x is None:
@@ -491,7 +524,7 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
     if _confirm("Edit fees/gas?"):
         tip_in = input("Tip (gwei) [blank=default]: ").strip() or None
         max_in = input("MaxFee (gwei) [blank=auto]: ").strip() or None
-        gas_in = input(f"Gas limit [blank={q['gas_est']}]: ").strip()
+        gas_in = ""  # auto
         gas_hint = int(gas_in) if gas_in else q['gas_est']
         try:
             q = quote_fee(tip_in, max_in, gas_hint)
@@ -687,7 +720,7 @@ def _swap_flow():
     def _execute(quote_obj):
         # Allow gas override
         est_gas = _gas_out(quote_obj) or 250000
-        gin = input(f"Gas limit [blank={est_gas}]: ").strip()
+        gin = ""  # auto
         gas_hint = int(gin) if gin else est_gas
         tip_gwei = os.getenv("SWAP_TIP_GWEI")
         max_gwei = os.getenv("SWAP_MAXFEE_GWEI")
@@ -822,11 +855,13 @@ def _swap_flow():
             if "__error__" not in qd:
                 success_quote, success_route = qd, "direct"; break
             q1 = _quote(sell_id, "ETH", test)
+            q1 = _normalize_quote_numbers(q1)
             if "__error__" not in q1:
                 if buy_is_native:
                     success_quote, success_route = q1, "two_eth_only"; break
                 s1_out = int(q1.get("buyAmount") or 0)
                 q2 = _quote("ETH", buy_id, int(s1_out * 0.99))
+                q2 = _normalize_quote_numbers(q2)
                 if "__error__" not in q2:
                     success_quote, success_route = (q1, q2), "two"; break
             # halve again
@@ -855,11 +890,13 @@ def _swap_flow():
             # fresh quotes each chunk (safer)
             if success_route == "direct":
                 q = _quote(sell_id, buy_id, this_amt)
+                q = _normalize_quote_numbers(q)
                 if "__error__" in q:
                     print(f"[chunk {idx+1}/{n}] direct quote failed: {q['__error__']}")
                     if auto_retry:
                         time.sleep(retry_sleep)
                         q = _quote(sell_id, buy_id, this_amt)
+                        q = _normalize_quote_numbers(q)
                         if "__error__" in q:
                             print(f"[chunk {idx+1}/{n}] still failing; aborting.")
                             break
@@ -887,11 +924,13 @@ def _swap_flow():
             elif success_route in ("two","two_eth_only"):
                 # step1
                 q1 = _quote(sell_id, "ETH", this_amt)
+                q1 = _normalize_quote_numbers(q1)
                 if "__error__" in q1:
                     print(f"[chunk {idx+1}/{n}] step1 quote failed: {q1['__error__']}")
                     if auto_retry:
                         time.sleep(retry_sleep); 
                         q1 = _quote(sell_id, "ETH", this_amt)
+                        q1 = _normalize_quote_numbers(q1)
                         if "__error__" in q1:
                             print(f"[chunk {idx+1}/{n}] still failing; aborting.")
                             break
@@ -910,6 +949,7 @@ def _swap_flow():
                 if success_route == "two":
                     s1_out = int(q1.get("buyAmount") or 0)
                     q2 = _quote("ETH", buy_id, int(s1_out * 0.99))
+                    q2 = _normalize_quote_numbers(q2)
                     if "__error__" in q2:
                         print(f"[chunk {idx+1}/{n}] step2 quote failed: {q2['__error__']}")
                         break
