@@ -1651,3 +1651,56 @@ try:
 except Exception:
     pass
 
+
+# --- injected: ERC-20 read helpers (idempotent) ---
+try:
+    UltraSwapBridge
+except NameError:
+    pass
+else:
+    if not hasattr(UltraSwapBridge, "erc20_balance_of"):
+        # We attach small helpers without touching the existing class body.
+        def _rw__get_w3(self, chain: str):
+            try:
+                # prefer an existing helper if present
+                return self._w3(chain)  # type: ignore[attr-defined]
+            except Exception:
+                from web3 import Web3
+                url = self._alchemy_url(chain)
+                return Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 20}))
+
+        def erc20_balance_of(self, chain: str, token: str, owner: str) -> int:
+            from web3 import Web3
+            w3 = _rw__get_w3(self, chain)
+            abi = [{"inputs":[{"name":"owner","type":"address"}],
+                    "name":"balanceOf","outputs":[{"name":"","type":"uint256"}],
+                    "stateMutability":"view","type":"function"}]
+            c = w3.eth.contract(Web3.to_checksum_address(token), abi=abi)
+            return int(c.functions.balanceOf(Web3.to_checksum_address(owner)).call())
+
+        def erc20_decimals(self, chain: str, token: str) -> int:
+            from web3 import Web3
+            w3 = _rw__get_w3(self, chain)
+            abi = [{"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],
+                    "stateMutability":"view","type":"function"}]
+            c = w3.eth.contract(Web3.to_checksum_address(token), abi=abi)
+            try:
+                return int(c.functions.decimals().call())
+            except Exception:
+                return 18
+
+        def erc20_symbol(self, chain: str, token: str) -> str:
+            from web3 import Web3
+            w3 = _rw__get_w3(self, chain)
+            abi = [{"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],
+                    "stateMutability":"view","type":"function"}]
+            c = w3.eth.contract(Web3.to_checksum_address(token), abi=abi)
+            try:
+                return str(c.functions.symbol().call())
+            except Exception:
+                return ""
+
+        UltraSwapBridge.erc20_balance_of = erc20_balance_of   # type: ignore[attr-defined]
+        UltraSwapBridge.erc20_decimals   = erc20_decimals     # type: ignore[attr-defined]
+        UltraSwapBridge.erc20_symbol     = erc20_symbol       # type: ignore[attr-defined]
+# --- end injected helpers ---
