@@ -802,7 +802,7 @@ def _swap_flow():
                 if "__error__" in q:
                     print(f"[chunk {idx+1}/{n}] direct quote failed: {q['__error__']}")
                     if auto_retry:
-                        time.sleep(retry_sleep); 
+                        time.sleep(retry_sleep)
                         q = _quote(sell_id, buy_id, this_amt)
                         if "__error__" in q:
                             print(f"[chunk {idx+1}/{n}] still failing; aborting.")
@@ -812,25 +812,9 @@ def _swap_flow():
                     if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
                         break
-        if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
-            print("Cancelled.")
-            break
-        if not _is_native(sell_id):
-            spender = q.get("to")
-            if spender:
-                try:
-                    needed = int(amount_raw)
-                    have = bridge.erc20_allowance(ch, sell_id, bridge.acct.address, spender)
-                    if have < needed:
-                        ans = input(f"Approve {needed} units for router {spender}? (Y/N): ").strip().lower()
-                        if ans == "y":
-                            txh = bridge.erc20_approve(ch, sell_id, spender, needed)
-                            print(f"Approve tx: {txh}")
-                except Exception as e:
-                    print(f"[warn] approve check failed: {e!r}")
-        if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
-            print("Cancelled.")
-            break
+                # per-chunk confirmation
+                if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
+                    print("Cancelled.")
                     break
                 _, ok = _execute(q)
                 executed_ok += 1 if ok else 0
