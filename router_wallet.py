@@ -1042,6 +1042,16 @@ UltraSwapBridge.send_erc20 = send_erc20
 # ======== End live send helpers v3 ========
 
 
+
+
+def _rb__hexint(v, default=0):
+    if v is None: return default
+    if isinstance(v, int): return v
+    try:
+        s=str(v).strip().lower()
+        return int(s,16) if s.startswith('0x') else int(s)
+    except Exception:
+        return default
 # ======== 0x swap helpers v1 (multi-chain) ========
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -1155,10 +1165,18 @@ def send_swap_via_0x(self, chain: str, quote: dict, *, gas: int | None = None, m
     w3 = self._rb__w3(chain)
     sender = self.acct.address
     to = Web3.to_checksum_address(quote["to"])
-    value = int(quote.get("value") or 0)
+    value = _rb__hexint(quote.get("value"), 0)
     data = quote.get("data") or "0x"
-    qgas = int(quote.get("gas") or quote.get("estimatedGas") or 250000)
-    gas_final = int(gas or int(qgas * 1.2))
+
+    # Try on-chain gas estimation first; fall back to quote hints or a conservative default
+    try:
+        gas_est = int(w3.eth.estimate_gas({"from": sender, "to": to, "value": value, "data": data}))
+    except Exception:
+        gas_hint = _rb__hexint(quote.get("gas") or quote.get("estimatedGas"), 0)
+        gas_est = gas_hint or 250000
+
+    gas_final = int(gas if gas is not None else int(gas_est * 1.2))
+
     tx = {
         "chainId": w3.eth.chain_id,
         "nonce": w3.eth.get_transaction_count(sender, "pending") if nonce is None else int(nonce),
@@ -1169,6 +1187,7 @@ def send_swap_via_0x(self, chain: str, quote: dict, *, gas: int | None = None, m
         "gas": gas_final,
     }
     tx.update(self._rb__fee_fields(w3, max_priority_gwei, max_fee_gwei))
+
     signed = self.acct.sign_transaction(tx)
     raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None) or getattr(signed, "raw", None) or signed
     txh = w3.eth.send_raw_transaction(raw)
