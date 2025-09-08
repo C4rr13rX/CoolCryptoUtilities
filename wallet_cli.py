@@ -1,4 +1,19 @@
 from __future__ import annotations
+
+# ---- numeric coercion: accepts int, decimal str, or 0x-hex str ----
+def _coerce_int(x, default=0):
+    if x is None:
+        return default
+    if isinstance(x, int):
+        return x
+    try:
+        s = str(x).strip().lower()
+        if s.startswith("0x"):
+            return int(s, 16)
+        return int(s)
+    except Exception:
+        return default
+
 def _is_native(tok:str)->bool:
     return tok.lower() in ('eth','native')
 
