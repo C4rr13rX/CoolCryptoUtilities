@@ -2238,6 +2238,47 @@ def _ultra__http_get_json_v2(path: str, params: dict, timeout=25):
     return r.json()
 
 def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, buy_token: str, sell_amount_raw: int, slippage_bps: int | None = None):
+    import os
+    cid = _ultra__chain_id(chain)
+    if not cid:
+        raise ValueError(f"unsupported chain for 0x v2: {chain}")
+    slip = int(slippage_bps if slippage_bps is not None else os.getenv("SWAP_SLIPPAGE_BPS", "100"))
+    params = {
+        "chainId": cid,
+        "sellToken": sell_token,
+        "buyToken": buy_token,
+        # v2 requires integer base units (string), we also carry the raw int for re-quotes
+        "sellAmount": str(int(sell_amount_raw)),
+        "taker": self.acct.address,
+        "slippageBps": max(0, slip),
+    }
+    q = _ultra__http_get_json_v2("/swap/allowance-holder/quote", params)
+    txo = q.get("transaction") or {}
+    to   = txo.get("to")   or q.get("to")
+    data = txo.get("data") or q.get("data")
+    value= txo.get("value") or q.get("value") or 0
+    gas  = txo.get("gas")  or q.get("estimatedGas") or q.get("gas") or 0
+    gasp = txo.get("gasPrice") or q.get("gasPrice") or 0
+    allowance = q.get("allowanceTarget")
+    if not allowance:
+        try:
+            allowance = (q.get("issues") or {}).get("allowance", {}).get("spender")
+        except Exception:
+            allowance = None
+    out = {
+        "aggregator": "0x-v2-allowance-holder",
+        "to": to, "data": data, "value": value,
+        "gas": gas, "gasPrice": gasp,
+        "allowanceTarget": allowance,
+        "sellToken": sell_token, "buyToken": buy_token,
+        "sellAmountRaw": int(sell_amount_raw),
+        "sellAmount": (q.get("sellAmount") or str(int(sell_amount_raw))),
+        "buyAmount": q.get("buyAmount"),
+        "issues": q.get("issues"), "route": q.get("route"),
+    }
+    if not out["to"] or not out["data"]:
+        raise RuntimeError("0x v2 quote: missing tx fields")
+    return out
     cid = _ultra__chain_id(chain)
     if not cid: raise ValueError(f"unsupported chain for 0x v2: {chain}")
     slip = int(slippage_bps if slippage_bps is not None else os.getenv("SWAP_SLIPPAGE_BPS","100"))
@@ -2288,6 +2329,114 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
 
 def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, slippage_bps: int | None = None,
                                 gas=None, max_fee_gwei=None, max_priority_gwei=None, nonce=None, **_extra):
+    import os
+    from web3 import Web3
+    def _hx(v, d=0):
+        try:
+            if v is None: return d
+            if isinstance(v, int): return v
+            sv = str(v).strip().lower()
+            return int(sv, 16) if sv.startswith("0x") else int(sv)
+        except Exception:
+            return d
+
+    w3 = self._rb__w3(chain)
+    q  = dict(quote)
+    to = Web3.to_checksum_address(q["to"])
+    data = q["data"]
+    if isinstance(data, str) and data.startswith("0x"):
+        data_bytes = bytes.fromhex(data[2:])
+    elif isinstance(data, (bytes, bytearray)):
+        data_bytes = bytes(data)
+    else:
+        raise ValueError("bad 0x v2 quote: no tx data")
+    value = _hx(q.get("value"), 0)
+
+    tx = {
+        "from": self.acct.address,
+        "to": to,
+        "data": data_bytes,
+        "value": int(value),
+        "chainId": int(w3.eth.chain_id),
+        "type": 2,
+        "nonce": (nonce if nonce is not None else w3.eth.get_transaction_count(self.acct.address, "pending")),
+    }
+
+    # gas: estimate -> quote hint -> fallback
+    g = _hx(gas, 0) if gas is not None else 0
+    if g <= 0:
+        try:
+            g = int(w3.eth.estimate_gas({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}))
+        except Exception:
+            g = _hx(q.get("gas") or q.get("estimatedGas"), 220000)
+    tx["gas"] = max(21000, int(g))
+
+    # EIP-1559 fees
+    fees = self._rb__fee_fields(w3, max_priority_gwei=max_priority_gwei, max_fee_gwei=max_fee_gwei)
+    tx.update(fees)
+
+    dbg = bool(int(os.getenv("DEBUG_SWAP", "0")))
+    if dbg:
+        try:
+            print(f"[v2] preflight tx → to={tx['to']} value={tx['value']} gas≈{tx['gas']}")
+        except Exception:
+            pass
+
+    # preflight; if revert, try bumping slippage with fresh quotes
+    try:
+        w3.eth.call({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}, "latest")
+    except Exception as e:
+        sell_tok = q.get("sellToken") or ""
+        buy_tok  = q.get("buyToken")  or ""
+        sell_amt = q.get("sellAmountRaw")
+        if sell_amt is None:
+            sell_amt = _hx(q.get("sellAmount"), 0)
+        sell_amt = int(sell_amt or 0)
+        bumps = [
+            int(os.getenv("SWAP_BUMP_BPS1", "100")),
+            int(os.getenv("SWAP_BUMP_BPS2", "150")),
+            int(os.getenv("SWAP_BUMP_BPS3", "200")),
+        ]
+        tried = set([int(slippage_bps)] if slippage_bps is not None else [])
+        why = str(e)
+        for b in bumps:
+            if b in tried: continue
+            tried.add(b)
+            if dbg:
+                try:
+                    print(f"[v2] re-quote params: chain={chain} sell={sell_tok} buy={buy_tok} sellAmount={int(sell_amt)} bps={b}")
+                except Exception:
+                    pass
+            newq = _ultra__get_0x_quote_v2_allowance_holder(self, chain, sell_tok, buy_tok, int(sell_amt), slippage_bps=b)
+            to2 = Web3.to_checksum_address(newq["to"])
+            dat = newq["data"]; dat = bytes.fromhex(dat[2:]) if isinstance(dat, str) and dat.startswith("0x") else dat
+            val = _hx(newq.get("value"), 0)
+            try:
+                gg = int(w3.eth.estimate_gas({"from": tx["from"], "to": to2, "data": dat, "value": int(val)}))
+            except Exception:
+                gg = _hx(newq.get("gas") or newq.get("estimatedGas"), tx["gas"])
+            tx.update({"to": to2, "data": dat, "value": int(val), "gas": max(21000, gg)})
+            try:
+                w3.eth.call({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]})
+                q = newq
+                break
+            except Exception as ee:
+                why = str(ee)
+                continue
+        else:
+            raise ValueError(f"preflight: revert — {why}")
+
+    # sign & send
+    self._rb__ensure_live()
+    signed = self.acct.sign_transaction(tx)
+    txh = w3.eth.send_raw_transaction(signed.rawTransaction)
+    if not wait:
+        return w3.to_hex(txh), None
+    rc = w3.eth.wait_for_transaction_receipt(txh)
+    ok = int(rc.get("status", 0)) == 1
+    if not ok:
+        raise RuntimeError("0x v2: on-chain revert")
+    return w3.to_hex(txh), rc
     dbg = bool(int(os.getenv("DEBUG_SWAP","0")))
     from web3 import Web3
     def _hx(v, d=0):
