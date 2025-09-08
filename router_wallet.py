@@ -1872,7 +1872,7 @@ def _ultra__auto_fees(w3, tip_gwei: float | None):
 def _ultra__send_swap_via_0x_v1(self, chain: str, quote: dict, *, wait=True, slippage_bps: int | None = None):
     # normalize quote numerics and build tx
     q = _ultra__norm_quote_numbers(dict(quote))
-    w3 = self._web3(chain)
+    w3 = self._rb__w3(chain)
     to = Web3.to_checksum_address(q["to"])
     data = q["data"]
     if isinstance(data, str) and data.startswith("0x"):
@@ -1977,7 +1977,7 @@ def _ultra__send_swap_via_0x_v1(self, chain: str, quote: dict, *, wait=True, sli
             return d
     q = _ultra__norm_quote_numbers(q)
 
-    w3 = self._web3(chain)
+    w3 = self._rb__w3(chain)
     to = Web3.to_checksum_address(q["to"])
     data = q["data"]
     if isinstance(data, str) and data.startswith("0x"):
@@ -2075,5 +2075,12 @@ def _ultra__send_swap_via_0x_v1(self, chain: str, quote: dict, *, wait=True, sli
 # rebind
 try:
     UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v1
+except NameError:
+    pass
+
+# --- compat aliases for web3 getter ---
+try:
+    UltraSwapBridge._web3 = UltraSwapBridge._rb__w3
+    UltraSwapBridge.w3    = UltraSwapBridge._rb__w3
 except NameError:
     pass
