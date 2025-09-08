@@ -1959,3 +1959,121 @@ try:
     UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v1
 except NameError:
     pass
+
+# === ULTRA_PATCH_0X_V1_COMPAT: accept gas/max_fee/priority/nonce/extra kwargs ===
+from web3 import Web3
+
+def _ultra__send_swap_via_0x_v1(self, chain: str, quote: dict, *, wait=True, slippage_bps=None,
+                                gas=None, max_fee_gwei=None, max_priority_gwei=None, nonce=None, **_extra):
+    # normalize numerics
+    q = dict(quote)
+    try:
+        _ = _ultra__norm_quote_numbers  # ensure exists
+    except NameError:
+        def _ultra__norm_quote_numbers(d): 
+            for k in ("gas","estimatedGas","gasPrice","maxFeePerGas","maxPriorityFeePerGas","value","buyAmount","sellAmount"):
+                if k in d:
+                    d[k] = _rb__hexint(d.get(k), 0)
+            return d
+    q = _ultra__norm_quote_numbers(q)
+
+    w3 = self._web3(chain)
+    to = Web3.to_checksum_address(q["to"])
+    data = q["data"]
+    if isinstance(data, str) and data.startswith("0x"):
+        data_bytes = bytes.fromhex(data[2:])
+    elif isinstance(data, (bytes, bytearray)):
+        data_bytes = bytes(data)
+    else:
+        raise ValueError("bad 0x quote: no tx data")
+    value = _rb__hexint(q.get("value"), 0)
+
+    tx = {
+        "from": self.acct.address,
+        "to": to,
+        "data": data_bytes,
+        "value": int(value),
+        "chainId": int(w3.eth.chain_id),
+        "type": 2,
+        "nonce": (nonce if nonce is not None else w3.eth.get_transaction_count(self.acct.address)),
+    }
+
+    # gas handling: use provided gas if valid, else estimate, else quote hint, else fallback
+    g = _rb__hexint(gas, 0) if gas is not None else 0
+    if g <= 0:
+        try:
+            g = int(w3.eth.estimate_gas({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}))
+        except Exception:
+            g = int(q.get("estimatedGas") or q.get("gas") or 250000)
+    tx["gas"] = max(21000, g)
+
+    # EIP-1559 fees
+    try:
+        base = int(w3.eth.get_block("latest")["baseFeePerGas"])
+    except Exception:
+        base = int(getattr(w3.eth, "gas_price", 0)) or int(w3.to_wei(2, "gwei"))
+    tip = w3.to_wei(float(max_priority_gwei) if max_priority_gwei is not None else float(os.getenv("SWAP_TIP_GWEI","2")), "gwei")
+    if max_fee_gwei is not None:
+        max_fee = w3.to_wei(float(max_fee_gwei), "gwei")
+    else:
+        max_fee = base * 2 + tip  # heuristic
+    tx["maxPriorityFeePerGas"] = int(tip)
+    tx["maxFeePerGas"] = int(max_fee)
+
+    # preflight; if revert, auto-bump slippage by re-quoting and rebuilding tx
+    def _preflight(frm, to, data_bytes, value_wei):
+        try:
+            w3.eth.call({"from": frm, "to": to, "data": data_bytes, "value": int(value_wei)}, "latest")
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    ok, why = _preflight(tx["from"], tx["to"], tx["data"], tx["value"])
+    if not ok:
+        # attempt slippage bumps with v1 re-quotes
+        sell_tok = q.get("sellToken") or q.get("from") or ""
+        buy_tok  = q.get("buyToken")  or q.get("toToken") or ""
+        sell_amt = int(q.get("sellAmount") or 0)
+        if not (sell_tok and buy_tok and sell_amt):
+            raise ValueError(f"preflight: {why}")
+        bumps = [50, 100, 150, 200]  # 0.5% → 2.0%
+        seen = set([int(slippage_bps)] if slippage_bps is not None else [])
+        for b in bumps:
+            if b in seen: 
+                continue
+            seen.add(b)
+            try:
+                newq = _ultra__get_0x_quote_v1(self, chain, sell_tok, buy_tok, sell_amt, slippage_bps=b)
+                newq = _ultra__norm_quote_numbers(newq)
+                to2 = Web3.to_checksum_address(newq["to"])
+                dat = newq["data"]
+                dat = bytes.fromhex(dat[2:]) if isinstance(dat, str) and dat.startswith("0x") else dat
+                val = _rb__hexint(newq.get("value"), 0)
+                try:
+                    gg = int(w3.eth.estimate_gas({"from": tx["from"], "to": to2, "data": dat, "value": int(val)}))
+                except Exception:
+                    gg = int(newq.get("estimatedGas") or newq.get("gas") or tx["gas"])
+                tx.update({"to": to2, "data": dat, "value": int(val), "gas": max(21000, gg)})
+                ok2, why2 = _preflight(tx["from"], tx["to"], tx["data"], tx["value"])
+                if ok2:
+                    q = newq  # for completeness
+                    break
+                why = why2
+            except Exception as e:
+                why = str(e)
+                continue
+        else:
+            raise ValueError(f"preflight: revert — {why}")
+
+    signed = w3.eth.account.sign_transaction(tx, self.pk)
+    txh = w3.eth.send_raw_transaction(signed.rawTransaction).hex()
+    if wait:
+        rec = w3.eth.wait_for_transaction_receipt(txh, timeout=180)
+        return txh, rec
+    return txh, None
+
+# rebind
+try:
+    UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v1
+except NameError:
+    pass
