@@ -7,6 +7,24 @@ from services.cli_utils import is_native, normalize_for_0x, to_base_units, explo
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 
 class SwapService:
+    def _swap_via_uniswap(self, ch: str, sell: str, buy: str, sell_raw: int, slippage_bps: int) -> bool:
+        # UniswapV3: ERC-20 addresses only
+        if is_native(sell) or is_native(buy):
+            print('[UniswapV3] native not supported directly; use WETH address on this chain')
+            return False
+        uq = self.uni.quote_and_build(ch, sell, buy, int(sell_raw), slippage_bps=slippage_bps)
+        if '__error__' in uq:
+            print('[UniswapV3]', uq['__error__'])
+            return False
+        spender = uq.get('allowanceTarget')
+        if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
+            print('❌ approval failed')
+            return False
+        tx = uq.get('tx') or {}
+        print(f"[UniswapV3] to={tx.get('to')} value={tx.get('value',0)} gas≈{tx.get('gas',0)}")
+        h, ok = self._send(ch, to=tx['to'], data=tx['data'], value=int(tx.get('value') or 0), gas_hint=int(tx.get('gas') or 0))
+        return bool(ok)
+
     def __init__(self, bridge: UltraSwapBridge):
         self.bridge = bridge
         self.zx     = ZeroXV2AllowanceHolder()                 # HTTP (needs ZEROX_API_KEY)
@@ -81,6 +99,13 @@ class SwapService:
             print("❌ sellAmount must be > 0"); return
 
         cid = int(w3.eth.chain_id); taker = self.bridge.acct.address
+        # Uniswap-only short-circuit (env flag)
+        import os
+        _ro = os.getenv('ROUTE_ONLY','').strip().lower()
+        if _ro in ('uniswap','uni','univ3'):
+            print('[router] ROUTE_ONLY=uniswap — trying UniswapV3 only')
+            ok = self._swap_via_uniswap(ch, sell, buy, sell_raw, slippage_bps)
+            return
         print(f"[info] chainId={cid} taker={taker}")
 
         # --- 1) 0x v2 Allowance-Holder (HTTP)
