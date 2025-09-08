@@ -414,3 +414,128 @@ _ABI_UNI_QUOTER_V1 = [
    "outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
    "stateMutability":"nonpayable","type":"function"}
 ]
+
+def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int=100) -> dict:
+    """Robust UniV3 quote: Factory check → QuoterV2 with V1 fallback; 1-hop + 2-hop via WETH; build Router02 tx."""
+    import time, os
+    from web3 import Web3
+    def _dbg(msg: str):
+        if os.getenv("DEBUG_SWAP","0") in ("1","true","TRUE"):
+            print(msg)
+
+    ch = chain.lower().strip()
+    w3 = self._w3(chain)
+    conf = self._cfg_norm(chain) if hasattr(self, "_cfg_norm") else {}
+    router_addr = Web3.to_checksum_address(conf.get("SWAP_ROUTER") or conf.get("ROUTER"))
+    quoter_v2_addr = Web3.to_checksum_address(conf.get("QUOTER_V2"))
+    factory_addr   = Web3.to_checksum_address( (UNI_V3_FACTORY.get(ch) or UNI_V3_FACTORY.get("ethereum")) )
+    weth_addr      = Web3.to_checksum_address(conf.get("WETH"))
+    if not router_addr or not quoter_v2_addr or not weth_addr:
+        return {"__error__": "UniswapV3: missing config (router/quoter/weth)"}
+
+    t_in  = Web3.to_checksum_address(token_in if token_in.lower() not in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") else weth_addr)
+    t_out = Web3.to_checksum_address(token_out if token_out.lower() not in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") else weth_addr)
+    if t_in == t_out:
+        return {"__error__": "UniswapV3: token_in == token_out"}
+
+    factory = w3.eth.contract(factory_addr, abi=_ABI_UNI_FACTORY)
+    quoter  = w3.eth.contract(quoter_v2_addr, abi=_ABI_UNI_QUOTER_V2)
+    quoter_v1 = None
+    if ch in UNI_V3_QUOTER_V1:
+        try:
+            quoter_v1 = w3.eth.contract(Web3.to_checksum_address(UNI_V3_QUOTER_V1[ch]), abi=_ABI_UNI_QUOTER_V1)
+        except Exception:
+            quoter_v1 = None
+
+    fees = [500, 3000, 10000]
+    best = None  # (out, kind, meta)
+    # 1) Direct 1-hop
+    for f in fees:
+        try:
+            pool = factory.functions.getPool(t_in, t_out, int(f)).call()
+            if str(pool).lower() == "0x0000000000000000000000000000000000000000":
+                _dbg(f"[UniV3] no pool 1-hop fee={f}")
+                continue
+            _dbg(f"[UniV3] pool 1-hop fee={f}: {pool}")
+            try:
+                out, *_ = quoter.functions.quoteExactInputSingle(t_in, t_out, int(f), int(amount_in), 0).call()
+            except Exception as e2:
+                _dbg(f"[UniV3] v2 quoteExactInputSingle failed fee={f}: {e2!r}")
+                if quoter_v1 is not None:
+                    out = quoter_v1.functions.quoteExactInputSingle(t_in, t_out, int(f), int(amount_in), 0).call()
+                else:
+                    continue
+            out = int(out)
+            if out > 0 and (best is None or out > best[0]):
+                best = (out, "1hop", {"fee": int(f)})
+                _dbg(f"[UniV3] 1-hop candidate fee={f} out={out}")
+        except Exception as e:
+            _dbg(f"[UniV3] 1-hop probe fee={f} error: {e!r}")
+
+    # 2) 2-hop via WETH
+    if t_in != weth_addr and t_out != weth_addr:
+        for f1 in fees:
+            for f2 in fees:
+                try:
+                    p1 = factory.functions.getPool(t_in, weth_addr, int(f1)).call()
+                    p2 = factory.functions.getPool(weth_addr, t_out, int(f2)).call()
+                    if str(p1).lower() == "0x0000000000000000000000000000000000000000" or str(p2).lower() == "0x0000000000000000000000000000000000000000":
+                        _dbg(f"[UniV3] no pool 2-hop fees=({f1},{f2})")
+                        continue
+                    _dbg(f"[UniV3] pools 2-hop fees=({f1},{f2}): {p1} , {p2}")
+                    path = _encode_path([t_in, weth_addr, t_out], [int(f1), int(f2)])
+                    try:
+                        out2, *_ = quoter.functions.quoteExactInput(path, int(amount_in)).call()
+                    except Exception as e2b:
+                        _dbg(f"[UniV3] v2 quoteExactInput failed fees=({f1},{f2}): {e2b!r}")
+                        if quoter_v1 is not None:
+                            out2 = quoter_v1.functions.quoteExactInput(path, int(amount_in)).call()
+                        else:
+                            continue
+                    out2 = int(out2)
+                    if out2 > 0 and (best is None or out2 > best[0]):
+                        best = (out2, "2hop", {"fees": (int(f1), int(f2)), "path": path})
+                        _dbg(f"[UniV3] 2-hop candidate fees=({f1},{f2}) out={out2}")
+                except Exception as e:
+                    _dbg(f"[UniV3] 2-hop probe fees=({f1},{f2}) error: {e!r}")
+
+    if best is None:
+        return {"__error__": "UniswapV3: no viable pool (direct or via WETH)"}
+
+    recipient = w3.eth.default_account
+    if not recipient:
+        return {"__error__": "UniswapV3: missing default_account for tx build"}
+
+    amount_out = best[0]
+    out_min = int(amount_out * (10_000 - int(slippage_bps)) // 10_000)
+    deadline = int(time.time()) + 600
+    router = w3.eth.contract(router_addr, abi=_ABI_UNI_ROUTER02)
+
+    if best[1] == "1hop":
+        fee = int(best[2]["fee"])
+        fn = router.functions.exactInputSingle((
+            t_in, t_out, fee, recipient, deadline, int(amount_in), int(out_min), 0
+        ))
+    else:
+        path = best[2]["path"]
+        fn = router.functions.exactInput((
+            path, recipient, deadline, int(amount_in), int(out_min)
+        ))
+
+    data = fn._encode_transaction_data()
+    gas_est = 0
+    try:
+        gas_est = int(w3.eth.estimate_gas({"from": recipient, "to": router_addr, "data": data, "value": 0}) * 1.2)
+    except Exception:
+        gas_est = 350000
+
+    return {
+        "aggregator": "UniswapV3",
+        "allowanceTarget": router_addr,
+        "tx": {"to": router_addr, "data": data, "value": 0, "gas": gas_est},
+        "buyAmount": str(int(amount_out)),
+        "meta": best[1:]
+    }
+
+# Bind override
+UniswapV3Local.quote_and_build = uniswap_v3_quote_and_build_v2
