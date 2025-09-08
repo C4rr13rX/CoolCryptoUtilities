@@ -306,7 +306,7 @@ def _price_usd_0x_single(chain: str, token: str, decimals: int) -> Decimal:
     2) if 0/failed: buyAmount = 1e6 USDC → invert tokens_for_1_usdc.
     Returns Decimal USD per 1 token, or 0 if unavailable.
     """
-    base = "https://api.0x.org/swap/permit2/price"
+    base = "https://api.0x.org/swap/v1/price"
     headers = {"accept": "application/json"}
     if ZEROX_API_KEY:
         headers["0x-api-key"] = ZEROX_API_KEY
@@ -1796,3 +1796,166 @@ def _rb__wrapped_send_swap_via_0x(self, chain: str, quote: dict, *a, **kw):
 # bind wrapper
 UltraSwapBridge.send_swap_via_0x = _rb__wrapped_send_swap_via_0x
 # === END: 0x preflight wrapper ===
+
+# === ULTRA_PATCH_0X_V1: 0x v1 quote + sender with preflight & auto-slippage ===
+import os, json
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from web3 import Web3
+
+def _ultra__0x_headers():
+    h = {
+        "Accept": "application/json",
+        "User-Agent": "CoolCryptoUtilities/1.0"
+    }
+    api_key = os.getenv("ZEROX_API_KEY") or os.getenv("OX_API_KEY") or os.getenv("API_0X")
+    if api_key:
+        h["0x-api-key"] = api_key
+    # no 0x-version header for v1
+    return h
+
+def _ultra__http_get_json(url: str, params: dict, timeout=25):
+    full = url + "?" + urlencode(params)
+    try:
+        with urlopen(Request(full, headers=_ultra__0x_headers()), timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except HTTPError as e:
+        body = e.read().decode("utf-8", "ignore")
+        raise RuntimeError(f"0x {e.code} {e.reason}: {body}")
+
+def _ultra__chain_id(chain: str) -> int:
+    m = {"ethereum":1, "base":8453, "arbitrum":42161, "optimism":10, "polygon":137}
+    return m.get(chain)
+
+def _ultra__norm_quote_numbers(q: dict) -> dict:
+    if not isinstance(q, dict): return q
+    for k in ("gas","estimatedGas","gasPrice","maxFeePerGas","maxPriorityFeePerGas","value","buyAmount","sellAmount"):
+        if k in q: q[k] = _rb__hexint(q.get(k), 0)
+    return q
+
+def _ultra__get_0x_quote_v1(self, chain: str, sell_token: str, buy_token: str, sell_amount_raw: int, slippage_bps: int | None = None):
+    cid = _ultra__chain_id(chain)
+    if not cid: raise ValueError(f"unsupported chain for 0x: {chain}")
+    slip = slippage_bps if slippage_bps is not None else int(os.getenv("SWAP_SLIPPAGE_BPS","50"))  # 50 bps = 0.5%
+    slip_pct = max(0, slip) / 10000.0
+    params = {
+        "chainId": cid,
+        "sellToken": sell_token,
+        "buyToken": buy_token,
+        "sellAmount": int(sell_amount_raw),
+        "takerAddress": self.acct.address,  # important for validation path
+        "slippagePercentage": slip_pct,
+        # keep validation enabled
+    }
+    q = _ultra__http_get_json("https://api.0x.org/swap/v1/quote", params)
+    return _ultra__norm_quote_numbers(q)
+
+def _ultra__preflight_ok(w3, frm, to, data_bytes, value_wei) -> tuple[bool,str]:
+    try:
+        w3.eth.call({"from": frm, "to": to, "data": data_bytes, "value": int(value_wei)}, "latest")
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+def _ultra__auto_fees(w3, tip_gwei: float | None):
+    # EIP-1559 fees
+    try:
+        base = int(w3.eth.get_block("latest")["baseFeePerGas"])
+    except Exception:
+        base = int(getattr(w3.eth, "gas_price", 0)) or int(w3.to_wei(2, "gwei"))
+    tip = w3.to_wei(float(tip_gwei if tip_gwei is not None else float(os.getenv("SWAP_TIP_GWEI","2"))), "gwei")
+    # heuristic: maxFee = base*2 + tip
+    max_fee = base * 2 + tip
+    return max_fee, tip
+
+def _ultra__send_swap_via_0x_v1(self, chain: str, quote: dict, *, wait=True, slippage_bps: int | None = None):
+    # normalize quote numerics and build tx
+    q = _ultra__norm_quote_numbers(dict(quote))
+    w3 = self._web3(chain)
+    to = Web3.to_checksum_address(q["to"])
+    data = q["data"]
+    if isinstance(data, str) and data.startswith("0x"):
+        data_bytes = bytes.fromhex(data[2:])
+    elif isinstance(data, (bytes,bytearray)):
+        data_bytes = bytes(data)
+    else:
+        raise ValueError("bad 0x quote: no tx data")
+    value = _rb__hexint(q.get("value"), 0)
+
+    # base tx
+    tx = {
+        "from": self.acct.address,
+        "to": to,
+        "data": data_bytes,
+        "value": int(value),
+        "nonce": w3.eth.get_transaction_count(self.acct.address),
+        "chainId": int(w3.eth.chain_id),
+        "type": 2,
+    }
+
+    # gas (estimate first; fallback to quote hint; then hard fallback)
+    try:
+        gas_est = int(w3.eth.estimate_gas({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}))
+    except Exception:
+        gas_est = int(q.get("estimatedGas") or q.get("gas") or 250000)
+    tx["gas"] = max(21000, gas_est)
+
+    # fees
+    max_fee, tip = _ultra__auto_fees(w3, None)
+    tx["maxFeePerGas"] = int(max_fee)
+    tx["maxPriorityFeePerGas"] = int(tip)
+
+    # preflight
+    ok, why = _ultra__preflight_ok(w3, tx["from"], tx["to"], tx["data"], tx["value"])
+    if not ok:
+        # try auto-slippage bumps by re-quoting at higher slippage and retry
+        # derive sell/buy/amount from quote we got
+        sell_tok = q.get("sellToken") or q.get("from") or ""
+        buy_tok  = q.get("buyToken")  or q.get("toToken") or ""
+        sell_amt = int(q.get("sellAmount") or 0)
+        if not sell_tok or not buy_tok or not sell_amt:
+            raise ValueError(f"preflight: {why}")
+        bumps = [50, 100, 150, 200]  # bps
+        already = set([int(slippage_bps)] if slippage_bps is not None else [])
+        for b in bumps:
+            if b in already: 
+                continue
+            try:
+                newq = _ultra__get_0x_quote_v1(self, chain, sell_tok, buy_tok, sell_amt, slippage_bps=b)
+                # rebuild tx pieces
+                to2 = Web3.to_checksum_address(newq["to"])
+                data2 = newq["data"]
+                data2 = bytes.fromhex(data2[2:]) if isinstance(data2, str) and data2.startswith("0x") else data2
+                val2 = _rb__hexint(newq.get("value"), 0)
+                # re-estimate & fees
+                try:
+                    gas2 = int(w3.eth.estimate_gas({"from": tx["from"], "to": to2, "data": data2, "value": int(val2)}))
+                except Exception:
+                    gas2 = int(newq.get("estimatedGas") or newq.get("gas") or tx["gas"])
+                tx.update({"to": to2, "data": data2, "value": int(val2), "gas": max(21000, gas2)})
+                ok2, why2 = _ultra__preflight_ok(w3, tx["from"], tx["to"], tx["data"], tx["value"])
+                if ok2:
+                    q = newq  # adopt for logs
+                    break
+                why = why2
+            except Exception as e:
+                why = str(e)
+                continue
+        else:
+            raise ValueError(f"preflight: {why}")
+
+    # sign + send
+    signed = w3.eth.account.sign_transaction(tx, self.pk)
+    txh = w3.eth.send_raw_transaction(signed.rawTransaction).hex()
+    if wait:
+        rec = w3.eth.wait_for_transaction_receipt(txh, timeout=180)
+        return txh, rec
+    return txh, None
+
+# bind overrides
+try:
+    UltraSwapBridge.get_0x_quote = _ultra__get_0x_quote_v1
+    UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v1
+except NameError:
+    pass
