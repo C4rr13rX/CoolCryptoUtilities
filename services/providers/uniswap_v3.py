@@ -291,3 +291,146 @@ def quote_and_build(self, chain: str, token_in: str, token_out: str, amount_in: 
         "buyAmount": str(out_amt),
         "route": {"kind": kind, "fees": fees}
     }
+
+
+# === Minimal ABIs (QuoterV2 + SwapRouter02) ===
+# QuoterV2: quoteExactInput(bytes path, uint256 amountIn) -> (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate)
+_ABI_UNI_QUOTER_V2__PATH = [
+  {"inputs":[
+      {"internalType":"bytes","name":"path","type":"bytes"},
+      {"internalType":"uint256","name":"amountIn","type":"uint256"}
+   ],
+   "name":"quoteExactInput",
+   "outputs":[
+      {"internalType":"uint256","name":"amountOut","type":"uint256"},
+      {"internalType":"uint160[]","name":"sqrtPriceX96AfterList","type":"uint160[]"},
+      {"internalType":"uint32[]","name":"initializedTicksCrossedList","type":"uint32[]"},
+      {"internalType":"uint256","name":"gasEstimate","type":"uint256"}
+   ],
+   "stateMutability":"nonpayable","type":"function"}
+]
+
+# SwapRouter02: exactInputSingle(...) and exactInput(...)
+_ABI_UNI_ROUTER02_MIN = [
+  {"inputs":[{"components":[
+      {"internalType":"address","name":"tokenIn","type":"address"},
+      {"internalType":"address","name":"tokenOut","type":"address"},
+      {"internalType":"uint24","name":"fee","type":"uint24"},
+      {"internalType":"address","name":"recipient","type":"address"},
+      {"internalType":"uint256","name":"deadline","type":"uint256"},
+      {"internalType":"uint256","name":"amountIn","type":"uint256"},
+      {"internalType":"uint256","name":"amountOutMinimum","type":"uint256"},
+      {"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}
+    ],"internalType":"struct ISwapRouter.ExactInputSingleParams","name":"params","type":"tuple"}],
+   "name":"exactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+   "stateMutability":"payable","type":"function"},
+  {"inputs":[{"components":[
+      {"internalType":"bytes","name":"path","type":"bytes"},
+      {"internalType":"address","name":"recipient","type":"address"},
+      {"internalType":"uint256","name":"deadline","type":"uint256"},
+      {"internalType":"uint256","name":"amountIn","type":"uint256"},
+      {"internalType":"uint256","name":"amountOutMinimum","type":"uint256"}
+    ],"internalType":"struct ISwapRouter.ExactInputParams","name":"params","type":"tuple"}],
+   "name":"exactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+   "stateMutability":"payable","type":"function"}
+]
+
+def _uni_encode_path(tokens: list[str], fees: list[int]) -> bytes:
+    """Encode V3 path: token(20) + fee(3) + token(20) [+ fee + token]..."""
+    from web3 import Web3
+    assert len(tokens) == len(fees) + 1
+    out = b""
+    for i, t in enumerate(tokens):
+        out += Web3.to_bytes(hexstr=Web3.to_checksum_address(t))[-20:]
+        if i < len(fees):
+            out += int(fees[i]).to_bytes(3, byteorder="big")
+    return out
+
+
+def uniswap_v3_quote_and_build(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int=100) -> dict:
+    """
+    Robust Uniswap V3 quoting via QuoterV2.quoteExactInput(path, amountIn).
+    Probes fee tiers 500/3000/10000 for direct hop; falls back to two-hop via WETH.
+    Builds SwapRouter02 tx for exactInputSingle (1 hop) or exactInput (multi-hop).
+    Returns: {"aggregator":"UniswapV3","allowanceTarget":router,"tx":{...},"buyAmount":str(amountOut)}
+    """
+    import time
+    from web3 import Web3
+    w3 = self._w3(chain)
+    # tolerate both _cfg_norm and _cfg
+    conf = None
+    try:
+        conf = self._cfg_norm(chain)
+    except Exception:
+        conf = self._cfg(chain)
+    router_addr = Web3.to_checksum_address(conf.get("SWAP_ROUTER") or conf.get("ROUTER") or conf.get("router"))
+    quoter_addr = Web3.to_checksum_address(conf.get("QUOTER_V2") or conf.get("quoter2") or conf.get("QUOTER2"))
+    weth        = Web3.to_checksum_address(conf.get("WETH"))
+    # normalize any native sentinel to WETH defensively
+    ti, to = token_in, token_out
+    if str(ti).lower() in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"): ti = weth
+    if str(to).lower() in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"): to = weth
+    try:
+        ti = Web3.to_checksum_address(ti)
+        to = Web3.to_checksum_address(to)
+    except Exception:
+        return {"__error__":"UniswapV3: invalid token address"}
+
+    quoter = w3.eth.contract(quoter_addr, abi=_ABI_UNI_QUOTER_V2__PATH)
+    router = w3.eth.contract(router_addr, abi=_ABI_UNI_ROUTER02_MIN)
+
+    fee_tiers = (500, 3000, 10000)
+    best = None  # (amountOut, tokens, fees)
+
+    # single-hop probe
+    for f in fee_tiers:
+        try:
+            path = _uni_encode_path([ti, to], [f])
+            out, *_ = quoter.functions.quoteExactInput(path, int(amount_in)).call()
+            if int(out) > 0 and (best is None or int(out) > best[0]):
+                best = (int(out), [ti, to], [f])
+        except Exception:
+            pass
+
+    # two-hop via WETH
+    if best is None and (ti != weth and to != weth):
+        for f1 in fee_tiers:
+            for f2 in fee_tiers:
+                try:
+                    path = _uni_encode_path([ti, weth, to], [f1, f2])
+                    out, *_ = quoter.functions.quoteExactInput(path, int(amount_in)).call()
+                    if int(out) > 0 and (best is None or int(out) > best[0]):
+                        best = (int(out), [ti, weth, to], [f1, f2])
+                except Exception:
+                    pass
+
+    if best is None:
+        return {"__error__":"UniswapV3: no viable pool (direct or via WETH)"}
+
+    best_out, tokens, fees = best
+    out_min = int(best_out * (10_000 - int(slippage_bps)) // 10_000)
+    deadline = int(time.time()) + 900
+    recipient = w3.eth.default_account or Web3.to_checksum_address("0x0000000000000000000000000000000000000001")
+
+    # build tx data
+    if len(tokens) == 2:
+        # exactInputSingle
+        params = (tokens[0], tokens[1], fees[0], recipient, deadline, int(amount_in), int(out_min), 0)
+        data = router.functions.exactInputSingle(params).build_transaction({"from": recipient, "value": 0})["data"]
+    else:
+        # exactInput with encoded path bytes (reverse order UNNECESSARY — already in the right direction)
+        path_bytes = _uni_encode_path(tokens, fees)
+        params = (path_bytes, recipient, deadline, int(amount_in), int(out_min))
+        data = router.functions.exactInput(params).build_transaction({"from": recipient, "value": 0})["data"]
+
+    # gas hint
+    tx = {"to": router_addr, "data": data, "value": 0}
+    try:
+        g = int(w3.eth.estimate_gas({"from": recipient, **tx}) * 1.25)
+    except Exception:
+        g = 300000
+    tx["gas"] = g
+
+    return {"aggregator":"UniswapV3", "allowanceTarget": router_addr, "tx": tx, "buyAmount": str(best_out)}
+
+UniswapV3Local.quote_and_build = uniswap_v3_quote_and_build
