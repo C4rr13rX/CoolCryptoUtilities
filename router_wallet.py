@@ -2246,24 +2246,27 @@ def _ultra__http_get_json_v2(path: str, params: dict, timeout=25):
     return r.json()
 
 def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, buy_token: str, sell_amount_raw: int, slippage_bps: int | None = None):
-    import os
-    dbg = bool(int(os.getenv('DEBUG_SWAP','0')))
     """
     0x Swap API v2 (Allowance-Holder) quote.
-    - Uses single host https://api.0x.org, endpoint /swap/allowance-holder/quote
-    - Required params: chainId, sellToken, buyToken, sellAmount (string int), taker, slippageBps
-    - Returns normalized dict with transaction fields + sellAmountRaw for re-quotes.
+    - Host: https://api.0x.org
+    - Endpoint: /swap/allowance-holder/quote
+    - Required: chainId, sellToken, buyToken, sellAmount (string int), taker, slippageBps
+    Returns a normalized dict including sellAmountRaw for re-quotes.
     """
     import os
-    cid = _ultra__chain_id(chain)
-    # coerce sell_amount_raw into a strict positive int (base units)
+
+    # Debug flag
+    dbg = bool(int(os.getenv("DEBUG_SWAP", "0")))
+
+    # Coerce sellAmountRaw -> strict positive int (base units)
     try:
         sar = int(sell_amount_raw)
     except Exception:
-        # last resort if a string sneaks in like "1e18"
         sar = int(float(str(sell_amount_raw)))
     if sar <= 0:
         raise ValueError("sellAmountRaw must be a positive integer (base units)")
+
+    cid = _ultra__chain_id(chain)
     if not cid:
         raise ValueError(f"unsupported chain for 0x v2: {chain}")
     slip = int(slippage_bps if slippage_bps is not None else os.getenv("SWAP_SLIPPAGE_BPS", "100"))
@@ -2271,19 +2274,19 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
         "chainId": cid,
         "sellToken": sell_token,
         "buyToken": buy_token,
-        # v2 requires integer base units (string)
-        "sellAmount": str(int(sar)),
+        "sellAmount": str(int(sar)),  # v2 requires stringified int
         "taker": self.acct.address,
         "slippageBps": max(0, slip),
     }
-        if dbg:
+    if dbg:
         try:
             safe = dict(params); safe.pop("taker", None)
             print(f"[v2] GET /swap/allowance-holder/quote params={safe}")
-        except Exception: pass
+        except Exception:
+            pass
+
     q = _ultra__http_get_json_v2("/swap/allowance-holder/quote", params)
 
-    # Prefer 'transaction' bundle when present
     txo  = q.get("transaction") or {}
     to   = txo.get("to")   or q.get("to")
     data = txo.get("data") or q.get("data")
@@ -2291,7 +2294,6 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
     gas  = txo.get("gas")  or q.get("estimatedGas") or q.get("gas") or 0
     gasp = txo.get("gasPrice") or q.get("gasPrice") or 0
 
-    # Allowance target (top-level or issues.allowance.spender)
     allowance = q.get("allowanceTarget")
     if not allowance:
         try:
@@ -2305,20 +2307,21 @@ def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, 
         "gas": gas, "gasPrice": gasp,
         "allowanceTarget": allowance,
         "sellToken": sell_token, "buyToken": buy_token,
-        "sellAmountRaw": int(sell_amount_raw),
-        "sellAmount": (q.get("sellAmount") or str(int(sell_amount_raw))),
+        "sellAmountRaw": int(sar),
+        "sellAmount": (q.get("sellAmount") or str(int(sar))),
         "buyAmount": q.get("buyAmount"),
         "issues": q.get("issues"), "route": q.get("route"),
     }
     if not out["to"] or not out["data"]:
         raise RuntimeError("0x v2 quote: missing tx fields")
     return out
+
 def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, slippage_bps: int | None = None,
                                 gas=None, max_fee_gwei=None, max_priority_gwei=None, nonce=None, **_extra):
     """
     Send a v2 Allowance-Holder transaction.
-    - Uses EIP-1559 fee fields from _rb__fee_fields
-    - Preflights with eth_call; on revert, bumps slippage and re-quotes using sellAmountRaw.
+    - EIP-1559 fees via _rb__fee_fields
+    - Preflight with eth_call; on revert, bump slippage and re-quote using sellAmountRaw.
     """
     import os
     from web3 import Web3
@@ -2398,7 +2401,7 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
         tried = set([int(slippage_bps)] if slippage_bps is not None else [])
         why = str(e)
         for b in bumps:
-            if b in tried: 
+            if b in tried:
                 continue
             tried.add(b)
             if dbg:
@@ -2436,38 +2439,6 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
     if not ok:
         raise RuntimeError("0x v2: on-chain revert")
     return w3.to_hex(txh), rc
-def _ultra__load_0x_api_key():
-    import os
-    # 1) env (preferred)
-    for k in ("ZEROX_API_KEY","OX_API_KEY","API_0X","API0X","API_OX"):
-        v = os.getenv(k)
-        if v and v.strip():
-            return v.strip()
-    # 2) local files (git-ignored), first hit wins
-    cand = [
-        os.path.expanduser("~/.config/coolcrypto/0x_api_key"),
-        os.path.expanduser("~/.coolcrypto/0x_api_key"),
-        os.path.join(os.getcwd(), ".secrets/0x_api_key"),
-        os.path.join(os.getcwd(), ".env.local"),
-        os.path.join(os.getcwd(), ".env"),
-    ]
-    for fp in cand:
-        try:
-            with open(fp, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#"): 
-                        continue
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        if k.strip() in ("ZEROX_API_KEY","OX_API_KEY","API_0X","API0X","API_OX"):
-                            return v.strip()
-                    else:
-                        # raw key file
-                        if len(line) > 20:
-                            return line
-        except Exception:
-            pass
-    return None
+
 UltraSwapBridge.get_0x_quote = _ultra__get_0x_quote_v2_allowance_holder
 UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v2
