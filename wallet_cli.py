@@ -882,7 +882,7 @@ def _swap_flow():
                 if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
                     print("Cancelled.")
                     break
-                _, ok = _execute(q)
+                _, ok = _send_swap_from_quote(bridge, ch, sell_id, q)
                 executed_ok += 1 if ok else 0
             elif success_route in ("two","two_eth_only"):
                 # step1
@@ -1091,3 +1091,122 @@ def _ab_update(chain: str, addr: str, **fields) -> None:
     row.update(fields)
     d[chain][addr.lower()] = row
     _ab_save(d)
+
+# === swap_send_hardener ===
+def _coerce_int(x, default=0):
+    """
+    Accepts int/None/decimal str/0x-hex str and returns int.
+    """
+    try:
+        if x is None: return default
+        if isinstance(x, int): return x
+        sx = str(x).strip().lower()
+        if sx.startswith("0x"): return int(sx, 16)
+        return int(sx)
+    except Exception:
+        try:
+            return int(float(str(x)))
+        except Exception:
+            return default
+
+def _auto_eip1559_fees(w3, tip_gwei_env=None):
+    """
+    Returns (maxFeePerGas, maxPriorityFeePerGas) in wei.
+    """
+    try:
+        fh = w3.eth.fee_history(1, "latest")
+        base = int(fh["baseFeePerGas"][-1])
+    except Exception:
+        base = int(w3.eth.gas_price)
+    try:
+        tip_gwei = float(tip_gwei_env) if tip_gwei_env not in (None, "") else 2.0
+    except Exception:
+        tip_gwei = 2.0
+    tip = int(tip_gwei * 1e9)
+    max_fee = int(base * 1.2) + tip
+    return max_fee, tip
+
+def _build_swap_tx_from_quote(bridge, w3, chain, q):
+    """
+    Normalize a heterogeneous aggregator quote into a signable tx dict.
+    Supports fields: to/spender, data/calldata/tx.data, value/gas/gasLimit,
+    and EIP-1559 fees or legacy.
+    """
+    tx = {}
+    tx["from"] = bridge.acct.address
+    # 'to' can be 'to', 'spender', or nested in 'tx'
+    to = (q.get("to") or q.get("spender") or (q.get("tx") or {}).get("to"))
+    if not to:
+        raise ValueError("quote missing 'to'/'spender'")
+    tx["to"] = Web3.to_checksum_address(to)
+
+    # 'data' may be 'data', 'calldata', or 'tx.data'
+    data = (q.get("data") or q.get("calldata") or (q.get("tx") or {}).get("data") or "")
+    tx["data"] = data
+
+    # 'value' could be absent or '0x0'
+    val = (q.get("value") or (q.get("tx") or {}).get("value") or 0)
+    tx["value"] = _coerce_int(val, 0)
+
+    tx["chainId"] = int(w3.eth.chain_id)
+    tx["nonce"] = int(w3.eth.get_transaction_count(bridge.acct.address))
+
+    # gas/gasLimit — if missing/0x0, estimate and add margin
+    g = (q.get("gas") or q.get("gasLimit") or (q.get("tx") or {}).get("gas") or 0)
+    g = _coerce_int(g, 0)
+    if g <= 21000:
+        try:
+            est = int(w3.eth.estimate_gas({k: v for k, v in tx.items() if k in ("from","to","data","value")}))*12//10
+            g = max(est, 21000)
+        except Exception:
+            g = 250000
+    tx["gas"] = g
+
+    # EIP-1559: prefer existing fees if valid, else auto
+    want_eip1559 = True
+    mf = _coerce_int(q.get("maxFeePerGas") or (q.get("tx") or {}).get("maxFeePerGas") or 0, 0)
+    mp = _coerce_int(q.get("maxPriorityFeePerGas") or (q.get("tx") or {}).get("maxPriorityFeePerGas") or 0, 0)
+    if mf <= 0 or mp <= 0:
+        mf, mp = _auto_eip1559_fees(w3, os.environ.get("SWAP_TIP_GWEI"))
+    tx["maxFeePerGas"] = mf
+    tx["maxPriorityFeePerGas"] = mp
+
+    return tx
+
+def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
+    """
+    Ensures allowance for ERC-20 sells, normalizes quote->tx, signs and broadcasts.
+    Returns (tx_hash_hex, ok_bool).
+    """
+    url = bridge._alchemy_url(chain)
+    if not url:
+        raise RuntimeError(f"No RPC URL for chain={chain}")
+    w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 25}))
+
+    # Allowance for ERC-20 sells
+    if sell_id and str(sell_id).lower() not in ("eth","native"):
+        spender = (q.get("allowanceTarget") or q.get("spender") or (q.get("tx") or {}).get("to"))
+        if not spender:
+            raise ValueError("quote missing allowanceTarget/spender for ERC-20 sell")
+        try:
+            have = bridge.erc20_allowance(chain, sell_id, bridge.acct.address, spender)
+        except Exception:
+            have = 0
+        need = _coerce_int(q.get("sellAmount") or q.get("fromTokenAmount") or q.get("amount") or 0, 0)
+        if need and have < need:
+            txh = bridge.erc20_approve(chain, sell_id, spender, int(need))
+            print(f"[approve] {txh}")
+
+    tx = _build_swap_tx_from_quote(bridge, w3, chain, q)
+    stx = bridge.acct.sign_transaction(tx)
+    raw = getattr(stx, "rawTransaction", None) or getattr(stx, "raw_transaction", None)
+    if raw is None:
+        raise AttributeError("SignedTransaction missing rawTransaction/raw_transaction")
+    txh = w3.eth.send_raw_transaction(raw).hex()
+    print(f"[swap] tx: {txh}")
+    if wait:
+        rc = w3.eth.wait_for_transaction_receipt(txh)
+        status = (rc.get("status", 0) == 1)
+        print(f"[receipt] status={'success' if status else 'failed'} gasUsed={rc.get('gasUsed')}")
+        return txh, bool(status)
+    return txh, True
