@@ -1381,3 +1381,251 @@ def get_openocean_swap_tx(self, chain: str, sell_token: str, buy_token: str, sel
 # bind
 UltraSwapBridge.get_openocean_swap_tx = get_openocean_swap_tx
 # ======== End OpenOcean v4 helpers ========
+
+
+# ----------------------- Local Uniswap v3 (Arbitrum) -----------------------
+# Minimal, module-level monkey-patch so we don't disturb class layout.
+
+try:
+    from web3 import Web3
+except Exception:
+    Web3 = None  # will raise at runtime if missing
+
+# Canonical addresses (Arbitrum One)
+_V3_ADDR = {
+    "arbitrum": {
+        # Uniswap V3 SwapRouter02
+        "router": "0x68b3465833FB72A70eCDf485E0e4C7bD8665Fc45",
+        # QuoterV2
+        "quoter": "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
+        # WETH
+        "weth":   "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+    }
+}
+
+# Minimal ABIs
+_V3_QUOTER_ABI = [
+    {
+        "inputs":[
+            {"internalType":"address","name":"tokenIn","type":"address"},
+            {"internalType":"address","name":"tokenOut","type":"address"},
+            {"internalType":"uint24","name":"fee","type":"uint24"},
+            {"internalType":"uint256","name":"amountIn","type":"uint256"},
+            {"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}
+        ],
+        "name":"quoteExactInputSingle",
+        "outputs":[
+            {"internalType":"uint256","name":"amountOut","type":"uint256"},
+            {"internalType":"uint160","name":"","type":"uint160"},
+            {"internalType":"uint32","name":"","type":"uint32"},
+            {"internalType":"uint256","name":"","type":"uint256"}
+        ],
+        "stateMutability":"nonpayable",
+        "type":"function"
+    },
+    {
+        "inputs":[
+            {"internalType":"bytes","name":"path","type":"bytes"},
+            {"internalType":"uint256","name":"amountIn","type":"uint256"}
+        ],
+        "name":"quoteExactInput",
+        "outputs":[
+            {"internalType":"uint256","name":"amountOut","type":"uint256"},
+            {"internalType":"uint160","name":"","type":"uint160"},
+            {"internalType":"uint32","name":"","type":"uint32"},
+            {"internalType":"uint256","name":"","type":"uint256"}
+        ],
+        "stateMutability":"nonpayable",
+        "type":"function"
+    }
+]
+
+_V3_ROUTER_ABI = [
+    {
+        "inputs":[
+            {
+                "components":[
+                    {"internalType":"address","name":"tokenIn","type":"address"},
+                    {"internalType":"address","name":"tokenOut","type":"address"},
+                    {"internalType":"uint24","name":"fee","type":"uint24"},
+                    {"internalType":"address","name":"recipient","type":"address"},
+                    {"internalType":"uint256","name":"deadline","type":"uint256"},
+                    {"internalType":"uint256","name":"amountIn","type":"uint256"},
+                    {"internalType":"uint256","name":"amountOutMinimum","type":"uint256"},
+                    {"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}
+                ],
+                "internalType":"struct ISwapRouter.ExactInputSingleParams",
+                "name":"params",
+                "type":"tuple"
+            }
+        ],
+        "name":"exactInputSingle",
+        "outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+        "stateMutability":"payable",
+        "type":"function"
+    },
+    {
+        "inputs":[
+            {"internalType":"bytes","name":"path","type":"bytes"},
+            {"internalType":"address","name":"recipient","type":"address"},
+            {"internalType":"uint256","name":"deadline","type":"uint256"},
+            {"internalType":"uint256","name":"amountIn","type":"uint256"},
+            {"internalType":"uint256","name":"amountOutMinimum","type":"uint256"}
+        ],
+        "name":"exactInput",
+        "outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+        "stateMutability":"payable",
+        "type":"function"
+    }
+]
+
+def _v3_encode_path(tokens, fees):
+    # tokens: list of EIP-55 addresses (len = len(fees)+1)
+    # fees: list of uint24
+    assert len(tokens) == len(fees)+1
+    b = b""
+    for i, fee in enumerate(fees):
+        b += bytes.fromhex(tokens[i][2:].zfill(40))
+        b += int(fee).to_bytes(3, "big")
+    b += bytes.fromhex(tokens[-1][2:].zfill(40))
+    return "0x" + b.hex()
+
+def _v3_best_direct(quoter, w3, t_in, t_out, amount):
+    best = (0, None)  # (amountOut, fee)
+    for fee in (500, 3000, 10000):
+        try:
+            out, *_ = quoter.functions.quoteExactInputSingle(
+                t_in, t_out, fee, int(amount), 0
+            ).call()
+            if int(out) > int(best[0]):
+                best = (int(out), fee)
+        except Exception:
+            pass
+    return best  # e.g., (amountOut, 3000)
+
+def _v3_best_via_weth(quoter, w3, t_in, t_out, weth, amount):
+    best = (0, None, None)  # (out, fee_in, fee_out)
+    fees = (500, 3000, 10000)
+    for f1 in fees:
+        for f2 in fees:
+            try:
+                path = _v3_encode_path([t_in, weth, t_out], [f1, f2])
+                out, *_ = quoter.functions.quoteExactInput(path, int(amount)).call()
+                if int(out) > int(best[0]):
+                    best = (int(out), f1, f2)
+            except Exception:
+                pass
+    return best
+
+def _ultra__get_local_v3_swap_tx(self, chain, sell, buy, amount_in_raw, slippage_bps=50):
+    """
+    Local Uniswap v3 pathfinder (Arbitrum only, direct or WETH hop).
+    Returns dict compatible with aggregator outputs: to, data, value, allowanceTarget, sellToken, buyToken, buyAmount.
+    """
+    if Web3 is None:
+        raise RuntimeError("web3 is required for LocalV3 swaps")
+
+    ch = (chain or "").lower()
+    if ch != "arbitrum":
+        raise NotImplementedError("LocalV3 currently implemented for 'arbitrum' only")
+
+    info = _V3_ADDR.get(ch) or {}
+    router_addr = Web3.to_checksum_address(info["router"])
+    quoter_addr = Web3.to_checksum_address(info["quoter"])
+    weth_addr   = Web3.to_checksum_address(info["weth"])
+
+    # Provider
+    url = getattr(self, "_alchemy_url")(ch)
+    if not url:
+        raise RuntimeError(f"No RPC URL for chain={ch}")
+    w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 20}))
+
+    # Resolve tokens
+    def _norm(a):
+        if a is None:
+            return None
+        s = str(a).strip()
+        if s.lower() in ("eth", "native"):
+            return "ETH"
+        return Web3.to_checksum_address(s)
+
+    token_in  = _norm(sell)
+    token_out = _norm(buy)
+    if token_in is None or token_out is None:
+        raise ValueError("sell/buy must be provided")
+
+    is_native_in  = token_in == "ETH"
+    is_native_out = token_out == "ETH"
+
+    # v3 swaps use WETH; map ETH to WETH for path
+    t_in_path  = weth_addr if is_native_in  else token_in
+    t_out_path = weth_addr if is_native_out else token_out
+
+    quoter = w3.eth.contract(address=quoter_addr, abi=_V3_QUOTER_ABI)
+    router = w3.eth.contract(address=router_addr, abi=_V3_ROUTER_ABI)
+
+    amt_in = int(amount_in_raw)
+
+    # 1) direct
+    best_out, best_fee = _v3_best_direct(quoter, w3, t_in_path, t_out_path, amt_in)
+    route = None
+    if best_out > 0:
+        route = ("direct", best_fee, None, best_out)
+
+    # 2) via WETH if direct not available and neither side is already WETH
+    if route is None and (t_in_path != weth_addr and t_out_path != weth_addr):
+        out2, f1, f2 = _v3_best_via_weth(quoter, w3, t_in_path, t_out_path, weth_addr, amt_in)
+        if out2 > 0:
+            route = ("via", (f1, f2), None, out2)
+
+    if route is None:
+        return {"__error__": "LocalV3: no quote (no pool direct or via WETH)"}
+
+    # Compute minOut with slippage
+    exp_out = int(route[3])
+    min_out = max(0, int(exp_out * (10_000 - int(slippage_bps)) // 10_000))
+
+    # Build tx data
+    recipient = self.acct.address  # receive to sender by default
+    deadline  = int(w3.eth.get_block("latest").timestamp) + 600
+
+    if route[0] == "direct":
+        fee = int(route[1])
+        params = (
+            t_in_path,
+            t_out_path,
+            fee,
+            recipient,
+            deadline,
+            amt_in,
+            min_out,
+            0  # sqrtPriceLimitX96
+        )
+        data = router.encode_abi("exactInputSingle", args=[params])
+        value = amt_in if is_native_in else 0
+    else:
+        f1, f2 = route[1]
+        path = _v3_encode_path([t_in_path, weth_addr, t_out_path], [int(f1), int(f2)])
+        data = router.encode_abi("exactInput", args=[path, recipient, deadline, amt_in, min_out])
+        value = amt_in if is_native_in else 0
+
+    # Allowance target is always the router for ERC-20 sells
+    allowance_target = router.address
+
+    return {
+        "to": router.address,
+        "data": data,
+        "value": hex(int(value)),
+        "allowanceTarget": allowance_target,
+        "sellToken": token_in if token_in != "ETH" else weth_addr,
+        "buyToken":  token_out if token_out  != "ETH" else weth_addr,
+        "buyAmount": str(exp_out),
+        "aggregator": "LocalV3",
+    }
+
+# Attach to class at import time (monkey-patch)
+try:
+    UltraSwapBridge.get_local_v3_swap_tx = _ultra__get_local_v3_swap_tx
+except Exception:
+    pass
+
