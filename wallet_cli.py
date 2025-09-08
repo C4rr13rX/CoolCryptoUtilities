@@ -813,7 +813,8 @@ def _swap_flow():
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
                         break
         if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
-            return
+            print("Cancelled.")
+            break
         if not _is_native(sell_id):
             spender = q.get("to")
             if spender:
@@ -828,7 +829,8 @@ def _swap_flow():
                 except Exception as e:
                     print(f"[warn] approve check failed: {e!r}")
         if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
-            return
+            print("Cancelled.")
+            break
                     break
                 _, ok = _execute(q)
                 executed_ok += 1 if ok else 0
