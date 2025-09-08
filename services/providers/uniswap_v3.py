@@ -189,3 +189,179 @@ class UniswapV3Local:
             "buyAmount": str(best[0]),
             "route": best[1],
         }
+
+
+# --- Uniswap V3 Factory (for getPool) ---
+_ABI_UNI_FACTORY = [
+  {"inputs":[
+      {"internalType":"address","name":"tokenA","type":"address"},
+      {"internalType":"address","name":"tokenB","type":"address"},
+      {"internalType":"uint24","name":"fee","type":"uint24"}],
+   "name":"getPool",
+   "outputs":[{"internalType":"address","name":"pool","type":"address"}],
+   "stateMutability":"view","type":"function"}
+]
+
+UNI_V3_FACTORY = {
+  # Uniswap V3 Core Factory address is the same on many networks (verify per chain)
+  "ethereum": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+  "arbitrum": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+}
+
+
+
+def _uni_v3_encode_path(tokens: list[str], fees: list[int]) -> bytes:
+    """Encode V3 path: token(20) + fee(3) + token(20) [+ ...]."""
+    from eth_abi import encode
+    path = b""
+    if len(tokens) < 2 or len(fees) != len(tokens) - 1:
+        raise ValueError("invalid path")
+    def _to20(a: str) -> bytes:
+        from web3 import Web3
+        return bytes.fromhex(Web3.to_checksum_address(a)[2:])
+    def _to3fee(f: int) -> bytes:
+        return int(f).to_bytes(3, "big")
+    path += _to20(tokens[0])
+    for i, f in enumerate(fees):
+        path += _to3fee(int(f))
+        path += _to20(tokens[i+1])
+    return path
+
+
+def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int=100) -> dict:
+    """
+    Factory-backed Uniswap V3 quoting:
+      - normalize native→WETH
+      - probe fee tiers [500, 3000, 10000] with Factory.getPool before quoter call
+      - try 1-hop first; if neither side is WETH, try WETH multihop
+      - build Router02 tx (exactInputSingle or exactInput)
+    """
+    import time
+    from web3 import Web3
+    ch = chain.lower().strip()
+    conf = self._cfg_norm(chain)  # already normalizes keys
+    router_addr = Web3.to_checksum_address(conf["SWAP_ROUTER"])
+    quoter_addr = Web3.to_checksum_address(conf["QUOTER_V2"])
+    weth_addr   = Web3.to_checksum_address(conf["WETH"])
+    w3 = self._w3(chain)
+    acct = w3.eth.default_account or "0x0000000000000000000000000000000000000000"
+
+    def _dbg(*a):
+        import os
+        if os.getenv("DEBUG_SWAP","0") in ("1","true","TRUE"):
+            print(*a)
+
+    # normalize native sentinel to WETH
+    def _norm(a: str) -> str:
+        low = str(a).lower()
+        if low in ("eth","native","0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"):
+            return weth_addr
+        return Web3.to_checksum_address(a)
+
+    t_in  = _norm(token_in)
+    t_out = _norm(token_out)
+    if int(amount_in) <= 0:
+        return {"__error__":"amount_in must be > 0"}
+
+    # contracts
+    quoter = w3.eth.contract(quoter_addr, abi=_ABI_UNI_QUOTER_V2)
+    router = w3.eth.contract(router_addr, abi=_ABI_UNI_ROUTER02)
+    # factory (for existence check)
+    factory_addr = UNI_V3_FACTORY.get(ch)
+    if not factory_addr:
+        return {"__error__": f"UniswapV3 Factory not configured for {chain}"}
+    factory = w3.eth.contract(Web3.to_checksum_address(factory_addr), abi=_ABI_UNI_FACTORY)
+
+    fees = [500, 3000, 10000]
+
+    best = None  # (route_kind, fee_or_tuple, amountOut, extra)
+    # route_kind: "1hop" or "2hop"
+    # extra: for 1hop -> None; for 2hop -> (fee_in, fee_out)
+
+    # 1) probe direct (1-hop)
+    for f in fees:
+        try:
+            pool = factory.functions.getPool(t_in, t_out, int(f)).call()
+            if int(pool, 16) == 0:
+                _dbg(f"[UniV3] no pool for 1-hop fee={f}")
+                continue
+            out, *_ = quoter.functions.quoteExactInputSingle(
+                (t_in, t_out, int(f), int(amount_in), 0)
+            ).call()
+            _dbg(f"[UniV3] 1-hop fee={f} amountOut={int(out)}")
+            if int(out) > 0 and (best is None or int(out) > best[2]):
+                best = ("1hop", f, int(out), None)
+        except Exception as e:
+            _dbg(f"[UniV3] 1-hop probe fee={f} error: {e!r}")
+
+    # 2) probe via WETH (2-hop) if neither side is WETH
+    if best is None and t_in != weth_addr and t_out != weth_addr:
+        for f1 in fees:
+            try:
+                pool1 = factory.functions.getPool(t_in, weth_addr, int(f1)).call()
+                if int(pool1, 16) == 0:
+                    continue
+                out1, *_ = quoter.functions.quoteExactInputSingle(
+                    (t_in, weth_addr, int(f1), int(amount_in), 0)
+                ).call()
+            except Exception:
+                continue
+            if int(out1) <= 0:
+                continue
+            for f2 in fees:
+                try:
+                    pool2 = factory.functions.getPool(weth_addr, t_out, int(f2)).call()
+                    if int(pool2, 16) == 0:
+                        continue
+                    out2, *_ = quoter.functions.quoteExactInputSingle(
+                        (weth_addr, t_out, int(f2), int(out1), 0)
+                    ).call()
+                    _dbg(f"[UniV3] 2-hop fees=({f1},{f2}) amountOut={int(out2)}")
+                    if int(out2) > 0 and (best is None or int(out2) > best[2]):
+                        best = ("2hop", (f1, f2), int(out2), None)
+                except Exception as e:
+                    _dbg(f"[UniV3] 2-hop probe fees=({f1},{f2}) error: {e!r}")
+
+    if best is None:
+        return {"__error__": "UniswapV3: no viable pool (direct or via WETH)"}
+
+    # build router tx
+    deadline = int(time.time()) + 900
+    out_min  = int(best[2] * (10_000 - int(slippage_bps)) // 10_000)
+
+    if best[0] == "1hop":
+        fee = int(best[1])
+        params = (t_in, t_out, fee, acct, deadline, int(amount_in), out_min, 0)
+        data = router.functions.exactInputSingle(params)._encode_transaction_data()
+        gas_est = 0
+        try:
+            gas_est = int(w3.eth.estimate_gas({"from": acct, "to": router_addr, "data": data, "value": 0}) * 1.2)
+        except Exception:
+            gas_est = 350000
+        return {
+            "aggregator": "UniswapV3",
+            "allowanceTarget": router_addr,
+            "tx": {"to": router_addr, "data": data, "value": 0, "gas": gas_est},
+            "buyAmount": str(best[2]),
+            "route": {"kind":"1hop","fee":fee}
+        }
+
+    # 2-hop via WETH
+    (f1, f2) = best[1]
+    path = _uni_v3_encode_path([t_in, weth_addr, t_out], [int(f1), int(f2)])
+    params = (path, acct, deadline, int(amount_in), out_min)
+    data = router.functions.exactInput(params)._encode_transaction_data()
+    gas_est = 0
+    try:
+        gas_est = int(w3.eth.estimate_gas({"from": acct, "to": router_addr, "data": data, "value": 0}) * 1.2)
+    except Exception:
+        gas_est = 400000
+    return {
+        "aggregator": "UniswapV3",
+        "allowanceTarget": router_addr,
+        "tx": {"to": router_addr, "data": data, "value": 0, "gas": gas_est},
+        "buyAmount": str(best[2]),
+        "route": {"kind":"2hop","fees":[int(f1), int(f2)]}
+    }
+
+UniswapV3Local.quote_and_build = uniswap_v3_quote_and_build_v2
