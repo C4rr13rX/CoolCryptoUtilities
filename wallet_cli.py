@@ -1148,8 +1148,6 @@ def _try_camelot_fallback(bridge, chain, sell_id, buy_id, amount_raw, *, slippag
         return None, False
 # ========== /Camelot fallback ==========
 
-if __name__ == "__main__":
-    _menu()
 
 # --------------- Address book (per chain + recipient) ---------------
 def _ab_path() -> Path:
@@ -1520,3 +1518,6 @@ def _ensure_allow_from_quote(bridge, chain: str, q: dict) -> bool:
     except Exception as e:
         print(f"[approve] failed: {e!r}")
         return False
+
+if __name__ == "__main__":
+    _menu()
