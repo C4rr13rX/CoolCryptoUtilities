@@ -92,7 +92,10 @@ class SwapService:
             if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
                 print("❌ approval failed"); raise RuntimeError("approval failed")
             print(f"[0x] to={tx.get('to')} value={tx.get('value',0)} gas≈{tx.get('gas',0)}")
-            h, ok = self._send(ch, to=tx["to"], data=tx["data"], value=int(tx.get("value") or 0), gas_hint=int(tx.get("gas") or 0))
+            h = self.bridge.send_prebuilt_tx_from_0x(ch, tx)
+            rc = self.bridge._rb__w3(ch).eth.wait_for_transaction_receipt(h)
+            ok = int(rc.get("status",0)) == 1
+            print(f"[0x] tx={h} status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
             if ok: return
             else: print("[0x] failed, trying UniswapV3…")
         except Exception as e:
