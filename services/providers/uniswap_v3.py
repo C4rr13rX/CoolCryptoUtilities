@@ -86,7 +86,7 @@ class UniswapV3Local:
         weth   = raw.get('WETH') or raw.get('weth')
         if not router or not quoter or not weth:
             raise KeyError(f"UniswapV3 config incomplete for {chain}; need router, QUOTER_V2/quoter2, WETH")
-        return {'ROUTER': router, 'QUOTER_V2': quoter, 'WETH': weth}
+        return {'ROUTER': router, 'SWAP_ROUTER': router, 'QUOTER_V2': quoter, 'WETH': weth}
 
     FEES = (500, 3000, 10000)
     def __init__(self, w3_provider_callable):
@@ -98,7 +98,14 @@ class UniswapV3Local:
     def _quoter(self, w3, conf):  # build contract
         return w3.eth.contract(Web3.to_checksum_address(conf["QUOTER_V2"]), abi=_ABI_UNI_QUOTER_V2)
     def _router(self, w3, conf):
-        return w3.eth.contract(Web3.to_checksum_address(conf["SWAP_ROUTER"]), abi=_ABI_UNI_ROUTER02)
+        addr = conf.get('SWAP_ROUTER') or conf.get('ROUTER') or conf.get('router')
+        if not addr:
+            raise KeyError('UniswapV3: router address missing')
+        try:
+            abi = _ABI_UNI_ROUTER02  # SwapRouter02
+        except NameError:
+            abi = _ABI_UNI_ROUTER    # fallback name
+        return w3.eth.contract(Web3.to_checksum_address(addr), abi=abi)
 
     def quote_and_build(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int=100, recipient: Optional[str]=None) -> Dict[str,Any]:
         conf = self._cfg_norm(chain)
