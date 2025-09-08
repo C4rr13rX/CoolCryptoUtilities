@@ -2084,3 +2084,134 @@ try:
     UltraSwapBridge.w3    = UltraSwapBridge._rb__w3
 except NameError:
     pass
+
+
+# ---- Arbitrum constants ----
+CAMELOT_V2_ROUTER = {
+    "arbitrum": "0xC873FECbd354f5A56E00E710B90EF4201db2448d",
+}
+WETH_ADDRESS = {
+    "arbitrum": "0x82aF49447D8a07e3bd95BDdB56f35241523fBab1",
+}
+
+
+# minimal UniswapV2-like router ABI
+_ABI_V2_ROUTER = [
+  {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},
+             {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
+             {"internalType":"address[]","name":"path","type":"address[]"},
+             {"internalType":"address","name":"to","type":"address"},
+             {"internalType":"uint256","name":"deadline","type":"uint256"}],
+   "name":"swapExactTokensForTokensSupportingFeeOnTransferTokens",
+   "outputs":[], "stateMutability":"nonpayable","type":"function"},
+
+  {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},
+             {"internalType":"address[]","name":"path","type":"address[]"}],
+   "name":"getAmountsOut",
+   "outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],
+   "stateMutability":"view","type":"function"}
+]
+
+# minimal ERC20 balance/allow/approve ABI (if missing)
+
+def send_prebuilt_tx(self, chain: str, to: str, data: str, *, value: int = 0, gas: int | None = None):
+    w3 = self._rb__w3(chain)
+    to_cs = w3.to_checksum_address(to)
+    tx = {
+        "chainId": w3.eth.chain_id,
+        "from": self.acct.address,
+        "to": to_cs,
+        "nonce": w3.eth.get_transaction_count(self.acct.address, "pending"),
+        "data": data if data else "0x",
+        "value": int(value or 0),
+        **self._rb__fee_fields(w3),
+    }
+    try:
+        if gas is None:
+            tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
+        else:
+            tx["gas"] = int(gas)
+    except Exception:
+        # fallback
+        tx["gas"] = 250000
+    signed = self.acct.sign_transaction(tx)
+    txh = w3.eth.send_raw_transaction(signed.rawTransaction)
+    return w3.to_hex(txh)
+
+def camelot_v2_quote(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int = 100):
+    """Return a dict that mirrors aggregator quote keys for our CLI:
+       {'aggregator':'CamelotV2','to','data','value','allowanceTarget','gas','buyAmount','route'}
+    """
+    chain = chain.lower().strip()
+    if chain not in CAMELOT_V2_ROUTER: 
+        return {"__error__": f"CamelotV2 unsupported on {chain}"}
+    w3 = self._rb__w3(chain)
+    router = w3.eth.contract(w3.to_checksum_address(CAMELOT_V2_ROUTER[chain]), abi=_ABI_V2_ROUTER)
+    t_in  = w3.to_checksum_address(token_in)
+    t_out = w3.to_checksum_address(token_out)
+    weth  = w3.to_checksum_address(WETH_ADDRESS.get(chain, WETH_ADDRESS["arbitrum"]))
+    path_try = []
+    # 1) direct
+    try:
+        amts = router.functions.getAmountsOut(int(amount_in), [t_in, t_out]).call()
+        if len(amts) >= 2 and int(amts[-1]) > 0:
+            path_try.append([t_in, t_out])
+    except Exception:
+        pass
+    # 2) via WETH
+    try:
+        amtsA = router.functions.getAmountsOut(int(amount_in), [t_in, weth]).call()
+        amtsB = router.functions.getAmountsOut(int(amtsA[-1]), [weth, t_out]).call()
+        if int(amtsA[-1]) > 0 and int(amtsB[-1]) > 0:
+            path_try.append([t_in, weth, t_out])
+    except Exception:
+        pass
+    if not path_try:
+        return {"__error__": "CamelotV2: no path (direct or via WETH)"}
+    # choose the best (largest out)
+    best = None
+    best_out = -1
+    for p in path_try:
+        try:
+            amts = router.functions.getAmountsOut(int(amount_in), p).call()
+            out = int(amts[-1])
+            if out > best_out:
+                best_out, best = out, p
+        except Exception:
+            continue
+    if best is None or best_out <= 0:
+        return {"__error__": "CamelotV2: quoting failed"}
+    # build tx data
+    out_min = int(best_out * (10_000 - slippage_bps) / 10_000)
+    deadline = int(self._rb__w3(chain).eth.get_block("latest")["timestamp"]) + 600
+    fn = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            int(amount_in), out_min, best, self.acct.address, deadline)
+    data = fn._encode_transaction_data()
+    allowance_target = CAMELOT_V2_ROUTER[chain]
+    # try gas estimate
+    gas_est = 0
+    try:
+        gas_est = int(self._rb__w3(chain).eth.estimate_gas({
+            "from": self.acct.address,
+            "to": allowance_target,
+            "data": data,
+            "value": 0
+        }) * 1.2)
+    except Exception:
+        gas_est = 250000
+    return {
+        "aggregator": "CamelotV2",
+        "to": allowance_target,
+        "data": data,
+        "value": 0,
+        "allowanceTarget": allowance_target,
+        "gas": gas_est,
+        "buyAmount": best_out,
+        "route": best,
+    }
+
+UltraSwapBridge.erc20_decimals = erc20_decimals
+
+UltraSwapBridge.send_prebuilt_tx = send_prebuilt_tx
+
+UltraSwapBridge.camelot_v2_quote = camelot_v2_quote
