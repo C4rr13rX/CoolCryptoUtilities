@@ -1,3 +1,6 @@
+def _is_native(tok:str)->bool:
+    return tok.lower() in ('eth','native')
+
 # MIT License
 # © 2025 Your Name
 #
@@ -573,49 +576,43 @@ def _swap_flow():
     # --- Helpers ---
     def _quote(s_id, b_id, amount_raw):
         """
-        Try 0x first; if it returns a route, tag it with __agg__.
-        If 0x fails and ONEINCH_API_KEY is set, try 1inch; else try OpenOcean.
+        LocalV3 -> 0x -> 1inch(if valid key) -> OpenOcean
+        Returns normalized dict {to,data,value,estimatedGas,buyAmount,__agg__} or {"__error__": "..."}.
         """
+        # 0) Local V3
+        try:
+            q = bridge.get_local_v3_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
+            q["__agg__"] = q.get("__agg__", "LocalV3")
+            return q
+        except Exception as e_loc:
+            emsg = f"LocalV3 failed: {e_loc}"
+
+        # 1) 0x
         try:
             q = bridge.get_0x_quote(ch, s_id, b_id, int(amount_raw), slippage=slip)
             q["__agg__"] = "0x"
             return q
         except Exception as e0:
-            emsg = str(e0)
-            key = (os.getenv("ONEINCH_API_KEY") or "").strip()
-            try_1inch = bool(key) and key.lower() not in ("your_1in_ch_key","your_1inch_key","placeholder") and len(key) >= 16
-            no_route_0x = ("no route" in emsg.lower()) or ("404" in emsg) or ("unsupported" in emsg.lower())
-            if try_1inch and no_route_0x:
-                try:
-                    q = bridge.get_1inch_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
-                    q["__agg__"] = "1inch"
-                    return q
-                except Exception as e1:
-                    emsg = f"0x->1inch failed: {e1}"
+            emsg = f"{emsg}; 0x: {e0}"
+
+        # 2) 1inch (only if valid key)
+        key = (os.getenv("ONEINCH_API_KEY") or "").strip()
+        try_1inch = bool(key) and key.lower() not in ("your_1in_ch_key","your_1inch_key","placeholder") and len(key) >= 16
+        if try_1inch:
             try:
-                q = bridge.get_openocean_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
-                q["__agg__"] = "OpenOcean"
+                q = bridge.get_1inch_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
+                q["__agg__"] = "1inch"
                 return q
-            except Exception as e2:
-                return {"__error__": f"{emsg}; OpenOcean: {e2}"}
-        except Exception as e0:
-            emsg = str(e0)
+            except Exception as e1:
+                emsg = f"{emsg}; 1inch: {e1}"
 
-            # If 1inch is available and error looks like route/validation → try it
-            key = (os.getenv("ONEINCH_API_KEY") or "").strip()
-            try_1inch = bool(key) and key.lower() not in ("your_1in_ch_key","your_1inch_key","placeholder") and len(key) >= 16
-            no_route_0x = ("no route" in emsg.lower()) or ("404" in emsg) or ("unsupported" in emsg.lower())
-            if try_1inch and no_route_0x:
-                try:
-                    return bridge.get_1inch_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
-                except Exception as e1:
-                    emsg = f"0x->1inch failed: {e1}"
-
-            # Finally, OpenOcean (no key)
-            try:
-                return bridge.get_openocean_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
-            except Exception as e2:
-                return {"__error__": f"{emsg}; OpenOcean: {e2}"}
+        # 3) OpenOcean
+        try:
+            q = bridge.get_openocean_swap_tx(ch, s_id, b_id, int(amount_raw), slippage=slip)
+            q["__agg__"] = "OpenOcean"
+            return q
+        except Exception as e2:
+            return {"__error__": f"{emsg}; OpenOcean: {e2}"}
 
     def _eff_gas_fee_wei(est_gas: int) -> int:
         try:
@@ -815,7 +812,21 @@ def _swap_flow():
                     if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
                         break
-                if not _confirm(f"[chunk {idx+1}/{n}] Proceed?"):
+                if not _confirm(f"[chunk {idx+1}/{n}] # Allowance/approve for ERC-20 sells
+        if not _is_native(sell_id):
+            spender = q.get("to")
+            if spender:
+                try:
+                    needed = int(amount_raw)
+                    have = bridge.erc20_allowance(ch, sell_id, bridge.acct.address, spender)
+                    if have < needed:
+                        ans = input(f"Approve {needed} units for router {spender}? (Y/N): ").strip().lower()
+                        if ans == "y":
+                            txh = bridge.erc20_approve(ch, sell_id, spender, needed)
+                            print(f"Approve tx: {txh}")
+                except Exception as e:
+                    print(f"[warn] approve check failed: {e!r}")
+        Proceed?"):
                     print("Cancelled.")
                     break
                 _, ok = _execute(q)
