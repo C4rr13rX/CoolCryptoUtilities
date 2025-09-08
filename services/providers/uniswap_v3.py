@@ -76,6 +76,18 @@ def _encode_path(tokens: List[str], fees: List[int]) -> bytes:
 
 
 class UniswapV3Local:
+    def _cfg_norm(self, chain: str) -> dict:
+        ch = chain.lower().strip()
+        if ch not in UNI_V3:
+            raise ValueError(f"UniswapV3 unsupported on {chain}")
+        raw = UNI_V3[ch]
+        router = raw.get('ROUTER') or raw.get('router')
+        quoter = raw.get('QUOTER_V2') or raw.get('quoter2') or raw.get('quoter')
+        weth   = raw.get('WETH') or raw.get('weth')
+        if not router or not quoter or not weth:
+            raise KeyError(f"UniswapV3 config incomplete for {chain}; need router, QUOTER_V2/quoter2, WETH")
+        return {'ROUTER': router, 'QUOTER_V2': quoter, 'WETH': weth}
+
     FEES = (500, 3000, 10000)
     def __init__(self, w3_provider_callable):
         self._w3 = w3_provider_callable
@@ -89,7 +101,7 @@ class UniswapV3Local:
         return w3.eth.contract(Web3.to_checksum_address(conf["SWAP_ROUTER"]), abi=_ABI_UNI_ROUTER02)
 
     def quote_and_build(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int=100, recipient: Optional[str]=None) -> Dict[str,Any]:
-        conf = self._cfg(chain)
+        conf = self._cfg_norm(chain)
         w3 = self._w3(chain)
         t_in  = Web3.to_checksum_address(token_in)
         t_out = Web3.to_checksum_address(token_out)
