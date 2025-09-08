@@ -56,7 +56,7 @@ def _is_native(tok:str)->bool:
 # wallet_cli.py — looped console for: get balances, refetch balances, refetch transfers.
 # Uses per-chain threading to speed up rebuilds. Respects existing caches.
 
-import os, sys, time, json, concurrent.futures, math
+import os, sys, time, json, concurrent.futures, math, math
 from typing import List, Tuple
 from pathlib import Path
 
