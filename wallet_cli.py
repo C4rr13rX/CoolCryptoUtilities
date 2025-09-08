@@ -62,6 +62,19 @@ from pathlib import Path
 
 # project imports
 
+def _spender_from_quote(q: dict) -> str:
+    if not isinstance(q, dict): return ''
+    sp = q.get('allowanceTarget') or q.get('to') or ''
+    try:
+        if not sp:
+            iss = q.get('issues') or {}
+            al  = iss.get('allowance') or {}
+            sp = al.get('spender') or sp
+    except Exception:
+        pass
+    return sp
+
+
 # ---- router alias map (display only) ----
 _ROUTER_ALIASES = {
     "arbitrum": {
@@ -911,7 +924,7 @@ def _swap_flow():
                 ## -- end spender diag --
                 # allowance for ERC-20 sells
                 if not sell_is_native:
-                    if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
+                    if not _ensure_allow(ch, sell, _spender_from_quote(q), int(this_amt)):
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
                         break
                 # auto-continue chunks
@@ -964,7 +977,7 @@ def _swap_flow():
     if route == "two":
         # Allowance for ERC-20 sell on step1
         if sell_id != "ETH":
-            if not _ensure_allow(ch, sell, two_1.get("allowanceTarget"), int(total_amount)):
+            if not _ensure_allow(ch, sell, _spender_from_quote(two_1), int(total_amount)):
                 return
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
@@ -1102,7 +1115,7 @@ def _try_camelot_fallback(bridge, chain, sell_id, buy_id, amount_raw, *, slippag
     if not _is_native(sell_id):
         try:
             needed = int(amount_raw)
-            spender = q.get("allowanceTarget")
+            spender = _spender_from_quote(q)
             have = bridge.erc20_allowance(chain, sell_id, bridge.acct.address, spender)
             if have < needed:
                 print(f"[approve] granting router {spender} allowance={needed}")
@@ -1257,7 +1270,7 @@ def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
 
     # Allowance for ERC-20 sells
     if sell_id and str(sell_id).lower() not in ("eth","native"):
-        spender = (q.get("allowanceTarget") or q.get("spender") or (q.get("tx") or {}).get("to"))
+        spender = (_spender_from_quote(q) or q.get("spender") or (q.get("tx") or {}).get("to"))
         if not spender:
             raise ValueError("quote missing allowanceTarget/spender for ERC-20 sell")
         try:
