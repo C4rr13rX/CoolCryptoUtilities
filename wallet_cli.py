@@ -75,6 +75,42 @@ def _spender_from_quote(q: dict) -> str:
     return sp
 
 
+
+
+def _patch_quote(q: dict, sell_id: str, buy_id: str, amount_raw: int) -> dict:
+    """
+    Ensure downstream always has sellToken/buyToken/sellAmountRaw and allowanceTarget.
+    Safe no-op if fields already present.
+    """
+    if not isinstance(q, dict):
+        return q
+    try:
+        # tokens
+        if not q.get("sellToken"):
+            q["sellToken"] = sell_id
+        if not q.get("buyToken"):
+            q["buyToken"] = buy_id
+        # sell amounts
+        sar = q.get("sellAmountRaw") or q.get("sellAmount")
+        try:
+            sar_i = int(sar) if sar is not None else 0
+        except Exception:
+            sar_i = 0
+        if sar_i <= 0:
+            sar_i = int(amount_raw)
+            q["sellAmount"] = str(sar_i)
+        q["sellAmountRaw"] = int(sar_i)
+        # spender / allowance target
+        spender = q.get("allowanceTarget")
+        if not spender:
+            issues = q.get("issues") or {}
+            allow  = issues.get("allowance") or {}
+            spender = allow.get("spender") or (q.get("tx") or {}).get("to") or q.get("to")
+            if spender:
+                q["allowanceTarget"] = spender
+        return q
+    except Exception:
+        return q
 # ---- router alias map (display only) ----
 _ROUTER_ALIASES = {
     "arbitrum": {
@@ -823,11 +859,14 @@ def _swap_flow():
     # --- Route selection (lowest estimated gas) ---
     direct = _quote(sell_id, buy_id, total_amount)
     two_1 = _quote(sell_id, "ETH", total_amount)
+direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
+two_1  = _patch_quote(two_1, sell_id, "ETH", int(total_amount))
     two_2 = None
     if "__error__" not in two_1 and not buy_is_native:
         s1_out = int(two_1.get("buyAmount") or 0)
         two_2 = _quote("ETH", buy_id, int(s1_out * 0.99))
 
+two_2 = _patch_quote(two_2, "ETH", buy_id, int(s1_out or 0))
     def _route_score(q):
         if q is None or "__error__" in q: return None
         return _eff_gas_fee_wei(_gas_out(q) or 0)
@@ -986,10 +1025,8 @@ def _swap_flow():
                 return
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
-        print(f"\nChosen route: TWO-STEP via ETH (lower gas). {sell_label} -> ETH -> {buy_label}")
-        if not _confirm("Proceed with two-step swap?"):
-            print("Cancelled.")
-            return
+        print(f"
+Chosen route: TWO-STEP via ETH (lower gas). Auto-proceeding.")
         # Step 1
         txh1, ok1 = _execute(two_1)
         if not ok1:
@@ -1015,13 +1052,11 @@ def _swap_flow():
         return
     else:
         # Direct
-        if not sell_is_native:
-            if not _ensure_allow(ch, sell, direct.get("allowanceTarget"), int(total_amount)):
-                return
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
         print(f"\nChosen route: DIRECT (lower gas). {sell_label} -> {buy_label}")
-        if not _ensure_allow_from_quote(bridge, ch, direct):
+                direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
+if not _ensure_allow_from_quote(bridge, ch, direct):
             print("[direct] allowance failed; aborting")
             return
         txh, ok = _execute(direct)
