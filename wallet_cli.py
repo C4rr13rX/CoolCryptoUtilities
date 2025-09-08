@@ -442,8 +442,6 @@ def _parse_amount(amount_str: str, decimals: int) -> int:
     return int(amount_str) * (10**decimals)
 
 def _confirm(prompt: str) -> bool:
-    ans = input(f"{prompt} (Y/N): ").strip().lower()
-    return ans == "y"
 
 def _wei_to_eth(n: int) -> str:
     try:
@@ -452,8 +450,6 @@ def _wei_to_eth(n: int) -> str:
     except Exception:
         return f"{int(n)/1e18:.18f}"
 
-    ans = input(f"{prompt} (Y/N): ").strip().lower()
-    return ans == "y"
 
 def _send_flow():
     import os, time
@@ -859,14 +855,14 @@ def _swap_flow():
     # --- Route selection (lowest estimated gas) ---
     direct = _quote(sell_id, buy_id, total_amount)
     two_1 = _quote(sell_id, "ETH", total_amount)
-direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
-two_1  = _patch_quote(two_1, sell_id, "ETH", int(total_amount))
+    direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
+    two_1  = _patch_quote(two_1, sell_id, "ETH", int(total_amount))
     two_2 = None
     if "__error__" not in two_1 and not buy_is_native:
         s1_out = int(two_1.get("buyAmount") or 0)
         two_2 = _quote("ETH", buy_id, int(s1_out * 0.99))
 
-two_2 = _patch_quote(two_2, "ETH", buy_id, int(s1_out or 0))
+    two_2 = _patch_quote(two_2, "ETH", buy_id, int(s1_out or 0))
     def _route_score(q):
         if q is None or "__error__" in q: return None
         return _eff_gas_fee_wei(_gas_out(q) or 0)
@@ -1055,8 +1051,8 @@ Chosen route: TWO-STEP via ETH (lower gas). Auto-proceeding.")
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
         print(f"\nChosen route: DIRECT (lower gas). {sell_label} -> {buy_label}")
-                direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
-if not _ensure_allow_from_quote(bridge, ch, direct):
+        direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
+        if not _ensure_allow_from_quote(bridge, ch, direct):
             print("[direct] allowance failed; aborting")
             return
         txh, ok = _execute(direct)
