@@ -731,6 +731,11 @@ def _swap_flow():
             txh = bridge.send_swap_via_0x(ch, quote_obj, **kwargs)
         except Exception as e:
             print(f"❌ swap send failed: {e!r}")
+            try:
+                bps = int(os.getenv("SWAP_SLIPPAGE_BPS","100"))
+            except Exception:
+                bps = 100
+            _try_camelot_fallback(bridge, ch, sell_id, buy_id, int(total_amount), slippage_bps=bps)
             return None, None
         url = EXPLORER_TX.get(ch)
         print(f"Swap TX: {txh}")
