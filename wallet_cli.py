@@ -1250,3 +1250,183 @@ def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
         print(f"[receipt] status={'success' if status else 'failed'} gasUsed={rc.get('gasUsed')}")
         return txh, bool(status)
     return txh, True
+
+
+# ===================== hardened swap sender (appended; overrides earlier def) =====================
+
+def _hexint(x):
+    if x is None: return 0
+    if isinstance(x, int): return x
+    try:
+        xs = str(x).strip().lower()
+        if xs.startswith("0x"): return int(xs, 16)
+        return int(xs)
+    except Exception:
+        return 0
+
+def _coerce_tx_numbers(tx: dict) -> dict:
+    if not isinstance(tx, dict): return {}
+    out = dict(tx)
+    for k in ("value","gas","gasLimit","gasPrice","maxFeePerGas","maxPriorityFeePerGas","nonce","chainId"):
+        if k in out:
+            out[k] = _hexint(out.get(k))
+    return out
+
+def _auto_fill_fees(bridge, chain, tx: dict):
+    """Fill EIP-1559 fees if missing; otherwise set legacy gasPrice."""
+    try:
+        w3 = bridge.w3(chain)
+    except Exception:
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(bridge._alchemy_url(chain), request_kwargs={"timeout":20}))
+    # prefer EIP-1559 if block has baseFee
+    blk = None
+    try:
+        blk = w3.eth.get_block("latest")
+    except Exception:
+        blk = None
+    tip_gwei = float(os.getenv("SWAP_TIP_GWEI", "2.0"))
+    tip = int(tip_gwei * 1e9)
+    if blk and "baseFeePerGas" in blk and int(blk["baseFeePerGas"]) > 0:
+        base = int(blk["baseFeePerGas"])
+        tx.setdefault("maxPriorityFeePerGas", tip)
+        # a modest headroom
+        tx.setdefault("maxFeePerGas", base + tip * 2)
+        # ensure legacy field is absent to avoid conflicts
+        tx.pop("gasPrice", None)
+    else:
+        # legacy chains / L2s exposing gasPrice
+        try:
+            gp = int(w3.eth.gas_price)
+        except Exception:
+            gp = int(2e9)  # safe fallback 2 gwei
+        tx.setdefault("gasPrice", gp)
+        tx.pop("maxFeePerGas", None)
+        tx.pop("maxPriorityFeePerGas", None)
+
+def _auto_estimate_gas(bridge, chain, tx: dict):
+    """Estimate gas if missing or zero; add small headroom."""
+    try:
+        w3 = bridge.w3(chain)
+    except Exception:
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(bridge._alchemy_url(chain), request_kwargs={"timeout":20}))
+    need_est = not tx.get("gas") or int(tx.get("gas", 0)) == 0
+    if need_est:
+        try:
+            est = int(w3.eth.estimate_gas({k:v for k,v in tx.items() if k in ("from","to","data","value")}))  # focus on core fields
+            # add ~20% safety
+            est = int(est * 1.2) + 1000
+            tx["gas"] = est
+        except Exception:
+            # last resort default
+            tx["gas"] = 250000
+
+def _make_tx_from_quote(bridge, chain, q: dict, sell_id: str) -> dict:
+    """
+    Accept any aggregator quote shape and return a concrete web3 tx dict.
+    Will normalize nested 'tx' or top-level fields, coerce numbers, and fill missing gas/fees.
+    """
+    tx = {}
+    if not isinstance(q, dict):
+        raise ValueError("bad quote")
+    # prefer nested tx if present
+    src = q.get("tx") or q.get("transaction") or q
+    tx["to"]    = src.get("to")
+    tx["data"]  = src.get("data")
+    tx["value"] = _hexint(src.get("value"))
+    # carry over any fee fields (will be normalized)
+    for k in ("gas","gasLimit","gasPrice","maxFeePerGas","maxPriorityFeePerGas","nonce","chainId"):
+        if k in src:
+            tx[k] = src[k]
+    tx = _coerce_tx_numbers(tx)
+    # chain id
+    try:
+        from router_wallet import CHAINS
+        tx.setdefault("chainId", int(CHAINS.get(chain)))
+    except Exception:
+        pass
+    # from address
+    from_addr = getattr(bridge, "acct", None).address if getattr(bridge, "acct", None) else None
+    if not from_addr:
+        raise RuntimeError("bridge account not initialized")
+    tx["from"] = from_addr
+    # fee handling
+    _auto_fill_fees(bridge, chain, tx)
+    # nonce if missing
+    try:
+        w3 = bridge.w3(chain)
+    except Exception:
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(bridge._alchemy_url(chain), request_kwargs={"timeout":20}))
+    if tx.get("nonce") in (None, 0):
+        try:
+            tx["nonce"] = w3.eth.get_transaction_count(from_addr)
+        except Exception:
+            pass
+    # gas handling last
+    _auto_estimate_gas(bridge, chain, tx)
+    return tx
+
+def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
+    """
+    Build a safe tx from quote, sign, send, and optionally wait receipt.
+    No interactive gas prompts; fully automatic.
+    """
+    import time
+    from binascii import hexlify
+
+    # normalize numerics in the quote itself
+    def _norm(qin):
+        if not isinstance(qin, dict): return qin
+        out = dict(qin)
+        for k in ("gas","gasLimit","gasPrice","maxFeePerGas","maxPriorityFeePerGas","value","nonce"):
+            if k in out: out[k] = _hexint(out[k])
+        if isinstance(out.get("tx"), dict):
+            out["tx"] = _coerce_tx_numbers(out["tx"])
+        return out
+    q = _norm(q)
+
+    # build tx
+    tx = _make_tx_from_quote(bridge, chain, q, sell_id)
+
+    # sign & send
+    try:
+        w3 = bridge.w3(chain)
+    except Exception:
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(bridge._alchemy_url(chain), request_kwargs={"timeout":20}))
+    pk = None
+    acct = getattr(bridge, "acct", None)
+    if acct is not None:
+        pk = getattr(acct, "key", None) or getattr(acct, "privateKey", None)
+    if pk is None:
+        raise RuntimeError("no private key on bridge.acct")
+
+    signed = w3.eth.account.sign_transaction(tx, pk)
+    raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None)
+    if raw is None:
+        raise RuntimeError("web3 sign returned no rawTransaction")
+    txh = w3.eth.send_raw_transaction(raw)
+    h = txh.hex() if hasattr(txh, "hex") else ("0x" + hexlify(txh).decode())
+
+    print(f"TX: {h}")
+    try:
+        url = f"https://arbiscan.io/tx/{h}" if chain.lower()=="arbitrum" else f"https://etherscan.io/tx/{h}"
+        print("Explorer:", url)
+    except Exception:
+        pass
+
+    if not wait:
+        return h, True
+
+    # wait a bit for receipt
+    ok = False
+    try:
+        rc = w3.eth.wait_for_transaction_receipt(h, timeout=60)
+        ok = bool(getattr(rc, "status", 0) == 1 or (isinstance(rc, dict) and rc.get("status") == 1))
+        print(f"[receipt] status={'success' if ok else 'failed'} block={rc['blockNumber'] if isinstance(rc, dict) else rc.blockNumber} gasUsed={rc['gasUsed'] if isinstance(rc, dict) else rc.gasUsed}")
+    except Exception as e:
+        print(f"[warn] wait_for_transaction_receipt: {e!r}")
+    return h, ok
+# =================== end hardened swap sender override ===================
