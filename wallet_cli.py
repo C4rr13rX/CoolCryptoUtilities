@@ -1100,6 +1100,45 @@ def _menu():
             _bridge_flow()
         else:
             print("Invalid selection.")
+# ========== Camelot fallback (auto) ==========
+def _try_camelot_fallback(bridge, chain, sell_id, buy_id, amount_raw, *, slippage_bps=100):
+    try:
+        q = bridge.camelot_v2_quote(chain, sell_id, buy_id, int(amount_raw), slippage_bps=slippage_bps)
+    except Exception as e:
+        print(f"[Camelot] quote error: {e!r}")
+        return None, False
+    if "__error__" in q:
+        print(f"[Camelot] {q['__error__']}")
+        return None, False
+    # ensure allowance for router
+    if not _is_native(sell_id):
+        try:
+            needed = int(amount_raw)
+            spender = q.get("allowanceTarget")
+            have = bridge.erc20_allowance(chain, sell_id, bridge.acct.address, spender)
+            if have < needed:
+                print(f"[approve] granting router {spender} allowance={needed}")
+                txh = bridge.approve_erc20(chain, sell_id, spender, needed)
+                print(f"[approve] tx: {txh}")
+        except Exception as e:
+            print(f"[Camelot] approve failed: {e!r}")
+            return None, False
+    # send
+    try:
+        txh = bridge.send_prebuilt_tx(chain, q["to"], q["data"], value=int(q.get("value") or 0), gas=int(q.get("gas") or 250000))
+        print(f"[Camelot] Swap TX: {txh}")
+        print(f"Explorer: https://{ 'arbiscan.io' if chain=='arbitrum' else chain+'.etherscan.io' }/tx/{txh}")
+        # wait for receipt
+        w3 = bridge._rb__w3(chain)
+        rc = w3.eth.wait_for_transaction_receipt(txh)
+        ok = int(rc.get("status",0)) == 1
+        print(f"[Camelot] receipt status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
+        return txh, ok
+    except Exception as e:
+        print(f"[Camelot] send failed: {e!r}")
+        return None, False
+# ========== /Camelot fallback ==========
+
 if __name__ == "__main__":
     _menu()
 
@@ -1437,42 +1476,4 @@ def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
 # =================== end hardened swap sender override ===================
 
 
-# ========== Camelot fallback (auto) ==========
-def _try_camelot_fallback(bridge, chain, sell_id, buy_id, amount_raw, *, slippage_bps=100):
-    try:
-        q = bridge.camelot_v2_quote(chain, sell_id, buy_id, int(amount_raw), slippage_bps=slippage_bps)
-    except Exception as e:
-        print(f"[Camelot] quote error: {e!r}")
-        return None, False
-    if "__error__" in q:
-        print(f"[Camelot] {q['__error__']}")
-        return None, False
-    # ensure allowance for router
-    if not _is_native(sell_id):
-        try:
-            needed = int(amount_raw)
-            spender = q.get("allowanceTarget")
-            have = bridge.erc20_allowance(chain, sell_id, bridge.acct.address, spender)
-            if have < needed:
-                print(f"[approve] granting router {spender} allowance={needed}")
-                txh = bridge.approve_erc20(chain, sell_id, spender, needed)
-                print(f"[approve] tx: {txh}")
-        except Exception as e:
-            print(f"[Camelot] approve failed: {e!r}")
-            return None, False
-    # send
-    try:
-        txh = bridge.send_prebuilt_tx(chain, q["to"], q["data"], value=int(q.get("value") or 0), gas=int(q.get("gas") or 250000))
-        print(f"[Camelot] Swap TX: {txh}")
-        print(f"Explorer: https://{ 'arbiscan.io' if chain=='arbitrum' else chain+'.etherscan.io' }/tx/{txh}")
-        # wait for receipt
-        w3 = bridge._rb__w3(chain)
-        rc = w3.eth.wait_for_transaction_receipt(txh)
-        ok = int(rc.get("status",0)) == 1
-        print(f"[Camelot] receipt status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
-        return txh, ok
-    except Exception as e:
-        print(f"[Camelot] send failed: {e!r}")
-        return None, False
-# ========== /Camelot fallback ==========
 # ## CAM_FALLBACK_MARKER
