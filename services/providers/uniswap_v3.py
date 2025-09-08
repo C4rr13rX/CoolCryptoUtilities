@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, List
 from web3 import Web3
 
 UNI_V3 = {
-    'ethereum': {'router': '0x68b3465833FB72A70ecDF485E0e4C7bD8665Fc45', 'quoter2': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e'},
+    'ethereum': {'router': '0x68b3465833FB72A70ecDF485E0e4C7bD8665Fc45', 'quoter2': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e', 'WETH': '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2'},
     "arbitrum": {
         "QUOTER_V2":   "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
         "SWAP_ROUTER": "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45",  # SwapRouter02
