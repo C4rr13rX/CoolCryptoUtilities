@@ -864,12 +864,13 @@ def _swap_flow():
     two_1 = _quote(sell_id, "ETH", total_amount)
     direct = _patch_quote(direct, sell_id, buy_id, int(total_amount))
     two_1  = _patch_quote(two_1, sell_id, "ETH", int(total_amount))
+
+    s1_out = 0
     two_2 = None
     if "__error__" not in two_1 and not buy_is_native:
         s1_out = int(two_1.get("buyAmount") or 0)
         two_2 = _quote("ETH", buy_id, int(s1_out * 0.99))
-
-    two_2 = _patch_quote(two_2, "ETH", buy_id, int(s1_out or 0))
+        two_2 = _patch_quote(two_2, "ETH", buy_id, int(s1_out or 0))
     def _route_score(q):
         if q is None or "__error__" in q: return None
         return _eff_gas_fee_wei(_gas_out(q) or 0)
@@ -1323,7 +1324,7 @@ def _send_swap_from_quote(bridge, chain, sell_id, q, *, wait=True):
             have = 0
         need = _coerce_int(q.get("sellAmount") or q.get("fromTokenAmount") or q.get("amount") or 0, 0)
         if need and have < need:
-            txh = bridge.erc20_approve(chain, sell_id, spender, int(need))
+            txh = bridge.approve_erc20(chain, sell_id, spender, int(need))
             print(f"[approve] {txh}")
 
     tx = _build_swap_tx_from_quote(bridge, w3, chain, q)
