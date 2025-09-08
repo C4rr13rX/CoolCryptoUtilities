@@ -265,6 +265,13 @@ def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: st
 
     # contracts
     quoter = w3.eth.contract(quoter_addr, abi=_ABI_UNI_QUOTER_V2)
+    quoter_v1 = None
+    qv1_addr = UNI_V3_QUOTER_V1.get(ch)
+    if qv1_addr:
+        try:
+            quoter_v1 = w3.eth.contract(Web3.to_checksum_address(qv1_addr), abi=_ABI_UNI_QUOTER_V1)
+        except Exception:
+            quoter_v1 = None
     router = w3.eth.contract(router_addr, abi=_ABI_UNI_ROUTER02)
     # factory (for existence check)
     factory_addr = UNI_V3_FACTORY.get(ch)
@@ -282,12 +289,19 @@ def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: st
     for f in fees:
         try:
             pool = factory.functions.getPool(t_in, t_out, int(f)).call()
-            if int(pool, 16) == 0:
+            if str(pool).lower() == '0x0000000000000000000000000000000000000000':
                 _dbg(f"[UniV3] no pool for 1-hop fee={f}")
                 continue
-            out, *_ = quoter.functions.quoteExactInputSingle(
+            try:
+                out, *_ = quoter.functions.quoteExactInputSingle(
                 (t_in, t_out, int(f), int(amount_in), 0)
             ).call()
+            except Exception as e_v2:
+                _dbg(f"[UniV3] 1-hop v2 failed fee={f} err={e_v2!r}; trying v1…")
+                if quoter_v1 is not None:
+                    out = quoter_v1.functions.quoteExactInputSingle(t_in, t_out, int(f), int(amount_in), 0).call()
+                else:
+                    raise
             _dbg(f"[UniV3] 1-hop fee={f} amountOut={int(out)}")
             if int(out) > 0 and (best is None or int(out) > best[2]):
                 best = ("1hop", f, int(out), None)
@@ -304,6 +318,12 @@ def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: st
                 out1, *_ = quoter.functions.quoteExactInputSingle(
                     (t_in, weth_addr, int(f1), int(amount_in), 0)
                 ).call()
+            except Exception as e_v2:
+                _dbg(f"[UniV3] 1-hop v2 failed fee={f} err={e_v2!r}; trying v1…")
+                if quoter_v1 is not None:
+                    out = quoter_v1.functions.quoteExactInputSingle(t_in, t_out, int(f), int(amount_in), 0).call()
+                else:
+                    raise
             except Exception:
                 continue
             if int(out1) <= 0:
@@ -316,6 +336,12 @@ def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: st
                     out2, *_ = quoter.functions.quoteExactInputSingle(
                         (weth_addr, t_out, int(f2), int(out1), 0)
                     ).call()
+            except Exception as e_v2:
+                _dbg(f"[UniV3] 1-hop v2 failed fee={f} err={e_v2!r}; trying v1…")
+                if quoter_v1 is not None:
+                    out = quoter_v1.functions.quoteExactInputSingle(t_in, t_out, int(f), int(amount_in), 0).call()
+                else:
+                    raise
                     _dbg(f"[UniV3] 2-hop fees=({f1},{f2}) amountOut={int(out2)}")
                     if int(out2) > 0 and (best is None or int(out2) > best[2]):
                         best = ("2hop", (f1, f2), int(out2), None)
@@ -348,7 +374,7 @@ def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: st
 
     # 2-hop via WETH
     (f1, f2) = best[1]
-    path = _uni_v3_encode_path([t_in, weth_addr, t_out], [int(f1), int(f2)])
+    path = _encode_path([t_in, weth_addr, t_out], [int(f1), int(f2)])
     params = (path, acct, deadline, int(amount_in), out_min)
     data = router.functions.exactInput(params)._encode_transaction_data()
     gas_est = 0
@@ -365,3 +391,26 @@ def uniswap_v3_quote_and_build_v2(self, chain: str, token_in: str, token_out: st
     }
 
 UniswapV3Local.quote_and_build = uniswap_v3_quote_and_build_v2
+
+
+# Optional Quoter V1 fallback (mainnet)
+UNI_V3_QUOTER_V1 = {
+    "ethereum": "0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6",
+}
+
+
+_ABI_UNI_QUOTER_V1 = [
+  {"inputs":[
+      {"internalType":"address","name":"tokenIn","type":"address"},
+      {"internalType":"address","name":"tokenOut","type":"address"},
+      {"internalType":"uint24","name":"fee","type":"uint24"},
+      {"internalType":"uint256","name":"amountIn","type":"uint256"},
+      {"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],
+   "name":"quoteExactInputSingle",
+   "outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+   "stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"bytes","name":"path","type":"bytes"}],
+   "name":"quoteExactInput",
+   "outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+   "stateMutability":"nonpayable","type":"function"}
+]
