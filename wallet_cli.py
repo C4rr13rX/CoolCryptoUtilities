@@ -848,6 +848,16 @@ def _swap_flow():
                         if "__error__" in q:
                             print(f"[chunk {idx+1}/{n}] still failing; aborting.")
                             break
+                ## -- spender diag --
+                spender = q.get('allowanceTarget') or q.get('to') or ''
+                alias = _alias_for_spender(ch, spender)
+                print('Spender:', spender, ('('+alias+')' if alias else ''))
+                try:
+                    need_raw = int(this_amt)
+                    print('Need allowance (raw):', need_raw, '≈', _human(need_raw))
+                except Exception:
+                    pass
+                ## -- end spender diag --
                 # allowance for ERC-20 sells
                 if not sell_is_native:
                     if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
