@@ -2441,3 +2441,5 @@ def _ultra__load_0x_api_key():
         except Exception:
             pass
     return None
+UltraSwapBridge.get_0x_quote = _ultra__get_0x_quote_v2_allowance_holder
+UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v2
