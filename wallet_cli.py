@@ -827,8 +827,8 @@ def _swap_flow():
                             print(f"Approve tx: {txh}")
                 except Exception as e:
                     print(f"[warn] approve check failed: {e!r}")
-        Proceed?"):
-                    print("Cancelled.")
+        if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
+            return
                     break
                 _, ok = _execute(q)
                 executed_ok += 1 if ok else 0
