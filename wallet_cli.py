@@ -849,68 +849,6 @@ def _swap_flow():
                             print(f"[chunk {idx+1}/{n}] still failing; aborting.")
                             break
                 # allowance for ERC-20 sells
-        ## -- injected diagnostics (spender/estGas/human) --
-        try:
-            spender = q.get('allowanceTarget') or q.get('to') or ''
-            s_alias = _alias_for_spender(ch, spender)
-            buy_raw = int(q.get('buyAmount') or 0)
-            sell_dec = _erc20_decimals(bridge, ch, sell)
-            buy_dec  = _erc20_decimals(bridge, ch, buy)
-            implied  = (buy_raw / (10**buy_dec)) / (int(this_amt)/(10**sell_dec)) if int(this_amt)>0 else 0
-            print(f"Spender : {spender} {('('+s_alias+')') if s_alias else ''}")
-            print(f"Amounts : sell≈{_human(this_amt, sell_dec)} ; buy≈{_human(buy_raw, buy_dec)} ; rate≈{implied:.6g}")
-            if not q.get('gas') and not q.get('estGas'):
-                # attempt a local estimate on the raw tx
-                try:
-                    from web3 import Web3
-                    w3 = Web3(Web3.HTTPProvider(bridge._alchemy_url(ch), request_kwargs={"timeout":20}))
-                    tx = {
-                        'from': bridge.acct.address,
-                        'to': Web3.to_checksum_address(q.get('to')) if q.get('to') else None,
-                        'data': q.get('data'),
-                        'value': int(q.get('value') or 0) if isinstance(q.get('value'), int) else int(str(q.get('value') or '0'), 16) if str(q.get('value') or '').startswith('0x') else int(q.get('value') or 0),
-                    }
-                    est = w3.eth.estimate_gas(tx)
-                    print(f"Gas est (local): {est}")
-                except Exception as e_est:
-                    print(f"[warn] gas estimate unavailable: {e_est!r}")
-        except Exception as e_diag:
-            print(f"[warn] diagnostics failed: {e_diag!r}")
-        ## -- end injected diagnostics --
-        # allowance for ERC-20 sells
-                if not sell_is_native:
-                    if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
-
-                # allowance for ERC-20 sells
-        ## -- injected diagnostics (spender/estGas/human) --
-        try:
-            spender = q.get('allowanceTarget') or q.get('to') or ''
-            s_alias = _alias_for_spender(ch, spender)
-            buy_raw = int(q.get('buyAmount') or 0)
-            sell_dec = _erc20_decimals(bridge, ch, sell)
-            buy_dec  = _erc20_decimals(bridge, ch, buy)
-            implied  = (buy_raw / (10**buy_dec)) / (int(this_amt)/(10**sell_dec)) if int(this_amt)>0 else 0
-            print(f"Spender : {spender} {('('+s_alias+')') if s_alias else ''}")
-            print(f"Amounts : sell≈{_human(this_amt, sell_dec)} ; buy≈{_human(buy_raw, buy_dec)} ; rate≈{implied:.6g}")
-            if not q.get('gas') and not q.get('estGas'):
-                # attempt a local estimate on the raw tx
-                try:
-                    from web3 import Web3
-                    w3 = Web3(Web3.HTTPProvider(bridge._alchemy_url(ch), request_kwargs={"timeout":20}))
-                    tx = {
-                        'from': bridge.acct.address,
-                        'to': Web3.to_checksum_address(q.get('to')) if q.get('to') else None,
-                        'data': q.get('data'),
-                        'value': int(q.get('value') or 0) if isinstance(q.get('value'), int) else int(str(q.get('value') or '0'), 16) if str(q.get('value') or '').startswith('0x') else int(q.get('value') or 0),
-                    }
-                    est = w3.eth.estimate_gas(tx)
-                    print(f"Gas est (local): {est}")
-                except Exception as e_est:
-                    print(f"[warn] gas estimate unavailable: {e_est!r}")
-        except Exception as e_diag:
-            print(f"[warn] diagnostics failed: {e_diag!r}")
-        ## -- end injected diagnostics --
-        # allowance for ERC-20 sells
                 if not sell_is_native:
                     if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
