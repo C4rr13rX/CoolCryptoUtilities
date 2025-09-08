@@ -54,13 +54,6 @@ def swap_flow():
     svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps)
 
 
-# Load env from project root
-try:
-    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
-except Exception:
-    pass
-
-
 EnvLoader.load()
 
 def menu():
