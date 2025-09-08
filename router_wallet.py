@@ -1517,7 +1517,29 @@ def _v3_best_via_weth(quoter, w3, t_in, t_out, weth, amount):
                 pass
     return best
 
-def _ultra__get_local_v3_swap_tx(self, chain, sell, buy, amount_in_raw, slippage_bps=50):
+def _ultra__get_local_v3_swap_tx(self, chain, sell, buy, amount_in_raw, slippage=None, slippage_bps=50):
+
+    # --- slippage normalization ---
+    # Accepts: slippage in fraction (0.005 = 0.5%), percent (0.5 = 0.5%), or bps (50 = 0.5%).
+    bps = None
+    if slippage is not None:
+        try:
+            x = float(str(slippage).strip())
+            if 0 <= x <= 1.0:
+                # fraction -> bps
+                bps = int(round(x * 10_000))
+            elif 1.0 < x <= 100.0:
+                # percent -> bps
+                bps = int(round(x * 100))
+            else:
+                # assume bps
+                bps = int(round(x))
+        except Exception:
+            bps = None
+    if bps is None:
+        bps = int(slippage_bps)
+    # Clamp to sane bounds
+    slippage_bps = max(1, min(5_000, bps))
     """
     Local Uniswap v3 pathfinder (Arbitrum only, direct or WETH hop).
     Returns dict compatible with aggregator outputs: to, data, value, allowanceTarget, sellToken, buyToken, buyAmount.
