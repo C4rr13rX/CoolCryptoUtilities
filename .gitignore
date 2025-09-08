@@ -10,3 +10,8 @@ pyvenv.cfg
 
 .backup_*/
 *.patch
+
+# local secrets (API keys etc.)
+.secrets/
+.env
+.env.local

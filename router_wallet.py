@@ -2217,10 +2217,11 @@ UltraSwapBridge.camelot_v2_quote = camelot_v2_quote
 
 
 def _ultra__0x_v2_headers():
+    import os
     h = {"Accept": "application/json",
          "User-Agent": os.getenv("HTTP_UA", "CoolCryptoUtilities/1.0"),
          "0x-version": "v2"}
-    api_key = os.getenv("ZEROX_API_KEY") or os.getenv("OX_API_KEY") or os.getenv("API_0X")
+    api_key = _ultra__load_0x_api_key()
     if api_key:
         h["0x-api-key"] = api_key
     return h
@@ -2230,7 +2231,10 @@ def _ultra__http_get_json_v2(path: str, params: dict, timeout=25):
     url = "https://api.0x.org" + path
     r = requests.get(url, headers=_ultra__0x_v2_headers(), params=params, timeout=timeout)
     if r.status_code >= 400:
-        raise RuntimeError(f"0x v2 {r.status_code}: {r.text}")
+        msg = r.text
+        if r.status_code == 401:
+            msg += "  (Hint: set ZEROX_API_KEY env or ~/.config/coolcrypto/0x_api_key)"
+        raise RuntimeError(f"0x v2 {r.status_code}: {msg}")
     return r.json()
 
 def _ultra__get_0x_quote_v2_allowance_holder(self, chain: str, sell_token: str, buy_token: str, sell_amount_raw: int, slippage_bps: int | None = None):
@@ -2366,3 +2370,38 @@ def _ultra__send_swap_via_0x_v2(self, chain: str, quote: dict, *, wait=True, sli
 
 UltraSwapBridge.get_0x_quote = _ultra__get_0x_quote_v2_allowance_holder
 UltraSwapBridge.send_swap_via_0x = _ultra__send_swap_via_0x_v2
+
+
+def _ultra__load_0x_api_key():
+    import os
+    # 1) env (preferred)
+    for k in ("ZEROX_API_KEY","OX_API_KEY","API_0X","API0X","API_OX"):
+        v = os.getenv(k)
+        if v and v.strip():
+            return v.strip()
+    # 2) local files (git-ignored), first hit wins
+    cand = [
+        os.path.expanduser("~/.config/coolcrypto/0x_api_key"),
+        os.path.expanduser("~/.coolcrypto/0x_api_key"),
+        os.path.join(os.getcwd(), ".secrets/0x_api_key"),
+        os.path.join(os.getcwd(), ".env.local"),
+        os.path.join(os.getcwd(), ".env"),
+    ]
+    for fp in cand:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"): 
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() in ("ZEROX_API_KEY","OX_API_KEY","API_0X","API0X","API_OX"):
+                            return v.strip()
+                    else:
+                        # raw key file
+                        if len(line) > 20:
+                            return line
+        except Exception:
+            pass
+    return None
