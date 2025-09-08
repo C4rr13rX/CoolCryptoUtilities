@@ -191,3 +191,103 @@ _ABI_V2_GENERIC = [
    "stateMutability":"view","type":"function"}
 ]
 
+
+def _to_checksum(addr, Web3):
+    return Web3.to_checksum_address(addr)
+
+def _encode_v3_path(tokens, fees):
+    # Encode a Uniswap V3 path: token(20) + fee(3) + token(20) [+ fee + token]...
+    if len(tokens) != len(fees) + 1:
+        raise ValueError("V3 path: tokens must be n+1 for n fees")
+    parts = []
+    for i in range(len(fees)):
+        t = tokens[i].lower().replace("0x","")
+        n = tokens[i+1].lower().replace("0x","")
+        f = int(fees[i])
+        if not (0 <= f < (1<<24)):
+            raise ValueError("fee must fit uint24")
+        parts.append(t.rjust(40,"0"))
+        parts.append(f"{f:06x}")
+        parts.append(n.rjust(40,"0"))
+    return "0x" + "".join(parts)
+
+
+# ## UNI_V3_ROBUST_IMPL
+def quote_and_build(self, chain: str, token_in: str, token_out: str, amount_in: int, *, slippage_bps: int=100):
+    import time as _t
+    ch = chain.lower().strip()
+    conf = self._cfg_norm(ch)
+    w3 = self._w3(chain)
+    # Choose ABI name present in file
+    try:
+        _abi_router = _ABI_UNI_ROUTER02
+    except NameError:
+        _abi_router = _ABI_UNI_ROUTER
+    router = w3.eth.contract(Web3.to_checksum_address(conf["SWAP_ROUTER"]), abi=_abi_router)
+    quoter = w3.eth.contract(Web3.to_checksum_address(conf["QUOTER_V2"]), abi=_ABI_UNI_QUOTER_V2)
+    recip  = w3.eth.default_account or "0x0000000000000000000000000000000000000000"
+
+    t_in  = _to_checksum(token_in, Web3)
+    t_out = _to_checksum(token_out, Web3)
+    weth  = _to_checksum(conf["WETH"], Web3)
+    if t_in == t_out:
+        return {"__error__":"UniswapV3: tokenIn == tokenOut"}
+    if int(amount_in) <= 0:
+        return {"__error__":"UniswapV3: amount_in must be > 0"}
+
+    # Probe single-hop: 0.05%, 0.3%, 1%
+    fees_direct = [500, 3000, 10000]
+    best = None
+    for fee in fees_direct:
+        try:
+            out, _, _, _ = quoter.functions.quoteExactInputSingle(
+                (t_in, t_out, int(amount_in), int(fee), 0)
+            ).call()
+            if int(out) > 0:
+                best = ("single", (int(fee),), int(out))
+                break
+        except Exception:
+            pass
+
+    # Multi-hop via WETH if needed and neither side is WETH
+    if best is None and t_in != weth and t_out != weth:
+        for f1, f2 in [(500,500),(500,3000),(3000,500),(3000,3000),(3000,10000)]:
+            try:
+                path = _encode_v3_path([t_in, weth, t_out], [int(f1), int(f2)])
+                out, _, _, _ = quoter.functions.quoteExactInput(path, int(amount_in)).call()
+                if int(out) > 0:
+                    best = ("multi", (int(f1), int(f2)), int(out))
+                    break
+            except Exception:
+                pass
+
+    if best is None:
+        return {"__error__":"UniswapV3: no viable pool (direct or via WETH)"}
+
+    kind, fees, out_amt = best
+    out_min = int(out_amt * (10_000 - int(slippage_bps)) // 10_000)
+    deadline = int(_t.time()) + 600
+
+    if kind == "single":
+        fee = int(fees[0])
+        fn = router.functions.exactInputSingle((
+            t_in, t_out, fee, recip, deadline, int(amount_in), int(out_min), 0
+        ))
+    else:
+        path = _encode_v3_path([t_in, weth, t_out], [int(fees[0]), int(fees[1])])
+        fn = router.functions.exactInput((path, recip, deadline, int(amount_in), int(out_min)))
+
+    data = fn._encode_transaction_data()
+    to_addr = conf["SWAP_ROUTER"]
+    try:
+        gas = int(w3.eth.estimate_gas({"from": recip, "to": to_addr, "data": data, "value": 0}) * 1.2)
+    except Exception:
+        gas = 400000
+
+    return {
+        "aggregator":"UniswapV3",
+        "allowanceTarget": to_addr,
+        "tx": {"to": to_addr, "data": data, "value": 0, "gas": gas},
+        "buyAmount": str(out_amt),
+        "route": {"kind": kind, "fees": fees}
+    }
