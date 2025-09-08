@@ -774,10 +774,8 @@ def _swap_flow():
         if int(cur) >= int(need_raw):
             return True
         print(f"Allowance insufficient: have {cur}, need {need_raw}.")
-        mode = input("Approve [E]xact amount or [U]nlimited? ").strip().lower()
-        if mode not in ("e","u"):
-            print("Cancelled.")
-            return False
+        mode = (os.getenv("APPROVE_MODE","e").strip().lower())
+        if mode not in ("e","u"): mode="e"
         amt_to_approve = int(need_raw) if mode=="e" else int((1<<256)-1)
         try:
             txh = bridge.approve_erc20(ch, token_addr, allowance_target, amt_to_approve, gas=60000)
@@ -885,10 +883,6 @@ def _swap_flow():
         n = int(math.ceil(int(total_amount) / int(per_chunk)))
         print(f"[chunk plan] {n} chunks of ~{per_chunk} raw each; route={success_route}")
 
-        if not _confirm("Proceed with chunked execution?"):
-            print("Cancelled.")
-            return
-
         executed_ok = 0
         for idx in range(n):
             this_amt = per_chunk if (idx < n-1) else (int(total_amount) - per_chunk*(n-1))
@@ -920,10 +914,7 @@ def _swap_flow():
                     if not _ensure_allow(ch, sell, q.get("allowanceTarget"), int(this_amt)):
                         print(f"[chunk {idx+1}/{n}] approval failed/cancelled.")
                         break
-                # per-chunk confirmation
-                if not _confirm(f"[chunk {idx+1}/{n}] Proceed with swap? (Y/N): "):
-                    print("Cancelled.")
-                    break
+                # auto-continue chunks
                 _, ok = _send_swap_from_quote(bridge, ch, sell_id, q)
                 executed_ok += 1 if ok else 0
             elif success_route in ("two","two_eth_only"):
@@ -1012,9 +1003,6 @@ def _swap_flow():
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
         print(f"\nChosen route: DIRECT (lower gas). {sell_label} -> {buy_label}")
-        if not _confirm("Proceed with direct swap?"):
-            print("Cancelled.")
-            return
         txh, ok = _execute(direct)
         if not ok and auto_retry:
             print("[retry] direct failed; sleeping then re-quoting...")

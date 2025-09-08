@@ -1848,7 +1848,7 @@ def _ultra__get_0x_quote_v1(self, chain: str, sell_token: str, buy_token: str, s
         "slippagePercentage": slip_pct,
         # keep validation enabled
     }
-    q = _ultra__http_get_json("https://api.0x.org/swap/v1/quote", params)
+    q = _ultra__http_get_json(f"{_rb__0x_base_url(self, chain)}/swap/v1/quote", params)
     return _ultra__norm_quote_numbers(q)
 
 def _ultra__preflight_ok(w3, frm, to, data_bytes, value_wei) -> tuple[bool,str]:
@@ -2101,10 +2101,10 @@ _ABI_V2_ROUTER = [
              {"internalType":"uint256","name":"amountOutMin","type":"uint256"},
              {"internalType":"address[]","name":"path","type":"address[]"},
              {"internalType":"address","name":"to","type":"address"},
+             {"internalType":"address","name":"referrer","type":"address"},
              {"internalType":"uint256","name":"deadline","type":"uint256"}],
    "name":"swapExactTokensForTokensSupportingFeeOnTransferTokens",
    "outputs":[], "stateMutability":"nonpayable","type":"function"},
-
   {"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},
              {"internalType":"address[]","name":"path","type":"address[]"}],
    "name":"getAmountsOut",
@@ -2184,8 +2184,7 @@ def camelot_v2_quote(self, chain: str, token_in: str, token_out: str, amount_in:
     # build tx data
     out_min = int(best_out * (10_000 - slippage_bps) / 10_000)
     deadline = int(self._rb__w3(chain).eth.get_block("latest")["timestamp"]) + 600
-    fn = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            int(amount_in), out_min, best, self.acct.address, deadline)
+    fn = router.functions.swapExactTokensForTokensSupportingFeeOnTransferTokens(int(amount_in), out_min, best, self.acct.address, "0x0000000000000000000000000000000000000000", deadline)
     data = fn._encode_transaction_data()
     allowance_target = CAMELOT_V2_ROUTER[chain]
     # try gas estimate
