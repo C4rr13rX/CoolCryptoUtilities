@@ -7,6 +7,32 @@ from services.cli_utils import is_native, normalize_for_0x, to_base_units, explo
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 
 class SwapService:
+    def _wrap_native(self, chain: str, wn_addr: str, amount_raw: int) -> bool:
+        """Call deposit() on the wrapped-native contract with value=amount_raw."""
+        try:
+            # deposit() selector 0xd0e30db0 used by WETH/WMATIC-style wrappers
+            txh = self.bridge.send_prebuilt_tx(chain, to=wn_addr, data='0xd0e30db0', value=int(amount_raw), gas=None)
+            print(f"[wrap] {chain}: native -> {wn_addr} amount={amount_raw} tx={txh}")
+            rc = self.bridge._rb__w3(chain).eth.wait_for_transaction_receipt(txh)
+            ok = int(rc.get('status',0)) == 1
+            print(f"[wrap] status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
+            return ok
+        except Exception as e:
+            print(f"[wrap] failed: {e!r}")
+            return False
+
+    def _wnative_for_chain(self, chain: str) -> str | None:
+        ch = chain.lower().strip()
+        # canonical wrapped-natives per chain (Uniswap V3)
+        mapping = {
+            'ethereum': '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2',  # WETH9
+            'arbitrum': '0x82aF49447D8a07e3bd95BDdB56f35241523fBab1',  # WETH
+            'optimism': '0x4200000000000000000000000000000000000006',  # WETH
+            'base':     '0x4200000000000000000000000000000000000006',  # WETH
+            'polygon':  '0x0d500B1d8E8ef31E21C99d1Db9A6444d3ADf1270',  # WMATIC
+        }
+        return mapping.get(ch)
+
     def _swap_via_uniswap(self, ch: str, sell: str, buy: str, sell_raw: int, slippage_bps: int) -> bool:
         # UniswapV3: ERC-20 addresses only
         if is_native(sell) or is_native(buy):
@@ -99,6 +125,18 @@ class SwapService:
             print("❌ sellAmount must be > 0"); return
 
         cid = int(w3.eth.chain_id); taker = self.bridge.acct.address
+        # Auto-wrap native before Uniswap if enabled
+        import os
+        if is_native(sell) and os.getenv('AUTO_WRAP_NATIVE', '1').strip().lower() not in ('0','false','no'):
+            wn = self._wnative_for_chain(ch)
+            if not wn:
+                print('[wrap] no wrapped-native known for this chain; aborting native sell')
+                return
+            if not self._wrap_native(ch, wn, int(sell_raw)):
+                print('❌ auto-wrap failed')
+                return
+            # replace sell token with wrapped-native address for downstream Uniswap path
+            sell = wn
         # Uniswap-only short-circuit (env flag)
         import os
         _ro = os.getenv('ROUTE_ONLY','').strip().lower()
