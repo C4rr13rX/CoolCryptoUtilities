@@ -3,6 +3,7 @@ import os
 from router_wallet import UltraSwapBridge, CHAINS
 from cache import CacheBalances, CacheTransfers
 from services.swap_service import SwapService
+from services.env_loader import EnvLoader
 from services.send_service import SendService
 
 def prompt_chain() -> str:
@@ -51,6 +52,16 @@ def swap_flow():
     amt  = input("Sell amount (decimals ok): ").strip()
     bps  = int(os.getenv("SWAP_SLIPPAGE_BPS","100"))
     svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps)
+
+
+# Load env from project root
+try:
+    load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
+except Exception:
+    pass
+
+
+EnvLoader.load()
 
 def menu():
     bridge = UltraSwapBridge()

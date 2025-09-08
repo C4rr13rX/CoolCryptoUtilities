@@ -4,14 +4,22 @@ from typing import Any, Dict, Optional
 from web3 import Web3
 
 class ZeroXV2AllowanceHolder:
+    def _zx_dbg(self, msg: str):
+        import os
+        if os.getenv('DEBUG_SWAP','0') not in ('1','true','TRUE'):
+            return
+        print(msg)
+
     BASE = "https://api.0x.org"
     def __init__(self, api_key: Optional[str]=None, *, timeout_s: float=25.0):
-        self.api_key = api_key or os.getenv("ZEROX_API_KEY")
+        raw = (api_key or os.getenv("ZEROX_API_KEY") or "")
+        self.api_key = raw.strip().strip("'\"")
         self.timeout_s = float(timeout_s)
     def _headers(self) -> Dict[str,str]:
+        self._zx_dbg(f"[0x] using key len={len(self.api_key)} head={self.api_key[:4]}… tail={self.api_key[-4:] if self.api_key else ''}")
         if not self.api_key:
             raise RuntimeError("0x v2: missing ZEROX_API_KEY")
-        return {"0x-api-key": self.api_key, "0x-version": "v2"}
+        return {"0x-api-key": self.api_key, "0x-version": "v2", "Accept": "application/json"}
     def quote(self, *, chain_id: int, sell_token: str, buy_token: str, sell_amount: int, taker: str, slippage_bps: int=100) -> Dict[str,Any]:
         if int(sell_amount) <= 0: raise ValueError("0x v2: sellAmount must be > 0")
         q = {
