@@ -1,12 +1,25 @@
 from __future__ import annotations
 import os
 from typing import Optional
+from web3.exceptions import ContractLogicError
 from web3 import Web3
 from router_wallet import UltraSwapBridge
 from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 
 class SwapService:
+    def _preflight(self, chain: str, to: str, data: str, value: int) -> tuple[bool, str]:
+        w3 = self.bridge._rb__w3(chain)
+        try:
+            w3.eth.call({'from': self.bridge.acct.address,
+                         'to': Web3.to_checksum_address(to),
+                         'data': data,
+                         'value': int(value or 0)})
+            return True, ''
+        except Exception as e:
+            return False, repr(e)
+
+
     def _is_contract(self, chain: str, addr: str) -> bool:
         try:
             if not addr or len(addr) != 42 or not addr.startswith('0x'): return False
@@ -57,7 +70,7 @@ class SwapService:
             print('[UniswapV3]', uq['__error__'])
             return False
         spender = uq.get('allowanceTarget')
-        if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
+        if spender and not self._ensure_allowance(ch, sell_for_allow, spender, sell_raw):
             print('❌ approval failed')
             return False
         tx = uq.get('tx') or {}
@@ -166,7 +179,7 @@ class SwapService:
                                sell_amount=int(sell_raw), taker=taker, slippage_bps=slippage_bps)
             tx = q0.get("tx") or {}
             spender = q0.get("allowanceTarget")
-            if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
+            if spender and not self._ensure_allowance(ch, sell_for_allow, spender, sell_raw):
                 print("❌ approval failed"); raise RuntimeError("approval failed")
             print(f"[0x] to={tx.get('to')} value={tx.get('value',0)} gas≈{tx.get('gas',0)}")
             h = self.bridge.send_prebuilt_tx_from_0x(ch, tx)
