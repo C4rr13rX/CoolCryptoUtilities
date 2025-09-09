@@ -8,6 +8,40 @@ from services.cli_utils import is_native, normalize_for_0x, to_base_units, explo
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 
 class SwapService:
+    def _w3_with_acct(self, chain: str):
+        """Return a Web3 for `chain` with default_account set to our signer."""
+        w3 = self.bridge._rb__w3(chain)
+        try:
+            acct = self.bridge.acct.address
+            if getattr(w3.eth, 'default_account', None) != acct:
+                w3.eth.default_account = acct
+        except Exception:
+            pass
+        return w3
+
+    def _preflight_estimate(self, chain: str, tx_to: str, tx_data: str, value: int) -> bool:
+        w3 = self.bridge._rb__w3(chain)
+        try:
+            tx = {
+                'from': self.bridge.acct.address,
+                'to': Web3.to_checksum_address(tx_to),
+                'data': tx_data,
+                'value': int(value or 0),
+            }
+            gas = int(w3.eth.estimate_gas(tx))
+            if os.getenv('DEBUG_SWAP','0') in ('1','true','TRUE'):
+                try:
+                    blk = w3.eth.get_block('latest')
+                    base = blk.get('baseFeePerGas')
+                except Exception:
+                    base = None
+                print(f"[preflight] estimateGas={gas} value={value} baseFee={base}")
+            return True
+        except Exception as e:
+            print(f"[preflight] estimateGas failed: {e!r}")
+            return False
+
+
     def _preflight(self, chain: str, to: str, data: str, value: int) -> tuple[bool, str]:
         w3 = self.bridge._rb__w3(chain)
         try:
@@ -55,27 +89,41 @@ class SwapService:
         return mapping.get(ch)
 
     def _swap_via_uniswap(self, ch: str, sell: str, buy: str, sell_raw: int, slippage_bps: int) -> bool:
-        # UniswapV3: ERC-20 addresses only
-        if is_native(sell) or is_native(buy):
-            print('[UniswapV3] native not supported directly; use WETH address on this chain')
-            return False
-        # Sanity: token contracts must exist on this chain
-        if sell and not is_native(sell) and not self._is_contract(ch, sell):
-            print(f"[UniswapV3] sell token not deployed on {ch}: {sell}"); return False
-        if buy and not is_native(buy) and not self._is_contract(ch, buy):
-            print(f"[UniswapV3] buy token not deployed on {ch}: {buy}"); return False
+        from services.cli_utils import is_native
+        w3 = self.bridge._rb__w3(ch)
+        w3.eth.default_account = self.bridge.acct.address
 
+        # Build Uniswap tx (provider encapsulates path/fee logic)
         uq = self.uni.quote_and_build(ch, sell, buy, int(sell_raw), slippage_bps=slippage_bps)
-        if '__error__' in uq:
-            print('[UniswapV3]', uq['__error__'])
+        if not uq or '__error__' in uq:
+            print('[UniswapV3]', (uq or {}).get('__error__', 'failed to build route'))
             return False
-        spender = uq.get('allowanceTarget')
-        if spender and not self._ensure_allowance(ch, sell_for_allow, spender, sell_raw):
+
+        # Allowance: normalize native->WETH using provider config
+        try:
+            conf = self.uni._cfg(ch)
+            weth = conf.get('WETH')
+        except Exception:
+            weth = None
+        sell_for_allow = (weth if (weth and is_native(sell)) else sell)
+
+        spender = uq.get('allowanceTarget') or uq.get('spender') or (conf.get('SWAP_ROUTER') if 'conf' in locals() and isinstance(conf, dict) else None)
+        if spender and not self._ensure_allowance(ch, sell_for_allow, spender, int(sell_raw)):
             print('❌ approval failed')
             return False
+
+        # Preflight via estimateGas (no .call())
         tx = uq.get('tx') or {}
-        print(f"[UniswapV3] to={tx.get('to')} value={tx.get('value',0)} gas≈{tx.get('gas',0)}")
-        h, ok = self._send(ch, to=tx['to'], data=tx['data'], value=int(tx.get('value') or 0), gas_hint=int(tx.get('gas') or 0))
+        to = tx.get('to'); data = tx.get('data'); value = int(tx.get('value') or 0); gas_hint = int(tx.get('gas') or 0) if tx.get('gas') else None
+        if not to or not data:
+            print('[UniswapV3] malformed tx from provider')
+            return False
+        if not self._preflight_estimate(ch, to, data, value, gas_hint):
+            print('[UniswapV3] preflight estimateGas failed')
+            return False
+
+        # Send
+        h, ok = self._send(ch, to=to, data=data, value=value, gas_hint=gas_hint or 0)
         return bool(ok)
 
     def __init__(self, bridge: UltraSwapBridge):
@@ -83,7 +131,7 @@ class SwapService:
         self.zx     = ZeroXV2AllowanceHolder()                 # HTTP (needs ZEROX_API_KEY)
         self.uni    = UniswapV3Local(lambda ch: self.bridge._rb__w3(ch))   # keyless, on-chain
         self.camelot= CamelotV2Local(lambda ch: self.bridge._rb__w3(ch))   # keyless, on-chain (Arbitrum)
-        self.sushi  = SushiV2Local(lambda ch: self.bridge._rb__w3(ch))     # keyless, on-chain (Arbitrum)
+        self.sushi  = SushiV2Local(lambda ch: self._w3_with_acct(ch))     # keyless, on-chain (Arbitrum)
 
     def _decimals(self, chain: str, token: str) -> int:
         if is_native(token): return 18
@@ -179,7 +227,7 @@ class SwapService:
                                sell_amount=int(sell_raw), taker=taker, slippage_bps=slippage_bps)
             tx = q0.get("tx") or {}
             spender = q0.get("allowanceTarget")
-            if spender and not self._ensure_allowance(ch, sell_for_allow, spender, sell_raw):
+            if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
                 print("❌ approval failed"); raise RuntimeError("approval failed")
             print(f"[0x] to={tx.get('to')} value={tx.get('value',0)} gas≈{tx.get('gas',0)}")
             h = self.bridge.send_prebuilt_tx_from_0x(ch, tx)
