@@ -299,33 +299,45 @@ class UltraSwapBridge:
     # ------------------------ Fees / Sending ------------------------
 
     @staticmethod
-    def _suggest_fees(w3: Web3) -> Dict[str, int]:
+    def _suggest_fees(w3) -> dict:
         """
-        EIP-1559 fees using fee_history.
-        Env overrides:
-          GAS_TIP_GWEI  (default 3)
-          GAS_BASE_MULT (default 2.0)
-          GAS_PRICE_GWEI (forces legacy)
+        EIP-1559 fees with dynamic priority tip:
+        - Honors GAS_PRICE_GWEI to force legacy if set.
+        - Else: uses fee_history to pick a realistic tip, with env/floor overrides.
+            Env:
+            GAS_TIP_GWEI           (default 3)
+            GAS_TIP_FLOOR_GWEI     (default 1)      # global floor
+            GAS_BASE_MULT          (default 2.0)
         """
         gp_override = os.getenv("GAS_PRICE_GWEI")
         if gp_override:
             return {"gasPrice": _gwei(float(gp_override))}
 
-        tip_gwei = float(os.getenv("GAS_TIP_GWEI", "3"))
-        mult     = float(os.getenv("GAS_BASE_MULT", "2.0"))
+        tip_default = float(os.getenv("GAS_TIP_GWEI", "3"))
+        tip_floor   = float(os.getenv("GAS_TIP_FLOOR_GWEI", "1"))
+        mult        = float(os.getenv("GAS_BASE_MULT", "2.0"))
+
         try:
-            hist = w3.eth.fee_history(5, "pending", [20, 50, 80])
+            # rewards is list[blocks][percentiles]; use high percentile to avoid underbidding
+            hist = w3.eth.fee_history(6, "pending", [25, 50, 75, 90])
             base = int(hist["baseFeePerGas"][-1])
-            tip  = _gwei(tip_gwei)
+            # take the last few blocks’ 75–90th percentile as a guide
+            rewards = [max(r[-2:]) for r in hist["reward"] if r]  # pick max of 75/90 per block
+            recent_tip = int(sum(rewards) / max(1, len(rewards))) if rewards else 0
+
+            tip = max(_gwei(tip_default), recent_tip, _gwei(tip_floor))
             max_fee = int(base * mult) + tip
             if max_fee < base + tip:
                 max_fee = base + tip
             return {"maxFeePerGas": max_fee, "maxPriorityFeePerGas": tip}
         except Exception:
+            # Fallback: legacy gasPrice if fee_history isn’t available
             try:
-                return {"gasPrice": int(w3.eth.gas_price)}
+                gp = int(w3.eth.gas_price)
             except Exception:
-                return {"gasPrice": _gwei(10)}
+                gp = _gwei(30)  # conservative
+            return {"gasPrice": gp}
+
 
     def send_prebuilt_tx(self, chain: str, to: str, data: str, *, value: int = 0, gas: int | None = None):
         """
