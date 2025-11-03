@@ -9,10 +9,10 @@ from keras.callbacks import Callback
 from keras.layers import (
     Activation,
     Add,
-    AlphaDropout,
     Concatenate,
     Conv1D,
     Dense,
+    Dropout,
     Embedding,
     Flatten,
     GlobalAveragePooling1D,
@@ -26,6 +26,19 @@ from keras.layers import (
 )
 from keras.layers import TextVectorization
 from keras.models import Model
+
+
+class TimeFeatureLayer(tf.keras.layers.Layer):
+    def call(self, inputs):
+        hour, dow = inputs
+        hour = tf.cast(hour, tf.float32) / 24.0
+        dow = tf.cast(dow, tf.float32) / 7.0
+        two_pi = tf.constant(2.0 * math.pi, dtype=tf.float32)
+        sin_hr = tf.math.sin(two_pi * hour)
+        cos_hr = tf.math.cos(two_pi * hour)
+        sin_dw = tf.math.sin(two_pi * dow)
+        cos_dw = tf.math.cos(two_pi * dow)
+        return tf.concat([sin_hr, cos_hr, sin_dw, cos_dw], axis=-1)
 
 # ---------------------------------------------------------------------
 # Optional encrypted DB state hooks (safe if missing)
@@ -73,6 +86,22 @@ class ExponentialDecay(tf.keras.layers.Layer):
         return inputs * weights
 
 
+_GAUSS_EPS = tf.constant(1e-6, dtype=tf.float32)
+_GAUSS_MAX_LOG_VAR = tf.constant(8.0, dtype=tf.float32)
+
+
+def gaussian_nll_loss(y_true, y_pred):
+    mu = y_pred[:, :1]
+    log_var = y_pred[:, 1:2]
+    log_var = tf.clip_by_value(log_var, tf.math.log(_GAUSS_EPS), _GAUSS_MAX_LOG_VAR)
+    precision = tf.exp(-log_var)
+    return 0.5 * (log_var + tf.square(y_true - mu) * precision)
+
+
+def zero_loss(y_true, y_pred):
+    return tf.zeros((tf.shape(y_pred)[0],), dtype=y_pred.dtype)
+
+
 # ---------------------------------------------------------------------
 # Utility: build (or accept) light TextVectorization + Embeddings
 # ---------------------------------------------------------------------
@@ -89,7 +118,7 @@ def build_text_encoder(name_prefix: str, vocab_size: int, seq_len: int, embed_di
     emb = Embedding(vocab_size, embed_dim, name=f"{name_prefix}_emb")(ids)
     feat = GlobalAveragePooling1D(name=f"{name_prefix}_avgpool")(emb)
     feat = Dense(embed_dim, activation="swish", name=f"{name_prefix}_proj")(feat)
-    feat = AlphaDropout(0.2, name=f"{name_prefix}_do")(feat)
+    feat = Dropout(0.2, name=f"{name_prefix}_do")(feat)
     enc = Model(inp, feat, name=f"{name_prefix}_encoder")
     return vec, enc
 
@@ -109,6 +138,7 @@ def build_multimodal_model(
     full_dim: int = 128,
     hidden_1: int = 256,
     hidden_2: int = 128,
+    asset_vocab_size: int = 1,
 ) -> tuple[Model, TextVectorization, TextVectorization, Dict[str, Any], Dict[str, float]]:
     ts_in = Input((window_size, 2), name="price_vol_input")
     d1 = Conv1D(64, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_in)
@@ -132,14 +162,14 @@ def build_multimodal_model(
     x = LayerNormalization(name="ts_norm")(x)
     x = MaxPooling1D(2, name="ts_pool2")(x)
     x = Flatten(name="ts_flat")(x)
-    x = AlphaDropout(0.2, name="ts_do")(x)
+    x = Dropout(0.2, name="ts_do")(x)
 
     exit_conf = Dense(1, activation="sigmoid", name="exit_conf")(x)
 
     sent_in = Input((sent_seq_len, 1), name="sentiment_seq")
     s = ExponentialDecay(sent_seq_len, name="sent_decay")(sent_in)
     s = LSTM(32, name="sent_lstm")(s)
-    s = AlphaDropout(0.2, name="sent_do")(s)
+    s = Dropout(0.2, name="sent_do")(s)
 
     headline_vec, headline_enc = build_text_encoder(
         name_prefix="headline", vocab_size=headline_vocab, seq_len=headline_len, embed_dim=headline_dim
@@ -156,7 +186,7 @@ def build_multimodal_model(
     tech_in = Input((tech_count,), name="tech_input")
     t = LayerNormalization(name="tech_norm")(tech_in)
     t = Dense(64, activation="swish", name="tech_dense")(t)
-    t = AlphaDropout(0.2, name="tech_do")(t)
+    t = Dropout(0.2, name="tech_do")(t)
 
     hour_in = Input((1,), dtype="int32", name="hour_input")
     dow_in = Input((1,), dtype="int32", name="dow_input")
@@ -165,16 +195,24 @@ def build_multimodal_model(
     gas_in = Input((1,), name="gas_fee_input")
     tax_in = Input((1,), name="tax_rate_input")
 
-    merged = Concatenate(name="merge_all")([x, s, headline_feat, full_feat, t, time_f])
+    vocab = max(1, int(asset_vocab_size))
+    asset_dim = max(8, min(32, vocab // 2 or 8))
+    asset_in = Input((1,), dtype="int32", name="asset_id_input")
+    asset_emb = Embedding(vocab, asset_dim, name="asset_embedding")(asset_in)
+    asset_feat = Flatten(name="asset_flat")(asset_emb)
+
+    merged = Concatenate(name="merge_all")([x, s, headline_feat, full_feat, t, time_f, asset_feat])
     d = Dense(hidden_1, activation="swish", name="h1")(merged)
     d = LayerNormalization(name="h1_norm")(d)
-    d = AlphaDropout(0.3, name="h1_do")(d)
+    d = Dropout(0.3, name="h1_do")(d)
     d = Dense(hidden_2, activation="swish", name="h2")(d)
     d = LayerNormalization(name="h2_norm")(d)
-    d = AlphaDropout(0.3, name="h2_do")(d)
+    d = Dropout(0.3, name="h2_do")(d)
 
-    price_mu = Dense(1, name="price_mu")(d)
-    price_log_var = Dense(1, name="price_log_var")(d)
+    price_params = Dense(2, name="price_params")(d)
+    price_mu = Lambda(lambda x: x[:, :1], name="price_mu")(price_params)
+    price_log_var = Lambda(lambda x: x[:, 1:2], name="price_log_var")(price_params)
+    price_gaussian = Concatenate(name="price_gaussian")([price_mu, price_log_var])
     price_dir = Dense(1, activation="sigmoid", name="price_dir")(d)
 
     net_margin = Lambda(lambda args: args[0] - (args[1] + args[2]), name="net_margin")([price_mu, gas_in, tax_in])
@@ -183,28 +221,30 @@ def build_multimodal_model(
     tech_out = Dense(tech_count, activation="linear", name="tech_recon")(d)
 
     model = Model(
-        inputs=[ts_in, sent_in, headline_in, full_in, tech_in, hour_in, dow_in, gas_in, tax_in],
-        outputs=[exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_out],
+        inputs=[ts_in, sent_in, headline_in, full_in, tech_in, hour_in, dow_in, gas_in, tax_in, asset_in],
+        outputs=[exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_out, price_gaussian],
         name="moneybutton_multimodal_light",
     )
 
     losses = {
         "exit_conf": "binary_crossentropy",
-        "price_mu": "mse",
-        "price_log_var": "mse",
+        "price_mu": zero_loss,
+        "price_log_var": zero_loss,
         "price_dir": "binary_crossentropy",
         "net_margin": "mse",
         "net_pnl": "mse",
         "tech_recon": "mse",
+        "price_gaussian": gaussian_nll_loss,
     }
     loss_weights = {
         "exit_conf": 0.5,
-        "price_mu": 1.0,
-        "price_log_var": 0.25,
+        "price_mu": 0.0,
+        "price_log_var": 0.0,
         "price_dir": 0.5,
         "net_margin": 1.0,
         "net_pnl": 0.0,
         "tech_recon": 0.25,
+        "price_gaussian": 1.0,
     }
 
     model.compile(
@@ -226,14 +266,3 @@ if __name__ == "__main__":  # pragma: no cover - manual check
     print("\nOK: model built. Adapt the text vectorizers offline before training:")
     print("  head_vec.adapt(dataset_of_headlines)")
     print("  full_vec.adapt(dataset_of_full_articles)")
-class TimeFeatureLayer(tf.keras.layers.Layer):
-    def call(self, inputs):
-        hour, dow = inputs
-        hour = tf.cast(hour, tf.float32) / 24.0
-        dow = tf.cast(dow, tf.float32) / 7.0
-        two_pi = tf.constant(2.0 * math.pi, dtype=tf.float32)
-        sin_hr = tf.math.sin(two_pi * hour)
-        cos_hr = tf.math.cos(two_pi * hour)
-        sin_dw = tf.math.sin(two_pi * dow)
-        cos_dw = tf.math.cos(two_pi * dow)
-        return tf.concat([sin_hr, cos_hr, sin_dw, cos_dw], axis=-1)

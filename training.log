@@ -1,29 +1,442 @@
-2025-11-03 04:36:43.797502: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
-2025-11-03 04:36:43.801377: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
-2025-11-03 04:36:43.812577: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2025-11-03 05:52:48.718330: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 05:52:48.722857: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 05:52:48.734818: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
 WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
-E0000 00:00:1762162603.832167  393319 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
-E0000 00:00:1762162603.838070  393319 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
-W0000 00:00:1762162603.852109  393319 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-W0000 00:00:1762162603.852170  393319 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-W0000 00:00:1762162603.852177  393319 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-W0000 00:00:1762162603.852180  393319 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
-2025-11-03 04:36:43.855971: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+E0000 00:00:1762167168.755635  457367 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1762167168.761305  457367 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1762167168.776689  457367 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762167168.776757  457367 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762167168.776764  457367 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762167168.776767  457367 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2025-11-03 05:52:48.780988: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
 To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
-2025-11-03 04:36:45.648031: E external/local_xla/xla/stream_executor/cuda/cuda_platform.cc:51] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
-2025-11-03 04:36:45.882971: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
-2025-11-03 04:36:45.894214: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+2025-11-03 05:53:09.496106: E external/local_xla/xla/stream_executor/cuda/cuda_platform.cc:51] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+2025-11-03 05:53:10.927509: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+2025-11-03 05:53:12.035732: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 1
+[training] candidate score 0.521 below promotion threshold 0.650.
+[trainer] iteration 1 completed with score=0.5211
+2025-11-03 05:54:02.316639: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 2
+[training] candidate score 0.509 below promotion threshold 0.650.
+[trainer] iteration 2 completed with score=0.5094
+[trainer] starting candidate training iteration 3
+[training] candidate score 0.498 below promotion threshold 0.650.
+[trainer] iteration 3 completed with score=0.4984
+2025-11-03 05:55:40.501423: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 4
+[training] candidate score 0.501 below promotion threshold 0.650.
+[trainer] iteration 4 completed with score=0.5008
+[trainer] starting candidate training iteration 5
+[training] candidate score 0.512 below promotion threshold 0.650.
+[trainer] iteration 5 completed with score=0.5117
+[trainer] starting candidate training iteration 6
+[training] candidate score 0.509 below promotion threshold 0.650.
+[trainer] iteration 6 completed with score=0.5086
+[trainer] starting candidate training iteration 7
+[training] candidate score 0.481 below promotion threshold 0.650.
+[trainer] iteration 7 completed with score=0.4812
+2025-11-03 05:59:01.838380: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 8
+[training] candidate score 0.504 below promotion threshold 0.650.
+[trainer] iteration 8 completed with score=0.5039
+[trainer] starting candidate training iteration 9
+[training] candidate score 0.499 below promotion threshold 0.650.
+[trainer] iteration 9 completed with score=0.4992
+[trainer] starting candidate training iteration 10
+[training] candidate score 0.514 below promotion threshold 0.650.
+[trainer] iteration 10 completed with score=0.5141
+[trainer] starting candidate training iteration 11
+[training] candidate score 0.496 below promotion threshold 0.650.
+[trainer] iteration 11 completed with score=0.4961
+[trainer] starting candidate training iteration 12
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 12 completed with score=0.5055
+[trainer] starting candidate training iteration 13
+[training] candidate score 0.507 below promotion threshold 0.650.
+[trainer] iteration 13 completed with score=0.5070
+[trainer] starting candidate training iteration 14
+[training] candidate score 0.488 below promotion threshold 0.650.
+[trainer] iteration 14 completed with score=0.4883
+[trainer] starting candidate training iteration 15
+[training] candidate score 0.514 below promotion threshold 0.650.
+[trainer] iteration 15 completed with score=0.5141
+2025-11-03 06:05:48.431205: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 16
+[training] candidate score 0.477 below promotion threshold 0.650.
+[trainer] iteration 16 completed with score=0.4773
+[trainer] starting candidate training iteration 17
+[training] candidate score 0.494 below promotion threshold 0.650.
+[trainer] iteration 17 completed with score=0.4938
+[trainer] starting candidate training iteration 18
+[training] candidate score 0.523 below promotion threshold 0.650.
+[trainer] iteration 18 completed with score=0.5234
+[trainer] starting candidate training iteration 19
+[training] candidate score 0.485 below promotion threshold 0.650.
+[trainer] iteration 19 completed with score=0.4852
+[trainer] starting candidate training iteration 20
+[training] candidate score 0.512 below promotion threshold 0.650.
+[trainer] iteration 20 completed with score=0.5117
+[trainer] starting candidate training iteration 21
+[training] candidate score 0.470 below promotion threshold 0.650.
+[trainer] iteration 21 completed with score=0.4703
+[trainer] starting candidate training iteration 22
+[training] candidate score 0.469 below promotion threshold 0.650.
+[trainer] iteration 22 completed with score=0.4688
+[trainer] starting candidate training iteration 23
+[training] candidate score 0.509 below promotion threshold 0.650.
+[trainer] iteration 23 completed with score=0.5086
+2025-11-03 06:13:13.734548: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 06:13:13.739956: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 06:13:13.755467: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1762168393.781957  475086 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1762168393.788484  475086 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1762168393.807314  475086 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762168393.807376  475086 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762168393.807409  475086 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762168393.807415  475086 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2025-11-03 06:13:13.812715: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-11-03 06:13:36.760860: E external/local_xla/xla/stream_executor/cuda/cuda_platform.cc:51] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+2025-11-03 06:13:38.069994: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+2025-11-03 06:13:39.129163: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
 [trainer] starting candidate training iteration 1
 [training] candidate score 0.497 below promotion threshold 0.650.
-[trainer] iteration 1 completed with score=0.4969
-2025-11-03 04:37:35.748885: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] iteration 1 completed with score=0.4971
+2025-11-03 06:14:24.785466: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
 [trainer] starting candidate training iteration 2
-[training] candidate score 0.520 below promotion threshold 0.650.
-[trainer] iteration 2 completed with score=0.5195
+[training] candidate score 0.472 below promotion threshold 0.650.
+[trainer] iteration 2 completed with score=0.4720
 [trainer] starting candidate training iteration 3
-[training] candidate score 0.505 below promotion threshold 0.650.
-[trainer] iteration 3 completed with score=0.5055
-2025-11-03 04:39:21.312621: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[training] candidate score 0.501 below promotion threshold 0.650.
+[trainer] iteration 3 completed with score=0.5010
+2025-11-03 06:15:54.117104: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
 [trainer] starting candidate training iteration 4
+[training] candidate score 0.462 below promotion threshold 0.650.
+[trainer] iteration 4 completed with score=0.4623
+[trainer] starting candidate training iteration 5
+[training] candidate score 0.509 below promotion threshold 0.650.
+[trainer] iteration 5 completed with score=0.5087
+[trainer] starting candidate training iteration 6
+[training] candidate score 0.516 below promotion threshold 0.650.
+[trainer] iteration 6 completed with score=0.5164
+[trainer] starting candidate training iteration 7
+[training] candidate score 0.516 below promotion threshold 0.650.
+[trainer] iteration 7 completed with score=0.5164
+2025-11-03 06:18:52.756017: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 8
+[training] candidate score 0.513 below promotion threshold 0.650.
+[trainer] iteration 8 completed with score=0.5126
+[trainer] starting candidate training iteration 9
+[training] candidate score 0.485 below promotion threshold 0.650.
+[trainer] iteration 9 completed with score=0.4855
+[trainer] starting candidate training iteration 10
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 10 completed with score=0.4913
+[trainer] starting candidate training iteration 11
+[training] candidate score 0.485 below promotion threshold 0.650.
+[trainer] iteration 11 completed with score=0.4855
+[trainer] starting candidate training iteration 12
+[training] candidate score 0.503 below promotion threshold 0.650.
+[trainer] iteration 12 completed with score=0.5029
+[trainer] starting candidate training iteration 13
+[training] candidate score 0.464 below promotion threshold 0.650.
+[trainer] iteration 13 completed with score=0.4642
+[trainer] starting candidate training iteration 14
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 14 completed with score=0.4913
+[trainer] starting candidate training iteration 15
+[training] candidate score 0.487 below promotion threshold 0.650.
+[trainer] iteration 15 completed with score=0.4874
+2025-11-03 06:24:48.012879: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 16
 [training] candidate score 0.495 below promotion threshold 0.650.
-[trainer] iteration 4 completed with score=0.4945
+[trainer] iteration 16 completed with score=0.4952
+[trainer] starting candidate training iteration 17
+[training] candidate score 0.507 below promotion threshold 0.650.
+[trainer] iteration 17 completed with score=0.5068
+[trainer] starting candidate training iteration 18
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 18 completed with score=0.5048
+[trainer] starting candidate training iteration 19
+[training] candidate score 0.511 below promotion threshold 0.650.
+[trainer] iteration 19 completed with score=0.5106
+[trainer] starting candidate training iteration 20
+[training] candidate score 0.495 below promotion threshold 0.650.
+[trainer] iteration 20 completed with score=0.4952
+[trainer] starting candidate training iteration 21
+[training] candidate score 0.501 below promotion threshold 0.650.
+[trainer] iteration 21 completed with score=0.5010
+[trainer] starting candidate training iteration 22
+[training] candidate score 0.484 below promotion threshold 0.650.
+[trainer] iteration 22 completed with score=0.4836
+[trainer] starting candidate training iteration 23
+[training] candidate score 0.462 below promotion threshold 0.650.
+[trainer] iteration 23 completed with score=0.4623
+[trainer] starting candidate training iteration 24
+[training] candidate score 0.495 below promotion threshold 0.650.
+[trainer] iteration 24 completed with score=0.4952
+[trainer] starting candidate training iteration 25
+[training] candidate score 0.489 below promotion threshold 0.650.
+[trainer] iteration 25 completed with score=0.4894
+[trainer] starting candidate training iteration 26
+[training] candidate score 0.524 below promotion threshold 0.650.
+[trainer] iteration 26 completed with score=0.5242
+[trainer] starting candidate training iteration 27
+[training] candidate score 0.515 below promotion threshold 0.650.
+[trainer] iteration 27 completed with score=0.5145
+[trainer] starting candidate training iteration 28
+[training] candidate score 0.480 below promotion threshold 0.650.
+[trainer] iteration 28 completed with score=0.4797
+[trainer] starting candidate training iteration 29
+[training] candidate score 0.458 below promotion threshold 0.650.
+[trainer] iteration 29 completed with score=0.4584
+[trainer] starting candidate training iteration 30
+[training] candidate score 0.470 below promotion threshold 0.650.
+[trainer] iteration 30 completed with score=0.4700
+[trainer] starting candidate training iteration 31
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 31 completed with score=0.5048
+2025-11-03 06:36:44.086691: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 32
+[training] candidate score 0.513 below promotion threshold 0.650.
+[trainer] iteration 32 completed with score=0.5126
+[trainer] starting candidate training iteration 33
+[training] candidate score 0.503 below promotion threshold 0.650.
+[trainer] iteration 33 completed with score=0.5029
+[trainer] starting candidate training iteration 34
+[training] candidate score 0.484 below promotion threshold 0.650.
+[trainer] iteration 34 completed with score=0.4836
+[trainer] starting candidate training iteration 35
+[training] candidate score 0.485 below promotion threshold 0.650.
+[trainer] iteration 35 completed with score=0.4855
+[trainer] starting candidate training iteration 36
+[training] candidate score 0.520 below promotion threshold 0.650.
+[trainer] iteration 36 completed with score=0.5203
+[trainer] starting candidate training iteration 37
+[training] candidate score 0.515 below promotion threshold 0.650.
+[trainer] iteration 37 completed with score=0.5145
+[trainer] starting candidate training iteration 38
+[training] candidate score 0.487 below promotion threshold 0.650.
+[trainer] iteration 38 completed with score=0.4874
+[trainer] starting candidate training iteration 39
+[training] candidate score 0.464 below promotion threshold 0.650.
+[trainer] iteration 39 completed with score=0.4642
+[trainer] starting candidate training iteration 40
+[training] candidate score 0.485 below promotion threshold 0.650.
+[trainer] iteration 40 completed with score=0.4855
+[trainer] starting candidate training iteration 41
+[training] candidate score 0.495 below promotion threshold 0.650.
+[trainer] iteration 41 completed with score=0.4952
+[trainer] starting candidate training iteration 42
+[training] candidate score 0.540 below promotion threshold 0.650.
+[trainer] iteration 42 completed with score=0.5397
+[trainer] starting candidate training iteration 43
+[training] candidate score 0.503 below promotion threshold 0.650.
+[trainer] iteration 43 completed with score=0.5029
+[trainer] starting candidate training iteration 44
+[training] candidate score 0.526 below promotion threshold 0.650.
+[trainer] iteration 44 completed with score=0.5261
+[trainer] starting candidate training iteration 45
+[training] candidate score 0.511 below promotion threshold 0.650.
+[trainer] iteration 45 completed with score=0.5106
+[trainer] starting candidate training iteration 46
+[training] candidate score 0.520 below promotion threshold 0.650.
+[trainer] iteration 46 completed with score=0.5203
+[trainer] starting candidate training iteration 47
+[training] candidate score 0.542 below promotion threshold 0.650.
+[trainer] iteration 47 completed with score=0.5416
+[trainer] starting candidate training iteration 48
+[training] candidate score 0.499 below promotion threshold 0.650.
+[trainer] iteration 48 completed with score=0.4990
+[trainer] starting candidate training iteration 49
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 49 completed with score=0.4913
+[trainer] starting candidate training iteration 50
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 50 completed with score=0.5048
+[trainer] starting candidate training iteration 51
+[training] candidate score 0.478 below promotion threshold 0.650.
+[trainer] iteration 51 completed with score=0.4778
+[trainer] starting candidate training iteration 52
+[training] candidate score 0.518 below promotion threshold 0.650.
+[trainer] iteration 52 completed with score=0.5184
+[trainer] starting candidate training iteration 53
+[training] candidate score 0.487 below promotion threshold 0.650.
+[trainer] iteration 53 completed with score=0.4874
+[trainer] starting candidate training iteration 54
+[training] candidate score 0.489 below promotion threshold 0.650.
+[trainer] iteration 54 completed with score=0.4894
+[trainer] starting candidate training iteration 55
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 55 completed with score=0.4913
+[trainer] starting candidate training iteration 56
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 56 completed with score=0.5048
+[trainer] starting candidate training iteration 57
+[training] candidate score 0.515 below promotion threshold 0.650.
+[trainer] iteration 57 completed with score=0.5145
+[trainer] starting candidate training iteration 58
+[training] candidate score 0.511 below promotion threshold 0.650.
+[trainer] iteration 58 completed with score=0.5106
+[trainer] starting candidate training iteration 59
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 59 completed with score=0.5048
+[trainer] starting candidate training iteration 60
+[training] candidate score 0.509 below promotion threshold 0.650.
+[trainer] iteration 60 completed with score=0.5087
+[trainer] starting candidate training iteration 61
+[training] candidate score 0.499 below promotion threshold 0.650.
+[trainer] iteration 61 completed with score=0.4990
+[trainer] starting candidate training iteration 62
+[training] candidate score 0.487 below promotion threshold 0.650.
+[trainer] iteration 62 completed with score=0.4874
+[trainer] starting candidate training iteration 63
+[training] candidate score 0.476 below promotion threshold 0.650.
+[trainer] iteration 63 completed with score=0.4758
+2025-11-03 07:00:58.989412: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 64
+[training] candidate score 0.480 below promotion threshold 0.650.
+[trainer] iteration 64 completed with score=0.4797
+[trainer] starting candidate training iteration 65
+[training] candidate score 0.497 below promotion threshold 0.650.
+[trainer] iteration 65 completed with score=0.4971
+[trainer] starting candidate training iteration 66
+[training] candidate score 0.526 below promotion threshold 0.650.
+[trainer] iteration 66 completed with score=0.5261
+[trainer] starting candidate training iteration 67
+[training] candidate score 0.507 below promotion threshold 0.650.
+[trainer] iteration 67 completed with score=0.5068
+[trainer] starting candidate training iteration 68
+[training] candidate score 0.522 below promotion threshold 0.650.
+[trainer] iteration 68 completed with score=0.5222
+[trainer] starting candidate training iteration 69
+[training] candidate score 0.513 below promotion threshold 0.650.
+[trainer] iteration 69 completed with score=0.5126
+[trainer] starting candidate training iteration 70
+[training] candidate score 0.505 below promotion threshold 0.650.
+[trainer] iteration 70 completed with score=0.5048
+[trainer] starting candidate training iteration 71
+[training] candidate score 0.509 below promotion threshold 0.650.
+[trainer] iteration 71 completed with score=0.5087
+[trainer] starting candidate training iteration 72
+[training] candidate score 0.493 below promotion threshold 0.650.
+[trainer] iteration 72 completed with score=0.4932
+[trainer] starting candidate training iteration 73
+[training] candidate score 0.528 below promotion threshold 0.650.
+[trainer] iteration 73 completed with score=0.5280
+[trainer] starting candidate training iteration 74
+[training] candidate score 0.513 below promotion threshold 0.650.
+[trainer] iteration 74 completed with score=0.5126
+[trainer] starting candidate training iteration 75
+[training] candidate score 0.522 below promotion threshold 0.650.
+[trainer] iteration 75 completed with score=0.5222
+[trainer] starting candidate training iteration 76
+[training] candidate score 0.493 below promotion threshold 0.650.
+[trainer] iteration 76 completed with score=0.4932
+[trainer] starting candidate training iteration 77
+[training] candidate score 0.526 below promotion threshold 0.650.
+[trainer] iteration 77 completed with score=0.5261
+[trainer] starting candidate training iteration 78
+[training] candidate score 0.530 below promotion threshold 0.650.
+[trainer] iteration 78 completed with score=0.5300
+[trainer] starting candidate training iteration 79
+[training] candidate score 0.503 below promotion threshold 0.650.
+[trainer] iteration 79 completed with score=0.5029
+[trainer] starting candidate training iteration 80
+[training] candidate score 0.484 below promotion threshold 0.650.
+[trainer] iteration 80 completed with score=0.4836
+[trainer] starting candidate training iteration 81
+[training] candidate score 0.511 below promotion threshold 0.650.
+[trainer] iteration 81 completed with score=0.5106
+[trainer] starting candidate training iteration 82
+[training] candidate score 0.520 below promotion threshold 0.650.
+[trainer] iteration 82 completed with score=0.5203
+[trainer] starting candidate training iteration 83
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 83 completed with score=0.4913
+[trainer] starting candidate training iteration 84
+[training] candidate score 0.547 below promotion threshold 0.650.
+[trainer] iteration 84 completed with score=0.5474
+[trainer] starting candidate training iteration 85
+[training] candidate score 0.526 below promotion threshold 0.650.
+[trainer] iteration 85 completed with score=0.5261
+[trainer] starting candidate training iteration 86
+[training] candidate score 0.474 below promotion threshold 0.650.
+[trainer] iteration 86 completed with score=0.4739
+[trainer] starting candidate training iteration 87
+[training] candidate score 0.499 below promotion threshold 0.650.
+[trainer] iteration 87 completed with score=0.4990
+[trainer] starting candidate training iteration 88
+[training] candidate score 0.516 below promotion threshold 0.650.
+[trainer] iteration 88 completed with score=0.5164
+[trainer] starting candidate training iteration 89
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 89 completed with score=0.4913
+[trainer] starting candidate training iteration 90
+[training] candidate score 0.456 below promotion threshold 0.650.
+[trainer] iteration 90 completed with score=0.4565
+[trainer] starting candidate training iteration 91
+[training] candidate score 0.480 below promotion threshold 0.650.
+[trainer] iteration 91 completed with score=0.4797
+[trainer] starting candidate training iteration 92
+[training] candidate score 0.487 below promotion threshold 0.650.
+[trainer] iteration 92 completed with score=0.4874
+[trainer] starting candidate training iteration 93
+[training] candidate score 0.478 below promotion threshold 0.650.
+[trainer] iteration 93 completed with score=0.4778
+[trainer] starting candidate training iteration 94
+[training] candidate score 0.513 below promotion threshold 0.650.
+[trainer] iteration 94 completed with score=0.5126
+[trainer] starting candidate training iteration 95
+[training] candidate score 0.542 below promotion threshold 0.650.
+[trainer] iteration 95 completed with score=0.5416
+[trainer] starting candidate training iteration 96
+[training] candidate score 0.491 below promotion threshold 0.650.
+[trainer] iteration 96 completed with score=0.4913
+[trainer] starting candidate training iteration 97
+[training] candidate score 0.516 below promotion threshold 0.650.
+[trainer] iteration 97 completed with score=0.5164
+[trainer] starting candidate training iteration 98
+[training] candidate score 0.516 below promotion threshold 0.650.
+[trainer] iteration 98 completed with score=0.5164
+[trainer] starting candidate training iteration 99
+[training] candidate score 0.503 below promotion threshold 0.650.
+[trainer] iteration 99 completed with score=0.5029
+[trainer] starting candidate training iteration 100
+[training] candidate score 0.518 below promotion threshold 0.650.
+[trainer] iteration 100 completed with score=0.5184
+[trainer] starting candidate training iteration 101
+[training] candidate score 0.553 below promotion threshold 0.650.
+[trainer] iteration 101 completed with score=0.5532
+[trainer] starting candidate training iteration 102
+[training] candidate score 0.530 below promotion threshold 0.650.
+[trainer] iteration 102 completed with score=0.5300
+2025-11-03 07:32:18.001685: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 07:32:18.006562: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 07:32:18.019203: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1762173138.038690  544429 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1762173138.044343  544429 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1762173138.062005  544429 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762173138.062106  544429 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762173138.062162  544429 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762173138.062168  544429 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2025-11-03 07:32:18.067200: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-11-03 07:32:20.107389: E external/local_xla/xla/stream_executor/cuda/cuda_platform.cc:51] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+2025-11-03 07:32:44.059196: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+2025-11-03 07:32:45.142627: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+/home/adam/CoolCryptoUtilities/lib/python3.12/site-packages/keras/src/optimizers/base_optimizer.py:678: UserWarning: Gradients do not exist for variables ['kernel', 'bias'] when minimizing the loss. If using `model.compile()`, did you forget to provide a `loss` argument?
+  warnings.warn(
+[trainer] starting candidate training iteration 1
+[training] candidate score 0.561 below promotion threshold 0.650.
+[trainer] iteration 1 completed with score=0.5613
+2025-11-03 07:33:29.844033: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 2
+[training] candidate score 0.542 below promotion threshold 0.650.
+[trainer] iteration 2 completed with score=0.5415
+[trainer] starting candidate training iteration 3
+[training] candidate score 0.538 below promotion threshold 0.650.
+[trainer] iteration 3 completed with score=0.5375

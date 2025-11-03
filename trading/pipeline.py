@@ -1,21 +1,31 @@
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
 import tensorflow as tf
 
 from db import TradingDatabase, get_db
-from model_definition import ExponentialDecay, StateSaver, build_multimodal_model
+from model_definition import (
+    ExponentialDecay,
+    StateSaver,
+    TimeFeatureLayer,
+    build_multimodal_model,
+    gaussian_nll_loss,
+    zero_loss,
+)
 from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
 
 
-CUSTOM_OBJECTS = {"ExponentialDecay": ExponentialDecay}
+CUSTOM_OBJECTS = {
+    "ExponentialDecay": ExponentialDecay,
+    "TimeFeatureLayer": TimeFeatureLayer,
+    "gaussian_nll_loss": gaussian_nll_loss,
+    "zero_loss": zero_loss,
+}
 
 
 class TrainingPipeline:
@@ -61,7 +71,7 @@ class TrainingPipeline:
         if not path.exists():
             return None
         try:
-            self._active_model = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS)
+            self._active_model = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
             return self._active_model
         except Exception as exc:
             print(f"[training] failed to load active model ({exc}); removing corrupted artifact.")
@@ -74,11 +84,14 @@ class TrainingPipeline:
             return model
         print("[training] no active model found; building a fresh baseline.")
         model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
-            window_size=self.window_size, tech_count=self.tech_count, sent_seq_len=self.sent_seq_len
+            window_size=self.window_size,
+            tech_count=self.tech_count,
+            sent_seq_len=self.sent_seq_len,
+            asset_vocab_size=self.data_loader.asset_vocab_size,
         )
         self._adapt_vectorizers(headline_vec, full_vec)
         path = self.model_dir / "active_model.keras"
-        model.save(path)
+        model.save(path, include_optimizer=False)
         self._active_model = model
         return model
 
@@ -87,15 +100,18 @@ class TrainingPipeline:
         lr = float(proposal.get("learning_rate", 3e-4))
         epochs = max(1, int(round(proposal.get("epochs", 2))))
 
-        model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
-            window_size=self.window_size, tech_count=self.tech_count, sent_seq_len=self.sent_seq_len
-        )
-        self._adapt_vectorizers(headline_vec, full_vec)
-
         inputs, targets = self._prepare_dataset(batch_size=32)
         if inputs is None or targets is None:
             print("[training] insufficient data for candidate training; skipping this cycle.")
             return None
+
+        model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
+            window_size=self.window_size,
+            tech_count=self.tech_count,
+            sent_seq_len=self.sent_seq_len,
+            asset_vocab_size=self.data_loader.asset_vocab_size,
+        )
+        self._adapt_vectorizers(headline_vec, full_vec)
 
         try:
             model.optimizer.learning_rate.assign(lr)
@@ -117,6 +133,7 @@ class TrainingPipeline:
             "net_margin",
             "net_pnl",
             "tech_recon",
+            "price_gaussian",
         ]
         input_tensors = tuple(inputs[name] for name in input_order)
         target_tensors = tuple(targets[name] for name in output_order)
@@ -132,7 +149,7 @@ class TrainingPipeline:
 
         version = f"candidate-{int(time.time())}"
         path = self.model_dir / f"{version}.keras"
-        model.save(path)
+        model.save(path, include_optimizer=False)
         self.db.register_model_version(version=version, metrics={"score": score}, path=str(path), activate=False)
 
         result = {
@@ -152,11 +169,11 @@ class TrainingPipeline:
     def promote_candidate(self, path: Path, *, score: float, metadata: Optional[Dict[str, Any]] = None) -> None:
         active_path = self.model_dir / "active_model.keras"
         print(f"[training] promoting candidate {path.name} (score={score:.3f}) to active deployment.")
-        tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS).save(active_path)
+        tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False).save(active_path, include_optimizer=False)
         self.db.register_model_version(
             version=f"active-{int(time.time())}", metrics={"score": score}, path=str(active_path), activate=True
         )
-        self._active_model = tf.keras.models.load_model(active_path, custom_objects=CUSTOM_OBJECTS)
+        self._active_model = tf.keras.models.load_model(active_path, custom_objects=CUSTOM_OBJECTS, compile=False)
         if metadata:
             self.db.log_trade(
                 wallet="system",
@@ -180,72 +197,9 @@ class TrainingPipeline:
         if inputs is not None and targets is not None:
             inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
             inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
+            inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
             return inputs, targets
-
-        rows = self.db.fetch_market_samples(limit=batch_size * self.window_size * 2)
-        if not rows:
-            rows = self._synthetic_samples(batch_size * self.window_size * 2)
-
-        if len(rows) < self.window_size:
-            return None, None
-
-        rows = list(sorted(rows, key=lambda r: r["ts"] or 0))
-        prices = np.array([float(r["price"] or 0.0) for r in rows], dtype=np.float32)
-        volumes = np.array([float(r["volume"] or 0.0) for r in rows], dtype=np.float32)
-        texts = []
-        for r in rows:
-            raw = r["raw"]
-            if raw:
-                if isinstance(raw, str):
-                    texts.append(raw)
-                else:
-                    texts.append(json.dumps(raw))
-            else:
-                texts.append(f"{r['symbol']} price {r['price']} volume {r['volume']}")
-
-        num_windows = max(1, len(rows) - self.window_size)
-        price_vol_windows = np.zeros((num_windows, self.window_size, 2), dtype=np.float32)
-        for idx in range(num_windows):
-            slice_prices = prices[idx : idx + self.window_size]
-            slice_vols = volumes[idx : idx + self.window_size]
-            price_vol_windows[idx, :, 0] = slice_prices
-            price_vol_windows[idx, :, 1] = slice_vols
-
-        sentiment_seq = np.random.uniform(-1, 1, size=(num_windows, self.sent_seq_len, 1)).astype(np.float32)
-        tech_input = np.random.normal(size=(num_windows, self.tech_count)).astype(np.float32)
-        hours = np.random.randint(0, 24, size=(num_windows, 1)).astype(np.int32)
-        dows = np.random.randint(0, 7, size=(num_windows, 1)).astype(np.int32)
-        gas = np.random.uniform(0, 0.005, size=(num_windows, 1)).astype(np.float32)
-        tax = np.random.uniform(0, 0.02, size=(num_windows, 1)).astype(np.float32)
-
-        headline_texts = [texts[min(i, len(texts) - 1)] for i in range(num_windows)]
-        full_texts = headline_texts
-
-        inputs = {
-            "price_vol_input": price_vol_windows,
-            "sentiment_seq": sentiment_seq,
-            "headline_text": tf.convert_to_tensor(np.array(headline_texts, dtype="<U256").reshape(-1, 1), dtype=tf.string),
-            "full_text": tf.convert_to_tensor(np.array(full_texts, dtype="<U512").reshape(-1, 1), dtype=tf.string),
-            "tech_input": tech_input,
-            "hour_input": hours,
-            "dow_input": dows,
-            "gas_fee_input": gas,
-            "tax_rate_input": tax,
-        }
-
-        price_deltas = price_vol_windows[:, -1, 0] - price_vol_windows[:, 0, 0]
-        direction = (price_deltas > 0).astype(np.float32).reshape(-1, 1)
-        targets = {
-            "exit_conf": np.clip(np.random.normal(loc=0.5, scale=0.2, size=(num_windows, 1)), 0, 1).astype(np.float32),
-            "price_mu": price_deltas.reshape(-1, 1).astype(np.float32),
-            "price_log_var": np.full((num_windows, 1), 0.1, dtype=np.float32),
-            "price_dir": direction,
-            "net_margin": (price_deltas.reshape(-1, 1) - gas - tax).astype(np.float32),
-            "net_pnl": (price_deltas.reshape(-1, 1) - gas - tax).astype(np.float32),
-            "tech_recon": tech_input,
-        }
-
-        return inputs, targets
+        return None, None
 
     # ------------------------------------------------------------------
     # Utilities
@@ -256,15 +210,6 @@ class TrainingPipeline:
         dataset = tf.data.Dataset.from_tensor_slices(texts)
         headline_vec.adapt(dataset)
         full_vec.adapt(dataset)
-
-    def _synthetic_samples(self, count: int) -> list:
-        price = 2000.0
-        out = []
-        for _ in range(count):
-            price = max(price + np.random.normal(scale=5.0), 1.0)
-            volume = max(np.random.normal(loc=15.0, scale=3.0), 0.1)
-            out.append({"ts": time.time(), "symbol": "SIM", "price": price, "volume": volume, "raw": None})
-        return out
 
     # ------------------------------------------------------------------
     # Debug helpers
