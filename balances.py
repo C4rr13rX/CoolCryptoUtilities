@@ -245,10 +245,24 @@ class MultiChainTokenPortfolio:
 
             # -------- Determine which tokens must refresh (movement or missing)
             cached_entries: Dict[str, Dict[str, Any]] = {}
+            meta_map: Dict[str, Dict[str, Any]] = {}
             min_block = None
+            need_meta: set[str] = set()
             for a in token_list:
                 ent = self.cb.get_token(self.wallet, ch, a) if self.cb else None
-                if ent: cached_entries[a] = ent; 
+                if ent:
+                    cached_entries[a] = ent
+                    sym = ent.get("symbol") or ent.get("name")
+                    if sym:
+                        sym_str = str(sym).strip()
+                        meta_map[a] = {
+                            "symbol": sym_str.upper() if sym_str else None,
+                            "name": ent.get("name"),
+                        }
+                    else:
+                        need_meta.add(a)
+                else:
+                    need_meta.add(a)
                 if ent and "asof_block" in ent:
                     b = int(ent["asof_block"])
                     min_block = b if min_block is None else min(min_block, b)
@@ -263,17 +277,37 @@ class MultiChainTokenPortfolio:
 
             self.v.log("To refresh: {} | keep from cache: {}", len(refresh), len(keep))
 
-            # -------- Metadata only for addresses that lack decimals in cache
-            need_decimals: List[str] = []
+            # -------- Metadata & decimals
             decimals_map: Dict[str,int] = {}
             for a in token_list:
                 d = None
-                if a in cached_entries: d = cached_entries[a].get("decimals")
-                if isinstance(d, int): decimals_map[a] = d
-                else: need_decimals.append(a)
-            if need_decimals:
-                meta = self._get_metadata_bulk(ch, need_decimals, max_workers=8)
-                for a, m in meta.items(): decimals_map[a] = int(m.get("decimals", 18) or 18)
+                if a in cached_entries:
+                    d = cached_entries[a].get("decimals")
+                if isinstance(d, int):
+                    decimals_map[a] = int(d)
+                else:
+                    need_meta.add(a)
+            if need_meta:
+                meta = self._get_metadata_bulk(ch, list(need_meta), max_workers=8)
+                for a, m in meta.items():
+                    if a not in decimals_map or not isinstance(decimals_map[a], int):
+                        decimals_map[a] = int((m or {}).get("decimals", 18) or 18)
+                    symbol = (m or {}).get("symbol")
+                    name = (m or {}).get("name")
+                    symbol_norm = None
+                    if symbol:
+                        sym_str = str(symbol).strip()
+                        if sym_str:
+                            symbol_norm = sym_str.upper()
+                    elif name:
+                        name_str = str(name).strip()
+                        if name_str:
+                            symbol_norm = name_str.upper()
+                    if symbol or name:
+                        meta_map[a] = {
+                            "symbol": symbol_norm,
+                            "name": name,
+                        }
 
             # -------- Balances: fetch only refresh subset; use cache for keep
             balances_raw: Dict[str,str] = {}
@@ -285,11 +319,20 @@ class MultiChainTokenPortfolio:
                 if self.cb:
                     payload = {}
                     for a in refresh:
+                        meta_info = meta_map.get(a) or cached_entries.get(a, {}) or {}
+                        symbol_val = meta_info.get("symbol") or meta_info.get("name")
+                        symbol_norm = None
+                        if symbol_val:
+                            symbol_str = str(symbol_val).strip()
+                            if symbol_str:
+                                symbol_norm = symbol_str.upper()
                         payload[a] = {
                             "balance_hex": fetched.get(a, "0x0"),
                             "asof_block": asof_block,
                             "ts": time.time(),
                             "decimals": int(decimals_map.get(a, 18)),
+                            "symbol": symbol_norm,
+                            "name": meta_info.get("name") or symbol_val,
                         }
                     try: self.cb.upsert_many(self.wallet, ch, payload)
                     except Exception as e: self.v.warn("balance cache upsert_many failed: {}", e)
@@ -339,6 +382,13 @@ class MultiChainTokenPortfolio:
             if self.cb:
                 payload = {}
                 for a in token_list:
+                    meta_info = meta_map.get(a) or cached_entries.get(a, {}) or {}
+                    symbol_val = meta_info.get("symbol") or meta_info.get("name")
+                    symbol_norm = None
+                    if symbol_val:
+                        symbol_str = str(symbol_val).strip()
+                        if symbol_str:
+                            symbol_norm = symbol_str.upper()
                     payload[a] = {
                         "balance_hex": balances_raw.get(a, "0x0"),
                         "asof_block": self._chain_tip_block(ch), # conservative
@@ -346,6 +396,8 @@ class MultiChainTokenPortfolio:
                         "decimals": int(decimals_map.get(a, 18)),
                         "quantity": str(qty_map[a].normalize()),
                         "usd_amount": usd_map[a],
+                        "symbol": symbol_norm,
+                        "name": meta_info.get("name") or symbol_val,
                     }
                 try: self.cb.upsert_many(self.wallet, ch, payload)
                 except Exception as e: self.v.warn("balance cache upsert (final) failed: {}", e)

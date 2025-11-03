@@ -22,9 +22,9 @@ def prompt_chain() -> str:
     return ch
 
 
-def show_balances():
+def show_balances(wallet_address: str | None = None):
     cb = CacheBalances()
-    cb.load()
+    cb.load(wallet=wallet_address)
     if hasattr(cb, "print_table"):
         cb.print_table()
     elif hasattr(cb, "data"):
@@ -132,7 +132,7 @@ def menu():
             print("Bye.")
             return
         elif choice == "1":
-            show_balances()
+            show_balances(bridge.get_address())
         elif choice == "2":
             refetch_balances_parallel(bridge, chains)
         elif choice == "3":

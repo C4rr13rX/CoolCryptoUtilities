@@ -223,7 +223,7 @@ class SwapService:
     def _fee_per_gas(self, w3) -> int:
         """Conservative per-gas price: EIP-1559 maxFeePerGas if present, else gasPrice."""
         try:
-            fees = self.bridge._rb__fee_fields(w3)
+            fees = self.bridge._suggest_fees(w3)
             gp = int(fees.get("gasPrice") or fees.get("maxFeePerGas") or w3.eth.gas_price)
         except Exception:
             gp = int(getattr(w3.eth, "gas_price", 0)) or int(Web3.to_wei(5, "gwei"))
@@ -596,5 +596,4 @@ class SwapService:
             print(f"[SushiV2] failed: {e!r}")
 
         print("❌ All routes failed.")
-
 

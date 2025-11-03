@@ -153,6 +153,9 @@ ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "decimals", "outputs":[{"name":"","type":"uint8"}], "type":"function"},
     {"constant": True, "inputs": [{"name":"account","type":"address"}], "name":"balanceOf", "outputs":[{"name":"","type":"uint256"}], "type":"function"},
     {"constant": True, "inputs": [{"name":"owner","type":"address"},{"name":"spender","type":"address"}], "name":"allowance", "outputs":[{"name":"","type":"uint256"}], "type":"function"},
+    {"constant": True, "inputs": [], "name": "symbol", "outputs":[{"name":"","type":"string"}], "type":"function"},
+    {"constant": True, "inputs": [], "name": "name", "outputs":[{"name":"","type":"string"}], "type":"function"},
+    {"constant": False, "inputs": [{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}], "name":"transfer", "outputs":[{"name":"","type":"bool"}], "type":"function"},
     {"constant": False, "inputs": [{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}], "name":"approve", "outputs":[{"name":"","type":"bool"}], "type":"function"},
 ]
 
@@ -197,6 +200,34 @@ def _to_decimal(value: Any) -> Decimal:
         return Decimal(str(value))
     except Exception:
         return Decimal(0)
+
+def _decode_erc20_text(value: Any) -> str:
+    """
+    Decode ERC-20 string/name/symbol responses which can be bytes32, bytes, or str.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip("\x00")
+    if isinstance(value, bytes):
+        return value.replace(b"\x00", b"").decode("utf-8", errors="ignore").strip()
+    try:
+        from hexbytes import HexBytes  # type: ignore
+        if isinstance(value, HexBytes):
+            return value.replace(b"\x00", b"").decode("utf-8", errors="ignore").strip()
+    except Exception:
+        pass
+    if isinstance(value, (bytearray, memoryview)):
+        try:
+            return bytes(value).replace(b"\x00", b"").decode("utf-8", errors="ignore").strip()
+        except Exception:
+            return ""
+    if isinstance(value, int):
+        try:
+            return bytes.fromhex(hex(value)[2:]).replace(b"\x00", b"").decode("utf-8", errors="ignore").strip()
+        except Exception:
+            return ""
+    return str(value)
 
 def _dec_to_str_plain(x: Decimal, max_dp: int) -> str:
     s = format(x, "f")
@@ -533,6 +564,22 @@ class UltraSwapBridge:
             Web3.to_checksum_address(owner), Web3.to_checksum_address(spender)
         ).call())
 
+    def erc20_symbol(self, chain: str, token: str) -> str:
+        w3 = self._w3(chain)
+        try:
+            raw = self._erc20(w3, token).functions.symbol().call()
+            return _decode_erc20_text(raw)
+        except Exception:
+            return ""
+
+    def erc20_name(self, chain: str, token: str) -> str:
+        w3 = self._w3(chain)
+        try:
+            raw = self._erc20(w3, token).functions.name().call()
+            return _decode_erc20_text(raw)
+        except Exception:
+            return ""
+
     def approve_erc20(self, chain: str, token: str, spender: str, amount: int) -> str:
         w3 = self._w3(chain)
         token_cs = Web3.to_checksum_address(token)
@@ -552,6 +599,38 @@ class UltraSwapBridge:
             est = 60000
         gas_final = int(est * 1.2)
         tx = c.functions.approve(spend_cs, int(amount)).build_transaction({**base, "gas": gas_final})
+        signed = self.acct.sign_transaction(tx)
+        raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None) or getattr(signed, "raw", None) or signed
+        txh = w3.eth.send_raw_transaction(raw)
+        return w3.to_hex(txh)
+
+    def send_erc20(self, chain: str, token: str, to: str, amount: int, *, gas: Optional[int] = None) -> str:
+        """
+        Transfer ERC-20 `amount` (base units) to `to` on `chain`.
+        Respects EIP-1559 fees and estimates gas when not provided.
+        """
+        w3 = self._w3(chain)
+        token_cs = Web3.to_checksum_address(token)
+        to_cs = Web3.to_checksum_address(to)
+        sender = self.acct.address
+
+        fn = self._erc20(w3, token_cs).functions.transfer(to_cs, int(amount))
+        base_tx = {
+            "chainId": w3.eth.chain_id,
+            "from": sender,
+            "nonce": w3.eth.get_transaction_count(sender, "pending"),
+            "value": 0,
+            **self._suggest_fees(w3),
+        }
+
+        if gas is None:
+            try:
+                est = fn.estimate_gas({"from": sender})
+            except Exception:
+                est = 65000
+            gas = int(est * 1.2)
+
+        tx = fn.build_transaction({**base_tx, "gas": int(gas)})
         signed = self.acct.sign_transaction(tx)
         raw = getattr(signed, "rawTransaction", None) or getattr(signed, "raw_transaction", None) or getattr(signed, "raw", None) or signed
         txh = w3.eth.send_raw_transaction(raw)
@@ -883,46 +962,102 @@ class UltraSwapBridge:
             gas_usd=gas_usd, tx_request=q.get("transactionRequest") or {},
         )
 
-    def execute(self, src_chain: str, dst_chain: str, from_token: str, to_token: str, amount: float, slippage: float = 0.003, wait: bool = False) -> Dict[str, Any]:
+    def execute(
+        self,
+        src_chain: str,
+        dst_chain: str,
+        from_token: str,
+        to_token: str,
+        amount: float,
+        slippage: float = 0.003,
+        wait: bool = False,
+    ) -> Dict[str, Any]:
         w3 = self._w3(src_chain)
-        from_token = _normalize_addr(from_token); to_token = _normalize_addr(to_token)
+        from_token = _normalize_addr(from_token)
+        to_token   = _normalize_addr(to_token)
+
+        # --- quote via LI.FI ---
         pv = self.quote(src_chain, dst_chain, from_token, to_token, amount, slippage)
         txreq = pv.tx_request
         if not txreq:
             raise RuntimeError("LI.FI returned no transactionRequest to execute.")
 
-        # Approve if ERC-20 sell
+        # --- approve if selling ERC-20 ---
         if from_token.lower() != NATIVE:
             needed = int(round(amount * (10 ** self.erc20_decimals(src_chain, from_token))))
             spender = Web3.to_checksum_address(txreq["to"])
             current = self.erc20_allowance(src_chain, from_token, self.acct.address, spender)
             if current < needed:
                 txh = self.approve_erc20(src_chain, from_token, spender, needed)
-                w3.eth.wait_for_transaction_receipt(txh, timeout=240)
+                try:
+                    w3.eth.wait_for_transaction_receipt(txh, timeout=240)
+                except Exception:
+                    pass
 
-        to = Web3.to_checksum_address(txreq["to"])
-        value = _hexint(txreq.get("value"), 0)
+        # --- build tx (honor EIP-1559, estimate gas if needed) ---
+        to_addr = Web3.to_checksum_address(txreq["to"])
+        value   = _hexint(txreq.get("value"), 0)
+
+        data = txreq["data"]
+        if isinstance(data, str) and data.startswith("0x"):
+            data_bytes = bytes.fromhex(data[2:])
+        elif isinstance(data, (bytes, bytearray)):
+            data_bytes = bytes(data)
+        else:
+            raise ValueError("transactionRequest.data missing/invalid")
+
         tx = {
-            "to": to, "from": self.acct.address, "data": txreq["data"], "value": value,
-            "chainId": w3.eth.chain_id, "nonce": w3.eth.get_transaction_count(self.acct.address, "pending"),
+            "to": to_addr,
+            "from": self.acct.address,
+            "data": data_bytes,
+            "value": int(value),
+            "chainId": int(w3.eth.chain_id),
+            "nonce": w3.eth.get_transaction_count(self.acct.address, "pending"),
             **self._suggest_fees(w3),
         }
+
         gl = txreq.get("gasLimit")
         if gl:
             tx["gas"] = _hexint(gl, 0)
         else:
-            tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.12)
-        signed = self.acct.sign_transaction(tx)
-        txh = w3.eth.send_raw_transaction(signed.rawTransaction).hex()
-        out: Dict[str, Any] = {"preview": pv.__dict__, "txHash": txh}
+            # Estimate without fee fields interfering
+            est_tx = dict(tx)
+            est_tx.pop("maxFeePerGas", None)
+            est_tx.pop("maxPriorityFeePerGas", None)
+            est_tx.pop("gasPrice", None)
+            try:
+                tx["gas"] = int(w3.eth.estimate_gas(est_tx) * 1.12)
+            except Exception:
+                tx["gas"] = 250000
+
+        # --- preflight (non-fatal) ---
+        try:
+            w3.eth.call({"from": tx["from"], "to": tx["to"], "data": tx["data"], "value": tx["value"]}, "latest")
+        except Exception as e:
+            print(f"[lifi preflight] warning: {e!r}")
+
+        # --- sign & send (robust raw tx attr handling) ---
+        stx = self.acct.sign_transaction(tx)
+        raw = getattr(stx, "rawTransaction", None) or getattr(stx, "raw_transaction", None) or getattr(stx, "raw", None) or stx
+        txh = w3.eth.send_raw_transaction(raw)
+        tx_hash = txh.hex() if hasattr(txh, "hex") else w3.to_hex(txh)
+
+        out: Dict[str, Any] = {"preview": pv.__dict__, "txHash": tx_hash}
+
+        # --- optional bridge status polling ---
         if pv.from_chain != pv.to_chain and wait:
             while True:
                 try:
-                    s = self._lifi_status(txh); out["bridgeStatus"] = s
-                    if s.get("status") in ("DONE","FAILED"): break
-                except Exception: pass
+                    s = self._lifi_status(tx_hash)
+                    out["bridgeStatus"] = s
+                    if s.get("status") in ("DONE", "FAILED"):
+                        break
+                except Exception:
+                    pass
                 time.sleep(20)
+
         return out
+
 
     # ------------------------ 0x v2 (Allowance-Holder) ------------------------
 
