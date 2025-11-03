@@ -23,3 +23,7 @@ To enable the following instructions: AVX2 FMA, in other operations, rebuild Ten
 [trainer] starting candidate training iteration 3
 [training] candidate score 0.505 below promotion threshold 0.650.
 [trainer] iteration 3 completed with score=0.5055
+2025-11-03 04:39:21.312621: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[trainer] starting candidate training iteration 4
+[training] candidate score 0.495 below promotion threshold 0.650.
+[trainer] iteration 4 completed with score=0.4945
