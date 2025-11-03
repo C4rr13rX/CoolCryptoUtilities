@@ -1,0 +1,436 @@
+2025-11-03 15:53:37.286492: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 15:53:37.415066: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:32] Could not find cuda drivers on your machine, GPU will not be used.
+2025-11-03 15:53:37.563016: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:467] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+E0000 00:00:1762203217.740523   84940 cuda_dnn.cc:8579] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+E0000 00:00:1762203217.795973   84940 cuda_blas.cc:1407] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+W0000 00:00:1762203218.081220   84940 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762203218.081320   84940 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762203218.081328   84940 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+W0000 00:00:1762203218.081331   84940 computation_placer.cc:177] computation placer already registered. Please check linkage and avoid linking the same target more than once.
+2025-11-03 15:53:38.111714: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2025-11-03 15:53:40.817776: E external/local_xla/xla/stream_executor/cuda/cuda_platform.cc:51] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+2025-11-03 15:54:23.072043: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+2025-11-03 15:54:24.182732: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+/home/adam/CoolCryptoUtilities/lib/python3.12/site-packages/keras/src/optimizers/base_optimizer.py:678: UserWarning: Gradients do not exist for variables ['kernel', 'bias'] when minimizing the loss. If using `model.compile()`, did you forget to provide a `loss` argument?
+  warnings.warn(
+2025-11-03 15:55:08.778858: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+WARNING:tensorflow:5 out of the last 17 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x775b2ad41c60> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+2025-11-03 15:56:43.819346: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+WARNING:tensorflow:5 out of the last 17 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x775b13e4d6c0> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+2025-11-03 15:59:44.405840: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 77): dir_acc=0.506, ghost_trades=133, pred_margin=-1.805083, realized_margin=-0.067307, win_rate=0.105, TP=14, FP=119, TN=114, FN=6
+[training] candidate score 0.462 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] promoting candidate candidate-1762203319.keras (score=0.680) to active deployment.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 78): dir_acc=0.870, ghost_trades=17, pred_margin=-0.574434, realized_margin=-0.538346, win_rate=0.118, TP=2, FP=15, TN=218, FN=18
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 79): dir_acc=0.747, ghost_trades=48, pred_margin=-0.104613, realized_margin=-0.090338, win_rate=0.042, TP=2, FP=46, TN=187, FN=18
+[training] candidate score 0.569 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] promoting candidate candidate-1762203414.keras (score=0.913) to active deployment.
+[training] ghost summary (iteration 80): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 81): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.723 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 82): dir_acc=0.549, ghost_trades=122, pred_margin=0.555730, realized_margin=-0.007136, win_rate=0.115, TP=14, FP=108, TN=125, FN=6
+[training] candidate score 0.640 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 83): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.889 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 84): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.881 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gatherCheck th more data before replacement.
+[training] ghost summary (iteration 85): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.881 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+2025-11-03 16:05:43.616887: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 86): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.708 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 87): dir_acc=0.739, ghost_trades=58, pred_margin=0.467893, realized_margin=-0.005483, win_rate=0.103, TP=6, FP=52, TN=181, FN=14
+[training] candidate score 0.625 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 88): dir_acc=0.802, ghost_trades=34, pred_margin=-0.848592, realized_margin=-0.522740, win_rate=0.059, TP=2, FP=32, TN=201, FN=18
+[training] candidate score 0.561 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 89): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.913 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 90): dir_acc=0.079, ghost_trades=253, pred_margin=-0.596439, realized_margin=-0.437133, win_rate=0.079, TP=20, FP=233, TN=0, FN=0
+[training] candidate score 0.344 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 91): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.719 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 92): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.917 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 93): dir_acc=0.134, ghost_trades=237, pred_margin=-0.935511, realized_margin=-0.448191, win_rate=0.080, TP=19, FP=218, TN=15, FN=1
+[training] candidate score 0.300 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 94): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.921 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 95): dir_acc=0.917, ghost_trades=1, pred_margin=0.012101, realized_margin=-0.140492, win_rate=0.000, TP=0, FP=1, TN=232, FN=20
+[training] candidate score 0.656 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 96): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.913 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 97): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.917 below promotion threshold 0.650.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 97): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.921 below promotion threshold 0.650.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 97): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.921 below promotion threshold 0.650.
+[trading-bot] background refinement error: bad parameter or other API misuse
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 97): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.909 below promotion threshold 0.650.
+[training] ghost summary (iteration 97): dir_acc=0.522, ghost_trades=129, pred_margin=-0.850999, realized_margin=-0.007180, win_rate=0.109, TP=14, FP=115, TN=118, FN=6
+[training] candidate score 0.625 below promotion threshold 0.650.
+[training] ghost summary (iteration 97): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.628 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 98): dir_acc=0.534, ghost_trades=108, pred_margin=-1.161854, realized_margin=-1.014526, win_rate=0.046, TP=5, FP=103, TN=130, FN=15
+[training] candidate score 0.490 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 99): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.917 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+2025-11-03 16:15:13.985870: I tensorflow/core/framework/local_rendezvous.cc:407] Local rendezvous is aborting with status: OUT_OF_RANGE: End of sequence
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 100): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.921 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 101): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.913 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 102): dir_acc=0.478, ghost_trades=124, pred_margin=-0.759305, realized_margin=-0.884423, win_rate=0.048, TP=6, FP=118, TN=115, FN=14
+[training] candidate score 0.399 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 103): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.897 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 104): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.901 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 105): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.798 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 106): dir_acc=0.352, ghost_trades=164, pred_margin=0.089170, realized_margin=-0.661547, win_rate=0.061, TP=10, FP=154, TN=79, FN=10
+[training] candidate score 0.474 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] ghost summary (iteration 107): dir_acc=0.522, ghost_trades=129, pred_margin=0.186576, realized_margin=-0.007180, win_rate=0.109, TP=14, FP=115, TN=118, FN=6
+[training] candidate score 0.613 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[training] retaining existing live model (0.921) to gather more data before replacement.
+[training] ghost summary (iteration 108): dir_acc=0.921, ghost_trades=0, pred_margin=0.000000, realized_margin=0.000000, win_rate=0.000, TP=0, FP=0, TN=233, FN=20
+[training] candidate score 0.917 below promotion threshold 0.650.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.
+[market-stream] websocket URL unavailable; waiting for configuration.

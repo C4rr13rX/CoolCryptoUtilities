@@ -151,7 +151,13 @@ class HistoricalDataLoader:
                 if news_text is None:
                     continue
 
-                mu = float(closes[next_idx] - price_slice[-1])
+                current_price = float(price_slice[-1])
+                future_price = float(closes[next_idx])
+                if current_price > 0 and future_price > 0:
+                    ret = float(np.log(future_price) - np.log(current_price))
+                else:
+                    ret = 0.0
+                mu = ret
 
                 price_windows.append(window)
                 sentiment_windows.append(sentiment_window)
@@ -181,10 +187,10 @@ class HistoricalDataLoader:
         asset_arr = np.array(asset_ids, dtype=np.int32).reshape(-1, 1)
 
         mu_arr = np.array(target_mu, dtype=np.float32).reshape(-1, 1)
-        dir_arr = (mu_arr > 0).astype(np.float32)
-        log_var_arr = np.log1p(np.abs(mu_arr))
-        exit_conf = 1.0 / (1.0 + np.exp(-np.abs(mu_arr) * 10.0))
         net_margin = mu_arr - (gas_arr + tax_arr)
+        dir_arr = (net_margin > 0).astype(np.float32)
+        log_var_arr = np.log1p(np.abs(mu_arr))
+        exit_conf = 1.0 / (1.0 + np.exp(-np.abs(net_margin) * 10.0))
 
         inputs = {
             "price_vol_input": price_windows_arr,
@@ -199,15 +205,23 @@ class HistoricalDataLoader:
             "asset_id_input": asset_arr,
         }
 
+        dummy_log = np.zeros_like(log_var_arr, dtype=np.float32)
+
         targets = {
             "exit_conf": exit_conf.astype(np.float32),
             "price_mu": mu_arr.astype(np.float32),
-            "price_log_var": log_var_arr.astype(np.float32),
+            "price_log_var": dummy_log,
             "price_dir": dir_arr.astype(np.float32),
             "net_margin": net_margin.astype(np.float32),
             "net_pnl": net_margin.astype(np.float32),
             "tech_recon": tech_arr.astype(np.float32),
-            "price_gaussian": mu_arr.astype(np.float32),
+            "price_gaussian": np.concatenate(
+                [
+                    mu_arr.astype(np.float32),
+                    np.zeros_like(mu_arr, dtype=np.float32),
+                ],
+                axis=1,
+            ),
         }
 
         return inputs, targets

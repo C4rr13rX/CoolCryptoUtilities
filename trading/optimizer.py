@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 
 @dataclass
@@ -59,3 +59,43 @@ class BayesianBruteForceOptimizer:
             state.mean = max(min(state.mean, hi), lo)
             state.variance = max(min(state.variance, (hi - lo) ** 2), 1e-6)
 
+    # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
+
+    def get_state(self) -> Dict[str, Any]:
+        return {
+            "params": {
+                name: {
+                    "mean": state.mean,
+                    "variance": state.variance,
+                    "bounds": list(state.bounds),
+                }
+                for name, state in self.params.items()
+            },
+            "best_score": self.best_score,
+            "best_params": self.best_params,
+            "exploration": self.exploration,
+        }
+
+    def set_state(self, state: Optional[Dict[str, Any]]) -> None:
+        if not state:
+            return
+        self.exploration = float(state.get("exploration", self.exploration))
+        params_state = state.get("params", {})
+        for name, info in params_state.items():
+            if name not in self.params:
+                bounds = info.get("bounds", [0.0, 1.0])
+                self.params[name] = ParameterState(
+                    mean=float(info.get("mean", 0.0)),
+                    variance=float(info.get("variance", 1.0)),
+                    bounds=(float(bounds[0]), float(bounds[1])),
+                )
+                continue
+            param = self.params[name]
+            bounds = info.get("bounds", param.bounds)
+            param.mean = float(info.get("mean", param.mean))
+            param.variance = max(float(info.get("variance", param.variance)), 1e-6)
+            param.bounds = (float(bounds[0]), float(bounds[1]))
+        self.best_score = float(state.get("best_score", self.best_score))
+        self.best_params = {k: float(v) for k, v in state.get("best_params", self.best_params).items()}

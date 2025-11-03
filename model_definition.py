@@ -25,7 +25,9 @@ from keras.layers import (
     Reshape,
 )
 from keras.layers import TextVectorization
+from keras.metrics import BinaryCrossentropy
 from keras.models import Model
+from keras.regularizers import l2
 
 
 class TimeFeatureLayer(tf.keras.layers.Layer):
@@ -87,17 +89,48 @@ class ExponentialDecay(tf.keras.layers.Layer):
 
 
 _GAUSS_EPS = tf.constant(1e-6, dtype=tf.float32)
+_GAUSS_MIN_LOG_VAR = tf.math.log(_GAUSS_EPS)
 _GAUSS_MAX_LOG_VAR = tf.constant(8.0, dtype=tf.float32)
 
 
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
+def _slice_price_mu(x: tf.Tensor) -> tf.Tensor:
+    return x[:, :1]
+
+
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
+def _slice_price_log_var(x: tf.Tensor) -> tf.Tensor:
+    return x[:, 1:2]
+
+
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
+def _identity(x: tf.Tensor) -> tf.Tensor:
+    return x
+
+
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
+def _compute_net_margin(args: list[tf.Tensor] | tuple[tf.Tensor, tf.Tensor, tf.Tensor]) -> tf.Tensor:
+    price_mu, gas_fee, tax_rate = args
+    return price_mu - (gas_fee + tax_rate)
+
+
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
 def gaussian_nll_loss(y_true, y_pred):
-    mu = y_pred[:, :1]
-    log_var = y_pred[:, 1:2]
-    log_var = tf.clip_by_value(log_var, tf.math.log(_GAUSS_EPS), _GAUSS_MAX_LOG_VAR)
-    precision = tf.exp(-log_var)
-    return 0.5 * (log_var + tf.square(y_true - mu) * precision)
+    y_true = tf.cast(y_true, tf.float32)
+    y_pred = tf.cast(y_pred, tf.float32)
+    target = y_true[:, :1] if y_true.shape.rank and y_true.shape.rank > 1 else tf.expand_dims(y_true, axis=-1)
+    last_dim = tf.shape(y_pred)[-1]
+    pad_width = tf.maximum(0, 2 - last_dim)
+    pred_two = tf.pad(y_pred, [[0, 0], [0, pad_width]])
+    mu = pred_two[:, :1]
+    log_var = pred_two[:, 1:2]
+    clipped = tf.clip_by_value(log_var, _GAUSS_MIN_LOG_VAR, _GAUSS_MAX_LOG_VAR)
+    precision = tf.exp(-clipped)
+    nll = 0.5 * (clipped + tf.square(target - mu) * precision)
+    return tf.squeeze(nll, axis=-1)
 
 
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
 def zero_loss(y_true, y_pred):
     return tf.zeros((tf.shape(y_pred)[0],), dtype=y_pred.dtype)
 
@@ -161,7 +194,7 @@ def build_multimodal_model(
     x = Add(name="ts_res_add")([x, d3_mod])
     x = LayerNormalization(name="ts_norm")(x)
     x = MaxPooling1D(2, name="ts_pool2")(x)
-    x = Flatten(name="ts_flat")(x)
+    x = GlobalAveragePooling1D(name="ts_gap")(x)
     x = Dropout(0.2, name="ts_do")(x)
 
     exit_conf = Dense(1, activation="sigmoid", name="exit_conf")(x)
@@ -196,29 +229,32 @@ def build_multimodal_model(
     tax_in = Input((1,), name="tax_rate_input")
 
     vocab = max(1, int(asset_vocab_size))
-    asset_dim = max(8, min(32, vocab // 2 or 8))
+    scaled = max(8.0, float(vocab) ** 0.25 * 8.0)
+    asset_dim = int(min(32, max(8, round(scaled))))
     asset_in = Input((1,), dtype="int32", name="asset_id_input")
     asset_emb = Embedding(vocab, asset_dim, name="asset_embedding")(asset_in)
     asset_feat = Flatten(name="asset_flat")(asset_emb)
 
     merged = Concatenate(name="merge_all")([x, s, headline_feat, full_feat, t, time_f, asset_feat])
-    d = Dense(hidden_1, activation="swish", name="h1")(merged)
+    reg = l2(1e-5)
+    d = Dense(hidden_1, activation="swish", kernel_regularizer=reg, name="h1")(merged)
     d = LayerNormalization(name="h1_norm")(d)
     d = Dropout(0.3, name="h1_do")(d)
-    d = Dense(hidden_2, activation="swish", name="h2")(d)
+    d = Dense(hidden_2, activation="swish", kernel_regularizer=reg, name="h2")(d)
     d = LayerNormalization(name="h2_norm")(d)
     d = Dropout(0.3, name="h2_do")(d)
 
     price_params = Dense(2, name="price_params")(d)
-    price_mu = Lambda(lambda x: x[:, :1], name="price_mu")(price_params)
-    price_log_var = Lambda(lambda x: x[:, 1:2], name="price_log_var")(price_params)
-    price_gaussian = Concatenate(name="price_gaussian")([price_mu, price_log_var])
+    price_mu = Lambda(_slice_price_mu, name="price_mu")(price_params)
+    price_log_var = Lambda(_slice_price_log_var, name="price_log_var")(price_params)
     price_dir = Dense(1, activation="sigmoid", name="price_dir")(d)
 
-    net_margin = Lambda(lambda args: args[0] - (args[1] + args[2]), name="net_margin")([price_mu, gas_in, tax_in])
-    net_pnl = Lambda(lambda x: x, name="net_pnl")(net_margin)
+    net_margin = Lambda(_compute_net_margin, name="net_margin")([price_mu, gas_in, tax_in])
+    net_pnl = Lambda(_identity, name="net_pnl")(net_margin)
 
     tech_out = Dense(tech_count, activation="linear", name="tech_recon")(d)
+
+    price_gaussian = Lambda(_identity, name="price_gaussian")(price_params)
 
     model = Model(
         inputs=[ts_in, sent_in, headline_in, full_in, tech_in, hour_in, dow_in, gas_in, tax_in, asset_in],
@@ -247,11 +283,12 @@ def build_multimodal_model(
         "price_gaussian": 1.0,
     }
 
+    bce_metric = BinaryCrossentropy(name="brier_like", from_logits=False)
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
         loss=losses,
         loss_weights=loss_weights,
-        metrics={"price_dir": ["accuracy"]},
+        metrics={"price_dir": [tf.keras.metrics.AUC(name="auroc"), "accuracy", bce_metric]},
     )
 
     return model, headline_vec, full_vec, losses, loss_weights
@@ -261,7 +298,7 @@ def build_multimodal_model(
 # Minimal smoke test (build only)
 # ---------------------------------------------------------------------
 if __name__ == "__main__":  # pragma: no cover - manual check
-    model, head_vec, full_vec = build_multimodal_model()
+    model, head_vec, full_vec, _, _ = build_multimodal_model()
     model.summary()
     print("\nOK: model built. Adapt the text vectorizers offline before training:")
     print("  head_vec.adapt(dataset_of_headlines)")
