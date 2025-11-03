@@ -18,7 +18,7 @@ class TradingDatabase:
 
     _DEFAULT_PATH = os.getenv(
         "TRADING_DB_PATH",
-        str(Path(os.getenv("PORTFOLIO_CACHE_DIR", "~/.cache/mchain")).expanduser() / "trading_cache.db"),
+        str((Path.cwd() / "storage" / "trading_cache.db").resolve()),
     )
 
     def __init__(self, path: Optional[str] = None) -> None:

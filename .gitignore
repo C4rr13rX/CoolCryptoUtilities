@@ -7,6 +7,8 @@ include/
 bin/
 __pycache__/
 pyvenv.cfg
+storage/
+*.db
 
 .backup_*/
 *.patch
