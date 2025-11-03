@@ -11,6 +11,7 @@ import tensorflow as tf
 
 from db import TradingDatabase, get_db
 from model_definition import ExponentialDecay, StateSaver, build_multimodal_model
+from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
 
 
@@ -45,6 +46,7 @@ class TrainingPipeline:
         self.window_size = 60
         self.sent_seq_len = 24
         self.tech_count = 12
+        self.data_loader = HistoricalDataLoader()
 
         self._active_model: Optional[tf.keras.Model] = None
 
@@ -71,7 +73,7 @@ class TrainingPipeline:
         if model is not None:
             return model
         print("[training] no active model found; building a fresh baseline.")
-        model, headline_vec, full_vec = build_multimodal_model(
+        model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
             window_size=self.window_size, tech_count=self.tech_count, sent_seq_len=self.sent_seq_len
         )
         self._adapt_vectorizers(headline_vec, full_vec)
@@ -85,7 +87,7 @@ class TrainingPipeline:
         lr = float(proposal.get("learning_rate", 3e-4))
         epochs = max(1, int(round(proposal.get("epochs", 2))))
 
-        model, headline_vec, full_vec = build_multimodal_model(
+        model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
             window_size=self.window_size, tech_count=self.tech_count, sent_seq_len=self.sent_seq_len
         )
         self._adapt_vectorizers(headline_vec, full_vec)
@@ -95,15 +97,35 @@ class TrainingPipeline:
             print("[training] insufficient data for candidate training; skipping this cycle.")
             return None
 
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
-            loss=model.loss,
-            loss_weights=model.loss_weights,
-            metrics=model.metrics,
-        )
+        try:
+            model.optimizer.learning_rate.assign(lr)
+        except Exception:
+            model.compile(
+                optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+                loss=losses,
+                loss_weights=loss_weights,
+                metrics={"price_dir": ["accuracy"]},
+            )
 
         callbacks = [StateSaver()]
-        history = model.fit(inputs, targets, epochs=epochs, batch_size=16, verbose=0, callbacks=callbacks)
+        input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+        output_order = [
+            "exit_conf",
+            "price_mu",
+            "price_log_var",
+            "price_dir",
+            "net_margin",
+            "net_pnl",
+            "tech_recon",
+        ]
+        input_tensors = tuple(inputs[name] for name in input_order)
+        target_tensors = tuple(targets[name] for name in output_order)
+        train_ds = (
+            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
+            .batch(16)
+            .prefetch(tf.data.AUTOTUNE)
+        )
+        history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
 
         score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
         self.optimizer.update({"learning_rate": lr, "epochs": epochs}, score)
@@ -150,6 +172,16 @@ class TrainingPipeline:
     # ------------------------------------------------------------------
 
     def _prepare_dataset(self, batch_size: int = 32) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        inputs, targets = self.data_loader.build_dataset(
+            window_size=self.window_size,
+            sent_seq_len=self.sent_seq_len,
+            tech_count=self.tech_count,
+        )
+        if inputs is not None and targets is not None:
+            inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
+            inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
+            return inputs, targets
+
         rows = self.db.fetch_market_samples(limit=batch_size * self.window_size * 2)
         if not rows:
             rows = self._synthetic_samples(batch_size * self.window_size * 2)
@@ -160,7 +192,6 @@ class TrainingPipeline:
         rows = list(sorted(rows, key=lambda r: r["ts"] or 0))
         prices = np.array([float(r["price"] or 0.0) for r in rows], dtype=np.float32)
         volumes = np.array([float(r["volume"] or 0.0) for r in rows], dtype=np.float32)
-        symbols = [r["symbol"] or "asset" for r in rows]
         texts = []
         for r in rows:
             raw = r["raw"]
@@ -193,8 +224,8 @@ class TrainingPipeline:
         inputs = {
             "price_vol_input": price_vol_windows,
             "sentiment_seq": sentiment_seq,
-            "headline_text": np.array(headline_texts, dtype=object).reshape(-1, 1),
-            "full_text": np.array(full_texts, dtype=object).reshape(-1, 1),
+            "headline_text": tf.convert_to_tensor(np.array(headline_texts, dtype="<U256").reshape(-1, 1), dtype=tf.string),
+            "full_text": tf.convert_to_tensor(np.array(full_texts, dtype="<U512").reshape(-1, 1), dtype=tf.string),
             "tech_input": tech_input,
             "hour_input": hours,
             "dow_input": dows,
@@ -221,9 +252,10 @@ class TrainingPipeline:
     # ------------------------------------------------------------------
 
     def _adapt_vectorizers(self, headline_vec, full_vec) -> None:
-        placeholder = tf.data.Dataset.from_tensor_slices(["market update"])
-        headline_vec.adapt(placeholder)
-        full_vec.adapt(placeholder)
+        texts = self.data_loader.sample_texts(limit=256)
+        dataset = tf.data.Dataset.from_tensor_slices(texts)
+        headline_vec.adapt(dataset)
+        full_vec.adapt(dataset)
 
     def _synthetic_samples(self, count: int) -> list:
         price = 2000.0

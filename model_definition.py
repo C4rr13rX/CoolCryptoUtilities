@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import math
 import os
 import tensorflow as tf
+from typing import Any, Dict
+
 from keras.callbacks import Callback
 from keras.layers import (
     Activation,
     Add,
     AlphaDropout,
     Concatenate,
+    Conv1D,
     Dense,
     Embedding,
     Flatten,
@@ -19,7 +23,6 @@ from keras.layers import (
     MaxPooling1D,
     Multiply,
     Reshape,
-    SeparableConv1D,
 )
 from keras.layers import TextVectorization
 from keras.models import Model
@@ -84,7 +87,7 @@ def build_text_encoder(name_prefix: str, vocab_size: int, seq_len: int, embed_di
     inp = Input((1,), dtype=tf.string, name=f"{name_prefix}_text")
     ids = vec(inp)
     emb = Embedding(vocab_size, embed_dim, name=f"{name_prefix}_emb")(ids)
-    feat = tf.reduce_mean(emb, axis=1, name=f"{name_prefix}_avgpool")
+    feat = GlobalAveragePooling1D(name=f"{name_prefix}_avgpool")(emb)
     feat = Dense(embed_dim, activation="swish", name=f"{name_prefix}_proj")(feat)
     feat = AlphaDropout(0.2, name=f"{name_prefix}_do")(feat)
     enc = Model(inp, feat, name=f"{name_prefix}_encoder")
@@ -106,13 +109,13 @@ def build_multimodal_model(
     full_dim: int = 128,
     hidden_1: int = 256,
     hidden_2: int = 128,
-) -> tuple[Model, TextVectorization, TextVectorization]:
+) -> tuple[Model, TextVectorization, TextVectorization, Dict[str, Any], Dict[str, float]]:
     ts_in = Input((window_size, 2), name="price_vol_input")
-    d1 = SeparableConv1D(64, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_in)
+    d1 = Conv1D(64, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_in)
     d1 = Activation("swish")(d1)
-    d2 = SeparableConv1D(64, 3, padding="causal", dilation_rate=2, name="ts_d2")(d1)
+    d2 = Conv1D(64, 3, padding="causal", dilation_rate=2, name="ts_d2")(d1)
     d2 = Activation("swish")(d2)
-    d3 = SeparableConv1D(64, 3, padding="causal", dilation_rate=4, name="ts_d3")(d2)
+    d3 = Conv1D(64, 3, padding="causal", dilation_rate=4, name="ts_d3")(d2)
     d3 = Activation("swish")(d3)
 
     x = Concatenate(name="ts_cat")([d1, d2, d3])
@@ -124,7 +127,7 @@ def build_multimodal_model(
     se = Reshape((1, 192), name="ts_se_reshape")(se)
     d3_aligned = Concatenate(name="ts_d3_wide")([d3, d3, d3])
     d3_mod = Multiply(name="ts_se_mul")([d3_aligned, se])
-
+    d3_mod = MaxPooling1D(2, name="ts_d3_pool")(d3_mod)
     x = Add(name="ts_res_add")([x, d3_mod])
     x = LayerNormalization(name="ts_norm")(x)
     x = MaxPooling1D(2, name="ts_pool2")(x)
@@ -157,13 +160,7 @@ def build_multimodal_model(
 
     hour_in = Input((1,), dtype="int32", name="hour_input")
     dow_in = Input((1,), dtype="int32", name="dow_input")
-    hr = Lambda(lambda z: tf.cast(z, tf.float32) / 24.0, name="norm_hr")(hour_in)
-    dwd = Lambda(lambda z: tf.cast(z, tf.float32) / 7.0, name="norm_dw")(dow_in)
-    hs = Lambda(lambda z: tf.sin(2 * tf.constant(tf.pi) * z), name="sin_hr")(hr)
-    hc = Lambda(lambda z: tf.cos(2 * tf.constant(tf.pi) * z), name="cos_hr")(hr)
-    ds = Lambda(lambda z: tf.sin(2 * tf.constant(tf.pi) * z), name="sin_dw")(dwd)
-    dc = Lambda(lambda z: tf.cos(2 * tf.constant(tf.pi) * z), name="cos_dw")(dwd)
-    time_f = Concatenate(name="time_feat")([hs, hc, ds, dc])
+    time_f = TimeFeatureLayer(name="time_feat")([hour_in, dow_in])
 
     gas_in = Input((1,), name="gas_fee_input")
     tax_in = Input((1,), name="tax_rate_input")
@@ -191,30 +188,33 @@ def build_multimodal_model(
         name="moneybutton_multimodal_light",
     )
 
+    losses = {
+        "exit_conf": "binary_crossentropy",
+        "price_mu": "mse",
+        "price_log_var": "mse",
+        "price_dir": "binary_crossentropy",
+        "net_margin": "mse",
+        "net_pnl": "mse",
+        "tech_recon": "mse",
+    }
+    loss_weights = {
+        "exit_conf": 0.5,
+        "price_mu": 1.0,
+        "price_log_var": 0.25,
+        "price_dir": 0.5,
+        "net_margin": 1.0,
+        "net_pnl": 0.0,
+        "tech_recon": 0.25,
+    }
+
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
-        loss={
-            "exit_conf": "binary_crossentropy",
-            "price_mu": "mse",
-            "price_log_var": "mse",
-            "price_dir": "binary_crossentropy",
-            "net_margin": "mse",
-            "net_pnl": "mse",
-            "tech_recon": "mse",
-        },
-        loss_weights={
-            "exit_conf": 0.5,
-            "price_mu": 1.0,
-            "price_log_var": 0.25,
-            "price_dir": 0.5,
-            "net_margin": 1.0,
-            "net_pnl": 0.0,
-            "tech_recon": 0.25,
-        },
+        loss=losses,
+        loss_weights=loss_weights,
         metrics={"price_dir": ["accuracy"]},
     )
 
-    return model, headline_vec, full_vec
+    return model, headline_vec, full_vec, losses, loss_weights
 
 
 # ---------------------------------------------------------------------
@@ -226,4 +226,14 @@ if __name__ == "__main__":  # pragma: no cover - manual check
     print("\nOK: model built. Adapt the text vectorizers offline before training:")
     print("  head_vec.adapt(dataset_of_headlines)")
     print("  full_vec.adapt(dataset_of_full_articles)")
-
+class TimeFeatureLayer(tf.keras.layers.Layer):
+    def call(self, inputs):
+        hour, dow = inputs
+        hour = tf.cast(hour, tf.float32) / 24.0
+        dow = tf.cast(dow, tf.float32) / 7.0
+        two_pi = tf.constant(2.0 * math.pi, dtype=tf.float32)
+        sin_hr = tf.math.sin(two_pi * hour)
+        cos_hr = tf.math.cos(two_pi * hour)
+        sin_dw = tf.math.sin(two_pi * dow)
+        cos_dw = tf.math.cos(two_pi * dow)
+        return tf.concat([sin_hr, cos_hr, sin_dw, cos_dw], axis=-1)

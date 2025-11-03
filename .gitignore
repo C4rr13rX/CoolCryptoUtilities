@@ -9,6 +9,7 @@ __pycache__/
 pyvenv.cfg
 storage/
 *.db
+models/
 
 .backup_*/
 *.patch

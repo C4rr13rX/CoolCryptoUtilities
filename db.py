@@ -551,3 +551,18 @@ def save_db(state: Dict[str, Any]) -> None:
 
 def _lower(val: Optional[str]) -> str:
     return (val or "").lower()
+def _hex_to_int(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    s = str(value).strip().lower()
+    if s.startswith("0x"):
+        try:
+            return int(s, 16)
+        except Exception:
+            return 0
+    try:
+        return int(s)
+    except Exception:
+        return 0

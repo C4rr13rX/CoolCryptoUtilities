@@ -57,7 +57,10 @@ def send_flow(bridge: UltraSwapBridge):
     token = input("Token (native or 0x...): ").strip()
     to = input("To (0x...): ").strip()
     amt = input("Amount (decimals ok): ").strip()
-    svc.send(chain=ch, token=token, to=to, amount_human=amt)
+    try:
+        svc.send(chain=ch, token=token, to=to, amount_human=amt)
+    except Exception as exc:
+        print(f"[send] unable to send in current environment: {exc}")
 
 
 def swap_flow(bridge: UltraSwapBridge):
@@ -69,7 +72,10 @@ def swap_flow(bridge: UltraSwapBridge):
     buy = input("Buy  token (native or 0x...): ").strip()
     amt = input("Sell amount (decimals ok): ").strip()
     bps = int(os.getenv("SWAP_SLIPPAGE_BPS", "100"))
-    svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps)
+    try:
+        svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps)
+    except Exception as exc:
+        print(f"[swap] unable to swap in current environment: {exc}")
 
 
 def bridge_flow(bridge: UltraSwapBridge):
