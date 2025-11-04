@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from web3 import Web3
 
 # ---------- .env loader ----------
-from dotenv import load_dotenv, find_dotenv, dotenv_values
+from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
 
 def load_env_robust() -> None:
     path = find_dotenv(usecwd=True)

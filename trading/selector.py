@@ -155,12 +155,16 @@ class GhostTradingSupervisor:
             self.bots.append(bot)
         self._tasks = [asyncio.create_task(bot.start()) for bot in self.bots]
         self._tasks.append(asyncio.create_task(self._drain_trades()))
-        await asyncio.gather(*self._tasks)
+        try:
+            await asyncio.gather(*self._tasks)
+        except asyncio.CancelledError:
+            pass
 
     async def stop(self) -> None:
         await asyncio.gather(*(bot.stop() for bot in self.bots), return_exceptions=True)
         for task in self._tasks:
             task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
     async def _drain_trades(self) -> None:

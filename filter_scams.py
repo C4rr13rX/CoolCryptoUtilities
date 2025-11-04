@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import certifi
 import requests
-from dotenv import load_dotenv, find_dotenv, dotenv_values
+from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
 
 # ---------------------------------------------------------------------
 # .env loader (same robust pattern you use elsewhere; safe on PyDroid)

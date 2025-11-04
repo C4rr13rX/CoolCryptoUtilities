@@ -7,10 +7,19 @@ from decimal import Decimal, InvalidOperation, getcontext as _getctx
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from dotenv import load_dotenv, find_dotenv, dotenv_values
-from web3 import Web3
-from eth_account import Account
-from eth_account.signers.local import LocalAccount
+from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
+
+try:
+    from web3 import Web3  # type: ignore
+    from eth_account import Account  # type: ignore
+    from eth_account.signers.local import LocalAccount  # type: ignore
+    _WEB3_AVAILABLE = True
+except ImportError as _exc:  # pragma: no cover - optional dependency
+    Web3 = None  # type: ignore
+    Account = None  # type: ignore
+    LocalAccount = Any  # type: ignore
+    _WEB3_AVAILABLE = False
+    _WEB3_ERROR = _exc
 
 try:
     # web3 v6
@@ -280,6 +289,11 @@ class UltraSwapBridge:
         cache_transfers: Optional[CacheTransfers] = None,
         reorg_safety_blocks: Optional[int] = None,
     ):
+        if not _WEB3_AVAILABLE:
+            raise ImportError(
+                "web3 and eth-account are required for blockchain operations. Install with 'pip install web3 eth-account'."
+            ) from _WEB3_ERROR
+
         mnemonic = mnemonic or os.getenv("MNEMONIC")
         private_key = private_key or os.getenv("PRIVATE_KEY")
         if mnemonic:

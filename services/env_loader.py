@@ -2,7 +2,7 @@ from __future__ import annotations
 import os, sys
 from pathlib import Path
 from typing import List, Optional
-from dotenv import load_dotenv, dotenv_values, find_dotenv
+from dotenv_fallback import load_dotenv, dotenv_values, find_dotenv
 
 class EnvLoader:
     """Robust .env loader you can import anywhere."""

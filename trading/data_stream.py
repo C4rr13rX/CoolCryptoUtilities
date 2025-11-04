@@ -316,8 +316,7 @@ class MarketDataStream:
             ws_url = _render_ws(ep, base, quote)
             if ws_url:
                 self.url = ws_url
-                if ep.subscribe_template:
-                    self.subscribe_template = ep.subscribe_template
+                self.subscribe_template = ep.subscribe_template
                 self._endpoint_index = (index + 1) % len(self.endpoints)
                 print(f"[market-stream] using {ep.name} endpoint -> {self.url}")
                 return

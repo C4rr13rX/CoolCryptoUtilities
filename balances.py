@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Iterable, Set
 from decimal import Decimal, getcontext
 import requests
-from dotenv import load_dotenv, find_dotenv, dotenv_values
+from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 

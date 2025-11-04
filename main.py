@@ -1,102 +1,198 @@
-import json
+from __future__ import annotations
 import os
-from typing import Dict
 
-from cache import CacheTransfers, CacheBalances
-from router_wallet import (
-    UltraSwapBridge,
-    normalize_snapshot_numbers, enrich_portfolio_with_0x, CHAINS,
-)
-from balances import MultiChainTokenPortfolio
-from filter_scams import FilterScamTokens
+from router_wallet import UltraSwapBridge, CHAINS
+from cache import CacheBalances, CacheTransfers
+from services.env_loader import EnvLoader
+
+# Load env before creating any services
+EnvLoader.load()
 
 
-def maybe_enrich(snapshot):
-    # Skip network-heavy 0x enrichment when FAST/ SKIP_0X is set
-    if os.getenv('FAST') == '1' or os.getenv('SKIP_0X') == '1':
-        print('[fast] skipping 0x enrichment')
-        return snapshot
-    from router_wallet import enrich_portfolio_with_0x
-    return maybe_enrich(snapshot)
+def prompt_chain() -> str:
+    allowed = list(CHAINS)
+    print("Available chains:", ", ".join(allowed))
+    ch = input("Chain: ").strip().lower()
+    if ch not in allowed:
+        print(f"❌ Unsupported chain. Allowed: {', '.join(allowed)}")
+        return ""
+    return ch
 
 
-# ======================================================================
-# DEMO
-# ======================================================================
-def action_show_balances():
+def show_balances(wallet_address: str | None = None):
+    cb = CacheBalances()
+    cb.load(wallet=wallet_address)
+    if hasattr(cb, "print_table"):
+        cb.print_table()
+    elif hasattr(cb, "data"):
+        print(cb.data)
+    else:
+        print("(no balances printer)")
 
-        # NEW: create a transfers cache and pass it into the router
-        ct = CacheTransfers() # honors PORTFOLIO_CACHE_DIR env if set
-        router = UltraSwapBridge(cache_transfers=ct) # pulls MNEMONIC/PRIVATE_KEY from .env
-        wallet = router.get_address()
-        print(f"Wallet: {wallet}")
 
-        # 1) Discover & annotate in balances.py's canonical format
-        annotated = router.discover_tokens() # defaults to style="portfolio"
-        print(f"Discovered {len(annotated)} tokens")
-        if annotated:
-            print("Sample:", annotated[:8])
-        
-        # 2) Filter scam tokens 
-        filt = FilterScamTokens()
-        try:
-            res = filt.filter(annotated)
-            safe_tokens = res.tokens
-            # --- CACHES (create after you know wallet/tokens) ---
-            cb = CacheBalances() 
-            ct = CacheTransfers() # optional args; defaults are fine
-        
-            # --- Portfolio using caches ---
-            tp = MultiChainTokenPortfolio(
-                wallet_address=wallet,
-                tokens=safe_tokens, # <- use the filtered list
-                cache_balances=cb, # <- balance cache
-                cache_transfers=ct, # <- transfer movement probe (fast path)
-                # keep transfers off for speed unless you need them:
-                max_transfers_per_token=0,
-                verbose=False # turn on to see cache hits/misses
-            )
-        
-            snapshot = tp.build()
-            print("INPUT :", json.dumps(annotated, indent=2))
-            print("OUTPUT:", json.dumps(safe_tokens, indent=2))
-    # ---- NEW: clean up scientific notation (formatting only)
-            normalize_snapshot_numbers(snapshot, qty_dp=18, usd_dp=8)
-    
-            # ---- NEW: optional 0x fill-in for tokens with usd_amount == 0 (balances untouched)
-            # Build address->chain map from the *filtered* list
-            addr_to_chain: Dict[str, str] = {}
-            for tag in safe_tokens:
-                if ":" in tag and tag.split(":",1)[0] in CHAINS:
-                    ch, addr = tag.split(":",1)
-                elif "@" in tag and tag.split("@",1)[1] in CHAINS:
-                    addr, ch = tag.split("@",1)
-                else:
-                    continue
-                addr_to_chain[addr.lower()] = ch.lower()
-            try:
-                maybe_enrich(snapshot, addr_to_chain, qty_dp=18, usd_dp=8)
-            except Exception as e:
-                print(f"[pricing] 0x enrich skipped due to error: {e}")
-    
-            # 4) Print raw snapshot JSON (balances + txs; USD may remain 0 for illiquid tokens)
-            print(json.dumps(snapshot, indent=2))
-    
-            # 5) Pretty total (optional)
-            total = 0.0
-            for info in snapshot.values():
+def refetch_balances_parallel(bridge: UltraSwapBridge, chains):
+    cb = CacheBalances()
+    if hasattr(cb, "rebuild_all"):
+        cb.rebuild_all(bridge, chains)
+    else:
+        print("(rebuild_all not found in CacheBalances)")
+
+
+def refetch_transfers_parallel(bridge: UltraSwapBridge, chains):
+    ct = CacheTransfers()
+    if hasattr(ct, "rebuild_incremental"):
+        ct.rebuild_incremental(bridge, chains)
+    else:
+        print("(rebuild_incremental not found in CacheTransfers)")
+
+
+def send_flow(bridge: UltraSwapBridge):
+    try:
+        from services.send_service import SendService
+    except ImportError as exc:
+        print(f"[send] missing dependency: {exc}")
+        print("Install 'web3' and related packages to use send functionality.")
+        return
+    svc = SendService(bridge)
+    ch = prompt_chain()
+    if not ch:
+        return
+    token = input("Token (native or 0x...): ").strip()
+    to = input("To (0x...): ").strip()
+    amt = input("Amount (decimals ok): ").strip()
+    try:
+        svc.send(chain=ch, token=token, to=to, amount_human=amt)
+    except Exception as exc:
+        print(f"[send] unable to send in current environment: {exc}")
+
+
+def swap_flow(bridge: UltraSwapBridge):
+    try:
+        from services.swap_service import SwapService
+    except ImportError as exc:
+        print(f"[swap] missing dependency: {exc}")
+        print("Install 'web3' and related packages to use swap functionality.")
+        return
+    svc = SwapService(bridge)
+    ch = prompt_chain()
+    if not ch:
+        return
+    sell = input("Sell token (native or 0x...): ").strip()
+    buy = input("Buy  token (native or 0x...): ").strip()
+    amt = input("Sell amount (decimals ok): ").strip()
+    bps = int(os.getenv("SWAP_SLIPPAGE_BPS", "100"))
+    try:
+        svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps)
+    except Exception as exc:
+        print(f"[swap] unable to swap in current environment: {exc}")
+
+
+def bridge_flow(bridge: UltraSwapBridge):
+    """
+    Bridge via LI.FI through UltraSwapBridge/BridgeService.
+    - Asks for src/dst chains.
+    - Token to bridge (use 'native' for ETH/MATIC/OP/etc).
+    - Amount in human units.
+    - Optional destination token (enter blank to keep the same token).
+    """
+    try:
+        from services.bridge_service import BridgeService
+    except ImportError as exc:
+        print(f"[bridge] missing dependency: {exc}")
+        print("Install 'web3' and related packages to use bridging functionality.")
+        return
+    svc = BridgeService(bridge)
+
+    print("Source:")
+    src = prompt_chain()
+    if not src:
+        return
+    print("Destination:")
+    dst = prompt_chain()
+    if not dst:
+        return
+
+    token = input("Token to bridge (native or 0x...): ").strip()
+    amt_human = input("Amount (decimals ok): ").strip()
+    dst_token = input("Destination token (press Enter to keep same): ").strip() or token
+
+    # Slippage: prefer BRIDGE_SLIPPAGE_BPS, else fall back to SWAP_SLIPPAGE_BPS, else 100 (1%)
+    bps = int(os.getenv("BRIDGE_SLIPPAGE_BPS", os.getenv("SWAP_SLIPPAGE_BPS", "100")))
+    wait_flag = os.getenv("BRIDGE_WAIT", "0").strip().lower() in ("1", "true", "yes")
+
+    try:
+        # BridgeService supports amount_human and dst_token (to_token still accepted for back-compat).
+        svc.bridge(
+            src_chain=src,
+            dst_chain=dst,
+            token=token,
+            amount_human=amt_human,
+            dst_token=dst_token,
+            slippage_bps=bps,
+            wait=wait_flag,
+        )
+    except Exception as e:
+        print(f"❌ bridge error: {e!r}")
+
+
+def menu():
+    # Reuse a single signer/connection pool across actions
+    try:
+        bridge = UltraSwapBridge()
+    except ImportError as exc:
+        print(f"[wallet] missing dependency: {exc}")
+        print("Install required packages and re-run. Exiting CLI.")
+        return
+
+    chains = list(CHAINS)
+    prod_manager = None
+    while True:
+        print("\n=== Wallet Console (OO) ===")
+        print("1) Get balances (cached; fast)")
+        print("2) Refetch balances now (rebuild/refresh cache, parallel)")
+        print("3) Refetch transactions now (incremental, parallel)")
+        print("4) Send")
+        print("5) Swap (auto: 0x v2 → Camelot)")
+        print("6) Bridge (LI.FI)")
+        print("7) Start production manager")
+        print("8) Stop production manager")
+        print("0) Exit")
+        choice = input("Select: ").strip().lower()
+        if choice in ("0", "q", "x", "exit"):
+            if prod_manager and prod_manager.is_running:
+                prod_manager.stop()
+            print("Bye.")
+            return
+        elif choice == "1":
+            show_balances(bridge.get_address())
+        elif choice == "2":
+            refetch_balances_parallel(bridge, chains)
+        elif choice == "3":
+            refetch_transfers_parallel(bridge, chains)
+        elif choice == "4":
+            send_flow(bridge)
+        elif choice == "5":
+            swap_flow(bridge)
+        elif choice == "6":
+            bridge_flow(bridge)
+        elif choice == "7":
+            if prod_manager is None:
                 try:
-                    total += float(info.get("usd_amount") or 0)
-                except Exception:
-                    pass
-            print("\n=== Portfolio snapshot ===")
-            print(f"TOTAL ≈ ${total:.2f}")
-    
-            if res.flagged:
-                print("\n-- Flagged (dropped) --")
-                for a, why in res.reasons.items():
-                    print(a, "=>", why)
-        except Exception as e:
-            print("Filter error:", type(e).__name__, str(e))
+                    from production import ProductionManager
+                    prod_manager = ProductionManager()
+                except ImportError as exc:
+                    print(f"[production] missing dependency: {exc}")
+                    print("Install machine-learning dependencies to run the production manager.")
+                    continue
+            prod_manager.start()
+        elif choice == "8":
+            if prod_manager:
+                prod_manager.stop()
+            else:
+                print("[production] manager not running.")
+        else:
+            print("Invalid selection.")
+
+
 if __name__ == "__main__":
-    action_show_balances()
+    menu()
