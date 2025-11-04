@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 import statistics
+from urllib.parse import quote_plus
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 import aiohttp
@@ -14,6 +15,15 @@ from db import get_db
 
 
 CallbackType = Union[Callable[[Dict[str, Any]], Awaitable[None]], Callable[[Dict[str, Any]], None]]
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        return float(value)
+    except Exception:
+        return 0.0
 
 
 TOKEN_NORMALIZATION = {
@@ -36,6 +46,15 @@ COINGECKO_IDS = {
     "DAI": "dai",
     "SPX": "spx6900",
 }
+
+
+def _token_synonyms(token: str) -> set[str]:
+    token_u = token.upper()
+    synonyms = {token_u}
+    for original, normalized in TOKEN_NORMALIZATION.items():
+        if normalized.upper() == token_u:
+            synonyms.add(original.upper())
+    return synonyms
 
 
 @dataclass
@@ -107,13 +126,13 @@ class MarketDataStream:
         backoff = 5.0
         while not self._stop_event.is_set():
             if not self.url:
-                print("[market-stream] websocket URL unavailable; waiting for configuration.")
-                await asyncio.sleep(30.0)
+                await self._poll_rest_data(max(backoff, self.consensus_timeout))
                 if self._template:
                     symbol_lower = self.symbol.lower().replace("/", "-")
                     self.url = self._template.format(symbol=symbol_lower, SYMBOL=self.symbol.upper(), pair=symbol_lower)
                 if not self.url:
                     self._select_next_endpoint()
+                await asyncio.sleep(1.0)
                 continue
             try:
                 await self._consume_ws()
@@ -295,6 +314,10 @@ class MarketDataStream:
         return False
 
     def _build_endpoints(self) -> List[Endpoint]:
+        symbol_clean = self.symbol.replace("/", "-")
+        parts = [p.strip() for p in symbol_clean.split("-") if p.strip()]
+        raw_base = parts[0].upper() if parts else "ETH"
+        raw_quote = parts[1].upper() if len(parts) > 1 else "USD"
         base, quote = _split_symbol(self.symbol)
         endpoints: List[Endpoint] = []
         binance_symbol = _binance_symbol(base, quote)
@@ -365,6 +388,15 @@ class MarketDataStream:
                 ws_template=None,
                 subscribe_template=None,
                 rest_template=f"https://api.mexc.com/api/v3/ticker/price?symbol={mexc_symbol}",
+            )
+        )
+        dex_query = quote_plus(f"{raw_base} {raw_quote}")
+        endpoints.append(
+            Endpoint(
+                name="dexscreener",
+                ws_template=None,
+                subscribe_template=None,
+                rest_template=f"https://api.dexscreener.com/latest/dex/search?q={dex_query}",
             )
         )
         return endpoints
@@ -531,7 +563,7 @@ def _render_rest(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
         return endpoint.rest_template
     if endpoint.name == "coingecko":
         return endpoint.rest_template
-    if endpoint.name in {"bitstamp", "mexc"}:
+    if endpoint.name in {"bitstamp", "mexc", "dexscreener"}:
         return endpoint.rest_template
     if endpoint.name == "okx":
         return endpoint.rest_template
@@ -583,6 +615,33 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
         if name == "mexc":
             price = float(payload.get("price") or 0)
             return price if price > 0 else None
+        if name == "dexscreener":
+            pairs = payload.get("pairs") or []
+            best_ratio: Optional[float] = None
+            best_liquidity = 0.0
+            base_synonyms = _token_synonyms(base)
+            quote_synonyms = _token_synonyms(quote)
+            for pair in pairs:
+                base_info = pair.get("baseToken") or {}
+                quote_info = pair.get("quoteToken") or {}
+                base_symbol = str(base_info.get("symbol") or "").upper()
+                quote_symbol = str(quote_info.get("symbol") or "").upper()
+                if base_symbol not in base_synonyms or quote_symbol not in quote_synonyms:
+                    continue
+                ratio = pair.get("priceNative")
+                if ratio is None:
+                    base_usd = _safe_float(pair.get("priceUsd"))
+                    quote_liq = _safe_float(pair.get("liquidity", {}).get("quote"))
+                    base_liq = _safe_float(pair.get("liquidity", {}).get("base"))
+                    if base_usd > 0 and quote_liq > 0 and base_liq > 0:
+                        ratio = base_liq / max(quote_liq, 1e-12)
+                ratio_val = _safe_float(ratio)
+                liquidity_usd = _safe_float(pair.get("liquidity", {}).get("usd"))
+                if ratio_val > 0 and liquidity_usd >= best_liquidity:
+                    best_ratio = ratio_val
+                    best_liquidity = liquidity_usd
+            if best_ratio and best_ratio > 0:
+                return float(best_ratio)
     except Exception:
         return None
     return None
