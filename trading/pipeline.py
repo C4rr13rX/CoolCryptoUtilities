@@ -62,6 +62,11 @@ class TrainingPipeline:
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.promotion_threshold = promotion_threshold
 
+        self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", "25"))
+        self.max_false_positive_rate = float(os.getenv("MAX_FALSE_POSITIVE_RATE", "0.15"))
+        self.min_ghost_win_rate = float(os.getenv("MIN_GHOST_WIN_RATE", "0.55"))
+        self.min_realized_margin = float(os.getenv("MIN_REALIZED_MARGIN", "0.0"))
+
         self.window_size = 60
         self.sent_seq_len = 24
         self.tech_count = 12
@@ -196,18 +201,51 @@ class TrainingPipeline:
         }
 
         promote = score >= self.promotion_threshold
-        if promote and evaluation and self.active_accuracy:
-            if evaluation.get("dir_accuracy", 0.0) < self.active_accuracy + 0.01:
-                promote = False
-                print(
-                    "[training] retaining existing live model (%.3f) to gather more data before replacement."
-                    % self.active_accuracy
-                )
+        gating_reason: Optional[str] = None
+        if promote:
+            if not evaluation:
+                gating_reason = "no evaluation metrics available"
+            else:
+                ghost_trades = int(evaluation.get("ghost_trades", 0))
+                if ghost_trades < self.min_ghost_trades:
+                    gating_reason = (
+                        f"ghost trades {ghost_trades} below minimum {self.min_ghost_trades}"
+                    )
+                else:
+                    fp_rate = float(evaluation.get("false_positive_rate", 0.0))
+                    win_rate = float(evaluation.get("ghost_win_rate", 0.0))
+                    realized_margin = float(evaluation.get("ghost_realized_margin", 0.0))
+                    if fp_rate > self.max_false_positive_rate:
+                        gating_reason = (
+                            f"false positive rate {fp_rate:.3f} exceeds limit {self.max_false_positive_rate:.3f}"
+                        )
+                    elif win_rate < self.min_ghost_win_rate:
+                        gating_reason = (
+                            f"ghost win rate {win_rate:.3f} below minimum {self.min_ghost_win_rate:.3f}"
+                        )
+                    elif realized_margin < self.min_realized_margin:
+                        gating_reason = (
+                            f"realized margin {realized_margin:.6f} below minimum {self.min_realized_margin:.6f}"
+                        )
+                    elif self.active_accuracy and evaluation.get("dir_accuracy", 0.0) < self.active_accuracy + 0.01:
+                        gating_reason = (
+                            "retaining existing live model (%.3f) to gather more data before replacement"
+                            % self.active_accuracy
+                        )
+        if gating_reason:
+            promote = False
+            print(f"[training] promotion deferred: {gating_reason}. Continuing candidate search.")
         if promote:
             self.promote_candidate(path, score=score, metadata=result, evaluation=evaluation)
         else:
             self._print_ghost_summary(evaluation)
-            print(f"[training] candidate score {score:.3f} below promotion threshold {self.promotion_threshold:.3f}.")
+            if score < self.promotion_threshold:
+                print(f"[training] candidate score {score:.3f} below promotion threshold {self.promotion_threshold:.3f}.")
+            else:
+                print(
+                    "[training] candidate retained for further evaluation despite score %.3f (promotion criteria not met)."
+                    % score
+                )
 
         self._save_state()
         return result
@@ -373,6 +411,10 @@ class TrainingPipeline:
             "false_negatives": int(np.sum((price_dir_true > 0.5) & (price_dir_labels == False))),
             "execution_bias": self._execution_bias(),
         }
+        negatives = summary["false_positives"] + summary["true_negatives"]
+        summary["false_positive_rate"] = self._safe_float(
+            summary["false_positives"] / max(1, negatives)
+        )
         return summary
 
     def _execution_bias(self, window: int = 50) -> float:
