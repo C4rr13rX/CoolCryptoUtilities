@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+import tensorflow as tf
 
 from db import TradingDatabase, get_db
 from trading.data_stream import MarketDataStream
@@ -46,6 +47,10 @@ class TradingBot:
         self.bus_routes: Dict[str, List[str]] = {}
         self.stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD"}
         self._load_state()
+        self._model_input_order: Optional[List[str]] = None
+        self._predict_fn: Optional[Callable[..., Any]] = None
+        self._active_model_ref: Optional[tf.keras.Model] = None
+        self._asset_vocab_limit: Optional[int] = None
 
     async def start(self) -> None:
         if self._running:
@@ -56,6 +61,63 @@ class TradingBot:
             self.stream.start(),
             self._start_background_refinement(),
         )
+
+    def _ensure_model_bindings(self, model: tf.keras.Model) -> None:
+        if self._active_model_ref is model and self._model_input_order is not None:
+            return
+
+        self._model_input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+
+        @tf.function(reduce_retracing=True)
+        def _predict(*ordered):
+            return model(list(ordered), training=False)
+
+        self._predict_fn = _predict
+        self._active_model_ref = model
+        self._asset_vocab_limit = None
+
+        for layer_name in ("asset_embedding", "asset_embedding_1"):
+            try:
+                layer = model.get_layer(layer_name)
+                if hasattr(layer, "input_dim"):
+                    self._asset_vocab_limit = int(layer.input_dim)
+                    break
+            except Exception:
+                continue
+        if self._asset_vocab_limit is None:
+            for layer in model.layers:
+                if isinstance(layer, tf.keras.layers.Embedding) and hasattr(layer, "input_dim"):
+                    self._asset_vocab_limit = int(layer.input_dim)
+                    break
+
+    def _invoke_model(self, inputs: Dict[str, np.ndarray]):
+        if not self._model_input_order:
+            raise RuntimeError("Model input order not initialised")
+
+        ordered_inputs = [inputs[name] for name in self._model_input_order]
+        if self._predict_fn is None or self._active_model_ref is None:
+            preds = self.pipeline.ensure_active_model().predict(ordered_inputs, verbose=0)
+        else:
+            ordered_tensors = [tf.convert_to_tensor(arr) for arr in ordered_inputs]
+            preds = self._predict_fn(*ordered_tensors)
+            if isinstance(preds, (list, tuple)):
+                preds = [p.numpy() for p in preds]
+            elif isinstance(preds, dict):
+                preds = {k: np.array(v) for k, v in preds.items()}
+            else:
+                preds = preds.numpy()
+        if isinstance(preds, dict):
+            preds = [preds[name] for name in [
+                "exit_conf",
+                "price_mu",
+                "price_log_var",
+                "price_dir",
+                "net_margin",
+                "net_pnl",
+                "tech_recon",
+                "price_gaussian",
+            ] if name in preds]
+        return preds
 
     async def stop(self) -> None:
         if not self._running:
@@ -71,9 +133,10 @@ class TradingBot:
             return  # wait until window filled
 
         model = self.pipeline.ensure_active_model()
+        self._ensure_model_bindings(model)
         inputs = self._prepare_inputs(list(self._buffer))
         try:
-            preds = model.predict(inputs, verbose=0)
+            preds = self._invoke_model(inputs)
         except Exception as exc:
             print(f"[trading-bot] prediction failed: {exc}")
             return
@@ -108,6 +171,9 @@ class TradingBot:
         except Exception:
             asset_id = 0
         asset = np.array([[asset_id]], dtype=np.int32)
+        if self._asset_vocab_limit is not None and self._asset_vocab_limit > 0:
+            max_index = self._asset_vocab_limit - 1
+            asset = np.clip(asset, 0, max_index).astype(np.int32)
 
         headline = f"{window[-1].get('symbol', 'asset')} price {window[-1].get('price', 0)}"
         full_text = str(window[-1].get("raw", ""))[:512]
@@ -127,7 +193,11 @@ class TradingBot:
         return inputs
 
     def _interpret_predictions(self, preds, sample: Dict[str, Any]) -> Dict[str, Any]:
-        exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_recon = preds
+        if len(preds) == 8:
+            exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_recon, price_gaussian = preds
+        else:
+            exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_recon = preds
+            price_gaussian = None
         exit_conf_val = float(exit_conf[0][0])
         direction_prob = float(price_dir[0][0])
         delta = float(price_mu[0][0])

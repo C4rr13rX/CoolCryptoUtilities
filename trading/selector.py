@@ -1,20 +1,31 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
 import asyncio
+import json
 from pathlib import Path
+import os
 from typing import Any, Dict, List, Optional
 
+from dataclasses import dataclass
+from urllib.parse import quote_plus
 import numpy as np
+import requests
 
 from db import TradingDatabase, get_db
 from trading.bot import TradingBot
-from trading.data_stream import MarketDataStream
+from trading.data_stream import MarketDataStream, _split_symbol, TOKEN_NORMALIZATION
 from trading.pipeline import TrainingPipeline
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
 
+DEFAULT_LIVE_PAIRS: List[str] = [
+    "WETH-USDT",
+    "USDC-WETH",
+    "DAI-WETH",
+    "WBTC-WETH",
+    "UNI-WETH",
+    "PEPE-WETH",
+]
 
 @dataclass
 class PairCandidate:
@@ -24,6 +35,107 @@ class PairCandidate:
     volatility: float
     score: float
     datapath: Path
+
+
+_LIVE_PAIR_CACHE: Dict[str, bool] = {}
+
+
+def _load_top_symbols(limit: int = 100) -> List[str]:
+    path = Path(os.getenv("PAIR_INDEX_PATH", "data/pair_index_top2000.json"))
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh) or {}
+    except Exception:
+        return []
+    try:
+        items = sorted(
+            data.items(),
+            key=lambda kv: int(kv[1].get("index", 0)),
+        )
+    except Exception:
+        items = list(data.items())
+    symbols: List[str] = []
+    for _, info in items:
+        symbol = str(info.get("symbol", "")).upper()
+        if not symbol:
+            continue
+        symbols.append(symbol)
+        if len(symbols) >= limit:
+            break
+    return symbols
+
+
+def _token_synonyms(token: str) -> set[str]:
+    token_u = token.upper()
+    synonyms = {token_u}
+    for original, normalized in TOKEN_NORMALIZATION.items():
+        if normalized.upper() == token_u:
+            synonyms.add(original.upper())
+    return synonyms
+
+
+def _probe_dexscreener(symbol: str) -> bool:
+    base, quote = _split_symbol(symbol)
+    query = quote_plus(f"{base} {quote}")
+    url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
+    try:
+        resp = requests.get(url, timeout=5)
+        if resp.status_code != 200:
+            return False
+        payload = resp.json()
+    except Exception:
+        return False
+    pairs = payload.get("pairs") or []
+    if not pairs:
+        return False
+    base_syn = _token_synonyms(base)
+    quote_syn = _token_synonyms(quote)
+    for pair in pairs:
+        base_info = pair.get("baseToken") or {}
+        quote_info = pair.get("quoteToken") or {}
+        base_symbol = str(base_info.get("symbol") or "").upper()
+        quote_symbol = str(quote_info.get("symbol") or "").upper()
+        if base_symbol not in base_syn or quote_symbol not in quote_syn:
+            continue
+        price = pair.get("priceNative") or pair.get("priceUsd")
+        try:
+            if price and float(price) > 0:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _has_historical_price(symbol: str) -> bool:
+    data_dir = Path("data/historical_ohlcv")
+    symbol_upper = symbol.upper()
+    try:
+        for json_file in data_dir.glob(f"*_{symbol_upper}.json"):
+            with json_file.open("r", encoding="utf-8") as handle:
+                rows = json.load(handle)
+            if isinstance(rows, list) and rows:
+                price = float(rows[-1].get("close") or rows[-1].get("price") or 0.0)
+                if price > 0:
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def _has_live_price(symbol: str) -> bool:
+    cached = _LIVE_PAIR_CACHE.get(symbol)
+    if cached is not None:
+        return cached
+    if _probe_dexscreener(symbol):
+        _LIVE_PAIR_CACHE[symbol] = True
+        return True
+    result = _has_historical_price(symbol)
+    _LIVE_PAIR_CACHE[symbol] = result
+    if not result:
+        print(f"[pair-select] skipping {symbol}: no live market data sources responded.")
+    return result
 
 
 def _load_pair_metadata() -> Dict[str, str]:
@@ -102,15 +214,46 @@ def select_pairs(
     data_dir: Path = Path("data/historical_ohlcv"),
 ) -> List[PairCandidate]:
     candidates = analyse_historical_pairs(data_dir=data_dir)
+    candidate_map = {cand.symbol: cand for cand in candidates}
     best: List[PairCandidate] = []
     seen_tokens: set[str] = set()
+
+    def try_add_candidate(symbol: str) -> None:
+        cand = candidate_map.get(symbol.upper())
+        if not cand:
+            return
+        token_key = tuple(sorted(cand.tokens))
+        if token_key in seen_tokens:
+            return
+        if not _has_live_price(cand.symbol):
+            return
+        best.append(cand)
+        seen_tokens.add(token_key)
+
+    for symbol in DEFAULT_LIVE_PAIRS:
+        if len(best) >= limit:
+            break
+        try_add_candidate(symbol)
+
+    for symbol in _load_top_symbols(limit * 5):
+        if len(best) >= limit:
+            break
+        try_add_candidate(symbol)
+
+    scanned = 0
+    max_scan = max(limit * 30, limit + 5)
     for cand in candidates:
         if len(best) >= limit:
+            break
+        scanned += 1
+        if scanned > max_scan and best:
             break
         if cand.avg_volume < min_volume:
             continue
         token_key = tuple(sorted(cand.tokens))
         if token_key in seen_tokens:
+            continue
+        if not _has_live_price(cand.symbol):
             continue
         seen_tokens.add(token_key)
         best.append(cand)

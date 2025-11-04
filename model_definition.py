@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import math
 import os
+
+# Force CPU execution to avoid CUDA driver warnings on machines without GPUs.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
 import tensorflow as tf
 from typing import Any, Dict
 

@@ -7,7 +7,8 @@ import time
 from dataclasses import dataclass
 import statistics
 from urllib.parse import quote_plus
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, Set
 
 import aiohttp
 
@@ -24,6 +25,11 @@ def _safe_float(value: Any) -> float:
         return float(value)
     except Exception:
         return 0.0
+    except ValueError:
+        try:
+            return float(str(value))
+        except Exception:
+            return 0.0
 
 
 TOKEN_NORMALIZATION = {
@@ -46,6 +52,15 @@ COINGECKO_IDS = {
     "USDT": "tether",
     "DAI": "dai",
     "SPX": "spx6900",
+    "UNI": "uniswap",
+    "PEPE": "pepe",
+}
+
+BINANCE_MARKETS: Set[Tuple[str, str]] = {
+    ("ETH", "USDT"),
+    ("ETH", "USDC"),
+    ("BTC", "USDT"),  # allows BTC/USDT feeds when needed
+    ("ETH", "BTC"),
 }
 
 
@@ -105,8 +120,6 @@ class MarketDataStream:
         self.endpoints = self._build_endpoints()
         self._endpoint_scores: Dict[str, float] = {ep.name: 0.0 for ep in self.endpoints}
         self._endpoint_order = {ep.name: idx for idx, ep in enumerate(self.endpoints)}
-        if not self.url:
-            self._select_next_endpoint()
         self.rest_poll_interval = float(os.getenv("REST_POLL_INTERVAL", "5"))
         self._last_volume: float = 0.0
         self.consensus_sources = int(os.getenv("PRICE_CONSENSUS_SOURCES", "2"))
@@ -115,6 +128,13 @@ class MarketDataStream:
         self._recent_price_by_source: Dict[str, Tuple[float, float]] = {}
         self._last_consensus_ts = time.time()
         self._endpoint_failures: Dict[str, int] = {}
+        self._historical_reference = self._load_historical_reference()
+        self._endpoint_backoff_until: Dict[str, float] = {}
+        self.current_endpoint: str = "bootstrap"
+        self._sample_count = 0
+        self._last_sample_log = 0.0
+        if not self.url:
+            self._select_next_endpoint()
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -141,6 +161,10 @@ class MarketDataStream:
             except aiohttp.WSServerHandshakeError as exc:
                 if exc.status in (429, 503):
                     print(f"[market-stream] rate limited ({exc.status}); sleeping {backoff:.1f}s")
+                elif exc.status == 451:
+                    current = time.time()
+                    self._endpoint_backoff_until[self.current_endpoint] = current + max(60.0, backoff * 2)
+                    print(f"[market-stream] endpoint {self.current_endpoint} denied (451); backing off until {self._endpoint_backoff_until[self.current_endpoint]:.0f}.")
                 else:
                     print(f"[market-stream] websocket handshake failed ({exc.status}); retrying in {backoff:.1f}s")
                 await self._poll_rest_data(backoff)
@@ -198,6 +222,8 @@ class MarketDataStream:
         while not self._stop_event.is_set() and time.time() < end_time:
             dispatched = False
             for endpoint in self._ranked_endpoints():
+                if self._endpoint_backoff_until.get(endpoint.name, 0.0) > time.time():
+                    continue
                 price = await self._fetch_rest_price(endpoint, base, quote)
                 if not price or price <= 0:
                     self._record_endpoint_failure(endpoint.name)
@@ -232,6 +258,18 @@ class MarketDataStream:
             self._last_volume = float(sample.get("volume") or self._last_volume or 0.0)
         except Exception:
             pass
+        self._sample_count += 1
+        now = time.time()
+        source = sample.get("rest") or self.current_endpoint
+        if now - self._last_sample_log >= 30.0:
+            self._last_sample_log = now
+            try:
+                price_preview = float(sample.get("price") or 0.0)
+            except Exception:
+                price_preview = 0.0
+            print(
+                f"[market-stream] {self.symbol} flow: {self._sample_count} samples (latest {price_preview:.6f}) via {source}"
+            )
         self._db.insert_market_sample(
             chain=sample.get("chain", self.chain),
             symbol=sample.get("symbol", self.symbol),
@@ -271,22 +309,24 @@ class MarketDataStream:
     def _normalize_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Uniswap-style streaming payloads often have nested "data" nodes
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-        price = float(payload.get("price") or payload.get("p") or 0)
-        volume = float(payload.get("volume") or payload.get("v") or 0)
+        price = _safe_float(payload.get("price") or payload.get("p"))
+        volume = _safe_float(payload.get("volume") or payload.get("v"))
         if price == 0 and isinstance(data, dict):
-            price = float(data.get("price") or data.get("priceUsd") or data.get("priceUSD") or 0)
+            price = _safe_float(data.get("price") or data.get("priceUsd") or data.get("priceUSD"))
+        if price == 0 and isinstance(data, dict):
+            price = _safe_float(data.get("best_bid") or data.get("bestBid") or data.get("ask"))
         if volume == 0 and isinstance(data, dict):
-            volume = float(data.get("volume") or data.get("amount") or data.get("amountUSD") or 0)
+            volume = _safe_float(data.get("volume") or data.get("amount") or data.get("amountUSD"))
         symbol = (
             payload.get("symbol")
             or payload.get("s")
             or (data.get("symbol") if isinstance(data, dict) else None)
             or self.symbol
         )
-        ts = float(payload.get("ts") or payload.get("time") or (data.get("timestamp") if isinstance(data, dict) else 0))
+        ts = _safe_float(payload.get("ts") or payload.get("time") or (data.get("timestamp") if isinstance(data, dict) else 0))
         if ts == 0:
             ts = time.time()
-        if price <= 0:
+        if not price or price <= 0:
             return None
         if not self._validate_price(price):
             return None
@@ -322,7 +362,7 @@ class MarketDataStream:
         base, quote = _split_symbol(self.symbol)
         endpoints: List[Endpoint] = []
         binance_symbol = _binance_symbol(base, quote)
-        if binance_symbol:
+        if binance_symbol and (base, quote) in BINANCE_MARKETS:
             endpoints.append(
                 Endpoint(
                     name="binance",
@@ -425,11 +465,14 @@ class MarketDataStream:
 
     def _confirm_consensus(self, name: str, price: float) -> Tuple[bool, bool, Optional[float]]:
         now = time.time()
+        if price <= 0:
+            self._recent_price_by_source.pop(name, None)
+            return False, False, None
         self._recent_price_by_source[name] = (price, now)
         valid = [
             value
             for value, ts in self._recent_price_by_source.values()
-            if now - ts <= self.consensus_window
+            if now - ts <= self.consensus_window and value > 0
         ]
         if not valid:
             return False, True, None
@@ -452,6 +495,8 @@ class MarketDataStream:
             return
         base, quote = _split_symbol(self.symbol)
         for endpoint in self._ranked_endpoints():
+            if self._endpoint_backoff_until.get(endpoint.name, 0.0) > time.time():
+                continue
             price = await self._fetch_rest_price(endpoint, base, quote)
             if not price or price <= 0:
                 self._record_endpoint_failure(endpoint.name)
@@ -470,7 +515,13 @@ class MarketDataStream:
             print(f"[market-stream] reference price from {endpoint.name}: {consensus:.6f}")
             return
         if self.reference_price is None:
-            print("[market-stream] unable to establish reference price; will retry")
+            if self._historical_reference:
+                self.reference_price = self._historical_reference
+                print(
+                    f"[market-stream] using historical reference for {self.symbol}: {self.reference_price:.6f}"
+                )
+            else:
+                print("[market-stream] unable to establish reference price; will retry")
         else:
             self.reference_price = max(self.reference_price, 1e-9)
 
@@ -496,13 +547,33 @@ class MarketDataStream:
         base, quote = _split_symbol(self.symbol)
         candidates = self._ranked_endpoints()
         for ep in candidates:
+            if self._endpoint_backoff_until.get(ep.name, 0.0) > time.time():
+                continue
             ws_url = _render_ws(ep, base, quote)
             if ws_url:
                 self.url = ws_url
                 self.subscribe_template = ep.subscribe_template
+                self.current_endpoint = ep.name
                 print(f"[market-stream] using {ep.name} endpoint -> {self.url}")
                 return
         self.url = None
+        self.current_endpoint = "unavailable"
+
+    def _load_historical_reference(self) -> Optional[float]:
+        data_dir = Path(os.getenv("HISTORICAL_DATA_DIR", "data/historical_ohlcv"))
+        symbol_upper = self.symbol.upper()
+        try:
+            for json_file in data_dir.glob(f"*_{symbol_upper}.json"):
+                with json_file.open("r", encoding="utf-8") as handle:
+                    rows = json.load(handle)
+                if isinstance(rows, list) and rows:
+                    last = rows[-1]
+                    price = float(last.get("close") or last.get("price") or 0.0)
+                    if price > 0:
+                        return price
+        except Exception:
+            return None
+        return None
 
 
 def _split_symbol(symbol: str) -> Tuple[str, str]:
@@ -622,6 +693,7 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
             best_liquidity = 0.0
             base_synonyms = _token_synonyms(base)
             quote_synonyms = _token_synonyms(quote)
+            stable_quotes = {"USDT", "USDC", "BUSD", "USD"}
             for pair in pairs:
                 base_info = pair.get("baseToken") or {}
                 quote_info = pair.get("quoteToken") or {}
@@ -630,6 +702,10 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
                 if base_symbol not in base_synonyms or quote_symbol not in quote_synonyms:
                     continue
                 ratio = pair.get("priceNative")
+                if quote in stable_quotes:
+                    usd_price = _safe_float(pair.get("priceUsd"))
+                    if usd_price > 0:
+                        ratio = usd_price
                 if ratio is None:
                     base_usd = _safe_float(pair.get("priceUsd"))
                     quote_liq = _safe_float(pair.get("liquidity", {}).get("quote"))
