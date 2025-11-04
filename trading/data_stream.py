@@ -41,6 +41,7 @@ COINGECKO_IDS = {
     "ETH": "ethereum",
     "BTC": "bitcoin",
     "BNB": "binancecoin",
+    "WBTC": "wrapped-bitcoin",
     "USDC": "usd-coin",
     "USDT": "tether",
     "DAI": "dai",
@@ -112,7 +113,7 @@ class MarketDataStream:
         self.consensus_window = float(os.getenv("PRICE_CONSENSUS_WINDOW", "60"))
         self.consensus_timeout = float(os.getenv("PRICE_CONSENSUS_TIMEOUT", "45"))
         self._recent_price_by_source: Dict[str, Tuple[float, float]] = {}
-        self._last_consensus_ts = 0.0
+        self._last_consensus_ts = time.time()
         self._endpoint_failures: Dict[str, int] = {}
 
     def register(self, callback: CallbackType) -> None:
@@ -432,7 +433,7 @@ class MarketDataStream:
         ]
         if not valid:
             return False, True, None
-        min_required = min(self.consensus_sources, max(1, len(self.endpoints)))
+        min_required = min(self.consensus_sources, max(1, len(valid)))
         median_price = statistics.median(valid)
         diff = abs(price - median_price) / max(median_price, 1e-9)
         if len(valid) < min_required:
