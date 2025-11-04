@@ -152,6 +152,21 @@ class TradingDatabase:
                 );
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS trade_fills (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL,
+                    chain TEXT,
+                    symbol TEXT,
+                    expected_amount REAL,
+                    executed_amount REAL,
+                    expected_price REAL,
+                    executed_price REAL,
+                    details TEXT
+                );
+                """
+            )
 
     @contextmanager
     def _cursor(self):
@@ -184,6 +199,55 @@ class TradingDatabase:
                 "INSERT INTO kv_store(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 ("state", payload),
             )
+
+    # ------------------------------------------------------------------
+    # Fills / execution feedback
+    # ------------------------------------------------------------------
+
+    def record_trade_fill(
+        self,
+        *,
+        chain: str,
+        symbol: str,
+        expected_amount: float,
+        executed_amount: float,
+        expected_price: float,
+        executed_price: float,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO trade_fills(ts, chain, symbol, expected_amount, executed_amount, expected_price, executed_price, details)
+                VALUES(strftime('%s','now'), ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chain,
+                    symbol,
+                    float(expected_amount),
+                    float(executed_amount),
+                    float(expected_price),
+                    float(executed_price),
+                    json.dumps(details or {}),
+                ),
+            )
+
+    def fetch_trade_fills(self, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT ts, chain, symbol, expected_amount, executed_amount, expected_price, executed_price, details FROM trade_fills ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            )
+            rows = cur.fetchall()
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            entry = dict(row)
+            try:
+                entry["details"] = json.loads(entry.get("details") or "{}")
+            except Exception:
+                entry["details"] = {}
+            results.append(entry)
+        return results
 
     # ------------------------------------------------------------------
     # Balance operations

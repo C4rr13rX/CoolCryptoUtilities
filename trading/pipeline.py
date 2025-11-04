@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -371,8 +371,21 @@ class TrainingPipeline:
             "true_negatives": int(np.sum((price_dir_true <= 0.5) & (price_dir_labels == False))),
             "false_positives": int(np.sum((price_dir_true <= 0.5) & (price_dir_labels == True))),
             "false_negatives": int(np.sum((price_dir_true > 0.5) & (price_dir_labels == False))),
+            "execution_bias": self._execution_bias(),
         }
         return summary
+
+    def _execution_bias(self, window: int = 50) -> float:
+        fills = self.db.fetch_trade_fills(limit=window)
+        ratios: List[float] = []
+        for fill in fills:
+            expected = float(fill.get("expected_amount") or 0.0)
+            executed = float(fill.get("executed_amount") or 0.0)
+            if expected > 0:
+                ratios.append(executed / expected)
+        if not ratios:
+            return 1.0
+        return float(np.clip(np.mean(ratios), 0.1, 2.0))
 
     # ------------------------------------------------------------------
     # Debug helpers

@@ -268,6 +268,37 @@ class TradingBot:
     def configure_route(self, symbol: str, tokens: List[str]) -> None:
         self.bus_routes[symbol] = tokens
 
+    def record_fill(
+        self,
+        *,
+        symbol: str,
+        chain: str,
+        expected_amount: float,
+        executed_amount: float,
+        expected_price: float,
+        executed_price: float,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Store live execution feedback for adaptive scheduling."""
+        slip_details = {
+            "expected_amount": expected_amount,
+            "executed_amount": executed_amount,
+            "expected_price": expected_price,
+            "executed_price": executed_price,
+        }
+        if extra:
+            slip_details.update(extra)
+        self.db.record_trade_fill(
+            chain=chain,
+            symbol=symbol,
+            expected_amount=expected_amount,
+            executed_amount=executed_amount,
+            expected_price=expected_price,
+            executed_price=executed_price,
+            details=slip_details,
+        )
+        self._save_state()
+
     def _load_state(self) -> None:
         try:
             state = self.db.load_state()

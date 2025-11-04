@@ -81,6 +81,9 @@ class MarketDataStream:
         self.reference_price: Optional[float] = None
         self.price_tolerance = float(os.getenv("PRICE_FEED_TOLERANCE", "0.05"))
         self.endpoints = self._build_endpoints()
+        self._endpoint_index = 0
+        if not self.url:
+            self._select_next_endpoint(initial=True)
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -98,6 +101,8 @@ class MarketDataStream:
                 if self._template:
                     symbol_lower = self.symbol.lower().replace("/", "-")
                     self.url = self._template.format(symbol=symbol_lower, SYMBOL=self.symbol.upper(), pair=symbol_lower)
+                if not self.url:
+                    self._select_next_endpoint()
                 continue
             try:
                 await self._consume_ws()
@@ -110,11 +115,13 @@ class MarketDataStream:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 1.5, 300.0)
                 await self._refresh_reference_price()
+                self._select_next_endpoint()
             except Exception as exc:  # pragma: no cover - network dependent
                 print(f"[market-stream] websocket error {exc}; retrying in {backoff:.1f}s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 1.5, 300.0)
                 await self._refresh_reference_price()
+                self._select_next_endpoint()
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -172,6 +179,19 @@ class MarketDataStream:
     def _build_subscribe_payload(self, symbol: str) -> Optional[str]:
         if not self.subscribe_template:
             return None
+        if self.subscribe_template == "COINBASE_DYNAMIC":
+            base, quote = _split_symbol(symbol)
+            base_cb = _to_coinbase(base)
+            quote_cb = _to_coinbase_quote(quote)
+            if not base_cb or not quote_cb:
+                return None
+            return json.dumps(
+                {
+                    "type": "subscribe",
+                    "product_ids": [f"{base_cb}-{quote_cb}"],
+                    "channels": ["ticker"],
+                }
+            )
         symbol_lower = symbol.lower().replace("/", "-")
         payload = self.subscribe_template.format(symbol=symbol_lower, SYMBOL=symbol.upper(), pair=symbol_lower)
         return payload
@@ -238,18 +258,11 @@ class MarketDataStream:
         coinbase_base = _to_coinbase(base)
         coinbase_quote = _to_coinbase_quote(quote)
         if coinbase_base and coinbase_quote:
-            subscribe_payload = json.dumps(
-                {
-                    "type": "subscribe",
-                    "product_ids": [f"{coinbase_base}-{coinbase_quote}"],
-                    "channels": ["ticker"],
-                }
-            )
             endpoints.append(
                 Endpoint(
                     name="coinbase",
                     ws_template="wss://ws-feed.exchange.coinbase.com",
-                    subscribe_template=subscribe_payload,
+                    subscribe_template="COINBASE_DYNAMIC",
                     rest_template=f"https://api.exchange.coinbase.com/products/{coinbase_base}-{coinbase_quote}/ticker",
                 )
             )
@@ -289,6 +302,28 @@ class MarketDataStream:
                 return
         if self.reference_price is None:
             print("[market-stream] unable to establish reference price; will retry")
+        else:
+            self.reference_price = max(self.reference_price, 1e-9)
+
+    def _select_next_endpoint(self, *, initial: bool = False) -> None:
+        if not self.endpoints:
+            return
+        base, quote = _split_symbol(self.symbol)
+        attempts = 0
+        index = self._endpoint_index if not initial else 0
+        while attempts < len(self.endpoints):
+            ep = self.endpoints[index]
+            ws_url = _render_ws(ep, base, quote)
+            if ws_url:
+                self.url = ws_url
+                if ep.subscribe_template:
+                    self.subscribe_template = ep.subscribe_template
+                self._endpoint_index = (index + 1) % len(self.endpoints)
+                print(f"[market-stream] using {ep.name} endpoint -> {self.url}")
+                return
+            index = (index + 1) % len(self.endpoints)
+            attempts += 1
+        self.url = None
 
 
 def _split_symbol(symbol: str) -> Tuple[str, str]:
@@ -351,6 +386,19 @@ def _render_rest(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
     if endpoint.name == "coingecko":
         return endpoint.rest_template
     return endpoint.rest_template
+
+
+def _render_ws(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
+    if not endpoint.ws_template:
+        return None
+    if endpoint.name == "binance":
+        symbol = _binance_symbol(base, quote)
+        return endpoint.ws_template.format(symbol=symbol) if symbol else None
+    if endpoint.name == "coinbase":
+        return endpoint.ws_template
+    if endpoint.name == "coingecko":
+        return None
+    return endpoint.ws_template
 
 
 def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: str) -> Optional[float]:
