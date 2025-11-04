@@ -15,6 +15,7 @@ from db import TradingDatabase, get_db
 from trading.bot import TradingBot
 from trading.data_stream import MarketDataStream, _split_symbol, TOKEN_NORMALIZATION
 from trading.pipeline import TrainingPipeline
+from trading.portfolio import PortfolioState
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
 
@@ -239,6 +240,25 @@ def select_pairs(
         if len(best) >= limit:
             break
         try_add_candidate(symbol)
+
+    held_symbols: set[str] = set()
+    try:
+        portfolio = PortfolioState()
+        portfolio.refresh(force=True)
+        held_symbols = {sym for (_, sym) in portfolio.holdings.keys()}
+    except Exception:
+        held_symbols = set()
+
+    for held in held_symbols:
+        if len(best) >= limit:
+            break
+        if held in STABLE_TOKENS:
+            continue
+        for stable in ("USDC", "USDT", "DAI"):
+            if len(best) >= limit:
+                break
+            try_add_candidate(f"{held}-{stable}")
+            try_add_candidate(f"{stable}-{held}")
 
     scanned = 0
     max_scan = max(limit * 30, limit + 5)

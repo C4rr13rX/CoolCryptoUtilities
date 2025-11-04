@@ -11,6 +11,8 @@ import tensorflow as tf
 from db import TradingDatabase, get_db
 from trading.data_stream import MarketDataStream
 from trading.pipeline import TrainingPipeline
+from trading.portfolio import PortfolioState
+from trading.scheduler import BusScheduler, TradeDirective
 
 
 class TradingBot:
@@ -51,6 +53,13 @@ class TradingBot:
         self._predict_fn: Optional[Callable[..., Any]] = None
         self._active_model_ref: Optional[tf.keras.Model] = None
         self._asset_vocab_limit: Optional[int] = None
+        self.portfolio = PortfolioState(db=self.db)
+        try:
+            self.portfolio.refresh(force=True)
+        except Exception as exc:
+            print(f"[portfolio] initial refresh failed: {exc}")
+        self._portfolio_next_refresh: float = time.time() + self.portfolio.refresh_interval
+        self.scheduler = BusScheduler(db=self.db)
 
     async def start(self) -> None:
         if self._running:
@@ -119,6 +128,40 @@ class TradingBot:
             ] if name in preds]
         return preds
 
+    def _summarise_predictions(self, preds) -> Dict[str, float]:
+        summary = {
+            "exit_conf": 0.5,
+            "direction_prob": 0.5,
+            "net_margin": 0.0,
+            "delta": 0.0,
+        }
+        try:
+            summary["exit_conf"] = float(preds[0][0][0])
+        except Exception:
+            pass
+        try:
+            summary["price_mu"] = float(preds[1][0][0])
+            summary["delta"] = summary["price_mu"]
+        except Exception:
+            summary["price_mu"] = 0.0
+        try:
+            summary["price_log_var"] = float(preds[2][0][0])
+        except Exception:
+            summary["price_log_var"] = 0.0
+        try:
+            summary["direction_prob"] = float(preds[3][0][0])
+        except Exception:
+            pass
+        try:
+            summary["net_margin"] = float(preds[4][0][0])
+        except Exception:
+            pass
+        try:
+            summary["net_pnl"] = float(preds[5][0][0])
+        except Exception:
+            summary["net_pnl"] = summary.get("net_margin", 0.0)
+        return summary
+
     async def stop(self) -> None:
         if not self._running:
             return
@@ -133,6 +176,23 @@ class TradingBot:
             return  # wait until window filled
 
         model = self.pipeline.ensure_active_model()
+        now = float(sample.get("ts") or time.time())
+        if now >= self._portfolio_next_refresh:
+            try:
+                self.portfolio.refresh()
+                summary = self.portfolio.summary()
+                print(
+                    "[portfolio] wallet=%s stable≈%.2f native≈%.4f holdings=%d"
+                    % (
+                        summary.get("wallet"),
+                        summary.get("stable_usd", 0.0),
+                        summary.get("native_eth", 0.0),
+                        int(summary.get("holdings", 0)),
+                    )
+                )
+            except Exception as exc:
+                print(f"[portfolio] refresh failed: {exc}")
+            self._portfolio_next_refresh = now + self.portfolio.refresh_interval
         self._ensure_model_bindings(model)
         inputs = self._prepare_inputs(list(self._buffer))
         try:
@@ -140,7 +200,13 @@ class TradingBot:
         except Exception as exc:
             print(f"[trading-bot] prediction failed: {exc}")
             return
-        decision = self._interpret_predictions(preds, sample)
+        pred_summary = self._summarise_predictions(preds)
+        directive = None
+        try:
+            directive = self.scheduler.evaluate(sample, pred_summary, self.portfolio)
+        except Exception as exc:
+            print(f"[bus-scheduler] evaluation failed: {exc}")
+        decision = self._interpret_predictions(preds, sample, directive, pred_summary)
         if decision and decision.get("action") != "hold":
             self.queue.append(decision)
             self.db.log_trade(
@@ -192,25 +258,31 @@ class TradingBot:
         }
         return inputs
 
-    def _interpret_predictions(self, preds, sample: Dict[str, Any]) -> Dict[str, Any]:
-        if len(preds) == 8:
-            exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_recon, price_gaussian = preds
-        else:
-            exit_conf, price_mu, price_log_var, price_dir, net_margin, net_pnl, tech_recon = preds
-            price_gaussian = None
-        exit_conf_val = float(exit_conf[0][0])
-        direction_prob = float(price_dir[0][0])
-        delta = float(price_mu[0][0])
-        margin = float(net_margin[0][0])
-        pnl = float(net_pnl[0][0])
+    def _interpret_predictions(
+        self,
+        preds,
+        sample: Dict[str, Any],
+        directive: Optional[TradeDirective],
+        pred_summary: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, Any]:
+        summary = pred_summary or self._summarise_predictions(preds)
+        exit_conf_val = float(summary.get("exit_conf", 0.5))
+        direction_prob = float(summary.get("direction_prob", 0.5))
+        delta = float(summary.get("delta", 0.0))
+        margin = float(summary.get("net_margin", 0.0))
+        pnl = float(summary.get("net_pnl", margin))
 
         symbol = sample.get("symbol", "asset")
         price = float(sample.get("price", 0.0))
         volume = float(sample.get("volume", 0.0))
         route = self.bus_routes.get(symbol) or symbol.split("-")
         route = [t.upper() for t in route if t]
+        if directive:
+            route = [directive.base_token.upper(), directive.quote_token.upper()]
         if not route:
             route = [symbol.upper()]
+        self.bus_routes[symbol] = route
+
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
         pos = self.positions.get(symbol)
         fees = 0.0015 + 0.005
@@ -227,94 +299,125 @@ class TradingBot:
             "status": "ghost",
             "action": "hold",
             "wallet": "ghost",
+            "route": route,
+            "bus_plan": directive.to_dict() if directive else None,
         }
 
         trade_size = max(min(volume * self.max_trade_share, volume), 0.0)
         trade_size = min(trade_size, 100.0)
+        if directive and directive.size > 0:
+            trade_size = float(directive.size)
         if trade_size <= 0.0:
-            return decision
-
-        if pos is None:
-            if direction_prob > 0.58 and exit_conf_val >= 0.6 and margin > fees * 1.1:
-                self.positions[symbol] = {
-                    "entry_price": price,
-                    "size": trade_size,
-                    "ts": sample.get("ts", time.time()),
-                    "route": route,
-                    "bus_index": 0,
-                }
+            if pos is not None:
                 decision.update(
                     {
-                        "action": "enter",
-                        "status": "ghost-entry",
-                        "size": trade_size,
-                        "entry_price": price,
-                        "route": route,
+                        "unrealized": (price - pos["entry_price"]) * pos["size"],
+                        "size": pos["size"],
+                        "entry_price": pos["entry_price"],
                     }
                 )
-                print(
-                    "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f"
-                    % (symbol, trade_size, price, direction_prob, margin)
-                )
+            return decision
+
+        should_enter = False
+        should_exit = False
+        reason = ""
+
+        if directive and directive.action == "enter":
+            should_enter = True
+            reason = directive.reason
+        elif directive and directive.action == "exit":
+            should_exit = True
+            reason = directive.reason
+        elif pos is None:
+            if direction_prob > 0.58 and exit_conf_val >= 0.6 and margin > fees * 1.1:
+                should_enter = True
+                reason = "model-long"
         else:
-            should_exit = False
-            reason = "signal"
             if direction_prob < 0.45 or exit_conf_val < 0.5:
                 should_exit = True
                 reason = "confidence_drop"
             elif margin <= fees:
                 should_exit = True
                 reason = "negative_margin"
+            elif pnl < 0 and (time.time() - pos.get("ts", 0)) > 60 * 15:
+                should_exit = True
+                reason = "timed-exit"
 
-            if should_exit:
-                profit = (price - pos["entry_price"]) * pos["size"]
-                self.total_trades += 1
-                if profit > 0:
-                    self.wins += 1
-                checkpoint = 0.0
-                next_stop: Optional[str] = None
-                if pos.get("route"):
-                    next_stop = pos["route"][(pos.get("bus_index", 0) + 1) % len(pos["route"])]
-                if profit > 0:
-                    checkpoint = profit * self.stable_checkpoint_ratio
-                    self.stable_bank += checkpoint
-                    profit -= checkpoint
-                self.total_profit += profit
-                self.realized_profit += profit
-                del self.positions[symbol]
-                decision.update(
-                    {
-                        "action": "exit",
-                        "status": "ghost-exit",
-                        "exit_reason": reason,
-                        "size": pos["size"],
-                        "entry_price": pos["entry_price"],
-                        "exit_price": price,
-                        "profit": profit,
-                        "checkpoint": checkpoint,
-                        "stable_token": stable_target,
-                        "bank_balance": self.stable_bank,
-                        "total_profit": self.total_profit,
-                        "win_rate": (self.wins / self.total_trades) if self.total_trades else 0.0,
-                        "next_bus": next_stop,
-                    }
-                )
-                print(
-                    "[ghost] exit %s size=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
-                    % (symbol, decision["size"], profit, checkpoint, self.stable_bank, reason)
-                )
-            else:
-                decision.update(
-                    {
-                        "action": "hold",
-                        "status": "ghost-hold",
-                        "size": pos["size"],
-                        "entry_price": pos["entry_price"],
-                        "unrealized": (price - pos["entry_price"]) * pos["size"],
-                    }
-                )
+        if should_enter:
+            self.positions[symbol] = {
+                "entry_price": price,
+                "size": trade_size,
+                "ts": sample.get("ts", time.time()),
+                "route": route,
+                "bus_index": 0,
+                "target_price": directive.target_price if directive else None,
+            }
+            decision.update(
+                {
+                    "action": "enter",
+                    "status": "ghost-entry",
+                    "size": trade_size,
+                    "entry_price": price,
+                    "route": route,
+                    "reason": reason or (directive.reason if directive else "model"),
+                    "target_price": directive.target_price if directive else price * 1.05,
+                    "horizon": directive.horizon if directive else None,
+                }
+            )
+            print(
+                "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
+                % (symbol, trade_size, price, direction_prob, margin, decision["reason"])
+            )
+            return decision
+
+        if should_exit and pos is not None:
+            exit_size = min(pos["size"], trade_size)
+            profit = (price - pos["entry_price"]) * exit_size
+            self.total_trades += 1
+            if profit > 0:
+                self.wins += 1
+            checkpoint = 0.0
+            next_stop = route[1] if len(route) > 1 else None
+            if profit > 0:
+                checkpoint = profit * self.stable_checkpoint_ratio
+                self.stable_bank += checkpoint
+                profit -= checkpoint
+            self.total_profit += profit
+            self.realized_profit += profit
+            del self.positions[symbol]
+            decision.update(
+                {
+                    "action": "exit",
+                    "status": "ghost-exit",
+                    "exit_reason": reason,
+                    "size": exit_size,
+                    "entry_price": pos["entry_price"],
+                    "exit_price": price,
+                    "profit": profit,
+                    "checkpoint": checkpoint,
+                    "stable_token": stable_target,
+                    "bank_balance": self.stable_bank,
+                    "total_profit": self.total_profit,
+                    "win_rate": (self.wins / self.total_trades) if self.total_trades else 0.0,
+                    "next_bus": next_stop,
+                    "horizon": directive.horizon if directive else None,
+                }
+            )
+            print(
+                "[ghost] exit %s size=%.4f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
+                % (symbol, exit_size, price, profit, self.stable_bank, reason)
+            )
+            return decision
+
+        if pos is not None:
+            decision.update(
+                {
+                    "unrealized": (price - pos["entry_price"]) * pos["size"],
+                    "size": pos["size"],
+                    "entry_price": pos["entry_price"],
+                }
+            )
         return decision
-
     async def _start_background_refinement(self, cadence: float = 900.0) -> None:
         async def _loop():
             while self._running:

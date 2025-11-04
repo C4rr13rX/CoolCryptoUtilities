@@ -583,6 +583,40 @@ class TradingDatabase:
                 )
             return decoded
 
+    def fetch_market_samples_for(self, symbol: str, limit: int = 512) -> List[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT ts, chain, symbol, price, volume, raw
+                FROM market_stream
+                WHERE symbol = ?
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (symbol, limit),
+            )
+            rows = cur.fetchall()
+        decoded: List[Dict[str, Any]] = []
+        for row in rows:
+            raw = row["raw"]
+            parsed = raw
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                except Exception:
+                    parsed = raw
+            decoded.append(
+                {
+                    "ts": row["ts"],
+                    "chain": row["chain"],
+                    "symbol": row["symbol"],
+                    "price": row["price"],
+                    "volume": row["volume"],
+                    "raw": parsed,
+                }
+            )
+        return decoded
+
 
 # ----------------------------------------------------------------------
 # Singleton helpers
