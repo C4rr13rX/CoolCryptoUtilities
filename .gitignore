@@ -19,3 +19,7 @@ models/
 .env
 .env.local
 .backup_*
+web/frontend/node_modules/
+web/frontend/dist/
+web/frontend/.vite/
+web/frontend/.cache/
