@@ -167,6 +167,43 @@ class TradingDatabase:
                 );
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL,
+                    stage TEXT,
+                    category TEXT,
+                    name TEXT,
+                    value REAL,
+                    meta TEXT
+                );
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_metrics_stage_ts
+                ON metrics(stage, ts);
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS feedback_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL,
+                    source TEXT,
+                    severity TEXT,
+                    label TEXT,
+                    details TEXT
+                );
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_feedback_source_ts
+                ON feedback_events(source, ts);
+                """
+            )
 
     @contextmanager
     def _cursor(self):
@@ -616,6 +653,208 @@ class TradingDatabase:
                 }
             )
         return decoded
+
+    # ------------------------------------------------------------------
+    # Metrics & feedback
+    # ------------------------------------------------------------------
+
+    def record_metrics(
+        self,
+        *,
+        stage: str,
+        metrics: Dict[str, Any],
+        category: str = "general",
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not metrics:
+            return
+        ts = time.time()
+        payload = json.dumps(meta or {})
+        rows: List[Tuple[float, str, str, str, float, str]] = []
+        for name, value in metrics.items():
+            try:
+                numeric_value = float(value)
+            except Exception:
+                continue
+            rows.append((ts, stage, category, str(name), numeric_value, payload))
+        if not rows:
+            return
+        with self._conn:
+            self._conn.executemany(
+                """
+                INSERT INTO metrics(ts, stage, category, name, value, meta)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def fetch_metrics(
+        self,
+        *,
+        stage: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        where: List[str] = []
+        params: List[Any] = []
+        if stage:
+            where.append("stage=?")
+            params.append(stage)
+        if category:
+            where.append("category=?")
+            params.append(category)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        query = f"""
+            SELECT ts, stage, category, name, value, meta
+            FROM metrics
+            {clause}
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            meta_raw = row["meta"]
+            try:
+                meta = json.loads(meta_raw) if meta_raw else {}
+            except Exception:
+                meta = {}
+            out.append(
+                {
+                    "ts": row["ts"],
+                    "stage": row["stage"],
+                    "category": row["category"],
+                    "name": row["name"],
+                    "value": row["value"],
+                    "meta": meta,
+                }
+            )
+        return out
+
+    def record_feedback_event(
+        self,
+        *,
+        source: str,
+        severity: str,
+        label: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        payload = json.dumps(details or {})
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO feedback_events(ts, source, severity, label, details)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (time.time(), source, severity, label, payload),
+            )
+
+    def fetch_feedback_events(
+        self,
+        *,
+        sources: Optional[Sequence[str]] = None,
+        severity: Optional[Sequence[str]] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        where: List[str] = []
+        params: List[Any] = []
+        if sources:
+            placeholders = ",".join("?" for _ in sources)
+            where.append(f"source IN ({placeholders})")
+            params.extend(sources)
+        if severity:
+            placeholders = ",".join("?" for _ in severity)
+            where.append(f"severity IN ({placeholders})")
+            params.extend(severity)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        query = f"""
+            SELECT ts, source, severity, label, details
+            FROM feedback_events
+            {clause}
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        entries: List[Dict[str, Any]] = []
+        for row in rows:
+            details_raw = row["details"]
+            try:
+                details = json.loads(details_raw) if details_raw else {}
+            except Exception:
+                details = {}
+            entries.append(
+                {
+                    "ts": row["ts"],
+                    "source": row["source"],
+                    "severity": row["severity"],
+                    "label": row["label"],
+                    "details": details,
+                }
+            )
+        return entries
+
+    def fetch_trades(
+        self,
+        *,
+        limit: int = 200,
+        statuses: Optional[Sequence[str]] = None,
+        wallets: Optional[Sequence[str]] = None,
+        symbol: Optional[str] = None,
+        since_ts: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        where: List[str] = []
+        params: List[Any] = []
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            where.append(f"status IN ({placeholders})")
+            params.extend(statuses)
+        if wallets:
+            placeholders = ",".join("?" for _ in wallets)
+            where.append(f"wallet IN ({placeholders})")
+            params.extend(wallets)
+        if symbol:
+            where.append("symbol=?")
+            params.append(symbol)
+        if since_ts is not None:
+            where.append("ts>=?")
+            params.append(float(since_ts))
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        query = f"""
+            SELECT ts, wallet, chain, symbol, action, status, details
+            FROM trading_ops
+            {clause}
+            ORDER BY ts DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        trades: List[Dict[str, Any]] = []
+        for row in rows:
+            details_raw = row["details"]
+            try:
+                details = json.loads(details_raw) if details_raw else {}
+            except Exception:
+                details = {}
+            trades.append(
+                {
+                    "ts": row["ts"],
+                    "wallet": row["wallet"],
+                    "chain": row["chain"],
+                    "symbol": row["symbol"],
+                    "action": row["action"],
+                    "status": row["status"],
+                    "details": details,
+                }
+            )
+        return trades
 
 
 # ----------------------------------------------------------------------

@@ -1,0 +1,69 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CoolCrypto Control Tower</title>
+    <link rel="icon" href="{% static 'branding/favicon.svg' %}" />
+    {% if debug %}
+      <script type="module" src="{{ vite_dev_server }}/@vite/client"></script>
+      <script type="module" src="{{ vite_dev_server }}/src/main.ts"></script>
+    {% else %}
+      <link rel="stylesheet" href="{% static 'assets/main.css' %}" />
+      <script type="module" src="{% static 'assets/main.js' %}"></script>
+    {% endif %}
+    <style>
+      :root {
+        color-scheme: dark;
+        --accent-1: #1b4a7c;
+        --accent-2: #2979c7;
+        --accent-3: #7fb0ff;
+        --accent-dark: #0e243d;
+        --bg-color: radial-gradient(circle at top left, rgba(25, 76, 130, 0.8), rgba(10, 18, 30, 0.95));
+      }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", "Roboto", "Helvetica", sans-serif;
+        background: var(--bg-color), #0b1420;
+        color: #f4f6fa;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      .branding-header {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        gap: 1rem;
+        text-transform: uppercase;
+        letter-spacing: 0.2rem;
+        background: linear-gradient(135deg, rgba(21, 60, 102, 0.6), rgba(8, 34, 70, 0.8));
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      .branding-header img {
+        height: 72px;
+        image-rendering: pixelated;
+      }
+      .branding-header h1 {
+        margin: 0;
+        font-size: 1.6rem;
+        color: var(--accent-3);
+      }
+      #app {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="branding-header">
+      <img src="{% static 'branding/logo.svg' %}" alt="C4rn3tX emblem" />
+      <h1>CoolCrypto Control Tower</h1>
+    </header>
+    <div id="app"></div>
+  </body>
+</html>

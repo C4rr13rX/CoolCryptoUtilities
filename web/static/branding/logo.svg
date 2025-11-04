@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d223d"/>
+      <stop offset="100%" stop-color="#1b4a7c"/>
+    </linearGradient>
+    <linearGradient id="wings" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#7fb0ff"/>
+      <stop offset="100%" stop-color="#2d75c4"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="180" rx="18" fill="url(#bg)"/>
+  <g fill="none" stroke="url(#wings)" stroke-width="8" stroke-linecap="round">
+    <path d="M40 120 C70 70 120 40 160 45"/>
+    <path d="M280 120 C250 70 200 40 160 45"/>
+  </g>
+  <circle cx="160" cy="92" r="52" fill="#0b1728" stroke="#7fb0ff" stroke-width="6"/>
+  <path d="M132 118 L160 58 L188 118 Z" fill="#2d75c4" stroke="#7fb0ff" stroke-width="4"/>
+  <path d="M154 84 h12 l-6 12z" fill="#eef5ff"/>
+  <text x="50%" y="150" fill="#7fb0ff" font-size="28" font-family="Orbitron, 'Segoe UI', sans-serif" text-anchor="middle" letter-spacing="4">
+    C4RN3TX
+  </text>
+</svg>

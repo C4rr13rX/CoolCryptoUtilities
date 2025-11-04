@@ -8,11 +8,19 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import tensorflow as tf
 
+from cache import CacheBalances, CacheTransfers
 from db import TradingDatabase, get_db
 from trading.data_stream import MarketDataStream
 from trading.pipeline import TrainingPipeline
 from trading.portfolio import PortfolioState
 from trading.scheduler import BusScheduler, TradeDirective
+from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
+from trading.swap_validator import SwapValidator
+
+try:
+    from router_wallet import UltraSwapBridge  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    UltraSwapBridge = None  # type: ignore
 
 
 class TradingBot:
@@ -60,6 +68,15 @@ class TradingBot:
             print(f"[portfolio] initial refresh failed: {exc}")
         self._portfolio_next_refresh: float = time.time() + self.portfolio.refresh_interval
         self.scheduler = BusScheduler(db=self.db)
+        self.metrics = MetricsCollector(self.db)
+        self._ghost_trade_counter = 0
+        self.swap_validator = SwapValidator(db=self.db)
+        self._wallet_sync_lock = asyncio.Lock()
+        self._bridge_init_attempted = False
+        self._cache_balances = CacheBalances(db=self.db)
+        self._cache_transfers = CacheTransfers(db=self.db)
+        self._bridge = self._init_bridge()
+        self._wallet_sync_last_reason: Optional[str] = None
 
     async def start(self) -> None:
         if self._running:
@@ -71,13 +88,87 @@ class TradingBot:
             self._start_background_refinement(),
         )
 
+    def _init_bridge(self) -> Optional["UltraSwapBridge"]:
+        if getattr(self, "_bridge_init_attempted", False) and getattr(self, "_bridge", None) is not None:
+            return self._bridge  # type: ignore[attr-defined]
+        self._bridge_init_attempted = True
+        if UltraSwapBridge is None:
+            print("[trading-bot] UltraSwapBridge unavailable (web3 dependencies missing). Wallet sync disabled.")
+            return None
+        try:
+            bridge = UltraSwapBridge()
+            return bridge
+        except Exception as exc:
+            print(f"[trading-bot] unable to initialise UltraSwapBridge: {exc}")
+            return None
+
+    async def _run_wallet_sync(self, *, reason: str) -> None:
+        if self._bridge is None:
+            self._bridge = self._init_bridge()
+        if self._bridge is None:
+            return
+        chains = list(self.portfolio.chains)
+        start = time.time()
+        errors: List[Tuple[str, str]] = []
+
+        async with self._wallet_sync_lock:
+            def _sync_work() -> List[Tuple[str, str]]:
+                local_errors: List[Tuple[str, str]] = []
+                try:
+                    self._cache_transfers.rebuild_incremental(self._bridge, chains)
+                except Exception as exc:
+                    local_errors.append(("transfers", str(exc)))
+                try:
+                    self._cache_balances.rebuild_all(self._bridge, chains)
+                except Exception as exc:
+                    local_errors.append(("balances", str(exc)))
+                return local_errors
+
+            errors = await asyncio.to_thread(_sync_work)
+
+        try:
+            self.portfolio.refresh(force=True)
+        except Exception as exc:
+            errors.append(("portfolio", str(exc)))
+
+        duration = time.time() - start
+        metrics_payload = {
+            "duration_sec": duration,
+            "chain_count": len(chains),
+            "errors": float(len(errors)),
+        }
+        self.metrics.record(
+            MetricStage.LIVE_TRADING,
+            metrics_payload,
+            category="wallet_sync",
+            meta={"reason": reason, "chains": chains, "errors": errors},
+        )
+        if errors:
+            for domain, message in errors:
+                severity = FeedbackSeverity.WARNING if domain != "balances" else FeedbackSeverity.CRITICAL
+                self.metrics.feedback(
+                    "wallet_sync",
+                    severity=severity,
+                    label=f"{domain}_failure",
+                    details={"reason": reason, "message": message, "chains": chains},
+                )
+        self._wallet_sync_last_reason = reason
+
     def _ensure_model_bindings(self, model: tf.keras.Model) -> None:
         if self._active_model_ref is model and self._model_input_order is not None:
             return
 
         self._model_input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+        input_signature: List[tf.TensorSpec] = []
+        for tensor in model.inputs:
+            keras_tensor = tensor[0] if isinstance(tensor, (list, tuple)) else tensor
+            shape_tuple = tf.keras.backend.int_shape(keras_tensor)
+            if shape_tuple is None:
+                shape_tuple = (None,)
+            shape_signature = tuple(None if idx == 0 else dim for idx, dim in enumerate(shape_tuple))
+            input_signature.append(tf.TensorSpec(shape=shape_signature, dtype=keras_tensor.dtype))
 
-        @tf.function(reduce_retracing=True)
+        @tf.function(reduce_retracing=True, input_signature=input_signature)
         def _predict(*ordered):
             return model(list(ordered), training=False)
 
@@ -201,12 +292,13 @@ class TradingBot:
             print(f"[trading-bot] prediction failed: {exc}")
             return
         pred_summary = self._summarise_predictions(preds)
+        await self._run_wallet_sync(reason="pre-schedule")
         directive = None
         try:
             directive = self.scheduler.evaluate(sample, pred_summary, self.portfolio)
         except Exception as exc:
             print(f"[bus-scheduler] evaluation failed: {exc}")
-        decision = self._interpret_predictions(preds, sample, directive, pred_summary)
+        decision = await self._interpret_predictions(preds, sample, directive, pred_summary)
         if decision and decision.get("action") != "hold":
             self.queue.append(decision)
             self.db.log_trade(
@@ -258,7 +350,7 @@ class TradingBot:
         }
         return inputs
 
-    def _interpret_predictions(
+    async def _interpret_predictions(
         self,
         preds,
         sample: Dict[str, Any],
@@ -271,6 +363,7 @@ class TradingBot:
         delta = float(summary.get("delta", 0.0))
         margin = float(summary.get("net_margin", 0.0))
         pnl = float(summary.get("net_pnl", margin))
+        sample_ts = float(sample.get("ts", time.time()))
 
         symbol = sample.get("symbol", "asset")
         price = float(sample.get("price", 0.0))
@@ -344,10 +437,33 @@ class TradingBot:
                 reason = "timed-exit"
 
         if should_enter:
+            await self._run_wallet_sync(reason="pre-enter")
+            allowed, guard_metrics, guard_reasons = self.swap_validator.validate(
+                symbol=symbol,
+                route=route,
+                trade_size=trade_size,
+                price=price,
+                volume=volume,
+                prediction=summary,
+            )
+            if not allowed:
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "guard-blocked",
+                        "reason": f"swap_guard:{'/'.join(guard_reasons) if guard_reasons else 'guard'}",
+                        "swap_guard": guard_metrics,
+                    }
+                )
+                return decision
+            self._ghost_trade_counter += 1
+            trade_id = f"{symbol}-{self._ghost_trade_counter}"
             self.positions[symbol] = {
                 "entry_price": price,
                 "size": trade_size,
-                "ts": sample.get("ts", time.time()),
+                "ts": sample_ts,
+                "entry_ts": sample_ts,
+                "trade_id": trade_id,
                 "route": route,
                 "bus_index": 0,
                 "target_price": directive.target_price if directive else None,
@@ -362,7 +478,40 @@ class TradingBot:
                     "reason": reason or (directive.reason if directive else "model"),
                     "target_price": directive.target_price if directive else price * 1.05,
                     "horizon": directive.horizon if directive else None,
+                    "trade_id": trade_id,
+                    "entry_ts": sample_ts,
                 }
+            )
+            entry_metrics = {
+                "direction_prob": direction_prob,
+                "exit_confidence": exit_conf_val,
+                "expected_margin": margin,
+                "trade_size": trade_size,
+                "volume": volume,
+                "route_length": len(route),
+            }
+            self.metrics.record(
+                MetricStage.GHOST_TRADING,
+                entry_metrics,
+                category="entry",
+                meta={
+                    "symbol": symbol,
+                    "trade_id": trade_id,
+                    "reason": decision["reason"],
+                    "price": price,
+                },
+            )
+            self.metrics.feedback(
+                "ghost_trading",
+                severity=FeedbackSeverity.INFO,
+                label="entry",
+                details={
+                    "symbol": symbol,
+                    "trade_id": trade_id,
+                    "expected_margin": margin,
+                    "direction_prob": direction_prob,
+                    "route": route,
+                },
             )
             print(
                 "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
@@ -371,6 +520,7 @@ class TradingBot:
             return decision
 
         if should_exit and pos is not None:
+            await self._run_wallet_sync(reason="pre-exit")
             exit_size = min(pos["size"], trade_size)
             profit = (price - pos["entry_price"]) * exit_size
             self.total_trades += 1
@@ -384,6 +534,9 @@ class TradingBot:
                 profit -= checkpoint
             self.total_profit += profit
             self.realized_profit += profit
+            trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
+            entry_ts = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
+            duration_sec = max(0.0, sample_ts - entry_ts)
             del self.positions[symbol]
             decision.update(
                 {
@@ -401,11 +554,53 @@ class TradingBot:
                     "win_rate": (self.wins / self.total_trades) if self.total_trades else 0.0,
                     "next_bus": next_stop,
                     "horizon": directive.horizon if directive else None,
+                    "trade_id": trade_id,
+                    "entry_ts": entry_ts,
+                    "exit_ts": sample_ts,
+                    "duration_sec": duration_sec,
                 }
+            )
+            exit_metrics = {
+                "profit": profit,
+                "checkpoint": checkpoint,
+                "duration_sec": duration_sec,
+                "bank_balance": self.stable_bank,
+                "total_profit": self.total_profit,
+                "win_rate": self.wins / max(1, self.total_trades),
+                "exit_price": price,
+                "entry_price": pos["entry_price"],
+            }
+            self.metrics.record(
+                MetricStage.GHOST_TRADING,
+                exit_metrics,
+                category="exit",
+                meta={
+                    "symbol": symbol,
+                    "trade_id": trade_id,
+                    "reason": reason,
+                    "route": route,
+                },
+            )
+            severity = FeedbackSeverity.INFO if profit > 0 else FeedbackSeverity.WARNING
+            if profit <= 0 or reason in {"negative_margin", "confidence_drop", "timed-exit"}:
+                severity = FeedbackSeverity.CRITICAL if profit < 0 else FeedbackSeverity.WARNING
+            self.metrics.feedback(
+                "ghost_trading",
+                severity=severity,
+                label=f"exit_{reason}",
+                details={
+                    "symbol": symbol,
+                    "trade_id": trade_id,
+                    "profit": profit,
+                    "duration_sec": duration_sec,
+                    "reason": reason,
+                    "expected_margin": margin,
+                    "direction_prob": direction_prob,
+                },
             )
             print(
                 "[ghost] exit %s size=%.4f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
-                % (symbol, exit_size, price, profit, self.stable_bank, reason)
+                % (symbol, exit_size, price, profit, self.stable_bank, reason or "exit")
             )
             return decision
 

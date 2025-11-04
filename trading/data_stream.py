@@ -9,10 +9,12 @@ import statistics
 from urllib.parse import quote_plus
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, Set
+from collections import deque
 
 import aiohttp
 
 from db import get_db
+from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 
 
 CallbackType = Union[Callable[[Dict[str, Any]], Awaitable[None]], Callable[[Dict[str, Any]], None]]
@@ -133,6 +135,12 @@ class MarketDataStream:
         self.current_endpoint: str = "bootstrap"
         self._sample_count = 0
         self._last_sample_log = 0.0
+        self.metrics = MetricsCollector(self._db)
+        self._last_emitted_by_source: Dict[str, Tuple[float, float]] = {}
+        self._duplicate_drops = 0
+        self._consensus_failures = 0
+        vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
+        self._window_prices: deque = deque(maxlen=vol_window)
         if not self.url:
             self._select_next_endpoint()
 
@@ -251,6 +259,7 @@ class MarketDataStream:
                 break
             if not dispatched:
                 print("[market-stream] unable to obtain consensus price during REST poll cycle.")
+                await self._handle_consensus_failure()
             await asyncio.sleep(self.rest_poll_interval)
 
     async def _dispatch(self, sample: Dict[str, Any]) -> None:
@@ -258,24 +267,45 @@ class MarketDataStream:
             self._last_volume = float(sample.get("volume") or self._last_volume or 0.0)
         except Exception:
             pass
+        source = str(sample.get("rest") or self.current_endpoint or "stream")
+        price_val = float(sample.get("price") or 0.0)
+        ts_val = float(sample.get("ts") or time.time())
+        if self._should_skip_duplicate(source, price_val, ts_val):
+            if self._duplicate_drops % 25 == 0:
+                self.metrics.record(
+                    MetricStage.DATA_STREAM,
+                    {
+                        "duplicate_rate": self._duplicate_drops / max(1, self._sample_count),
+                    },
+                    category="dedupe",
+                    meta={"symbol": self.symbol, "source": source},
+                )
+            return
+
         self._sample_count += 1
         now = time.time()
-        source = sample.get("rest") or self.current_endpoint
         if now - self._last_sample_log >= 30.0:
             self._last_sample_log = now
-            try:
-                price_preview = float(sample.get("price") or 0.0)
-            except Exception:
-                price_preview = 0.0
             print(
-                f"[market-stream] {self.symbol} flow: {self._sample_count} samples (latest {price_preview:.6f}) via {source}"
+                f"[market-stream] {self.symbol} flow: {self._sample_count} samples (latest {price_val:.6f}) via {source}"
             )
         self._db.insert_market_sample(
             chain=sample.get("chain", self.chain),
             symbol=sample.get("symbol", self.symbol),
-            price=float(sample.get("price") or 0),
+            price=price_val,
             volume=float(sample.get("volume") or 0),
             raw=sample,
+        )
+        self._last_emitted_by_source[source] = (price_val, ts_val)
+        self._window_prices.append(price_val)
+        volatility = statistics.pstdev(self._window_prices) if len(self._window_prices) > 1 else 0.0
+        drift = 0.0 if self.reference_price is None else price_val - self.reference_price
+        self._record_stream_metrics(
+            sample,
+            source,
+            volatility=volatility,
+            drift=drift,
+            fallback=(sample.get("rest") == "fallback"),
         )
         for callback in list(self._callbacks):
             try:
@@ -285,6 +315,99 @@ class MarketDataStream:
                     callback(sample)  # type: ignore[misc]
             except Exception as exc:
                 print(f"[market-stream] callback error: {exc}")
+
+    def _should_skip_duplicate(self, source: str, price: float, ts_val: float) -> bool:
+        last = self._last_emitted_by_source.get(source)
+        if not last:
+            return False
+        last_price, last_ts = last
+        if ts_val <= last_ts:
+            return False
+        tolerance = max(1e-9, (self.reference_price or price) * 1e-5)
+        if abs(price - last_price) <= tolerance and (ts_val - last_ts) <= 1.0:
+            self._duplicate_drops += 1
+            return True
+        return False
+
+    def _record_stream_metrics(
+        self,
+        sample: Dict[str, Any],
+        source: str,
+        *,
+        volatility: float,
+        drift: float,
+        fallback: bool = False,
+    ) -> None:
+        price_val = float(sample.get("price") or 0.0)
+        volume_val = float(sample.get("volume") or 0.0)
+        metrics = {
+            "price": price_val,
+            "volume": volume_val,
+            "rolling_volatility": volatility,
+            "price_drift": drift,
+            "consensus_age": max(0.0, time.time() - self._last_consensus_ts),
+            "sample_count": self._sample_count,
+            "duplicate_rate": self._duplicate_drops / max(1, self._sample_count),
+            "consensus_failures": self._consensus_failures,
+        }
+        self.metrics.record(
+            MetricStage.DATA_STREAM,
+            metrics,
+            category="stream_flow",
+            meta={
+                "symbol": self.symbol,
+                "source": source,
+                "fallback": fallback,
+                "endpoint_score": self._endpoint_scores.get(source),
+            },
+        )
+
+    async def _handle_consensus_failure(self) -> None:
+        self._consensus_failures += 1
+        fallback_price = self._fallback_consensus_price()
+        if fallback_price:
+            sample = {
+                "ts": time.time(),
+                "symbol": self.symbol,
+                "chain": self.chain,
+                "price": fallback_price,
+                "volume": self._last_volume,
+                "rest": "fallback",
+            }
+            self.metrics.feedback(
+                "market_stream",
+                severity=FeedbackSeverity.WARNING,
+                label="consensus_fallback",
+                details={
+                    "symbol": self.symbol,
+                    "price": fallback_price,
+                    "failures": self._consensus_failures,
+                },
+            )
+            await self._dispatch(sample)
+        else:
+            self.metrics.feedback(
+                "market_stream",
+                severity=FeedbackSeverity.CRITICAL,
+                label="consensus_failure",
+                details={
+                    "symbol": self.symbol,
+                    "failures": self._consensus_failures,
+                },
+            )
+
+    def _fallback_consensus_price(self) -> Optional[float]:
+        now = time.time()
+        valid = [
+            price
+            for price, ts in self._recent_price_by_source.values()
+            if now - ts <= self.consensus_window * 2 and price > 0
+        ]
+        if valid:
+            return float(statistics.median(valid))
+        if self.reference_price:
+            return float(self.reference_price)
+        return None
 
     def _build_subscribe_payload(self, symbol: str) -> Optional[str]:
         if not self.subscribe_template:

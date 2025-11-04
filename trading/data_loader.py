@@ -6,7 +6,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -62,6 +62,7 @@ class HistoricalDataLoader:
         window_size: int,
         sent_seq_len: int,
         tech_count: int,
+        focus_assets: Optional[Sequence[str]] = None,
     ) -> Tuple[Optional[Dict[str, np.ndarray]], Optional[Dict[str, np.ndarray]]]:
         price_windows: List[np.ndarray] = []
         sentiment_windows: List[np.ndarray] = []
@@ -79,6 +80,10 @@ class HistoricalDataLoader:
         if self.max_files:
             files = files[: self.max_files]
 
+        focus_set: Optional[set[str]] = None
+        if focus_assets:
+            focus_set = {str(asset).upper() for asset in focus_assets if asset}
+
         for file_path in files:
             try:
                 with file_path.open("r", encoding="utf-8") as handle:
@@ -95,9 +100,12 @@ class HistoricalDataLoader:
             timestamps = np.array([int(row.get("timestamp", 0)) for row in rows])
 
             pair_label = file_path.stem.split("_", 1)[-1]
+            pair_label_upper = pair_label.upper()
+            if focus_set and pair_label_upper not in focus_set:
+                continue
             raw_tokens = [part.strip().upper() for part in pair_label.split("-") if part]
             tokens = [t.lower() for t in raw_tokens]
-            asset_id = self._get_asset_id(pair_label.upper())
+            asset_id = self._get_asset_id(pair_label_upper)
 
             limit = len(rows) - window_size - 1
             if self.max_samples_per_file:
@@ -142,7 +150,7 @@ class HistoricalDataLoader:
                 tax_val = 0.005 + abs(float(vol_slice[-1])) * 5e-5
 
                 news_text = self._build_news_text(
-                    pair_symbol=pair_label.upper(),
+                    pair_symbol=pair_label_upper,
                     tokens=raw_tokens,
                     ref_ts=int(timestamps[end - 1]),
                     price_slice=price_slice,

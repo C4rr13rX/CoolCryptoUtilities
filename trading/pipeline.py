@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -23,6 +23,12 @@ from model_definition import (
 )
 from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
+from trading.metrics import (
+    MetricStage,
+    MetricsCollector,
+    classification_report,
+    distribution_report,
+)
 
 
 CUSTOM_OBJECTS = {
@@ -75,6 +81,9 @@ class TrainingPipeline:
         self.active_accuracy: float = 0.0
         self._load_state()
         self._active_model: Optional[tf.keras.Model] = None
+        self.metrics = MetricsCollector(self.db)
+        self.focus_lookback_sec = int(os.getenv("GHOST_FOCUS_LOOKBACK_SEC", "172800"))
+        self.focus_max_assets = int(os.getenv("GHOST_FOCUS_MAX_ASSETS", "6"))
 
     # ------------------------------------------------------------------
     # Public API
@@ -118,7 +127,35 @@ class TrainingPipeline:
 
         pending_iteration = self.iteration + 1
 
-        inputs, targets = self._prepare_dataset(batch_size=32)
+        focus_assets, focus_stats = self._ghost_focus_assets()
+
+        news_items = getattr(self.data_loader, "news_items", []) or []
+        if news_items:
+            sentiment_counts: Dict[str, int] = {}
+            token_coverage: set[str] = set()
+            for item in news_items:
+                sentiment = str(item.get("sentiment", "neutral")).lower()
+                sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+                for token in item.get("tokens") or []:
+                    token_coverage.add(str(token).upper())
+            total_news = len(news_items)
+            news_metrics = {
+                "news_items_total": total_news,
+                "news_token_coverage": len(token_coverage),
+                "news_positive_ratio": sentiment_counts.get("positive", 0) / total_news,
+                "news_negative_ratio": sentiment_counts.get("negative", 0) / total_news,
+            }
+            self.metrics.record(
+                MetricStage.NEWS,
+                news_metrics,
+                category="training_news",
+                meta={
+                    "iteration": self.iteration,
+                    "unique_tokens": list(sorted(token_coverage))[:32],
+                },
+            )
+
+        inputs, targets = self._prepare_dataset(batch_size=32, dataset_label="full")
         if inputs is None or targets is None:
             self.iteration = pending_iteration
             self._save_state()
@@ -184,6 +221,10 @@ class TrainingPipeline:
             .prefetch(tf.data.AUTOTUNE)
         )
         evaluation = self._evaluate_candidate(model, eval_ds, targets)
+        focus_history = self._apply_focus_adaptation(model, focus_assets)
+        if focus_history is not None:
+            evaluation = self._evaluate_candidate(model, eval_ds, targets)
+            evaluation.update(focus_history)
 
         version = f"candidate-{int(time.time())}"
         path = self.model_dir / f"{version}.keras"
@@ -199,6 +240,32 @@ class TrainingPipeline:
             "evaluation": evaluation,
             "status": "trained",
         }
+        evaluation_meta = {
+            "iteration": self.iteration,
+            "params": {"learning_rate": lr, "epochs": epochs},
+            "version": version,
+            "focus_assets": focus_assets,
+            "ghost_feedback": focus_stats,
+        }
+        training_metrics = {
+            "candidate_score": score,
+            "dir_accuracy": self._safe_float(evaluation.get("dir_accuracy", 0.0)),
+            "price_dir_precision": self._safe_float(evaluation.get("precision", 0.0)),
+            "price_dir_recall": self._safe_float(evaluation.get("recall", 0.0)),
+            "price_dir_f1": self._safe_float(evaluation.get("f1_score", 0.0)),
+            "profit_factor": self._safe_float(evaluation.get("profit_factor", 0.0)),
+            "kelly_fraction": self._safe_float(evaluation.get("kelly_fraction", 0.0)),
+            "ghost_win_rate": self._safe_float(evaluation.get("ghost_win_rate", 0.0)),
+            "ghost_pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
+            "ghost_realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
+            "false_positive_rate": self._safe_float(evaluation.get("false_positive_rate", 0.0)),
+        }
+        self.metrics.record(
+            MetricStage.TRAINING,
+            training_metrics,
+            category="candidate",
+            meta=evaluation_meta,
+        )
 
         promote = score >= self.promotion_threshold
         gating_reason: Optional[str] = None
@@ -286,13 +353,47 @@ class TrainingPipeline:
     # Dataset creation
     # ------------------------------------------------------------------
 
-    def _prepare_dataset(self, batch_size: int = 32) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    def _prepare_dataset(
+        self,
+        batch_size: int = 32,
+        *,
+        focus_assets: Optional[Sequence[str]] = None,
+        dataset_label: str = "full",
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
         inputs, targets = self.data_loader.build_dataset(
             window_size=self.window_size,
             sent_seq_len=self.sent_seq_len,
             tech_count=self.tech_count,
+            focus_assets=focus_assets,
         )
         if inputs is not None and targets is not None:
+            sample_count = int(inputs["price_vol_input"].shape[0])
+            asset_ids = inputs["asset_id_input"].reshape(-1)
+            asset_diversity = int(len(np.unique(asset_ids)))
+            price_slice = inputs["price_vol_input"][..., 0]
+            price_volatility = float(np.std(price_slice, axis=1).mean()) if sample_count else 0.0
+            headlines_flat = inputs["headline_text"].reshape(-1)
+            news_coverage = float(
+                np.mean([1.0 if str(text).strip() else 0.0 for text in headlines_flat])
+            )
+            margin_arr = targets["net_margin"].reshape(-1)
+            margin_stats = distribution_report(margin_arr)
+            dataset_metrics = {
+                "samples": sample_count,
+                "asset_diversity": asset_diversity,
+                "avg_price_volatility": price_volatility,
+                "news_coverage_ratio": news_coverage,
+            }
+            dataset_metrics.update({f"net_margin_{k}": v for k, v in margin_stats.items()})
+            self.metrics.record(
+                MetricStage.TRAINING,
+                dataset_metrics,
+                category=f"dataset_{dataset_label}",
+                meta={
+                    "iteration": self.iteration,
+                    "focus_assets": list(focus_assets or []),
+                },
+            )
             inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
             inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
             inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
@@ -415,6 +516,47 @@ class TrainingPipeline:
         summary["false_positive_rate"] = self._safe_float(
             summary["false_positives"] / max(1, negatives)
         )
+        class_metrics = classification_report(
+            summary["true_positives"],
+            summary["false_positives"],
+            summary["true_negatives"],
+            summary["false_negatives"],
+        )
+        summary.update(class_metrics)
+
+        real_dist = distribution_report(net_margin_true)
+        pred_dist = distribution_report(net_margin_pred_flat)
+        summary.update({f"real_margin_{k}": self._safe_float(v) for k, v in real_dist.items()})
+        summary.update({f"pred_margin_{k}": self._safe_float(v) for k, v in pred_dist.items()})
+        mu_dist = distribution_report(price_mu_pred.reshape(-1))
+        summary.update({f"price_mu_{k}": self._safe_float(v) for k, v in mu_dist.items()})
+
+        positive_returns = net_margin_true[net_margin_true > 0]
+        negative_returns = net_margin_true[net_margin_true < 0]
+        if negative_returns.size > 0:
+            profit_factor = self._safe_float(positive_returns.sum() / abs(negative_returns.sum()))
+        else:
+            profit_factor = self._safe_float(positive_returns.sum())
+        summary["profit_factor"] = profit_factor
+
+        if positive_returns.size > 0:
+            avg_positive = float(np.mean(positive_returns))
+            avg_negative = float(np.mean(np.abs(negative_returns))) if negative_returns.size > 0 else avg_positive
+            payoff_ratio = self._safe_float(avg_positive / max(avg_negative, 1e-9))
+            kelly = self._safe_float(
+                max(
+                    0.0,
+                    min(
+                        1.0,
+                        ((payoff_ratio + 1.0) * summary["ghost_win_rate"] - 1.0) / max(payoff_ratio, 1e-9),
+                    ),
+                )
+            )
+        else:
+            payoff_ratio = 0.0
+            kelly = 0.0
+        summary["payoff_ratio"] = payoff_ratio
+        summary["kelly_fraction"] = kelly
         return summary
 
     def _execution_bias(self, window: int = 50) -> float:
@@ -428,6 +570,99 @@ class TrainingPipeline:
         if not ratios:
             return 1.0
         return float(np.clip(np.mean(ratios), 0.1, 2.0))
+
+    def _ghost_focus_assets(self) -> Tuple[List[str], Dict[str, Any]]:
+        trades = self.metrics.ghost_trade_snapshot(limit=500, lookback_sec=self.focus_lookback_sec)
+        aggregate = self.metrics.aggregate_trade_metrics(trades)
+        symbol_stats: Dict[str, Dict[str, Any]] = {}
+        for trade in trades:
+            symbol = str(trade.symbol or "UNKNOWN").upper()
+            entry = symbol_stats.setdefault(
+                symbol,
+                {"profits": [], "count": 0, "wins": 0},
+            )
+            entry["profits"].append(float(trade.profit))
+            entry["count"] += 1
+            if float(trade.profit) > 0:
+                entry["wins"] += 1
+        ranked: List[Dict[str, Any]] = []
+        for symbol, info in symbol_stats.items():
+            avg_profit = float(np.mean(info["profits"])) if info["profits"] else 0.0
+            win_rate = float(info["wins"] / max(1, info["count"]))
+            penalty = max(0.0, -avg_profit) + max(0.0, 0.55 - win_rate)
+            ranked.append(
+                {
+                    "symbol": symbol,
+                    "avg_profit": avg_profit,
+                    "win_rate": win_rate,
+                    "count": info["count"],
+                    "score": penalty,
+                }
+            )
+        ranked.sort(key=lambda item: item["score"], reverse=True)
+        focus_assets = [
+            item["symbol"] for item in ranked if item["score"] > 0.0
+        ][: self.focus_max_assets]
+        self.metrics.record(
+            MetricStage.GHOST_TRADING,
+            aggregate,
+            category="ghost_snapshot",
+            meta={
+                "iteration": self.iteration,
+                "focus_candidates": focus_assets,
+                "ranked": ranked[: self.focus_max_assets],
+            },
+        )
+        return focus_assets, {"aggregate": aggregate, "ranked": ranked}
+
+    def _apply_focus_adaptation(
+        self,
+        model: tf.keras.Model,
+        focus_assets: Sequence[str],
+    ) -> Optional[Dict[str, float]]:
+        if not focus_assets:
+            return None
+        focus_inputs, focus_targets = self._prepare_dataset(
+            batch_size=16,
+            focus_assets=focus_assets,
+            dataset_label="focus",
+        )
+        if focus_inputs is None or focus_targets is None:
+            return None
+        input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+        output_order = [
+            "exit_conf",
+            "price_mu",
+            "price_log_var",
+            "price_dir",
+            "net_margin",
+            "net_pnl",
+            "tech_recon",
+            "price_gaussian",
+        ]
+        input_tensors = tuple(focus_inputs[name] for name in input_order)
+        target_tensors = tuple(focus_targets[name] for name in output_order)
+        focus_ds = (
+            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
+            .batch(8)
+            .prefetch(tf.data.AUTOTUNE)
+        )
+        history = model.fit(focus_ds, epochs=1, verbose=0)
+        metrics = {
+            f"focus_{name}": float(values[-1])
+            for name, values in history.history.items()
+            if values
+        }
+        self.metrics.record(
+            MetricStage.MODEL_FINE_TUNE,
+            metrics,
+            category="focus_training",
+            meta={
+                "iteration": self.iteration,
+                "assets": list(focus_assets),
+            },
+        )
+        return metrics
 
     # ------------------------------------------------------------------
     # Debug helpers

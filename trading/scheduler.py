@@ -239,6 +239,7 @@ class BusScheduler:
             return []
         times = np.array([row[0] for row in state.samples], dtype=float)
         prices = np.array([row[1] for row in state.samples], dtype=float)
+        prices = np.nan_to_num(prices, nan=0.0, neginf=0.0, posinf=0.0)
         if np.all(prices <= 0):
             return []
         # Use the last 120 points (approx 2 hours if sampled ~1 min)
@@ -246,14 +247,21 @@ class BusScheduler:
         times = times[-window:]
         prices = prices[-window:]
         rel_minutes = (times - times[-1]) / 60.0
-        log_prices = np.log(np.clip(prices, a_min=1e-9, a_max=None))
-        if np.allclose(rel_minutes, rel_minutes[0]):
+        rel_minutes = np.nan_to_num(rel_minutes, nan=0.0)
+        safe_prices = np.clip(prices, a_min=1e-9, a_max=1e9)
+        log_prices = np.log(safe_prices)
+        slope = 0.0
+        intercept = log_prices[-1]
+        try:
+            if not np.allclose(rel_minutes, rel_minutes[0]):
+                with np.errstate(all="ignore"):
+                    slope, intercept = np.polyfit(rel_minutes, log_prices, 1)
+        except Exception:
             slope = 0.0
             intercept = log_prices[-1]
-        else:
-            slope, intercept = np.polyfit(rel_minutes, log_prices, 1)
         current_price = prices[-1]
         returns = np.diff(log_prices)
+        returns = returns[np.isfinite(returns)]
         vol = float(np.std(returns)) if returns.size > 0 else 0.0
         if not math.isfinite(vol) or vol == 0.0:
             vol = 1e-6
@@ -262,11 +270,21 @@ class BusScheduler:
         for label, seconds in self.horizons:
             future_minutes = seconds / 60.0
             predicted_log = intercept + slope * future_minutes
+            predicted_log = float(np.clip(predicted_log, -20.0, 20.0))
             predicted_price = float(math.exp(predicted_log))
             expected_return = (predicted_price - current_price) / max(current_price, 1e-9)
+            expected_return = float(np.clip(expected_return, -5.0, 5.0))
+            if not math.isfinite(expected_return):
+                expected_return = 0.0
             # rough z-score relative to observed volatility scaled by horizon
-            horizon_vol = vol * math.sqrt(max(future_minutes / max(abs(rel_minutes[0]), 1e-6), 1.0))
-            zscore = expected_return / max(horizon_vol, 1e-6)
+            denom = max(abs(rel_minutes[0]), 1e-6)
+            horizon_scale = max(future_minutes / denom, 1.0)
+            try:
+                horizon_vol = vol * math.sqrt(horizon_scale)
+            except ValueError:
+                horizon_vol = vol
+            horizon_vol = max(horizon_vol, 1e-6)
+            zscore = expected_return / horizon_vol
             signals.append(
                 HorizonSignal(
                     label=label,
@@ -277,4 +295,3 @@ class BusScheduler:
                 )
             )
         return signals
-
