@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
-from .models import FeedbackEvent, MetricEntry, TradeLog
+from .models import Advisory, FeedbackEvent, MetricEntry, TradeLog
 
 
 class MetricEntrySerializer(serializers.ModelSerializer):
@@ -36,3 +36,25 @@ class TradeLogSerializer(serializers.ModelSerializer):
 
     def get_details(self, obj: TradeLog) -> dict:
         return obj.details_dict()
+
+
+class AdvisorySerializer(serializers.ModelSerializer):
+    meta = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Advisory
+        fields = [
+            "id",
+            "ts",
+            "scope",
+            "topic",
+            "severity",
+            "message",
+            "recommendation",
+            "meta",
+            "resolved",
+            "resolved_ts",
+        ]
+
+    def get_meta(self, obj: Advisory) -> dict:
+        return obj.meta_dict()

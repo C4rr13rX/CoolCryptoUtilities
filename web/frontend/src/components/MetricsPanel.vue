@@ -67,6 +67,28 @@
           </tbody>
         </table>
       </section>
+      <section class="telemetry-table advisory-panel">
+        <header>Operational Advisories</header>
+        <ul class="advisory-list">
+          <li v-for="advisory in dashboardData.active_advisories" :key="advisory.id" :data-level="advisory.severity">
+            <div class="headline">
+              <StatusIndicator
+                :label="advisory.severity.toUpperCase()"
+                :level="severityToLevel(advisory.severity)"
+                :detail="advisory.topic"
+              />
+              <time>{{ formatRelative(advisory.ts) }}</time>
+            </div>
+            <p class="message">{{ advisory.message }}</p>
+            <p class="action">
+              <strong>Action:</strong> {{ advisory.recommendation }}
+            </p>
+          </li>
+          <li v-if="!dashboardData.active_advisories.length" class="empty">
+            No active advisories
+          </li>
+        </ul>
+      </section>
     </div>
   </div>
 </template>
@@ -80,8 +102,10 @@ const props = defineProps<{ dashboard: Record<string, any> | null }>();
 const dashboardData = computed(() => props.dashboard ?? {
   metrics_by_stage: [],
   feedback_by_severity: [],
+  advisories_by_severity: [],
   latest_metrics: [],
-  recent_trades: []
+  recent_trades: [],
+  active_advisories: []
 });
 
 function formatRelative(ts: number | string) {
@@ -142,5 +166,50 @@ function severityToLevel(severity: string) {
   letter-spacing: 0.12em;
   color: var(--text-muted);
   margin-bottom: 0.75rem;
+}
+.advisory-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.advisory-list li {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  background: rgba(8, 16, 28, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.advisory-list li[data-level="critical"] {
+  border-color: rgba(255, 90, 95, 0.45);
+}
+.advisory-list li[data-level="warning"] {
+  border-color: rgba(246, 177, 67, 0.45);
+}
+.advisory-list .headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+.advisory-list .headline time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.advisory-list .message,
+.advisory-list .action {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+.advisory-list .empty {
+  justify-content: center;
+  align-items: center;
+  color: var(--text-muted);
+  border-style: dashed;
 }
 </style>

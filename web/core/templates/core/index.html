@@ -4,15 +4,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CoolCrypto Control Tower</title>
+    <title>C4rr13rX Control Tower</title>
     <link rel="icon" href="{% static 'branding/favicon.svg' %}" />
     {% if debug %}
       <script type="module" src="{{ vite_dev_server }}/@vite/client"></script>
       <script type="module" src="{{ vite_dev_server }}/src/main.ts"></script>
-    {% else %}
-      <link rel="stylesheet" href="{% static 'assets/main.css' %}" />
-      <script type="module" src="{% static 'assets/main.js' %}"></script>
     {% endif %}
+    <link rel="stylesheet" href="{% static 'assets/main.css' %}" />
+    <script type="module" src="{% static 'assets/main.js' %}"></script>
     <style>
       :root {
         color-scheme: dark;
@@ -57,13 +56,384 @@
         flex-direction: column;
         width: 100%;
       }
+      .login-wrapper {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4rem 1.5rem;
+      }
+      .login-card {
+        width: min(420px, 100%);
+        background: rgba(12, 23, 40, 0.85);
+        border: 1px solid rgba(127, 176, 255, 0.25);
+        border-radius: 18px;
+        padding: 2rem;
+        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      .login-card h2 {
+        margin: 0;
+        font-size: 1.4rem;
+        text-transform: uppercase;
+        letter-spacing: 0.18rem;
+        color: var(--accent-3);
+      }
+      .dashboard-fallback {
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+        padding: 2.5rem;
+      }
+      .dashboard-fallback .overview {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1.5rem;
+      }
+      .dashboard-fallback .overview > div {
+        background: rgba(12, 23, 40, 0.85);
+        border: 1px solid rgba(127, 176, 255, 0.25);
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+      }
+      .dashboard-fallback .overview h2 {
+        margin: 0 0 0.75rem;
+        font-size: 1rem;
+        letter-spacing: 0.14rem;
+        text-transform: uppercase;
+        color: var(--accent-3);
+      }
+      .dashboard-fallback .metric {
+        font-size: 2.25rem;
+        font-weight: 700;
+        color: #f4f6fa;
+      }
+      .fallback-panels article {
+        background: rgba(12, 23, 40, 0.85);
+        border: 1px solid rgba(127, 176, 255, 0.2);
+        border-radius: 16px;
+        padding: 1.25rem;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .fallback-panels header {
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12rem;
+        color: rgba(255, 255, 255, 0.85);
+        margin-bottom: 1rem;
+      }
+      .fallback-panels h3 {
+        margin: 0 0 0.5rem;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1rem;
+        color: rgba(255, 255, 255, 0.7);
+      }
+      .subsection {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .fallback-panels table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .fallback-panels th,
+      .fallback-panels td {
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid rgba(127, 176, 255, 0.18);
+        text-align: left;
+      }
+      .fallback-panels tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .feedback-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .feedback-list li {
+        font-size: 0.9rem;
+        color: rgba(244, 246, 250, 0.85);
+      }
+      .advisory-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .advisory-list li {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 0.75rem;
+        background: rgba(8, 16, 28, 0.6);
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .advisory-list li[data-severity="critical"] {
+        border-color: rgba(255, 90, 95, 0.4);
+      }
+      .advisory-list li[data-severity="warning"] {
+        border-color: rgba(246, 177, 67, 0.35);
+      }
+      .advisory-headline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        font-size: 0.85rem;
+        opacity: 0.85;
+      }
+      .advisory-headline .badge {
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.06);
+        font-size: 0.7rem;
+        letter-spacing: 0.12rem;
+      }
+      .advisory-headline .topic {
+        flex: 1;
+        font-weight: 600;
+        letter-spacing: 0.08rem;
+      }
+      .advisory-headline .timestamp {
+        font-size: 0.75rem;
+        opacity: 0.8;
+      }
+      .advisory-list .message,
+      .advisory-list .recommendation {
+        margin: 0;
+        font-size: 0.85rem;
+        line-height: 1.45;
+      }
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+      }
+      .form-field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      label {
+        font-size: 0.85rem;
+        letter-spacing: 0.12rem;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.8);
+      }
+      input[type="text"],
+      input[type="password"] {
+        background: rgba(8, 16, 28, 0.9);
+        border: 1px solid rgba(127, 176, 255, 0.35);
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+        color: #f4f6fa;
+        font-size: 0.95rem;
+      }
+      input[type="text"]:focus,
+      input[type="password"]:focus {
+        outline: none;
+        border-color: var(--accent-2);
+        box-shadow: 0 0 0 2px rgba(41, 121, 199, 0.25);
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(45, 117, 196, 0.9), rgba(12, 33, 66, 0.95));
+        border: 1px solid rgba(127, 176, 255, 0.4);
+        color: #f4f6fa;
+        padding: 0.75rem 1.4rem;
+        border-radius: 12px;
+        font-weight: 600;
+        letter-spacing: 0.12rem;
+        text-transform: uppercase;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      .btn.primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 30px rgba(45, 117, 196, 0.35);
+      }
+      .form-errors {
+        background: rgba(255, 90, 95, 0.15);
+        border: 1px solid rgba(255, 90, 95, 0.35);
+        color: #ffd4d6;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        font-size: 0.85rem;
+      }
+      .field-error {
+        color: #ffd4d6;
+        font-size: 0.75rem;
+      }
     </style>
   </head>
   <body>
     <header class="branding-header">
-      <img src="{% static 'branding/logo.svg' %}" alt="C4rn3tX emblem" />
-      <h1>CoolCrypto Control Tower</h1>
+      <img src="{% static 'branding/logo.svg' %}" alt="C4rr13rX emblem" />
+      <h1>C4rr13rX Control Tower</h1>
     </header>
-    <div id="app"></div>
+    {% if user.is_authenticated %}
+      <main class="dashboard-fallback">
+        <section class="overview">
+          <div>
+            <h2>Stable Bank Reserve</h2>
+            <p class="metric">${{ stable_bank|floatformat:2 }}</p>
+          </div>
+          <div>
+            <h2>Total Profit (Ghost)</h2>
+            <p class="metric">${{ total_profit|floatformat:2 }}</p>
+          </div>
+        </section>
+        <section class="grid-two fallback-panels">
+          <article>
+            <header>Recent Metrics</header>
+            <table>
+              <thead>
+                <tr>
+                  <th>Stage</th>
+                  <th>Name</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for metric in latest_metrics %}
+                  <tr>
+                    <td>{{ metric.stage }}</td>
+                    <td>{{ metric.name }}</td>
+                    <td>{{ metric.value|floatformat:4 }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="3">No metrics yet</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </article>
+          <article>
+            <header>Signals &amp; Advisories</header>
+            <div class="subsection">
+              <h3>Feedback</h3>
+              <ul class="feedback-list">
+                {% for fb in latest_feedback %}
+                  <li><strong>{{ fb.severity|upper }}</strong> — {{ fb.label }} ({{ fb.details }})</li>
+                {% empty %}
+                  <li>No feedback yet</li>
+                {% endfor %}
+              </ul>
+            </div>
+            <div class="subsection">
+              <h3>Advisories</h3>
+              <ul class="advisory-list">
+                {% for adv in advisories %}
+                  <li data-severity="{{ adv.severity }}">
+                    <div class="advisory-headline">
+                      <span class="badge">{{ adv.severity|upper }}</span>
+                      <span class="topic">{{ adv.topic }}</span>
+                      <span class="timestamp">{{ adv.ts|date:"Y-m-d H:i" }}</span>
+                    </div>
+                    <p class="message">{{ adv.message }}</p>
+                    <p class="recommendation"><strong>Action:</strong> {{ adv.recommendation }}</p>
+                  </li>
+                {% empty %}
+                  <li>No active advisories</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </article>
+        </section>
+        <section class="grid-two fallback-panels">
+          <article>
+            <header>Live Trade Ledger</header>
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Action</th>
+                  <th>P/L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for trade in live_trades %}
+                  <tr>
+                    <td>{{ trade.symbol }}</td>
+                    <td>{{ trade.action }}</td>
+                    <td>{{ trade.details.profit|default:trade.details.net_margin|floatformat:4 }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="3">No live trades logged</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </article>
+          <article>
+            <header>Ghost Trade Highlights</header>
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Action</th>
+                  <th>Margin</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for trade in ghost_trades %}
+                  <tr>
+                    <td>{{ trade.symbol }}</td>
+                    <td>{{ trade.action }}</td>
+                    <td>{{ trade.details.net_margin|floatformat:4 }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="3">No ghost trades yet</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </article>
+        </section>
+      </main>
+      <div id="app"></div>
+    {% else %}
+      <main class="login-wrapper">
+        <section class="login-card">
+          <h2>Sign In</h2>
+          <form method="post" novalidate>
+            {% csrf_token %}
+            {% if auth_form.non_field_errors %}
+              <div class="form-errors">
+                {% for error in auth_form.non_field_errors %}
+                  <p>{{ error }}</p>
+                {% endfor %}
+              </div>
+            {% endif %}
+            <div class="form-field">
+              <label for="id_username">Username</label>
+              {{ auth_form.username }}
+              {% if auth_form.username.errors %}
+                <small class="field-error">{{ auth_form.username.errors|striptags }}</small>
+              {% endif %}
+            </div>
+            <div class="form-field">
+              <label for="id_password">Password</label>
+              {{ auth_form.password }}
+              {% if auth_form.password.errors %}
+                <small class="field-error">{{ auth_form.password.errors|striptags }}</small>
+              {% endif %}
+            </div>
+            <button type="submit" class="btn primary">Log In</button>
+          </form>
+        </section>
+      </main>
+    {% endif %}
   </body>
 </html>

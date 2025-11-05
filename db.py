@@ -204,6 +204,28 @@ class TradingDatabase:
                 ON feedback_events(source, ts);
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS advisories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL,
+                    scope TEXT,
+                    topic TEXT,
+                    severity TEXT,
+                    message TEXT,
+                    recommendation TEXT,
+                    meta TEXT,
+                    resolved INTEGER DEFAULT 0,
+                    resolved_ts REAL
+                );
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_advisories_resolved_ts
+                ON advisories(resolved, ts);
+                """
+            )
 
     @contextmanager
     def _cursor(self):
@@ -855,6 +877,93 @@ class TradingDatabase:
                 }
             )
         return trades
+
+    # ------------------------------------------------------------------
+    # Advisory / recommendation helpers
+    # ------------------------------------------------------------------
+
+    def record_advisory(
+        self,
+        *,
+        topic: str,
+        message: str,
+        severity: str = "info",
+        scope: Optional[str] = None,
+        recommendation: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        payload = json.dumps(meta or {})
+        ts = time.time()
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO advisories(ts, scope, topic, severity, message, recommendation, meta, resolved)
+                VALUES(?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (ts, scope or "", topic, severity, message, recommendation or "", payload),
+            )
+            return int(cur.lastrowid)
+
+    def fetch_advisories(
+        self,
+        *,
+        limit: int = 200,
+        include_resolved: bool = False,
+        severity: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        where: List[str] = []
+        params: List[Any] = []
+        if not include_resolved:
+            where.append("resolved=0")
+        if severity:
+            placeholders = ",".join("?" for _ in severity)
+            where.append(f"severity IN ({placeholders})")
+            params.extend(severity)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        query = f"""
+            SELECT id, ts, scope, topic, severity, message, recommendation, meta, resolved, resolved_ts
+            FROM advisories
+            {clause}
+            ORDER BY resolved ASC, ts DESC
+            LIMIT ?
+        """
+        params.append(int(limit))
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        advisories: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                meta = json.loads(row["meta"] or "{}")
+            except Exception:
+                meta = {}
+            advisories.append(
+                {
+                    "id": row["id"],
+                    "ts": row["ts"],
+                    "scope": row["scope"],
+                    "topic": row["topic"],
+                    "severity": row["severity"],
+                    "message": row["message"],
+                    "recommendation": row["recommendation"],
+                    "meta": meta,
+                    "resolved": bool(row["resolved"]),
+                    "resolved_ts": row["resolved_ts"],
+                }
+            )
+        return advisories
+
+    def resolve_advisory(self, advisory_id: int) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE advisories
+                SET resolved=1,
+                    resolved_ts=strftime('%s','now')
+                WHERE id=?;
+                """,
+                (int(advisory_id),),
+            )
 
 
 # ----------------------------------------------------------------------

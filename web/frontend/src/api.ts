@@ -27,6 +27,15 @@ export async function fetchFeedback(limit = 100) {
   return data;
 }
 
+export async function fetchAdvisories(limit = 100, includeResolved = false) {
+  const params: Record<string, string> = { limit: String(limit) };
+  if (includeResolved) {
+    params.include_resolved = '1';
+  }
+  const { data } = await api.get('/telemetry/advisories/', { params });
+  return data;
+}
+
 export async function fetchMetrics(stage?: string, limit = 200) {
   const params: Record<string, string> = { limit: String(limit) };
   if (stage) params.stage = stage;

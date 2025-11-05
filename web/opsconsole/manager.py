@@ -10,7 +10,16 @@ from pathlib import Path
 from typing import Dict, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_COMMAND = [os.getenv("PYTHON_BIN", "python3"), "-u", "main.py"]
+DEFAULT_PYTHON = os.getenv("PYTHON_BIN")
+if not DEFAULT_PYTHON:
+    DEFAULT_PYTHON = os.getenv("VIRTUAL_ENV", "")
+    if DEFAULT_PYTHON:
+        DEFAULT_PYTHON = str(Path(DEFAULT_PYTHON) / "bin" / "python")
+    else:
+        import sys
+
+        DEFAULT_PYTHON = sys.executable
+DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py"]
 LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "console.log"

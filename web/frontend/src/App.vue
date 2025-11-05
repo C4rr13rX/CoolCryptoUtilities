@@ -1,25 +1,20 @@
 <template>
   <div class="dashboard-shell" v-if="loaded">
     <nav class="side-panel">
-      <div class="pillar">
-        <span>🛰️</span>
-        <span class="label">Overview</span>
-      </div>
-      <div class="pillar">
-        <span>📡</span>
-        <span class="label">Market Streams</span>
-      </div>
-      <div class="pillar">
-        <span>📊</span>
-        <span class="label">Telemetry</span>
-      </div>
-      <div class="pillar">
-        <span>🖥️</span>
-        <span class="label">Console</span>
-      </div>
+      <button
+        v-for="item in navSections"
+        :key="item.key"
+        type="button"
+        class="pillar"
+        :class="{ active: activeSection === item.key }"
+        @click="scrollToSection(item.key)"
+      >
+        <span>{{ item.icon }}</span>
+        <span class="label">{{ item.label }}</span>
+      </button>
     </nav>
     <main class="dashboard-content">
-      <section>
+      <section id="section-overview">
         <div class="grid-three">
           <StatusIndicator
             label="Streams"
@@ -38,14 +33,20 @@
           />
         </div>
       </section>
-      <StreamsPanel :streams="store.streams" />
-      <MetricsPanel :dashboard="store.dashboard" />
-      <ConsolePanel
-        :status="store.consoleStatus"
-        :logs="store.consoleLogs"
-        @start="store.startProcess"
-        @stop="store.stopProcess"
-      />
+      <section id="section-streams">
+        <StreamsPanel :streams="store.streams" />
+      </section>
+      <section id="section-telemetry">
+        <MetricsPanel :dashboard="store.dashboard" />
+      </section>
+      <section id="section-console">
+        <ConsolePanel
+          :status="store.consoleStatus"
+          :logs="store.consoleLogs"
+          @start="store.startProcess"
+          @stop="store.stopProcess"
+        />
+      </section>
     </main>
   </div>
   <div v-else class="dashboard-shell" style="place-items: center; padding: 4rem;">
@@ -54,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import StatusIndicator from './components/StatusIndicator.vue';
 import StreamsPanel from './components/StreamsPanel.vue';
 import MetricsPanel from './components/MetricsPanel.vue';
@@ -65,10 +66,21 @@ const store = useDashboardStore();
 const loaded = ref(false);
 let interval: number | undefined;
 let consoleInterval: number | undefined;
+let observer: IntersectionObserver | null = null;
+
+const navSections = [
+  { key: 'overview', label: 'Overview', icon: '🛰️' },
+  { key: 'streams', label: 'Market Streams', icon: '📡' },
+  { key: 'telemetry', label: 'Telemetry', icon: '📊' },
+  { key: 'console', label: 'Console', icon: '🖥️' },
+];
+const activeSection = ref('overview');
 
 async function bootstrap() {
   await store.refreshAll();
   loaded.value = true;
+  await nextTick();
+  setupObserver();
 }
 
 onMounted(() => {
@@ -80,6 +92,10 @@ onMounted(() => {
 onUnmounted(() => {
   if (interval) window.clearInterval(interval);
   if (consoleInterval) window.clearInterval(consoleInterval);
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
 });
 
 const streamCount = computed(() => Object.keys(store.streams || {}).length);
@@ -120,4 +136,34 @@ const consoleDetail = computed(() => {
   if (status.returncode) return `code ${status.returncode}`;
   return status.pid ? `pid ${status.pid}` : 'idle';
 });
+
+function setupObserver() {
+  if (observer) observer.disconnect();
+  observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting && entry.target instanceof HTMLElement) {
+          const key = entry.target.dataset.section || entry.target.id.replace('section-', '');
+          if (key) activeSection.value = key;
+        }
+      });
+    },
+    { root: null, threshold: 0.35 }
+  );
+  navSections.forEach((item) => {
+    const element = document.getElementById(`section-${item.key}`);
+    if (element) {
+      element.dataset.section = item.key;
+      observer?.observe(element);
+    }
+  });
+}
+
+function scrollToSection(key: string) {
+  const target = document.getElementById(`section-${key}`);
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    activeSection.value = key;
+  }
+}
 </script>

@@ -13,7 +13,7 @@ from cache import CacheBalances, CacheTransfers
 from db import TradingDatabase, get_db
 from trading.data_stream import MarketDataStream
 from trading.pipeline import TrainingPipeline
-from trading.portfolio import PortfolioState
+from trading.portfolio import PortfolioState, NATIVE_SYMBOL
 from trading.scheduler import BusScheduler, TradeDirective
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
@@ -82,6 +82,9 @@ class TradingBot:
         self._pending_queue: deque = deque(maxlen=int(os.getenv("STREAM_QUEUE_MAX", "8")))
         self._processing_sample: bool = False
         self._last_sample_signature: Optional[Tuple[str, float]] = None
+        self._last_gas_advisory_signature: Optional[str] = None
+        self.gas_buffer_multiplier: float = max(1.0, float(os.getenv("GAS_BUFFER_MULTIPLIER", "1.5")))
+        self.gas_profit_guard: float = max(1.0, float(os.getenv("GAS_PROFIT_SAFETY", "1.2")))
 
     async def start(self) -> None:
         if self._running:
@@ -458,11 +461,44 @@ class TradingBot:
         if directive and directive.size > 0:
             trade_size = float(directive.size)
         if native_balance < gas_required:
+            strategy = self._plan_gas_replenishment(
+                chain=chain_name,
+                route=route,
+                native_balance=native_balance,
+                gas_required=gas_required,
+                trade_size=trade_size,
+                price=price,
+                margin=margin,
+                pnl=pnl,
+                available_quote=available_quote,
+                symbol=symbol,
+            )
+            strategy_severity = FeedbackSeverity.CRITICAL
+            details = {
+                "native_balance": native_balance,
+                "required": gas_required,
+                "chain": chain_name,
+            }
+            if strategy:
+                details["strategy"] = strategy
+                if strategy.get("profit_guard_passed") and strategy.get("stable_swap_plan"):
+                    strategy_severity = FeedbackSeverity.WARNING
+                message = (
+                    f"Native balance {native_balance:.6f} below required {gas_required:.6f} on {chain_name}."
+                )
+                self._record_advisory(
+                    topic="gas_replenishment",
+                    message=message,
+                    severity=strategy_severity,
+                    scope=f"{chain_name}:{symbol}",
+                    recommendation=str(strategy.get("recommendation", "")),
+                    meta=strategy,
+                )
             self.metrics.feedback(
                 "trading",
-                severity=FeedbackSeverity.WARNING,
+                severity=strategy_severity,
                 label="insufficient_gas",
-                details={"native_balance": native_balance, "required": gas_required, "chain": chain_name},
+                details=details,
             )
             return decision
         if trade_size > 0.0 and price > 0.0 and available_quote > 0.0:
@@ -745,6 +781,188 @@ class TradingBot:
         hop_cost = float(os.getenv("ESTIMATED_GAS_HOP", "0.0002"))
         hops = max(0, len(route) - 1)
         return base_cost + hops * hop_cost
+
+    def _estimate_native_price(self, chain: str, route: List[str], price: float, symbol: str) -> float:
+        chain_l = chain.lower()
+        native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
+        price_candidate = float(price or 0.0)
+        route_upper = [token.upper() for token in route]
+        if (
+            price_candidate > 0.0
+            and native_symbol in route_upper
+            and route_upper[-1] in self.stable_tokens
+        ):
+            return price_candidate
+        try:
+            row = self.db.fetch_price(chain, native_symbol)
+            if row:
+                candidate = row.get("usd")
+                if candidate is not None:
+                    price_candidate = float(candidate)
+        except Exception:
+            pass
+        if price_candidate <= 0.0:
+            env_key = f"FALLBACK_NATIVE_PRICE_{chain_l.upper()}"
+            fallback = os.getenv(env_key) or os.getenv("FALLBACK_NATIVE_PRICE")
+            if fallback:
+                try:
+                    price_candidate = float(fallback)
+                except Exception:
+                    price_candidate = 0.0
+        if price_candidate <= 0.0:
+            if native_symbol in {"ETH", "WETH"} or symbol.upper().endswith("WETH"):
+                return 1800.0
+            return 100.0
+        return price_candidate
+
+    def _plan_gas_replenishment(
+        self,
+        *,
+        chain: str,
+        route: List[str],
+        native_balance: float,
+        gas_required: float,
+        trade_size: float,
+        price: float,
+        margin: float,
+        pnl: float,
+        available_quote: float,
+        symbol: str,
+    ) -> Optional[Dict[str, Any]]:
+        deficit = max(0.0, gas_required - native_balance)
+        if deficit <= 0.0:
+            return None
+        target_native = max(deficit * self.gas_buffer_multiplier, deficit)
+        native_price = self._estimate_native_price(chain, route, price, symbol)
+        expected_profit_unit = max(float(margin), float(pnl))
+        expected_profit_usd = max(
+            float(pnl),
+            float(margin) * max(trade_size, 1.0),
+        )
+        estimated_gas_cost_usd = gas_required * native_price
+        target_buffer_usd = target_native * native_price
+        profit_guard_passed = expected_profit_usd > (estimated_gas_cost_usd * self.gas_profit_guard)
+
+        chain_l = chain.lower()
+        stable_holdings = [
+            holding
+            for (key_chain, sym), holding in self.portfolio.holdings.items()
+            if key_chain == chain_l and sym.upper() in self.stable_tokens
+        ]
+        stable_holdings.sort(key=lambda entry: entry.usd, reverse=True)
+
+        swap_plan: List[Dict[str, Any]] = []
+        native_from_stables = 0.0
+        remaining_native = target_native
+        for holding in stable_holdings:
+            if remaining_native <= 0.0:
+                break
+            max_native_from_holding = holding.usd / max(native_price, 1e-9)
+            convert_native = min(remaining_native, max_native_from_holding, holding.quantity)
+            if convert_native <= 0.0:
+                continue
+            spend_stable = convert_native * native_price
+            swap_plan.append(
+                {
+                    "symbol": holding.symbol,
+                    "token": holding.token,
+                    "spend_stable": round(spend_stable, 2),
+                    "obtain_native": round(convert_native, 8),
+                    "available": holding.quantity,
+                    "usd_value": holding.usd,
+                }
+            )
+            native_from_stables += convert_native
+            remaining_native -= convert_native
+
+        bridge_candidates = [
+            {"chain": other_chain, "native_balance": bal}
+            for other_chain, bal in self.portfolio.native_balances.items()
+            if other_chain != chain_l and bal > 0.0
+        ]
+        bridge_candidates.sort(key=lambda entry: entry["native_balance"], reverse=True)
+
+        remaining_native_gap = max(0.0, remaining_native)
+        signature = f"{chain_l}:{symbol}:{int(round(deficit * 1e6))}:{int(round(target_native * 1e6))}:{1 if profit_guard_passed else 0}"
+
+        if not profit_guard_passed:
+            recommendation = (
+                "Predicted profit does not cover gas costs. Pause trade and replenish native balance before resuming."
+            )
+        elif swap_plan and remaining_native_gap <= 1e-6:
+            primary_swap = swap_plan[0]
+            recommendation = (
+                f"Swap {primary_swap['spend_stable']:.2f} {primary_swap['symbol']} to native to restore gas buffer."
+            )
+        elif swap_plan:
+            recommendation = (
+                "Swap available stablecoins for native gas, then bridge or deposit remaining shortfall."
+            )
+        else:
+            recommendation = (
+                "Bridge or deposit native tokens to replenish gas; no stables available on the active chain."
+            )
+
+        plan = {
+            "chain": chain_l,
+            "symbol": symbol,
+            "native_balance": native_balance,
+            "gas_required": gas_required,
+            "deficit_native": deficit,
+            "target_native": target_native,
+            "native_price_usd": native_price,
+            "expected_profit_usd": expected_profit_usd,
+            "estimated_gas_cost_usd": estimated_gas_cost_usd,
+            "profit_guard_passed": profit_guard_passed,
+            "stable_swap_plan": swap_plan,
+            "bridge_candidates": bridge_candidates,
+            "remaining_native_gap": remaining_native_gap,
+            "available_quote": available_quote,
+            "recommendation": recommendation,
+            "signature": signature,
+        }
+        if swap_plan:
+            plan["stable_coverage_native"] = native_from_stables
+        return plan
+
+    def _record_advisory(
+        self,
+        *,
+        topic: str,
+        message: str,
+        severity: str,
+        scope: str,
+        recommendation: str,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        meta = meta or {}
+        signature = str(meta.get("signature") or "")
+        if signature and signature == self._last_gas_advisory_signature:
+            return
+        advisory_id: Optional[int] = None
+        try:
+            advisory_id = self.db.record_advisory(
+                topic=topic,
+                message=message,
+                severity=severity,
+                scope=scope,
+                recommendation=recommendation,
+                meta=meta,
+            )
+        except Exception as exc:
+            print(f"[advisory] failed to persist {topic}: {exc}")
+        details = {
+            "topic": topic,
+            "scope": scope,
+            "message": message,
+            "recommendation": recommendation,
+            "meta": meta,
+        }
+        if advisory_id is not None:
+            details["advisory_id"] = advisory_id
+        self.metrics.feedback("advisory", severity=severity, label=topic, details=details)
+        if signature:
+            self._last_gas_advisory_signature = signature
 
     def record_fill(
         self,

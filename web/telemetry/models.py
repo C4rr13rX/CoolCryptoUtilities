@@ -63,3 +63,26 @@ class TradeLog(models.Model):
             return json.loads(self.details or "{}")
         except Exception:
             return {}
+
+
+class Advisory(models.Model):
+    ts = models.FloatField()
+    scope = models.CharField(max_length=128, blank=True, null=True)
+    topic = models.CharField(max_length=128)
+    severity = models.CharField(max_length=32)
+    message = models.TextField()
+    recommendation = models.TextField()
+    meta = models.TextField(blank=True, null=True)
+    resolved = models.BooleanField(default=False)
+    resolved_ts = models.FloatField(blank=True, null=True)
+
+    class Meta:
+        db_table = "advisories"
+        managed = False
+        ordering = ["-resolved", "-ts"]
+
+    def meta_dict(self) -> dict:
+        try:
+            return json.loads(self.meta or "{}")
+        except Exception:
+            return {}

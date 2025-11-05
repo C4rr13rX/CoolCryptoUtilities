@@ -4,6 +4,7 @@ import {
   fetchConsoleStatus,
   fetchDashboardSummary,
   fetchLatestStreams,
+  fetchAdvisories,
   startConsoleProcess,
   stopConsoleProcess
 } from '@/api';
@@ -13,6 +14,7 @@ interface DashboardState {
   streams: Record<string, any>;
   consoleStatus: Record<string, any> | null;
   consoleLogs: string[];
+  advisories: any[];
   loading: boolean;
   error: string | null;
 }
@@ -23,6 +25,7 @@ export const useDashboardStore = defineStore('dashboard', {
     streams: {},
     consoleStatus: null,
     consoleLogs: [],
+    advisories: [],
     loading: false,
     error: null
   }),
@@ -30,16 +33,18 @@ export const useDashboardStore = defineStore('dashboard', {
     async refreshAll() {
       this.loading = true;
       try {
-        const [summary, streams, consoleStatus, consoleLogs] = await Promise.all([
+        const [summary, streams, consoleStatus, consoleLogs, advisories] = await Promise.all([
           fetchDashboardSummary(),
           fetchLatestStreams(),
           fetchConsoleStatus(),
-          fetchConsoleLogs(200)
+          fetchConsoleLogs(200),
+          fetchAdvisories(50)
         ]);
         this.dashboard = summary;
         this.streams = streams;
         this.consoleStatus = consoleStatus;
         this.consoleLogs = consoleLogs.lines || [];
+        this.advisories = advisories;
         this.error = null;
       } catch (error: any) {
         this.error = error?.message || 'Failed to refresh data';

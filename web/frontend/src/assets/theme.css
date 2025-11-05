@@ -57,11 +57,21 @@ nav.side-panel .pillar {
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid transparent;
-  transition: border-color 0.2s ease;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
 }
 
 nav.side-panel .pillar:hover {
   border-color: var(--accent);
+  background: rgba(45, 117, 196, 0.12);
+}
+
+nav.side-panel .pillar.active {
+  border-color: var(--accent);
+  background: rgba(45, 117, 196, 0.18);
+  box-shadow: 0 12px 28px rgba(45, 117, 196, 0.25);
 }
 
 nav.side-panel .pillar .label {

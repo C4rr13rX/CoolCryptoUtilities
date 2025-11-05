@@ -6,8 +6,9 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import FeedbackEvent, MetricEntry, TradeLog
+from .models import Advisory, FeedbackEvent, MetricEntry, TradeLog
 from .serializers import (
+    AdvisorySerializer,
     FeedbackEventSerializer,
     MetricEntrySerializer,
     TradeLogSerializer,
@@ -62,13 +63,34 @@ class TradeLogView(generics.ListAPIView):
         return qs.order_by("-ts")[:limit]
 
 
+class AdvisoryListView(generics.ListAPIView):
+    serializer_class = AdvisorySerializer
+
+    def get_queryset(self):
+        qs = Advisory.objects.all()
+        include_resolved = self.request.query_params.get("include_resolved")
+        if not (include_resolved and include_resolved.lower() in {"1", "true", "yes"}):
+            qs = qs.filter(resolved=0)
+        severity = self.request.query_params.getlist("severity")
+        if severity:
+            qs = qs.filter(severity__in=[lvl.lower() for lvl in severity])
+        limit = int(self.request.query_params.get("limit", "200"))
+        limit = max(1, min(limit, 500))
+        return qs.order_by("-ts")[:limit]
+
+
 class DashboardSummaryView(APIView):
     def get(self, request: Request, *args, **kwargs) -> Response:
         metric_counts = MetricEntry.objects.values("stage").annotate(total=Count("id"))
         feedback_counts = FeedbackEvent.objects.values("severity").annotate(total=Count("id"))
+        advisory_counts = Advisory.objects.filter(resolved=0).values("severity").annotate(total=Count("id"))
         latest_metrics = MetricEntrySerializer(MetricEntry.objects.order_by("-ts")[:12], many=True).data
         latest_feedback = FeedbackEventSerializer(FeedbackEvent.objects.order_by("-ts")[:10], many=True).data
         recent_trades = TradeLogSerializer(TradeLog.objects.order_by("-ts")[:10], many=True).data
+        active_advisories = AdvisorySerializer(
+            Advisory.objects.filter(resolved=0).order_by("-ts")[:10],
+            many=True,
+        ).data
 
         summary = {
             "metrics_by_stage": list(metric_counts),
@@ -76,5 +98,7 @@ class DashboardSummaryView(APIView):
             "latest_metrics": latest_metrics,
             "latest_feedback": latest_feedback,
             "recent_trades": recent_trades,
+            "advisories_by_severity": list(advisory_counts),
+            "active_advisories": active_advisories,
         }
         return Response(summary, status=status.HTTP_200_OK)
