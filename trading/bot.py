@@ -27,6 +27,14 @@ from trading.constants import (
     GAS_PROFIT_BUFFER,
     FALLBACK_NATIVE_PRICE,
 )
+from trading.brain import (
+    NeuroGraph,
+    MultiResolutionSwarm,
+    PatternMemory,
+    ScenarioReactor,
+    VolatilityArbCell,
+)
+from trading.brain.event_engine import make_default_engine
 
 try:
     from router_wallet import UltraSwapBridge  # type: ignore
@@ -53,7 +61,6 @@ class TradingBot:
         self.pipeline = pipeline or TrainingPipeline(db=self.db)
         self.stream = stream or MarketDataStream(symbol=PRIMARY_SYMBOL, chain=PRIMARY_CHAIN)
         self.window_size = window_size
-        self._buffer: deque = deque(maxlen=window_size)
         self.queue: List[Dict[str, Any]] = []
         self._bg_task: Optional[asyncio.Task] = None
         self._running = False
@@ -72,6 +79,28 @@ class TradingBot:
         self._sim_initial_pool: float = 0.0
         self.ghost_session_id: int = 1
         self.active_exposure: Dict[str, float] = {}
+        self.graph = NeuroGraph()
+        self.swarm = MultiResolutionSwarm(
+            [("fast", 20), ("medium", 60), ("slow", 180)]
+        )
+        self._brain_window = max(
+            self.window_size,
+            max((h for _, h in self.swarm.horizon_defs), default=self.window_size),
+        )
+        self._buffer = deque(maxlen=self._brain_window)
+        self._price_history: Dict[str, deque] = {}
+        self._sentiment_history: Dict[str, deque] = {}
+        self._prev_prices: Dict[str, float] = {}
+        self._graph_decay_counter: int = 0
+        self.memory = PatternMemory(dim=6)
+        self.scenario_reactor = ScenarioReactor()
+        self.arb_cell = VolatilityArbCell()
+        self.event_engine = make_default_engine(self._on_reflex_block)
+        self._reflex_blocked_until: float = 0.0
+        self._reflex_block_reason: Optional[str] = None
+        self._volatility_avg: float = 0.0
+        self._peak_equity: float = 0.0
+        self._last_windows: Dict[str, Dict[str, np.ndarray]] = {}
         self._model_input_order: Optional[List[str]] = None
         self._predict_fn: Optional[Callable[..., Any]] = None
         self._active_model_ref: Optional[tf.keras.Model] = None
@@ -140,6 +169,8 @@ class TradingBot:
         self.sim_native_balances = {chain.lower(): max(balance, 0.1) for chain, balance in self.portfolio.native_balances.items()}
         self.sim_native_balances.setdefault(self.primary_chain.lower(), 0.5)
         self._sim_initial_pool = sum(self.sim_quote_balances.values())
+        if self._sim_initial_pool > self._peak_equity:
+            self._peak_equity = self._sim_initial_pool
         self.ghost_session_id = max(1, self.ghost_session_id)
         self.active_exposure.clear()
 
@@ -182,6 +213,263 @@ class TradingBot:
             self.positions.clear()
             self.ghost_session_id += 1
 
+    def _extract_sentiment_score(self, sample: Dict[str, Any]) -> float:
+        raw_score = sample.get("sentiment_score")
+        if raw_score is not None:
+            try:
+                return float(raw_score)
+            except Exception:
+                pass
+        sentiment = sample.get("sentiment")
+        if sentiment is None:
+            raw = sample.get("raw")
+            if isinstance(raw, dict):
+                sentiment = raw.get("sentiment") or raw.get("label")
+        if sentiment is None:
+            return 0.0
+        mapping = {
+            "positive": 0.7,
+            "bullish": 1.0,
+            "accumulate": 0.5,
+            "neutral": 0.0,
+            "mixed": 0.1,
+            "negative": -0.7,
+            "bearish": -1.0,
+            "sell": -0.6,
+        }
+        return float(mapping.get(str(sentiment).lower(), 0.0))
+
+    def _on_reflex_block(self, context: Dict[str, float]) -> None:
+        cooldown = float(context.get("cooldown", 60.0))
+        reason = str(context.get("reflex_rule") or context.get("reason") or "reflex")
+        self._reflex_blocked_until = time.time() + cooldown
+        self._reflex_block_reason = reason
+        details = {
+            "reason": reason,
+            "cooldown": cooldown,
+            "drawdown": context.get("drawdown"),
+            "volatility": context.get("volatility"),
+        }
+        if hasattr(self, "metrics"):
+            try:
+                self.metrics.feedback(
+                    "reflex",
+                    severity=FeedbackSeverity.CRITICAL,
+                    label="block",
+                    details=details,
+                )
+            except Exception:
+                pass
+
+    def _update_brain_state(
+        self,
+        sample: Dict[str, Any],
+        history_window: List[Dict[str, Any]],
+        pred_summary: Dict[str, float],
+    ) -> Dict[str, Any]:
+        symbol = str(sample.get("symbol") or self.primary_symbol)
+        price = float(sample.get("price") or 0.0)
+        volume = float(sample.get("volume") or 0.0)
+        if volume <= 0.0 and history_window:
+            try:
+                volume = float(history_window[-1].get("volume", volume))
+            except Exception:
+                pass
+        ts = float(sample.get("ts", time.time()))
+        if price <= 0.0 and history_window:
+            try:
+                price = float(history_window[-1].get("price", price))
+            except Exception:
+                pass
+        price_history = self._price_history.setdefault(symbol, deque(maxlen=self._brain_window))
+        sentiment_history = self._sentiment_history.setdefault(symbol, deque(maxlen=self._brain_window))
+        price_history.append(price)
+        sentiment_history.append(self._extract_sentiment_score(sample))
+        history_prices = np.asarray(list(price_history), dtype=np.float64)
+        history_sentiment = np.asarray(list(sentiment_history), dtype=np.float64)
+        price_windows: Dict[str, np.ndarray] = {}
+        sentiment_windows: Dict[str, np.ndarray] = {}
+        realized_returns: Dict[str, float] = {}
+        for label, horizon in self.swarm.horizon_defs:
+            if history_prices.size >= horizon:
+                price_windows[label] = history_prices[-horizon:].copy()
+                sentiment_windows[label] = history_sentiment[-horizon:].copy()
+                base_index = history_prices.size - horizon - 1
+                if base_index >= 0:
+                    base_price = history_prices[base_index]
+                else:
+                    base_price = history_prices[0]
+                if base_price != 0.0:
+                    realized_returns[label] = (price - base_price) / max(abs(base_price), 1e-9)
+        if realized_returns:
+            try:
+                self.swarm.learn(price_windows, sentiment_windows, realized_returns)
+            except Exception:
+                pass
+        swarm_votes = []
+        try:
+            swarm_votes = self.swarm.vote(price_windows, sentiment_windows)
+        except Exception:
+            swarm_votes = []
+        weight_sum = sum(v.confidence for v in swarm_votes) or 1.0
+        swarm_bias = (
+            sum(v.expected_return * v.confidence for v in swarm_votes) / weight_sum
+            if swarm_votes
+            else 0.0
+        )
+        volatility = float(sample.get("rolling_volatility") or 0.0)
+        if volatility == 0.0 and history_prices.size > 3:
+            volatility = float(np.std(np.diff(history_prices[-min(20, history_prices.size):])))
+        alpha = 0.05
+        self._volatility_avg = (1 - alpha) * self._volatility_avg + alpha * volatility
+        self.graph.upsert_node(symbol, "asset", price, ts, volume=volume, volatility=volatility)
+        prev_price = self._prev_prices.get(symbol)
+        if prev_price is not None:
+            rel_change = (price - prev_price) / max(abs(prev_price), 1e-9)
+            self.graph.upsert_node(f"{symbol}:momentum", "volatility", rel_change, ts)
+            self.graph.reinforce(symbol, f"{symbol}:momentum", ts, rel_change)
+        self._prev_prices[symbol] = price
+        self._graph_decay_counter += 1
+        if self._graph_decay_counter >= 20:
+            try:
+                self.graph.decay_all()
+            finally:
+                self._graph_decay_counter = 0
+        graph_conf = self.graph.confidence_adjustment(symbol)
+        fingerprint = np.array(
+            [
+                price,
+                volume,
+                float(pred_summary.get("direction_prob", 0.5)),
+                float(pred_summary.get("net_margin", 0.0)),
+                float(pred_summary.get("delta", 0.0)),
+                volatility,
+            ],
+            dtype=np.float32,
+        )
+        memory_bias = 0.0
+        memory_meta: Dict[str, float] = {}
+        try:
+            match = self.memory.match(fingerprint)
+        except Exception:
+            match = None
+        if match:
+            memory_bias, memory_meta = match
+        scenarios = self.scenario_reactor.analyse(
+            float(pred_summary.get("net_margin", 0.0)),
+            float(pred_summary.get("direction_prob", 0.5)),
+            volatility,
+        )
+        scenario_spread = self.scenario_reactor.divergence(scenarios)
+        scenario_defer = self.scenario_reactor.should_defer(scenarios)
+        scenario_mod = 1.0
+        if scenario_defer:
+            scenario_mod = 0.0
+        else:
+            scenario_mod = max(0.4, 1.0 - min(0.4, scenario_spread * 10.0))
+        arb_signal_payload: Optional[Dict[str, float]] = None
+        symbol_upper = symbol.upper()
+        if price > 0 and any(tok in symbol_upper for tok in {"ETH", "WETH"}) and any(
+            stable in symbol_upper for stable in {"USDC", "USDT", "DAI"}
+        ):
+            try:
+                arb_signal = self.arb_cell.observe(price, 1.0)
+                arb_signal_payload = {
+                    "action": arb_signal.action,
+                    "spread": float(arb_signal.spread),
+                    "implied_edge": float(arb_signal.implied_edge),
+                    "confidence": float(arb_signal.confidence),
+                }
+            except Exception:
+                arb_signal_payload = None
+        self._last_windows[symbol] = {
+            "prices": {label: window.copy() for label, window in price_windows.items()},
+            "sentiment": {label: window.copy() for label, window in sentiment_windows.items()},
+        }
+        equity = self._current_equity()
+        if equity > self._peak_equity:
+            self._peak_equity = equity
+        drawdown = 0.0
+        if self._peak_equity > 0:
+            drawdown = (equity - self._peak_equity) / max(self._peak_equity, 1e-9)
+        context = {
+            "drawdown": drawdown,
+            "equity": equity,
+            "volatility": volatility,
+            "volatility_avg": self._volatility_avg,
+            "pnl": self.total_profit,
+            "cooldown": max(30.0, 60.0 * (1.0 + min(1.0, abs(drawdown)))),
+        }
+        if self._reflex_blocked_until and time.time() >= self._reflex_blocked_until:
+            self._reflex_block_reason = None
+            self._reflex_blocked_until = 0.0
+        reflex_triggered: List[str] = []
+        try:
+            reflex_triggered = self.event_engine.process(context, ts)
+        except Exception:
+            reflex_triggered = []
+        if reflex_triggered:
+            for rule in reflex_triggered:
+                try:
+                    self.metrics.feedback(
+                        "reflex",
+                        severity=FeedbackSeverity.WARNING,
+                        label=f"trigger_{rule}",
+                        details={"drawdown": drawdown, "volatility": volatility},
+                    )
+                except Exception:
+                    pass
+        reflex_active = time.time() < self._reflex_blocked_until
+        threshold_scale = 1.0
+        if swarm_bias > 0:
+            threshold_scale *= max(0.7, 1.0 - min(0.3, abs(swarm_bias) * 2.0))
+        elif swarm_bias < 0:
+            threshold_scale *= min(1.3, 1.0 + min(0.3, abs(swarm_bias) * 2.0))
+        if memory_bias > 0:
+            threshold_scale *= max(0.75, 1.0 - min(0.2, memory_bias / 5.0))
+        elif memory_bias < 0:
+            threshold_scale *= min(1.25, 1.0 + min(0.2, abs(memory_bias) / 5.0))
+        brain_summary = {
+            "graph_confidence": graph_conf,
+            "swarm_bias": swarm_bias,
+            "swarm_votes": [
+                {"horizon": vote.horizon, "expected": vote.expected_return, "confidence": vote.confidence}
+                for vote in swarm_votes
+            ],
+            "memory_bias": memory_bias,
+            "memory_meta": memory_meta,
+            "scenario_spread": scenario_spread,
+            "scenario_defer": scenario_defer,
+            "scenario_mod": scenario_mod,
+            "scenarios": [
+                {"label": s.label, "expected": s.expected_return, "confidence": s.confidence} for s in scenarios
+            ],
+            "arb_signal": arb_signal_payload,
+            "volatility": volatility,
+            "volatility_avg": self._volatility_avg,
+            "reflex_triggered": reflex_triggered,
+            "reflex_block_active": reflex_active,
+            "reflex_block_until": self._reflex_blocked_until if reflex_active else None,
+            "reflex_reason": self._reflex_block_reason,
+            "threshold_scale": threshold_scale,
+            "fingerprint": fingerprint.tolist(),
+        }
+        try:
+            self.metrics.record(
+                MetricStage.GHOST_TRADING,
+                {
+                    "graph_confidence": graph_conf,
+                    "swarm_bias": swarm_bias,
+                    "scenario_spread": scenario_spread,
+                    "volatility": volatility,
+                },
+                category="brain_state",
+                meta={"symbol": symbol, "reflex_block": reflex_active},
+            )
+        except Exception:
+            pass
+        return brain_summary
+
     def _total_stable(self, chain: str) -> float:
         chain_l = chain.lower()
         if self.live_trading_enabled:
@@ -189,6 +477,28 @@ class TradingBot:
         total = sum(qty for (ch, _), qty in self.sim_quote_balances.items() if ch == chain_l)
         total += max(0.0, self.stable_bank)
         return total
+
+    def _current_equity(self) -> float:
+        if self.live_trading_enabled:
+            stable_liquidity = 0.0
+            try:
+                for holding in self.portfolio.holdings.values():
+                    value = getattr(holding, "usd", None)
+                    if value is None:
+                        continue
+                    stable_liquidity += float(value)
+            except Exception:
+                stable_liquidity = 0.0
+            native_usd = 0.0
+            try:
+                for chain, balance in self.portfolio.native_balances.items():
+                    price_row = self.db.fetch_price(chain, NATIVE_SYMBOL.get(chain, chain.upper()))
+                    price = float(price_row.get("usd")) if price_row and price_row.get("usd") else FALLBACK_NATIVE_PRICE
+                    native_usd += balance * price
+            except Exception:
+                native_usd = 0.0
+            return max(0.0, stable_liquidity + native_usd + self.stable_bank + self.total_profit)
+        return max(0.0, self._sim_initial_pool + self.stable_bank + self.total_profit)
 
     def _compute_base_allocation(self, sample: Dict[str, Any]) -> Dict[str, float]:
         symbol = str(sample.get("symbol") or "")
@@ -451,13 +761,16 @@ class TradingBot:
                     print(f"[portfolio] refresh failed: {exc}")
                     self._schedule_next_portfolio_refresh(now, success=False)
             self._ensure_model_bindings(model)
-            inputs = self._prepare_inputs(list(self._buffer))
+            history_snapshot = list(self._buffer)
+            window_slice = history_snapshot[-self.window_size :]
+            inputs = self._prepare_inputs(window_slice)
             try:
                 preds = self._invoke_model(inputs)
             except Exception as exc:
                 print(f"[trading-bot] prediction failed: {exc}")
                 return
             pred_summary = self._summarise_predictions(preds)
+            brain_summary = self._update_brain_state(sample, history_snapshot, pred_summary)
             await self._run_wallet_sync(reason="pre-schedule")
             directive = None
             try:
@@ -471,7 +784,13 @@ class TradingBot:
                 )
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
-            decision = await self._interpret_predictions(preds, sample, directive, pred_summary)
+            decision = await self._interpret_predictions(
+                preds,
+                sample,
+                directive,
+                pred_summary,
+                brain_summary,
+            )
             if decision and decision.get("action") != "hold":
                 self.queue.append(decision)
                 self.db.log_trade(
@@ -567,8 +886,10 @@ class TradingBot:
         sample: Dict[str, Any],
         directive: Optional[TradeDirective],
         pred_summary: Optional[Dict[str, float]] = None,
+        brain_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         summary = pred_summary or self._summarise_predictions(preds)
+        brain = brain_summary or {}
         exit_conf_val = float(summary.get("exit_conf", 0.5))
         direction_prob = float(summary.get("direction_prob", 0.5))
         delta = float(summary.get("delta", 0.0))
@@ -578,6 +899,37 @@ class TradingBot:
         enter_threshold = max(getattr(self.pipeline, "decision_threshold", 0.58), MIN_CONFIDENCE)
         exit_threshold = min(enter_threshold * 0.6, 0.5)
         max_hold_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600"))
+        graph_conf = float(brain.get("graph_confidence", 1.0) or 1.0)
+        direction_prob = float(np.clip(direction_prob * graph_conf, 0.0, 1.0))
+        swarm_bias = float(brain.get("swarm_bias", 0.0) or 0.0)
+        margin += swarm_bias
+        delta += swarm_bias
+        memory_bias_val = brain.get("memory_bias")
+        if memory_bias_val is not None:
+            try:
+                memory_bias = float(memory_bias_val)
+                direction_prob = float(
+                    np.clip(direction_prob + np.tanh(memory_bias) * 0.05, 0.0, 1.0)
+                )
+                margin += memory_bias * 0.02
+            except Exception:
+                pass
+        threshold_scale = float(brain.get("threshold_scale", 1.0) or 1.0)
+        enter_threshold = float(np.clip(enter_threshold * threshold_scale, 0.45, 0.9))
+        exit_threshold = min(enter_threshold * 0.6, 0.5)
+        scenario_defer = bool(brain.get("scenario_defer"))
+        scenario_mod = float(brain.get("scenario_mod", 1.0) or 1.0)
+        arb_signal = brain.get("arb_signal")
+        if isinstance(arb_signal, dict):
+            action = str(arb_signal.get("action") or "")
+            confidence = float(arb_signal.get("confidence") or 0.0)
+            sym_upper = str(sample.get("symbol", "")).upper()
+            if "ETH" in sym_upper:
+                if action == "buy_eth":
+                    direction_prob = float(np.clip(direction_prob + confidence * 0.05, 0.0, 1.0))
+                elif action == "sell_eth":
+                    direction_prob = float(np.clip(direction_prob - confidence * 0.05, 0.0, 1.0))
+                    margin -= confidence * 0.01
 
         symbol = sample.get("symbol", "asset")
         price = float(sample.get("price", 0.0))
@@ -594,28 +946,17 @@ class TradingBot:
         quote_token = route[-1]
         chain_name = str(sample.get("chain", self.primary_chain)).lower() or self.primary_chain
         pos = self.positions.get(symbol)
-        if chain_name != self.primary_chain:
-            required_float = float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000"))
-            if self.portfolio.stable_liquidity(self.primary_chain) < required_float:
-                decision["status"] = "hold-nonprimary"
-                return decision
-        gas_required = self._estimate_gas_cost(chain_name, route)
-        use_sim = not self.live_trading_enabled
-        if use_sim:
-            available_quote = self._get_quote_balance(chain_name, quote_token)
-            available_base = float(pos.get("size", 0.0)) if pos else 0.0
-            native_balance = max(
-                self.sim_native_balances.get(chain_name, gas_required * self.gas_buffer_multiplier),
-                gas_required,
-            )
-        else:
-            available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
-            available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
-            native_balance = self.portfolio.get_native_balance(chain_name)
-
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
         fees = 0.0015 + 0.005
-
+        brain_payload = {}
+        if brain:
+            brain_payload = {
+                key: value
+                for key, value in brain.items()
+                if key not in {"fingerprint"}
+            }
+            if brain.get("fingerprint") is not None:
+                brain_payload["fingerprint"] = list(brain.get("fingerprint") or [])
         decision: Dict[str, Any] = {
             "timestamp": sample.get("ts", time.time()),
             "symbol": symbol,
@@ -631,12 +972,51 @@ class TradingBot:
             "route": route,
             "bus_plan": directive.to_dict() if directive else None,
             "session_id": self.ghost_session_id,
+            "brain": brain_payload,
         }
+        if chain_name != self.primary_chain:
+            required_float = float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000"))
+            if self.portfolio.stable_liquidity(self.primary_chain) < required_float:
+                decision["status"] = "hold-nonprimary"
+                decision["reason"] = "insufficient-float"
+                return decision
+        if time.time() < self._reflex_blocked_until:
+            decision.update(
+                {
+                    "status": "reflex-blocked",
+                    "reason": f"reflex:{self._reflex_block_reason or 'safety'}",
+                    "blocked_until": self._reflex_blocked_until,
+                }
+            )
+            return decision
+        gas_required = self._estimate_gas_cost(chain_name, route)
+        use_sim = not self.live_trading_enabled
+        if use_sim:
+            available_quote = self._get_quote_balance(chain_name, quote_token)
+            available_base = float(pos.get("size", 0.0)) if pos else 0.0
+            native_balance = max(
+                self.sim_native_balances.get(chain_name, gas_required * self.gas_buffer_multiplier),
+                gas_required,
+            )
+        else:
+            available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
+            available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
+            native_balance = self.portfolio.get_native_balance(chain_name)
 
         trade_size = max(min(volume * self.max_trade_share, volume), 0.0)
         trade_size = min(trade_size, 100.0)
         if directive and directive.size > 0:
             trade_size = float(directive.size)
+        if pos is None:
+            trade_size *= max(0.0, scenario_mod)
+        if scenario_defer and pos is None:
+            decision.update(
+                {
+                    "status": "scenario-hold",
+                    "reason": "scenario_spread",
+                }
+            )
+            return decision
         if native_balance < gas_required:
             if self.live_trading_enabled:
                 strategy = self._plan_gas_replenishment(
@@ -787,7 +1167,13 @@ class TradingBot:
                 "route": route,
                 "bus_index": 0,
                 "target_price": directive.target_price if directive else None,
+                "brain_snapshot": brain_payload,
             }
+            if brain.get("fingerprint"):
+                try:
+                    self.positions[symbol]["fingerprint"] = list(brain.get("fingerprint") or [])
+                except Exception:
+                    self.positions[symbol]["fingerprint"] = []
             decision.update(
                 {
                     "action": "enter",
@@ -804,6 +1190,8 @@ class TradingBot:
                     "session_id": self.ghost_session_id,
                 }
             )
+            if isinstance(decision.get("brain"), dict):
+                decision["brain"]["entry_trade_id"] = trade_id
             exposure_delta = trade_size * price
             self.active_exposure[symbol] = self.active_exposure.get(symbol, 0.0) + exposure_delta
             entry_metrics = {
@@ -881,6 +1269,30 @@ class TradingBot:
             trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
             entry_ts = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
             duration_sec = max(0.0, sample_ts - entry_ts)
+            pos_fingerprint = pos.get("fingerprint")
+            if pos_fingerprint is not None:
+                try:
+                    self.memory.add(
+                        np.asarray(pos_fingerprint, dtype=np.float32),
+                        profit,
+                        duration=duration_sec,
+                        size=exit_size,
+                    )
+                except Exception:
+                    pass
+            if profit != 0.0:
+                try:
+                    self.graph.upsert_node(
+                        f"{symbol}:pnl",
+                        "portfolio",
+                        profit,
+                        sample_ts,
+                        duration=duration_sec,
+                    )
+                    strength = float(np.tanh(profit / max(abs(pos["entry_price"]), 1e-6)))
+                    self.graph.reinforce(symbol, f"{symbol}:pnl", sample_ts, strength)
+                except Exception:
+                    pass
             del self.positions[symbol]
             decision.update(
                 {
@@ -906,6 +1318,8 @@ class TradingBot:
                     "session_id": self.ghost_session_id,
                 }
             )
+            if isinstance(decision.get("brain"), dict):
+                decision["brain"]["realized_profit"] = profit
             exposure_delta = exit_size * price
             remaining = max(0.0, self.active_exposure.get(symbol, 0.0) - exposure_delta)
             if remaining <= 1e-6:
@@ -1332,16 +1746,31 @@ class TradingBot:
         self.realized_profit = float(ghost.get("realized_profit", self.realized_profit))
         self.total_trades = int(ghost.get("total_trades", self.total_trades))
         self.wins = int(ghost.get("wins", self.wins))
-        self.positions = {
-            sym: {
+        positions: Dict[str, Dict[str, Any]] = {}
+        for sym, pos in ghost.get("positions", {}).items():
+            if not isinstance(pos, dict):
+                continue
+            entry_ts_val = float(pos.get("entry_ts", pos.get("ts", time.time())))
+            fingerprint_val = pos.get("fingerprint")
+            if isinstance(fingerprint_val, np.ndarray):
+                fingerprint_list = fingerprint_val.tolist()
+            elif isinstance(fingerprint_val, list):
+                fingerprint_list = fingerprint_val
+            else:
+                fingerprint_list = []
+            positions[str(sym)] = {
                 "entry_price": float(pos.get("entry_price", 0.0)),
                 "size": float(pos.get("size", 0.0)),
                 "ts": float(pos.get("ts", time.time())),
+                "entry_ts": entry_ts_val,
                 "route": list(pos.get("route", [])),
                 "bus_index": int(pos.get("bus_index", 0)),
+                "trade_id": pos.get("trade_id"),
+                "target_price": pos.get("target_price"),
+                "fingerprint": fingerprint_list,
+                "brain_snapshot": pos.get("brain_snapshot"),
             }
-            for sym, pos in ghost.get("positions", {}).items()
-        }
+        self.positions = positions
         routes = ghost.get("routes")
         if isinstance(routes, dict):
             self.bus_routes = {sym: list(tokens) for sym, tokens in routes.items()}
@@ -1366,13 +1795,20 @@ class TradingBot:
             state = {}
         if not isinstance(state, dict):
             state = {}
+        positions_payload: Dict[str, Dict[str, Any]] = {}
+        for sym, pos in self.positions.items():
+            pos_copy = dict(pos)
+            fingerprint_val = pos_copy.get("fingerprint")
+            if isinstance(fingerprint_val, np.ndarray):
+                pos_copy["fingerprint"] = fingerprint_val.tolist()
+            positions_payload[str(sym)] = pos_copy
         state["ghost_trading"] = {
             "stable_bank": self.stable_bank,
             "total_profit": self.total_profit,
             "realized_profit": self.realized_profit,
             "total_trades": self.total_trades,
             "wins": self.wins,
-            "positions": self.positions,
+            "positions": positions_payload,
             "routes": self.bus_routes,
             "sim_quote_balances": {f"{chain}:{symbol}": amount for (chain, symbol), amount in self.sim_quote_balances.items()},
             "sim_native_balances": self.sim_native_balances,
