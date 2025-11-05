@@ -11,6 +11,7 @@ import numpy as np
 from db import get_db, TradingDatabase
 from trading.data_stream import _split_symbol
 from trading.portfolio import PortfolioState
+from trading.constants import PRIMARY_CHAIN
 
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("5m", 5 * 60),
@@ -66,6 +67,8 @@ class RouteState:
     last_directive: Optional[TradeDirective] = None
     last_update: float = 0.0
     last_signature: Optional[Tuple[float, float]] = None
+    cached_signals: Optional[List[HorizonSignal]] = None
+    forecast_signature: Optional[Tuple[int, float, float]] = None
 
 
 class BusScheduler:
@@ -112,10 +115,11 @@ class BusScheduler:
         direction_prob = float(pred_summary.get("direction_prob", 0.5))
         confidence = float(pred_summary.get("exit_conf", 0.5))
         net_margin = float(pred_summary.get("net_margin", 0.0))
+        chain_name = str(sample.get("chain", PRIMARY_CHAIN)).lower()
 
-        available_quote = portfolio.get_quantity(state.quote_token)
-        available_base = portfolio.get_quantity(state.base_token)
-        native_balance = portfolio.get_native_balance("ethereum")
+        available_quote = portfolio.get_quantity(state.quote_token, chain=chain_name)
+        available_base = portfolio.get_quantity(state.base_token, chain=chain_name)
+        native_balance = portfolio.get_native_balance(chain_name)
         # crude gas safety
         if native_balance < 0.01:
             return None
@@ -214,6 +218,8 @@ class BusScheduler:
         state.samples.append((ts, price, volume))
         state.last_update = ts
         state.last_signature = signature
+        state.cached_signals = None
+        state.forecast_signature = None
         self._trim_history(state)
         return state
 
@@ -245,6 +251,9 @@ class BusScheduler:
     def _forecast(self, state: RouteState) -> List[HorizonSignal]:
         if len(state.samples) < 12:
             return []
+        signature_key = (len(state.samples), state.samples[-1][0], state.samples[-1][1])
+        if state.cached_signals is not None and state.forecast_signature == signature_key:
+            return state.cached_signals
         times = np.array([row[0] for row in state.samples], dtype=float)
         prices = np.array([row[1] for row in state.samples], dtype=float)
         prices = np.nan_to_num(prices, nan=0.0, neginf=0.0, posinf=0.0)
@@ -302,4 +311,6 @@ class BusScheduler:
                     zscore=zscore,
                 )
             )
+        state.cached_signals = signals
+        state.forecast_signature = signature_key
         return signals

@@ -16,6 +16,7 @@ import aiohttp
 
 from db import get_db
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
+from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
 
 
 CallbackType = Union[Callable[[Dict[str, Any]], Awaitable[None]], Callable[[Dict[str, Any]], None]]
@@ -97,8 +98,8 @@ class MarketDataStream:
         self,
         *,
         url: Optional[str] = None,
-        symbol: str = "ETH-USD",
-        chain: str = "ethereum",
+        symbol: str = PRIMARY_SYMBOL,
+        chain: str = PRIMARY_CHAIN,
         simulation_interval: float = 2.0,
         ws_template: Optional[str] = None,
         subscribe_template: Optional[str] = None,

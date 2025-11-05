@@ -8,6 +8,7 @@ from typing import Dict, Iterable, Optional, Tuple
 
 from cache import CacheBalances
 from db import get_db, TradingDatabase
+from trading.constants import PRIMARY_CHAIN
 
 try:  # pragma: no cover - optional dependency
     from eth_account import Account  # type: ignore
@@ -47,7 +48,7 @@ class PortfolioState:
         self,
         *,
         wallet: Optional[str] = None,
-        chains: Iterable[str] = ("ethereum",),
+        chains: Iterable[str] = (PRIMARY_CHAIN,),
         refresh_interval: float = 300.0,
         db: Optional[TradingDatabase] = None,
     ) -> None:
@@ -178,4 +179,3 @@ class PortfolioState:
     @refresh_interval.setter
     def refresh_interval(self, value: float) -> None:
         self._refresh_interval = max(60.0, float(value))
-

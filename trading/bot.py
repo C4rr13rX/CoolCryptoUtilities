@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 import os
 from collections import deque
@@ -17,6 +18,15 @@ from trading.portfolio import PortfolioState, NATIVE_SYMBOL
 from trading.scheduler import BusScheduler, TradeDirective
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
+from trading.constants import (
+    PRIMARY_CHAIN,
+    PRIMARY_SYMBOL,
+    MIN_CONFIDENCE,
+    SMALL_PROFIT_FLOOR,
+    MAX_QUOTE_SHARE,
+    GAS_PROFIT_BUFFER,
+    FALLBACK_NATIVE_PRICE,
+)
 
 try:
     from router_wallet import UltraSwapBridge  # type: ignore
@@ -41,7 +51,7 @@ class TradingBot:
     ) -> None:
         self.db = db or get_db()
         self.pipeline = pipeline or TrainingPipeline(db=self.db)
-        self.stream = stream or MarketDataStream()
+        self.stream = stream or MarketDataStream(symbol=PRIMARY_SYMBOL, chain=PRIMARY_CHAIN)
         self.window_size = window_size
         self._buffer: deque = deque(maxlen=window_size)
         self.queue: List[Dict[str, Any]] = []
@@ -53,7 +63,7 @@ class TradingBot:
         self.realized_profit: float = 0.0
         self.total_trades: int = 0
         self.wins: int = 0
-        self.max_trade_share: float = 0.15
+        self.max_trade_share: float = min(0.5, max(0.05, MAX_QUOTE_SHARE))
         self.stable_checkpoint_ratio: float = 0.15
         self.bus_routes: Dict[str, List[str]] = {}
         self.stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD"}
@@ -83,8 +93,11 @@ class TradingBot:
         self._processing_sample: bool = False
         self._last_sample_signature: Optional[Tuple[str, float]] = None
         self._last_gas_advisory_signature: Optional[str] = None
-        self.gas_buffer_multiplier: float = max(1.0, float(os.getenv("GAS_BUFFER_MULTIPLIER", "1.5")))
-        self.gas_profit_guard: float = max(1.0, float(os.getenv("GAS_PROFIT_SAFETY", "1.2")))
+        self.primary_chain: str = PRIMARY_CHAIN
+        self.primary_symbol: str = PRIMARY_SYMBOL
+        self.gas_buffer_multiplier: float = max(1.0, float(os.getenv("GAS_BUFFER_MULTIPLIER", str(GAS_PROFIT_BUFFER))))
+        self.gas_profit_guard: float = max(1.0, float(os.getenv("GAS_PROFIT_SAFETY", str(GAS_PROFIT_BUFFER))))
+        self._latency_samples: int = 0
 
     async def start(self) -> None:
         if self._running:
@@ -259,6 +272,13 @@ class TradingBot:
             summary["net_pnl"] = float(preds[5][0][0])
         except Exception:
             summary["net_pnl"] = summary.get("net_margin", 0.0)
+        temp_scale = getattr(self.pipeline, "temperature_scale", 1.0)
+        if temp_scale and temp_scale > 0:
+            raw_prob = float(np.clip(summary["direction_prob"], 1e-6, 1.0 - 1e-6))
+            logit = math.log(raw_prob / (1.0 - raw_prob))
+            calibrated = 1.0 / (1.0 + math.exp(-logit / temp_scale))
+            summary["direction_prob_raw"] = summary["direction_prob"]
+            summary["direction_prob"] = float(np.clip(calibrated, 1e-6, 1.0 - 1e-6))
         return summary
 
     async def stop(self) -> None:
@@ -349,6 +369,24 @@ class TradingBot:
                 category="latency",
                 meta={"window": len(self._buffer), "queue_depth": len(self._pending_queue)},
             )
+            self._latency_samples += 1
+            if self._latency_samples % 20 == 0 and self._latency_window:
+                window_arr = np.asarray(self._latency_window, dtype=np.float64)
+                ttl_avg_ms = float(np.mean(window_arr) * 1000.0)
+                ttl_p95_ms = float(np.percentile(window_arr, 95) * 1000.0)
+                self.metrics.record(
+                    MetricStage.LIVE_TRADING,
+                    {"ttl_ms_avg": ttl_avg_ms, "ttl_ms_p95": ttl_p95_ms},
+                    category="latency_summary",
+                    meta={"sample_count": len(window_arr)},
+                )
+                if ttl_p95_ms > 50.0:
+                    self.metrics.feedback(
+                        "latency",
+                        severity=FeedbackSeverity.WARNING,
+                        label="high_ttl_window",
+                        details={"ttl_ms_p95": ttl_p95_ms, "ttl_ms_avg": ttl_avg_ms},
+                    )
             if latency > 0.05:
                 self.metrics.feedback(
                     "latency",
@@ -414,8 +452,9 @@ class TradingBot:
         margin = float(summary.get("net_margin", 0.0))
         pnl = float(summary.get("net_pnl", margin))
         sample_ts = float(sample.get("ts", time.time()))
-        enter_threshold = getattr(self.pipeline, "decision_threshold", 0.58)
-        exit_threshold = min(enter_threshold * 0.75, 0.5)
+        enter_threshold = max(getattr(self.pipeline, "decision_threshold", 0.58), MIN_CONFIDENCE)
+        exit_threshold = min(enter_threshold * 0.6, 0.5)
+        max_hold_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600"))
 
         symbol = sample.get("symbol", "asset")
         price = float(sample.get("price", 0.0))
@@ -430,7 +469,12 @@ class TradingBot:
 
         base_token = route[0]
         quote_token = route[-1]
-        chain_name = sample.get("chain", "ethereum")
+        chain_name = str(sample.get("chain", self.primary_chain)).lower() or self.primary_chain
+        if chain_name != self.primary_chain:
+            required_float = float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000"))
+            if self.portfolio.stable_liquidity(self.primary_chain) < required_float:
+                decision["status"] = "hold-nonprimary"
+                return decision
         available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
         available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
         native_balance = self.portfolio.get_native_balance(chain_name)
@@ -503,7 +547,9 @@ class TradingBot:
             return decision
         if trade_size > 0.0 and price > 0.0 and available_quote > 0.0:
             max_affordable = max(0.0, available_quote / price)
-            trade_size = min(trade_size, max_affordable)
+            trade_size = min(trade_size, max_affordable * self.max_trade_share)
+        min_margin_required = max(fees * 1.5, SMALL_PROFIT_FLOOR)
+        expected_profit_units = margin * max(trade_size, 0.0) * max(price, 1e-9)
         if trade_size <= 0.0:
             if pos is not None:
                 decision.update(
@@ -533,7 +579,13 @@ class TradingBot:
             should_exit = True
             reason = directive.reason
         elif pos is None:
-            if direction_prob > enter_threshold and exit_conf_val >= 0.6 and margin > fees * 1.1:
+            if (
+                direction_prob >= enter_threshold
+                and exit_conf_val >= enter_threshold
+                and margin >= min_margin_required
+                and expected_profit_units >= SMALL_PROFIT_FLOOR
+                and delta >= 0.0
+            ):
                 should_enter = True
                 reason = "model-long"
         else:
@@ -660,6 +712,9 @@ class TradingBot:
                 checkpoint = profit * self.stable_checkpoint_ratio
                 self.stable_bank += checkpoint
                 profit -= checkpoint
+            elif profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
+                decision.update({"status": "hold-negative", "reason": reason or "hold"})
+                return decision
             self.total_profit += profit
             self.realized_profit += profit
             trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
@@ -730,6 +785,28 @@ class TradingBot:
                 "[ghost] exit %s size=%.4f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
                 % (symbol, exit_size, price, profit, self.stable_bank, reason or "exit")
             )
+            if profit > 0 and decision.get("wallet", "ghost") == "live":
+                strategy = self._plan_gas_replenishment(
+                    chain=chain_name,
+                    route=route,
+                    native_balance=native_balance,
+                    gas_required=gas_required,
+                    trade_size=trade_size,
+                    price=price,
+                    margin=margin,
+                    pnl=pnl,
+                    available_quote=available_quote,
+                    symbol=symbol,
+                )
+                if strategy:
+                    executed = self._rebalance_for_gas(chain_name, strategy)
+                    if executed:
+                        self.metrics.feedback(
+                            "trading",
+                            severity=FeedbackSeverity.INFO,
+                            label="gas_rebalanced",
+                            details={"chain": chain_name, "strategy": strategy},
+                        )
             return decision
 
         if pos is not None:
@@ -775,6 +852,28 @@ class TradingBot:
             adjustment = 0.5
         interval = float(np.clip(base * adjustment, 60.0, 900.0))
         self._portfolio_next_refresh = now + interval
+        self._maybe_expand_chains()
+
+    def _maybe_expand_chains(self) -> None:
+        """
+        Start on the primary chain (Base) and progressively enable additional
+        networks only when the stablecoin float justifies the added latency.
+        """
+        total_stable = self.portfolio.stable_liquidity(self.primary_chain)
+        if total_stable < float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000")):
+            return
+        desired_chains = {self.primary_chain}
+        optional_chains = os.getenv("SECONDARY_CHAINS", "ethereum,arbitrum,optimism").split(",")
+        for chain in optional_chains:
+            chain_clean = chain.strip().lower()
+            if not chain_clean:
+                continue
+            desired_chains.add(chain_clean)
+            if len(desired_chains) >= 3:
+                break
+        current = set(self.portfolio.chains)
+        if desired_chains != current:
+            self.portfolio.chains = tuple(desired_chains)
 
     def _estimate_gas_cost(self, chain: str, route: List[str]) -> float:
         base_cost = float(os.getenv("ESTIMATED_GAS_NATIVE", "0.001"))
@@ -803,12 +902,12 @@ class TradingBot:
             pass
         if price_candidate <= 0.0:
             env_key = f"FALLBACK_NATIVE_PRICE_{chain_l.upper()}"
-            fallback = os.getenv(env_key) or os.getenv("FALLBACK_NATIVE_PRICE")
-            if fallback:
-                try:
-                    price_candidate = float(fallback)
-                except Exception:
-                    price_candidate = 0.0
+            fallback_raw = os.getenv(env_key) or os.getenv("FALLBACK_NATIVE_PRICE")
+            try:
+                fallback_val = float(fallback_raw) if fallback_raw else FALLBACK_NATIVE_PRICE
+            except Exception:
+                fallback_val = FALLBACK_NATIVE_PRICE
+            price_candidate = fallback_val
         if price_candidate <= 0.0:
             if native_symbol in {"ETH", "WETH"} or symbol.upper().endswith("WETH"):
                 return 1800.0
@@ -963,6 +1062,44 @@ class TradingBot:
         self.metrics.feedback("advisory", severity=severity, label=topic, details=details)
         if signature:
             self._last_gas_advisory_signature = signature
+
+    def _rebalance_for_gas(self, chain: str, strategy: Dict[str, Any]) -> bool:
+        if not strategy or not strategy.get("stable_swap_plan"):
+            return False
+        if self._bridge is None:
+            self._bridge = self._init_bridge()
+        if self._bridge is None:
+            return False
+        try:
+            from services.swap_service import SwapService  # type: ignore
+        except Exception as exc:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="gas_swap_unavailable",
+                details={"reason": str(exc)},
+            )
+            return False
+
+        swapper = SwapService(self._bridge)
+        slippage = int(os.getenv("GAS_REFILL_SLIPPAGE_BPS", "75"))
+        executed = False
+        for plan in strategy.get("stable_swap_plan", []):
+            spend = float(plan.get("spend_stable", 0.0))
+            token = plan.get("token")
+            if spend <= 0.0 or not token:
+                continue
+            try:
+                swapper.swap(chain=chain, sell=token, buy="native", amount_human=f"{spend:.4f}", slippage_bps=slippage)
+                executed = True
+            except Exception as exc:
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="gas_swap_failed",
+                    details={"token": token, "amount": spend, "reason": str(exc)},
+                )
+        return executed
 
     def record_fill(
         self,

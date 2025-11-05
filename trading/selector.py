@@ -16,17 +16,11 @@ from trading.bot import TradingBot
 from trading.data_stream import MarketDataStream, _split_symbol, TOKEN_NORMALIZATION
 from trading.pipeline import TrainingPipeline
 from trading.portfolio import PortfolioState
+from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
 
-DEFAULT_LIVE_PAIRS: List[str] = [
-    "WETH-USDT",
-    "USDC-WETH",
-    "DAI-WETH",
-    "WBTC-WETH",
-    "UNI-WETH",
-    "PEPE-WETH",
-]
+DEFAULT_LIVE_PAIRS: List[str] = [PRIMARY_SYMBOL]
 
 @dataclass
 class PairCandidate:
@@ -42,7 +36,8 @@ _LIVE_PAIR_CACHE: Dict[str, bool] = {}
 
 
 def _load_top_symbols(limit: int = 100) -> List[str]:
-    path = Path(os.getenv("PAIR_INDEX_PATH", "data/pair_index_top2000.json"))
+    default_index = Path("data") / f"pair_index_{PRIMARY_CHAIN}.json"
+    path = Path(os.getenv("PAIR_INDEX_PATH", str(default_index)))
     if not path.exists():
         return []
     try:
@@ -110,7 +105,7 @@ def _probe_dexscreener(symbol: str) -> bool:
 
 
 def _has_historical_price(symbol: str) -> bool:
-    data_dir = Path("data/historical_ohlcv")
+    data_dir = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")) / PRIMARY_CHAIN
     symbol_upper = symbol.upper()
     try:
         for json_file in data_dir.glob(f"*_{symbol_upper}.json"):
@@ -140,7 +135,7 @@ def _has_live_price(symbol: str) -> bool:
 
 
 def _load_pair_metadata() -> Dict[str, str]:
-    index_path = Path("data/pair_index_top2000.json")
+    index_path = Path("data") / f"pair_index_{PRIMARY_CHAIN}.json"
     if not index_path.exists():
         return {}
     try:
@@ -158,7 +153,7 @@ def _load_pair_metadata() -> Dict[str, str]:
 
 def analyse_historical_pairs(
     *,
-    data_dir: Path = Path("data/historical_ohlcv"),
+    data_dir: Path = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")) / PRIMARY_CHAIN,
     min_samples: int = 120,
 ) -> List[PairCandidate]:
     entries: List[PairCandidate] = []
@@ -301,7 +296,7 @@ class GhostTradingSupervisor:
             return
         pairs = select_pairs(limit=self.pair_limit)
         for pair in pairs:
-            stream = MarketDataStream(symbol=pair.symbol, chain="ethereum")
+            stream = MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN)
             bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
             bot.configure_route(pair.symbol, pair.tokens)
             bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio

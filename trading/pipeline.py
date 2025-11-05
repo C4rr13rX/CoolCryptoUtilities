@@ -12,6 +12,7 @@ import numpy as np
 import tensorflow as tf
 
 from db import TradingDatabase, get_db
+from trading.constants import PRIMARY_SYMBOL
 from model_definition import (
     ExponentialDecay,
     StateSaver,
@@ -79,12 +80,13 @@ class TrainingPipeline:
 
         self.window_size = 60
         self.sent_seq_len = 24
-        self.tech_count = 12
+        self.tech_count = 35
         self.data_loader = HistoricalDataLoader()
         self.iteration: int = 0
         self.active_accuracy: float = 0.0
         self.target_positive_floor = float(os.getenv("TRAIN_POSITIVE_FLOOR", "0.15"))
         self.decision_threshold = float(os.getenv("PRICE_DIR_THRESHOLD", "0.58"))
+        self.temperature_scale: float = 1.0
         self._load_state()
         self._active_model: Optional[tf.keras.Model] = None
         self.metrics = MetricsCollector(self.db)
@@ -93,6 +95,7 @@ class TrainingPipeline:
         self._vectorizer_signature: Optional[str] = None
         self._vectorizer_cache: set[str] = set()
         self._last_dataset_meta: Dict[str, Any] = {}
+        self.primary_symbol = PRIMARY_SYMBOL
 
     # ------------------------------------------------------------------
     # Public API
@@ -284,6 +287,10 @@ class TrainingPipeline:
             category="runtime_eval",
             meta={"iteration": self.iteration},
         )
+        new_temperature = self._safe_float(evaluation.get("temperature", self.temperature_scale))
+        if new_temperature > 0:
+            new_temperature = float(np.clip(new_temperature, 0.25, 4.0))
+            self.temperature_scale = float(0.8 * self.temperature_scale + 0.2 * new_temperature)
 
         version = f"candidate-{int(time.time())}"
         path = self.model_dir / f"{version}.keras"
@@ -318,11 +325,13 @@ class TrainingPipeline:
             "ghost_pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
             "ghost_realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
             "false_positive_rate": self._safe_float(evaluation.get("false_positive_rate", 0.0)),
+            "brier_score": self._safe_float(evaluation.get("brier_score", 0.0)),
             "best_threshold": self._safe_float(evaluation.get("best_threshold", self.decision_threshold)),
             "ghost_trades_best": self._safe_float(evaluation.get("ghost_trades_best", 0.0)),
             "best_profit_factor": self._safe_float(evaluation.get("best_profit_factor", 0.0)),
             "best_win_rate": self._safe_float(evaluation.get("ghost_win_rate_best", 0.0)),
             "temperature": self._safe_float(evaluation.get("temperature", 1.0)),
+            "temperature_scale": float(self.temperature_scale),
             "drift_alert": self._safe_float(evaluation.get("drift_alert", 0.0)),
             "drift_stat": self._safe_float(evaluation.get("drift_stat", 0.0)),
         }
@@ -478,6 +487,13 @@ class TrainingPipeline:
             margin_stats = distribution_report(margin_arr)
             dir_arr = targets["price_dir"].reshape(-1)
             positive_ratio = float(np.mean(dir_arr > 0.5)) if dir_arr.size else 0.0
+            per_asset_ratio: Dict[str, float] = {}
+            asset_lexicon = getattr(self.data_loader, "asset_lexicon", {})
+            if asset_lexicon and asset_ids.size:
+                for idx, symbol in asset_lexicon.items():
+                    mask = asset_ids == idx
+                    if np.any(mask):
+                        per_asset_ratio[symbol] = float(np.mean(dir_arr[mask] > 0.5))
             dataset_metrics = {
                 "samples": sample_count,
                 "asset_diversity": asset_diversity,
@@ -485,12 +501,21 @@ class TrainingPipeline:
                 "news_coverage_ratio": news_coverage,
                 "positive_ratio": positive_ratio,
             }
+            if per_asset_ratio:
+                top_symbol, top_ratio = max(per_asset_ratio.items(), key=lambda kv: kv[1])
+                low_symbol, low_ratio = min(per_asset_ratio.items(), key=lambda kv: kv[1])
+                dataset_metrics["asset_positive_top"] = top_ratio
+                dataset_metrics["asset_positive_bottom"] = low_ratio
+                dataset_metrics["asset_positive_span"] = top_ratio - low_ratio
             dataset_metrics.update({f"net_margin_{k}": v for k, v in margin_stats.items()})
             dataset_meta = {
                 "iteration": self.iteration,
                 "focus_assets": list(focus_assets or []),
                 "signature": self.data_loader.dataset_signature(),
             }
+            if per_asset_ratio:
+                dataset_meta["asset_positive_top_symbol"] = top_symbol
+                dataset_meta["asset_positive_bottom_symbol"] = low_symbol
             self._last_dataset_meta = {
                 **dataset_metrics,
                 **dataset_meta,
@@ -586,6 +611,7 @@ class TrainingPipeline:
                 self.iteration = int(tp_state.get("iteration", 0))
                 self.active_accuracy = float(tp_state.get("active_accuracy", self.active_accuracy))
                 self.decision_threshold = float(tp_state.get("decision_threshold", self.decision_threshold))
+                self.temperature_scale = float(tp_state.get("temperature_scale", self.temperature_scale))
                 optimizer_state = tp_state.get("optimizer")
                 if optimizer_state:
                     self.optimizer.set_state(optimizer_state)
@@ -602,6 +628,7 @@ class TrainingPipeline:
             "optimizer": self.optimizer.get_state(),
             "active_accuracy": float(self.active_accuracy),
             "decision_threshold": float(self.decision_threshold),
+            "temperature_scale": float(self.temperature_scale),
         }
         try:
             self.db.save_state(state)
@@ -680,6 +707,7 @@ class TrainingPipeline:
             "execution_bias": self._execution_bias(),
         }
         summary["positive_ratio"] = self._safe_float(np.mean(price_dir_true > 0.5))
+        summary["brier_score"] = self._safe_float(np.mean(np.square(price_dir_scores - price_dir_true)))
         negatives = summary["false_positives"] + summary["true_negatives"]
         summary["false_positive_rate"] = self._safe_float(
             summary["false_positives"] / max(1, negatives)
@@ -849,6 +877,8 @@ class TrainingPipeline:
         focus_assets = [
             item["symbol"] for item in ranked if item["score"] > 0.0
         ][: self.focus_max_assets]
+        if not focus_assets and self.primary_symbol:
+            focus_assets = [self.primary_symbol]
         self.metrics.record(
             MetricStage.GHOST_TRADING,
             aggregate,

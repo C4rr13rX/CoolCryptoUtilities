@@ -13,6 +13,9 @@ import numpy as np
 import pandas as pd
 import requests
 
+from trading.constants import PRIMARY_CHAIN
+from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
+
 TOKEN_SYNONYMS = {
     "BTC": ["bitcoin", "btc"],
     "BITCOIN": ["btc"],
@@ -46,7 +49,8 @@ class HistoricalDataLoader:
         max_files: Optional[int] = 5,
         max_samples_per_file: Optional[int] = 256,
     ) -> None:
-        self.data_dir = Path(data_dir or os.getenv("HISTORICAL_DATA_DIR", "data/historical_ohlcv")).expanduser()
+        default_dir = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")) / PRIMARY_CHAIN
+        self.data_dir = Path(data_dir or os.getenv("HISTORICAL_DATA_DIR", str(default_dir))).expanduser()
         self.max_files = max_files
         self.max_samples_per_file = max_samples_per_file
         self._headline_samples: List[str] = []
@@ -150,6 +154,8 @@ class HistoricalDataLoader:
                     price_slice=price_slice,
                     buy_slice=buy_volumes[start:end],
                     sell_slice=sell_volumes[start:end],
+                    net_slice=net_volumes[start:end],
+                    timestamp_slice=timestamps[start:end],
                 )
                 if len(tech_features) < tech_count:
                     tech_features = np.pad(
@@ -342,7 +348,14 @@ class HistoricalDataLoader:
         unique = list(dict.fromkeys(pool))
         return unique[:limit]
 
-    def _compute_tech_features(self, price_slice: np.ndarray, buy_slice: np.ndarray, sell_slice: np.ndarray) -> np.ndarray:
+    def _compute_tech_features(
+        self,
+        price_slice: np.ndarray,
+        buy_slice: np.ndarray,
+        sell_slice: np.ndarray,
+        net_slice: np.ndarray,
+        timestamp_slice: np.ndarray,
+    ) -> np.ndarray:
         returns = np.diff(price_slice, prepend=price_slice[0])
         returns = np.clip(returns, -1e3, 1e3)
         mean_price = float(price_slice.mean())
@@ -359,8 +372,8 @@ class HistoricalDataLoader:
             np.arange(len(price_slice)),
             price_slice
         )[0, 1])
-        features = np.array(
-            [
+        advanced = ADV_ENGINE.compute(price_slice, net_slice, timestamp_slice)
+        feature_vector: List[float] = [
                 mean_price,
                 std_price,
                 last_return,
@@ -376,9 +389,9 @@ class HistoricalDataLoader:
                 float(np.mean(np.square(returns))),
                 float(np.percentile(price_slice, 25)),
                 float(np.percentile(price_slice, 75)),
-            ],
-            dtype=np.float32,
-        )
+        ]
+        feature_vector.extend(advanced.values.get(name, 0.0) for name in advanced_feature_names())
+        features = np.array(feature_vector, dtype=np.float32)
         if np.isnan(features).any():
             features = np.nan_to_num(features)
         return features
@@ -403,6 +416,10 @@ class HistoricalDataLoader:
     @property
     def asset_vocab_size(self) -> int:
         return max(1, len(self._asset_vocab) + 1)
+
+    @property
+    def asset_lexicon(self) -> Dict[int, str]:
+        return {idx: symbol for symbol, idx in self._asset_vocab.items()}
 
     def _get_asset_id(self, symbol: str) -> int:
         key = symbol.upper()
@@ -437,7 +454,7 @@ class HistoricalDataLoader:
         return {t.upper() for t in tokens}
 
     def _build_keyword_map(self) -> Dict[str, set[str]]:
-        path = self.data_dir.parent / "pair_index_top2000.json"
+        path = self.data_dir.parent / f"pair_index_{PRIMARY_CHAIN}.json"
         tokens: set[str] = set()
         if path.exists():
             with path.open("r", encoding="utf-8") as f:
@@ -552,11 +569,11 @@ class HistoricalDataLoader:
 
         df = df.copy()
         df["timestamp"] = pd.to_numeric(df.get("timestamp"), errors="coerce")
-        df = df.dropna(subset=["timestamp", "article"])
+        df["article"] = df.get("article", pd.Series("", index=df.index)).astype(str)
+        df = df.dropna(subset=["timestamp"])
         df["timestamp"] = df["timestamp"].astype(np.int64)
-        df["headline"] = df.get("headline", "").astype(str)
-        df["article"] = df["article"].astype(str)
-        df["sentiment"] = df.get("sentiment", "neutral").astype(str)
+        df["headline"] = df.get("headline", pd.Series("", index=df.index)).astype(str)
+        df["sentiment"] = df.get("sentiment", pd.Series("neutral", index=df.index)).astype(str)
 
         def extract_tokens(row: pd.Series) -> List[str]:
             seeds = row.get("tokens")
@@ -578,6 +595,9 @@ class HistoricalDataLoader:
 
         df["tokens"] = df.apply(extract_tokens, axis=1, result_type="reduce")
         df = df[df["tokens"].map(bool)]
+        for col in ("headline", "article", "sentiment"):
+            if col not in df.columns:
+                df[col] = ""
         return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
 
     def _load_cryptonews_dataset(self, path: Path, since_ts: int) -> Optional[pd.DataFrame]:
@@ -597,10 +617,10 @@ class HistoricalDataLoader:
             df["timestamp"] = pd.to_datetime(df["datetime"], errors="coerce", utc=True).astype("int64") // 10**9
         else:
             return None
-        df = df.dropna(subset=["timestamp", "article"])
+        df = df.dropna(subset=["timestamp"])
         df["timestamp"] = df["timestamp"].astype(np.int64)
         df = df[df["timestamp"] >= since_ts]
-        df["article"] = df["article"].astype(str)
+        df["article"] = df.get("article", pd.Series("", index=df.index)).astype(str)
 
         def make_headline(text: str) -> str:
             words = text.strip().split()
@@ -610,12 +630,17 @@ class HistoricalDataLoader:
             return snippet[:256].strip().capitalize()
 
         sentiment_map = {0: "bearish", 1: "bullish"}
-        df["headline"] = df.get("headline", pd.Series(index=df.index, dtype=str))
+        df["headline"] = df.get("headline", pd.Series("", index=df.index))
         df["headline"] = df["headline"].where(df["headline"].astype(bool), df["article"].apply(make_headline))
-        df["sentiment"] = df.get("label").map(sentiment_map).fillna("neutral")
+        df["sentiment"] = df.get("label", pd.Series(index=df.index)).map(sentiment_map).fillna("neutral")
         df["tokens"] = df["article"].apply(lambda text: sorted(self._collect_tokens(text=text, seed_tokens=None)))
         df = df[df["tokens"].map(bool)]
-        return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
+        required_cols = ["timestamp", "headline", "article", "sentiment", "tokens"]
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = [] if col == "tokens" else (0 if col == "timestamp" else "")
+        df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce").fillna(0).astype(np.int64)
+        return df[required_cols]
 
     def _load_arweave_news(self, path: Path, since_ts: int) -> Optional[pd.DataFrame]:
         if not path.exists():

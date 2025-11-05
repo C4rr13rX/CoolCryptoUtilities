@@ -2,8 +2,9 @@ import os
 import json
 from datetime import datetime, timedelta
 
-PAIR_INDEX_FILE = "data/pair_index_top2000.json"
-ASSIGNMENT_FILE = "data/pair_provider_assignment.json"
+CHAIN_NAME = os.getenv("CHAIN_NAME", "base").strip().lower() or "base"
+PAIR_INDEX_FILE = os.getenv("PAIR_INDEX_FILE", f"data/pair_index_{CHAIN_NAME}.json")
+ASSIGNMENT_FILE = os.getenv("PAIR_ASSIGNMENT_FILE", f"data/{CHAIN_NAME}_pair_provider_assignment.json")
 
 # Update these to match your main script
 GRANULARITY_SECONDS = 60 * 5
@@ -27,6 +28,7 @@ def assign_ankr_only():
         "granularity_seconds": GRANULARITY_SECONDS,
         "years_back": YEARS_BACK,
         "start_date": start_date,
+        "chain": CHAIN_NAME,
         "pairs": {}
     }
 

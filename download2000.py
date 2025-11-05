@@ -56,9 +56,16 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 ANKR_API_KEY         = os.getenv("ANKR_API_KEY", "").strip()
-PAIR_ASSIGNMENT_FILE = os.getenv("PAIR_ASSIGNMENT_FILE", "data/pair_provider_assignment.json")
-OUTPUT_DIR           = os.getenv("OUTPUT_DIR", "data/historical_ohlcv")
-INTERMEDIATE_DIR     = os.getenv("INTERMEDIATE_DIR", "data/intermediate")
+CHAIN_NAME           = os.getenv("CHAIN_NAME", "base").strip().lower() or "base"
+PAIR_ASSIGNMENT_FILE = os.getenv(
+    "PAIR_ASSIGNMENT_FILE",
+    f"data/{CHAIN_NAME}_pair_provider_assignment.json",
+)
+OUTPUT_DIR           = os.getenv(
+    "OUTPUT_DIR",
+    str(Path("data") / "historical_ohlcv" / CHAIN_NAME)
+)
+INTERMEDIATE_DIR     = os.getenv("INTERMEDIATE_DIR", f"data/intermediate/{CHAIN_NAME}")
 YEARS_BACK           = _int_env("YEARS_BACK", 3)
 GRANULARITY_SECONDS  = _int_env("GRANULARITY_SECONDS", 60 * 5)   # 5 min
 MAX_WORKERS          = _int_env("MAX_WORKERS", 30)
@@ -66,7 +73,8 @@ ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
 LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
 
 # Optional full RPC URL override (e.g., self-hosted, Alchemy, Infura, Ankr w/ key)
-RPC_URL = os.getenv("ANKR_RPC_URL", f"https://rpc.ankr.com/eth/{ANKR_API_KEY}").strip()
+DEFAULT_RPC = "https://mainnet.base.org" if CHAIN_NAME == "base" else f"https://rpc.ankr.com/{CHAIN_NAME}/{ANKR_API_KEY}".rstrip("/")
+RPC_URL = os.getenv("ANKR_RPC_URL", DEFAULT_RPC).strip()
 
 # --- RATE LIMITER ---
 bucket = Semaphore(0)
@@ -290,6 +298,12 @@ def update_assignment(assignment, addr, **fields):
 def main():
     with open(PAIR_ASSIGNMENT_FILE) as f:
         assignment = json.load(f)
+    previous_chain = assignment.get("chain")
+    if previous_chain and previous_chain != CHAIN_NAME:
+        raise RuntimeError(
+            f"Assignment file {PAIR_ASSIGNMENT_FILE} is tagged for '{previous_chain}' but current CHAIN_NAME is '{CHAIN_NAME}'."
+        )
+    assignment.setdefault("chain", CHAIN_NAME)
 
     start_ts = int((datetime.now(UTC) - timedelta(days=YEARS_BACK*365)).timestamp())
     start_blk = get_block_by_timestamp(start_ts)

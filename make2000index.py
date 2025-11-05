@@ -51,11 +51,18 @@ load_env_robust()
 # Required: your The Graph API key (Studio/Hosted Gateway)
 THEGRAPH_API_KEY = os.getenv("THEGRAPH_API_KEY", "").strip()
 
+# Resolve target chain before configuring subgraphs/paths
+CHAIN_NAME = os.getenv("CHAIN_NAME", "base").strip().lower() or "base"
+
 # Optional: override the Uniswap V2 subgraph ID via env,
 # falls back to the given default if not provided.
+default_subgraph = "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu"
+if CHAIN_NAME == "base":
+    default_subgraph = os.getenv("BASE_UNISWAP_SUBGRAPH_ID", "").strip() or default_subgraph
+
 UNISWAP_V2_SUBGRAPH_ID = os.getenv(
     "UNISWAP_V2_SUBGRAPH_ID",
-    "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu"
+    default_subgraph
 ).strip()
 
 # Optional: allow full URL override (e.g., self-hosted/alt gateway)
@@ -65,13 +72,19 @@ THEGRAPH_SUBGRAPH_URL = os.getenv(
 ).strip()
 
 # Output path can be overridden via env if desired
-OUTPUT_PATH = os.getenv("PAIR_INDEX_OUTPUT_PATH", os.path.join("data", "pair_index_top2000.json"))
+OUTPUT_PATH = os.getenv(
+    "PAIR_INDEX_OUTPUT_PATH",
+    os.path.join("data", "pair_index_%s.json" % CHAIN_NAME)
+)
 
 if "gateway.thegraph.com" in THEGRAPH_SUBGRAPH_URL and not THEGRAPH_API_KEY:
     raise RuntimeError(
         "Missing THEGRAPH_API_KEY in environment for gateway.thegraph.com.\n"
         "Set THEGRAPH_API_KEY in your .env or provide THEGRAPH_SUBGRAPH_URL to bypass."
     )
+
+if CHAIN_NAME == "base" and not THEGRAPH_SUBGRAPH_URL:
+    raise RuntimeError("Provide THEGRAPH_SUBGRAPH_URL for Base network pairs.")
 
 # -----------------------------------------------------------------------
 # Fetch pairs ordered by a given field (1000 + 1000 for paging)
