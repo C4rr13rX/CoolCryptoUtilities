@@ -8,9 +8,10 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from db import TradingDatabase, get_db
+from services.public_api_clients import aggregate_market_data
 
 
 def _load_assignment(path: Path) -> Optional[Dict[str, Any]]:
@@ -185,6 +186,69 @@ class DynamicDownloadWorker:
             _update_assignment(assignment_path, assignment)
 
 
+class MarketDataWorker:
+    def __init__(
+        self,
+        db: Optional[TradingDatabase] = None,
+        interval_sec: int = 1200,
+        symbols: Optional[Sequence[str]] = None,
+    ) -> None:
+        self.db = db or get_db()
+        self.interval = max(60, interval_sec)
+        env_symbols = os.getenv("MARKET_DATA_SYMBOLS")
+        if env_symbols:
+            symbols = [sym.strip().upper() for sym in env_symbols.split(",") if sym.strip()]
+        self.symbols = symbols
+        self.gecko_ids = [gid.strip() for gid in os.getenv("MARKET_DATA_COINGECKO_IDS", "bitcoin,ethereum").split(",") if gid.strip()]
+        self.output_path = Path(os.getenv("MARKET_DATA_SNAPSHOT_PATH", "data/market_snapshots.json"))
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        if not self._thread.is_alive():
+            self._thread.start()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self._stop_event.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+
+    def run_once(self) -> None:
+        snapshots = aggregate_market_data(
+            symbols=self.symbols,
+            coingecko_ids=self.gecko_ids,
+            top_n=int(os.getenv("MARKET_DATA_TOP_N", "25")),
+        )
+        if not snapshots:
+            return
+        rows = []
+        now = time.time()
+        for snap in snapshots:
+            if not snap.price_usd:
+                continue
+            rows.append(("global", snap.symbol, float(snap.price_usd), snap.source, now))
+        if rows:
+            try:
+                self.db.upsert_prices(rows)
+            except Exception as exc:
+                print(f"[market-data] failed to persist prices: {exc}")
+        try:
+            from services.public_api_clients import save_snapshots
+
+            save_snapshots(snapshots, self.output_path)
+        except Exception as exc:
+            print(f"[market-data] failed to write snapshots: {exc}")
+
+    def _loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self.run_once()
+            except Exception as exc:
+                print(f"[market-data] cycle error: {exc}")
+            if self._stop_event.wait(self.interval):
+                break
+
+
 class TokenDownloadSupervisor:
     def __init__(self, db: Optional[TradingDatabase] = None) -> None:
         self.base_worker = DownloadWorker("base", interval_sec=int(os.getenv("BASE_DOWNLOAD_INTERVAL", "10800")))
@@ -193,11 +257,17 @@ class TokenDownloadSupervisor:
             interval_sec=int(os.getenv("DYNAMIC_DOWNLOAD_INTERVAL", "21600")),
             horizon_sec=int(os.getenv("DYNAMIC_DOWNLOAD_HORIZON", str(3 * 24 * 3600))),
         )
+        self.market_worker = MarketDataWorker(
+            db=db,
+            interval_sec=int(os.getenv("MARKET_DATA_REFRESH_SEC", "1200")),
+        )
 
     def start(self) -> None:
         self.base_worker.start()
         self.dynamic_worker.start()
+        self.market_worker.start()
 
     def stop(self) -> None:
         self.base_worker.stop()
         self.dynamic_worker.stop()
+        self.market_worker.stop()

@@ -4,6 +4,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from datetime import datetime, timezone, timedelta
 
 import hashlib
 import math
@@ -647,7 +648,24 @@ class TrainingPipeline:
             if not symbols:
                 return False
             lookback_sec = int(os.getenv("CRYPTOPANIC_LOOKBACK_SEC", str(2 * 24 * 3600)))
-            return self.data_loader.request_news_backfill(symbols=symbols, lookback_sec=lookback_sec)
+            backfilled = self.data_loader.request_news_backfill(symbols=symbols, lookback_sec=lookback_sec)
+            if not backfilled and os.getenv("CRYPTOPANIC_API_KEY"):
+                try:
+                    center = datetime.now(timezone.utc)
+                    start = center - timedelta(seconds=lookback_sec)
+                    end = center + timedelta(seconds=max(3600, lookback_sec // 2))
+                    archiver = CryptoNewsArchiver(
+                        output_path=Path(os.getenv("CRYPTOPANIC_ARCHIVE_PATH", "data/news/cryptopanic_archive.parquet"))
+                    )
+                    archive = archiver.backfill(symbols=symbols, start=start, end=end)
+                    if not archive.empty:
+                        # reload combined news cache so synthetic fallback is avoided
+                        self.data_loader.invalidate_dataset_cache()
+                        self.data_loader.news_items = self.data_loader._load_news()
+                        backfilled = True
+                except Exception as arch_exc:
+                    print(f"[training] archive backfill failed: {arch_exc}")
+            return backfilled
         except Exception as exc:
             print(f"[training] news backfill skipped due to error: {exc}")
             return False
@@ -1116,3 +1134,4 @@ class TrainingPipeline:
             "best_params": self.optimizer.best_params,
             "decision_threshold": float(self.decision_threshold),
         }
+from services.news_archive import CryptoNewsArchiver
