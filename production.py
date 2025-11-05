@@ -7,6 +7,7 @@ from typing import Optional
 
 from trading.pipeline import TrainingPipeline
 from trading.selector import GhostTradingSupervisor
+from services.background_workers import TokenDownloadSupervisor
 
 
 class ProductionManager:
@@ -17,6 +18,7 @@ class ProductionManager:
         self._loop_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = threading.Event()
+        self._download_supervisor: Optional[TokenDownloadSupervisor] = TokenDownloadSupervisor(db=self.pipeline.db)
 
     def start(self) -> None:
         if self.is_running:
@@ -28,6 +30,8 @@ class ProductionManager:
         self._trainer.start()
         self._loop_thread = threading.Thread(target=self._run_supervisor_loop, daemon=True)
         self._loop_thread.start()
+        if self._download_supervisor:
+            self._download_supervisor.start()
         print("[production] manager started.")
 
     def stop(self, timeout: float = 15.0) -> None:
@@ -45,6 +49,11 @@ class ProductionManager:
             self._loop_thread.join(timeout=timeout)
         if self._trainer:
             self._trainer.join(timeout=timeout)
+        if self._download_supervisor:
+            try:
+                self._download_supervisor.stop()
+            except Exception as exc:
+                print(f"[production] download supervisor stop error: {exc}")
         self._loop = None
         self._loop_thread = None
         self._trainer = None

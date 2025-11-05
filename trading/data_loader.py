@@ -7,13 +7,16 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
 
 import numpy as np
 import pandas as pd
 import requests
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timezone
 
-from trading.constants import PRIMARY_CHAIN
+from trading.constants import PRIMARY_CHAIN, top_pairs
 from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
 
 TOKEN_SYNONYMS = {
@@ -49,12 +52,18 @@ class HistoricalDataLoader:
         max_files: Optional[int] = 5,
         max_samples_per_file: Optional[int] = 256,
     ) -> None:
-        default_dir = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")) / PRIMARY_CHAIN
-        self.data_dir = Path(data_dir or os.getenv("HISTORICAL_DATA_DIR", str(default_dir))).expanduser()
+        root_default = Path(os.getenv("HISTORICAL_DATA_DIR", ""))
+        if not root_default:
+            root_default = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv"))
+        self.data_dir = Path(data_dir or root_default).expanduser()
         self.max_files = max_files
         self.max_samples_per_file = max_samples_per_file
+        self._initial_max_files = self.max_files
+        self._initial_max_samples = self.max_samples_per_file
         self._headline_samples: List[str] = []
         self.news_horizon = int(os.getenv("NEWS_HORIZON_SEC", str(6 * 3600)))
+        self._historical_tokens, self._token_hints = self._collect_historical_tokens()
+        self._expand_token_synonyms()
         self.keyword_to_tokens = self._build_keyword_map()
         self.news_index: Dict[str, List[int]] = {}
         self.ohlc_start_ts = self._estimate_ohlc_start()
@@ -65,6 +74,23 @@ class HistoricalDataLoader:
         self._tech_pca_mean: Optional[np.ndarray] = None
         self._headline_digest: Optional[str] = None
         self._fulltext_digest: Optional[str] = None
+        self._completion_index: Optional[Set[str]] = None
+
+    def reset_limits(self) -> None:
+        self.max_files = self._initial_max_files
+        self.max_samples_per_file = self._initial_max_samples
+        self._dataset_cache.clear()
+
+    def expand_limits(self, factor: float = 1.5, file_cap: int = 96, sample_cap: int = 4096) -> None:
+        new_files = min(file_cap, max(int(self.max_files * factor), self.max_files + 1))
+        new_samples = min(sample_cap, max(int(self.max_samples_per_file * factor), self.max_samples_per_file + self.window_size if hasattr(self, "window_size") else self.max_samples_per_file + 64))
+        if new_files != self.max_files or new_samples != self.max_samples_per_file:
+            self.max_files = new_files
+            self.max_samples_per_file = new_samples
+            self._dataset_cache.clear()
+
+    def invalidate_dataset_cache(self) -> None:
+        self._dataset_cache.clear()
 
     def build_dataset(
         self,
@@ -86,7 +112,26 @@ class HistoricalDataLoader:
         target_mu: List[float] = []
         asset_ids: List[int] = []
 
-        files = sorted(self.data_dir.glob("*.json"))
+        files = sorted(self.data_dir.rglob("*.json")) if self.data_dir.is_dir() else []
+        completed = self._load_completion_index()
+        if completed:
+            filtered = [path for path in files if path.stem.upper() in completed]
+            if filtered:
+                files = filtered
+        preferred_symbols = top_pairs(limit=self.max_files or 16)
+        if preferred_symbols:
+            buckets: Dict[str, List[Path]] = {}
+            for file_path in files:
+                symbol = file_path.stem.split("_", 1)[-1].upper()
+                buckets.setdefault(symbol, []).append(file_path)
+            ordered: List[Path] = []
+            for symbol in preferred_symbols:
+                entries = buckets.pop(symbol, None)
+                if entries:
+                    ordered.extend(entries)
+            for remaining in buckets.values():
+                ordered.extend(remaining)
+            files = ordered
         if self.max_files:
             files = files[: self.max_files]
 
@@ -413,6 +458,103 @@ class HistoricalDataLoader:
             return int(time.time()) - 365 * 24 * 3600
         return min_ts
 
+    def _collect_historical_tokens(self) -> Tuple[set[str], Dict[str, set[str]]]:
+        tokens: set[str] = set()
+        hints: Dict[str, set[str]] = {}
+
+        def register(token: str, hint: Optional[str] = None) -> None:
+            token_u = token.strip().upper()
+            if not token_u:
+                return
+            tokens.add(token_u)
+            if hint:
+                hints.setdefault(token_u, set()).add(hint)
+        try:
+            for symbol in top_pairs(limit=256):
+                for token in re.split(r"[-/ ]", str(symbol)):
+                    if token:
+                        register(token, symbol)
+        except Exception:
+            pass
+        if self.data_dir.is_dir():
+            for path in self.data_dir.rglob("*.json"):
+                symbol = path.stem.split("_", 1)[-1].upper()
+                for token in re.split(r"[-_/ ]", symbol):
+                    token = token.strip().upper()
+                    if token:
+                        tokens.add(token)
+        try:
+            from trading.constants import pair_index_entries
+
+            for info in pair_index_entries().values():
+                symbol = str(info.get("symbol", "")).upper()
+                for token in re.split(r"[-/ ]", symbol):
+                    if token:
+                        register(token, symbol)
+                label = info.get("label") or info.get("name")
+                if label:
+                    for token in re.split(r"[-/ ]", str(label)):
+                        if token:
+                            register(token, label)
+        except Exception:
+            pass
+        filtered = {tok for tok in tokens if tok and len(tok) < 32}
+        hints = {tok: hints.get(tok, set()) for tok in filtered}
+        return filtered, hints
+
+    def _expand_token_synonyms(self) -> None:
+        if not getattr(self, "_historical_tokens", None):
+            return
+
+        def register(token: str, *hints: str) -> None:
+            token_u = token.strip().upper()
+            if not token_u:
+                return
+            synonyms = set(TOKEN_SYNONYMS.get(token_u, []))
+            synonyms.add(token_u.lower())
+            if token_u.startswith("W") and len(token_u) > 1:
+                naked = token_u[1:]
+                synonyms.add(naked.lower())
+                synonyms.add(naked)
+            for hint in hints:
+                if not hint:
+                    continue
+                cleaned = re.sub(r"[^a-z0-9$ ]", " ", hint.lower())
+                for part in cleaned.split():
+                    part = part.strip()
+                    if len(part) < 2:
+                        continue
+                    synonyms.add(part)
+                    if part.startswith("$"):
+                        synonyms.add(part[1:])
+            TOKEN_SYNONYMS[token_u] = sorted(synonyms)
+
+        for token in sorted(self._historical_tokens):
+            hint_list = sorted(self._token_hints.get(token, set())) if hasattr(self, "_token_hints") else []
+            register(token, token, *hint_list)
+
+    def _load_completion_index(self) -> Set[str]:
+        index_files = list(Path("data").glob("*_pair_provider_assignment.json"))
+        completed: Set[str] = set()
+        for path in index_files:
+            try:
+                with path.open("r", encoding="utf-8") as fh:
+                    assignment = json.load(fh)
+            except Exception:
+                continue
+            pairs = assignment.get("pairs", {})
+            for meta in pairs.values():
+                if not isinstance(meta, dict) or not meta.get("completed"):
+                    continue
+                symbol = str(meta.get("symbol", "")).upper()
+                idx = meta.get("index")
+                if not symbol:
+                    continue
+                key = f"{int(idx):04d}_{symbol}" if idx is not None else symbol
+                completed.add(key.upper())
+        return completed
+
+
     @property
     def asset_vocab_size(self) -> int:
         return max(1, len(self._asset_vocab) + 1)
@@ -454,20 +596,21 @@ class HistoricalDataLoader:
         return {t.upper() for t in tokens}
 
     def _build_keyword_map(self) -> Dict[str, set[str]]:
-        path = self.data_dir.parent / f"pair_index_{PRIMARY_CHAIN}.json"
-        tokens: set[str] = set()
-        if path.exists():
-            with path.open("r", encoding="utf-8") as f:
-                pairs = json.load(f)
-            for info in pairs.values():
-                symbol = str(info.get("symbol", "")).upper()
-                if not symbol:
-                    continue
-                for token in re.split(r"[-/ ]", symbol):
-                    token = token.strip().upper()
-                    if token:
-                        tokens.add(token)
-        else:
+        tokens: set[str] = set(getattr(self, "_historical_tokens", set()))
+        if not tokens:
+            path = self.data_dir.parent / f"pair_index_{PRIMARY_CHAIN}.json"
+            if path.exists():
+                with path.open("r", encoding="utf-8") as f:
+                    pairs = json.load(f)
+                for info in pairs.values():
+                    symbol = str(info.get("symbol", "")).upper()
+                    if not symbol:
+                        continue
+                    for token in re.split(r"[-/ ]", symbol):
+                        token = token.strip().upper()
+                        if token:
+                            tokens.add(token)
+        if not tokens:
             tokens.update(TOKEN_SYNONYMS.keys())
 
         keyword_map: Dict[str, set[str]] = {}
@@ -505,6 +648,14 @@ class HistoricalDataLoader:
         arweave_df = self._load_arweave_news(Path("data/arweave_mirror_news.parquet"), since_ts)
         if arweave_df is not None:
             frames.append(arweave_df)
+
+        rss_df = self._load_rss_news(cache_dir / "rss_news.parquet", since_ts)
+        if rss_df is not None:
+            frames.append(rss_df)
+
+        cryptopanic_df = self._load_cryptopanic_news(cache_dir / "cryptopanic_news.parquet", since_ts)
+        if cryptopanic_df is not None:
+            frames.append(cryptopanic_df)
 
         if not frames:
             return []
@@ -598,6 +749,102 @@ class HistoricalDataLoader:
         for col in ("headline", "article", "sentiment"):
             if col not in df.columns:
                 df[col] = ""
+        return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
+
+    def _load_rss_news(self, cache_path: Path, since_ts: int) -> Optional[pd.DataFrame]:
+        feeds = os.getenv(
+            "CRYPTO_RSS_FEEDS",
+            ",".join(
+                [
+                    "https://www.coindesk.com/arc/outboundfeeds/rss/",
+                    "https://cointelegraph.com/rss",
+                    "https://decrypt.co/feed",
+                    "https://news.bitcoin.com/feed/",
+                ]
+            ),
+        )
+        feed_urls = [url.strip() for url in feeds.split(",") if url.strip()]
+        if not feed_urls:
+            return None
+        df: Optional[pd.DataFrame] = None
+        if cache_path.exists():
+            try:
+                df = pd.read_parquet(cache_path)
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+                df = None
+        refresh_needed = df is None or df.empty or (df["timestamp"].min() > since_ts if df is not None else True)
+        if refresh_needed:
+            collected: List[Dict[str, Any]] = []
+            for url in feed_urls:
+                try:
+                    resp = requests.get(url, timeout=20)
+                    resp.raise_for_status()
+                    root = ET.fromstring(resp.content)
+                except Exception:
+                    continue
+                channel = root.find("channel")
+                items = channel.findall("item") if channel is not None else root.findall("item")
+                for item in items:
+                    title = (item.findtext("title") or "").strip()
+                    description = (item.findtext("description") or "").strip()
+                    content = (item.findtext("{http://purl.org/rss/1.0/modules/content/}encoded") or "").strip()
+                    article_body = "\n".join(part for part in (description, content) if part)
+                    article_text = (article_body or title).strip()
+                    if not article_text:
+                        continue
+                    pub_date = item.findtext("pubDate") or item.findtext("published")
+                    try:
+                        dt = parsedate_to_datetime(pub_date) if pub_date else None
+                        if dt is None:
+                            continue
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        ts_int = int(dt.timestamp())
+                    except Exception:
+                        continue
+                    if ts_int < since_ts:
+                        continue
+                    categories = item.findall("category")
+                    seeds = [cat.text for cat in categories if cat is not None and cat.text]
+                    link = item.findtext("link") or ""
+                    tokens = self._collect_tokens(text=f"{title}\n{article_text}\n{link}", seed_tokens=seeds)
+                    if not tokens:
+                        continue
+                    collected.append(
+                        {
+                            "timestamp": ts_int,
+                            "headline": title[:256],
+                            "article": article_text[:2048],
+                            "sentiment": "neutral",
+                            "tokens": sorted(tokens),
+                        }
+                    )
+            if not collected:
+                return None
+            df = pd.DataFrame(collected)
+            try:
+                df.to_parquet(cache_path, index=False)
+            except Exception:
+                pass
+        if df is None or df.empty:
+            return None
+        df = df.copy()
+        df["timestamp"] = pd.to_numeric(df.get("timestamp"), errors="coerce")
+        df = df.dropna(subset=["timestamp"])
+        df["timestamp"] = df["timestamp"].astype(np.int64)
+        df = df[df["timestamp"] >= since_ts]
+        if df.empty:
+            return None
+        df["headline"] = df.get("headline", pd.Series("", index=df.index)).astype(str)
+        df["article"] = df.get("article", pd.Series("", index=df.index)).astype(str)
+        df["sentiment"] = df.get("sentiment", pd.Series("neutral", index=df.index)).astype(str)
+        df["tokens"] = df.get("tokens", pd.Series([[]] * len(df), index=df.index)).apply(
+            lambda values: [self._normalize_token(tok) for tok in values if self._normalize_token(tok)]
+        )
+        df = df[df["tokens"].map(bool)]
+        if df.empty:
+            return None
         return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
 
     def _load_cryptonews_dataset(self, path: Path, since_ts: int) -> Optional[pd.DataFrame]:
@@ -702,6 +949,136 @@ class HistoricalDataLoader:
             return None
         return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
 
+    def _load_cryptopanic_news(self, cache_path: Path, since_ts: int) -> Optional[pd.DataFrame]:
+        api_token = os.getenv("CRYPTOPANIC_API_KEY", "").strip()
+        if not api_token:
+            return None
+        df: Optional[pd.DataFrame] = None
+        if cache_path.exists():
+            try:
+                df = pd.read_parquet(cache_path)
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+                df = None
+        refresh_needed = df is None or df.empty or ("timestamp" in df.columns and df["timestamp"].min() > since_ts)
+        if refresh_needed:
+            df = self._download_cryptopanic_news(api_token=api_token, since_ts=since_ts)
+            if df is None or df.empty:
+                return None
+            try:
+                df.to_parquet(cache_path, index=False)
+            except Exception:
+                pass
+        if df is None or df.empty:
+            return None
+        df = df.copy()
+        df["timestamp"] = pd.to_numeric(df.get("timestamp"), errors="coerce")
+        df = df.dropna(subset=["timestamp"])
+        if df.empty:
+            return None
+        df["timestamp"] = df["timestamp"].astype(np.int64)
+        df = df[df["timestamp"] >= since_ts]
+        if df.empty:
+            return None
+        df["headline"] = df.get("headline", pd.Series("", index=df.index)).astype(str)
+        df["article"] = df.get("article", pd.Series("", index=df.index)).astype(str)
+        df["sentiment"] = df.get("sentiment", pd.Series("neutral", index=df.index)).astype(str)
+
+        def _normalize_news_tokens(raw: Any) -> List[str]:
+            if isinstance(raw, (list, tuple, set)):
+                source = list(raw)
+            elif isinstance(raw, str):
+                source = [raw]
+            else:
+                source = []
+            normalized: List[str] = []
+            for candidate in source:
+                norm = self._normalize_token(candidate)
+                if norm:
+                    normalized.append(norm)
+            return normalized
+
+        df["tokens"] = df.get("tokens", pd.Series([[]] * len(df), index=df.index)).apply(_normalize_news_tokens)
+        df = df[df["tokens"].map(bool)]
+        if df.empty:
+            return None
+        return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
+
+    def _download_cryptopanic_news(self, api_token: str, since_ts: int) -> Optional[pd.DataFrame]:
+        endpoint = "https://cryptopanic.com/api/v1/posts/"
+        params = {
+            "auth_token": api_token,
+            "kind": os.getenv("CRYPTOPANIC_KIND", "news"),
+            "filter": os.getenv("CRYPTOPANIC_FILTER", "all"),
+            "public": "true",
+            "limit": int(os.getenv("CRYPTOPANIC_PAGE_SIZE", "100")),
+        }
+        collected: List[Dict[str, Any]] = []
+        next_url: Optional[str] = endpoint
+        pages = 0
+        max_pages = int(os.getenv("CRYPTOPANIC_MAX_PAGES", "12"))
+        delay = max(0.1, float(os.getenv("CRYPTOPANIC_REQUEST_INTERVAL", "0.5")))
+        while next_url and pages < max_pages:
+            try:
+                if next_url == endpoint:
+                    resp = requests.get(next_url, params=params, timeout=15)
+                else:
+                    resp = requests.get(next_url, timeout=15)
+                resp.raise_for_status()
+                payload = resp.json()
+            except Exception:
+                break
+            results = payload.get("results") or []
+            for item in results:
+                published = item.get("published_at") or item.get("created_at")
+                ts = pd.to_datetime(published, errors="coerce", utc=True)
+                if ts is None or pd.isna(ts):
+                    continue
+                ts_int = int(ts.timestamp())
+                if ts_int < since_ts:
+                    continue
+                currencies = item.get("currencies") or []
+                seed_tokens: List[str] = []
+                for currency in currencies:
+                    code = currency.get("code")
+                    slug = currency.get("slug")
+                    if code:
+                        seed_tokens.append(code)
+                    if slug:
+                        seed_tokens.append(slug)
+                body = item.get("body") or item.get("title") or item.get("url") or ""
+                text = f"{item.get('title', '')}\n{body}"
+                tokens = self._collect_tokens(text=text, seed_tokens=seed_tokens)
+                if not tokens:
+                    continue
+                sentiment = item.get("sentiment")
+                if not sentiment:
+                    votes = item.get("votes") or {}
+                    sentiment = votes.get("sentiment") or "neutral"
+                collected.append(
+                    {
+                        "timestamp": ts_int,
+                        "headline": str(item.get("title") or "").strip()[:256],
+                        "article": str(body).strip()[:2048],
+                        "sentiment": str(sentiment or "neutral"),
+                        "tokens": sorted(tokens),
+                    }
+                )
+            next_url = payload.get("next")
+            pages += 1
+            if not results:
+                break
+            try:
+                last_published = pd.to_datetime(results[-1].get("published_at"), errors="coerce", utc=True)
+                if last_published is not None and not pd.isna(last_published) and int(last_published.timestamp()) < since_ts:
+                    break
+            except Exception:
+                pass
+            time.sleep(delay)
+        if not collected:
+            return None
+        return pd.DataFrame(collected)
+
     def _download_cryptocompare_news(self, since_ts: int) -> Optional[pd.DataFrame]:
         url = "https://min-api.cryptocompare.com/data/v2/news/"
         params = {
@@ -805,7 +1182,20 @@ class HistoricalDataLoader:
                 continue
             matched.append(item)
         if not matched:
-            return None
+            start_price = float(price_slice[0]) if price_slice.size else 0.0
+            end_price = float(price_slice[-1]) if price_slice.size else 0.0
+            delta = end_price - start_price
+            pct = 0.0
+            if start_price:
+                pct = (delta / abs(start_price)) * 100.0
+            direction = "gained" if delta > 0 else "fell" if delta < 0 else "held"
+            headline = f"{pair_symbol} {direction} {pct:.2f}% in latest window"
+            article = (
+                f"{pair_symbol} price moved from {start_price:.6f} to {end_price:.6f} over the observed window. "
+                f"Net directional volume was {net_volume:.4f}."
+            )
+            sentiment = "bullish" if delta > 0 else "bearish" if delta < 0 else "neutral"
+            return {"headline": headline, "article": article, "sentiment": sentiment}
         matched.sort(key=lambda item: abs(item["timestamp"] - ref_ts))
         headlines: List[str] = []
         articles: List[str] = []

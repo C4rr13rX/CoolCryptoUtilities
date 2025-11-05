@@ -134,6 +134,7 @@ class PortfolioState:
                 )
             native_balances[chain_lower] = native_balance
 
+        holdings = self._filter_holdings(holdings)
         self.holdings = holdings
         self.native_balances = native_balances
         self._last_refresh = now
@@ -171,6 +172,39 @@ class PortfolioState:
             "holdings": len(self.holdings),
             "last_refresh": self._last_refresh,
         }
+
+    def _filter_holdings(self, holdings: Dict[Tuple[str, str], TokenHolding]) -> Dict[Tuple[str, str], TokenHolding]:
+        key = os.getenv("GOPLUS_APP_KEY")
+        secret = os.getenv("GOPLUS_APP_SECRET")
+        if not key or not secret:
+            return holdings
+        try:
+            from filter_scams import FilterScamTokens
+
+            specs: List[str] = []
+            addr_key: Dict[str, Tuple[str, str]] = {}
+            for (chain, symbol), holding in holdings.items():
+                token = holding.token
+                if token and token.lower().startswith("0x") and len(token) >= 42:
+                    spec = f"{chain}:{token}"
+                    specs.append(spec)
+                    addr_key[token.lower()] = (chain, symbol)
+            if not specs:
+                return holdings
+            filterer = FilterScamTokens()
+            result = filterer.filter(specs)
+            flagged = set(result.flagged.keys())
+            if not flagged:
+                return holdings
+            print(f"[portfolio] filtering {len(flagged)} honeypot/high-risk tokens from holdings")
+            for addr_lower in flagged:
+                key_tuple = addr_key.get(addr_lower)
+                if key_tuple and key_tuple in holdings:
+                    holdings.pop(key_tuple, None)
+            return holdings
+        except Exception as exc:
+            print(f"[portfolio] scam filter unavailable: {exc}")
+            return holdings
 
     @property
     def refresh_interval(self) -> float:

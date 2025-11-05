@@ -1,60 +1,87 @@
 {% load static %}
+{% load humanize %}
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>C4rr13rX Control Tower</title>
-    <link rel="icon" href="{% static 'branding/favicon.svg' %}" />
-    {% if debug %}
-      <script type="module" src="{{ vite_dev_server }}/@vite/client"></script>
-      <script type="module" src="{{ vite_dev_server }}/src/main.ts"></script>
+    <link rel="icon" href="{% static 'assets/logo.png' %}" />
+    {% if serve_vite %}
+      <script type="module">
+        const DEV_ORIGIN = "{{ vite_dev_server }}";
+        const FALLBACK = "{% static 'assets/main.js' %}";
+        (async () => {
+          try {
+            await import(`${DEV_ORIGIN}/@vite/client`);
+            await import(`${DEV_ORIGIN}/src/main.ts`);
+          } catch (error) {
+            console.warn("Vite dev server unavailable; falling back to bundled assets.", error);
+            await import(FALLBACK);
+          }
+        })();
+      </script>
+    {% else %}
+      <script type="module" src="{% static 'assets/main.js' %}"></script>
     {% endif %}
     <link rel="stylesheet" href="{% static 'assets/main.css' %}" />
-    <script type="module" src="{% static 'assets/main.js' %}"></script>
     <style>
       :root {
         color-scheme: dark;
-        --accent-1: #1b4a7c;
-        --accent-2: #2979c7;
-        --accent-3: #7fb0ff;
-        --accent-dark: #0e243d;
-        --bg-color: radial-gradient(circle at top left, rgba(25, 76, 130, 0.8), rgba(10, 18, 30, 0.95));
+        --accent-1: #143352;
+        --accent-2: #1f4e7b;
+        --accent-3: #6fa7ff;
+        --accent-ok: #12d18d;
+        --accent-warn: #ffb74d;
+        --accent-err: #ff6b6b;
+        --bg: radial-gradient(circle at 12% 20%, rgba(36, 73, 118, 0.9), rgba(9, 16, 26, 0.95));
+        --panel-bg: rgba(10, 24, 40, 0.82);
+        --panel-border: rgba(111, 167, 255, 0.25);
+        font-family: "Segoe UI", "Roboto", "Helvetica", sans-serif;
       }
       body {
         margin: 0;
-        font-family: "Segoe UI", "Roboto", "Helvetica", sans-serif;
-        background: var(--bg-color), #0b1420;
-        color: #f4f6fa;
+        background: var(--bg), #05090f;
+        color: #f5f8ff;
         min-height: 100vh;
         display: flex;
         flex-direction: column;
       }
-      .branding-header {
+      header.site-header {
         display: flex;
         align-items: center;
-        justify-content: center;
-        padding: 1.25rem;
+        justify-content: space-between;
+        padding: 1.25rem 1.75rem;
+        gap: 1.5rem;
+        background: linear-gradient(135deg, rgba(20, 51, 82, 0.7), rgba(9, 24, 42, 0.8));
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+      header.site-header .brand {
+        display: flex;
+        align-items: center;
         gap: 1rem;
         text-transform: uppercase;
-        letter-spacing: 0.2rem;
-        background: linear-gradient(135deg, rgba(21, 60, 102, 0.6), rgba(8, 34, 70, 0.8));
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        letter-spacing: 0.22rem;
       }
-      .branding-header img {
-        height: 72px;
-        image-rendering: pixelated;
+      header.site-header img {
+        height: 60px;
       }
-      .branding-header h1 {
+      header.site-header h1 {
         margin: 0;
-        font-size: 1.6rem;
+        font-size: 1.4rem;
         color: var(--accent-3);
       }
-      #app {
+      header.site-header .user-chip {
+        font-size: 0.85rem;
+        opacity: 0.75;
+      }
+      main.app-shell {
         flex: 1;
         display: flex;
-        flex-direction: column;
-        width: 100%;
+        position: relative;
       }
       .login-wrapper {
         flex: 1;
@@ -65,375 +92,172 @@
       }
       .login-card {
         width: min(420px, 100%);
-        background: rgba(12, 23, 40, 0.85);
-        border: 1px solid rgba(127, 176, 255, 0.25);
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
         border-radius: 18px;
-        padding: 2rem;
-        box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+        padding: 2.2rem 2rem;
+        box-shadow: 0 28px 60px rgba(0, 0, 0, 0.55);
         display: flex;
         flex-direction: column;
         gap: 1.5rem;
       }
       .login-card h2 {
         margin: 0;
-        font-size: 1.4rem;
+        font-size: 1.35rem;
         text-transform: uppercase;
-        letter-spacing: 0.18rem;
+        letter-spacing: 0.2rem;
         color: var(--accent-3);
       }
-      .dashboard-fallback {
-        display: flex;
-        flex-direction: column;
-        gap: 2rem;
-        padding: 2.5rem;
-      }
-      .dashboard-fallback .overview {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 1.5rem;
-      }
-      .dashboard-fallback .overview > div {
-        background: rgba(12, 23, 40, 0.85);
-        border: 1px solid rgba(127, 176, 255, 0.25);
-        border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
-      }
-      .dashboard-fallback .overview h2 {
-        margin: 0 0 0.75rem;
-        font-size: 1rem;
-        letter-spacing: 0.14rem;
-        text-transform: uppercase;
-        color: var(--accent-3);
-      }
-      .dashboard-fallback .metric {
-        font-size: 2.25rem;
-        font-weight: 700;
-        color: #f4f6fa;
-      }
-      .fallback-panels article {
-        background: rgba(12, 23, 40, 0.85);
-        border: 1px solid rgba(127, 176, 255, 0.2);
-        border-radius: 16px;
-        padding: 1.25rem;
-        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-      }
-      .fallback-panels header {
-        font-size: 0.95rem;
-        text-transform: uppercase;
-        letter-spacing: 0.12rem;
-        color: rgba(255, 255, 255, 0.85);
-        margin-bottom: 1rem;
-      }
-      .fallback-panels h3 {
-        margin: 0 0 0.5rem;
+      .login-card label {
         font-size: 0.85rem;
-        text-transform: uppercase;
-        letter-spacing: 0.1rem;
-        color: rgba(255, 255, 255, 0.7);
-      }
-      .subsection {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-      .fallback-panels table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      .fallback-panels th,
-      .fallback-panels td {
-        padding: 0.5rem 0.75rem;
-        border-bottom: 1px solid rgba(127, 176, 255, 0.18);
-        text-align: left;
-      }
-      .fallback-panels tbody tr:last-child td {
-        border-bottom: none;
-      }
-      .feedback-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .feedback-list li {
-        font-size: 0.9rem;
-        color: rgba(244, 246, 250, 0.85);
-      }
-      .advisory-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .advisory-list li {
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        padding: 0.75rem;
-        background: rgba(8, 16, 28, 0.6);
         display: flex;
         flex-direction: column;
         gap: 0.4rem;
-      }
-      .advisory-list li[data-severity="critical"] {
-        border-color: rgba(255, 90, 95, 0.4);
-      }
-      .advisory-list li[data-severity="warning"] {
-        border-color: rgba(246, 177, 67, 0.35);
-      }
-      .advisory-headline {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        font-size: 0.85rem;
-        opacity: 0.85;
-      }
-      .advisory-headline .badge {
-        padding: 0.2rem 0.6rem;
-        border-radius: 999px;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        background: rgba(255, 255, 255, 0.06);
-        font-size: 0.7rem;
-        letter-spacing: 0.12rem;
-      }
-      .advisory-headline .topic {
-        flex: 1;
-        font-weight: 600;
         letter-spacing: 0.08rem;
-      }
-      .advisory-headline .timestamp {
-        font-size: 0.75rem;
-        opacity: 0.8;
-      }
-      .advisory-list .message,
-      .advisory-list .recommendation {
-        margin: 0;
-        font-size: 0.85rem;
-        line-height: 1.45;
-      }
-      form {
-        display: flex;
-        flex-direction: column;
-        gap: 1.25rem;
-      }
-      .form-field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-      }
-      label {
-        font-size: 0.85rem;
-        letter-spacing: 0.12rem;
         text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.8);
       }
-      input[type="text"],
-      input[type="password"] {
-        background: rgba(8, 16, 28, 0.9);
-        border: 1px solid rgba(127, 176, 255, 0.35);
-        border-radius: 10px;
-        padding: 0.75rem 1rem;
-        color: #f4f6fa;
+      .login-card input {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(111, 167, 255, 0.25);
+        border-radius: 8px;
+        font-size: 1rem;
+        padding: 0.75rem;
+        color: #f5f8ff;
+      }
+      .login-card button {
+        margin-top: 0.5rem;
+        padding: 0.85rem;
         font-size: 0.95rem;
-      }
-      input[type="text"]:focus,
-      input[type="password"]:focus {
-        outline: none;
-        border-color: var(--accent-2);
-        box-shadow: 0 0 0 2px rgba(41, 121, 199, 0.25);
-      }
-      .btn.primary {
-        background: linear-gradient(135deg, rgba(45, 117, 196, 0.9), rgba(12, 33, 66, 0.95));
-        border: 1px solid rgba(127, 176, 255, 0.4);
-        color: #f4f6fa;
-        padding: 0.75rem 1.4rem;
-        border-radius: 12px;
-        font-weight: 600;
-        letter-spacing: 0.12rem;
         text-transform: uppercase;
+        letter-spacing: 0.16rem;
+        border-radius: 999px;
+        border: none;
+        background: linear-gradient(135deg, var(--accent-2), var(--accent-3));
+        color: #0b141f;
+        font-weight: 600;
         cursor: pointer;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
       }
-      .btn.primary:hover {
+      .login-card button:hover {
         transform: translateY(-1px);
-        box-shadow: 0 12px 30px rgba(45, 117, 196, 0.35);
+        box-shadow: 0 12px 30px rgba(111, 167, 255, 0.35);
       }
-      .form-errors {
-        background: rgba(255, 90, 95, 0.15);
-        border: 1px solid rgba(255, 90, 95, 0.35);
-        color: #ffd4d6;
-        padding: 0.65rem 0.75rem;
-        border-radius: 10px;
+      .login-card .form-errors {
+        color: var(--accent-err);
         font-size: 0.85rem;
       }
-      .field-error {
-        color: #ffd4d6;
-        font-size: 0.75rem;
+      .fallback-grid {
+        padding: 2.5rem 3rem;
+        width: 100%;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 1.5rem;
+      }
+      .fallback-panel {
+        background: var(--panel-bg);
+        border: 1px solid var(--panel-border);
+        border-radius: 18px;
+        padding: 1.25rem;
+        box-shadow: 0 22px 50px rgba(0, 0, 0, 0.42);
+      }
+      .fallback-panel h3 {
+        margin: 0 0 1rem;
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12rem;
+        color: var(--accent-3);
+      }
+      .fallback-panel table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+      }
+      .fallback-panel th,
+      .fallback-panel td {
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid rgba(111, 167, 255, 0.18);
+        text-align: left;
+      }
+      .fallback-panel tbody tr:last-child td {
+        border-bottom: none;
+      }
+      footer.site-footer {
+        text-align: center;
+        padding: 1rem;
+        font-size: 0.78rem;
+        color: rgba(255, 255, 255, 0.45);
       }
     </style>
   </head>
   <body>
-    <header class="branding-header">
-      <img src="{% static 'branding/logo.svg' %}" alt="C4rr13rX emblem" />
-      <h1>C4rr13rX Control Tower</h1>
+    <header class="site-header">
+      <div class="brand">
+        <img src="{% static 'assets/logo.png' %}" alt="C4rr13rX insignia" />
+        <h1>C4rr13rX • Mission Control</h1>
+      </div>
+      {% if user.is_authenticated %}
+        <span class="user-chip">Logged in as {{ user.get_username }}</span>
+      {% endif %}
     </header>
     {% if user.is_authenticated %}
-      <main class="dashboard-fallback">
-        <section class="overview">
-          <div>
-            <h2>Stable Bank Reserve</h2>
-            <p class="metric">${{ stable_bank|floatformat:2 }}</p>
+      <main class="app-shell">
+        <noscript>
+          <div class="fallback-grid">
+            <aside class="fallback-panel">
+              <h3>Snapshot</h3>
+              <p>Stable bank: {{ fallback_snapshot.stable_bank|floatformat:2 }}</p>
+              <p>Total profit: {{ fallback_snapshot.total_profit|floatformat:2 }}</p>
+              <p>Open advisories: {{ fallback_snapshot.advisories|length }}</p>
+            </aside>
+            <section class="fallback-panel">
+              <h3>Latest Metrics</h3>
+              <table>
+                <tbody>
+                  {% for metric in fallback_snapshot.latest_metrics %}
+                    <tr>
+                      <td>{{ metric.stage }}</td>
+                      <td>{{ metric.name }}</td>
+                      <td>{{ metric.value|floatformat:3 }}</td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="3">No metrics recorded.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </section>
           </div>
-          <div>
-            <h2>Total Profit (Ghost)</h2>
-            <p class="metric">${{ total_profit|floatformat:2 }}</p>
-          </div>
-        </section>
-        <section class="grid-two fallback-panels">
-          <article>
-            <header>Recent Metrics</header>
-            <table>
-              <thead>
-                <tr>
-                  <th>Stage</th>
-                  <th>Name</th>
-                  <th>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for metric in latest_metrics %}
-                  <tr>
-                    <td>{{ metric.stage }}</td>
-                    <td>{{ metric.name }}</td>
-                    <td>{{ metric.value|floatformat:4 }}</td>
-                  </tr>
-                {% empty %}
-                  <tr><td colspan="3">No metrics yet</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </article>
-          <article>
-            <header>Signals &amp; Advisories</header>
-            <div class="subsection">
-              <h3>Feedback</h3>
-              <ul class="feedback-list">
-                {% for fb in latest_feedback %}
-                  <li><strong>{{ fb.severity|upper }}</strong> — {{ fb.label }} ({{ fb.details }})</li>
-                {% empty %}
-                  <li>No feedback yet</li>
-                {% endfor %}
-              </ul>
-            </div>
-            <div class="subsection">
-              <h3>Advisories</h3>
-              <ul class="advisory-list">
-                {% for adv in advisories %}
-                  <li data-severity="{{ adv.severity }}">
-                    <div class="advisory-headline">
-                      <span class="badge">{{ adv.severity|upper }}</span>
-                      <span class="topic">{{ adv.topic }}</span>
-                      <span class="timestamp">{{ adv.ts|date:"Y-m-d H:i" }}</span>
-                    </div>
-                    <p class="message">{{ adv.message }}</p>
-                    <p class="recommendation"><strong>Action:</strong> {{ adv.recommendation }}</p>
-                  </li>
-                {% empty %}
-                  <li>No active advisories</li>
-                {% endfor %}
-              </ul>
-            </div>
-          </article>
-        </section>
-        <section class="grid-two fallback-panels">
-          <article>
-            <header>Live Trade Ledger</header>
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Action</th>
-                  <th>P/L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for trade in live_trades %}
-                  <tr>
-                    <td>{{ trade.symbol }}</td>
-                    <td>{{ trade.action }}</td>
-                    <td>{{ trade.details.profit|default:trade.details.net_margin|floatformat:4 }}</td>
-                  </tr>
-                {% empty %}
-                  <tr><td colspan="3">No live trades logged</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </article>
-          <article>
-            <header>Ghost Trade Highlights</header>
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Action</th>
-                  <th>Margin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for trade in ghost_trades %}
-                  <tr>
-                    <td>{{ trade.symbol }}</td>
-                    <td>{{ trade.action }}</td>
-                    <td>{{ trade.details.net_margin|floatformat:4 }}</td>
-                  </tr>
-                {% empty %}
-                  <tr><td colspan="3">No ghost trades yet</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </article>
-        </section>
+        </noscript>
+        <div
+          id="app"
+          data-initial-route="{{ initial_route }}"
+          data-fallback-id="fallback-data"
+        ></div>
+        {{ fallback_snapshot|json_script:"fallback-data" }}
       </main>
-      <div id="app"></div>
     {% else %}
-      <main class="login-wrapper">
-        <section class="login-card">
-          <h2>Sign In</h2>
-          <form method="post" novalidate>
+      <main class="app-shell">
+        <section class="login-wrapper">
+          <form method="post" class="login-card">
+            <h2>Authenticate</h2>
             {% csrf_token %}
             {% if auth_form.non_field_errors %}
               <div class="form-errors">
-                {% for error in auth_form.non_field_errors %}
-                  <p>{{ error }}</p>
-                {% endfor %}
+                {{ auth_form.non_field_errors }}
               </div>
             {% endif %}
-            <div class="form-field">
-              <label for="id_username">Username</label>
+            <label>
+              Username
               {{ auth_form.username }}
-              {% if auth_form.username.errors %}
-                <small class="field-error">{{ auth_form.username.errors|striptags }}</small>
-              {% endif %}
-            </div>
-            <div class="form-field">
-              <label for="id_password">Password</label>
+            </label>
+            <label>
+              Password
               {{ auth_form.password }}
-              {% if auth_form.password.errors %}
-                <small class="field-error">{{ auth_form.password.errors|striptags }}</small>
-              {% endif %}
-            </div>
-            <button type="submit" class="btn primary">Log In</button>
+            </label>
+            <button type="submit">Enter Mission Control</button>
           </form>
         </section>
       </main>
     {% endif %}
+    <footer class="site-footer">© {% now "Y" %} C4rr13rX • Autonomous Trading Control Tower</footer>
   </body>
 </html>

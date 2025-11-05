@@ -30,6 +30,8 @@ class ConsoleProcessManager:
         self._lock = threading.Lock()
         self._process: Optional[subprocess.Popen] = None
         self._started_at: Optional[float] = None
+        self._stdin_lock = threading.Lock()
+        self._bootstrap_thread: Optional[threading.Thread] = None
 
     def start(self, command: Optional[list[str]] = None) -> Dict[str, str]:
         cmd = command or DEFAULT_COMMAND
@@ -44,6 +46,7 @@ class ConsoleProcessManager:
                     cwd=str(REPO_ROOT),
                     stdout=logfile,
                     stderr=subprocess.STDOUT,
+                    stdin=subprocess.PIPE,
                     text=True,
                     bufsize=1,
                     start_new_session=True,
@@ -54,6 +57,8 @@ class ConsoleProcessManager:
                 return {"status": "error", "message": str(exc)}
             self._process = proc
             self._started_at = time.time()
+            logfile.close()
+            self._schedule_bootstrap()
             return {"status": "started", "pid": str(proc.pid)}
 
     def stop(self, graceful_timeout: float = 5.0) -> Dict[str, str]:
@@ -70,6 +75,13 @@ class ConsoleProcessManager:
                 waited += 0.25
             if self._process.poll() is None:
                 self._process.kill()
+            if self._process.stdin:
+                try:
+                    self._process.stdin.close()
+                except Exception:
+                    pass
+            self._process = None
+            self._started_at = None
             return {"status": "stopped"}
 
     def status(self) -> Dict[str, Optional[str]]:
@@ -93,6 +105,38 @@ class ConsoleProcessManager:
         with LOG_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
             dq: deque[str] = deque(handle, maxlen=lines)
         return list(dq)
+
+    def send(self, command: str) -> Dict[str, str]:
+        payload = (command or "").strip()
+        if not payload:
+            return {"status": "noop"}
+        with self._lock:
+            proc = self._process
+        if not proc or proc.poll() is not None or not proc.stdin:
+            return {"status": "stopped"}
+        with self._stdin_lock:
+            try:
+                proc.stdin.write(payload + "\n")
+                proc.stdin.flush()
+            except Exception as exc:
+                return {"status": "error", "message": str(exc)}
+        return {"status": "sent"}
+
+    def _schedule_bootstrap(self) -> None:
+        if self._bootstrap_thread and self._bootstrap_thread.is_alive():
+            return
+        sequence = ["3", "2", "7"]
+
+        def _worker():
+            time.sleep(1.0)
+            for cmd in sequence:
+                result = self.send(cmd)
+                if result.get("status") != "sent":
+                    break
+                time.sleep(1.0)
+
+        self._bootstrap_thread = threading.Thread(target=_worker, daemon=True)
+        self._bootstrap_thread.start()
 
 
 manager = ConsoleProcessManager()

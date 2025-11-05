@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from django.db.models import Count
 from rest_framework import generics, status
 from rest_framework.request import Request
@@ -14,11 +17,18 @@ from .serializers import (
     TradeLogSerializer,
 )
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
+from db import get_db  # noqa: E402
+
 
 class MetricsListView(generics.ListAPIView):
     serializer_class = MetricEntrySerializer
 
     def get_queryset(self):
+        get_db()
         qs = MetricEntry.objects.all()
         stage = self.request.query_params.get("stage")
         category = self.request.query_params.get("category")
@@ -35,6 +45,7 @@ class FeedbackListView(generics.ListAPIView):
     serializer_class = FeedbackEventSerializer
 
     def get_queryset(self):
+        get_db()
         qs = FeedbackEvent.objects.all()
         sources = self.request.query_params.getlist("source")
         severity = self.request.query_params.getlist("severity")
@@ -51,6 +62,7 @@ class TradeLogView(generics.ListAPIView):
     serializer_class = TradeLogSerializer
 
     def get_queryset(self):
+        get_db()
         qs = TradeLog.objects.all()
         wallet = self.request.query_params.get("wallet")
         status_param = self.request.query_params.get("status")
@@ -67,6 +79,7 @@ class AdvisoryListView(generics.ListAPIView):
     serializer_class = AdvisorySerializer
 
     def get_queryset(self):
+        get_db()
         qs = Advisory.objects.all()
         include_resolved = self.request.query_params.get("include_resolved")
         if not (include_resolved and include_resolved.lower() in {"1", "true", "yes"}):
@@ -81,6 +94,7 @@ class AdvisoryListView(generics.ListAPIView):
 
 class DashboardSummaryView(APIView):
     def get(self, request: Request, *args, **kwargs) -> Response:
+        db = get_db()
         metric_counts = MetricEntry.objects.values("stage").annotate(total=Count("id"))
         feedback_counts = FeedbackEvent.objects.values("severity").annotate(total=Count("id"))
         advisory_counts = Advisory.objects.filter(resolved=0).values("severity").annotate(total=Count("id"))
@@ -91,6 +105,10 @@ class DashboardSummaryView(APIView):
             Advisory.objects.filter(resolved=0).order_by("-ts")[:10],
             many=True,
         ).data
+        state = db.load_state() or {}
+        ghost_state = state.get("ghost_trading") or {}
+        stable_bank = float(ghost_state.get("stable_bank", 0.0))
+        total_profit = float(ghost_state.get("total_profit", 0.0))
 
         summary = {
             "metrics_by_stage": list(metric_counts),
@@ -100,5 +118,7 @@ class DashboardSummaryView(APIView):
             "recent_trades": recent_trades,
             "advisories_by_severity": list(advisory_counts),
             "active_advisories": active_advisories,
+            "stable_bank": stable_bank,
+            "total_profit": total_profit,
         }
         return Response(summary, status=status.HTTP_200_OK)

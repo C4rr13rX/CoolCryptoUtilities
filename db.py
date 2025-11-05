@@ -676,6 +676,21 @@ class TradingDatabase:
             )
         return decoded
 
+    def fetch_recent_pairs(self, *, horizon_sec: int = 24 * 3600, limit: int = 200) -> List[Dict[str, Any]]:
+        cutoff = time.time() - max(0, float(horizon_sec))
+        query = """
+            SELECT chain, symbol, MAX(ts) AS last_ts
+            FROM market_stream
+            WHERE ts >= ?
+            GROUP BY chain, symbol
+            ORDER BY last_ts DESC
+            LIMIT ?
+        """
+        with self._cursor() as cur:
+            cur.execute(query, (cutoff, int(limit)))
+            rows = cur.fetchall()
+        return [{"chain": row["chain"], "symbol": row["symbol"], "last_ts": row["last_ts"]} for row in rows]
+
     # ------------------------------------------------------------------
     # Metrics & feedback
     # ------------------------------------------------------------------

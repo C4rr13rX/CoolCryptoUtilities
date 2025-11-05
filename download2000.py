@@ -73,7 +73,32 @@ ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
 LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
 
 # Optional full RPC URL override (e.g., self-hosted, Alchemy, Infura, Ankr w/ key)
-DEFAULT_RPC = "https://mainnet.base.org" if CHAIN_NAME == "base" else f"https://rpc.ankr.com/{CHAIN_NAME}/{ANKR_API_KEY}".rstrip("/")
+DEFAULT_RPC = "https://mainnet.base.org"
+if CHAIN_NAME in {"base", "ethereum", "arbitrum", "optimism", "polygon"}:
+    alchemy_env = {
+        "base": "ALCHEMY_BASE_URL",
+        "ethereum": "ALCHEMY_ETH_URL",
+        "arbitrum": "ALCHEMY_ARB_URL",
+        "optimism": "ALCHEMY_OP_URL",
+        "polygon": "ALCHEMY_POLY_URL",
+    }[CHAIN_NAME]
+    candidate = os.getenv(alchemy_env)
+    if not candidate:
+        key = os.getenv("ALCHEMY_API_KEY", "").strip()
+        slugs = {
+            "base": "base-mainnet",
+            "ethereum": "eth-mainnet",
+            "arbitrum": "arb-mainnet",
+            "optimism": "opt-mainnet",
+            "polygon": "polygon-mainnet",
+        }
+        if key:
+            candidate = f"https://{slugs[CHAIN_NAME]}.g.alchemy.com/v2/{key}"
+    if candidate:
+        DEFAULT_RPC = candidate.strip()
+elif ANKR_API_KEY:
+    DEFAULT_RPC = f"https://rpc.ankr.com/{CHAIN_NAME}/{ANKR_API_KEY}".rstrip("/")
+
 RPC_URL = os.getenv("ANKR_RPC_URL", DEFAULT_RPC).strip()
 
 # --- RATE LIMITER ---

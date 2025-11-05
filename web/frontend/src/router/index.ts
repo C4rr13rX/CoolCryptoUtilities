@@ -1,0 +1,48 @@
+import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router';
+
+import DashboardView from '@/views/DashboardView.vue';
+import PipelineView from '@/views/PipelineView.vue';
+import StreamsView from '@/views/StreamsView.vue';
+import TelemetryView from '@/views/TelemetryView.vue';
+import ConsoleView from '@/views/ConsoleView.vue';
+import AdvisoriesView from '@/views/AdvisoriesView.vue';
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/',
+    name: 'dashboard',
+    component: DashboardView,
+  },
+  {
+    path: '/pipeline',
+    name: 'pipeline',
+    component: PipelineView,
+  },
+  {
+    path: '/streams',
+    name: 'streams',
+    component: StreamsView,
+  },
+  {
+    path: '/telemetry',
+    name: 'telemetry',
+    component: TelemetryView,
+  },
+  {
+    path: '/console',
+    name: 'console',
+    component: ConsoleView,
+  },
+  {
+    path: '/advisories',
+    name: 'advisories',
+    component: AdvisoriesView,
+  },
+];
+
+export function createDashboardRouter(baseHref = '/') {
+  return createRouter({
+    history: createWebHistory(baseHref),
+    routes,
+  });
+}

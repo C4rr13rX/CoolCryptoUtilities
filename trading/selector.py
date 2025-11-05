@@ -16,11 +16,14 @@ from trading.bot import TradingBot
 from trading.data_stream import MarketDataStream, _split_symbol, TOKEN_NORMALIZATION
 from trading.pipeline import TrainingPipeline
 from trading.portfolio import PortfolioState
+from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs, pair_index_entries
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
 
-DEFAULT_LIVE_PAIRS: List[str] = [PRIMARY_SYMBOL]
+DEFAULT_LIVE_PAIRS: List[str] = top_pairs(limit=6) or [PRIMARY_SYMBOL]
+if PRIMARY_SYMBOL not in DEFAULT_LIVE_PAIRS:
+    DEFAULT_LIVE_PAIRS.insert(0, PRIMARY_SYMBOL)
 
 @dataclass
 class PairCandidate:
@@ -36,31 +39,7 @@ _LIVE_PAIR_CACHE: Dict[str, bool] = {}
 
 
 def _load_top_symbols(limit: int = 100) -> List[str]:
-    default_index = Path("data") / f"pair_index_{PRIMARY_CHAIN}.json"
-    path = Path(os.getenv("PAIR_INDEX_PATH", str(default_index)))
-    if not path.exists():
-        return []
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh) or {}
-    except Exception:
-        return []
-    try:
-        items = sorted(
-            data.items(),
-            key=lambda kv: int(kv[1].get("index", 0)),
-        )
-    except Exception:
-        items = list(data.items())
-    symbols: List[str] = []
-    for _, info in items:
-        symbol = str(info.get("symbol", "")).upper()
-        if not symbol:
-            continue
-        symbols.append(symbol)
-        if len(symbols) >= limit:
-            break
-    return symbols
+    return top_pairs(limit=limit)
 
 
 def _token_synonyms(token: str) -> set[str]:
@@ -135,17 +114,12 @@ def _has_live_price(symbol: str) -> bool:
 
 
 def _load_pair_metadata() -> Dict[str, str]:
-    index_path = Path("data") / f"pair_index_{PRIMARY_CHAIN}.json"
-    if not index_path.exists():
-        return {}
-    try:
-        with index_path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except Exception:
-        return {}
+    data = pair_index_entries()
     mapping: Dict[str, str] = {}
     for addr, info in data.items():
-        symbol = str(info.get("symbol") or "").upper()
+        if not isinstance(info, dict):
+            continue
+        symbol = str(info.get("symbol", "")).upper()
         if addr and symbol:
             mapping[symbol] = addr
     return mapping

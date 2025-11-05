@@ -62,3 +62,8 @@ export async function stopConsoleProcess() {
   const { data } = await api.post('/console/stop/');
   return data;
 }
+
+export async function sendConsoleInput(command: string) {
+  const { data } = await api.post('/console/input/', { command });
+  return data;
+}

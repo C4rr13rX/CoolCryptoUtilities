@@ -15,15 +15,19 @@ from trading.constants import PRIMARY_CHAIN
 
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("5m", 5 * 60),
-    ("20m", 20 * 60),
+    ("15m", 15 * 60),
     ("30m", 30 * 60),
     ("1h", 60 * 60),
-    ("5h", 5 * 60 * 60),
-    ("10h", 10 * 60 * 60),
+    ("3h", 3 * 60 * 60),
+    ("6h", 6 * 60 * 60),
+    ("12h", 12 * 60 * 60),
     ("1d", 24 * 60 * 60),
     ("3d", 3 * 24 * 60 * 60),
     ("5d", 5 * 24 * 60 * 60),
     ("1w", 7 * 24 * 60 * 60),
+    ("1m", 30 * 24 * 60 * 60),
+    ("3m", 90 * 24 * 60 * 60),
+    ("6m", 180 * 24 * 60 * 60),
 ]
 
 
@@ -104,6 +108,9 @@ class BusScheduler:
         sample: Dict[str, float],
         pred_summary: Dict[str, float],
         portfolio: PortfolioState,
+        *,
+        base_allocation: Optional[Dict[str, float]] = None,
+        risk_budget: float = 1.0,
     ) -> Optional[TradeDirective]:
         """Update internal state with the latest sample and return a directive."""
         state = self._update_state(sample)
@@ -131,12 +138,18 @@ class BusScheduler:
         # Enter: use quote asset to buy base
         if available_quote > 0:
             expected = best_long.expected_return
+            risk_factor = min(1.0, max(expected - self.min_profit, 0.0) * 5.0)
+            allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
+            max_allocation = max(allocation * risk_budget, 0.0)
             if (
                 expected > (self.min_profit + fee_rate)
-                and direction_prob >= 0.52
-                and (net_margin >= 0 or confidence >= 0.55)
+                and direction_prob >= 0.6
+                and confidence >= 0.6
+                and (net_margin >= self.min_profit)
             ):
-                size_quote = min(available_quote * 0.25, max(available_quote * 0.1, 0.0))
+                size_quote = available_quote * min(0.35, max(0.08, risk_factor * 0.25))
+                if max_allocation > 0:
+                    size_quote = min(size_quote, max_allocation)
                 size_base = size_quote / max(last_price, 1e-9)
                 if size_base > 0:
                     target_price = last_price * (1.0 + max(expected - fee_rate, self.min_profit))
@@ -158,8 +171,8 @@ class BusScheduler:
         # Exit: sell base into quote when projected drawdown
         if available_base > 0:
             expected = best_short.expected_return
-            if expected < -(self.min_profit / 2.0) or direction_prob <= 0.45 or net_margin < 0:
-                size_base = available_base * 0.4
+            if expected < -self.min_profit or direction_prob <= 0.4 or net_margin < 0:
+                size_base = available_base * 0.5
                 if size_base > 0:
                     target_price = last_price * (1.0 + expected + fee_rate)
                     directive = TradeDirective(

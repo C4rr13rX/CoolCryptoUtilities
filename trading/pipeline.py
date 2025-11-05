@@ -467,12 +467,38 @@ class TrainingPipeline:
         focus_assets: Optional[Sequence[str]] = None,
         dataset_label: str = "full",
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, np.ndarray]]]:
-        inputs, targets = self.data_loader.build_dataset(
-            window_size=self.window_size,
-            sent_seq_len=self.sent_seq_len,
-            tech_count=self.tech_count,
-            focus_assets=focus_assets,
-        )
+        attempts = 0
+        max_attempts = 4
+        inputs: Optional[Dict[str, Any]] = None
+        targets: Optional[Dict[str, Any]] = None
+        while attempts < max_attempts:
+            inputs, targets = self.data_loader.build_dataset(
+                window_size=self.window_size,
+                sent_seq_len=self.sent_seq_len,
+                tech_count=self.tech_count,
+                focus_assets=focus_assets,
+            )
+            if inputs is not None and targets is not None:
+                break
+            attempts += 1
+            self.data_loader.expand_limits()
+            time.sleep(0.1)
+        if inputs is None or targets is None:
+            try:
+                from services.background_workers import TokenDownloadSupervisor
+
+                supervisor = TokenDownloadSupervisor(db=self.db)
+                supervisor.base_worker.run_once()
+            except Exception as exc:
+                print(f"[training] dataset fallback unable to fetch new data: {exc}")
+            self.data_loader.expand_limits(factor=2.0, file_cap=128, sample_cap=8192)
+            self.data_loader.invalidate_dataset_cache()
+            inputs, targets = self.data_loader.build_dataset(
+                window_size=self.window_size,
+                sent_seq_len=self.sent_seq_len,
+                tech_count=self.tech_count,
+                focus_assets=focus_assets,
+            )
         if inputs is not None and targets is not None:
             sample_count = int(inputs["price_vol_input"].shape[0])
             asset_ids = inputs["asset_id_input"].reshape(-1)
@@ -545,6 +571,12 @@ class TrainingPipeline:
             for key in sample_weights:
                 sample_weights[key] = sample_weights[key].astype(np.float32)
             return inputs, targets, sample_weights
+        self.metrics.feedback(
+            "preflight",
+            severity=FeedbackSeverity.CRITICAL,
+            label="dataset_generation_failed",
+            details={"attempts": attempts, "focus_assets": list(focus_assets or [])},
+        )
         return None, None, None
 
     # ------------------------------------------------------------------

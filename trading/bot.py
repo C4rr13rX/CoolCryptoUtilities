@@ -67,7 +67,11 @@ class TradingBot:
         self.stable_checkpoint_ratio: float = 0.15
         self.bus_routes: Dict[str, List[str]] = {}
         self.stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD"}
-        self._load_state()
+        self.sim_quote_balances: Dict[Tuple[str, str], float] = {}
+        self.sim_native_balances: Dict[str, float] = {}
+        self._sim_initial_pool: float = 0.0
+        self.ghost_session_id: int = 1
+        self.active_exposure: Dict[str, float] = {}
         self._model_input_order: Optional[List[str]] = None
         self._predict_fn: Optional[Callable[..., Any]] = None
         self._active_model_ref: Optional[tf.keras.Model] = None
@@ -98,16 +102,128 @@ class TradingBot:
         self.gas_buffer_multiplier: float = max(1.0, float(os.getenv("GAS_BUFFER_MULTIPLIER", str(GAS_PROFIT_BUFFER))))
         self.gas_profit_guard: float = max(1.0, float(os.getenv("GAS_PROFIT_SAFETY", str(GAS_PROFIT_BUFFER))))
         self._latency_samples: int = 0
+        self._enable_bg_refinement = os.getenv("ENABLE_BG_REFINEMENT", "0").lower() in {"1", "true", "yes", "on"}
+        self.live_trading_enabled: bool = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
+        self.auto_promote_live: bool = os.getenv("AUTO_PROMOTE_LIVE", "0").lower() in {"1", "true", "yes", "on"}
+        self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.9"))
+        self.required_live_trades: int = int(os.getenv("LIVE_PROMOTION_MIN_TRADES", "120"))
+        self.required_live_profit: float = float(os.getenv("LIVE_PROMOTION_MIN_PROFIT", "50.0"))
+        self.max_symbol_share: float = float(os.getenv("MAX_SYMBOL_SHARE", "0.25"))
+        self.global_risk_budget: float = float(os.getenv("GLOBAL_RISK_BUDGET", "1.0"))
+        self._load_state()
+        if not self.sim_quote_balances:
+            self._init_sim_balances()
+        else:
+            self._sim_initial_pool = sum(self.sim_quote_balances.values()) or self._sim_initial_pool
+            if not self.sim_native_balances:
+                self.sim_native_balances[self.primary_chain.lower()] = 0.5
 
     async def start(self) -> None:
         if self._running:
             return
         self._running = True
         self.stream.register(self._handle_sample)
-        await asyncio.gather(
-            self.stream.start(),
-            self._start_background_refinement(),
+        tasks = [self.stream.start()]
+        if self._enable_bg_refinement:
+            tasks.append(self._start_background_refinement())
+        await asyncio.gather(*tasks)
+
+    def _init_sim_balances(self) -> None:
+        """Initialise simulated balances based on the real portfolio snapshot."""
+        self.sim_quote_balances.clear()
+        for (chain, symbol), holding in self.portfolio.holdings.items():
+            if symbol.upper() in self.stable_tokens:
+                self.sim_quote_balances[(chain.lower(), symbol.upper())] = holding.quantity
+        # ensure primary quote exists even if wallet empty
+        key = (self.primary_chain.lower(), "USDC")
+        self.sim_quote_balances.setdefault(key, 0.0)
+        self.sim_native_balances = {chain.lower(): max(balance, 0.1) for chain, balance in self.portfolio.native_balances.items()}
+        self.sim_native_balances.setdefault(self.primary_chain.lower(), 0.5)
+        self._sim_initial_pool = sum(self.sim_quote_balances.values())
+        self.ghost_session_id = max(1, self.ghost_session_id)
+        self.active_exposure.clear()
+
+    def _token_key(self, chain: str, symbol: str) -> Tuple[str, str]:
+        return (chain.lower(), symbol.upper())
+
+    def _get_quote_balance(self, chain: str, symbol: str) -> float:
+        key = self._token_key(chain, symbol)
+        if not self.live_trading_enabled:
+            return self.sim_quote_balances.get(key, 0.0)
+        return self.portfolio.get_quantity(symbol, chain=chain)
+
+    def _adjust_quote_balance(self, chain: str, symbol: str, delta: float) -> None:
+        if self.live_trading_enabled:
+            return
+        key = self._token_key(chain, symbol)
+        current = self.sim_quote_balances.get(key, 0.0)
+        updated = max(0.0, current + delta)
+        self.sim_quote_balances[key] = updated
+
+    def _consume_sim_gas(self, chain: str, gas_native: float) -> None:
+        if self.live_trading_enabled:
+            return
+        chain_l = chain.lower()
+        current = self.sim_native_balances.get(chain_l, 0.5)
+        current = max(0.0, current - gas_native)
+        self.sim_native_balances[chain_l] = current
+
+    def _check_sim_restart(self) -> None:
+        if self.live_trading_enabled:
+            return
+        total = sum(self.sim_quote_balances.values())
+        if self._sim_initial_pool <= 0:
+            self._sim_initial_pool = total
+            return
+        threshold = float(os.getenv("SIM_BALANCE_RESET_RATIO", "0.1"))
+        if total <= self._sim_initial_pool * threshold:
+            print("[ghost] simulated bankroll depleted; resetting simulation state.")
+            self._init_sim_balances()
+            self.positions.clear()
+            self.ghost_session_id += 1
+
+    def _total_stable(self, chain: str) -> float:
+        chain_l = chain.lower()
+        if self.live_trading_enabled:
+            return self.portfolio.stable_liquidity(chain_l)
+        total = sum(qty for (ch, _), qty in self.sim_quote_balances.items() if ch == chain_l)
+        total += max(0.0, self.stable_bank)
+        return total
+
+    def _compute_base_allocation(self, sample: Dict[str, Any]) -> Dict[str, float]:
+        symbol = str(sample.get("symbol") or "")
+        if not symbol:
+            return {}
+        chain = str(sample.get("chain", self.primary_chain)).lower() or self.primary_chain
+        total_stable = self._total_stable(chain)
+        if total_stable <= 0:
+            return {}
+        max_share = max(0.01, min(self.max_symbol_share, 1.0))
+        allocation = total_stable * max_share
+        current_exposure = self.active_exposure.get(symbol, 0.0)
+        available = max(0.0, allocation - current_exposure)
+        if available <= 0:
+            return {}
+        return {symbol: available}
+
+    def _maybe_promote_to_live(self) -> None:
+        if self.live_trading_enabled or not self.auto_promote_live:
+            return
+        if self.total_trades < max(1, self.required_live_trades):
+            return
+        win_rate = (self.wins / self.total_trades) if self.total_trades else 0.0
+        if win_rate < self.required_live_win_rate:
+            return
+        if self.total_profit < self.required_live_profit:
+            return
+        self.live_trading_enabled = True
+        self.metrics.feedback(
+            "trading",
+            severity=FeedbackSeverity.INFO,
+            label="live_promotion",
+            details={"win_rate": win_rate, "trades": self.total_trades, "profit": self.total_profit},
         )
+        print("[trading-bot] conditions met; live trading enabled.")
 
     def _init_bridge(self) -> Optional["UltraSwapBridge"]:
         if getattr(self, "_bridge_init_attempted", False) and getattr(self, "_bridge", None) is not None:
@@ -345,7 +461,14 @@ class TradingBot:
             await self._run_wallet_sync(reason="pre-schedule")
             directive = None
             try:
-                directive = self.scheduler.evaluate(sample, pred_summary, self.portfolio)
+                allocation_map = self._compute_base_allocation(sample)
+                directive = self.scheduler.evaluate(
+                    sample,
+                    pred_summary,
+                    self.portfolio,
+                    base_allocation=allocation_map,
+                    risk_budget=self.global_risk_budget,
+                )
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
             decision = await self._interpret_predictions(preds, sample, directive, pred_summary)
@@ -470,18 +593,27 @@ class TradingBot:
         base_token = route[0]
         quote_token = route[-1]
         chain_name = str(sample.get("chain", self.primary_chain)).lower() or self.primary_chain
+        pos = self.positions.get(symbol)
         if chain_name != self.primary_chain:
             required_float = float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000"))
             if self.portfolio.stable_liquidity(self.primary_chain) < required_float:
                 decision["status"] = "hold-nonprimary"
                 return decision
-        available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
-        available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
-        native_balance = self.portfolio.get_native_balance(chain_name)
         gas_required = self._estimate_gas_cost(chain_name, route)
+        use_sim = not self.live_trading_enabled
+        if use_sim:
+            available_quote = self._get_quote_balance(chain_name, quote_token)
+            available_base = float(pos.get("size", 0.0)) if pos else 0.0
+            native_balance = max(
+                self.sim_native_balances.get(chain_name, gas_required * self.gas_buffer_multiplier),
+                gas_required,
+            )
+        else:
+            available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
+            available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
+            native_balance = self.portfolio.get_native_balance(chain_name)
 
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
-        pos = self.positions.get(symbol)
         fees = 0.0015 + 0.005
 
         decision: Dict[str, Any] = {
@@ -498,6 +630,7 @@ class TradingBot:
             "wallet": "ghost",
             "route": route,
             "bus_plan": directive.to_dict() if directive else None,
+            "session_id": self.ghost_session_id,
         }
 
         trade_size = max(min(volume * self.max_trade_share, volume), 0.0)
@@ -505,46 +638,66 @@ class TradingBot:
         if directive and directive.size > 0:
             trade_size = float(directive.size)
         if native_balance < gas_required:
-            strategy = self._plan_gas_replenishment(
-                chain=chain_name,
-                route=route,
-                native_balance=native_balance,
-                gas_required=gas_required,
-                trade_size=trade_size,
-                price=price,
-                margin=margin,
-                pnl=pnl,
-                available_quote=available_quote,
-                symbol=symbol,
-            )
-            strategy_severity = FeedbackSeverity.CRITICAL
-            details = {
-                "native_balance": native_balance,
-                "required": gas_required,
-                "chain": chain_name,
-            }
-            if strategy:
-                details["strategy"] = strategy
-                if strategy.get("profit_guard_passed") and strategy.get("stable_swap_plan"):
-                    strategy_severity = FeedbackSeverity.WARNING
-                message = (
-                    f"Native balance {native_balance:.6f} below required {gas_required:.6f} on {chain_name}."
+            if self.live_trading_enabled:
+                strategy = self._plan_gas_replenishment(
+                    chain=chain_name,
+                    route=route,
+                    native_balance=native_balance,
+                    gas_required=gas_required,
+                    trade_size=trade_size,
+                    price=price,
+                    margin=margin,
+                    pnl=pnl,
+                    available_quote=available_quote,
+                    symbol=symbol,
                 )
-                self._record_advisory(
-                    topic="gas_replenishment",
-                    message=message,
-                    severity=strategy_severity,
-                    scope=f"{chain_name}:{symbol}",
-                    recommendation=str(strategy.get("recommendation", "")),
-                    meta=strategy,
-                )
-            self.metrics.feedback(
-                "trading",
-                severity=strategy_severity,
-                label="insufficient_gas",
-                details=details,
-            )
-            return decision
+                if strategy and strategy.get("profit_guard_passed") and strategy.get("stable_swap_plan"):
+                    executed = self._rebalance_for_gas(chain_name, strategy)
+                    if executed:
+                        self.metrics.feedback(
+                            "trading",
+                            severity=FeedbackSeverity.INFO,
+                            label="gas_rebalanced",
+                            details={"chain": chain_name, "strategy": strategy, "mode": "auto"},
+                        )
+                        await self._run_wallet_sync(reason="post-gas-rebalance")
+                        native_balance = self.portfolio.get_native_balance(chain_name)
+                        available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
+                        if native_balance >= gas_required:
+                            strategy = None
+                if native_balance < gas_required:
+                    strategy_severity = FeedbackSeverity.CRITICAL
+                    details = {
+                        "native_balance": native_balance,
+                        "required": gas_required,
+                        "chain": chain_name,
+                    }
+                    if strategy:
+                        details["strategy"] = strategy
+                        if strategy.get("profit_guard_passed") and strategy.get("stable_swap_plan"):
+                            strategy_severity = FeedbackSeverity.WARNING
+                        message = (
+                            f"Native balance {native_balance:.6f} below required {gas_required:.6f} on {chain_name}."
+                        )
+                        self._record_advisory(
+                            topic="gas_replenishment",
+                            message=message,
+                            severity=strategy_severity,
+                            scope=f"{chain_name}:{symbol}",
+                            recommendation=str(strategy.get("recommendation", "")),
+                            meta=strategy,
+                        )
+                    self.metrics.feedback(
+                        "trading",
+                        severity=strategy_severity,
+                        label="insufficient_gas",
+                        details=details,
+                    )
+                    return decision
+            else:
+                # Simulated trading: replenish virtual gas buffer instead of touching live funds
+                self.sim_native_balances[chain_name] = max(self.sim_native_balances.get(chain_name, 0.5), gas_required * self.gas_buffer_multiplier)
+                native_balance = self.sim_native_balances[chain_name]
         if trade_size > 0.0 and price > 0.0 and available_quote > 0.0:
             max_affordable = max(0.0, available_quote / price)
             trade_size = min(trade_size, max_affordable * self.max_trade_share)
@@ -638,7 +791,7 @@ class TradingBot:
             decision.update(
                 {
                     "action": "enter",
-                    "status": "ghost-entry",
+                    "status": f"{'live' if self.live_trading_enabled else 'ghost'}-entry",
                     "size": trade_size,
                     "entry_price": price,
                     "route": route,
@@ -647,8 +800,12 @@ class TradingBot:
                     "horizon": directive.horizon if directive else None,
                     "trade_id": trade_id,
                     "entry_ts": sample_ts,
+                    "wallet": "live" if self.live_trading_enabled else "ghost",
+                    "session_id": self.ghost_session_id,
                 }
             )
+            exposure_delta = trade_size * price
+            self.active_exposure[symbol] = self.active_exposure.get(symbol, 0.0) + exposure_delta
             entry_metrics = {
                 "direction_prob": direction_prob,
                 "exit_confidence": exit_conf_val,
@@ -684,6 +841,10 @@ class TradingBot:
                 "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
                 % (symbol, trade_size, price, direction_prob, margin, decision["reason"])
             )
+            if not self.live_trading_enabled:
+                quote_spent = trade_size * price
+                self._adjust_quote_balance(chain_name, quote_token, -quote_spent)
+                self._consume_sim_gas(chain_name, gas_required)
             return decision
 
         if should_exit and pos is not None:
@@ -724,7 +885,7 @@ class TradingBot:
             decision.update(
                 {
                     "action": "exit",
-                    "status": "ghost-exit",
+                    "status": f"{'live' if self.live_trading_enabled else 'ghost'}-exit",
                     "exit_reason": reason,
                     "size": exit_size,
                     "entry_price": pos["entry_price"],
@@ -741,8 +902,16 @@ class TradingBot:
                     "entry_ts": entry_ts,
                     "exit_ts": sample_ts,
                     "duration_sec": duration_sec,
+                    "wallet": "live" if self.live_trading_enabled else "ghost",
+                    "session_id": self.ghost_session_id,
                 }
             )
+            exposure_delta = exit_size * price
+            remaining = max(0.0, self.active_exposure.get(symbol, 0.0) - exposure_delta)
+            if remaining <= 1e-6:
+                self.active_exposure.pop(symbol, None)
+            else:
+                self.active_exposure[symbol] = remaining
             exit_metrics = {
                 "profit": profit,
                 "checkpoint": checkpoint,
@@ -785,6 +954,13 @@ class TradingBot:
                 "[ghost] exit %s size=%.4f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
                 % (symbol, exit_size, price, profit, self.stable_bank, reason or "exit")
             )
+            if not self.live_trading_enabled:
+                quote_gain = exit_size * price
+                self._adjust_quote_balance(chain_name, quote_token, quote_gain)
+                self._consume_sim_gas(chain_name, gas_required)
+                self.sim_native_balances[chain_name] = max(self.sim_native_balances.get(chain_name, 0.5), 0.5)
+                self._check_sim_restart()
+            self._maybe_promote_to_live()
             if profit > 0 and decision.get("wallet", "ghost") == "live":
                 strategy = self._plan_gas_replenishment(
                     chain=chain_name,
@@ -819,6 +995,9 @@ class TradingBot:
             )
         return decision
     async def _start_background_refinement(self, cadence: float = 900.0) -> None:
+        if not self._enable_bg_refinement:
+            return
+
         async def _loop():
             while self._running:
                 await asyncio.sleep(cadence)
@@ -957,15 +1136,23 @@ class TradingBot:
             if remaining_native <= 0.0:
                 break
             max_native_from_holding = holding.usd / max(native_price, 1e-9)
-            convert_native = min(remaining_native, max_native_from_holding, holding.quantity)
+            convert_native = min(remaining_native, max_native_from_holding)
             if convert_native <= 0.0:
                 continue
             spend_stable = convert_native * native_price
+            min_swap_usd = float(os.getenv("GAS_MIN_SWAP_USD", "1.0"))
+            if spend_stable < min_swap_usd:
+                spend_stable = min(min_swap_usd, holding.usd)
+                convert_native = spend_stable / max(native_price, 1e-9)
+            spend_stable = min(spend_stable, holding.usd, holding.quantity)
+            convert_native = spend_stable / max(native_price, 1e-9)
+            if spend_stable <= 0.0 or convert_native <= 0.0:
+                continue
             swap_plan.append(
                 {
                     "symbol": holding.symbol,
                     "token": holding.token,
-                    "spend_stable": round(spend_stable, 2),
+                    "spend_stable": round(spend_stable, 6),
                     "obtain_native": round(convert_native, 8),
                     "available": holding.quantity,
                     "usd_value": holding.usd,
@@ -1158,6 +1345,19 @@ class TradingBot:
         routes = ghost.get("routes")
         if isinstance(routes, dict):
             self.bus_routes = {sym: list(tokens) for sym, tokens in routes.items()}
+        sim_quotes = ghost.get("sim_quote_balances")
+        if isinstance(sim_quotes, dict):
+            self.sim_quote_balances = {
+                (str(key[0]).lower(), str(key[1]).upper()) if isinstance(key, (list, tuple)) and len(key) == 2 else (self.primary_chain.lower(), str(key).upper()): float(value)
+                for key, value in sim_quotes.items()
+            }
+        sim_native = ghost.get("sim_native_balances")
+        if isinstance(sim_native, dict):
+            self.sim_native_balances = {str(chain).lower(): float(value) for chain, value in sim_native.items()}
+        self.ghost_session_id = int(ghost.get("session_id", self.ghost_session_id)) or 1
+        exposure = ghost.get("active_exposure")
+        if isinstance(exposure, dict):
+            self.active_exposure = {str(sym): float(value) for sym, value in exposure.items()}
 
     def _save_state(self) -> None:
         try:
@@ -1174,6 +1374,10 @@ class TradingBot:
             "wins": self.wins,
             "positions": self.positions,
             "routes": self.bus_routes,
+            "sim_quote_balances": {f"{chain}:{symbol}": amount for (chain, symbol), amount in self.sim_quote_balances.items()},
+            "sim_native_balances": self.sim_native_balances,
+            "session_id": self.ghost_session_id,
+            "active_exposure": self.active_exposure,
         }
         try:
             self.db.save_state(state)

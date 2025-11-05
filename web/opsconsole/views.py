@@ -31,3 +31,11 @@ class TailLogsView(APIView):
         limit = int(request.query_params.get("limit", "200"))
         limit = max(10, min(limit, 2000))
         return Response({"lines": manager.tail(limit)}, status=status.HTTP_200_OK)
+
+
+class SendInputView(APIView):
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        payload = request.data.get("command", "")
+        result = manager.send(str(payload))
+        http_status = status.HTTP_200_OK if result.get("status") in {"sent", "noop"} else status.HTTP_409_CONFLICT
+        return Response(result, status=http_status)
