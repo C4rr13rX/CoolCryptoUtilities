@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -55,6 +56,11 @@ class HistoricalDataLoader:
         self.ohlc_start_ts = self._estimate_ohlc_start()
         self._asset_vocab: Dict[str, int] = {}
         self.news_items = self._load_news()
+        self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
+        self._tech_pca_components: Optional[np.ndarray] = None
+        self._tech_pca_mean: Optional[np.ndarray] = None
+        self._headline_digest: Optional[str] = None
+        self._fulltext_digest: Optional[str] = None
 
     def build_dataset(
         self,
@@ -83,6 +89,17 @@ class HistoricalDataLoader:
         focus_set: Optional[set[str]] = None
         if focus_assets:
             focus_set = {str(asset).upper() for asset in focus_assets if asset}
+
+        file_signature = tuple((str(path), int(path.stat().st_mtime)) for path in files)
+        focus_key = ",".join(sorted(focus_set)) if focus_set else "*"
+        cache_key = (window_size, sent_seq_len, tech_count, focus_key, file_signature)
+        cached = self._dataset_cache.get(cache_key)
+        if cached is not None:
+            inputs_cached, targets_cached = cached
+            return (
+                {name: value.copy() for name, value in inputs_cached.items()},
+                {name: value.copy() for name, value in targets_cached.items()},
+            )
 
         for file_path in files:
             try:
@@ -186,6 +203,7 @@ class HistoricalDataLoader:
         price_windows_arr = np.array(price_windows, dtype=np.float32)
         sentiment_arr = np.array(sentiment_windows, dtype=np.float32)
         tech_arr = np.array(tech_inputs, dtype=np.float32)
+        tech_arr = self._apply_tech_pca(tech_arr, tech_count)
         hour_arr = np.array(hours, dtype=np.int32).reshape(-1, 1)
         dow_arr = np.array(dows, dtype=np.int32).reshape(-1, 1)
         gas_arr = np.array(gases, dtype=np.float32).reshape(-1, 1)
@@ -232,7 +250,88 @@ class HistoricalDataLoader:
             ),
         }
 
+        positive_floor = float(os.getenv("TRAIN_POSITIVE_FLOOR", "0.15"))
+        dir_flat = targets["price_dir"].reshape(-1)
+        pos_idx = np.where(dir_flat > 0.5)[0]
+        pos_ratio = float(dir_flat.mean()) if dir_flat.size else 0.0
+        if pos_idx.size > 0 and 0.0 < pos_ratio < positive_floor:
+            multiplier = int(np.ceil((positive_floor / max(pos_ratio, 1e-6))))
+            multiplier = min(multiplier, int(os.getenv("TRAIN_OVERSAMPLE_MAX", "6")))
+            if multiplier > 1:
+                inputs, targets = self._oversample(inputs, targets, pos_idx, multiplier)
+
+        self._headline_digest = self._digest_array(headline_arr)
+        self._fulltext_digest = self._digest_array(full_arr)
+
+        inputs_copy = {name: value.copy() for name, value in inputs.items()}
+        targets_copy = {name: value.copy() for name, value in targets.items()}
+        self._dataset_cache[cache_key] = (inputs_copy, targets_copy)
+
         return inputs, targets
+
+    def dataset_signature(self) -> str:
+        digest_source = ":".join(filter(None, [self._headline_digest, self._fulltext_digest]))
+        return digest_source or ""
+
+    def _oversample(
+        self,
+        inputs: Dict[str, np.ndarray],
+        targets: Dict[str, np.ndarray],
+        positive_indices: np.ndarray,
+        multiplier: int,
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        if multiplier <= 1:
+            return inputs, targets
+        def _expand(arr: np.ndarray) -> np.ndarray:
+            if arr.shape[0] == 0:
+                return arr
+            replicas = [arr]
+            for _ in range(multiplier - 1):
+                replicas.append(arr[positive_indices])
+            return np.concatenate(replicas, axis=0)
+
+        expanded_inputs = {name: _expand(values) for name, values in inputs.items()}
+        expanded_targets = {name: _expand(values) for name, values in targets.items()}
+        return expanded_inputs, expanded_targets
+
+    def _digest_array(self, arr: np.ndarray) -> str:
+        if arr.size == 0:
+            return ""
+        data_bytes = arr.tobytes()
+        return hashlib.sha1(data_bytes).hexdigest()
+
+    def _apply_tech_pca(self, tech_arr: np.ndarray, tech_count: int) -> np.ndarray:
+        if tech_arr.size == 0:
+            return tech_arr
+        if self._tech_pca_components is None or self._tech_pca_mean is None:
+            self._fit_tech_pca(tech_arr)
+        if self._tech_pca_components is not None and self._tech_pca_mean is not None:
+            centered = tech_arr - self._tech_pca_mean
+            projected = centered @ self._tech_pca_components
+            if projected.shape[1] >= tech_count:
+                return projected[:, :tech_count].astype(np.float32)
+            if projected.shape[1] < tech_count:
+                pad = np.zeros((projected.shape[0], tech_count - projected.shape[1]), dtype=np.float32)
+                return np.concatenate([projected, pad], axis=1)
+        return tech_arr
+
+    def _fit_tech_pca(self, tech_arr: np.ndarray) -> None:
+        try:
+            mean = tech_arr.mean(axis=0, keepdims=False)
+            centered = tech_arr - mean
+            cov = np.cov(centered, rowvar=False)
+            evals, evecs = np.linalg.eigh(cov)
+            order = np.argsort(evals)[::-1]
+            evals = evals[order]
+            evecs = evecs[:, order]
+            explained = np.cumsum(evals) / max(np.sum(evals), 1e-9)
+            target_components = np.searchsorted(explained, 0.85) + 1
+            target_components = min(target_components, evecs.shape[1])
+            self._tech_pca_components = evecs[:, :target_components].astype(np.float32)
+            self._tech_pca_mean = mean.astype(np.float32)
+        except Exception:
+            self._tech_pca_components = None
+            self._tech_pca_mean = None
 
     def sample_texts(self, limit: int = 128) -> List[str]:
         pool = [h for h in self._headline_samples if h]

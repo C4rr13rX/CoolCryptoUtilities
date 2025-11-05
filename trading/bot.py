@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import os
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -77,6 +78,10 @@ class TradingBot:
         self._cache_transfers = CacheTransfers(db=self.db)
         self._bridge = self._init_bridge()
         self._wallet_sync_last_reason: Optional[str] = None
+        self._latency_window: deque = deque(maxlen=500)
+        self._pending_queue: deque = deque(maxlen=int(os.getenv("STREAM_QUEUE_MAX", "8")))
+        self._processing_sample: bool = False
+        self._last_sample_signature: Optional[Tuple[str, float]] = None
 
     async def start(self) -> None:
         if self._running:
@@ -262,54 +267,96 @@ class TradingBot:
         await self.stream.stop()
 
     async def _handle_sample(self, sample: Dict[str, Any]) -> None:
-        self._buffer.append(sample)
-        if len(self._buffer) < self.window_size:
-            return  # wait until window filled
-
-        model = self.pipeline.ensure_active_model()
-        now = float(sample.get("ts") or time.time())
-        if now >= self._portfolio_next_refresh:
-            try:
-                self.portfolio.refresh()
-                summary = self.portfolio.summary()
-                print(
-                    "[portfolio] wallet=%s stable≈%.2f native≈%.4f holdings=%d"
-                    % (
-                        summary.get("wallet"),
-                        summary.get("stable_usd", 0.0),
-                        summary.get("native_eth", 0.0),
-                        int(summary.get("holdings", 0)),
-                    )
+        if self._processing_sample:
+            if len(self._pending_queue) >= self._pending_queue.maxlen:
+                dropped = self._pending_queue.popleft()
+                self.metrics.feedback(
+                    "stream",
+                    severity=FeedbackSeverity.WARNING,
+                    label="queue_drop",
+                    details={"symbol": dropped.get("symbol"), "ts": dropped.get("ts")},
                 )
-            except Exception as exc:
-                print(f"[portfolio] refresh failed: {exc}")
-            self._portfolio_next_refresh = now + self.portfolio.refresh_interval
-        self._ensure_model_bindings(model)
-        inputs = self._prepare_inputs(list(self._buffer))
-        try:
-            preds = self._invoke_model(inputs)
-        except Exception as exc:
-            print(f"[trading-bot] prediction failed: {exc}")
+            self._pending_queue.append(sample)
             return
-        pred_summary = self._summarise_predictions(preds)
-        await self._run_wallet_sync(reason="pre-schedule")
-        directive = None
+
+        cycle_start = time.perf_counter()
+        self._processing_sample = True
         try:
-            directive = self.scheduler.evaluate(sample, pred_summary, self.portfolio)
-        except Exception as exc:
-            print(f"[bus-scheduler] evaluation failed: {exc}")
-        decision = await self._interpret_predictions(preds, sample, directive, pred_summary)
-        if decision and decision.get("action") != "hold":
-            self.queue.append(decision)
-            self.db.log_trade(
-                wallet=decision.get("wallet", "ghost"),
-                chain=decision.get("chain", sample.get("chain", "ethereum")),
-                symbol=decision.get("symbol", sample.get("symbol", "asset")),
-                action=decision.get("action", "queue"),
-                status=decision.get("status", "ghost"),
-                details=decision,
+            self._buffer.append(sample)
+            if len(self._buffer) < self.window_size:
+                return
+
+            sample_ts = float(sample.get("ts") or time.time())
+            signature = (sample.get("symbol", ""), sample_ts)
+            if signature == self._last_sample_signature:
+                return
+            self._last_sample_signature = signature
+
+            model = self.pipeline.ensure_active_model()
+            now = sample_ts
+            if now >= self._portfolio_next_refresh:
+                try:
+                    self.portfolio.refresh()
+                    summary = self.portfolio.summary()
+                    print(
+                        "[portfolio] wallet=%s stable≈%.2f native≈%.4f holdings=%d"
+                        % (
+                            summary.get("wallet"),
+                            summary.get("stable_usd", 0.0),
+                            summary.get("native_eth", 0.0),
+                            int(summary.get("holdings", 0)),
+                        )
+                    )
+                    self._schedule_next_portfolio_refresh(now, success=True)
+                except Exception as exc:
+                    print(f"[portfolio] refresh failed: {exc}")
+                    self._schedule_next_portfolio_refresh(now, success=False)
+            self._ensure_model_bindings(model)
+            inputs = self._prepare_inputs(list(self._buffer))
+            try:
+                preds = self._invoke_model(inputs)
+            except Exception as exc:
+                print(f"[trading-bot] prediction failed: {exc}")
+                return
+            pred_summary = self._summarise_predictions(preds)
+            await self._run_wallet_sync(reason="pre-schedule")
+            directive = None
+            try:
+                directive = self.scheduler.evaluate(sample, pred_summary, self.portfolio)
+            except Exception as exc:
+                print(f"[bus-scheduler] evaluation failed: {exc}")
+            decision = await self._interpret_predictions(preds, sample, directive, pred_summary)
+            if decision and decision.get("action") != "hold":
+                self.queue.append(decision)
+                self.db.log_trade(
+                    wallet=decision.get("wallet", "ghost"),
+                    chain=decision.get("chain", sample.get("chain", "ethereum")),
+                    symbol=decision.get("symbol", sample.get("symbol", "asset")),
+                    action=decision.get("action", "queue"),
+                    status=decision.get("status", "ghost"),
+                    details=decision,
+                )
+                self._save_state()
+        finally:
+            latency = time.perf_counter() - cycle_start
+            self._latency_window.append(latency)
+            self.metrics.record(
+                MetricStage.LIVE_TRADING,
+                {"ttl_ms": latency * 1000.0},
+                category="latency",
+                meta={"window": len(self._buffer), "queue_depth": len(self._pending_queue)},
             )
-            self._save_state()
+            if latency > 0.05:
+                self.metrics.feedback(
+                    "latency",
+                    severity=FeedbackSeverity.WARNING,
+                    label="high_ttl",
+                    details={"ttl_ms": latency * 1000.0},
+                )
+            self._processing_sample = False
+            if self._pending_queue:
+                next_sample = self._pending_queue.popleft()
+                asyncio.create_task(self._handle_sample(next_sample))
 
     def _prepare_inputs(self, window: List[Dict[str, Any]]) -> Dict[str, np.ndarray]:
         prices = np.array([float(row.get("price", 0.0)) for row in window], dtype=np.float32)
@@ -364,6 +411,8 @@ class TradingBot:
         margin = float(summary.get("net_margin", 0.0))
         pnl = float(summary.get("net_pnl", margin))
         sample_ts = float(sample.get("ts", time.time()))
+        enter_threshold = getattr(self.pipeline, "decision_threshold", 0.58)
+        exit_threshold = min(enter_threshold * 0.75, 0.5)
 
         symbol = sample.get("symbol", "asset")
         price = float(sample.get("price", 0.0))
@@ -375,6 +424,14 @@ class TradingBot:
         if not route:
             route = [symbol.upper()]
         self.bus_routes[symbol] = route
+
+        base_token = route[0]
+        quote_token = route[-1]
+        chain_name = sample.get("chain", "ethereum")
+        available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
+        available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
+        native_balance = self.portfolio.get_native_balance(chain_name)
+        gas_required = self._estimate_gas_cost(chain_name, route)
 
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
         pos = self.positions.get(symbol)
@@ -400,6 +457,17 @@ class TradingBot:
         trade_size = min(trade_size, 100.0)
         if directive and directive.size > 0:
             trade_size = float(directive.size)
+        if native_balance < gas_required:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="insufficient_gas",
+                details={"native_balance": native_balance, "required": gas_required, "chain": chain_name},
+            )
+            return decision
+        if trade_size > 0.0 and price > 0.0 and available_quote > 0.0:
+            max_affordable = max(0.0, available_quote / price)
+            trade_size = min(trade_size, max_affordable)
         if trade_size <= 0.0:
             if pos is not None:
                 decision.update(
@@ -408,6 +476,13 @@ class TradingBot:
                         "size": pos["size"],
                         "entry_price": pos["entry_price"],
                     }
+                )
+            else:
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="insufficient_quote",
+                    details={"quote_token": quote_token, "available": available_quote, "price": price},
                 )
             return decision
 
@@ -422,11 +497,11 @@ class TradingBot:
             should_exit = True
             reason = directive.reason
         elif pos is None:
-            if direction_prob > 0.58 and exit_conf_val >= 0.6 and margin > fees * 1.1:
+            if direction_prob > enter_threshold and exit_conf_val >= 0.6 and margin > fees * 1.1:
                 should_enter = True
                 reason = "model-long"
         else:
-            if direction_prob < 0.45 or exit_conf_val < 0.5:
+            if direction_prob < exit_threshold or exit_conf_val < 0.5:
                 should_exit = True
                 reason = "confidence_drop"
             elif margin <= fees:
@@ -455,6 +530,10 @@ class TradingBot:
                         "swap_guard": guard_metrics,
                     }
                 )
+                return decision
+            if price > 0.0 and available_quote > 0.0:
+                trade_size = min(trade_size, max(0.0, available_quote / price))
+            if trade_size <= 0.0:
                 return decision
             self._ghost_trade_counter += 1
             trade_id = f"{symbol}-{self._ghost_trade_counter}"
@@ -521,7 +600,20 @@ class TradingBot:
 
         if should_exit and pos is not None:
             await self._run_wallet_sync(reason="pre-exit")
-            exit_size = min(pos["size"], trade_size)
+            held_size = float(pos["size"])
+            exit_size = min(held_size, trade_size, available_base)
+            if exit_size <= 0.0:
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="insufficient_base",
+                    details={
+                        "base_token": base_token,
+                        "available": available_base,
+                        "held": held_size,
+                    },
+                )
+                return decision
             profit = (price - pos["entry_price"]) * exit_size
             self.total_trades += 1
             if profit > 0:
@@ -635,6 +727,24 @@ class TradingBot:
 
     def configure_route(self, symbol: str, tokens: List[str]) -> None:
         self.bus_routes[symbol] = tokens
+
+    def _schedule_next_portfolio_refresh(self, now: float, *, success: bool) -> None:
+        base = self.portfolio.refresh_interval
+        if self._latency_window:
+            avg_ttl = float(np.mean(self._latency_window))
+        else:
+            avg_ttl = 0.02
+        adjustment = 1.0 + min(1.0, avg_ttl * 10.0)
+        if not success:
+            adjustment = 0.5
+        interval = float(np.clip(base * adjustment, 60.0, 900.0))
+        self._portfolio_next_refresh = now + interval
+
+    def _estimate_gas_cost(self, chain: str, route: List[str]) -> float:
+        base_cost = float(os.getenv("ESTIMATED_GAS_NATIVE", "0.001"))
+        hop_cost = float(os.getenv("ESTIMATED_GAS_HOP", "0.0002"))
+        hops = max(0, len(route) - 1)
+        return base_cost + hops * hop_cost
 
     def record_fill(
         self,

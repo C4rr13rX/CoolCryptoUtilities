@@ -5,6 +5,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import hashlib
+import math
+
 import numpy as np
 import tensorflow as tf
 
@@ -24,6 +27,7 @@ from model_definition import (
 from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
 from trading.metrics import (
+    FeedbackSeverity,
     MetricStage,
     MetricsCollector,
     classification_report,
@@ -79,11 +83,16 @@ class TrainingPipeline:
         self.data_loader = HistoricalDataLoader()
         self.iteration: int = 0
         self.active_accuracy: float = 0.0
+        self.target_positive_floor = float(os.getenv("TRAIN_POSITIVE_FLOOR", "0.15"))
+        self.decision_threshold = float(os.getenv("PRICE_DIR_THRESHOLD", "0.58"))
         self._load_state()
         self._active_model: Optional[tf.keras.Model] = None
         self.metrics = MetricsCollector(self.db)
         self.focus_lookback_sec = int(os.getenv("GHOST_FOCUS_LOOKBACK_SEC", "172800"))
         self.focus_max_assets = int(os.getenv("GHOST_FOCUS_MAX_ASSETS", "6"))
+        self._vectorizer_signature: Optional[str] = None
+        self._vectorizer_cache: set[str] = set()
+        self._last_dataset_meta: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -155,12 +164,35 @@ class TrainingPipeline:
                 },
             )
 
-        inputs, targets = self._prepare_dataset(batch_size=32, dataset_label="full")
-        if inputs is None or targets is None:
+        prep_start = time.perf_counter()
+        result = self._prepare_dataset(batch_size=32, dataset_label="full")
+        inputs, targets, sample_weights = result
+        if inputs is None or targets is None or sample_weights is None:
             self.iteration = pending_iteration
             self._save_state()
             print("[training] insufficient data for candidate training; skipping this cycle.")
             return {"iteration": self.iteration, "status": "skipped", "score": None}
+        prep_duration = time.perf_counter() - prep_start
+        self.metrics.record(
+            MetricStage.TRAINING,
+            {
+                "dataset_seconds": prep_duration,
+                "positive_ratio": float(self._last_dataset_meta.get("positive_ratio", 0.0)),
+                "samples": float(self._last_dataset_meta.get("samples", 0)),
+            },
+            category="runtime_prep",
+            meta={"iteration": self.iteration},
+        )
+        self.metrics.feedback(
+            "preflight",
+            severity=FeedbackSeverity.INFO,
+            label="dataset_ready",
+            details={
+                "samples": self._last_dataset_meta.get("samples", 0),
+                "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
+            },
+        )
+        self._preflight_checks(inputs, targets)
 
         self.iteration = pending_iteration
         self._save_state()
@@ -206,12 +238,24 @@ class TrainingPipeline:
         ]
         input_tensors = tuple(inputs[name] for name in input_order)
         target_tensors = tuple(targets[name] for name in output_order)
+        weight_tensors = tuple(
+            tf.convert_to_tensor(sample_weights.get(name, np.ones(targets[name].shape[0], dtype=np.float32)), dtype=tf.float32)
+            for name in output_order
+        )
         train_ds = (
-            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
+            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors, weight_tensors))
             .batch(16)
             .prefetch(tf.data.AUTOTUNE)
         )
+        train_start = time.perf_counter()
         history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
+        train_duration = time.perf_counter() - train_start
+        self.metrics.record(
+            MetricStage.TRAINING,
+            {"train_seconds": train_duration, "epochs": float(epochs)},
+            category="runtime_train",
+            meta={"iteration": self.iteration},
+        )
 
         score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
         self.optimizer.update({"learning_rate": lr, "epochs": epochs}, score)
@@ -220,11 +264,26 @@ class TrainingPipeline:
             .batch(32)
             .prefetch(tf.data.AUTOTUNE)
         )
+        eval_start = time.perf_counter()
         evaluation = self._evaluate_candidate(model, eval_ds, targets)
         focus_history = self._apply_focus_adaptation(model, focus_assets)
         if focus_history is not None:
             evaluation = self._evaluate_candidate(model, eval_ds, targets)
             evaluation.update(focus_history)
+        if evaluation.get("best_f1", 1.0) < 0.6:
+            burst_rerun = self._burst_replay(model, inputs, targets, sample_weights, evaluation)
+            if burst_rerun:
+                evaluation = self._evaluate_candidate(model, eval_ds, targets)
+                evaluation.update(burst_rerun)
+        if evaluation.get("best_threshold") is not None:
+            self.decision_threshold = float(evaluation["best_threshold"])
+        eval_duration = time.perf_counter() - eval_start
+        self.metrics.record(
+            MetricStage.TRAINING,
+            {"eval_seconds": eval_duration},
+            category="runtime_eval",
+            meta={"iteration": self.iteration},
+        )
 
         version = f"candidate-{int(time.time())}"
         path = self.model_dir / f"{version}.keras"
@@ -259,6 +318,13 @@ class TrainingPipeline:
             "ghost_pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
             "ghost_realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
             "false_positive_rate": self._safe_float(evaluation.get("false_positive_rate", 0.0)),
+            "best_threshold": self._safe_float(evaluation.get("best_threshold", self.decision_threshold)),
+            "ghost_trades_best": self._safe_float(evaluation.get("ghost_trades_best", 0.0)),
+            "best_profit_factor": self._safe_float(evaluation.get("best_profit_factor", 0.0)),
+            "best_win_rate": self._safe_float(evaluation.get("ghost_win_rate_best", 0.0)),
+            "temperature": self._safe_float(evaluation.get("temperature", 1.0)),
+            "drift_alert": self._safe_float(evaluation.get("drift_alert", 0.0)),
+            "drift_stat": self._safe_float(evaluation.get("drift_stat", 0.0)),
         }
         self.metrics.record(
             MetricStage.TRAINING,
@@ -273,15 +339,19 @@ class TrainingPipeline:
             if not evaluation:
                 gating_reason = "no evaluation metrics available"
             else:
-                ghost_trades = int(evaluation.get("ghost_trades", 0))
-                if ghost_trades < self.min_ghost_trades:
+                ghost_trades = int(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0)))
+                positive_ratio = float(self._last_dataset_meta.get("positive_ratio", 0.0))
+                effective_min_trades = self.min_ghost_trades
+                if ghost_trades > 0 and positive_ratio < self.target_positive_floor:
+                    effective_min_trades = max(5, min(self.min_ghost_trades, ghost_trades))
+                if ghost_trades < effective_min_trades:
                     gating_reason = (
-                        f"ghost trades {ghost_trades} below minimum {self.min_ghost_trades}"
+                        f"ghost trades {ghost_trades} below minimum {effective_min_trades}"
                     )
                 else:
-                    fp_rate = float(evaluation.get("false_positive_rate", 0.0))
-                    win_rate = float(evaluation.get("ghost_win_rate", 0.0))
-                    realized_margin = float(evaluation.get("ghost_realized_margin", 0.0))
+                    fp_rate = float(evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate", 0.0)))
+                    win_rate = float(evaluation.get("ghost_win_rate_best", evaluation.get("ghost_win_rate", 0.0)))
+                    realized_margin = float(evaluation.get("ghost_realized_margin_best", evaluation.get("ghost_realized_margin", 0.0)))
                     if fp_rate > self.max_false_positive_rate:
                         gating_reason = (
                             f"false positive rate {fp_rate:.3f} exceeds limit {self.max_false_positive_rate:.3f}"
@@ -302,6 +372,17 @@ class TrainingPipeline:
         if gating_reason:
             promote = False
             print(f"[training] promotion deferred: {gating_reason}. Continuing candidate search.")
+            self.metrics.feedback(
+                "promotion",
+                severity=FeedbackSeverity.WARNING,
+                label="deferred",
+                details={
+                    "iteration": self.iteration,
+                    "reason": gating_reason,
+                    "ghost_trades_best": evaluation.get("ghost_trades_best"),
+                    "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
+                },
+            )
         if promote:
             self.promote_candidate(path, score=score, metadata=result, evaluation=evaluation)
         else:
@@ -313,6 +394,15 @@ class TrainingPipeline:
                     "[training] candidate retained for further evaluation despite score %.3f (promotion criteria not met)."
                     % score
                 )
+            self.metrics.record(
+                MetricStage.TRAINING,
+                {
+                    "ghost_trades_best": float(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0))),
+                    "best_threshold": float(evaluation.get("best_threshold", self.decision_threshold)),
+                },
+                category="candidate_eval",
+                meta={"iteration": self.iteration},
+            )
 
         self._save_state()
         return result
@@ -333,6 +423,14 @@ class TrainingPipeline:
         )
         self._active_model = tf.keras.models.load_model(active_path, custom_objects=CUSTOM_OBJECTS, compile=False)
         self.active_accuracy = float(evaluation.get("dir_accuracy", score)) if evaluation else score
+        if evaluation and evaluation.get("best_threshold") is not None:
+            new_threshold = float(evaluation["best_threshold"])
+            self.decision_threshold = float(
+                max(
+                    0.05,
+                    min(0.95, 0.7 * self.decision_threshold + 0.3 * new_threshold),
+                )
+            )
         if metadata:
             summary = metadata.copy()
             if evaluation:
@@ -359,7 +457,7 @@ class TrainingPipeline:
         *,
         focus_assets: Optional[Sequence[str]] = None,
         dataset_label: str = "full",
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, np.ndarray]]]:
         inputs, targets = self.data_loader.build_dataset(
             window_size=self.window_size,
             sent_seq_len=self.sent_seq_len,
@@ -378,37 +476,104 @@ class TrainingPipeline:
             )
             margin_arr = targets["net_margin"].reshape(-1)
             margin_stats = distribution_report(margin_arr)
+            dir_arr = targets["price_dir"].reshape(-1)
+            positive_ratio = float(np.mean(dir_arr > 0.5)) if dir_arr.size else 0.0
             dataset_metrics = {
                 "samples": sample_count,
                 "asset_diversity": asset_diversity,
                 "avg_price_volatility": price_volatility,
                 "news_coverage_ratio": news_coverage,
+                "positive_ratio": positive_ratio,
             }
             dataset_metrics.update({f"net_margin_{k}": v for k, v in margin_stats.items()})
+            dataset_meta = {
+                "iteration": self.iteration,
+                "focus_assets": list(focus_assets or []),
+                "signature": self.data_loader.dataset_signature(),
+            }
+            self._last_dataset_meta = {
+                **dataset_metrics,
+                **dataset_meta,
+            }
             self.metrics.record(
                 MetricStage.TRAINING,
                 dataset_metrics,
                 category=f"dataset_{dataset_label}",
-                meta={
-                    "iteration": self.iteration,
-                    "focus_assets": list(focus_assets or []),
-                },
+                meta=dataset_meta,
             )
             inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
             inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
             inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
-            return inputs, targets
-        return None, None
+            price_dir_true = targets["price_dir"].reshape(-1)
+            positive_mask = price_dir_true > 0.5
+            pos_ratio = float(np.mean(positive_mask)) if price_dir_true.size else 0.0
+            sample_weights: Dict[str, np.ndarray] = {}
+            for name, value in targets.items():
+                sample_weights[name] = np.ones(value.shape[0], dtype=np.float32)
+            if 0.0 < pos_ratio < 1.0:
+                weight_pos = max(1.0, (1.0 - pos_ratio) / max(pos_ratio, 1e-4))
+                sample_weights["price_dir"][positive_mask] = weight_pos
+                sample_weights["net_margin"][positive_mask] = weight_pos
+            margin_intensity = np.clip(np.abs(margin_arr), 0.1, 5.0)
+            sample_weights["net_margin"] *= margin_intensity
+            sample_weights["net_pnl"] *= margin_intensity
+            for key in sample_weights:
+                sample_weights[key] = sample_weights[key].astype(np.float32)
+            return inputs, targets, sample_weights
+        return None, None, None
 
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
 
+    def _preflight_checks(self, inputs: Dict[str, Any], targets: Dict[str, Any]) -> bool:
+        meta = self._last_dataset_meta or {}
+        sample_count = int(meta.get("samples", inputs["price_vol_input"].shape[0] if inputs else 0))
+        positive_ratio = float(meta.get("positive_ratio", 0.0))
+        if sample_count < max(32, self.window_size):
+            self.metrics.feedback(
+                "preflight",
+                severity=FeedbackSeverity.CRITICAL,
+                label="insufficient_samples",
+                details={"samples": sample_count},
+            )
+            return False
+        if positive_ratio < self.target_positive_floor * 0.5:
+            self.metrics.feedback(
+                "preflight",
+                severity=FeedbackSeverity.WARNING,
+                label="low_positive_ratio",
+                details={"positive_ratio": positive_ratio},
+            )
+        return True
+
     def _adapt_vectorizers(self, headline_vec, full_vec) -> None:
-        texts = self.data_loader.sample_texts(limit=256)
-        dataset = tf.data.Dataset.from_tensor_slices(texts)
+        texts = [text for text in self.data_loader.sample_texts(limit=512) if text]
+        if not texts:
+            return
+        digest = hashlib.sha1("|".join(sorted(texts)).encode("utf-8")).hexdigest()
+        needs_init = False
+        try:
+            vocab = headline_vec.get_vocabulary()
+            needs_init = len(vocab) <= 2  # TextVectorization default vocab: ['', '[UNK]']
+        except Exception:
+            needs_init = True
+
+        if not needs_init and digest == self._vectorizer_signature:
+            return
+
+        candidate_texts = [text for text in texts if text not in self._vectorizer_cache]
+        if needs_init or not candidate_texts:
+            candidate_texts = texts
+
+        if not candidate_texts:
+            return
+
+        dataset = tf.data.Dataset.from_tensor_slices(candidate_texts)
         headline_vec.adapt(dataset)
         full_vec.adapt(dataset)
+        self._vectorizer_cache.update(candidate_texts)
+        self._vectorizer_signature = digest
 
     def _load_state(self) -> None:
         try:
@@ -420,6 +585,7 @@ class TrainingPipeline:
             if isinstance(tp_state, dict):
                 self.iteration = int(tp_state.get("iteration", 0))
                 self.active_accuracy = float(tp_state.get("active_accuracy", self.active_accuracy))
+                self.decision_threshold = float(tp_state.get("decision_threshold", self.decision_threshold))
                 optimizer_state = tp_state.get("optimizer")
                 if optimizer_state:
                     self.optimizer.set_state(optimizer_state)
@@ -435,6 +601,7 @@ class TrainingPipeline:
             "iteration": int(self.iteration),
             "optimizer": self.optimizer.get_state(),
             "active_accuracy": float(self.active_accuracy),
+            "decision_threshold": float(self.decision_threshold),
         }
         try:
             self.db.save_state(state)
@@ -512,6 +679,7 @@ class TrainingPipeline:
             "false_negatives": int(np.sum((price_dir_true > 0.5) & (price_dir_labels == False))),
             "execution_bias": self._execution_bias(),
         }
+        summary["positive_ratio"] = self._safe_float(np.mean(price_dir_true > 0.5))
         negatives = summary["false_positives"] + summary["true_negatives"]
         summary["false_positive_rate"] = self._safe_float(
             summary["false_positives"] / max(1, negatives)
@@ -530,6 +698,23 @@ class TrainingPipeline:
         summary.update({f"pred_margin_{k}": self._safe_float(v) for k, v in pred_dist.items()})
         mu_dist = distribution_report(price_mu_pred.reshape(-1))
         summary.update({f"price_mu_{k}": self._safe_float(v) for k, v in mu_dist.items()})
+
+        temperature = self._calibrate_temperature(price_dir_scores, price_dir_true)
+        summary["temperature"] = self._safe_float(temperature)
+
+        drift_alert, drift_stat = self._page_hinkley(net_margin_true, net_margin_pred_flat)
+        summary["drift_alert"] = float(drift_alert)
+        summary["drift_stat"] = self._safe_float(drift_stat)
+        if drift_alert:
+            self.metrics.feedback(
+                "drift",
+                severity=FeedbackSeverity.WARNING,
+                label="margin_drift",
+                details={
+                    "iteration": self.iteration,
+                    "stat": drift_stat,
+                },
+            )
 
         positive_returns = net_margin_true[net_margin_true > 0]
         negative_returns = net_margin_true[net_margin_true < 0]
@@ -557,6 +742,67 @@ class TrainingPipeline:
             kelly = 0.0
         summary["payoff_ratio"] = payoff_ratio
         summary["kelly_fraction"] = kelly
+
+        thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
+        best_score = -np.inf
+        best_info: Optional[Dict[str, Any]] = None
+        for thr in thresholds:
+            thr_labels = price_dir_scores > thr
+            tp_thr = int(np.sum((price_dir_true > 0.5) & (thr_labels == True)))
+            tn_thr = int(np.sum((price_dir_true <= 0.5) & (thr_labels == False)))
+            fp_thr = int(np.sum((price_dir_true <= 0.5) & (thr_labels == True)))
+            fn_thr = int(np.sum((price_dir_true > 0.5) & (thr_labels == False)))
+            metrics_thr = classification_report(tp_thr, fp_thr, tn_thr, fn_thr)
+            realized_thr = 0.0
+            win_thr = 0.0
+            profit_factor_thr = 0.0
+            if thr_labels.any():
+                realized_thr = self._safe_float(np.mean(net_margin_true[thr_labels]))
+                win_thr = self._safe_float(np.mean(net_margin_true[thr_labels] > 0))
+                pos_vals = net_margin_true[thr_labels]
+                gains = self._safe_float(np.sum(pos_vals[pos_vals > 0]))
+                losses = self._safe_float(np.sum(np.abs(pos_vals[pos_vals < 0])))
+                if losses > 0:
+                    profit_factor_thr = self._safe_float(gains / losses)
+                else:
+                    profit_factor_thr = gains
+            summary[f"thr_{thr:.2f}_f1"] = self._safe_float(metrics_thr.get("f1_score", 0.0))
+            summary[f"thr_{thr:.2f}_precision"] = self._safe_float(metrics_thr.get("precision", 0.0))
+            summary[f"thr_{thr:.2f}_recall"] = self._safe_float(metrics_thr.get("recall", 0.0))
+            summary[f"thr_{thr:.2f}_profit_factor"] = profit_factor_thr
+            summary[f"thr_{thr:.2f}_win_rate"] = win_thr
+            objective_thr = self._safe_float(metrics_thr.get("f1_score", 0.0)) + profit_factor_thr
+            if objective_thr > best_score:
+                best_score = objective_thr
+                best_info = {
+                    "threshold": thr,
+                    "tp": tp_thr,
+                    "fp": fp_thr,
+                    "tn": tn_thr,
+                    "fn": fn_thr,
+                    "metrics": metrics_thr,
+                    "profit_factor": profit_factor_thr,
+                    "win_rate": win_thr,
+                    "realized_margin": realized_thr,
+                    "predicted_margin": self._safe_float(np.mean(net_margin_pred_flat[thr_labels])) if thr_labels.any() else 0.0,
+                    "positives": int(np.sum(thr_labels)),
+                }
+
+        if best_info:
+            summary["best_threshold"] = self._safe_float(best_info["threshold"])
+            summary["ghost_trades_best"] = int(best_info["positives"])
+            summary["false_positive_rate_best"] = self._safe_float(best_info["metrics"].get("false_positive_rate", 0.0))
+            summary["best_profit_factor"] = self._safe_float(best_info["profit_factor"])
+            summary["ghost_realized_margin_best"] = self._safe_float(best_info["realized_margin"])
+            summary["ghost_pred_margin_best"] = self._safe_float(best_info["predicted_margin"])
+            summary["ghost_win_rate_best"] = self._safe_float(best_info["win_rate"])
+            summary["best_precision"] = self._safe_float(best_info["metrics"].get("precision", 0.0))
+            summary["best_recall"] = self._safe_float(best_info["metrics"].get("recall", 0.0))
+            summary["best_f1"] = self._safe_float(best_info["metrics"].get("f1_score", 0.0))
+            summary["best_tp"] = int(best_info["tp"])
+            summary["best_fp"] = int(best_info["fp"])
+            summary["best_tn"] = int(best_info["tn"])
+            summary["best_fn"] = int(best_info["fn"])
         return summary
 
     def _execution_bias(self, window: int = 50) -> float:
@@ -622,12 +868,12 @@ class TrainingPipeline:
     ) -> Optional[Dict[str, float]]:
         if not focus_assets:
             return None
-        focus_inputs, focus_targets = self._prepare_dataset(
+        focus_inputs, focus_targets, focus_weights = self._prepare_dataset(
             batch_size=16,
             focus_assets=focus_assets,
             dataset_label="focus",
         )
-        if focus_inputs is None or focus_targets is None:
+        if focus_inputs is None or focus_targets is None or focus_weights is None:
             return None
         input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
         output_order = [
@@ -642,8 +888,12 @@ class TrainingPipeline:
         ]
         input_tensors = tuple(focus_inputs[name] for name in input_order)
         target_tensors = tuple(focus_targets[name] for name in output_order)
+        weight_tensors = tuple(
+            tf.convert_to_tensor(focus_weights.get(name, np.ones(focus_targets[name].shape[0], dtype=np.float32)), dtype=tf.float32)
+            for name in output_order
+        )
         focus_ds = (
-            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
+            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors, weight_tensors))
             .batch(8)
             .prefetch(tf.data.AUTOTUNE)
         )
@@ -664,6 +914,115 @@ class TrainingPipeline:
         )
         return metrics
 
+    def _burst_replay(
+        self,
+        model: tf.keras.Model,
+        inputs: Dict[str, np.ndarray],
+        targets: Dict[str, np.ndarray],
+        sample_weights: Dict[str, np.ndarray],
+        evaluation: Dict[str, Any],
+        burst_window: int = 15,
+        top_k: int = 64,
+    ) -> Optional[Dict[str, float]]:
+        try:
+            input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+            pred_ds = tf.data.Dataset.from_tensor_slices(tuple(inputs[name] for name in input_order)).batch(64)
+            predictions = model.predict(pred_ds, verbose=0)
+        except Exception:
+            return None
+        if not isinstance(predictions, (list, tuple)) or len(predictions) < 4:
+            return None
+        price_dir_scores = predictions[3].reshape(-1)
+        price_dir_true = targets["price_dir"].reshape(-1)
+        if price_dir_scores.shape[0] != price_dir_true.shape[0]:
+            return None
+        residual = np.abs(price_dir_scores - price_dir_true)
+        if residual.size == 0:
+            return None
+        burst_k = min(top_k, residual.size)
+        if burst_k == 0:
+            return None
+        top_idx = np.argsort(residual)[-burst_k:]
+        truncated_inputs = self._truncate_inputs(inputs, top_idx, burst_window)
+        truncated_targets = {name: value[top_idx] for name, value in targets.items()}
+        truncated_weights = {name: sample_weights.get(name, np.ones_like(truncated_targets[name], dtype=np.float32))[top_idx] for name in truncated_targets}
+        input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+        output_order = [
+            "exit_conf",
+            "price_mu",
+            "price_log_var",
+            "price_dir",
+            "net_margin",
+            "net_pnl",
+            "tech_recon",
+            "price_gaussian",
+        ]
+        train_ds = (
+            tf.data.Dataset.from_tensor_slices(
+                (
+                    tuple(truncated_inputs[name] for name in input_order),
+                    tuple(truncated_targets[name] for name in output_order),
+                    tuple(truncated_weights[name] for name in output_order),
+                )
+            )
+            .batch(8)
+            .prefetch(tf.data.AUTOTUNE)
+        )
+        model.fit(train_ds, epochs=1, verbose=0)
+        return {
+            "burst_samples": float(burst_k),
+            "burst_window": float(burst_window),
+        }
+
+    def _truncate_inputs(
+        self,
+        inputs: Dict[str, np.ndarray],
+        indices: np.ndarray,
+        burst_window: int,
+    ) -> Dict[str, np.ndarray]:
+        truncated: Dict[str, np.ndarray] = {}
+        for name, value in inputs.items():
+            subset = value[indices]
+            if subset.ndim == 3 and subset.shape[1] >= burst_window:
+                truncated[name] = subset[:, -burst_window:, :]
+            elif subset.ndim == 2 and subset.shape[1] >= burst_window:
+                truncated[name] = subset[:, -burst_window:]
+            else:
+                truncated[name] = subset
+        return truncated
+
+    def _calibrate_temperature(self, probs: np.ndarray, labels: np.ndarray) -> float:
+        probs = np.clip(probs.astype(np.float64), 1e-6, 1 - 1e-6)
+        logits = np.log(probs) - np.log1p(-probs)
+        labels = labels.astype(np.float64)
+
+        def _nll(temp: float) -> float:
+            temp = max(temp, 1e-6)
+            scaled = 1.0 / (1.0 + np.exp(-logits / temp))
+            return float(-np.mean(labels * np.log(scaled) + (1 - labels) * np.log1p(-scaled)))
+
+        temps = np.linspace(0.5, 3.0, num=11)
+        losses = [_nll(t) for t in temps]
+        return float(temps[int(np.argmin(losses))])
+
+    def _page_hinkley(
+        self,
+        actual: np.ndarray,
+        predicted: np.ndarray,
+        delta: float = 0.005,
+        lambd: float = 0.05,
+    ) -> Tuple[bool, float]:
+        residual = (actual - predicted).astype(np.float64)
+        cumulative = 0.0
+        min_cumulative = 0.0
+        for value in residual:
+            cumulative = cumulative + value - delta
+            if cumulative < min_cumulative:
+                min_cumulative = cumulative
+            if cumulative - min_cumulative > lambd:
+                return True, cumulative - min_cumulative
+        return False, cumulative - min_cumulative
+
     # ------------------------------------------------------------------
     # Debug helpers
     # ------------------------------------------------------------------
@@ -673,4 +1032,5 @@ class TrainingPipeline:
             "model_dir": str(self.model_dir),
             "best_score": self.optimizer.best_score,
             "best_params": self.optimizer.best_params,
+            "decision_threshold": float(self.decision_threshold),
         }

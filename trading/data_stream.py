@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -143,6 +144,14 @@ class MarketDataStream:
         self._window_prices: deque = deque(maxlen=vol_window)
         if not self.url:
             self._select_next_endpoint()
+        self.bias_alpha = float(os.getenv("PRICE_BIAS_ALPHA", "0.2"))
+        self.vol_alpha = float(os.getenv("PRICE_VOL_ALPHA", "0.1"))
+        self.vol_multiplier = float(os.getenv("PRICE_VOL_MULTIPLIER", "3.0"))
+        self.max_bias = float(os.getenv("PRICE_MAX_BIAS", "0.05"))
+        self._source_bias: Dict[str, float] = {}
+        self._source_var: Dict[str, float] = {}
+        self._global_price_ema: Optional[float] = None
+        self._global_price_var: float = 0.0
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -298,6 +307,10 @@ class MarketDataStream:
         )
         self._last_emitted_by_source[source] = (price_val, ts_val)
         self._window_prices.append(price_val)
+        self._update_price_stats(price_val)
+        if source and source not in {"fallback", "bootstrap"}:
+            baseline = self.reference_price or price_val
+            self._update_source_stats(source, price_val, baseline)
         volatility = statistics.pstdev(self._window_prices) if len(self._window_prices) > 1 else 0.0
         drift = 0.0 if self.reference_price is None else price_val - self.reference_price
         self._record_stream_metrics(
@@ -340,6 +353,7 @@ class MarketDataStream:
     ) -> None:
         price_val = float(sample.get("price") or 0.0)
         volume_val = float(sample.get("volume") or 0.0)
+        tolerance = self._dynamic_tolerance(price_val if price_val > 0 else (self.reference_price or 1.0))
         metrics = {
             "price": price_val,
             "volume": volume_val,
@@ -349,6 +363,7 @@ class MarketDataStream:
             "sample_count": self._sample_count,
             "duplicate_rate": self._duplicate_drops / max(1, self._sample_count),
             "consensus_failures": self._consensus_failures,
+            "tolerance": tolerance,
         }
         self.metrics.record(
             MetricStage.DATA_STREAM,
@@ -361,6 +376,38 @@ class MarketDataStream:
                 "endpoint_score": self._endpoint_scores.get(source),
             },
         )
+
+    def _update_price_stats(self, price: float) -> None:
+        if price <= 0:
+            return
+        if self._global_price_ema is None:
+            self._global_price_ema = price
+            self._global_price_var = 0.0
+            return
+        delta = price - self._global_price_ema
+        self._global_price_ema += self.vol_alpha * delta
+        self._global_price_var = max(
+            0.0,
+            (1 - self.vol_alpha) * self._global_price_var + self.vol_alpha * (delta ** 2),
+        )
+
+    def _update_source_stats(self, name: str, price: float, consensus: float) -> None:
+        if price <= 0 or consensus <= 0:
+            return
+        rel = (price - consensus) / max(consensus, 1e-9)
+        prev_bias = self._source_bias.get(name, 0.0)
+        new_bias = (1 - self.bias_alpha) * prev_bias + self.bias_alpha * rel
+        new_bias = float(max(-self.max_bias, min(self.max_bias, new_bias)))
+        self._source_bias[name] = new_bias
+        prev_var = self._source_var.get(name, 0.0)
+        self._source_var[name] = float((1 - self.vol_alpha) * prev_var + self.vol_alpha * (rel - new_bias) ** 2)
+
+    def _dynamic_tolerance(self, base_price: float) -> float:
+        tolerance = self.price_tolerance
+        if self._global_price_ema is None or self._global_price_var <= 0:
+            return tolerance
+        rel_vol = math.sqrt(self._global_price_var) / max(self._global_price_ema, 1e-9)
+        return max(tolerance, self.vol_multiplier * rel_vol)
 
     async def _handle_consensus_failure(self) -> None:
         self._consensus_failures += 1
@@ -463,15 +510,39 @@ class MarketDataStream:
         }
 
     def _validate_price(self, price: float) -> bool:
-        if self.reference_price is None:
-            self.reference_price = price
-            return True
         if price <= 0:
             return False
-        diff = abs(price - self.reference_price) / max(self.reference_price, 1e-9)
-        if diff <= self.price_tolerance:
-            self.reference_price = 0.9 * self.reference_price + 0.1 * price
+        if self.reference_price is None:
+            self.reference_price = price
+            self._update_price_stats(price)
             return True
+
+        tolerance = self._dynamic_tolerance(self.reference_price)
+        diff = abs(price - self.reference_price) / max(self.reference_price, 1e-9)
+        if diff <= tolerance:
+            blend = self.vol_alpha
+            self.reference_price = (1 - blend) * self.reference_price + blend * price
+            self._update_price_stats(price)
+            return True
+
+        if diff <= tolerance * 2:
+            blend = self.vol_alpha * 0.25
+            self.reference_price = (1 - blend) * self.reference_price + blend * price
+            self._update_price_stats(price)
+            self.metrics.feedback(
+                "market_stream",
+                severity=FeedbackSeverity.WARNING,
+                label="wide_acceptance",
+                details={
+                    "symbol": self.symbol,
+                    "price": price,
+                    "reference": self.reference_price,
+                    "tolerance": tolerance,
+                    "diff": diff,
+                },
+            )
+            return True
+
         print(
             f"[market-stream] price {price:.6f} deviates from reference {self.reference_price:.6f}; waiting for confirmation"
         )
@@ -576,9 +647,11 @@ class MarketDataStream:
             ),
         )
 
-    def _record_endpoint_success(self, name: str) -> None:
+    def _record_endpoint_success(self, name: str, *, price: Optional[float] = None, consensus: Optional[float] = None) -> None:
         self._endpoint_scores[name] = self._endpoint_scores.get(name, 0.0) + 1.0
         self._endpoint_failures[name] = 0
+        if price is not None and consensus is not None:
+            self._update_source_stats(name, price, consensus)
 
     def _record_endpoint_failure(self, name: str) -> None:
         self._endpoint_scores[name] = self._endpoint_scores.get(name, 0.0) - 2.0
@@ -592,26 +665,47 @@ class MarketDataStream:
             self._recent_price_by_source.pop(name, None)
             return False, False, None
         self._recent_price_by_source[name] = (price, now)
-        valid = [
-            value
-            for value, ts in self._recent_price_by_source.values()
-            if now - ts <= self.consensus_window and value > 0
-        ]
-        if not valid:
+
+        adjusted_values: List[Tuple[str, float]] = []
+        for source, (value, ts) in list(self._recent_price_by_source.items()):
+            if now - ts > self.consensus_window or value <= 0:
+                continue
+            bias_ratio = self._source_bias.get(source, 0.0)
+            adjusted = value / (1.0 + bias_ratio)
+            adjusted_values.append((source, adjusted))
+
+        if not adjusted_values:
             return False, True, None
-        min_required = min(self.consensus_sources, max(1, len(valid)))
-        median_price = statistics.median(valid)
-        diff = abs(price - median_price) / max(median_price, 1e-9)
-        if len(valid) < min_required:
+
+        min_required = min(self.consensus_sources, max(1, len(adjusted_values)))
+        values_only = [val for _, val in adjusted_values]
+        median_price = statistics.median(values_only)
+        tolerance = self._dynamic_tolerance(median_price)
+
+        price_bias = self._source_bias.get(name, 0.0)
+        price_adjusted = price / (1.0 + price_bias)
+        diff = abs(price_adjusted - median_price) / max(median_price, 1e-9)
+
+        if len(adjusted_values) < min_required:
             return False, True, median_price
-        if diff <= self.price_tolerance:
+
+        if diff <= tolerance:
             self._last_consensus_ts = now
+            for source, (value, ts) in list(self._recent_price_by_source.items()):
+                if now - ts <= self.consensus_window and value > 0:
+                    self._update_source_stats(source, value, median_price)
             return True, False, median_price
-        if now - self._last_consensus_ts >= self.consensus_timeout and diff <= self.price_tolerance * 2:
-            # Fallback: accept slightly wider band if consensus overdue
+
+        overdue = now - self._last_consensus_ts >= self.consensus_timeout
+        if overdue and diff <= tolerance * 2:
             self._last_consensus_ts = now
+            for source, (value, ts) in list(self._recent_price_by_source.items()):
+                if now - ts <= self.consensus_window and value > 0:
+                    self._update_source_stats(source, value, median_price)
+            self._endpoint_scores[name] -= 0.5
             return True, False, median_price
-        return False, False, None
+
+        return False, False, median_price
 
     async def _refresh_reference_price(self) -> None:
         if self._http_session is None:
@@ -633,7 +727,8 @@ class MarketDataStream:
             if not self._validate_price(consensus):
                 self._record_endpoint_failure(endpoint.name)
                 continue
-            self._record_endpoint_success(endpoint.name)
+            self._record_endpoint_success(endpoint.name, price=price, consensus=consensus)
+            self._update_price_stats(consensus)
             self.reference_price = consensus
             print(f"[market-stream] reference price from {endpoint.name}: {consensus:.6f}")
             return

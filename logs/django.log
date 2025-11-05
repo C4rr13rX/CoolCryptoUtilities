@@ -2,3 +2,30 @@ Watching for file changes with StatReloader
 Watching for file changes with StatReloader
 [04/Nov/2025 21:58:30] "GET / HTTP/1.1" 200 1893
 [04/Nov/2025 22:04:10] "GET / HTTP/1.1" 200 1893
+[04/Nov/2025 22:10:31] "GET / HTTP/1.1" 200 1893
+[04/Nov/2025 22:10:38] "GET /admin HTTP/1.1" 301 0
+[04/Nov/2025 22:10:38] "GET /admin/ HTTP/1.1" 302 0
+[04/Nov/2025 22:10:38] "GET /admin/login/?next=/admin/ HTTP/1.1" 200 4160
+[04/Nov/2025 22:40:41] "GET /admin/login/?next=/admin/ HTTP/1.1" 200 4160
+Performing system checks...
+
+System check identified no issues (0 silenced).
+
+You have 18 unapplied migration(s). Your project may not work properly until you apply the migrations for app(s): admin, auth, contenttypes, sessions.
+Run 'python manage.py migrate' to apply them.
+November 04, 2025 - 21:58:27
+Django version 5.1.4, using settings 'coolcrypto_dashboard.settings'
+Starting development server at http://0.0.0.0:8000/
+Quit the server with CONTROL-C.
+
+Exception ignored in atexit callback: <bound method finalize._exitfunc of <class 'weakref.finalize'>>
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/weakref.py", line 649, in _exitfunc
+    import gc
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 915, in _load_unlocked
+  File "/home/adam/CoolCryptoUtilities/lib/python3.12/site-packages/django/utils/autoreload.py", line 664, in <lambda>
+    signal.signal(signal.SIGTERM, lambda *args: sys.exit(0))
+                                                ^^^^^^^^^^^
+SystemExit: 0

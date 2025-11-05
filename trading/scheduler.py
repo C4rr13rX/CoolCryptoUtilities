@@ -65,6 +65,7 @@ class RouteState:
     samples: Deque[Tuple[float, float, float]] = field(default_factory=lambda: deque(maxlen=720))
     last_directive: Optional[TradeDirective] = None
     last_update: float = 0.0
+    last_signature: Optional[Tuple[float, float]] = None
 
 
 class BusScheduler:
@@ -207,8 +208,12 @@ class BusScheduler:
         ts = float(sample.get("ts") or time.time())
         price = float(sample.get("price") or 0.0)
         volume = float(sample.get("volume") or 0.0)
+        signature = (ts, price)
+        if state.last_signature == signature:
+            return state
         state.samples.append((ts, price, volume))
         state.last_update = ts
+        state.last_signature = signature
         self._trim_history(state)
         return state
 
@@ -226,6 +231,9 @@ class BusScheduler:
             if price <= 0:
                 continue
             state.samples.append((ts, price, volume))
+        if state.samples:
+            last_ts, last_price, _ = state.samples[-1]
+            state.last_signature = (last_ts, last_price)
 
     def _trim_history(self, state: RouteState) -> None:
         if not state.samples:
