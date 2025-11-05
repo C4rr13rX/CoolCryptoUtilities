@@ -7,6 +7,7 @@ from typing import Dict, List, Set
 
 import numpy as np
 import pytest
+import time
 
 from trading.data_loader import HistoricalDataLoader
 
@@ -98,3 +99,57 @@ def test_expand_limits_invalidate_cache(historical_tmp: Path) -> None:
     assert loader.max_files == 2
     assert loader.max_samples_per_file >= 32
     assert not loader._dataset_cache  # expanding clears cache
+
+
+def test_dataset_builds_without_news(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    pair_index = tmp_path / "pair_index_base.json"
+    _write_pair_index(pair_index, ["ETH-USDC"])
+    monkeypatch.setenv("PAIR_INDEX_PATH", str(pair_index))
+    monkeypatch.setenv("HISTORICAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TRAIN_POSITIVE_FLOOR", "0.1")
+
+    (tmp_path / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(120)), encoding="utf-8")
+
+    def fake_load_news(self: HistoricalDataLoader):
+        self.news_index = {}
+        return []
+
+    monkeypatch.setattr(HistoricalDataLoader, "_load_news", fake_load_news, raising=True)
+
+    loader = HistoricalDataLoader(data_dir=tmp_path, max_files=1, max_samples_per_file=32)
+    inputs, targets = loader.build_dataset(window_size=16, sent_seq_len=12, tech_count=8)
+    assert inputs is not None and targets is not None
+    headlines = inputs["headline_text"].reshape(-1)
+    assert any(str(headline).strip() for headline in headlines)
+
+
+def test_request_news_backfill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CRYPTOPANIC_API_KEY", "test-token")
+
+    (tmp_path / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(80)), encoding="utf-8")
+
+    def no_news(self: HistoricalDataLoader):
+        return []
+
+    monkeypatch.setattr(HistoricalDataLoader, "_load_news", no_news, raising=True)
+
+    loader = HistoricalDataLoader(data_dir=tmp_path, max_files=1, max_samples_per_file=16)
+
+    def fake_fetch(self: HistoricalDataLoader, **kwargs):
+        return [
+            {
+                "timestamp": kwargs["since_ts"] + 5,
+                "headline": "ETH rally",
+                "article": "ETH moved higher on network upgrades.",
+                "sentiment": "positive",
+                "tokens": ["ETH", "USDC"],
+            }
+        ]
+
+    monkeypatch.setattr(HistoricalDataLoader, "_fetch_cryptopanic_posts", fake_fetch, raising=True)
+    added_first = loader.request_news_backfill(symbols=["ETH-USDC"], lookback_sec=3600, center_ts=int(time.time()))
+    assert added_first is True
+    count_after_first = len(loader.news_items)
+    added_second = loader.request_news_backfill(symbols=["ETH-USDC"], lookback_sec=3600, center_ts=int(time.time()))
+    assert added_second is False
+    assert len(loader.news_items) == count_after_first

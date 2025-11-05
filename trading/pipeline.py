@@ -499,6 +499,15 @@ class TrainingPipeline:
                 tech_count=self.tech_count,
                 focus_assets=focus_assets,
             )
+        if inputs is None or targets is None:
+            if self._auto_backfill_news(focus_assets):
+                self.data_loader.invalidate_dataset_cache()
+                inputs, targets = self.data_loader.build_dataset(
+                    window_size=self.window_size,
+                    sent_seq_len=self.sent_seq_len,
+                    tech_count=self.tech_count,
+                    focus_assets=focus_assets,
+                )
         if inputs is not None and targets is not None:
             sample_count = int(inputs["price_vol_input"].shape[0])
             asset_ids = inputs["asset_id_input"].reshape(-1)
@@ -631,6 +640,17 @@ class TrainingPipeline:
         full_vec.adapt(dataset)
         self._vectorizer_cache.update(candidate_texts)
         self._vectorizer_signature = digest
+
+    def _auto_backfill_news(self, focus_assets: Optional[Sequence[str]]) -> bool:
+        try:
+            symbols = list(focus_assets or top_pairs(limit=min(self.focus_max_assets, 10)))
+            if not symbols:
+                return False
+            lookback_sec = int(os.getenv("CRYPTOPANIC_LOOKBACK_SEC", str(2 * 24 * 3600)))
+            return self.data_loader.request_news_backfill(symbols=symbols, lookback_sec=lookback_sec)
+        except Exception as exc:
+            print(f"[training] news backfill skipped due to error: {exc}")
+            return False
 
     def _load_state(self) -> None:
         try:

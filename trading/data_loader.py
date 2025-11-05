@@ -6,8 +6,9 @@ import json
 import os
 import re
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
 
 import numpy as np
 import pandas as pd
@@ -68,6 +69,17 @@ class HistoricalDataLoader:
         self.news_index: Dict[str, List[int]] = {}
         self.ohlc_start_ts = self._estimate_ohlc_start()
         self._asset_vocab: Dict[str, int] = {}
+        self._cryptopanic_token = os.getenv("CRYPTOPANIC_API_KEY", "").strip()
+        self._cryptopanic_session = requests.Session()
+        self._cryptopanic_request_log: deque[float] = deque(maxlen=256)
+        self._cryptopanic_rate_limit = max(1, int(os.getenv("CRYPTOPANIC_MAX_CALLS_PER_MIN", "45")))
+        self._cryptopanic_min_interval = max(0.2, float(os.getenv("CRYPTOPANIC_REQUEST_INTERVAL", "1.2")))
+        self._cryptopanic_max_pages = max(1, int(os.getenv("CRYPTOPANIC_MAX_PAGES", "8")))
+        self._cryptopanic_default_limit = max(5, min(100, int(os.getenv("CRYPTOPANIC_PAGE_SIZE", "50"))))
+        self._cryptopanic_cooldown = max(60, int(os.getenv("CRYPTOPANIC_SYMBOL_COOLDOWN_SEC", "900")))
+        self._cryptopanic_last_fetch: Dict[str, float] = {}
+        self._news_seen_keys: Set[str] = set()
+        self._cryptopanic_failed_windows: Set[str] = set()
         self.news_items = self._load_news()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
         self._tech_pca_components: Optional[np.ndarray] = None
@@ -552,6 +564,9 @@ class HistoricalDataLoader:
                     continue
                 key = f"{int(idx):04d}_{symbol}" if idx is not None else symbol
                 completed.add(key.upper())
+        min_required = int(os.getenv("MIN_COMPLETED_PAIRS_FOR_DATASET", "5"))
+        if len(completed) < max(1, min_required):
+            return set()
         return completed
 
 
@@ -656,6 +671,16 @@ class HistoricalDataLoader:
         cryptopanic_df = self._load_cryptopanic_news(cache_dir / "cryptopanic_news.parquet", since_ts)
         if cryptopanic_df is not None:
             frames.append(cryptopanic_df)
+
+        archive_path = Path(os.getenv("CRYPTOPANIC_ARCHIVE_PATH", "data/news/cryptopanic_archive.parquet"))
+        if archive_path.exists():
+            try:
+                archive_df = pd.read_parquet(archive_path)
+                if not archive_df.empty:
+                    archive_df = archive_df[["timestamp", "headline", "article", "sentiment", "tokens"]]
+                    frames.append(archive_df)
+            except Exception:
+                pass
 
         if not frames:
             return []
@@ -950,7 +975,7 @@ class HistoricalDataLoader:
         return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
 
     def _load_cryptopanic_news(self, cache_path: Path, since_ts: int) -> Optional[pd.DataFrame]:
-        api_token = os.getenv("CRYPTOPANIC_API_KEY", "").strip()
+        api_token = self._cryptopanic_token
         if not api_token:
             return None
         df: Optional[pd.DataFrame] = None
@@ -1005,28 +1030,71 @@ class HistoricalDataLoader:
         return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
 
     def _download_cryptopanic_news(self, api_token: str, since_ts: int) -> Optional[pd.DataFrame]:
+        posts = self._fetch_cryptopanic_posts(
+            api_token=api_token,
+            since_ts=since_ts,
+            currencies=None,
+            until_ts=None,
+            max_pages=self._cryptopanic_max_pages,
+            limit=self._cryptopanic_default_limit,
+        )
+        if not posts:
+            return None
+        df = pd.DataFrame(
+            [
+                {
+                    "timestamp": post["timestamp"],
+                    "headline": post["headline"],
+                    "article": post["article"],
+                    "sentiment": post["sentiment"],
+                    "tokens": post["tokens"],
+                }
+                for post in posts
+            ]
+        )
+        return df if not df.empty else None
+
+    def _fetch_cryptopanic_posts(
+        self,
+        *,
+        api_token: str,
+        since_ts: int,
+        currencies: Optional[Iterable[str]],
+        until_ts: Optional[int],
+        max_pages: int,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        if not api_token:
+            return []
         endpoint = "https://cryptopanic.com/api/v1/posts/"
-        params = {
+        tokens_filter = {str(t).upper() for t in (currencies or []) if t}
+        params: Dict[str, Any] = {
             "auth_token": api_token,
             "kind": os.getenv("CRYPTOPANIC_KIND", "news"),
             "filter": os.getenv("CRYPTOPANIC_FILTER", "all"),
             "public": "true",
-            "limit": int(os.getenv("CRYPTOPANIC_PAGE_SIZE", "100")),
+            "limit": max(5, min(100, limit)),
         }
-        collected: List[Dict[str, Any]] = []
+        if tokens_filter:
+            params["currencies"] = ",".join(sorted({tok.lower() for tok in tokens_filter}))
+        if os.getenv("CRYPTOPANIC_INCLUDE_METADATA", "false").lower() in {"1", "true", "yes"}:
+            params["metadata"] = "true"
+        posts: List[Dict[str, Any]] = []
         next_url: Optional[str] = endpoint
         pages = 0
-        max_pages = int(os.getenv("CRYPTOPANIC_MAX_PAGES", "12"))
-        delay = max(0.1, float(os.getenv("CRYPTOPANIC_REQUEST_INTERVAL", "0.5")))
         while next_url and pages < max_pages:
+            resp = None
             try:
+                self._throttle_cryptopanic()
                 if next_url == endpoint:
-                    resp = requests.get(next_url, params=params, timeout=15)
+                    resp = self._cryptopanic_session.get(next_url, params=params, timeout=20)
                 else:
-                    resp = requests.get(next_url, timeout=15)
+                    resp = self._cryptopanic_session.get(next_url, timeout=20)
                 resp.raise_for_status()
                 payload = resp.json()
             except Exception:
+                if resp is not None and 500 <= resp.status_code < 600:
+                    time.sleep(self._cryptopanic_min_interval * 2)
                 break
             results = payload.get("results") or []
             for item in results:
@@ -1037,29 +1105,58 @@ class HistoricalDataLoader:
                 ts_int = int(ts.timestamp())
                 if ts_int < since_ts:
                     continue
-                currencies = item.get("currencies") or []
+                if until_ts and ts_int > until_ts:
+                    continue
                 seed_tokens: List[str] = []
-                for currency in currencies:
+                for currency in item.get("currencies") or []:
                     code = currency.get("code")
                     slug = currency.get("slug")
                     if code:
                         seed_tokens.append(code)
                     if slug:
                         seed_tokens.append(slug)
-                body = item.get("body") or item.get("title") or item.get("url") or ""
-                text = f"{item.get('title', '')}\n{body}"
+                description = item.get("description") or item.get("body") or ""
+                title = str(item.get("title") or "").strip()
+                text = f"{title}\n{description}"
                 tokens = self._collect_tokens(text=text, seed_tokens=seed_tokens)
+                if tokens_filter and not tokens:
+                    tokens.update(tokens_filter)
                 if not tokens:
                     continue
                 sentiment = item.get("sentiment")
                 if not sentiment:
                     votes = item.get("votes") or {}
                     sentiment = votes.get("sentiment") or "neutral"
-                collected.append(
+                slug = item.get("slug") or ""
+                fallback_url = f"https://cryptopanic.com/news/{slug}/" if slug else ""
+                source_url = item.get("url") or fallback_url
+                domain = item.get("domain") or ""
+                metadata = item.get("metadata") or {}
+                info_lines: List[str] = []
+                if metadata:
+                    impact = metadata.get("impact")
+                    if impact:
+                        info_lines.append(f"Impact: {impact}")
+                    confidence = metadata.get("confidence")
+                    if confidence:
+                        info_lines.append(f"Confidence: {confidence}")
+                    labels = metadata.get("labels")
+                    if isinstance(labels, list) and labels:
+                        info_lines.append("Labels: " + ", ".join(labels[:5]))
+                if item.get("kind"):
+                    info_lines.append(f"Kind: {item['kind']}")
+                if domain:
+                    info_lines.append(f"Source: {domain}")
+                if source_url:
+                    info_lines.append(f"Link: {source_url}")
+                info_lines.append("Focus tokens: " + ", ".join(sorted(tokens)))
+                article_parts = [description.strip(), "\n".join(info_lines)]
+                article = "\n\n".join(part for part in article_parts if part).strip()[:2048]
+                posts.append(
                     {
                         "timestamp": ts_int,
-                        "headline": str(item.get("title") or "").strip()[:256],
-                        "article": str(body).strip()[:2048],
+                        "headline": title[:256] if title else "Crypto market update",
+                        "article": article if article else (title or description),
                         "sentiment": str(sentiment or "neutral"),
                         "tokens": sorted(tokens),
                     }
@@ -1068,16 +1165,94 @@ class HistoricalDataLoader:
             pages += 1
             if not results:
                 break
-            try:
-                last_published = pd.to_datetime(results[-1].get("published_at"), errors="coerce", utc=True)
-                if last_published is not None and not pd.isna(last_published) and int(last_published.timestamp()) < since_ts:
-                    break
-            except Exception:
-                pass
-            time.sleep(delay)
-        if not collected:
-            return None
-        return pd.DataFrame(collected)
+        return posts
+
+    def _throttle_cryptopanic(self) -> None:
+        now = time.time()
+        while self._cryptopanic_request_log and now - self._cryptopanic_request_log[0] > 60.0:
+            self._cryptopanic_request_log.popleft()
+        if self._cryptopanic_request_log:
+            elapsed = now - self._cryptopanic_request_log[-1]
+            if elapsed < self._cryptopanic_min_interval:
+                time.sleep(self._cryptopanic_min_interval - elapsed)
+        if len(self._cryptopanic_request_log) >= self._cryptopanic_rate_limit:
+            wait = 60.0 - (now - self._cryptopanic_request_log[0])
+            if wait > 0:
+                time.sleep(wait)
+        self._cryptopanic_request_log.append(time.time())
+
+    def _augment_news_from_cryptopanic(self, tokens_upper: Set[str], start_ts: int, end_ts: int) -> None:
+        if not self._cryptopanic_token or not tokens_upper:
+            return
+        key = "|".join(sorted(tokens_upper))
+        window_bucket = f"{key}:{int(start_ts // 3600)}:{int(end_ts // 3600)}"
+        if window_bucket in self._cryptopanic_failed_windows:
+            return
+        last_fetch = self._cryptopanic_last_fetch.get(key, 0.0)
+        if time.time() - last_fetch < self._cryptopanic_cooldown:
+            return
+        posts = self._fetch_cryptopanic_posts(
+            api_token=self._cryptopanic_token,
+            since_ts=max(0, start_ts),
+            currencies=tokens_upper,
+            until_ts=end_ts,
+            max_pages=max(1, min(3, self._cryptopanic_max_pages)),
+            limit=max(5, min(40, self._cryptopanic_default_limit)),
+        )
+        if not posts:
+            self._cryptopanic_failed_windows.add(window_bucket)
+            self._cryptopanic_last_fetch[key] = time.time()
+            return
+        for post in posts:
+            digest = f"{post['timestamp']}:{post['headline']}"
+            if digest in self._news_seen_keys:
+                continue
+            entry = {
+                "timestamp": post["timestamp"],
+                "headline": post["headline"],
+                "article": post["article"],
+                "sentiment": post["sentiment"],
+                "tokens": set(post["tokens"]),
+            }
+            self.news_items.append(entry)
+            idx = len(self.news_items) - 1
+            self._news_seen_keys.add(digest)
+            for token in entry["tokens"]:
+                token_upper = token.upper()
+                bucket = self.news_index.setdefault(token_upper, [])
+                bucket.append(idx)
+        for token, indices in self.news_index.items():
+            self.news_index[token] = sorted(set(indices))
+        self._cryptopanic_last_fetch[key] = time.time()
+
+    def request_news_backfill(
+        self,
+        *,
+        symbols: Sequence[str],
+        lookback_sec: int = 2 * 24 * 3600,
+        center_ts: Optional[int] = None,
+    ) -> bool:
+        """Fetch additional news for the supplied symbols.
+
+        Returns True if at least one new article is added to ``self.news_items``.
+        """
+
+        if not symbols:
+            return False
+        ts_center = center_ts or int(time.time())
+        start_ts = ts_center - abs(int(lookback_sec))
+        end_ts = ts_center + max(3600, abs(int(lookback_sec)) // 2)
+        added = False
+        for symbol in symbols:
+            tokens = [part.strip().upper() for part in re.split(r"[-/ ]", str(symbol)) if part.strip()]
+            token_set = {tok for tok in tokens if tok}
+            if not token_set:
+                continue
+            before = len(self.news_items)
+            self._augment_news_from_cryptopanic(token_set, start_ts, end_ts)
+            if len(self.news_items) > before:
+                added = True
+        return added
 
     def _download_cryptocompare_news(self, since_ts: int) -> Optional[pd.DataFrame]:
         url = "https://min-api.cryptocompare.com/data/v2/news/"
@@ -1160,30 +1335,9 @@ class HistoricalDataLoader:
         price_slice: np.ndarray,
         net_volume: float,
     ) -> Optional[Dict[str, str]]:
-        if not self.news_items:
-            return None
-        tokens_upper = {self._normalize_token(t) for t in tokens if t}
-        tokens_upper = {t for t in tokens_upper if t}
-        if not tokens_upper:
-            return None
-        candidate_indices: set[int] = set()
-        for token in tokens_upper:
-            candidate_indices.update(self.news_index.get(token, []))
-        if not candidate_indices:
-            return None
-        start_ts = ref_ts - self.news_horizon
-        matched: List[Dict[str, Any]] = []
-        for idx in sorted(candidate_indices):
-            item = self.news_items[idx]
-            ts = item["timestamp"]
-            if ts < start_ts or ts > ref_ts:
-                continue
-            if not item["tokens"].intersection(tokens_upper):
-                continue
-            matched.append(item)
-        if not matched:
+        def _synthetic_summary() -> Dict[str, str]:
             start_price = float(price_slice[0]) if price_slice.size else 0.0
-            end_price = float(price_slice[-1]) if price_slice.size else 0.0
+            end_price = float(price_slice[-1]) if price_slice.size else start_price
             delta = end_price - start_price
             pct = 0.0
             if start_price:
@@ -1196,6 +1350,34 @@ class HistoricalDataLoader:
             )
             sentiment = "bullish" if delta > 0 else "bearish" if delta < 0 else "neutral"
             return {"headline": headline, "article": article, "sentiment": sentiment}
+
+        tokens_upper = {self._normalize_token(t) for t in tokens if t}
+        tokens_upper = {t for t in tokens_upper if t}
+        if not tokens_upper:
+            return _synthetic_summary()
+
+        if not self.news_items and self._cryptopanic_token:
+            self._augment_news_from_cryptopanic(tokens_upper, ref_ts - self.news_horizon, ref_ts + 1800)
+        if not self.news_items:
+            return _synthetic_summary()
+
+        candidate_indices: set[int] = set()
+        for token in tokens_upper:
+            candidate_indices.update(self.news_index.get(token, []))
+        if not candidate_indices:
+            return _synthetic_summary()
+        start_ts = ref_ts - self.news_horizon
+        matched: List[Dict[str, Any]] = []
+        for idx in sorted(candidate_indices):
+            item = self.news_items[idx]
+            ts = item["timestamp"]
+            if ts < start_ts or ts > ref_ts:
+                continue
+            if not item["tokens"].intersection(tokens_upper):
+                continue
+            matched.append(item)
+        if not matched:
+            return _synthetic_summary()
         matched.sort(key=lambda item: abs(item["timestamp"] - ref_ts))
         headlines: List[str] = []
         articles: List[str] = []
