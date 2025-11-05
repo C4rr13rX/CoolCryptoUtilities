@@ -2,7 +2,6 @@
   <div class="app-layout">
     <aside class="sidebar">
       <div class="sidebar__brand">
-        <img :src="logo" alt="C4rr13rX crest" class="brand-logo" />
         <div class="brand-copy">
           <span class="title">C4rr13rX</span>
           <small class="subtitle">Mission Control</small>
@@ -79,11 +78,9 @@ import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import StatusIndicator from '@/components/StatusIndicator.vue';
 import { useDashboardStore } from '@/stores/dashboard';
-import logoUrl from '@/assets/logo.png';
 
 const store = useDashboardStore();
 const route = useRoute();
-const logo = logoUrl;
 
 let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
@@ -217,17 +214,7 @@ const totalProfitDisplay = computed(() =>
 
 .sidebar__brand {
   display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.brand-logo {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  object-fit: cover;
-  border: 1px solid rgba(111, 167, 255, 0.35);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+  align-items: flex-start;
 }
 
 .brand-copy {

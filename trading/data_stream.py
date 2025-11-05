@@ -141,6 +141,7 @@ class MarketDataStream:
         self._last_emitted_by_source: Dict[str, Tuple[float, float]] = {}
         self._duplicate_drops = 0
         self._consensus_failures = 0
+        self._consensus_relax_until = 0.0
         vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
         self._window_prices: deque = deque(maxlen=vol_window)
         if not self.url:
@@ -412,6 +413,18 @@ class MarketDataStream:
 
     async def _handle_consensus_failure(self) -> None:
         self._consensus_failures += 1
+        if self._consensus_failures in {10, 20}:
+            self._consensus_relax_until = time.time() + max(self.consensus_timeout, 120.0)
+            self.metrics.feedback(
+                "market_stream",
+                severity=FeedbackSeverity.WARNING,
+                label="consensus_relaxed",
+                details={
+                    "symbol": self.symbol,
+                    "failures": self._consensus_failures,
+                    "min_sources": 1,
+                },
+            )
         fallback_price = self._fallback_consensus_price()
         if fallback_price:
             sample = {
@@ -679,6 +692,8 @@ class MarketDataStream:
             return False, True, None
 
         min_required = min(self.consensus_sources, max(1, len(adjusted_values)))
+        if time.time() < self._consensus_relax_until:
+            min_required = 1
         values_only = [val for _, val in adjusted_values]
         median_price = statistics.median(values_only)
         tolerance = self._dynamic_tolerance(median_price)
@@ -692,6 +707,8 @@ class MarketDataStream:
 
         if diff <= tolerance:
             self._last_consensus_ts = now
+            self._consensus_relax_until = 0.0
+            self._consensus_failures = 0
             for source, (value, ts) in list(self._recent_price_by_source.items()):
                 if now - ts <= self.consensus_window and value > 0:
                     self._update_source_stats(source, value, median_price)
@@ -700,6 +717,8 @@ class MarketDataStream:
         overdue = now - self._last_consensus_ts >= self.consensus_timeout
         if overdue and diff <= tolerance * 2:
             self._last_consensus_ts = now
+            self._consensus_relax_until = 0.0
+            self._consensus_failures = 0
             for source, (value, ts) in list(self._recent_price_by_source.items()):
                 if now - ts <= self.consensus_window and value > 0:
                     self._update_source_stats(source, value, median_price)
