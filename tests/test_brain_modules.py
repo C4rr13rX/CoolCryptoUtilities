@@ -71,9 +71,10 @@ def test_pattern_memory_match() -> None:
 
 def test_scenario_reactor_divergence() -> None:
     reactor = ScenarioReactor(tolerance=0.01)
-    scenarios = reactor.analyse(base_expected=0.02, confidence=0.7, volatility=0.01)
+    scenarios = reactor.analyse(base_expected=0.001, confidence=0.7, volatility=0.0002)
     spread = reactor.divergence(scenarios)
     assert spread > 0.0
+    # small volatility keeps divergence below tolerance
     assert reactor.should_defer(scenarios) is False
 
     wide_scenarios = reactor.analyse(base_expected=0.0, confidence=0.5, volatility=0.5)

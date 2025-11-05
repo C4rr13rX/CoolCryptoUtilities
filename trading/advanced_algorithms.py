@@ -154,8 +154,8 @@ class AdvancedSignalEngine:
         psd_sum = psd.sum()
         if psd_sum <= 0:
             return 0.0
-        psd_norm = psd / psd_sum
-        entropy = -np.sum(np.where(psd_norm > 0, psd_norm * np.log(psd_norm), 0))
+        psd_norm = np.clip(psd / psd_sum, 1e-12, None)
+        entropy = -np.sum(psd_norm * np.log(psd_norm))
         return float(entropy / np.log(psd_norm.size + 1e-9))
 
     def _wavelet_energy(self, prices: np.ndarray, level: int) -> float:
@@ -189,8 +189,16 @@ class AdvancedSignalEngine:
         returns = np.diff(prices)
         if returns.size < 3:
             return 0.0
-        phi = np.corrcoef(returns[:-1], returns[1:])[0, 1]
-        theta = np.mean(returns[-3:])
+        x = returns[:-1]
+        y = returns[1:]
+        x_std = np.std(x)
+        y_std = np.std(y)
+        if x_std == 0.0 or y_std == 0.0:
+            phi = 0.0
+        else:
+            cov = np.cov(x, y, bias=True)[0, 1]
+            phi = cov / (x_std * y_std)
+        theta = float(np.mean(returns[-3:]))
         return float(phi * returns[-1] + theta)
 
     def _holt_winters(self, prices: np.ndarray, timestamps: np.ndarray) -> float:
