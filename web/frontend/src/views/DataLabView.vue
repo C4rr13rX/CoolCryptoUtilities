@@ -63,6 +63,29 @@
         <h3>Job Log</h3>
         <pre>{{ jobLog.join('\n') }}</pre>
       </div>
+      <div v-if="jobHistory.length" class="history-block">
+        <h3>Recent Job History</h3>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Job</th>
+              <th>Status</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="entry in jobHistory" :key="String(entry.started_at) + String(entry.job_type)">
+              <td>{{ formatEpoch(entry.started_at) }}</td>
+              <td>{{ formatEpoch(entry.finished_at) }}</td>
+              <td>{{ entry.job_type }}</td>
+              <td :class="entry.status">{{ entry.status === 'success' ? 'Success' : 'Failure' }}</td>
+              <td>{{ entry.message }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section class="panel datasets-panel">
@@ -238,6 +261,7 @@ const jobStatusMessage = computed(() => {
 });
 
 const jobLog = computed(() => store.jobLog);
+const jobHistory = computed(() => store.jobHistory || []);
 
 const filteredNews = computed(() => {
   if (!newsQuery.value) return store.newsItems;
@@ -320,6 +344,12 @@ function togglePolling() {
     window.clearInterval(jobPollHandle);
     jobPollHandle = undefined;
   }
+}
+
+function formatEpoch(value: any) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return new Date(num * 1000).toLocaleString();
 }
 
 onMounted(async () => {
@@ -424,6 +454,31 @@ watch(
   color: #e2e8f0;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85rem;
+}
+
+.history-block {
+  margin-top: 1.2rem;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.history-table th,
+.history-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid rgba(30, 64, 175, 0.2);
+  word-break: break-word;
+}
+
+.history-table td.success {
+  color: #34d399;
+}
+
+.history-table td.failure {
+  color: #f87171;
 }
 
 .dataset-controls {

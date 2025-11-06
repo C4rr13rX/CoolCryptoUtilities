@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import pandas as pd
+
 from db import TradingDatabase, get_db
 from services.news_archive import CryptoNewsArchiver
 from services.polite_news_crawler import collect_news as crawl_news
@@ -141,13 +143,16 @@ def _format_crawler_news(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 ts = None
         if ts is None:
             ts = datetime.now(timezone.utc)
+        title = entry.get("title") or entry.get("url") or "Untitled"
+        summary = entry.get("description") or ""
+        sentiment = _score_sentiment(f"{title} {summary}")
         formatted.append(
             {
                 "timestamp": int(ts.timestamp()),
                 "datetime": ts.isoformat(),
-                "title": entry.get("title") or entry.get("url"),
-                "summary": entry.get("description") or "",
-                "sentiment": "unknown",
+                "title": title,
+                "summary": summary,
+                "sentiment": sentiment,
                 "tokens": [],
                 "url": entry.get("url"),
                 "origin": entry.get("query_match") or "crawler",

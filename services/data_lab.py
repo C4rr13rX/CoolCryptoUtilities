@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
@@ -147,7 +148,9 @@ class DataLabRunner:
             "returncode": None,
             "message": "idle",
             "log": [],
+            "history": [],
         }
+        self._history: List[Dict[str, Any]] = []
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
@@ -167,8 +170,10 @@ class DataLabRunner:
                     "returncode": None,
                     "message": "initialising",
                     "log": [],
+                    "history": list(self._history),
                 }
             )
+        self._append_log(f"Queued job `{job_type}` with options: {json.dumps(options, sort_keys=True)}")
         thread = threading.Thread(target=self._run_job, args=(job_type, options), daemon=True)
         self._thread = thread
         thread.start()
@@ -177,6 +182,7 @@ class DataLabRunner:
         env = self._prepare_env(job_type, options)
         command = self._build_command(job_type, options)
         if not command:
+            self._append_log(f"Unknown job type requested: {job_type}")
             self._set_status(False, message=f"Unknown job type: {job_type}")
             return
         self._append_log(f"Starting job `{job_type}` with command: {' '.join(command)}")
@@ -191,6 +197,7 @@ class DataLabRunner:
                 bufsize=1,
             )
         except Exception as exc:
+            self._append_log(f"Failed to start job: {exc}")
             self._set_status(False, message=f"Failed to start job: {exc}")
             return
 
@@ -199,6 +206,10 @@ class DataLabRunner:
             self._append_log(line.rstrip())
         proc.wait()
         success = proc.returncode == 0
+        if success:
+            self._append_log("Job completed successfully.")
+        else:
+            self._append_log(f"Job failed with exit code {proc.returncode}.")
         message = "completed successfully" if success else f"job failed with code {proc.returncode}"
         self._set_status(success, message=message, returncode=proc.returncode)
 
@@ -209,6 +220,23 @@ class DataLabRunner:
             if len(log) > 400:
                 log = log[-400:]
             self._status["log"] = log
+            self._status["history"] = list(self._history)
+
+    def _record_history(self, success: bool, message: str, returncode: Optional[int]) -> None:
+        with self._lock:
+            entry = {
+                "job_type": self._status.get("job_type"),
+                "options": self._status.get("options") or {},
+                "started_at": self._status.get("started_at"),
+                "finished_at": self._status.get("finished_at"),
+                "status": "success" if success else "failure",
+                "message": message,
+                "returncode": returncode,
+                "log": list(self._status.get("log", [])),
+            }
+            self._history.append(entry)
+            self._history = self._history[-50:]
+            self._status["history"] = list(self._history)
 
     def _set_status(self, success: bool, *, message: str, returncode: Optional[int] = None) -> None:
         with self._lock:
@@ -220,6 +248,8 @@ class DataLabRunner:
                     "finished_at": time.time(),
                 }
             )
+            self._status["history"] = list(self._history)
+        self._record_history(success, message, returncode)
 
     def _prepare_env(self, job_type: str, options: Dict[str, Any]) -> Dict[str, str]:
         env = os.environ.copy()

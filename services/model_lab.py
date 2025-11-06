@@ -34,7 +34,10 @@ class ModelLabRunner:
             "started_at": None,
             "result": None,
             "error": None,
+            "log": [],
+            "history": [],
         }
+        self._history: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -80,8 +83,14 @@ class ModelLabRunner:
                     "started_at": time.time(),
                     "result": None,
                     "error": None,
+                    "log": [],
+                    "history": list(self._history),
+                    "job_type": "model_lab",
                 }
             )
+        self._append_log(
+            f"Starting model lab job with train_files={config.train_files} eval_files={config.eval_files} epochs={config.epochs} batch_size={config.batch_size}"
+        )
         thread = threading.Thread(target=self._run_job, args=(config,), daemon=True)
         self._thread = thread
         thread.start()
@@ -116,6 +125,34 @@ class ModelLabRunner:
     def _update_status(self, **kwargs: Any) -> None:
         with self._lock:
             self._status.update(kwargs)
+            self._status["history"] = list(self._history)
+
+    def _append_log(self, line: str) -> None:
+        with self._lock:
+            log = self._status.get("log", [])
+            log.append(line)
+            if len(log) > 400:
+                log = log[-400:]
+            self._status["log"] = log
+            self._status["history"] = list(self._history)
+
+    def _record_history(self, success: bool) -> None:
+        with self._lock:
+            entry = {
+                "started_at": self._status.get("started_at"),
+                "finished_at": self._status.get("finished_at") or time.time(),
+                "status": "success" if success else "failure",
+                "message": self._status.get("message"),
+                "error": self._status.get("error"),
+                "job_type": self._status.get("job_type", "model_lab"),
+                "train_files": (self._status.get("result") or {}).get("train", {}).get("info", {}).get("files"),
+                "eval_files": (self._status.get("result") or {}).get("evaluation", {}).get("files"),
+                "result": self._status.get("result"),
+                "log": list(self._status.get("log", [])),
+            }
+            self._history.append(entry)
+            self._history = self._history[-50:]
+            self._status["history"] = list(self._history)
 
     def _run_job(self, config: LabJobConfig) -> None:
         train_files = self._resolve_paths(config.train_files)
@@ -131,6 +168,7 @@ class ModelLabRunner:
                 managed_pause = True
             self._update_status(progress=0.05, message="Pausing training pipeline")
             time.sleep(0.5)
+            self._append_log("Training pipeline paused.")
 
             pipeline = TrainingPipeline(db=self.db)
             lab_model: Optional[tf.keras.Model] = None
@@ -139,6 +177,7 @@ class ModelLabRunner:
 
             if train_files:
                 self._update_status(progress=0.15, message="Building training dataset")
+                self._append_log(f"Building dataset from {len(train_files)} training files.")
                 lab_model, train_metrics, train_info = pipeline.lab_train_on_files(
                     train_files,
                     epochs=max(1, config.epochs),
@@ -150,14 +189,17 @@ class ModelLabRunner:
                     "info": train_info,
                 }
                 self._update_status(progress=0.65, message="Training completed")
+                self._append_log(f"Training completed with metrics: {json.dumps(train_metrics, default=str)}")
             else:
                 lab_model = pipeline.ensure_active_model()
                 self._update_status(progress=0.25, message="Using active model weights")
+                self._append_log("No training files supplied; using existing active model.")
 
             if eval_files:
                 if lab_model is None:
                     lab_model = pipeline.ensure_active_model()
                 self._update_status(progress=0.7, message="Running evaluation")
+                self._append_log(f"Evaluating {len(eval_files)} files.")
                 eval_metrics = pipeline.lab_evaluate_on_files(
                     lab_model,
                     eval_files,
@@ -165,6 +207,7 @@ class ModelLabRunner:
                 )
                 eval_summary = {"metrics": eval_metrics, "files": eval_rel}
                 self._update_status(progress=0.95, message="Evaluation complete")
+                self._append_log(f"Evaluation metrics: {json.dumps(eval_metrics, default=str)}")
 
             self._update_status(
                 progress=1.0,
@@ -176,14 +219,20 @@ class ModelLabRunner:
                     "train_files": train_rel,
                     "eval_files": eval_rel,
                 },
+                finished_at=time.time(),
             )
+            self._append_log("Model lab run completed successfully.")
+            self._record_history(True)
         except Exception as exc:  # pragma: no cover - defensive
             self._update_status(
                 running=False,
                 progress=1.0,
                 message="Model lab run failed",
                 error=str(exc),
+                finished_at=time.time(),
             )
+            self._append_log(f"Model lab run failed: {exc}")
+            self._record_history(False)
         finally:
             if managed_pause:
                 try:

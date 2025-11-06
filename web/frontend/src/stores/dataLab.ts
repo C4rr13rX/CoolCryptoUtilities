@@ -16,6 +16,7 @@ interface DataLabState {
   jobStatus: Record<string, any> | null;
   jobLoading: boolean;
   jobError: string | null;
+  jobHistory: Record<string, any>[];
   newsItems: Record<string, any>[];
   newsMeta: Record<string, any> | null;
   newsLoading: boolean;
@@ -30,6 +31,7 @@ export const useDataLabStore = defineStore('dataLab', {
     jobStatus: null,
     jobLoading: false,
     jobError: null,
+    jobHistory: [],
     newsItems: [],
     newsMeta: null,
     newsLoading: false,
@@ -41,6 +43,9 @@ export const useDataLabStore = defineStore('dataLab', {
     },
     jobLog(state): string[] {
       return (state.jobStatus?.log as string[]) || [];
+    },
+    jobHistory(state): Record<string, any>[] {
+      return state.jobHistory;
     },
   },
   actions: {
@@ -62,6 +67,7 @@ export const useDataLabStore = defineStore('dataLab', {
       try {
         const status = await startDataLabJob(payload);
         this.jobStatus = status;
+        this.jobHistory = Array.isArray(status?.history) ? status.history : [];
         this.jobError = null;
       } catch (err: any) {
         this.jobError = err?.message || 'Failed to start data lab job';
@@ -74,6 +80,7 @@ export const useDataLabStore = defineStore('dataLab', {
       try {
         const status = await fetchDataLabJobStatus();
         this.jobStatus = status;
+        this.jobHistory = Array.isArray(status?.history) ? status.history : this.jobHistory;
       } catch (err: any) {
         this.jobError = err?.message || 'Failed to fetch job status';
       }

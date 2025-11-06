@@ -79,6 +79,34 @@
           </ul>
           <p v-else>No evaluation metrics recorded.</p>
         </div>
+        <div v-if="jobLog.length" class="log-block">
+          <h3>Job Log</h3>
+          <pre>{{ jobLog.join('\n') }}</pre>
+        </div>
+      </article>
+      <article v-if="historyEntries.length" class="panel history-panel">
+        <h2>Job History</h2>
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Status</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="entry in historyEntries" :key="String(entry.started_at) + String(entry.status)">
+              <td>{{ formatEpoch(entry.started_at) }}</td>
+              <td>{{ formatEpoch(entry.finished_at) }}</td>
+              <td :class="entry.status">{{ entry.status === 'success' ? 'Success' : 'Failure' }}</td>
+              <td>
+                {{ entry.message }}
+                <span v-if="entry.error" class="error-text"> — {{ entry.error }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </article>
     </section>
 
@@ -177,6 +205,8 @@ let pollHandle: number | undefined;
 
 const progress = computed(() => store.progress);
 const result = computed(() => store.result);
+const jobLog = computed(() => store.jobLog || []);
+const historyEntries = computed(() => store.jobHistory || []);
 const newsItems = computed(() => store.news || []);
 const newsMeta = computed(() => store.newsMeta);
 const hasSelection = computed(() => selectedTrain.value.length > 0 || selectedEval.value.length > 0);
@@ -294,6 +324,12 @@ function formatNumber(value: any) {
   if (Math.abs(num) >= 100) return num.toFixed(2);
   if (Math.abs(num) >= 1) return num.toFixed(4);
   return num.toExponential(2);
+}
+
+function formatEpoch(value: any) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return new Date(num * 1000).toLocaleString();
 }
 
 onMounted(async () => {
@@ -454,6 +490,22 @@ watch(
   gap: 0.6rem;
 }
 
+.log-block {
+  margin-top: 1.2rem;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: 12px;
+  background: rgba(6, 11, 20, 0.9);
+}
+
+.log-block pre {
+  padding: 1rem;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+
 .files-panel header {
   display: flex;
   align-items: center;
@@ -545,5 +597,31 @@ watch(
 .hint {
   font-size: 0.8rem;
   color: #94a3b8;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.history-table th,
+.history-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid rgba(30, 64, 175, 0.2);
+  word-break: break-word;
+}
+
+.history-table td.success {
+  color: #34d399;
+}
+
+.history-table td.failure {
+  color: #f87171;
+}
+
+.error-text {
+  color: #f87171;
+  font-size: 0.85rem;
 }
 </style>

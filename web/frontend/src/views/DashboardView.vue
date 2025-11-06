@@ -22,7 +22,9 @@
 
     <section class="status-grid">
       <div class="status-card" v-for="card in healthCards" :key="card.label">
-        <span class="icon">{{ card.icon }}</span>
+        <span class="icon">
+          <HackerIcon :name="card.icon" :size="22" />
+        </span>
         <div class="copy">
           <strong :class="`status-${card.level}`">{{ card.label }}</strong>
           <small>{{ card.detail }}</small>
@@ -31,25 +33,13 @@
     </section>
 
     <section class="quick-links">
-      <RouterLink to="/pipeline" class="link-card">
-        <span class="icon">🧠</span>
+      <RouterLink v-for="link in quickLinks" :key="link.to" :to="link.to" class="link-card">
+        <span class="icon">
+          <HackerIcon :name="link.icon" :size="22" />
+        </span>
         <div>
-          <strong>Pipeline</strong>
-          <small>Drill into training, calibration, and ghost supervision.</small>
-        </div>
-      </RouterLink>
-      <RouterLink to="/streams" class="link-card">
-        <span class="icon">📡</span>
-        <div>
-          <strong>Market Streams</strong>
-          <small>Inspect consensus prices and per-exchange flows.</small>
-        </div>
-      </RouterLink>
-      <RouterLink to="/console" class="link-card">
-        <span class="icon">🖥️</span>
-        <div>
-          <strong>Ops Console</strong>
-          <small>Launch main.py, send commands, and tail live logs.</small>
+          <strong>{{ link.label }}</strong>
+          <small>{{ link.detail }}</small>
         </div>
       </RouterLink>
     </section>
@@ -185,6 +175,7 @@ import { computed } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useDashboardStore } from '@/stores/dashboard';
 import TickerTape from '@/components/TickerTape.vue';
+import HackerIcon from '@/components/HackerIcon.vue';
 
 const store = useDashboardStore();
 
@@ -270,25 +261,25 @@ const healthCards = computed(() => {
   return [
     {
       label: 'Data Stream',
-      icon: '📡',
+      icon: 'radar',
       level: streamLevel,
       detail: streams ? `${streams} live feeds` : 'No feeds detected',
     },
     {
       label: 'Pipeline',
-      icon: '🧠',
+      icon: 'pipeline',
       level: pipelineLevel,
       detail: metrics.length ? `${metrics.length} stages reporting` : 'Awaiting metrics',
     },
     {
       label: 'Feedback',
-      icon: '🛡️',
+      icon: 'shield',
       level: feedbackLevel,
       detail: feedback.slice(0, 1).map((entry: any) => entry.label).join(' · ') || 'Nominal',
     },
     {
       label: 'Console',
-      icon: '🖥️',
+      icon: 'terminal',
       level: consoleLevel,
       detail: store.consoleStatus?.uptime ? `Up ${Number(store.consoleStatus.uptime).toFixed(0)}s` : (store.consoleStatus?.status || 'idle'),
     },
@@ -297,6 +288,27 @@ const healthCards = computed(() => {
 
 const feedback = computed(() => (store.latestFeedback || []).slice(0, 10));
 const metrics = computed(() => (store.latestMetrics || []).slice(0, 12));
+
+const quickLinks = computed(() => [
+  {
+    to: '/pipeline',
+    label: 'Pipeline',
+    detail: 'Drill into training, calibration, and ghost supervision.',
+    icon: 'pipeline',
+  },
+  {
+    to: '/streams',
+    label: 'Market Streams',
+    detail: 'Inspect consensus prices and per-exchange flows.',
+    icon: 'streams',
+  },
+  {
+    to: '/console',
+    label: 'Ops Console',
+    detail: 'Launch main.py, send commands, and tail live logs.',
+    icon: 'terminal',
+  },
+]);
 
 function formatWhen(ts: number | string) {
   const numeric = Number(ts);
@@ -431,6 +443,7 @@ function formatWhen(ts: number | string) {
 .status-card .copy small {
   font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.6);
+  overflow-wrap: anywhere;
 }
 
 .status-ok {

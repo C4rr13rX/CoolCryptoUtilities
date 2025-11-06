@@ -15,7 +15,9 @@
           class="nav-link"
           :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
         >
-          <span class="icon"><i :class="item.icon"></i></span>
+          <span class="icon">
+            <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
+          </span>
           <span class="label">{{ item.label }}</span>
           <span class="status-dot" />
         </RouterLink>
@@ -40,26 +42,31 @@
             label="Streams"
             :level="streamIntent"
             :detail="streamSummary"
+            icon="radar"
           />
           <StatusIndicator
             label="Feedback"
             :level="feedbackIntent"
             :detail="feedbackSummary"
+            icon="shield"
           />
           <StatusIndicator
             label="Console"
             :level="consoleIntent"
             :detail="consoleSummary"
+            icon="terminal"
           />
           <StatusIndicator
             label="Pipeline"
             :level="pipelineIntent"
             :detail="pipelineSummary"
+            icon="pipeline"
           />
           <StatusIndicator
             label="Advisories"
             :level="advisoryIntent"
             :detail="advisorySummary"
+            icon="lightning"
           />
         </div>
         <div class="header-right">
@@ -77,6 +84,7 @@
 import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import StatusIndicator from '@/components/StatusIndicator.vue';
+import HackerIcon from '@/components/HackerIcon.vue';
 import { useDashboardStore } from '@/stores/dashboard';
 
 const store = useDashboardStore();
@@ -172,15 +180,15 @@ const pipelineSummary = computed(() => {
 });
 
 const navItems = computed(() => [
-  { route: 'dashboard', label: 'Overview', icon: 'fa-solid fa-eye', path: '/', intent: streamIntent.value },
-  { route: 'organism', label: 'Organism', icon: 'fa-solid fa-microchip', path: '/organism', intent: pipelineIntent.value },
-  { route: 'pipeline', label: 'Pipeline', icon: 'fa-solid fa-diagram-project', path: '/pipeline', intent: pipelineIntent.value },
-  { route: 'streams', label: 'Market Streams', icon: 'fa-solid fa-wave-square', path: '/streams', intent: streamIntent.value },
-  { route: 'telemetry', label: 'Telemetry', icon: 'fa-solid fa-chart-line', path: '/telemetry', intent: feedbackIntent.value },
-  { route: 'console', label: 'Console', icon: 'fa-solid fa-terminal', path: '/console', intent: consoleIntent.value },
-  { route: 'advisories', label: 'Advisories', icon: 'fa-solid fa-shield-virus', path: '/advisories', intent: advisoryIntent.value },
-  { route: 'datalab', label: 'Data Lab', icon: 'fa-solid fa-database', path: '/datalab', intent: pipelineIntent.value },
-  { route: 'lab', label: 'Model Lab', icon: 'fa-solid fa-flask', path: '/lab', intent: pipelineIntent.value },
+  { route: 'dashboard', label: 'Overview', icon: 'overview', path: '/', intent: streamIntent.value },
+  { route: 'organism', label: 'Organism', icon: 'organism', path: '/organism', intent: pipelineIntent.value },
+  { route: 'pipeline', label: 'Pipeline', icon: 'pipeline', path: '/pipeline', intent: pipelineIntent.value },
+  { route: 'streams', label: 'Market Streams', icon: 'streams', path: '/streams', intent: streamIntent.value },
+  { route: 'telemetry', label: 'Telemetry', icon: 'activity', path: '/telemetry', intent: feedbackIntent.value },
+  { route: 'console', label: 'Console', icon: 'terminal', path: '/console', intent: consoleIntent.value },
+  { route: 'advisories', label: 'Advisories', icon: 'shield', path: '/advisories', intent: advisoryIntent.value },
+  { route: 'datalab', label: 'Data Lab', icon: 'datalab', path: '/datalab', intent: pipelineIntent.value },
+  { route: 'lab', label: 'Model Lab', icon: 'lab', path: '/lab', intent: pipelineIntent.value },
 ]);
 
 const isActive = (name: string) => route.name === name;
@@ -201,23 +209,31 @@ const totalProfitDisplay = computed(() =>
 
 <style scoped>
 .app-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  min-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 100vh;
+  width: 100%;
+  overflow-x: hidden;
+  background: radial-gradient(circle at 20% 0%, rgba(10, 40, 85, 0.25), rgba(2, 8, 17, 0.95));
 }
 
 .sidebar {
-  background: linear-gradient(180deg, rgba(5, 12, 22, 0.96), rgba(9, 20, 36, 0.88));
-  border-right: 1px solid rgba(79, 168, 255, 0.2);
   display: flex;
-  flex-direction: column;
-  padding: 1.8rem 1.2rem;
-  gap: 2rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: linear-gradient(180deg, rgba(5, 12, 22, 0.96), rgba(9, 20, 36, 0.88));
+  backdrop-filter: blur(16px) saturate(160%);
+  border-bottom: 1px solid rgba(79, 168, 255, 0.2);
+  box-sizing: border-box;
+  overflow: hidden;
+  width: 100%;
 }
 
 .sidebar__brand {
-  display: flex;
-  align-items: flex-start;
+  flex: 1 1 auto;
 }
 
 .brand-copy {
@@ -229,26 +245,35 @@ const totalProfitDisplay = computed(() =>
 }
 
 .sidebar .title {
-  font-size: 1.1rem;
+  font-size: 1rem;
   color: var(--accent-3);
 }
 
 .sidebar .subtitle {
-  font-size: 0.68rem;
-  letter-spacing: 0.16rem;
+  font-size: 0.64rem;
+  letter-spacing: 0.14rem;
   color: rgba(240, 245, 255, 0.55);
 }
 
 .sidebar__nav {
   display: flex;
-  flex-direction: column;
+  flex: 1 1 100%;
   gap: 0.4rem;
+  padding: 0.4rem 0 0.25rem;
+  width: 100%;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  position: relative;
+  top: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(79, 168, 255, 0.35) rgba(5, 12, 22, 0.95);
 }
 
 .nav-link {
   display: flex;
   align-items: center;
-  gap: 0.9rem;
+  gap: 0.6rem;
   padding: 0.85rem 1rem;
   border-radius: 12px;
   text-decoration: none;
@@ -256,14 +281,19 @@ const totalProfitDisplay = computed(() =>
   background: rgba(12, 26, 45, 0.6);
   position: relative;
   transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 3.25rem;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  touch-action: manipulation;
 }
 
 .nav-link .icon {
-  width: 28px;
+  width: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 1.05rem;
   color: rgba(240, 245, 255, 0.8);
 }
 
@@ -272,7 +302,8 @@ const totalProfitDisplay = computed(() =>
   height: 10px;
   border-radius: 999px;
   margin-left: auto;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.25);
+  flex: 0 0 auto;
 }
 
 .nav-link.intent-ok .status-dot {
@@ -285,31 +316,49 @@ const totalProfitDisplay = computed(() =>
   background: var(--accent-err);
 }
 
-.nav-link:hover {
-  transform: translateX(4px);
+.nav-link:hover,
+.nav-link.active {
   color: #ecf3ff;
   background: rgba(23, 48, 80, 0.72);
-}
-
-.nav-link:hover .icon,
-.nav-link.active .icon {
-  color: #ecf3ff;
+  transform: translateX(2px);
 }
 
 .nav-link.active {
-  background: rgba(45, 117, 196, 0.28);
-  color: #f8fbff;
-  box-shadow: 0 20px 36px rgba(9, 24, 42, 0.4);
+  box-shadow: 0 14px 32px rgba(9, 24, 42, 0.38);
+}
+
+.sidebar__nav::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.sidebar__nav::-webkit-scrollbar-track {
+  background: rgba(5, 12, 22, 0.8);
+  border-radius: 999px;
+}
+
+.sidebar__nav::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, rgba(79, 168, 255, 0.6), rgba(28, 121, 255, 0.4));
+  border-radius: 999px;
+  border: 2px solid rgba(5, 12, 22, 0.9);
+}
+
+.sidebar__nav::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, rgba(119, 198, 255, 0.85), rgba(58, 151, 255, 0.6));
 }
 
 .sidebar__foot {
-  margin-top: auto;
+  flex: 1 1 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: rgba(240, 245, 255, 0.75);
 }
 
 .sidebar__stats {
-  display: grid;
-  gap: 0.8rem;
-  font-size: 0.85rem;
+  display: flex;
+  gap: 1.2rem;
 }
 
 .sidebar__stats .label {
@@ -320,7 +369,7 @@ const totalProfitDisplay = computed(() =>
 }
 
 .sidebar__stats .value {
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: #f8fbff;
 }
@@ -328,9 +377,13 @@ const totalProfitDisplay = computed(() =>
 .content {
   display: flex;
   flex-direction: column;
-  padding: 1.6rem 2rem;
+  padding: clamp(1.2rem, 2vw + 0.5rem, 2rem);
   gap: 1.5rem;
-  background: radial-gradient(circle at 20% 0%, rgba(10, 40, 85, 0.25), rgba(2, 8, 17, 0.95));
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: hidden;
+  max-width: 100vw;
 }
 
 .content__header {
@@ -339,12 +392,14 @@ const totalProfitDisplay = computed(() =>
   align-items: center;
   flex-wrap: wrap;
   gap: 1rem;
+  width: 100%;
 }
 
 .header-metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
+  width: 100%;
 }
 
 .header-right .loading-pill {
@@ -361,40 +416,76 @@ const totalProfitDisplay = computed(() =>
   background: rgba(6, 14, 26, 0.9);
   border: 1px solid rgba(79, 168, 255, 0.18);
   border-radius: 18px;
-  padding: 1.6rem;
+  padding: clamp(1.2rem, 1.5vw + 0.6rem, 1.6rem);
   box-shadow: 0 28px 56px rgba(3, 12, 25, 0.45);
   min-height: 60vh;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
-@media (max-width: 1120px) {
+@media (min-width: 960px) {
   .app-layout {
-    grid-template-columns: 220px 1fr;
-  }
-  .sidebar {
-    padding: 1.4rem 1rem;
-  }
-}
-
-@media (max-width: 900px) {
-  .app-layout {
-    grid-template-columns: 1fr;
-  }
-  .sidebar {
     flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem;
+    align-items: stretch;
+    max-width: 100vw;
+  }
+  .sidebar {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: 1.8rem 1.2rem;
+  border-bottom: none;
+  border-right: 1px solid rgba(79, 168, 255, 0.2);
+  width: 260px;
+  flex: 0 0 260px;
+  min-height: 100vh;
+  position: sticky;
+  top: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+  .sidebar__brand {
+    width: 100%;
   }
   .sidebar__nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    flex-direction: column;
+    width: 220px !important;
+    position: absolute !important;
+    top: 75px !important;
+    gap: 0.4rem;
+    overflow-x: hidden;
+    scrollbar-width: thin;
   }
   .nav-link {
-    padding: 0.6rem 0.8rem;
+    width: 100%;
+    min-width: unset;
+    min-height: 3.4rem;
   }
   .sidebar__foot {
-    display: none;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .content {
+    flex: 1 1 auto;
+    min-height: 100vh;
+    overflow: hidden;
+    max-width: calc(100vw - 260px);
+  }
+}
+
+@media (max-width: 959px) {
+  .nav-link {
+    flex: 0 0 auto;
+    min-width: 120px;
+    max-width: calc(100vw - 2rem);
+  }
+  .sidebar__nav {
+    position: relative !important;
+    top: auto !important;
+    width: 100% !important;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
   }
 }
 </style>

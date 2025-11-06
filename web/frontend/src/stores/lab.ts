@@ -6,6 +6,8 @@ interface LabState {
   status: Record<string, any> | null;
   loading: boolean;
   error: string | null;
+  history: Record<string, any>[];
+  log: string[];
   news: Record<string, any>[];
   newsMeta: Record<string, any> | null;
   newsLoading: boolean;
@@ -18,6 +20,8 @@ export const useLabStore = defineStore('lab', {
     status: null,
     loading: false,
     error: null,
+    history: [],
+    log: [],
     news: [],
     newsMeta: null,
     newsLoading: false,
@@ -35,6 +39,12 @@ export const useLabStore = defineStore('lab', {
     },
     result(state): Record<string, any> | null {
       return (state.status?.result as Record<string, any>) || null;
+    },
+    jobLog(state): string[] {
+      return state.log;
+    },
+    jobHistory(state): Record<string, any>[] {
+      return state.history;
     },
   },
   actions: {
@@ -54,6 +64,8 @@ export const useLabStore = defineStore('lab', {
       try {
         const data = await fetchLabStatus();
         this.status = data || {};
+        this.log = Array.isArray(data?.log) ? data.log : [];
+        this.history = Array.isArray(data?.history) ? data.history : [];
         this.error = null;
       } catch (err: any) {
         this.error = err?.message || 'Failed to fetch lab status';
@@ -64,6 +76,8 @@ export const useLabStore = defineStore('lab', {
       try {
         const data = await startLabJob(payload);
         this.status = data || {};
+        this.log = Array.isArray(data?.log) ? data.log : [];
+        this.history = Array.isArray(data?.history) ? data.history : [];
         this.error = null;
       } catch (err: any) {
         this.error = err?.message || 'Failed to start lab job';
