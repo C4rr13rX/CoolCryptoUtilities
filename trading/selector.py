@@ -38,7 +38,22 @@ class PairCandidate:
 
 _LIVE_PAIR_CACHE: Dict[str, bool] = {}
 _SUPPRESSION_TTL = float(os.getenv("PAIR_SUPPRESSION_TTL", str(6 * 3600)))
+_ALWAYS_LIVE_SYMBOLS = {
+    "WETH-USDC",
+    "USDC-WETH",
+    "WETH-USDT",
+    "USDT-WETH",
+    "DAI-WETH",
+    "WETH-DAI",
+    "USDC-USDT",
+}
 _db: TradingDatabase = get_db()
+
+for _core_symbol in list(_ALWAYS_LIVE_SYMBOLS):
+    try:
+        _db.clear_pair_suppression(_core_symbol)
+    except Exception:
+        pass
 
 
 def _load_top_symbols(limit: int = 100) -> List[str]:
@@ -54,28 +69,30 @@ def _token_synonyms(token: str) -> set[str]:
     return synonyms
 
 
-def _probe_dexscreener(symbol: str) -> bool:
+def _probe_dexscreener(symbol: str) -> Optional[bool]:
     base, quote = _split_symbol(symbol)
     query = quote_plus(f"{base} {quote}")
     url = f"https://api.dexscreener.com/latest/dex/search?q={query}"
     try:
         resp = requests.get(url, timeout=5)
         if resp.status_code != 200:
-            return False
+            return None
         payload = resp.json()
     except Exception:
-        return False
+        return None
     pairs = payload.get("pairs") or []
     if not pairs:
         return False
     base_syn = _token_synonyms(base)
     quote_syn = _token_synonyms(quote)
+    def _matches(pair_base: str, pair_quote: str) -> bool:
+        return pair_base in base_syn and pair_quote in quote_syn
     for pair in pairs:
         base_info = pair.get("baseToken") or {}
         quote_info = pair.get("quoteToken") or {}
         base_symbol = str(base_info.get("symbol") or "").upper()
         quote_symbol = str(quote_info.get("symbol") or "").upper()
-        if base_symbol not in base_syn or quote_symbol not in quote_syn:
+        if not (_matches(base_symbol, quote_symbol) or _matches(quote_symbol, base_symbol)):
             continue
         price = pair.get("priceNative") or pair.get("priceUsd")
         try:
@@ -104,6 +121,9 @@ def _has_historical_price(symbol: str) -> bool:
 
 def _has_live_price(symbol: str) -> bool:
     symbol_u = symbol.upper()
+    if symbol_u in _ALWAYS_LIVE_SYMBOLS:
+        _LIVE_PAIR_CACHE[symbol_u] = True
+        return True
     if _db.is_pair_suppressed(symbol_u):
         record = _db.get_pair_suppression(symbol_u) or {}
         remaining = float(record.get("release_ts", 0.0)) - time.time()
@@ -118,10 +138,16 @@ def _has_live_price(symbol: str) -> bool:
     cached = _LIVE_PAIR_CACHE.get(symbol_u)
     if cached is not None:
         return cached
-    if _probe_dexscreener(symbol_u):
+    probe_result = _probe_dexscreener(symbol_u)
+    if probe_result:
         _LIVE_PAIR_CACHE[symbol_u] = True
         _db.clear_pair_suppression(symbol_u)
         return True
+    if probe_result is None:
+        print(f"[pair-select] probe deferred for {symbol_u}: dexscreener unreachable.")
+        result = _has_historical_price(symbol_u)
+        _LIVE_PAIR_CACHE[symbol_u] = result
+        return result
     result = _has_historical_price(symbol_u)
     _LIVE_PAIR_CACHE[symbol_u] = result
     if not result:

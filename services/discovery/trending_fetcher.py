@@ -29,9 +29,15 @@ def fetch_trending_tokens(limit: int = 50, chains: Optional[List[str]] = None) -
     params: Dict[str, str] = {"limit": str(limit)}
     if chains:
         params["filter"] = ",".join([chain.lower() for chain in chains])
-    resp = requests.get(DEXSCREENER_URL, params=params, timeout=float(os.getenv("DISCOVERY_HTTP_TIMEOUT", "12")))
-    resp.raise_for_status()
-    payload = resp.json()
+    try:
+        resp = requests.get(DEXSCREENER_URL, params=params, timeout=float(os.getenv("DISCOVERY_HTTP_TIMEOUT", "12")))
+        if resp.status_code == 404:
+            return []
+        resp.raise_for_status()
+        payload = resp.json()
+    except Exception as exc:
+        print(f"[discovery] trending fetch failed: {exc}")
+        return []
     data = payload.get("pairs") or []
     results: List[TrendingToken] = []
     for entry in data:

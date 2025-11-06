@@ -246,6 +246,21 @@ class TradingDatabase:
                 );
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pair_adjustments (
+                    symbol TEXT PRIMARY KEY,
+                    priority INTEGER DEFAULT 0,
+                    enter_offset REAL DEFAULT 0.0,
+                    exit_offset REAL DEFAULT 0.0,
+                    size_multiplier REAL DEFAULT 1.0,
+                    margin_offset REAL DEFAULT 0.0,
+                    allocation_multiplier REAL DEFAULT 1.0,
+                    updated REAL DEFAULT (strftime('%s','now')),
+                    details TEXT
+                );
+                """
+            )
 
     @contextmanager
     def _cursor(self):
@@ -1196,6 +1211,100 @@ class TradingDatabase:
                 "DELETE FROM pair_suppression WHERE symbol=?",
                 (symbol.upper(),),
             )
+
+    # ------------------------------------------------------------------
+    # Pair adjustments (trade/scheduler knobs)
+    # ------------------------------------------------------------------
+
+    def get_pair_adjustment(self, symbol: str) -> Optional[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT symbol, priority, enter_offset, exit_offset, size_multiplier,
+                       margin_offset, allocation_multiplier, updated, details
+                FROM pair_adjustments
+                WHERE symbol=?
+                """,
+                (symbol.upper(),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        details = {}
+        try:
+            details = json.loads(row["details"] or "{}")
+        except Exception:
+            details = {}
+        return {
+            "symbol": row["symbol"],
+            "priority": int(row["priority"] or 0),
+            "enter_offset": float(row["enter_offset"] or 0.0),
+            "exit_offset": float(row["exit_offset"] or 0.0),
+            "size_multiplier": float(row["size_multiplier"] or 1.0),
+            "margin_offset": float(row["margin_offset"] or 0.0),
+            "allocation_multiplier": float(row["allocation_multiplier"] or 1.0),
+            "updated": float(row["updated"] or 0.0),
+            "details": details,
+        }
+
+    def upsert_pair_adjustment(
+        self,
+        symbol: str,
+        *,
+        enter_offset: Optional[float] = None,
+        exit_offset: Optional[float] = None,
+        size_multiplier: Optional[float] = None,
+        margin_offset: Optional[float] = None,
+        allocation_multiplier: Optional[float] = None,
+        priority: Optional[int] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        current = self.get_pair_adjustment(symbol) or {}
+        payload = {
+            "symbol": symbol.upper(),
+            "enter_offset": enter_offset if enter_offset is not None else current.get("enter_offset", 0.0),
+            "exit_offset": exit_offset if exit_offset is not None else current.get("exit_offset", 0.0),
+            "size_multiplier": size_multiplier if size_multiplier is not None else current.get("size_multiplier", 1.0),
+            "margin_offset": margin_offset if margin_offset is not None else current.get("margin_offset", 0.0),
+            "allocation_multiplier": allocation_multiplier if allocation_multiplier is not None else current.get(
+                "allocation_multiplier", 1.0
+            ),
+            "priority": priority if priority is not None else current.get("priority", 0),
+            "details": json.dumps(details if details is not None else current.get("details", {})),
+        }
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO pair_adjustments(symbol, priority, enter_offset, exit_offset,
+                                             size_multiplier, margin_offset, allocation_multiplier,
+                                             details, updated)
+                VALUES(:symbol, :priority, :enter_offset, :exit_offset,
+                       :size_multiplier, :margin_offset, :allocation_multiplier,
+                       :details, strftime('%s','now'))
+                ON CONFLICT(symbol) DO UPDATE SET
+                    priority=excluded.priority,
+                    enter_offset=excluded.enter_offset,
+                    exit_offset=excluded.exit_offset,
+                    size_multiplier=excluded.size_multiplier,
+                    margin_offset=excluded.margin_offset,
+                    allocation_multiplier=excluded.allocation_multiplier,
+                    details=excluded.details,
+                    updated=strftime('%s','now');
+                """,
+                payload,
+            )
+
+    def adjust_pair_allocation(self, symbol: str, delta: float, *, floor: float = 0.05, ceiling: float = 2.0) -> None:
+        record = self.get_pair_adjustment(symbol) or {}
+        multiplier = float(record.get("allocation_multiplier", 1.0))
+        multiplier = max(floor, min(ceiling, multiplier + delta))
+        self.upsert_pair_adjustment(symbol, allocation_multiplier=multiplier)
+
+    def adjust_pair_size(self, symbol: str, delta: float, *, floor: float = 0.1, ceiling: float = 3.0) -> None:
+        record = self.get_pair_adjustment(symbol) or {}
+        multiplier = float(record.get("size_multiplier", 1.0))
+        multiplier = max(floor, min(ceiling, multiplier + delta))
+        self.upsert_pair_adjustment(symbol, size_multiplier=multiplier)
 
 
 # ----------------------------------------------------------------------

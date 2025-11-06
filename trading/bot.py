@@ -483,6 +483,33 @@ class TradingBot:
         total += max(0.0, self.stable_bank)
         return total
 
+    def _get_pair_adjustment(self, symbol: str) -> Dict[str, Any]:
+        cache = self._pair_adjustments.get(symbol)
+        now = time.time()
+        if cache and (now - float(cache.get("_ts", 0.0))) < 30.0:
+            return cache
+        try:
+            record = self.db.get_pair_adjustment(symbol) or {}
+        except Exception:
+            record = {}
+        record["_ts"] = now
+        self._pair_adjustments[symbol] = record
+        return record
+
+    def _tune_allocation(self, symbol: str, *, positive: bool, negative: bool) -> None:
+        delta = 0.0
+        if positive:
+            delta += 0.02
+        if negative:
+            delta -= 0.05
+        if abs(delta) < 1e-6:
+            return
+        try:
+            self.db.adjust_pair_allocation(symbol, delta)
+            self._pair_adjustments.pop(symbol, None)
+        except Exception:
+            pass
+
     def _current_equity(self) -> float:
         if self.live_trading_enabled:
             stable_liquidity = 0.0
@@ -1116,7 +1143,11 @@ class TradingBot:
         if trade_size > 0.0 and price > 0.0 and available_quote > 0.0:
             max_affordable = max(0.0, available_quote / price)
             trade_size = min(trade_size, max_affordable * self.max_trade_share)
+        adjustments = self._get_pair_adjustment(symbol)
+        trade_size *= float(max(0.1, min(3.0, adjustments.get("size_multiplier", 1.0))))
+        trade_size = max(0.0, trade_size)
         min_margin_required = max(fees * 1.5, SMALL_PROFIT_FLOOR)
+        min_margin_required = max(0.0, min_margin_required + float(adjustments.get("margin_offset", 0.0)))
         expected_profit_units = margin * max(trade_size, 0.0) * max(price, 1e-9)
         if trade_size <= 0.0:
             if pos is not None:
@@ -1147,6 +1178,7 @@ class TradingBot:
             should_exit = True
             reason = directive.reason
         elif pos is None:
+            enter_threshold = max(0.5, min(0.99, enter_threshold + float(adjustments.get("enter_offset", 0.0))))
             if (
                 direction_prob >= enter_threshold
                 and exit_conf_val >= enter_threshold
@@ -1157,6 +1189,7 @@ class TradingBot:
                 should_enter = True
                 reason = "model-long"
         else:
+            exit_threshold = max(0.05, min(enter_threshold * 0.95, exit_threshold + float(adjustments.get("exit_offset", 0.0))))
             if direction_prob < exit_threshold or exit_conf_val < 0.5:
                 should_exit = True
                 reason = "confidence_drop"
@@ -1186,10 +1219,13 @@ class TradingBot:
                         "swap_guard": guard_metrics,
                     }
                 )
+                if guard_reasons and any("insufficient" in reason for reason in guard_reasons):
+                    self._tune_allocation(symbol, positive=False, negative=True)
                 return decision
             if price > 0.0 and available_quote > 0.0:
                 trade_size = min(trade_size, max(0.0, available_quote / price))
             if trade_size <= 0.0:
+                self._tune_allocation(symbol, positive=False, negative=True)
                 return decision
             self._ghost_trade_counter += 1
             trade_id = f"{symbol}-{self._ghost_trade_counter}"
@@ -1229,6 +1265,7 @@ class TradingBot:
                 decision["brain"]["entry_trade_id"] = trade_id
             exposure_delta = trade_size * price
             self.active_exposure[symbol] = self.active_exposure.get(symbol, 0.0) + exposure_delta
+            self._tune_allocation(symbol, positive=True, negative=False)
             entry_metrics = {
                 "direction_prob": direction_prob,
                 "exit_confidence": exit_conf_val,

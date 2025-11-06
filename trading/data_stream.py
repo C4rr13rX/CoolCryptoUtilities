@@ -14,6 +14,11 @@ from collections import deque
 
 import aiohttp
 
+try:  # pragma: no cover - optional dependency may fail at import time
+    from services.onchain_feed import OnChainPairFeed
+except Exception:  # pragma: no cover - graceful fallback
+    OnChainPairFeed = None  # type: ignore
+
 from db import get_db
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
@@ -154,6 +159,18 @@ class MarketDataStream:
         self._source_var: Dict[str, float] = {}
         self._global_price_ema: Optional[float] = None
         self._global_price_var: float = 0.0
+        self._onchain_listener = None
+        if OnChainPairFeed is not None:
+            try:
+                listener = OnChainPairFeed(chain=self.chain, symbol=self.symbol)
+                if listener.available:
+                    self._onchain_listener = listener
+                    print(f"[market-stream] on-chain listener enabled for {self.symbol} on {self.chain}.")
+            except Exception as exc:
+                print(f"[market-stream] on-chain feed unavailable for {self.symbol}: {exc}")
+        self._onchain_queue: Optional[asyncio.Queue] = None
+        self._onchain_task: Optional[asyncio.Task] = None
+        self._onchain_consumer: Optional[asyncio.Task] = None
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -163,6 +180,10 @@ class MarketDataStream:
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession()
         await self._refresh_reference_price()
+        if self._onchain_listener and self._onchain_listener.available and not self._onchain_task:
+            self._onchain_queue = asyncio.Queue()
+            self._onchain_task = asyncio.create_task(self._onchain_listener.run(self._onchain_queue.put))
+            self._onchain_consumer = asyncio.create_task(self._consume_onchain_queue())
         backoff = 5.0
         while not self._stop_event.is_set():
             if not self.url:
@@ -205,6 +226,22 @@ class MarketDataStream:
         if self._http_session:
             await self._http_session.close()
             self._http_session = None
+        if self._onchain_listener:
+            await self._onchain_listener.stop()
+        if self._onchain_task:
+            self._onchain_task.cancel()
+            try:
+                await self._onchain_task
+            except Exception:
+                pass
+            self._onchain_task = None
+        if self._onchain_consumer:
+            self._onchain_consumer.cancel()
+            try:
+                await self._onchain_consumer
+            except Exception:
+                pass
+            self._onchain_consumer = None
 
     async def _consume_ws(self) -> None:  # pragma: no cover - requires network
         async with aiohttp.ClientSession() as session:
@@ -272,6 +309,25 @@ class MarketDataStream:
                 print("[market-stream] unable to obtain consensus price during REST poll cycle.")
                 await self._handle_consensus_failure()
             await asyncio.sleep(self.rest_poll_interval)
+
+    async def _consume_onchain_queue(self) -> None:
+        if not self._onchain_queue:
+            return
+        while not self._stop_event.is_set():
+            try:
+                sample = await self._onchain_queue.get()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                continue
+            if not isinstance(sample, dict):
+                continue
+            sample.setdefault("rest", "onchain")
+            sample.setdefault("source", "onchain")
+            try:
+                await self._dispatch(sample)
+            except Exception as exc:
+                print(f"[market-stream] on-chain dispatch error: {exc}")
 
     async def _dispatch(self, sample: Dict[str, Any]) -> None:
         try:
