@@ -129,3 +129,7 @@ class TelemetryView(BaseSecureView):
 
 class ConsoleView(BaseSecureView):
     initial_route = "console"
+
+
+class OrganismView(BaseSecureView):
+    initial_route = "organism"

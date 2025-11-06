@@ -13,6 +13,7 @@ ALLOWED_HOSTS = [
     "127.0.0.1",
     "localhost",
     os.getenv("DJANGO_ALLOWED_HOST", "localhost"),
+    "testserver",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -36,6 +37,7 @@ INSTALLED_APPS = [
     "streams.apps.StreamsConfig",
     "telemetry.apps.TelemetryConfig",
     "opsconsole.apps.OpsConsoleConfig",
+    "discovery.apps.DiscoveryConfig",
 ]
 
 MIDDLEWARE = [

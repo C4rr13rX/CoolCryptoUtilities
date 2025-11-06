@@ -122,3 +122,44 @@ class DashboardSummaryView(APIView):
             "total_profit": total_profit,
         }
         return Response(summary, status=status.HTTP_200_OK)
+
+
+class OrganismLatestView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        db = get_db()
+        snapshot = db.fetch_latest_organism_snapshot()
+        return Response(
+            {
+                "snapshot": snapshot or {},
+                "available": bool(snapshot),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class OrganismHistoryView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        db = get_db()
+        start_ts = request.query_params.get("start_ts")
+        end_ts = request.query_params.get("end_ts")
+        limit_param = request.query_params.get("limit", "200")
+        try:
+            limit = max(1, min(int(limit_param), 1000))
+        except ValueError:
+            limit = 200
+        try:
+            start = float(start_ts) if start_ts is not None else None
+        except ValueError:
+            start = None
+        try:
+            end = float(end_ts) if end_ts is not None else None
+        except ValueError:
+            end = None
+        history = db.fetch_organism_history(start_ts=start, end_ts=end, limit=limit)
+        return Response(
+            {
+                "snapshots": history,
+                "count": len(history),
+            },
+            status=status.HTTP_200_OK,
+        )

@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 
 from db import TradingDatabase, get_db
 from services.public_api_clients import aggregate_market_data
+from services.discovery.coordinator import DiscoveryCoordinator
 
 
 def _load_assignment(path: Path) -> Optional[Dict[str, Any]]:
@@ -249,6 +250,42 @@ class MarketDataWorker:
                 break
 
 
+class DiscoveryWorker:
+    def __init__(
+        self,
+        *,
+        interval_sec: int = int(os.getenv("DISCOVERY_INTERVAL_SEC", "1800")),
+        chains: Optional[Sequence[str]] = None,
+    ) -> None:
+        self.interval = max(300, interval_sec)
+        self.coordinator = DiscoveryCoordinator(chains=chains)
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        if not self._thread.is_alive():
+            self._thread.start()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self._stop_event.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=timeout)
+
+    def run_once(self) -> None:
+        results = self.coordinator.run()
+        if results:
+            print(f"[discovery] processed {len(results)} tokens")
+
+    def _loop(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                self.run_once()
+            except Exception as exc:
+                print(f"[discovery] cycle error: {exc}")
+            if self._stop_event.wait(self.interval):
+                break
+
+
 class TokenDownloadSupervisor:
     def __init__(self, db: Optional[TradingDatabase] = None) -> None:
         self.base_worker = DownloadWorker("base", interval_sec=int(os.getenv("BASE_DOWNLOAD_INTERVAL", "10800")))
@@ -261,13 +298,21 @@ class TokenDownloadSupervisor:
             db=db,
             interval_sec=int(os.getenv("MARKET_DATA_REFRESH_SEC", "1200")),
         )
+        discovery_chains = os.getenv("DISCOVERY_CHAINS")
+        chains = [c.strip() for c in discovery_chains.split(",") if c.strip()] if discovery_chains else None
+        self.discovery_worker = DiscoveryWorker(
+            interval_sec=int(os.getenv("DISCOVERY_INTERVAL_SEC", "1800")),
+            chains=chains,
+        )
 
     def start(self) -> None:
         self.base_worker.start()
         self.dynamic_worker.start()
         self.market_worker.start()
+        self.discovery_worker.start()
 
     def stop(self) -> None:
         self.base_worker.stop()
         self.dynamic_worker.stop()
         self.market_worker.stop()
+        self.discovery_worker.stop()

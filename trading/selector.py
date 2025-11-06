@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ class PairCandidate:
 
 
 _LIVE_PAIR_CACHE: Dict[str, bool] = {}
+_SUPPRESSION_TTL = float(os.getenv("PAIR_SUPPRESSION_TTL", str(6 * 3600)))
+_db: TradingDatabase = get_db()
 
 
 def _load_top_symbols(limit: int = 100) -> List[str]:
@@ -100,16 +103,35 @@ def _has_historical_price(symbol: str) -> bool:
 
 
 def _has_live_price(symbol: str) -> bool:
-    cached = _LIVE_PAIR_CACHE.get(symbol)
+    symbol_u = symbol.upper()
+    if _db.is_pair_suppressed(symbol_u):
+        record = _db.get_pair_suppression(symbol_u) or {}
+        remaining = float(record.get("release_ts", 0.0)) - time.time()
+        wait_minutes = max(0.0, remaining / 60.0)
+        reason = record.get("reason") or "suppressed"
+        print(
+            f"[pair-select] suppressed {symbol_u}: {reason}; retry in ~{wait_minutes:.1f} min."
+        )
+        _LIVE_PAIR_CACHE[symbol_u] = False
+        return False
+
+    cached = _LIVE_PAIR_CACHE.get(symbol_u)
     if cached is not None:
         return cached
-    if _probe_dexscreener(symbol):
-        _LIVE_PAIR_CACHE[symbol] = True
+    if _probe_dexscreener(symbol_u):
+        _LIVE_PAIR_CACHE[symbol_u] = True
+        _db.clear_pair_suppression(symbol_u)
         return True
-    result = _has_historical_price(symbol)
-    _LIVE_PAIR_CACHE[symbol] = result
+    result = _has_historical_price(symbol_u)
+    _LIVE_PAIR_CACHE[symbol_u] = result
     if not result:
-        print(f"[pair-select] skipping {symbol}: no live market data sources responded.")
+        _db.record_pair_suppression(
+            symbol_u,
+            "no_live_market_data",
+            ttl_seconds=_SUPPRESSION_TTL,
+            metadata={"checked_at": time.time()},
+        )
+        print(f"[pair-select] skipping {symbol_u}: no live market data sources responded.")
     return result
 
 

@@ -12,4 +12,6 @@ urlpatterns = [
     path("trades/", views.TradeLogView.as_view(), name="trades"),
     path("advisories/", views.AdvisoryListView.as_view(), name="advisories"),
     path("dashboard/", views.DashboardSummaryView.as_view(), name="dashboard"),
+    path("organism/latest/", views.OrganismLatestView.as_view(), name="organism-latest"),
+    path("organism/history/", views.OrganismHistoryView.as_view(), name="organism-history"),
 ]

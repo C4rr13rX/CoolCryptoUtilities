@@ -35,6 +35,7 @@ from trading.brain import (
     VolatilityArbCell,
 )
 from trading.brain.event_engine import make_default_engine
+from services.organism_state import build_snapshot
 
 try:
     from router_wallet import UltraSwapBridge  # type: ignore
@@ -106,6 +107,10 @@ class TradingBot:
         self._active_model_ref: Optional[tf.keras.Model] = None
         self._asset_vocab_limit: Optional[int] = None
         self.portfolio = PortfolioState(db=self.db)
+        self._snapshot_interval = max(1.0, float(os.getenv("ORGANISM_SNAPSHOT_INTERVAL", "5.0")))
+        self._last_snapshot_ts: float = 0.0
+        self._discovery_cache: Dict[str, Any] = {}
+        self._discovery_cache_ts: float = 0.0
         try:
             self.portfolio.refresh(force=True)
         except Exception as exc:
@@ -500,6 +505,27 @@ class TradingBot:
             return max(0.0, stable_liquidity + native_usd + self.stable_bank + self.total_profit)
         return max(0.0, self._sim_initial_pool + self.stable_bank + self.total_profit)
 
+    def current_equity(self) -> float:
+        """Public helper exposed to observability layers."""
+        return self._current_equity()
+
+    def latency_stats(self) -> Dict[str, float]:
+        if not self._latency_window:
+            return {}
+        try:
+            window_arr = np.asarray(self._latency_window, dtype=np.float64)
+        except Exception:
+            window_arr = np.array(list(self._latency_window), dtype=np.float64)
+        if window_arr.size == 0:
+            return {}
+        avg_ms = float(np.mean(window_arr) * 1000.0)
+        p95_ms = float(np.percentile(window_arr, 95) * 1000.0)
+        return {
+            "avg_ms": avg_ms,
+            "p95_ms": p95_ms,
+            "count": int(window_arr.size),
+        }
+
     def _compute_base_allocation(self, sample: Dict[str, Any]) -> Dict[str, float]:
         symbol = str(sample.get("symbol") or "")
         if not symbol:
@@ -802,6 +828,15 @@ class TradingBot:
                     details=decision,
                 )
                 self._save_state()
+            snapshot_latency = time.perf_counter() - cycle_start
+            self._record_organism_snapshot(
+                sample=sample,
+                pred_summary=pred_summary,
+                brain_summary=brain_summary,
+                directive=directive,
+                decision=decision,
+                latency_s=snapshot_latency,
+            )
         finally:
             latency = time.perf_counter() - cycle_start
             self._latency_window.append(latency)
@@ -1787,6 +1822,60 @@ class TradingBot:
         exposure = ghost.get("active_exposure")
         if isinstance(exposure, dict):
             self.active_exposure = {str(sym): float(value) for sym, value in exposure.items()}
+
+    def _record_organism_snapshot(
+        self,
+        *,
+        sample: Optional[Dict[str, Any]],
+        pred_summary: Optional[Dict[str, Any]],
+        brain_summary: Optional[Dict[str, Any]],
+        directive: Optional[TradeDirective],
+        decision: Optional[Dict[str, Any]],
+        latency_s: Optional[float],
+    ) -> None:
+        if not getattr(self, "db", None):
+            return
+        now = time.time()
+        if (now - self._last_snapshot_ts) < self._snapshot_interval:
+            return
+        discovery_snapshot = self._get_discovery_snapshot(now)
+        try:
+            snapshot = build_snapshot(
+                bot=self,
+                sample=sample,
+                pred_summary=pred_summary,
+                brain_summary=brain_summary,
+                directive=directive,
+                decision=decision,
+                latency_s=latency_s,
+                latency_window=list(self._latency_window),
+                pending_depth=len(self._pending_queue),
+                discovery_snapshot=discovery_snapshot,
+                last_windows=self._last_windows,
+            )
+        except Exception as exc:
+            print(f"[organism] snapshot build failed: {exc}")
+            return
+        try:
+            self.db.record_organism_snapshot(snapshot)
+            self._last_snapshot_ts = now
+        except Exception as exc:
+            print(f"[organism] snapshot persist failed: {exc}")
+
+    def _get_discovery_snapshot(self, now: float) -> Dict[str, Any]:
+        if self._discovery_cache and (now - self._discovery_cache_ts) < 300:
+            return self._discovery_cache
+        try:
+            snapshot = {
+                "status_counts": self.db.discovery_status_counts(),
+                "recent_events": self.db.discovery_recent_events(limit=12),
+                "recent_honeypots": self.db.discovery_recent_honeypots(limit=6),
+            }
+        except Exception:
+            snapshot = {}
+        self._discovery_cache = snapshot
+        self._discovery_cache_ts = now
+        return snapshot
 
     def _save_state(self) -> None:
         try:

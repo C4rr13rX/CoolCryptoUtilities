@@ -1,0 +1,596 @@
+<template>
+  <div class="organism-view">
+    <div class="hero-card">
+      <header class="card-header">
+        <div>
+          <h1>Neurograph Control</h1>
+          <p>Visualise the multi-loop trading organism across brain, schedule, and exposure domains.</p>
+        </div>
+        <div class="header-right">
+          <span class="pill" :class="{ busy: store.loading }">
+            {{ store.loading ? 'Syncing…' : 'Live' }}
+          </span>
+          <span class="timestamp">
+            {{ formattedTimestamp }}
+          </span>
+        </div>
+      </header>
+      <div class="canvas-wrapper" :class="{ empty: !hasGraph }">
+        <template v-if="hasGraph">
+          <OrganismCanvas :graph="activeGraph" />
+        </template>
+        <div v-else class="canvas-empty">
+          <h2>No Network Activity Yet</h2>
+          <p>Waiting for the trading bot to emit a brain snapshot with active modules and edges.</p>
+          <p class="hint">
+            Keep the production manager running; snapshots appear once live market streams and the model start updating.
+          </p>
+        </div>
+      </div>
+      <footer class="card-footer">
+        <label class="slider-label" for="timeline-range">
+          Timeline
+        </label>
+        <input
+          id="timeline-range"
+          class="timeline-range"
+          type="range"
+          :min="0"
+          :max="Math.max(timelinePoints.length - 1, 0)"
+          v-model.number="selectedIndex"
+        />
+        <div class="timeline-meta">
+          <span>{{ timelinePoints.length }} snapshots</span>
+          <button class="btn" type="button" @click="jumpLatest">
+            Jump to Latest
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <div class="grid">
+      <div class="info-card">
+        <h2>Brain State</h2>
+        <div class="metrics-grid">
+          <div class="metric">
+            <span class="label">Graph Confidence</span>
+            <span class="value">{{ formatPercent(brain.graph_confidence) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Swarm Bias</span>
+            <span class="value">{{ formatPercent(brain.swarm_bias) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Memory Bias</span>
+            <span class="value">{{ formatPercent(brain.memory_bias) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Scenario Spread</span>
+            <span class="value">{{ formatPercent(brain.scenario_spread) }}</span>
+          </div>
+        </div>
+        <div class="swarm-votes">
+          <h3>Swarm Voting</h3>
+          <ul>
+            <li v-for="vote in brain.swarm_votes || []" :key="vote.horizon">
+              <span>{{ vote.horizon }}</span>
+              <span>{{ formatPercent(vote.expected) }}</span>
+              <span class="confidence">{{ formatPercent(vote.confidence) }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="info-card">
+        <h2>Exposure & Positions</h2>
+        <div class="metrics-grid">
+          <div class="metric">
+            <span class="label">Active Symbols</span>
+            <span class="value">{{ positionList.length }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Total Exposure</span>
+            <span class="value">
+              {{ formatCurrency(totalExposure) }}
+            </span>
+          </div>
+          <div class="metric">
+            <span class="label">Queue Depth</span>
+            <span class="value">{{ (snapshot?.queue_depth ?? 0) + (snapshot?.pending_samples ?? 0) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Latency P95</span>
+            <span class="value">{{ formatMilliseconds(snapshot?.latency_stats?.p95_ms) }}</span>
+          </div>
+        </div>
+        <table class="positions-table" v-if="positionList.length">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Size</th>
+              <th>Entry</th>
+              <th>Target</th>
+              <th>Age</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="position in positionList" :key="position.symbol">
+              <td>{{ position.symbol }}</td>
+              <td>{{ formatNumber(position.size) }}</td>
+              <td>{{ formatCurrency(position.entry_price) }}</td>
+              <td>{{ formatCurrency(position.target_price) }}</td>
+              <td>{{ formatDuration(position.age) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="empty">No open ghost positions.</p>
+      </div>
+
+      <div class="info-card discovery-card">
+        <h2>Discovery Signals</h2>
+        <div class="metrics-grid">
+          <div class="metric" v-for="(count, status) in discoveryCounts" :key="status">
+            <span class="label">{{ status }}</span>
+            <span class="value">{{ count }}</span>
+          </div>
+        </div>
+        <div class="recent-discovery">
+          <h3>Recent Trend Reports</h3>
+          <ul>
+            <li v-for="event in recentDiscovery" :key="event.created_at + event.symbol">
+              <span>{{ event.symbol }}</span>
+              <span>{{ (event.liquidity_usd ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) }}$ LQ</span>
+              <span>{{ formatPercent(event.price_change_24h) }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="info-card totals-card">
+        <h2>Financial State</h2>
+        <div class="metrics-grid">
+          <div class="metric">
+            <span class="label">Equity</span>
+            <span class="value">{{ formatCurrency(snapshot?.totals?.equity) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Stable Bank</span>
+            <span class="value">{{ formatCurrency(snapshot?.totals?.stable_bank) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Realised Profit</span>
+            <span class="value">{{ formatCurrency(snapshot?.totals?.realized_profit) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Win Rate</span>
+            <span class="value">{{ formatPercent(winRate) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import OrganismCanvas from '@/components/OrganismCanvas.vue';
+import { useOrganismStore } from '@/stores/organism';
+
+const store = useOrganismStore();
+const selectedIndex = ref(0);
+let refreshHandle: number | undefined;
+
+const timelinePoints = computed(() => store.timeline);
+
+const snapshot = computed(() => {
+  if (!timelinePoints.value.length) {
+    return store.latest;
+  }
+  const clampedIndex = Math.min(Math.max(selectedIndex.value, 0), timelinePoints.value.length - 1);
+  const ts = timelinePoints.value[clampedIndex];
+  if (store.latest && Number(store.latest.timestamp) === Number(ts)) {
+    return store.latest;
+  }
+  return store.history.find((entry) => Number(entry.timestamp) === Number(ts)) || store.latest;
+});
+
+const formattedTimestamp = computed(() => {
+  const ts = snapshot.value?.timestamp;
+  if (!ts) return '—';
+  const date = new Date(ts * 1000);
+  return date.toLocaleString();
+});
+
+const brain = computed(() => snapshot.value?.brain || {});
+const exposure = computed(() => snapshot.value?.exposure || {});
+const totalExposure = computed(() =>
+  Object.values(exposure.value).reduce((sum: number, val: any) => sum + Number(val || 0), 0),
+);
+const positionList = computed(() => {
+  const positions = snapshot.value?.positions || {};
+  return Object.keys(positions).map((symbol) => {
+    const entry = positions[symbol] || {};
+    const entryTs = Number(entry.entry_ts || entry.ts || snapshot.value?.timestamp || Date.now() / 1000);
+    return {
+      symbol,
+      size: Number(entry.size || 0),
+      entry_price: Number(entry.entry_price || 0),
+      target_price: Number(entry.target_price || 0),
+      age: Math.max(0, (snapshot.value?.timestamp || entryTs) - entryTs),
+    };
+  });
+});
+
+const discoveryCounts = computed(() => snapshot.value?.discovery?.status_counts || {});
+const recentDiscovery = computed(() => snapshot.value?.discovery?.recent_events || []);
+
+const winRate = computed(() => {
+  const wins = Number(snapshot.value?.totals?.wins || 0);
+  const trades = Number(snapshot.value?.totals?.total_trades || 0);
+  if (!trades) return 0;
+  return wins / trades;
+});
+
+const activeGraph = computed(() => snapshot.value?.organism_graph || { nodes: [], edges: [] });
+const hasGraph = computed(() => {
+  const graph = activeGraph.value;
+  const nodes = (graph?.nodes as any[]) || [];
+  return nodes.length > 0;
+});
+
+function formatPercent(value: any) {
+  if (value === null || value === undefined) return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return `${(num * 100).toFixed(1)}%`;
+}
+
+function formatCurrency(value: any) {
+  const num = Number(value || 0);
+  return num.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  });
+}
+
+function formatNumber(value: any) {
+  const num = Number(value || 0);
+  if (Math.abs(num) >= 1000) {
+    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  return num.toFixed(3);
+}
+
+function formatMilliseconds(value: any) {
+  const num = Number(value || 0);
+  return `${num.toFixed(1)} ms`;
+}
+
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds)) return '—';
+  if (seconds < 60) return `${seconds.toFixed(0)}s`;
+  if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
+  return `${(seconds / 3600).toFixed(2)}h`;
+}
+
+function jumpLatest() {
+  selectedIndex.value = Math.max(timelinePoints.value.length - 1, 0);
+}
+
+async function initialise() {
+  await store.loadHistory({ limit: 200 });
+  await store.refreshLatest();
+  jumpLatest();
+}
+
+onMounted(() => {
+  initialise();
+  refreshHandle = window.setInterval(() => store.refreshLatest(), 12000);
+});
+
+onBeforeUnmount(() => {
+  if (refreshHandle) {
+    window.clearInterval(refreshHandle);
+    refreshHandle = undefined;
+  }
+});
+
+watch(
+  () => timelinePoints.value.length,
+  (length, prevLength) => {
+    if (!length) return;
+    if (selectedIndex.value >= length) {
+      selectedIndex.value = length - 1;
+    } else if (prevLength && selectedIndex.value === prevLength - 1 && length > prevLength) {
+      selectedIndex.value = length - 1;
+    }
+  },
+);
+
+watch(
+  () => store.lastUpdated,
+  () => {
+    if (!timelinePoints.value.length) return;
+    const lastIndex = timelinePoints.value.length - 1;
+    if (selectedIndex.value >= lastIndex) {
+      selectedIndex.value = lastIndex;
+    }
+  },
+);
+</script>
+
+<style scoped>
+.organism-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  color: #e2e8f0;
+}
+
+.hero-card {
+  background: rgba(10, 23, 43, 0.85);
+  backdrop-filter: blur(18px);
+  border-radius: 24px;
+  padding: 1.5rem;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.35);
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding-bottom: 1rem;
+}
+
+.card-header h1 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #bfdbfe;
+}
+
+.card-header p {
+  margin-top: 0.25rem;
+  color: #94a3b8;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pill {
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.pill.busy {
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.35);
+}
+
+.timestamp {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+  color: #cbd5f5;
+}
+
+.canvas-wrapper {
+  width: 100%;
+  height: 460px;
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.canvas-wrapper.empty {
+  background: rgba(11, 20, 34, 0.85);
+  border: 1px dashed rgba(96, 165, 250, 0.35);
+  border-radius: 18px;
+  padding: 2rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-top: 1.25rem;
+}
+
+.slider-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #cbd5f5;
+}
+
+.timeline-range {
+  flex: 1;
+  accent-color: #38bdf8;
+}
+
+.timeline-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.2);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  color: #bfdbfe;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn:hover {
+  background: rgba(37, 99, 235, 0.3);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.info-card {
+  background: rgba(8, 18, 33, 0.9);
+  border: 1px solid rgba(51, 102, 204, 0.2);
+  border-radius: 20px;
+  padding: 1.5rem;
+  box-shadow: 0 14px 40px rgba(8, 47, 73, 0.25);
+}
+
+.info-card h2 {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #cbd5f5;
+  margin-bottom: 1rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.metric {
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 14px;
+  padding: 0.75rem;
+  border: 1px solid rgba(59, 130, 246, 0.12);
+}
+
+.metric .label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.metric .value {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.swarm-votes ul,
+.recent-discovery ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.swarm-votes li,
+.recent-discovery li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 0.65rem 0.9rem;
+  border-radius: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8rem;
+  color: #cbd5f5;
+}
+
+.swarm-votes .confidence {
+  color: #38bdf8;
+}
+
+.positions-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.45);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.positions-table th,
+.positions-table td {
+  padding: 0.6rem;
+  text-align: left;
+}
+
+.positions-table thead {
+  background: rgba(37, 99, 235, 0.25);
+  color: #cbd5f5;
+}
+
+.positions-table tbody tr:nth-child(even) {
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.empty {
+  color: #64748b;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.discovery-card h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  color: #93c5fd;
+  font-size: 0.85rem;
+}
+
+.totals-card .metrics-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+@media (max-width: 900px) {
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .canvas-wrapper {
+    height: 360px;
+  }
+}
+</style>
+.canvas-empty {
+  text-align: center;
+  max-width: 520px;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.canvas-empty h2 {
+  margin: 0;
+  color: #dbeafe;
+  font-size: 1.25rem;
+}
+
+.canvas-empty .hint {
+  font-size: 0.85rem;
+  color: rgba(148, 163, 184, 0.8);
+}

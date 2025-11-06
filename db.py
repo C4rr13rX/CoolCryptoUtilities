@@ -226,6 +226,26 @@ class TradingDatabase:
                 ON advisories(resolved, ts);
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS organism_snapshots (
+                    ts REAL PRIMARY KEY,
+                    payload TEXT
+                );
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pair_suppression (
+                    symbol TEXT PRIMARY KEY,
+                    reason TEXT,
+                    strikes INTEGER DEFAULT 1,
+                    last_failure REAL,
+                    release_ts REAL,
+                    metadata TEXT
+                );
+                """
+            )
 
     @contextmanager
     def _cursor(self):
@@ -978,6 +998,203 @@ class TradingDatabase:
                 WHERE id=?;
                 """,
                 (int(advisory_id),),
+            )
+
+    # ------------------------------------------------------------------
+    # Discovery helpers (Django-managed tables)
+    # ------------------------------------------------------------------
+
+    def discovery_status_counts(self) -> Dict[str, int]:
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT status, COUNT(*) as total FROM discovery_discoveredtoken GROUP BY status"
+                )
+                rows = cur.fetchall()
+        except Exception:
+            return {}
+        return {row["status"]: int(row["total"]) for row in rows}
+
+    def discovery_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT created_at, symbol, chain, source, bull_score, bear_score, liquidity_usd, volume_24h, price_change_24h
+                    FROM discovery_discoveryevent
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+                rows = cur.fetchall()
+        except Exception:
+            return []
+        return [dict(row) for row in rows]
+
+    def discovery_recent_honeypots(self, limit: int = 20) -> List[Dict[str, Any]]:
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT created_at, symbol, chain, verdict, confidence
+                    FROM discovery_honeypotcheck
+                    WHERE verdict='honeypot'
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                )
+                rows = cur.fetchall()
+        except Exception:
+            return []
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Organism snapshots
+    # ------------------------------------------------------------------
+
+    def record_organism_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        ts = float(snapshot.get("timestamp") or time.time())
+        payload = json.dumps(snapshot)
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO organism_snapshots(ts, payload)
+                VALUES(?, ?)
+                ON CONFLICT(ts) DO UPDATE SET payload=excluded.payload
+                """,
+                (ts, payload),
+            )
+
+    def fetch_latest_organism_snapshot(self) -> Optional[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute("SELECT payload FROM organism_snapshots ORDER BY ts DESC LIMIT 1")
+            row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except Exception:
+            return None
+
+    def fetch_organism_snapshot_at(self, ts: float) -> Optional[Dict[str, Any]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT payload FROM organism_snapshots WHERE ts<=? ORDER BY ts DESC LIMIT 1",
+                (float(ts),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except Exception:
+            return None
+
+    def fetch_organism_history(
+        self,
+        *,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        clauses = []
+        params: List[Any] = []
+        if start_ts is not None:
+            clauses.append("ts >= ?")
+            params.append(float(start_ts))
+        if end_ts is not None:
+            clauses.append("ts <= ?")
+            params.append(float(end_ts))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        query = f"SELECT ts, payload FROM organism_snapshots {where} ORDER BY ts DESC LIMIT ?"
+        params.append(int(limit))
+        with self._cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        history: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                history.append(json.loads(row["payload"]))
+            except Exception:
+                continue
+        return history
+
+    # ------------------------------------------------------------------
+    # Pair suppression (for unreliable market data)
+    # ------------------------------------------------------------------
+
+    def record_pair_suppression(
+        self,
+        symbol: str,
+        reason: str,
+        *,
+        ttl_seconds: float = 6 * 3600,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        now = time.time()
+        release_ts = now + max(float(ttl_seconds), 0.0)
+        payload = json.dumps(metadata or {})
+        symbol_u = symbol.upper()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO pair_suppression (symbol, reason, strikes, last_failure, release_ts, metadata)
+                VALUES(?, ?, 1, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    reason=excluded.reason,
+                    strikes=pair_suppression.strikes + 1,
+                    last_failure=excluded.last_failure,
+                    release_ts=excluded.release_ts,
+                    metadata=excluded.metadata;
+                """,
+                (symbol_u, reason, now, release_ts, payload),
+            )
+
+    def get_pair_suppression(self, symbol: str) -> Optional[Dict[str, Any]]:
+        symbol_u = symbol.upper()
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT symbol, reason, strikes, last_failure, release_ts, metadata
+                FROM pair_suppression
+                WHERE symbol=?
+                """,
+                (symbol_u,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        metadata = {}
+        try:
+            metadata = json.loads(row["metadata"] or "{}")
+        except Exception:
+            metadata = {}
+        return {
+            "symbol": row["symbol"],
+            "reason": row["reason"],
+            "strikes": int(row["strikes"] or 0),
+            "last_failure": float(row["last_failure"] or 0.0),
+            "release_ts": float(row["release_ts"] or 0.0),
+            "metadata": metadata,
+        }
+
+    def is_pair_suppressed(self, symbol: str) -> bool:
+        record = self.get_pair_suppression(symbol)
+        if not record:
+            return False
+        release = float(record.get("release_ts") or 0.0)
+        if release > time.time():
+            return True
+        self.clear_pair_suppression(symbol)
+        return False
+
+    def clear_pair_suppression(self, symbol: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM pair_suppression WHERE symbol=?",
+                (symbol.upper(),),
             )
 
 

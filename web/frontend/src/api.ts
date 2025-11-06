@@ -2,7 +2,31 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '/api',
-  timeout: 8000
+  timeout: 8000,
+  withCredentials: true,
+});
+
+api.defaults.xsrfCookieName = 'csrftoken';
+api.defaults.xsrfHeaderName = 'X-CSRFToken';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(/csrftoken=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+api.interceptors.request.use((config) => {
+  if (!config.headers) {
+    config.headers = {};
+  }
+  const headerKey = api.defaults.xsrfHeaderName || 'X-CSRFToken';
+  if (!config.headers[headerKey]) {
+    const token = getCsrfToken();
+    if (token) {
+      config.headers[headerKey] = token;
+    }
+  }
+  return config;
 });
 
 export async function fetchDashboardSummary() {
@@ -40,6 +64,26 @@ export async function fetchMetrics(stage?: string, limit = 200) {
   const params: Record<string, string> = { limit: String(limit) };
   if (stage) params.stage = stage;
   const { data } = await api.get('/telemetry/metrics/', { params });
+  return data;
+}
+
+export async function fetchOrganismLatest() {
+  const { data } = await api.get('/telemetry/organism/latest/');
+  return data;
+}
+
+export interface OrganismHistoryParams {
+  start_ts?: number;
+  end_ts?: number;
+  limit?: number;
+}
+
+export async function fetchOrganismHistory(params?: OrganismHistoryParams) {
+  const query: Record<string, string> = {};
+  if (params?.limit) query.limit = String(params.limit);
+  if (params?.start_ts) query.start_ts = String(params.start_ts);
+  if (params?.end_ts) query.end_ts = String(params.end_ts);
+  const { data } = await api.get('/telemetry/organism/history/', { params: query });
   return data;
 }
 

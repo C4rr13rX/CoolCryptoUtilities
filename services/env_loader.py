@@ -8,6 +8,13 @@ class EnvLoader:
     """Robust .env loader you can import anywhere."""
     @staticmethod
     def load() -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        web_dir = repo_root / "web"
+        for path in (repo_root, web_dir):
+            path_str = str(path)
+            if path_str not in sys.path:
+                sys.path.insert(0, path_str)
+
         # 1) try an auto-discovered .env in current working dir
         path = find_dotenv(usecwd=True)
         if path:

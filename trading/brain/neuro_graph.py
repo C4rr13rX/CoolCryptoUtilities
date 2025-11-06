@@ -116,6 +116,21 @@ class NeuroGraph:
                 graph[src][dst] = weight
         return dict(graph)
 
+    def nodes_snapshot(self) -> Dict[str, Dict[str, float]]:
+        """
+        Lightweight view of node metadata used by observability tooling.
+        """
+        with self._lock:
+            return {
+                key: {
+                    "kind": node.kind,
+                    "value": node.value,
+                    "last_update": node.last_update,
+                    "metadata": dict(node.metadata),
+                }
+                for key, node in self._nodes.items()
+            }
+
     def confidence_adjustment(self, symbol: str) -> float:
         """
         Compute a confidence multiplier for a symbol based on graph saturation.

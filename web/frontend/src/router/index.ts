@@ -6,6 +6,7 @@ import StreamsView from '@/views/StreamsView.vue';
 import TelemetryView from '@/views/TelemetryView.vue';
 import ConsoleView from '@/views/ConsoleView.vue';
 import AdvisoriesView from '@/views/AdvisoriesView.vue';
+import OrganismView from '@/views/OrganismView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -27,6 +28,11 @@ const routes: RouteRecordRaw[] = [
     path: '/telemetry',
     name: 'telemetry',
     component: TelemetryView,
+  },
+  {
+    path: '/organism',
+    name: 'organism',
+    component: OrganismView,
   },
   {
     path: '/console',

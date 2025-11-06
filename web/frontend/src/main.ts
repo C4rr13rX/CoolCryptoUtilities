@@ -38,6 +38,7 @@ if (mountEl) {
 
   const targetRoutes: Record<string, string> = {
     dashboard: '/',
+    organism: '/organism',
     pipeline: '/pipeline',
     streams: '/streams',
     telemetry: '/telemetry',

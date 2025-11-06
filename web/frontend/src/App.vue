@@ -173,6 +173,7 @@ const pipelineSummary = computed(() => {
 
 const navItems = computed(() => [
   { route: 'dashboard', label: 'Overview', icon: '🛰️', path: '/', intent: streamIntent.value },
+  { route: 'organism', label: 'Organism', icon: '🧬', path: '/organism', intent: pipelineIntent.value },
   { route: 'pipeline', label: 'Pipeline', icon: '🧠', path: '/pipeline', intent: pipelineIntent.value },
   { route: 'streams', label: 'Market Streams', icon: '📡', path: '/streams', intent: streamIntent.value },
   { route: 'telemetry', label: 'Telemetry', icon: '📊', path: '/telemetry', intent: feedbackIntent.value },
@@ -204,8 +205,8 @@ const totalProfitDisplay = computed(() =>
 }
 
 .sidebar {
-  background: rgba(7, 17, 29, 0.78);
-  border-right: 1px solid rgba(111, 167, 255, 0.18);
+  background: linear-gradient(180deg, rgba(5, 12, 22, 0.96), rgba(9, 20, 36, 0.88));
+  border-right: 1px solid rgba(79, 168, 255, 0.2);
   display: flex;
   flex-direction: column;
   padding: 1.8rem 1.2rem;
@@ -249,8 +250,8 @@ const totalProfitDisplay = computed(() =>
   padding: 0.85rem 1rem;
   border-radius: 12px;
   text-decoration: none;
-  color: rgba(240, 245, 255, 0.8);
-  background: rgba(18, 35, 54, 0.6);
+  color: rgba(207, 225, 255, 0.82);
+  background: rgba(12, 26, 45, 0.6);
   position: relative;
   transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
@@ -279,13 +280,14 @@ const totalProfitDisplay = computed(() =>
 
 .nav-link:hover {
   transform: translateX(4px);
-  color: #f8fbff;
+  color: #ecf3ff;
+  background: rgba(23, 48, 80, 0.72);
 }
 
 .nav-link.active {
-  background: rgba(37, 82, 137, 0.65);
+  background: rgba(45, 117, 196, 0.28);
   color: #f8fbff;
-  box-shadow: 0 18px 32px rgba(9, 24, 42, 0.35);
+  box-shadow: 0 20px 36px rgba(9, 24, 42, 0.4);
 }
 
 .sidebar__foot {
@@ -316,7 +318,7 @@ const totalProfitDisplay = computed(() =>
   flex-direction: column;
   padding: 1.6rem 2rem;
   gap: 1.5rem;
-  background: rgba(4, 10, 18, 0.65);
+  background: radial-gradient(circle at 20% 0%, rgba(10, 40, 85, 0.25), rgba(2, 8, 17, 0.95));
 }
 
 .content__header {
@@ -336,7 +338,7 @@ const totalProfitDisplay = computed(() =>
 .header-right .loading-pill {
   padding: 0.45rem 0.9rem;
   border-radius: 999px;
-  background: rgba(111, 167, 255, 0.2);
+  background: rgba(79, 168, 255, 0.25);
   color: var(--accent-3);
   text-transform: uppercase;
   letter-spacing: 0.12rem;
@@ -344,11 +346,11 @@ const totalProfitDisplay = computed(() =>
 }
 
 .content__body {
-  background: rgba(12, 23, 40, 0.78);
-  border: 1px solid rgba(111, 167, 255, 0.18);
+  background: rgba(6, 14, 26, 0.9);
+  border: 1px solid rgba(79, 168, 255, 0.18);
   border-radius: 18px;
   padding: 1.6rem;
-  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 28px 56px rgba(3, 12, 25, 0.45);
   min-height: 60vh;
 }
 
