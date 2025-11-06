@@ -1,5 +1,11 @@
 import { defineStore } from 'pinia';
-import { fetchOrganismHistory, fetchOrganismLatest, OrganismHistoryParams } from '@/api';
+import {
+  fetchOrganismConfig,
+  fetchOrganismHistory,
+  fetchOrganismLatest,
+  updateOrganismConfig,
+  OrganismHistoryParams,
+} from '@/api';
 
 interface OrganismState {
   latest: Record<string, any> | null;
@@ -7,6 +13,7 @@ interface OrganismState {
   loading: boolean;
   error: string | null;
   lastUpdated: number | null;
+  labelScale: number;
 }
 
 function normaliseSnapshot(snapshot: Record<string, any> | null) {
@@ -22,6 +29,7 @@ export const useOrganismStore = defineStore('organism', {
     loading: false,
     error: null,
     lastUpdated: null,
+    labelScale: 1,
   }),
   getters: {
     timeline(state): number[] {
@@ -85,6 +93,30 @@ export const useOrganismStore = defineStore('organism', {
         this.error = error?.message || 'Failed to load organism history';
       } finally {
         this.loading = false;
+      }
+    },
+    async loadSettings() {
+      try {
+        const response = await fetchOrganismConfig();
+        const scale = Number(response?.label_scale ?? 1);
+        if (!Number.isNaN(scale)) {
+          this.labelScale = scale;
+        }
+      } catch (error: any) {
+        this.error = error?.message || 'Failed to load organism settings';
+      }
+    },
+    setLabelScaleLocal(scale: number) {
+      const safe = Number.isFinite(scale) ? scale : 1;
+      this.labelScale = safe;
+    },
+    async saveLabelScale(scale: number) {
+      const safe = Number.isFinite(scale) ? scale : 1;
+      this.labelScale = safe;
+      try {
+        await updateOrganismConfig({ label_scale: safe });
+      } catch (error: any) {
+        this.error = error?.message || 'Failed to update label scale';
       }
     },
   },

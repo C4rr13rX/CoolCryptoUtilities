@@ -163,3 +163,18 @@ class OrganismHistoryView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class OrganismSettingsView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        db = get_db()
+        return Response({"label_scale": db.get_label_scale()}, status=status.HTTP_200_OK)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        db = get_db()
+        try:
+            scale = float(request.data.get("label_scale"))
+        except (TypeError, ValueError):
+            return Response({"detail": "label_scale must be numeric"}, status=status.HTTP_400_BAD_REQUEST)
+        db.set_label_scale(scale)
+        return Response({"label_scale": db.get_label_scale()}, status=status.HTTP_200_OK)

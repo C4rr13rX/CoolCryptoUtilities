@@ -4,7 +4,7 @@
       <div class="sidebar__brand">
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
-          <small class="subtitle">C@$h Fl0w Hub</small>
+          <small class="subtitle">Crypto Trading AI Bot</small>
         </div>
       </div>
       <nav class="sidebar__nav">
@@ -15,7 +15,7 @@
           class="nav-link"
           :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
         >
-          <span class="icon">{{ item.icon }}</span>
+          <span class="icon"><i :class="item.icon"></i></span>
           <span class="label">{{ item.label }}</span>
           <span class="status-dot" />
         </RouterLink>
@@ -172,13 +172,13 @@ const pipelineSummary = computed(() => {
 });
 
 const navItems = computed(() => [
-  { route: 'dashboard', label: 'Overview', icon: '🛰️', path: '/', intent: streamIntent.value },
-  { route: 'organism', label: 'Organism', icon: '🧬', path: '/organism', intent: pipelineIntent.value },
-  { route: 'pipeline', label: 'Pipeline', icon: '🧠', path: '/pipeline', intent: pipelineIntent.value },
-  { route: 'streams', label: 'Market Streams', icon: '📡', path: '/streams', intent: streamIntent.value },
-  { route: 'telemetry', label: 'Telemetry', icon: '📊', path: '/telemetry', intent: feedbackIntent.value },
-  { route: 'console', label: 'Console', icon: '🖥️', path: '/console', intent: consoleIntent.value },
-  { route: 'advisories', label: 'Advisories', icon: '🧭', path: '/advisories', intent: advisoryIntent.value },
+  { route: 'dashboard', label: 'Overview', icon: 'fa-solid fa-eye', path: '/', intent: streamIntent.value },
+  { route: 'organism', label: 'Organism', icon: 'fa-solid fa-microchip', path: '/organism', intent: pipelineIntent.value },
+  { route: 'pipeline', label: 'Pipeline', icon: 'fa-solid fa-diagram-project', path: '/pipeline', intent: pipelineIntent.value },
+  { route: 'streams', label: 'Market Streams', icon: 'fa-solid fa-wave-square', path: '/streams', intent: streamIntent.value },
+  { route: 'telemetry', label: 'Telemetry', icon: 'fa-solid fa-chart-line', path: '/telemetry', intent: feedbackIntent.value },
+  { route: 'console', label: 'Console', icon: 'fa-solid fa-terminal', path: '/console', intent: consoleIntent.value },
+  { route: 'advisories', label: 'Advisories', icon: 'fa-solid fa-shield-virus', path: '/advisories', intent: advisoryIntent.value },
 ]);
 
 const isActive = (name: string) => route.name === name;
@@ -257,7 +257,12 @@ const totalProfitDisplay = computed(() =>
 }
 
 .nav-link .icon {
-  font-size: 1.2rem;
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  color: rgba(240, 245, 255, 0.8);
 }
 
 .nav-link .status-dot {
@@ -282,6 +287,11 @@ const totalProfitDisplay = computed(() =>
   transform: translateX(4px);
   color: #ecf3ff;
   background: rgba(23, 48, 80, 0.72);
+}
+
+.nav-link:hover .icon,
+.nav-link.active .icon {
+  color: #ecf3ff;
 }
 
 .nav-link.active {

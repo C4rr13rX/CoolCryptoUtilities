@@ -14,4 +14,5 @@ urlpatterns = [
     path("dashboard/", views.DashboardSummaryView.as_view(), name="dashboard"),
     path("organism/latest/", views.OrganismLatestView.as_view(), name="organism-latest"),
     path("organism/history/", views.OrganismHistoryView.as_view(), name="organism-history"),
+    path("organism/settings/", views.OrganismSettingsView.as_view(), name="organism-settings"),
 ]

@@ -17,7 +17,7 @@
       </header>
       <div class="canvas-wrapper" :class="{ empty: !hasGraph }">
         <template v-if="hasGraph">
-          <OrganismCanvas :graph="activeGraph" />
+          <OrganismCanvas :graph="activeGraph" :label-scale="labelScaleLocal" />
         </template>
         <div v-else class="canvas-empty">
           <h2>No Network Activity Yet</h2>
@@ -28,6 +28,19 @@
         </div>
       </div>
       <footer class="card-footer">
+        <div class="label-controls">
+          <span>Label Scale</span>
+          <input
+            class="label-range"
+            type="range"
+            min="0.6"
+            max="2.5"
+            step="0.1"
+            v-model.number="labelScaleLocal"
+            @input="onLabelScaleInput"
+          />
+          <span class="label-value">{{ labelScaleLocal.toFixed(2) }}×</span>
+        </div>
         <label class="slider-label" for="timeline-range">
           Timeline
         </label>
@@ -179,6 +192,7 @@ import { useOrganismStore } from '@/stores/organism';
 const store = useOrganismStore();
 const selectedIndex = ref(0);
 let refreshHandle: number | undefined;
+let labelSaveTimer: number | undefined;
 
 const timelinePoints = computed(() => store.timeline);
 
@@ -237,6 +251,7 @@ const hasGraph = computed(() => {
   const nodes = (graph?.nodes as any[]) || [];
   return nodes.length > 0;
 });
+const labelScaleLocal = ref(1);
 
 function formatPercent(value: any) {
   if (value === null || value === undefined) return '—';
@@ -267,6 +282,23 @@ function formatMilliseconds(value: any) {
   return `${num.toFixed(1)} ms`;
 }
 
+function onLabelScaleInput(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const value = Number(target.value);
+  if (!Number.isFinite(value)) {
+    return;
+  }
+  labelScaleLocal.value = value;
+  store.setLabelScaleLocal(value);
+  if (labelSaveTimer) {
+    window.clearTimeout(labelSaveTimer);
+  }
+  labelSaveTimer = window.setTimeout(() => {
+    store.saveLabelScale(value);
+    labelSaveTimer = undefined;
+  }, 400);
+}
+
 function formatDuration(seconds: number) {
   if (!Number.isFinite(seconds)) return '—';
   if (seconds < 60) return `${seconds.toFixed(0)}s`;
@@ -279,6 +311,8 @@ function jumpLatest() {
 }
 
 async function initialise() {
+  await store.loadSettings();
+  labelScaleLocal.value = Number(store.labelScale || 1);
   await store.loadHistory({ limit: 200 });
   await store.refreshLatest();
   jumpLatest();
@@ -293,6 +327,11 @@ onBeforeUnmount(() => {
   if (refreshHandle) {
     window.clearInterval(refreshHandle);
     refreshHandle = undefined;
+  }
+  if (labelSaveTimer) {
+    store.saveLabelScale(labelScaleLocal.value);
+    window.clearTimeout(labelSaveTimer);
+    labelSaveTimer = undefined;
   }
 });
 
@@ -317,6 +356,16 @@ watch(
       selectedIndex.value = lastIndex;
     }
   },
+);
+
+watch(
+  () => store.labelScale,
+  (value) => {
+    if (Number.isFinite(value)) {
+      labelScaleLocal.value = Number(value);
+    }
+  },
+  { immediate: true }
 );
 </script>
 
@@ -400,11 +449,51 @@ watch(
   justify-content: center;
 }
 
+.canvas-empty {
+  text-align: center;
+  max-width: 520px;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.canvas-empty h2 {
+  margin: 0;
+  color: #dbeafe;
+  font-size: 1.25rem;
+}
+
+.canvas-empty .hint {
+  font-size: 0.85rem;
+  color: rgba(148, 163, 184, 0.8);
+}
+
 .card-footer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
   padding-top: 1.25rem;
+}
+
+.label-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.label-range {
+  width: 180px;
+  accent-color: #38bdf8;
+}
+
+.label-value {
+  font-family: 'IBM Plex Mono', monospace;
+  color: #dbeafe;
+  font-size: 0.85rem;
 }
 
 .slider-label {
@@ -414,7 +503,7 @@ watch(
 }
 
 .timeline-range {
-  flex: 1;
+  flex: 1 1 220px;
   accent-color: #38bdf8;
 }
 
@@ -575,22 +664,3 @@ watch(
   }
 }
 </style>
-.canvas-empty {
-  text-align: center;
-  max-width: 520px;
-  color: #94a3b8;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.canvas-empty h2 {
-  margin: 0;
-  color: #dbeafe;
-  font-size: 1.25rem;
-}
-
-.canvas-empty .hint {
-  font-size: 0.85rem;
-  color: rgba(148, 163, 184, 0.8);
-}

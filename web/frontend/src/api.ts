@@ -87,6 +87,16 @@ export async function fetchOrganismHistory(params?: OrganismHistoryParams) {
   return data;
 }
 
+export async function fetchOrganismConfig() {
+  const { data } = await api.get('/telemetry/organism/settings/');
+  return data;
+}
+
+export async function updateOrganismConfig(payload: { label_scale: number }) {
+  const { data } = await api.post('/telemetry/organism/settings/', payload);
+  return data;
+}
+
 export async function fetchConsoleStatus() {
   const { data } = await api.get('/console/status/');
   return data;

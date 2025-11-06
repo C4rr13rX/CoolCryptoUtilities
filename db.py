@@ -256,6 +256,7 @@ class TradingDatabase:
                     size_multiplier REAL DEFAULT 1.0,
                     margin_offset REAL DEFAULT 0.0,
                     allocation_multiplier REAL DEFAULT 1.0,
+                    label_scale REAL DEFAULT 1.0,
                     updated REAL DEFAULT (strftime('%s','now')),
                     details TEXT
                 );
@@ -1240,12 +1241,13 @@ class TradingDatabase:
             "priority": int(row["priority"] or 0),
             "enter_offset": float(row["enter_offset"] or 0.0),
             "exit_offset": float(row["exit_offset"] or 0.0),
-            "size_multiplier": float(row["size_multiplier"] or 1.0),
-            "margin_offset": float(row["margin_offset"] or 0.0),
-            "allocation_multiplier": float(row["allocation_multiplier"] or 1.0),
-            "updated": float(row["updated"] or 0.0),
-            "details": details,
-        }
+           "size_multiplier": float(row["size_multiplier"] or 1.0),
+           "margin_offset": float(row["margin_offset"] or 0.0),
+           "allocation_multiplier": float(row["allocation_multiplier"] or 1.0),
+            "label_scale": float(row["label_scale"] or 1.0),
+           "updated": float(row["updated"] or 0.0),
+           "details": details,
+       }
 
     def upsert_pair_adjustment(
         self,
@@ -1256,10 +1258,15 @@ class TradingDatabase:
         size_multiplier: Optional[float] = None,
         margin_offset: Optional[float] = None,
         allocation_multiplier: Optional[float] = None,
+        label_scale: Optional[float] = None,
         priority: Optional[int] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
         current = self.get_pair_adjustment(symbol) or {}
+        current_details = current.get("details", {})
+        if not isinstance(current_details, dict):
+            current_details = {}
+        payload_details = details if details is not None else current_details
         payload = {
             "symbol": symbol.upper(),
             "enter_offset": enter_offset if enter_offset is not None else current.get("enter_offset", 0.0),
@@ -1269,18 +1276,19 @@ class TradingDatabase:
             "allocation_multiplier": allocation_multiplier if allocation_multiplier is not None else current.get(
                 "allocation_multiplier", 1.0
             ),
+            "label_scale": label_scale if label_scale is not None else current.get("label_scale", 1.0),
             "priority": priority if priority is not None else current.get("priority", 0),
-            "details": json.dumps(details if details is not None else current.get("details", {})),
+            "details": json.dumps(payload_details),
         }
         with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO pair_adjustments(symbol, priority, enter_offset, exit_offset,
                                              size_multiplier, margin_offset, allocation_multiplier,
-                                             details, updated)
+                                             label_scale, details, updated)
                 VALUES(:symbol, :priority, :enter_offset, :exit_offset,
                        :size_multiplier, :margin_offset, :allocation_multiplier,
-                       :details, strftime('%s','now'))
+                       :label_scale, :details, strftime('%s','now'))
                 ON CONFLICT(symbol) DO UPDATE SET
                     priority=excluded.priority,
                     enter_offset=excluded.enter_offset,
@@ -1288,6 +1296,7 @@ class TradingDatabase:
                     size_multiplier=excluded.size_multiplier,
                     margin_offset=excluded.margin_offset,
                     allocation_multiplier=excluded.allocation_multiplier,
+                    label_scale=excluded.label_scale,
                     details=excluded.details,
                     updated=strftime('%s','now');
                 """,
@@ -1305,6 +1314,19 @@ class TradingDatabase:
         multiplier = float(record.get("size_multiplier", 1.0))
         multiplier = max(floor, min(ceiling, multiplier + delta))
         self.upsert_pair_adjustment(symbol, size_multiplier=multiplier)
+
+    def get_label_scale(self, symbol: str = "__GLOBAL__") -> float:
+        record = self.get_pair_adjustment(symbol)
+        if not record:
+            return 1.0
+        try:
+            return float(record.get("label_scale", 1.0))
+        except Exception:
+            return 1.0
+
+    def set_label_scale(self, scale: float, symbol: str = "__GLOBAL__") -> None:
+        safe = max(0.5, min(3.0, float(scale)))
+        self.upsert_pair_adjustment(symbol, label_scale=safe)
 
 
 # ----------------------------------------------------------------------
