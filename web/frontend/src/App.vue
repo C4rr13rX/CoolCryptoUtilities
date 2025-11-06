@@ -3,8 +3,8 @@
     <aside class="sidebar">
       <div class="sidebar__brand">
         <div class="brand-copy">
-          <span class="title">C4rr13rX</span>
-          <small class="subtitle">Mission Control</small>
+          <span class="title">R3V3N!R</span>
+          <small class="subtitle">C@$h Fl0w Hub</small>
         </div>
       </div>
       <nav class="sidebar__nav">
