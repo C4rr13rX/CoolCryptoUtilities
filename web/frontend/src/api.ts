@@ -121,3 +121,25 @@ export async function sendConsoleInput(command: string) {
   const { data } = await api.post('/console/input/', { command });
   return data;
 }
+
+export interface LabJobPayload {
+  train_files?: string[];
+  eval_files?: string[];
+  epochs?: number;
+  batch_size?: number;
+}
+
+export async function fetchLabFiles() {
+  const { data } = await api.get('/lab/files/');
+  return data;
+}
+
+export async function fetchLabStatus() {
+  const { data } = await api.get('/lab/status/');
+  return data;
+}
+
+export async function startLabJob(payload: LabJobPayload) {
+  const { data } = await api.post('/lab/run/', payload);
+  return data;
+}

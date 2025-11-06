@@ -40,6 +40,18 @@ def build_snapshot(
     discovery_payload = discovery_snapshot or {}
 
     graph_metadata, graph_edges = _prepare_graph(bot)
+    totals_payload = {
+        "stable_bank": float(getattr(bot, "stable_bank", 0.0)),
+        "total_profit": float(getattr(bot, "total_profit", 0.0)),
+        "realized_profit": float(getattr(bot, "realized_profit", 0.0)),
+        "equity": _safe_float(_call_optional(bot, "current_equity")),
+        "wins": int(getattr(bot, "wins", 0)),
+        "total_trades": int(getattr(bot, "total_trades", 0)),
+    }
+    mode = "live" if getattr(bot, "live_trading_enabled", False) else "ghost"
+    ghost_session = int(getattr(bot, "ghost_session_id", 0) or 0)
+    activity_payload = _prepare_activity(bot)
+
     organism_graph = _build_organism_graph(
         brain_payload,
         exposure_payload,
@@ -50,13 +62,20 @@ def build_snapshot(
         decision_payload,
         queue_preview,
         pending_depth,
+        portfolio=portfolio_payload,
+        totals=totals_payload,
+        discovery=discovery_payload,
+        mode=mode,
+        ghost_session=ghost_session,
+        activity=activity_payload,
+        windows=windows_payload,
     )
 
     snapshot = {
         "timestamp": now,
         "latency_ms": float(latency_s * 1000.0) if latency_s is not None else None,
-        "mode": "live" if getattr(bot, "live_trading_enabled", False) else "ghost",
-        "ghost_session": getattr(bot, "ghost_session_id", 0),
+        "mode": mode,
+        "ghost_session": ghost_session,
         "sample": sample_payload,
         "prediction": prediction_payload,
         "brain": brain_payload,
@@ -73,14 +92,8 @@ def build_snapshot(
         "brain_windows": windows_payload,
         "discovery": discovery_payload,
         "organism_graph": organism_graph,
-        "totals": {
-            "stable_bank": float(getattr(bot, "stable_bank", 0.0)),
-            "total_profit": float(getattr(bot, "total_profit", 0.0)),
-            "realized_profit": float(getattr(bot, "realized_profit", 0.0)),
-            "equity": _safe_float(_call_optional(bot, "current_equity")),
-            "wins": int(getattr(bot, "wins", 0)),
-            "total_trades": int(getattr(bot, "total_trades", 0)),
-        },
+        "totals": totals_payload,
+        "activity": activity_payload,
     }
     return snapshot
 
@@ -227,6 +240,90 @@ def _prepare_windows(last_windows: Optional[Dict[str, Dict[str, Any]]], limit: i
     return output
 
 
+def _prepare_activity(bot: Any) -> Dict[str, Any]:
+    db = getattr(bot, "db", None)
+    if db is None:
+        return {}
+
+    activity: Dict[str, Any] = {
+        "ghost_trades": [],
+        "live_trades": [],
+        "feedback_events": [],
+        "metrics": [],
+    }
+
+    try:
+        ghost_trades = db.fetch_trades(wallets=["ghost"], limit=24)
+    except Exception:
+        ghost_trades = []
+    activity["ghost_trades"] = [
+        {
+            "ts": _safe_float(trade.get("ts")),
+            "wallet": trade.get("wallet"),
+            "chain": trade.get("chain"),
+            "symbol": trade.get("symbol"),
+            "action": trade.get("action"),
+            "status": trade.get("status"),
+            "details": _sanitize(trade.get("details")),
+        }
+        for trade in ghost_trades[:24]
+        if isinstance(trade, dict)
+    ]
+
+    try:
+        live_trades = db.fetch_trades(wallets=["live"], limit=24)
+    except Exception:
+        live_trades = []
+    activity["live_trades"] = [
+        {
+            "ts": _safe_float(trade.get("ts")),
+            "wallet": trade.get("wallet"),
+            "chain": trade.get("chain"),
+            "symbol": trade.get("symbol"),
+            "action": trade.get("action"),
+            "status": trade.get("status"),
+            "details": _sanitize(trade.get("details")),
+        }
+        for trade in live_trades[:24]
+        if isinstance(trade, dict)
+    ]
+
+    try:
+        feedback_events = db.fetch_feedback_events(limit=24)
+    except Exception:
+        feedback_events = []
+    activity["feedback_events"] = [
+        {
+            "ts": _safe_float(event.get("ts")),
+            "source": event.get("source"),
+            "severity": (event.get("severity") or "").lower(),
+            "label": event.get("label"),
+            "details": _sanitize(event.get("details")),
+        }
+        for event in feedback_events[:24]
+        if isinstance(event, dict)
+    ]
+
+    try:
+        metrics = db.fetch_metrics(limit=24)
+    except Exception:
+        metrics = []
+    activity["metrics"] = [
+        {
+            "ts": _safe_float(entry.get("ts")),
+            "stage": entry.get("stage"),
+            "category": entry.get("category"),
+            "name": entry.get("name"),
+            "value": _safe_float(entry.get("value")),
+            "meta": _sanitize(entry.get("meta")),
+        }
+        for entry in metrics[:24]
+        if isinstance(entry, dict)
+    ]
+
+    return activity
+
+
 def _series_to_list(values: Any, *, limit: int) -> List[float]:
     if hasattr(values, "tolist"):
         seq = values.tolist()
@@ -290,7 +387,23 @@ def _build_organism_graph(
     decision: Dict[str, Any],
     queue_preview: List[Dict[str, Any]],
     pending_depth: int,
+    *,
+    portfolio: Optional[Dict[str, Any]] = None,
+    totals: Optional[Dict[str, Any]] = None,
+    discovery: Optional[Dict[str, Any]] = None,
+    mode: str = "ghost",
+    ghost_session: int = 0,
+    activity: Optional[Dict[str, Any]] = None,
+    windows: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    portfolio = portfolio or {}
+    totals = totals or {}
+    discovery = discovery or {}
+    activity = activity or {}
+    windows = windows or {}
+    mode = (mode or "ghost").lower()
+    ghost_session = max(0, int(ghost_session or 0))
+
     nodes: Dict[str, Dict[str, Any]] = {}
     edges: List[Dict[str, Any]] = []
 
@@ -307,6 +420,58 @@ def _build_organism_graph(
                 "kind": kind,
             }
         )
+
+    def ensure_asset(symbol: Any) -> str:
+        symbol_str = str(symbol or "?").upper()
+        node_id = f"asset:{symbol_str}"
+        if node_id not in nodes:
+            add_node(node_id, label=symbol_str, group="asset", status="watch", exposure=0.0)
+        return node_id
+
+    def pnl_status(value: Optional[float]) -> str:
+        if value is None:
+            return "idle"
+        if value > 0.0001:
+            return "strong"
+        if value < -0.0001:
+            return "cautious" if value > -1.0 else "halted"
+        return "soft"
+
+    def trade_status(raw_status: Optional[str]) -> str:
+        status = str(raw_status or "").lower()
+        if any(flag in status for flag in ("fail", "error", "reject", "cancel")):
+            return "halted"
+        if any(flag in status for flag in ("pending", "waiting", "queued")):
+            return "cautious"
+        if any(flag in status for flag in ("fill", "done", "success", "complete", "executed", "filled")):
+            return "strong"
+        return "soft"
+
+    def severity_status(severity: Optional[str]) -> str:
+        level = str(severity or "").lower()
+        if level in {"critical", "fatal", "error"}:
+            return "halted"
+        if level in {"warning", "warn"}:
+            return "cautious"
+        if level in {"info", "notice"}:
+            return "soft"
+        return "idle"
+
+    def metric_status(value: Optional[float]) -> str:
+        if value is None:
+            return "idle"
+        if value >= 0.75:
+            return "strong"
+        if value >= 0.5:
+            return "engaged"
+        if value >= 0.25:
+            return "soft"
+        if value < 0:
+            return "cautious"
+        return "idle"
+
+    def scaled_value(amount: float, *, base: float = 0.35) -> float:
+        return max(0.2, min(1.2, math.log1p(abs(amount)) * 0.22 + base))
 
     brain_status = "ok"
     if brain.get("reflex_block_active"):
@@ -367,28 +532,135 @@ def _build_organism_graph(
         depth=len(queue_preview),
     )
 
-    add_edge("brain", "module:swarm", weight=abs(_safe_float(brain.get("swarm_bias"))), kind="signal")
-    add_edge("brain", "module:memory", weight=abs(_safe_float(brain.get("memory_bias"))), kind="signal")
-    add_edge("brain", "module:scenario", weight=abs(_safe_float(brain.get("scenario_spread"))), kind="signal")
+    feedback_events = activity.get("feedback_events") or []
+    metrics_events = activity.get("metrics") or []
+
+    add_node(
+        "module:feedback",
+        label="Feedback Loop",
+        group="module",
+        status="busy" if feedback_events else "idle",
+        value=scaled_value(len(feedback_events), base=0.25),
+    )
+    add_node(
+        "module:metrics",
+        label="Metrics Hub",
+        group="module",
+        status="busy" if metrics_events else "idle",
+        value=scaled_value(len(metrics_events), base=0.25),
+    )
+
+    holdings_map = portfolio.get("holdings") or {}
+    native_balances = portfolio.get("native_balances") or {}
+    holdings_total_usd = sum(max(0.0, _safe_float(payload.get("usd"))) for payload in holdings_map.values())
+    native_total = sum(max(0.0, _safe_float(amount)) for amount in native_balances.values())
+    portfolio_total = holdings_total_usd + native_total
+    add_node(
+        "module:portfolio",
+        label="Wallet Stack",
+        group="system",
+        status="busy" if portfolio_total > 0 else "idle",
+        value=scaled_value(portfolio_total, base=0.4),
+    )
+
+    add_edge("brain", "module:swarm", weight=max(0.2, abs(_safe_float(brain.get("swarm_bias")))), kind="signal")
+    add_edge("brain", "module:memory", weight=max(0.2, abs(_safe_float(brain.get("memory_bias")))), kind="signal")
+    add_edge("brain", "module:scenario", weight=max(0.2, abs(_safe_float(brain.get("scenario_spread")))), kind="signal")
     if arb_signal:
-        add_edge("brain", "module:arb", weight=abs(_safe_float(arb_signal.get("spread"))), kind="signal")
+        add_edge("brain", "module:arb", weight=max(0.2, abs(_safe_float(arb_signal.get("spread")))), kind="signal")
+    add_edge("brain", "module:feedback", weight=0.6 + len(feedback_events) * 0.05, kind="feedback")
+    add_edge("brain", "module:metrics", weight=0.5 + len(metrics_events) * 0.04, kind="metric")
+    add_edge("brain", "module:portfolio", weight=0.8, kind="operational")
     add_edge("module:scheduler", "module:queue", weight=float(len(queue_preview) + 1), kind="operational")
+
+    add_edge("module:portfolio", "module:scheduler", weight=0.6, kind="operational")
+
+    add_node(
+        "session:mode",
+        label=f"Mode • {mode.upper()}",
+        group="session",
+        status="engaged" if mode == "live" else "soft",
+        value=1.0 if mode == "live" else 0.7,
+    )
+    add_node(
+        "session:ghost",
+        label=f"Ghost Session #{ghost_session or 0}",
+        group="session",
+        status="soft" if mode == "live" else "engaged",
+        value=scaled_value(float(max(1, ghost_session or 1)), base=0.3),
+    )
+    add_node(
+        "session:live",
+        label="Live Wallet",
+        group="session",
+        status="engaged" if mode == "live" else "idle",
+        value=0.8 if mode == "live" else 0.4,
+    )
+
+    add_edge("session:mode", "brain", weight=1.0, kind="state")
+    add_edge("session:mode", "module:scheduler", weight=0.6, kind="session")
+    add_edge("session:mode", "session:ghost", weight=0.7, kind="session")
+    add_edge("session:mode", "session:live", weight=0.7, kind="session")
+    add_edge("session:ghost", "module:queue", weight=0.8, kind="session")
+    add_edge("session:live", "module:portfolio", weight=0.8, kind="session")
+
+    swarm_votes = brain.get("swarm_votes") or []
+    for vote in swarm_votes[:10]:
+        horizon = str(vote.get("horizon") or "?")
+        expected = _safe_float(vote.get("expected"))
+        confidence = _safe_float(vote.get("confidence"))
+        vote_id = f"swarm_vote:{horizon}"
+        add_node(
+            vote_id,
+            label=f"{horizon} • {expected * 100:.1f}% / {confidence * 100:.0f}%",
+            group="vote",
+            status="strong" if expected > 0 else ("halted" if expected < 0 else "soft"),
+            value=scaled_value(confidence, base=0.25),
+        )
+        add_edge("module:swarm", vote_id, weight=max(0.12, abs(expected)) + confidence * 0.2, kind="vote")
 
     total_exposure = sum(abs(val) for val in exposure.values()) or 1.0
     for symbol, value in exposure.items():
-        node_id = f"asset:{symbol}"
+        node_id = ensure_asset(symbol)
         in_position = symbol in positions
         add_node(
             node_id,
-            label=symbol,
+            label=str(symbol),
             group="asset",
             status="position" if in_position else "watch",
             exposure=_safe_float(value),
         )
-        weight = abs(value) / total_exposure
+        weight = max(0.05, abs(value) / total_exposure)
         add_edge("module:scheduler", node_id, weight=weight, kind="exposure")
         if in_position:
             add_edge("module:queue", node_id, weight=weight, kind="position")
+
+    for symbol, payload in positions.items():
+        asset_id = ensure_asset(symbol)
+        node_id = f"ghost:{symbol}"
+        add_node(
+            node_id,
+            label=f"Ghost {symbol}",
+            group="ghost",
+            status="position",
+            value=scaled_value(_safe_float(payload.get("size")), base=0.28),
+        )
+        add_edge(asset_id, node_id, weight=0.9, kind="ghost")
+        add_edge("session:ghost", node_id, weight=0.7, kind="ghost")
+
+    for idx, queued in enumerate(queue_preview):
+        node_id = f"queue_item:{idx}"
+        symbol = queued.get("symbol") or queued.get("decision", {}).get("symbol") or "?"
+        status = str(queued.get("status") or "pending").lower()
+        add_node(
+            node_id,
+            label=f"Q[{idx}] {symbol}",
+            group="queue",
+            status=trade_status(status),
+            value=scaled_value(_safe_float(queued.get("size") or 1.0), base=0.25),
+        )
+        add_edge("module:queue", node_id, weight=0.6, kind="queue")
+        add_edge(node_id, ensure_asset(symbol), weight=0.4, kind="queue")
 
     decision_action = decision.get("action")
     if isinstance(decision_action, str) and decision_action.lower() in {"enter", "exit"}:
@@ -400,8 +672,225 @@ def _build_organism_graph(
                 group="event",
                 status=decision_action.lower(),
             )
-            add_edge("brain", "decision", weight=1.0, kind="decision")
-            add_edge("decision", f"asset:{symbol}", weight=1.0, kind="decision")
+            add_edge("brain", "decision", weight=0.9, kind="decision")
+            add_edge("decision", ensure_asset(symbol), weight=0.9, kind="decision")
+
+    # Portfolio holdings
+    if holdings_map:
+        sorted_holdings = sorted(
+            holdings_map.items(),
+            key=lambda item: _safe_float(item[1].get("usd")),
+            reverse=True,
+        )
+        for key, payload in sorted_holdings[:36]:
+            usd = _safe_float(payload.get("usd"))
+            quantity = _safe_float(payload.get("quantity"))
+            node_id = f"holding:{key}"
+            add_node(
+                node_id,
+                label=f"{key} • {quantity:.4g}",
+                group="holding",
+                status="position" if usd > 0 else "watch",
+                value=scaled_value(usd, base=0.22),
+            )
+            weight = max(0.05, usd / max(holdings_total_usd, 1.0))
+            add_edge("module:portfolio", node_id, weight=weight, kind="holding")
+            asset_symbol = key.split(":")[-1]
+            add_edge(node_id, ensure_asset(asset_symbol), weight=0.4 + weight, kind="holding")
+
+    if native_balances:
+        for chain, amount in list(native_balances.items())[:12]:
+            amt_float = _safe_float(amount)
+            node_id = f"native:{chain}"
+            add_node(
+                node_id,
+                label=f"{chain.upper()} Native • {amt_float:.4g}",
+                group="native",
+                status="position" if amt_float > 0 else "idle",
+                value=scaled_value(amt_float, base=0.2),
+            )
+            add_edge("module:portfolio", node_id, weight=0.4 + min(0.6, amt_float / max(native_total, 1.0)), kind="holding")
+
+    # Totals / ledger nodes
+    stable_bank = _safe_float(totals.get("stable_bank"))
+    total_profit = _safe_float(totals.get("total_profit"))
+    realized_profit = _safe_float(totals.get("realized_profit"))
+    equity = totals.get("equity")
+    wins = int(totals.get("wins") or 0)
+    total_trades = int(totals.get("total_trades") or 0)
+
+    ledger_nodes = [
+        ("stable_bank", "Stable Bank", stable_bank),
+        ("total_profit", "Total Profit", total_profit),
+        ("realized", "Realised Profit", realized_profit),
+    ]
+    if equity is not None:
+        ledger_nodes.append(("equity", "Equity", _safe_float(equity)))
+    for key, label, value in ledger_nodes:
+        node_id = f"finance:{key}"
+        add_node(
+            node_id,
+            label=f"{label} • ${value:,.2f}",
+            group="finance",
+            status=pnl_status(value),
+            value=scaled_value(value, base=0.3),
+        )
+        add_edge("module:portfolio", node_id, weight=0.9, kind="finance")
+
+    if total_trades > 0:
+        win_rate = wins / max(total_trades, 1)
+        add_node(
+            "finance:winrate",
+            label=f"Win Rate • {win_rate * 100:.1f}%",
+            group="finance",
+            status="strong" if win_rate >= 0.55 else ("cautious" if win_rate < 0.35 else "soft"),
+            value=scaled_value(win_rate, base=0.25),
+        )
+        add_edge("module:portfolio", "finance:winrate", weight=0.6 + win_rate * 0.6, kind="finance")
+
+    # Activity: ghost trades
+    ghost_trades = activity.get("ghost_trades") or []
+    for idx, trade in enumerate(ghost_trades[:18]):
+        symbol = trade.get("symbol") or "?"
+        node_id = f"ghost_trade:{idx}"
+        size = _safe_float((trade.get("details") or {}).get("size"))
+        add_node(
+            node_id,
+            label=f"Ghost {symbol} • {trade.get('action', '').upper()}",
+            group="ghost_trade",
+            status=trade_status(trade.get("status")),
+            value=scaled_value(size, base=0.22),
+        )
+        add_edge("session:ghost", node_id, weight=0.6, kind="trade")
+        add_edge(node_id, ensure_asset(symbol), weight=0.5, kind="trade")
+
+    live_trades = activity.get("live_trades") or []
+    for idx, trade in enumerate(live_trades[:18]):
+        symbol = trade.get("symbol") or "?"
+        node_id = f"live_trade:{idx}"
+        size = _safe_float((trade.get("details") or {}).get("size"))
+        add_node(
+            node_id,
+            label=f"Live {symbol} • {trade.get('action', '').upper()}",
+            group="live_trade",
+            status=trade_status(trade.get("status")),
+            value=scaled_value(size, base=0.22),
+        )
+        add_edge("session:live", node_id, weight=0.6, kind="trade")
+        add_edge(node_id, ensure_asset(symbol), weight=0.5, kind="trade")
+
+    for idx, event in enumerate(feedback_events[:12]):
+        node_id = f"feedback:{idx}"
+        add_node(
+            node_id,
+            label=f"{event.get('label') or event.get('source')}",
+            group="feedback",
+            status=severity_status(event.get("severity")),
+            value=scaled_value(1 + idx * 0.1, base=0.21),
+        )
+        add_edge("module:feedback", node_id, weight=0.6, kind="feedback")
+
+    for idx, metric in enumerate(metrics_events[:12]):
+        node_id = f"metric:{idx}"
+        label = f"{metric.get('stage') or metric.get('category')}: {metric.get('name')}"
+        add_node(
+            node_id,
+            label=label,
+            group="metric",
+            status=metric_status(metric.get("value")),
+            value=scaled_value(_safe_float(metric.get("value")), base=0.2),
+        )
+        add_edge("module:metrics", node_id, weight=0.5, kind="metric")
+
+    discovery_events = discovery.get("recent_events") or []
+    total_liquidity = sum(max(0.0, _safe_float(evt.get("liquidity_usd"))) for evt in discovery_events)
+    for idx, evt in enumerate(discovery_events[:16]):
+        symbol = evt.get("symbol") or "?"
+        change = _safe_float(evt.get("price_change_24h"))
+        liquidity = _safe_float(evt.get("liquidity_usd"))
+        node_id = f"discovery:event:{idx}"
+        add_node(
+            node_id,
+            label=f"{symbol} • {change:+.1f}%",
+            group="discovery",
+            status="strong" if change > 0 else ("cautious" if change < 0 else "soft"),
+            value=scaled_value(abs(change), base=0.22),
+        )
+        weight = max(0.08, liquidity / max(total_liquidity, 1.0))
+        add_edge("module:arb", node_id, weight=weight, kind="discovery")
+        add_edge(node_id, ensure_asset(symbol), weight=0.5, kind="discovery")
+
+    honeypots = discovery.get("recent_honeypots") or []
+    for idx, evt in enumerate(honeypots[:8]):
+        symbol = evt.get("symbol") or "?"
+        node_id = f"discovery:honeypot:{idx}"
+        add_node(
+            node_id,
+            label=f"Honeypot • {symbol}",
+            group="discovery",
+            status="halted",
+            value=0.6,
+        )
+        add_edge(node_id, ensure_asset(symbol), weight=0.4, kind="discovery")
+        add_edge("module:arb", node_id, weight=0.4, kind="discovery")
+
+    status_counts = discovery.get("status_counts") or {}
+    for status_key, total in list(status_counts.items())[:6]:
+        node_id = f"discovery:status:{status_key}"
+        add_node(
+            node_id,
+            label=f"{status_key} • {total}",
+            group="discovery",
+            status="soft",
+            value=scaled_value(float(total), base=0.2),
+        )
+        add_edge(node_id, "module:arb", weight=0.4 + min(0.6, float(total) / 10.0), kind="discovery")
+
+    if windows:
+        for idx, (symbol, payload) in enumerate(windows.items()):
+            if idx >= 24:
+                break
+            asset_id = ensure_asset(symbol)
+            price_series = payload.get("prices") or {}
+            sentiment_series = payload.get("sentiment") or {}
+            volatility = 0.0
+            for series in list(price_series.values())[:4]:
+                if series:
+                    volatility = max(volatility, abs(max(series) - min(series)))
+            window_id = f"window:{symbol}"
+            add_node(
+                window_id,
+                label=f"{symbol} signals",
+                group="window",
+                status="soft",
+                value=scaled_value(volatility or 0.2, base=0.24),
+            )
+            add_edge("module:memory", window_id, weight=0.45 + min(0.55, volatility), kind="memory")
+            add_edge(window_id, asset_id, weight=0.35 + min(0.35, volatility), kind="memory")
+            for series_name, series in list(price_series.items())[:4]:
+                fluct = 0.0
+                if series:
+                    fluct = abs(max(series) - min(series))
+                series_id = f"window:{symbol}:price:{series_name}"
+                add_node(
+                    series_id,
+                    label=f"{series_name.upper()} Δ{fluct:.4f}",
+                    group="window_series",
+                    status="soft",
+                    value=scaled_value(fluct or 0.1, base=0.18),
+                )
+                add_edge(window_id, series_id, weight=0.4 + min(0.6, fluct), kind="memory")
+            for series_name, series in list(sentiment_series.items())[:3]:
+                sentiment_mean = float(sum(series) / len(series)) if series else 0.0
+                series_id = f"window:{symbol}:sent:{series_name}"
+                add_node(
+                    series_id,
+                    label=f"Sent {series_name} • {sentiment_mean:+.3f}",
+                    group="window_series",
+                    status="soft",
+                    value=scaled_value(abs(sentiment_mean) or 0.05, base=0.16),
+                )
+                add_edge(window_id, series_id, weight=0.3 + min(0.5, abs(sentiment_mean)), kind="memory")
 
     # include condensed neuro graph nodes
     for node_key, meta in graph_nodes.items():
@@ -418,7 +907,7 @@ def _build_organism_graph(
         src = f"graph:{edge['source']}"
         dst = f"graph:{edge['target']}"
         if src in nodes and dst in nodes:
-            add_edge(src, dst, weight=abs(_safe_float(edge.get("weight"))), kind="neuro")
+            add_edge(src, dst, weight=max(0.12, abs(_safe_float(edge.get("weight")))), kind="neuro")
 
     return {
         "nodes": list(nodes.values()),

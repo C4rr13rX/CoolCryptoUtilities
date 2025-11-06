@@ -53,6 +53,15 @@ class TradingDatabase:
             )
             self._conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS control_flags (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated REAL DEFAULT (strftime('%s','now'))
+                );
+                """
+            )
+            self._conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS balances (
                     wallet TEXT NOT NULL,
                     chain  TEXT NOT NULL,
@@ -294,6 +303,31 @@ class TradingDatabase:
                 "INSERT INTO kv_store(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 ("state", payload),
             )
+
+    def set_control_flag(self, key: str, value: Any) -> None:
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO control_flags(key, value, updated)
+                VALUES(?, ?, strftime('%s','now'))
+                ON CONFLICT(key) DO UPDATE SET
+                    value=excluded.value,
+                    updated=excluded.updated
+                """,
+                (str(key), "" if value is None else str(value)),
+            )
+
+    def get_control_flag(self, key: str) -> Optional[str]:
+        with self._cursor() as cur:
+            cur.execute("SELECT value FROM control_flags WHERE key=?", (str(key),))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return row["value"]
+
+    def clear_control_flag(self, key: str) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM control_flags WHERE key=?", (str(key),))
 
     # ------------------------------------------------------------------
     # Fills / execution feedback
@@ -1325,7 +1359,7 @@ class TradingDatabase:
             return 1.0
 
     def set_label_scale(self, scale: float, symbol: str = "__GLOBAL__") -> None:
-        safe = max(0.5, min(3.0, float(scale)))
+        safe = max(0.5, min(7.0, float(scale)))
         self.upsert_pair_adjustment(symbol, label_scale=safe)
 
 

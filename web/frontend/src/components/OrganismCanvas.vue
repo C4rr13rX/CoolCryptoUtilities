@@ -72,6 +72,18 @@ const theme = {
     ['position', 0x22c55e],
     ['decision', 0xf97316],
     ['neuro', 0x6366f1],
+    ['queue', 0x2563eb],
+    ['ghost', 0x7c3aed],
+    ['state', 0x14b8a6],
+    ['session', 0x0f766e],
+    ['holding', 0x0ea5e9],
+    ['finance', 0xfacc15],
+    ['trade', 0x38bdf8],
+    ['feedback', 0xf59e0b],
+    ['metric', 0x8b5cf6],
+    ['discovery', 0x22d3ee],
+    ['vote', 0xfbbf24],
+    ['memory', 0x10b981],
   ]),
 };
 
@@ -114,6 +126,18 @@ function layoutNodes(nodes: GraphNode[]): Map<string, THREE.Vector3> {
     module: { radius: 72, height: 18, start: Math.PI / 6 },
     asset: { radius: 128, height: -14, start: Math.PI / 12 },
     event: { radius: 96, height: 28, start: Math.PI / 4 },
+    session: { radius: 56, height: 64, start: Math.PI / 6 },
+    holding: { radius: 188, height: -28, start: Math.PI / 5 },
+    native: { radius: 140, height: -6, start: Math.PI / 3 },
+    finance: { radius: 72, height: 58, start: Math.PI / 3 },
+    ghost: { radius: 150, height: -22, start: Math.PI / 8 },
+    ghost_trade: { radius: 210, height: -46, start: Math.PI / 2.8 },
+    live_trade: { radius: 236, height: -62, start: Math.PI / 2.2 },
+    feedback: { radius: 108, height: 72, start: Math.PI / 2.6 },
+    metric: { radius: 132, height: 56, start: Math.PI / 2.1 },
+    discovery: { radius: 248, height: 24, start: Math.PI / 5 },
+    vote: { radius: 86, height: 78, start: Math.PI / 2.4 },
+    queue: { radius: 120, height: -32, start: Math.PI / 1.8 },
   };
 
   const positions = new Map<string, THREE.Vector3>();

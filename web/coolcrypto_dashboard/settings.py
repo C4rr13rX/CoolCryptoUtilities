@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "telemetry.apps.TelemetryConfig",
     "opsconsole.apps.OpsConsoleConfig",
     "discovery.apps.DiscoveryConfig",
+    "lab.apps.LabConfig",
 ]
 
 MIDDLEWARE = [

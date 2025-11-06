@@ -111,6 +111,7 @@ class HistoricalDataLoader:
         sent_seq_len: int,
         tech_count: int,
         focus_assets: Optional[Sequence[str]] = None,
+        selected_files: Optional[Sequence[os.PathLike[str] | str]] = None,
     ) -> Tuple[Optional[Dict[str, np.ndarray]], Optional[Dict[str, np.ndarray]]]:
         price_windows: List[np.ndarray] = []
         sentiment_windows: List[np.ndarray] = []
@@ -124,28 +125,55 @@ class HistoricalDataLoader:
         target_mu: List[float] = []
         asset_ids: List[int] = []
 
-        files = sorted(self.data_dir.rglob("*.json")) if self.data_dir.is_dir() else []
-        completed = self._load_completion_index()
-        if completed:
-            filtered = [path for path in files if path.stem.upper() in completed]
-            if filtered:
-                files = filtered
-        preferred_symbols = top_pairs(limit=self.max_files or 16)
-        if preferred_symbols:
-            buckets: Dict[str, List[Path]] = {}
-            for file_path in files:
-                symbol = file_path.stem.split("_", 1)[-1].upper()
-                buckets.setdefault(symbol, []).append(file_path)
-            ordered: List[Path] = []
-            for symbol in preferred_symbols:
-                entries = buckets.pop(symbol, None)
-                if entries:
-                    ordered.extend(entries)
-            for remaining in buckets.values():
-                ordered.extend(remaining)
-            files = ordered
-        if self.max_files:
-            files = files[: self.max_files]
+        if selected_files:
+            files = []
+            root = self.data_dir.resolve()
+            for entry in selected_files:
+                path = Path(entry)
+                if not path.is_absolute():
+                    path = (root / path).resolve()
+                else:
+                    path = path.resolve()
+                if not str(path).startswith(str(root)):
+                    continue
+                if path.is_file() and path.suffix.lower() == ".json":
+                    files.append(path)
+            # keep caller-provided ordering and drop duplicates while preserving order
+            seen: set[str] = set()
+            ordered_files: List[Path] = []
+            for path in files:
+                key = str(path)
+                if key in seen:
+                    continue
+                seen.add(key)
+                ordered_files.append(path)
+            files = ordered_files
+        else:
+            files = sorted(self.data_dir.rglob("*.json")) if self.data_dir.is_dir() else []
+            completed = self._load_completion_index()
+            if completed:
+                filtered = [path for path in files if path.stem.upper() in completed]
+                if filtered:
+                    files = filtered
+            preferred_symbols = top_pairs(limit=self.max_files or 16)
+            if preferred_symbols:
+                buckets: Dict[str, List[Path]] = {}
+                for file_path in files:
+                    symbol = file_path.stem.split("_", 1)[-1].upper()
+                    buckets.setdefault(symbol, []).append(file_path)
+                ordered: List[Path] = []
+                for symbol in preferred_symbols:
+                    entries = buckets.pop(symbol, None)
+                    if entries:
+                        ordered.extend(entries)
+                for remaining in buckets.values():
+                    ordered.extend(remaining)
+                files = ordered
+            if self.max_files:
+                files = files[: self.max_files]
+
+        if not files:
+            return None, None
 
         focus_set: Optional[set[str]] = None
         if focus_assets:
@@ -153,7 +181,8 @@ class HistoricalDataLoader:
 
         file_signature = tuple((str(path), int(path.stat().st_mtime)) for path in files)
         focus_key = ",".join(sorted(focus_set)) if focus_set else "*"
-        cache_key = (window_size, sent_seq_len, tech_count, focus_key, file_signature)
+        selected_key = ",".join(str(path) for path in files) if selected_files else "*"
+        cache_key = (window_size, sent_seq_len, tech_count, focus_key, selected_key, file_signature)
         cached = self._dataset_cache.get(cache_key)
         if cached is not None:
             inputs_cached, targets_cached = cached

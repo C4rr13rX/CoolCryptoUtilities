@@ -7,6 +7,7 @@ import TelemetryView from '@/views/TelemetryView.vue';
 import ConsoleView from '@/views/ConsoleView.vue';
 import AdvisoriesView from '@/views/AdvisoriesView.vue';
 import OrganismView from '@/views/OrganismView.vue';
+import ModelLabView from '@/views/ModelLabView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -43,6 +44,11 @@ const routes: RouteRecordRaw[] = [
     path: '/advisories',
     name: 'advisories',
     component: AdvisoriesView,
+  },
+  {
+    path: '/lab',
+    name: 'lab',
+    component: ModelLabView,
   },
 ];
 

@@ -48,6 +48,17 @@ CUSTOM_OBJECTS = {
     "_compute_net_margin": _compute_net_margin,
 }
 
+MODEL_OUTPUT_ORDER: Tuple[str, ...] = (
+    "exit_conf",
+    "price_mu",
+    "price_log_var",
+    "price_dir",
+    "net_margin",
+    "net_pnl",
+    "tech_recon",
+    "price_gaussian",
+)
+
 
 class TrainingPipeline:
     """
@@ -97,6 +108,7 @@ class TrainingPipeline:
         self._vectorizer_cache: set[str] = set()
         self._last_dataset_meta: Dict[str, Any] = {}
         self.primary_symbol = PRIMARY_SYMBOL
+        self._pause_flag_key = "pipeline_pause"
 
     # ------------------------------------------------------------------
     # Public API
@@ -133,12 +145,49 @@ class TrainingPipeline:
         self._active_model = model
         return model
 
+    # ------------------------------------------------------------------
+    # Coordination helpers
+    # ------------------------------------------------------------------
+
+    def is_paused(self) -> bool:
+        try:
+            flag = self.db.get_control_flag(self._pause_flag_key)
+        except Exception:
+            flag = None
+        if flag is None:
+            return False
+        if isinstance(flag, (int, float)):
+            return bool(flag)
+        return str(flag).strip().lower() in {"1", "true", "yes", "paused"}
+
+    def request_pause(self) -> None:
+        try:
+            self.db.set_control_flag(self._pause_flag_key, "1")
+        except Exception:
+            pass
+
+    def clear_pause(self) -> None:
+        try:
+            self.db.clear_control_flag(self._pause_flag_key)
+        except Exception:
+            pass
+
     def train_candidate(self) -> Optional[Dict[str, Any]]:
         proposal = self.optimizer.propose()
         lr = float(proposal.get("learning_rate", 3e-4))
         epochs = max(1, int(round(proposal.get("epochs", 2))))
 
         pending_iteration = self.iteration + 1
+
+        if self.is_paused():
+            self.iteration = pending_iteration
+            self._save_state()
+            return {
+                "iteration": self.iteration,
+                "status": "paused",
+                "score": self.active_accuracy,
+                "message": "training pause flag set",
+            }
 
         focus_assets, focus_stats = self._ghost_focus_assets()
 
@@ -230,16 +279,7 @@ class TrainingPipeline:
 
         callbacks = [StateSaver()]
         input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
-        output_order = [
-            "exit_conf",
-            "price_mu",
-            "price_log_var",
-            "price_dir",
-            "net_margin",
-            "net_pnl",
-            "tech_recon",
-            "price_gaussian",
-        ]
+        output_order = list(MODEL_OUTPUT_ORDER)
         input_tensors = tuple(inputs[name] for name in input_order)
         target_tensors = tuple(targets[name] for name in output_order)
         weight_tensors = tuple(
@@ -467,6 +507,7 @@ class TrainingPipeline:
         *,
         focus_assets: Optional[Sequence[str]] = None,
         dataset_label: str = "full",
+        selected_files: Optional[Sequence[str]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, np.ndarray]]]:
         attempts = 0
         max_attempts = 4
@@ -478,6 +519,7 @@ class TrainingPipeline:
                 sent_seq_len=self.sent_seq_len,
                 tech_count=self.tech_count,
                 focus_assets=focus_assets,
+                selected_files=selected_files,
             )
             if inputs is not None and targets is not None:
                 break
@@ -499,6 +541,7 @@ class TrainingPipeline:
                 sent_seq_len=self.sent_seq_len,
                 tech_count=self.tech_count,
                 focus_assets=focus_assets,
+                selected_files=selected_files,
             )
         if inputs is None or targets is None:
             if self._auto_backfill_news(focus_assets):
@@ -508,6 +551,7 @@ class TrainingPipeline:
                     sent_seq_len=self.sent_seq_len,
                     tech_count=self.tech_count,
                     focus_assets=focus_assets,
+                    selected_files=selected_files,
                 )
         if inputs is not None and targets is not None:
             sample_count = int(inputs["price_vol_input"].shape[0])
@@ -588,6 +632,118 @@ class TrainingPipeline:
             details={"attempts": attempts, "focus_assets": list(focus_assets or [])},
         )
         return None, None, None
+
+    def _build_training_dataset(
+        self,
+        model: tf.keras.Model,
+        inputs: Dict[str, Any],
+        targets: Dict[str, Any],
+        sample_weights: Dict[str, np.ndarray],
+        batch_size: int,
+    ) -> tf.data.Dataset:
+        input_dict = {name: tf.convert_to_tensor(inputs[name]) for name in model.input_names}
+        target_dict = {name: tf.convert_to_tensor(targets[name]) for name in model.output_names}
+        weight_dict: Dict[str, tf.Tensor] = {}
+        for name in model.output_names:
+            weights = sample_weights.get(name)
+            if weights is None:
+                weights = np.ones(target_dict[name].shape[0], dtype=np.float32)
+            weight_dict[name] = tf.convert_to_tensor(weights, dtype=tf.float32)
+        dataset = tf.data.Dataset.from_tensor_slices((input_dict, target_dict, weight_dict))
+        return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+    def _build_inference_dataset(
+        self,
+        model: tf.keras.Model,
+        inputs: Dict[str, Any],
+        batch_size: int,
+    ) -> tf.data.Dataset:
+        input_dict = {name: tf.convert_to_tensor(inputs[name]) for name in model.input_names}
+        dataset = tf.data.Dataset.from_tensor_slices(input_dict)
+        return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+
+    def lab_train_on_files(
+        self,
+        file_paths: Sequence[str],
+        *,
+        epochs: int = 1,
+        batch_size: int = 16,
+    ) -> Tuple[tf.keras.Model, Dict[str, float], Dict[str, Any]]:
+        if not file_paths:
+            raise ValueError("No files selected for lab training.")
+        inputs, targets, sample_weights = self._prepare_dataset(
+            batch_size=batch_size,
+            dataset_label="lab_train",
+            selected_files=file_paths,
+        )
+        if inputs is None or targets is None or sample_weights is None:
+            raise RuntimeError("Unable to build dataset from selected files.")
+        base_model = self.ensure_active_model()
+        lab_model, _, _, losses, loss_weights = build_multimodal_model(
+            window_size=self.window_size,
+            tech_count=self.tech_count,
+            sent_seq_len=self.sent_seq_len,
+            asset_vocab_size=self.data_loader.asset_vocab_size,
+        )
+        lab_model.set_weights(base_model.get_weights())
+        lab_model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
+            loss=losses,
+            loss_weights=loss_weights,
+            metrics={"price_dir": [tf.keras.metrics.AUC(name="auroc"), "accuracy"]},
+        )
+        train_ds = self._build_training_dataset(lab_model, inputs, targets, sample_weights, batch_size)
+        history = lab_model.fit(train_ds, epochs=max(1, int(epochs)), verbose=0)
+        summary_metrics = {name: float(values[-1]) for name, values in history.history.items() if values}
+        info = {
+            "samples": int(inputs["price_vol_input"].shape[0]),
+            "epochs": int(epochs),
+            "files": [str(path) for path in file_paths],
+        }
+        return lab_model, summary_metrics, info
+
+    def lab_evaluate_on_files(
+        self,
+        model: tf.keras.Model,
+        file_paths: Sequence[str],
+        *,
+        batch_size: int = 16,
+    ) -> Dict[str, float]:
+        if not file_paths:
+            raise ValueError("No files selected for lab evaluation.")
+        inputs, targets, _ = self._prepare_dataset(
+            batch_size=batch_size,
+            dataset_label="lab_eval",
+            selected_files=file_paths,
+        )
+        if inputs is None or targets is None:
+            raise RuntimeError("Unable to prepare evaluation dataset.")
+        eval_ds = self._build_inference_dataset(model, inputs, batch_size)
+        predictions = model.predict(eval_ds, verbose=0)
+        if isinstance(predictions, list):
+            pred_map = {name: np.asarray(array) for name, array in zip(model.output_names, predictions)}
+        elif isinstance(predictions, dict):
+            pred_map = {name: np.asarray(array) for name, array in predictions.items()}
+        else:
+            raise RuntimeError("Unexpected prediction structure from model.")
+        results: Dict[str, float] = {}
+        dir_true = np.asarray(targets["price_dir"]).reshape(-1)
+        dir_pred = pred_map["price_dir"].reshape(-1)
+        results["dir_accuracy"] = float(np.mean((dir_pred >= 0.5) == (dir_true >= 0.5))) if dir_true.size else 0.0
+        results["dir_confidence_mean"] = float(np.mean(dir_pred)) if dir_pred.size else 0.0
+        results["brier_score"] = float(np.mean((dir_pred - dir_true) ** 2)) if dir_true.size else 0.0
+        margin_true = np.asarray(targets["net_margin"]).reshape(-1)
+        margin_pred = pred_map["net_margin"].reshape(-1)
+        if margin_true.size:
+            results["margin_mae"] = float(np.mean(np.abs(margin_true - margin_pred)))
+            results["margin_mean_true"] = float(np.mean(margin_true))
+            results["margin_mean_pred"] = float(np.mean(margin_pred))
+        pnl_pred = pred_map.get("net_pnl")
+        if pnl_pred is not None:
+            results["pnl_mean_pred"] = float(np.mean(pnl_pred.reshape(-1)))
+        results["samples"] = float(dir_true.size)
+        results["file_count"] = int(len(file_paths))
+        return results
 
     # ------------------------------------------------------------------
     # Utilities

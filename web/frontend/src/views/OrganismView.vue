@@ -33,8 +33,8 @@
           <input
             class="label-range"
             type="range"
-            min="0.6"
-            max="2.5"
+            min="0.5"
+            max="7"
             step="0.1"
             v-model.number="labelScaleLocal"
             @input="onLabelScaleInput"
