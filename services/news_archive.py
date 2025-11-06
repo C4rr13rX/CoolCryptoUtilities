@@ -72,12 +72,13 @@ class CryptoNewsArchiver:
     # Public API
     # ------------------------------------------------------------------
 
-    def backfill(
+    def collect_window(
         self,
         *,
         symbols: Sequence[str],
         start: datetime,
         end: datetime,
+        persist: bool = False,
     ) -> pd.DataFrame:
         start = start.astimezone(timezone.utc)
         end = end.astimezone(timezone.utc)
@@ -104,25 +105,36 @@ class CryptoNewsArchiver:
         if not collected_frames:
             return pd.DataFrame()
 
-        archive_df = pd.concat(collected_frames, ignore_index=True)
-        archive_df["headline"] = archive_df["headline"].astype(str)
-        archive_df["article"] = archive_df["article"].astype(str)
-        archive_df["sentiment"] = archive_df["sentiment"].astype(str)
-        archive_df["timestamp"] = archive_df["timestamp"].astype("int64")
-        archive_df.sort_values("timestamp", inplace=True)
+        window_df = pd.concat(collected_frames, ignore_index=True)
+        window_df["headline"] = window_df["headline"].astype(str)
+        window_df["article"] = window_df["article"].astype(str)
+        window_df["sentiment"] = window_df["sentiment"].astype(str)
+        window_df["timestamp"] = window_df["timestamp"].astype("int64")
+        window_df.sort_values("timestamp", inplace=True)
 
-        # Merge with existing archive
-        existing = self._read_archive()
-        combined = (
-            pd.concat([existing, archive_df], ignore_index=True)
-            if not existing.empty
-            else archive_df
-        )
-        combined.drop_duplicates(subset=["timestamp", "headline"], inplace=True)
-        combined.sort_values("timestamp", inplace=True)
-        combined.reset_index(drop=True, inplace=True)
-        self._write_archive(combined)
-        return combined
+        if persist:
+            existing = self._read_archive()
+            combined = (
+                pd.concat([existing, window_df], ignore_index=True)
+                if not existing.empty
+                else window_df.copy()
+            )
+            combined.drop_duplicates(subset=["timestamp", "headline"], inplace=True)
+            combined.sort_values("timestamp", inplace=True)
+            combined.reset_index(drop=True, inplace=True)
+            self._write_archive(combined)
+            return combined
+
+        return window_df.reset_index(drop=True)
+
+    def backfill(
+        self,
+        *,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        return self.collect_window(symbols=symbols, start=start, end=end, persist=True)
 
     # ------------------------------------------------------------------
     # Internal helpers

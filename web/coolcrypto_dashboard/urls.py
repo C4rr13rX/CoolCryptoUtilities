@@ -8,6 +8,7 @@ urlpatterns = [
     path("api/streams/", include("streams.urls")),
     path("api/telemetry/", include("telemetry.urls")),
     path("api/console/", include("opsconsole.urls")),
+    path("api/datalab/", include("datalab.urls")),
     path("api/lab/", include("lab.urls")),
     path("", include("core.urls")),
 ]

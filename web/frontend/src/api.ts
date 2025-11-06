@@ -143,3 +143,48 @@ export async function startLabJob(payload: LabJobPayload) {
   const { data } = await api.post('/lab/run/', payload);
   return data;
 }
+
+export async function fetchLabNews(payload: { train_files?: string[]; eval_files?: string[] }) {
+  const { data } = await api.post('/lab/news/', payload);
+  return data;
+}
+
+export interface DataLabDatasetParams {
+  chain?: string;
+  category?: string;
+  sort?: string;
+  order?: string;
+}
+
+export async function fetchDataLabDatasets(params?: DataLabDatasetParams) {
+  const { data } = await api.get('/datalab/datasets/', { params });
+  return data;
+}
+
+export interface DataLabJobPayload {
+  job_type: string;
+  options?: Record<string, any>;
+}
+
+export async function startDataLabJob(payload: DataLabJobPayload) {
+  const { data } = await api.post('/datalab/run/', payload);
+  return data;
+}
+
+export async function fetchDataLabJobStatus() {
+  const { data } = await api.get('/datalab/status/');
+  return data;
+}
+
+export interface DataLabNewsPayload {
+  tokens: string[];
+  start: string;
+  end: string;
+  query?: string;
+  max_pages?: number;
+}
+
+export async function fetchDataLabNews(payload: DataLabNewsPayload) {
+  const { data } = await api.post('/datalab/news/', payload);
+  return data;
+}

@@ -304,6 +304,25 @@ class TradingDatabase:
                 ("state", payload),
             )
 
+    def set_json(self, key: str, payload: Any) -> None:
+        data = json.dumps(payload or {})
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO kv_store(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(key), data),
+            )
+
+    def get_json(self, key: str) -> Optional[Any]:
+        with self._cursor() as cur:
+            cur.execute("SELECT value FROM kv_store WHERE key=?", (str(key),))
+            row = cur.fetchone()
+        if not row or row["value"] is None:
+            return None
+        try:
+            return json.loads(row["value"])
+        except Exception:
+            return None
+
     def set_control_flag(self, key: str, value: Any) -> None:
         with self._conn:
             self._conn.execute(

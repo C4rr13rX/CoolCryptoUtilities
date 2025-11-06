@@ -745,6 +745,11 @@ class TrainingPipeline:
         results["file_count"] = int(len(file_paths))
         return results
 
+    def lab_collect_news(self, file_paths: Sequence[str]) -> Dict[str, Any]:
+        from services.news_lab import collect_news_for_files
+
+        return collect_news_for_files(file_paths, db=self.db)
+
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------

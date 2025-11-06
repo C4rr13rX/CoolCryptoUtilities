@@ -1,11 +1,15 @@
 import { defineStore } from 'pinia';
-import { fetchLabFiles, fetchLabStatus, startLabJob, LabJobPayload } from '@/api';
+import { fetchLabFiles, fetchLabStatus, startLabJob, fetchLabNews, LabJobPayload } from '@/api';
 
 interface LabState {
   files: Record<string, any>[];
   status: Record<string, any> | null;
   loading: boolean;
   error: string | null;
+  news: Record<string, any>[];
+  newsMeta: Record<string, any> | null;
+  newsLoading: boolean;
+  newsError: string | null;
 }
 
 export const useLabStore = defineStore('lab', {
@@ -14,6 +18,10 @@ export const useLabStore = defineStore('lab', {
     status: null,
     loading: false,
     error: null,
+    news: [],
+    newsMeta: null,
+    newsLoading: false,
+    newsError: null,
   }),
   getters: {
     running(state): boolean {
@@ -62,6 +70,21 @@ export const useLabStore = defineStore('lab', {
         throw err;
       } finally {
         this.loading = false;
+      }
+    },
+    async loadNews(payload: { train_files?: string[]; eval_files?: string[] }) {
+      this.newsLoading = true;
+      try {
+        const data = await fetchLabNews(payload);
+        this.news = Array.isArray(data?.items) ? data.items : [];
+        this.newsMeta = data || {};
+        this.newsError = null;
+      } catch (err: any) {
+        this.newsError = err?.message || 'Failed to fetch lab news';
+        this.news = [];
+        this.newsMeta = null;
+      } finally {
+        this.newsLoading = false;
       }
     },
   },

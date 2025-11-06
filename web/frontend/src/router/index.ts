@@ -8,6 +8,7 @@ import ConsoleView from '@/views/ConsoleView.vue';
 import AdvisoriesView from '@/views/AdvisoriesView.vue';
 import OrganismView from '@/views/OrganismView.vue';
 import ModelLabView from '@/views/ModelLabView.vue';
+import DataLabView from '@/views/DataLabView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -49,6 +50,11 @@ const routes: RouteRecordRaw[] = [
     path: '/lab',
     name: 'lab',
     component: ModelLabView,
+  },
+  {
+    path: '/datalab',
+    name: 'datalab',
+    component: DataLabView,
   },
 ];
 

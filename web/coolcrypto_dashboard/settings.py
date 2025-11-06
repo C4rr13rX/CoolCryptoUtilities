@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "opsconsole.apps.OpsConsoleConfig",
     "discovery.apps.DiscoveryConfig",
     "lab.apps.LabConfig",
+    "datalab.apps.DatalabConfig",
 ]
 
 MIDDLEWARE = [

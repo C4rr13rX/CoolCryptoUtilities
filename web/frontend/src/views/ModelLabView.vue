@@ -5,9 +5,24 @@
         <h1>Model Lab</h1>
         <p>Run focused training loops and evaluation passes against curated historical windows.</p>
       </div>
-      <button type="button" class="btn" :disabled="store.loading || isStarting" @click="startRun">
-        {{ isStarting ? 'Starting…' : 'Run Selected' }}
-      </button>
+      <div class="action-buttons">
+        <button
+          type="button"
+          class="btn ghost"
+          :disabled="store.newsLoading || !hasSelection"
+          @click="fetchNews"
+        >
+          {{ store.newsLoading ? 'Fetching…' : 'Fetch News' }}
+        </button>
+        <button
+          type="button"
+          class="btn"
+          :disabled="store.loading || isStarting || !hasSelection"
+          @click="startRun"
+        >
+          {{ isStarting ? 'Starting…' : 'Run Selected' }}
+        </button>
+      </div>
     </header>
 
     <section class="lab-panels">
@@ -75,17 +90,34 @@
       <table class="table">
         <thead>
           <tr>
+            <th>#</th>
             <th>Train</th>
             <th>Eval</th>
             <th>Chain</th>
-            <th>Symbol</th>
+            <th>
+              <button type="button" class="link" @click="toggleFileSort('symbol')">
+                Symbol
+                <span v-if="fileSort.key === 'symbol'">{{ fileSort.dir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
             <th>File</th>
-            <th>Size</th>
-            <th>Updated</th>
+            <th>
+              <button type="button" class="link" @click="toggleFileSort('size')">
+                Size
+                <span v-if="fileSort.key === 'size'">{{ fileSort.dir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
+            <th>
+              <button type="button" class="link" @click="toggleFileSort('modified')">
+                Updated
+                <span v-if="fileSort.key === 'modified'">{{ fileSort.dir === 'asc' ? '▲' : '▼' }}</span>
+              </button>
+            </th>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="file in store.files" :key="file.path">
+          <tr v-for="(file, idx) in sortedFiles" :key="file.path">
+            <td>{{ idx + 1 }}</td>
             <td>
               <input type="checkbox" :value="file.path" v-model="selectedTrain" />
             </td>
@@ -98,17 +130,41 @@
             <td>{{ formatBytes(file.size_bytes) }}</td>
             <td>{{ formatDate(file.modified) }}</td>
           </tr>
-          <tr v-if="!store.files.length">
-            <td colspan="7">No historical windows detected. Populate data/historical_ohlcv first.</td>
+          <tr v-if="!sortedFiles.length">
+            <td colspan="8">No historical windows detected. Populate data/historical_ohlcv first.</td>
           </tr>
         </tbody>
       </table>
+    </section>
+
+    <section class="panel news-panel">
+      <header>
+        <h2>Contextual News</h2>
+        <span class="caption" v-if="newsMeta">{{ newsMeta.symbols?.join(', ') || '—' }} · {{ newsRange }}</span>
+      </header>
+      <div v-if="store.newsError" class="error">{{ store.newsError }}</div>
+      <ul v-if="newsItems.length" class="news-list">
+        <li v-for="item in newsItems" :key="item.url || item.title">
+          <div class="headline">
+            <a v-if="item.url" :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+            <span v-else>{{ item.title }}</span>
+          </div>
+          <div class="meta">
+            <span>{{ formatDateText(item.datetime) }}</span>
+            <span>Source: {{ item.source || item.origin }}</span>
+            <span v-if="item.sentiment && item.sentiment !== 'unknown'">Sentiment: {{ item.sentiment }}</span>
+          </div>
+          <p v-if="item.summary" class="summary">{{ item.summary }}</p>
+        </li>
+      </ul>
+      <p v-else-if="store.newsLoading" class="empty">Fetching contextual news…</p>
+      <p v-else class="empty">Select one or more windows and fetch news to see contextual headlines.</p>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useLabStore } from '@/stores/lab';
 
 const store = useLabStore();
@@ -121,6 +177,30 @@ let pollHandle: number | undefined;
 
 const progress = computed(() => store.progress);
 const result = computed(() => store.result);
+const newsItems = computed(() => store.news || []);
+const newsMeta = computed(() => store.newsMeta);
+const hasSelection = computed(() => selectedTrain.value.length > 0 || selectedEval.value.length > 0);
+const newsRange = computed(() => {
+  if (!newsMeta.value) return '';
+  const start = newsMeta.value.start ? formatDateText(newsMeta.value.start) : '—';
+  const end = newsMeta.value.end ? formatDateText(newsMeta.value.end) : '—';
+  return `${start} → ${end}`;
+});
+
+const fileSort = reactive({ key: 'modified', dir: 'desc' as 'asc' | 'desc' });
+const sortedFiles = computed(() => {
+  const key = fileSort.key;
+  const dir = fileSort.dir === 'asc' ? 1 : -1;
+  return [...store.files].sort((a, b) => {
+    if (key === 'size') {
+      return (a.size_bytes - b.size_bytes) * dir;
+    }
+    if (key === 'symbol') {
+      return (a.symbol.localeCompare(b.symbol) || a.chain.localeCompare(b.chain)) * dir;
+    }
+    return (a.modified - b.modified) * dir;
+  });
+});
 
 async function refreshAll() {
   await Promise.all([store.loadFiles(), store.refreshStatus()]);
@@ -141,7 +221,7 @@ function normalisePath(path: string) {
 }
 
 async function startRun() {
-  if (!selectedTrain.value.length && !selectedEval.value.length) {
+  if (!hasSelection.value) {
     isStarting.value = false;
     return;
   }
@@ -159,6 +239,14 @@ async function startRun() {
   }
 }
 
+async function fetchNews() {
+  if (!hasSelection.value) return;
+  await store.loadNews({
+    train_files: selectedTrain.value,
+    eval_files: selectedEval.value,
+  });
+}
+
 function schedulePolling() {
   clearPolling();
   pollHandle = window.setInterval(() => store.refreshStatus(), 4000);
@@ -168,6 +256,15 @@ function clearPolling() {
   if (pollHandle) {
     window.clearInterval(pollHandle);
     pollHandle = undefined;
+  }
+}
+
+function toggleFileSort(key: string) {
+  if (fileSort.key === key) {
+    fileSort.dir = fileSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    fileSort.key = key;
+    fileSort.dir = key === 'symbol' ? 'asc' : 'desc';
   }
 }
 
@@ -182,6 +279,13 @@ function formatDate(ts: number) {
   if (!Number.isFinite(ts)) return '—';
   const date = new Date(ts * 1000);
   return date.toLocaleString();
+}
+
+function formatDateText(value: string) {
+  if (!value) return '—';
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return value;
+  return dt.toLocaleString();
 }
 
 function formatNumber(value: any) {
@@ -229,6 +333,11 @@ watch(
   align-items: flex-start;
   justify-content: space-between;
   gap: 1.5rem;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
 }
 
 .lab-header h1 {
@@ -352,6 +461,61 @@ watch(
   margin-bottom: 0.8rem;
 }
 
+.news-panel .caption {
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.news-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.news-list li {
+  padding: 0.8rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  background: rgba(13, 24, 40, 0.8);
+  box-shadow: 0 12px 32px rgba(9, 20, 45, 0.25);
+}
+
+.news-list .headline a,
+.news-list .headline span {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e0f2fe;
+  text-decoration: none;
+}
+
+.news-list .headline a:hover {
+  text-decoration: underline;
+}
+
+.news-list .meta {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.news-list .summary {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #cbd5f5;
+  white-space: pre-wrap;
+}
+
+.empty {
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -362,6 +526,16 @@ watch(
 .table td {
   padding: 0.6rem 0.75rem;
   border-bottom: 1px solid rgba(30, 64, 175, 0.25);
+}
+
+.table th .link {
+  background: transparent;
+  border: none;
+  color: #93c5fd;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .table tbody tr:hover {

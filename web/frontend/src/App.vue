@@ -179,6 +179,7 @@ const navItems = computed(() => [
   { route: 'telemetry', label: 'Telemetry', icon: 'fa-solid fa-chart-line', path: '/telemetry', intent: feedbackIntent.value },
   { route: 'console', label: 'Console', icon: 'fa-solid fa-terminal', path: '/console', intent: consoleIntent.value },
   { route: 'advisories', label: 'Advisories', icon: 'fa-solid fa-shield-virus', path: '/advisories', intent: advisoryIntent.value },
+  { route: 'datalab', label: 'Data Lab', icon: 'fa-solid fa-database', path: '/datalab', intent: pipelineIntent.value },
   { route: 'lab', label: 'Model Lab', icon: 'fa-solid fa-flask', path: '/lab', intent: pipelineIntent.value },
 ]);
 

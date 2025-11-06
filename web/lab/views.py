@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from services.model_lab import LabJobConfig, get_model_lab_runner
+from trading.pipeline import TrainingPipeline
 
 
 class LabFilesView(APIView):
@@ -47,3 +48,21 @@ class LabStartView(APIView):
         except Exception as exc:  # pragma: no cover - defensive
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(runner.get_status(), status=status.HTTP_202_ACCEPTED)
+
+
+class LabNewsView(APIView):
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        payload = request.data or {}
+        train_files = payload.get("train_files") or []
+        eval_files = payload.get("eval_files") or []
+        if not isinstance(train_files, list) or not isinstance(eval_files, list):
+            return Response({"detail": "train_files and eval_files must be lists"}, status=status.HTTP_400_BAD_REQUEST)
+        files = [str(item) for item in (train_files + eval_files) if item]
+        if not files:
+            return Response({"items": [], "symbols": [], "start": None, "end": None}, status=status.HTTP_200_OK)
+        pipeline = TrainingPipeline()
+        try:
+            news_payload = pipeline.lab_collect_news(files)
+        except Exception as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(news_payload, status=status.HTTP_200_OK)
