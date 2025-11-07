@@ -156,7 +156,7 @@ export interface LabPreviewPayload {
 }
 
 export async function fetchLabPreview(payload: LabPreviewPayload) {
-  const { data } = await api.post('/lab/preview/', payload);
+  const { data } = await api.post('/lab/preview/', payload, { timeout: 60000 });
   return data;
 }
 

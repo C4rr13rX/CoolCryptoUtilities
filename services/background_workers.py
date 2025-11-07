@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 from db import TradingDatabase, get_db
 from services.public_api_clients import aggregate_market_data
 from services.discovery.coordinator import DiscoveryCoordinator
+from services.logging_bus import log_message
 
 
 def _load_assignment(path: Path) -> Optional[Dict[str, Any]]:
@@ -24,7 +25,7 @@ def _load_assignment(path: Path) -> Optional[Dict[str, Any]]:
         data.setdefault("pairs", {})
         return data
     except Exception as exc:
-        print(f"[download-worker] failed to read {path}: {exc}")
+        log_message("download-worker", f"failed to read {path}: {exc}", severity="warning")
         return None
 
 
@@ -79,7 +80,7 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     try:
         subprocess.run([sys.executable, str(script)], env=env, check=False)
     except Exception as exc:
-        print(f"[download-worker] error running download2000 for {chain}: {exc}")
+        log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")
 
 
 class DownloadWorker:
@@ -103,7 +104,7 @@ class DownloadWorker:
         try:
             _run_download(self.chain, self.assignment_path)
         except Exception as exc:
-            print(f"[download-worker] run_once error for {self.chain}: {exc}")
+            log_message("download-worker", f"run_once error for {self.chain}: {exc}", severity="error")
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
@@ -134,12 +135,15 @@ class DynamicDownloadWorker:
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)
 
+    def run_once(self) -> None:
+        self._run_cycle()
+
     def _loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 self._run_cycle()
             except Exception as exc:
-                print(f"[download-worker] dynamic cycle error: {exc}")
+                log_message("download-worker", f"dynamic cycle error: {exc}", severity="error")
             if self._stop_event.wait(self.interval):
                 break
 
@@ -232,20 +236,20 @@ class MarketDataWorker:
             try:
                 self.db.upsert_prices(rows)
             except Exception as exc:
-                print(f"[market-data] failed to persist prices: {exc}")
+                log_message("market-data", f"failed to persist prices: {exc}", severity="error")
         try:
             from services.public_api_clients import save_snapshots
 
             save_snapshots(snapshots, self.output_path)
         except Exception as exc:
-            print(f"[market-data] failed to write snapshots: {exc}")
+            log_message("market-data", f"failed to write snapshots: {exc}", severity="error")
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 self.run_once()
             except Exception as exc:
-                print(f"[market-data] cycle error: {exc}")
+                log_message("market-data", f"cycle error: {exc}", severity="error")
             if self._stop_event.wait(self.interval):
                 break
 
@@ -274,14 +278,14 @@ class DiscoveryWorker:
     def run_once(self) -> None:
         results = self.coordinator.run()
         if results:
-            print(f"[discovery] processed {len(results)} tokens")
+            log_message("discovery", f"processed {len(results)} tokens")
 
     def _loop(self) -> None:
         while not self._stop_event.is_set():
             try:
                 self.run_once()
             except Exception as exc:
-                print(f"[discovery] cycle error: {exc}")
+                log_message("discovery", f"cycle error: {exc}", severity="error")
             if self._stop_event.wait(self.interval):
                 break
 
@@ -316,3 +320,21 @@ class TokenDownloadSupervisor:
         self.dynamic_worker.stop()
         self.market_worker.stop()
         self.discovery_worker.stop()
+
+    def run_cycle(self) -> None:
+        try:
+            self.base_worker.run_once()
+        except Exception as exc:
+            log_message("download-supervisor", f"base cycle error: {exc}", severity="error")
+        try:
+            self.dynamic_worker.run_once()
+        except Exception as exc:
+            log_message("download-supervisor", f"dynamic cycle error: {exc}", severity="error")
+        try:
+            self.market_worker.run_once()
+        except Exception as exc:
+            log_message("download-supervisor", f"market cycle error: {exc}", severity="error")
+        try:
+            self.discovery_worker.run_once()
+        except Exception as exc:
+            log_message("download-supervisor", f"discovery cycle error: {exc}", severity="error")

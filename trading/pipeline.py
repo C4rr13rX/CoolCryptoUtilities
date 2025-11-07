@@ -147,6 +147,36 @@ class TrainingPipeline:
         self._active_model = self._ensure_vectorizers_ready(model)
         return self._active_model
 
+    def warm_dataset_cache(self, *, focus_assets: Optional[Sequence[str]] = None, oversample: bool = False) -> bool:
+        """
+        Pre-builds a dataset batch so subsequent training runs can reuse cached tensors.
+        Returns True when at least one sample was generated.
+        """
+        try:
+            inputs, targets, _ = self._prepare_dataset(
+                batch_size=32,
+                dataset_label="warmup",
+                focus_assets=focus_assets,
+                oversample=oversample,
+            )
+            return inputs is not None and targets is not None
+        except Exception as exc:
+            print(f"[training] dataset warmup failed: {exc}")
+            return False
+
+    def reinforce_news_cache(self, focus_assets: Optional[Sequence[str]] = None) -> bool:
+        """
+        Ensure recent news is available for the focus assets used in ghost trading.
+        """
+        try:
+            return self._auto_backfill_news(focus_assets or [])
+        except Exception as exc:
+            print(f"[training] news enrichment failed: {exc}")
+            return False
+
+    def ghost_focus_assets(self) -> Tuple[List[str], Dict[str, Any]]:
+        return self._ghost_focus_assets()
+
     def _load_active_clone(self) -> tf.keras.Model:
         path = self.model_dir / "active_model.keras"
         if path.exists():
@@ -385,8 +415,7 @@ class TrainingPipeline:
             meta={"iteration": self.iteration},
         )
 
-        score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
-        self.optimizer.update({"learning_rate": lr, "epochs": epochs}, score)
+        raw_score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
         eval_ds = (
             tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
             .batch(32)
@@ -417,17 +446,31 @@ class TrainingPipeline:
             new_temperature = float(np.clip(new_temperature, 0.25, 4.0))
             self.temperature_scale = float(0.8 * self.temperature_scale + 0.2 * new_temperature)
 
+        signal_bundle = self._build_candidate_signals(evaluation, focus_stats)
+        composite_score = self.optimizer.update(
+            {"learning_rate": lr, "epochs": epochs},
+            raw_score,
+            signals=signal_bundle,
+        )
+
         version = f"candidate-{int(time.time())}"
         path = self.model_dir / f"{version}.keras"
         model.save(path, include_optimizer=False)
-        self.db.register_model_version(version=version, metrics={"score": score}, path=str(path), activate=False)
+        self.db.register_model_version(
+            version=version,
+            metrics={"score": composite_score, "raw_score": raw_score},
+            path=str(path),
+            activate=False,
+        )
 
         result = {
             "iteration": self.iteration,
             "version": version,
-            "score": score,
+            "score": composite_score,
+            "raw_score": raw_score,
             "path": str(path),
             "params": {"learning_rate": lr, "epochs": epochs},
+            "signals": signal_bundle,
             "evaluation": evaluation,
             "status": "trained",
         }
@@ -439,7 +482,7 @@ class TrainingPipeline:
             "ghost_feedback": focus_stats,
         }
         training_metrics = {
-            "candidate_score": score,
+            "candidate_score": composite_score,
             "dir_accuracy": self._safe_float(evaluation.get("dir_accuracy", 0.0)),
             "price_dir_precision": self._safe_float(evaluation.get("precision", 0.0)),
             "price_dir_recall": self._safe_float(evaluation.get("recall", 0.0)),
@@ -467,7 +510,7 @@ class TrainingPipeline:
             meta=evaluation_meta,
         )
 
-        promote = score >= self.promotion_threshold
+        promote = composite_score >= self.promotion_threshold
         gating_reason: Optional[str] = None
         if promote:
             if not evaluation:
@@ -505,7 +548,7 @@ class TrainingPipeline:
                         )
         if gating_reason:
             promote = False
-            print(f"[training] promotion deferred: {gating_reason}. Continuing candidate search.")
+            log_message("training", f"promotion deferred: {gating_reason}. Continuing candidate search.", severity="warning")
             self.metrics.feedback(
                 "promotion",
                 severity=FeedbackSeverity.WARNING,
@@ -518,15 +561,18 @@ class TrainingPipeline:
                 },
             )
         if promote:
-            self.promote_candidate(path, score=score, metadata=result, evaluation=evaluation)
+            self.promote_candidate(path, score=composite_score, metadata=result, evaluation=evaluation)
         else:
             self._print_ghost_summary(evaluation)
-            if score < self.promotion_threshold:
-                print(f"[training] candidate score {score:.3f} below promotion threshold {self.promotion_threshold:.3f}.")
+            if composite_score < self.promotion_threshold:
+                log_message(
+                    "training",
+                    f"candidate score {composite_score:.3f} below promotion threshold {self.promotion_threshold:.3f}.",
+                )
             else:
-                print(
-                    "[training] candidate retained for further evaluation despite score %.3f (promotion criteria not met)."
-                    % score
+                log_message(
+                    "training",
+                    f"candidate retained for further evaluation despite score {composite_score:.3f} (promotion criteria not met).",
                 )
             self.metrics.record(
                 MetricStage.TRAINING,
@@ -550,7 +596,7 @@ class TrainingPipeline:
         evaluation: Optional[Dict[str, float]] = None,
     ) -> None:
         active_path = self.model_dir / "active_model.keras"
-        print(f"[training] promoting candidate {path.name} (score={score:.3f}) to active deployment.")
+        log_message("training", f"promoting candidate {path.name} (score={score:.3f}) to active deployment.")
         tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False).save(active_path, include_optimizer=False)
         self.db.register_model_version(
             version=f"active-{int(time.time())}", metrics={"score": score}, path=str(active_path), activate=True
@@ -614,13 +660,27 @@ class TrainingPipeline:
             self.data_loader.expand_limits()
             time.sleep(0.1)
         if inputs is None or targets is None:
+            if focus_assets:
+                log_message(
+                    "training",
+                    "focus dataset unavailable; falling back to global dataset.",
+                    severity="warning",
+                    details={"focus_assets": list(focus_assets)},
+                )
+                return self._prepare_dataset(
+                    batch_size=batch_size,
+                    dataset_label=dataset_label,
+                    focus_assets=None,
+                    selected_files=selected_files,
+                    oversample=oversample,
+                )
             try:
                 from services.background_workers import TokenDownloadSupervisor
 
                 supervisor = TokenDownloadSupervisor(db=self.db)
                 supervisor.base_worker.run_once()
             except Exception as exc:
-                print(f"[training] dataset fallback unable to fetch new data: {exc}")
+                log_message("training", f"dataset fallback unable to fetch new data: {exc}", severity="warning")
             self.data_loader.expand_limits(factor=2.0, file_cap=128, sample_cap=8192)
             self.data_loader.invalidate_dataset_cache()
             inputs, targets = self.data_loader.build_dataset(
@@ -643,6 +703,17 @@ class TrainingPipeline:
                     oversample=oversample,
                 )
         if inputs is not None and targets is not None:
+            try:
+                self._validate_dataset_shapes(inputs, targets)
+                self._validate_dataset_values(inputs, targets)
+            except ValueError as exc:
+                self.metrics.feedback(
+                    "preflight",
+                    severity=FeedbackSeverity.CRITICAL,
+                    label="dataset_validation_error",
+                    details={"error": str(exc)},
+                )
+                raise
             sample_count = int(inputs["price_vol_input"].shape[0])
             asset_ids = inputs["asset_id_input"].reshape(-1)
             asset_diversity = int(len(np.unique(asset_ids)))
@@ -723,6 +794,112 @@ class TrainingPipeline:
         )
         self._last_sample_meta = {}
         return None, None, None
+
+    def _validate_dataset_shapes(self, inputs: Dict[str, Any], targets: Dict[str, Any]) -> None:
+        """
+        Guardrail to ensure dataset tensors always match the model signature.
+        Raises ValueError with clear messaging when something drifts.
+        """
+        if not inputs or not targets:
+            raise ValueError("Dataset validation requires both inputs and targets.")
+
+        def _shape(arr: Any) -> Tuple[int, ...]:
+            return tuple(np.asarray(arr).shape)
+
+        samples = inputs["price_vol_input"].shape[0]
+        if samples == 0:
+            raise ValueError("Dataset is empty (0 samples).")
+
+        expected_inputs: Dict[str, Tuple[int, ...]] = {
+            "price_vol_input": (samples, self.window_size, 2),
+            "sentiment_seq": (samples, self.sent_seq_len, 1),
+            "tech_input": (samples, self.tech_count),
+            "hour_input": (samples, 1),
+            "dow_input": (samples, 1),
+            "gas_fee_input": (samples, 1),
+            "tax_rate_input": (samples, 1),
+            "asset_id_input": (samples, 1),
+            "headline_text": (samples, 1),
+            "full_text": (samples, 1),
+        }
+        for name, shape in expected_inputs.items():
+            if name not in inputs:
+                raise ValueError(f"Dataset missing input '{name}'.")
+            actual = _shape(inputs[name])
+            if actual != shape:
+                raise ValueError(f"Input '{name}' shape mismatch: expected {shape}, got {actual}.")
+
+        expected_targets: Dict[str, Tuple[int, ...]] = {
+            "exit_conf": (samples, 1),
+            "price_mu": (samples, 1),
+            "price_log_var": (samples, 1),
+            "price_dir": (samples, 1),
+            "net_margin": (samples, 1),
+            "net_pnl": (samples, 1),
+            "tech_recon": (samples, self.tech_count),
+            "price_gaussian": (samples, 2),
+        }
+        for name, shape in expected_targets.items():
+            if name not in targets:
+                raise ValueError(f"Dataset missing target '{name}'.")
+            actual = _shape(targets[name])
+            if actual != shape:
+                raise ValueError(f"Target '{name}' shape mismatch: expected {shape}, got {actual}.")
+
+    def _validate_dataset_values(self, inputs: Dict[str, Any], targets: Dict[str, Any]) -> None:
+        """
+        Additional semantic validations to ensure tensors are finite and respect domain constraints.
+        """
+
+        def _finite(name: str, arr: Any) -> np.ndarray:
+            arr_np = np.asarray(arr)
+            if not np.all(np.isfinite(arr_np)):
+                raise ValueError(f"Tensor '{name}' contains NaN or infinite values.")
+            return arr_np
+
+        price_vol = _finite("price_vol_input", inputs["price_vol_input"])
+        if np.any(price_vol[..., 0] < 0):
+            raise ValueError("Price channel contains negative values.")
+        if np.any(np.abs(price_vol[..., 1]) > 1e12):
+            raise ValueError("Volume channel magnitude exceeds safety threshold (1e12).")
+
+        _finite("sentiment_seq", inputs["sentiment_seq"])
+
+        _finite("tech_input", inputs["tech_input"])
+
+        hour_input = _finite("hour_input", inputs["hour_input"])
+        if np.any((hour_input < 0) | (hour_input > 23)):
+            raise ValueError("Hour input outside [0, 23].")
+
+        dow_input = _finite("dow_input", inputs["dow_input"])
+        if np.any((dow_input < 0) | (dow_input > 6)):
+            raise ValueError("Day-of-week input outside [0, 6].")
+
+        asset_ids = _finite("asset_id_input", inputs["asset_id_input"])
+        if np.any(asset_ids < 0):
+            raise ValueError("Asset IDs must be non-negative.")
+
+        gas = _finite("gas_fee_input", inputs["gas_fee_input"])
+        tax = _finite("tax_rate_input", inputs["tax_rate_input"])
+        if np.any(gas < 0) or np.any(tax < 0):
+            raise ValueError("Gas or tax inputs contain negative values.")
+
+        price_dir = _finite("price_dir", targets["price_dir"])
+        if np.any((price_dir < 0) | (price_dir > 1)):
+            raise ValueError("price_dir target must be within [0, 1].")
+
+        exit_conf = _finite("exit_conf", targets["exit_conf"])
+        if np.any((exit_conf < 0) | (exit_conf > 1)):
+            raise ValueError("exit_conf target must be within [0, 1].")
+
+        net_margin = _finite("net_margin", targets["net_margin"])
+        net_pnl = _finite("net_pnl", targets["net_pnl"])
+        if not np.allclose(net_margin, net_pnl, atol=1e-6):
+            raise ValueError("net_margin and net_pnl diverge; expected mirror values.")
+
+        price_gaussian = _finite("price_gaussian", targets["price_gaussian"])
+        if price_gaussian.shape[-1] != 2:
+            raise ValueError("price_gaussian last dimension must be 2.")
 
     def _build_training_dataset(
         self,
@@ -1050,10 +1227,10 @@ class TrainingPipeline:
                         self.data_loader.news_items = self.data_loader._load_news()
                         backfilled = True
                 except Exception as arch_exc:
-                    print(f"[training] archive backfill failed: {arch_exc}")
+                    log_message("training", f"archive backfill failed: {arch_exc}", severity="warning")
             return backfilled
         except Exception as exc:
-            print(f"[training] news backfill skipped due to error: {exc}")
+            log_message("training", f"news backfill skipped due to error: {exc}", severity="warning")
             return False
 
     def _load_state(self) -> None:
@@ -1096,22 +1273,23 @@ class TrainingPipeline:
 
     def _print_ghost_summary(self, evaluation: Optional[Dict[str, float]]) -> None:
         if not evaluation:
-            print(f"[training] ghost summary (iteration {self.iteration}): no evaluation available")
+            log_message("training", f"ghost summary (iteration {self.iteration}): no evaluation available", severity="info")
             return
-        print(
-            "[training] ghost summary (iteration %d): dir_acc=%.3f, ghost_trades=%d, pred_margin=%.6f, realized_margin=%.6f, win_rate=%.3f, TP=%d, FP=%d, TN=%d, FN=%d"
-            % (
-                self.iteration,
-                self._safe_float(evaluation.get("dir_accuracy", 0.0)),
-                int(evaluation.get("ghost_trades", 0)),
-                self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
-                self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
-                self._safe_float(evaluation.get("ghost_win_rate", 0.0)),
-                int(evaluation.get("true_positives", 0)),
-                int(evaluation.get("false_positives", 0)),
-                int(evaluation.get("true_negatives", 0)),
-                int(evaluation.get("false_negatives", 0)),
-            )
+        log_message(
+            "training",
+            "ghost summary",
+            details={
+                "iteration": self.iteration,
+                "dir_acc": self._safe_float(evaluation.get("dir_accuracy", 0.0)),
+                "ghost_trades": int(evaluation.get("ghost_trades", 0)),
+                "pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
+                "realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
+                "win_rate": self._safe_float(evaluation.get("ghost_win_rate", 0.0)),
+                "TP": int(evaluation.get("true_positives", 0)),
+                "FP": int(evaluation.get("false_positives", 0)),
+                "TN": int(evaluation.get("true_negatives", 0)),
+                "FN": int(evaluation.get("false_negatives", 0)),
+            },
         )
 
     def _evaluate_candidate(
@@ -1346,6 +1524,67 @@ class TrainingPipeline:
             },
         )
         return focus_assets, {"aggregate": aggregate, "ranked": ranked}
+
+    def _build_candidate_signals(
+        self,
+        evaluation: Dict[str, Any],
+        focus_stats: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, float]:
+        signals: Dict[str, float] = {}
+
+        def _add(name: str, value: Any) -> None:
+            try:
+                val = float(value)
+            except (TypeError, ValueError):
+                return
+            if math.isfinite(val):
+                signals[name] = val
+
+        dataset_meta = self._last_dataset_meta or {}
+        aggregate = (focus_stats or {}).get("aggregate") or {}
+        ranked = (focus_stats or {}).get("ranked") or []
+
+        # Core evaluation metrics
+        for key in [
+            "dir_accuracy",
+            "best_f1",
+            "profit_factor",
+            "best_profit_factor",
+            "margin_mae",
+            "drift_stat",
+            "kelly_fraction",
+            "payoff_ratio",
+            "temperature",
+        ]:
+            _add(key, evaluation.get(key))
+        _add("ghost_win_rate", evaluation.get("ghost_win_rate", evaluation.get("ghost_win_rate_best")))
+        _add("ghost_win_rate_best", evaluation.get("ghost_win_rate_best"))
+        _add("ghost_realized_margin_best", evaluation.get("ghost_realized_margin_best"))
+        _add("ghost_pred_margin_best", evaluation.get("ghost_pred_margin_best"))
+        _add("ghost_trades_best", evaluation.get("ghost_trades_best"))
+
+        # Dataset statistics
+        _add("positive_ratio", dataset_meta.get("positive_ratio"))
+        _add("samples", dataset_meta.get("samples"))
+        _add("asset_diversity", dataset_meta.get("asset_diversity"))
+        _add("avg_price_volatility", dataset_meta.get("avg_price_volatility"))
+
+        # Ghost aggregate metrics
+        for key in [
+            "win_rate",
+            "avg_profit",
+            "median_profit",
+            "kelly_fraction",
+            "avg_duration_sec",
+            "avg_expected_vs_realized_delta",
+        ]:
+            _add(f"ghost_{key}", aggregate.get(key))
+
+        if ranked:
+            penalties = [item.get("score") for item in ranked if item.get("score") is not None]
+            if penalties:
+                _add("focus_penalty_mean", np.mean(penalties))
+        return signals
 
     def _apply_focus_adaptation(
         self,

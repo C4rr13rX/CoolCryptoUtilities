@@ -74,7 +74,9 @@ class LabPreviewView(APIView):
         files = payload.get("files") or payload.get("eval_files") or []
         if not isinstance(files, list):
             return Response({"detail": "files must be a list"}, status=status.HTTP_400_BAD_REQUEST)
-        file_paths = [str(item) for item in files if item]
+        raw_paths = [str(item) for item in files if item]
+        runner = get_model_lab_runner()
+        file_paths = runner.resolve_paths(raw_paths)
         if not file_paths:
             return Response({"detail": "No files provided for preview"}, status=status.HTTP_400_BAD_REQUEST)
         try:

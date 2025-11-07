@@ -14,6 +14,9 @@ from collections import deque
 
 import aiohttp
 
+from services.adaptive_control import APIRateLimiter
+from services.logging_bus import log_message
+
 try:  # pragma: no cover - optional dependency may fail at import time
     from services.onchain_feed import OnChainPairFeed
 except Exception:  # pragma: no cover - graceful fallback
@@ -165,12 +168,14 @@ class MarketDataStream:
                 listener = OnChainPairFeed(chain=self.chain, symbol=self.symbol)
                 if listener.available:
                     self._onchain_listener = listener
-                    print(f"[market-stream] on-chain listener enabled for {self.symbol} on {self.chain}.")
+                    log_message("market-stream", f"on-chain listener enabled for {self.symbol} on {self.chain}.")
             except Exception as exc:
-                print(f"[market-stream] on-chain feed unavailable for {self.symbol}: {exc}")
+                log_message("market-stream", f"on-chain feed unavailable for {self.symbol}: {exc}", severity="warning")
         self._onchain_queue: Optional[asyncio.Queue] = None
         self._onchain_task: Optional[asyncio.Task] = None
         self._onchain_consumer: Optional[asyncio.Task] = None
+
+        self.rate_limiter = APIRateLimiter(default_capacity=5.0, default_refill_rate=1.0)
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -200,19 +205,28 @@ class MarketDataStream:
                 backoff = 5.0
             except aiohttp.WSServerHandshakeError as exc:
                 if exc.status in (429, 503):
-                    print(f"[market-stream] rate limited ({exc.status}); sleeping {backoff:.1f}s")
+                    log_message("market-stream", f"rate limited ({exc.status}); sleeping {backoff:.1f}s", severity="warning")
                 elif exc.status == 451:
                     current = time.time()
                     self._endpoint_backoff_until[self.current_endpoint] = current + max(60.0, backoff * 2)
-                    print(f"[market-stream] endpoint {self.current_endpoint} denied (451); backing off until {self._endpoint_backoff_until[self.current_endpoint]:.0f}.")
+                    log_message(
+                        "market-stream",
+                        f"endpoint {self.current_endpoint} denied (451); backing off.",
+                        severity="warning",
+                        details={"resume_at": self._endpoint_backoff_until[self.current_endpoint]},
+                    )
                 else:
-                    print(f"[market-stream] websocket handshake failed ({exc.status}); retrying in {backoff:.1f}s")
+                    log_message(
+                        "market-stream",
+                        f"websocket handshake failed ({exc.status}); retrying in {backoff:.1f}s",
+                        severity="warning",
+                    )
                 await self._poll_rest_data(backoff)
                 backoff = min(backoff * 1.5, 300.0)
                 await self._refresh_reference_price()
                 self._select_next_endpoint()
             except Exception as exc:  # pragma: no cover - network dependent
-                print(f"[market-stream] websocket error {exc}; retrying in {backoff:.1f}s")
+                log_message("market-stream", f"websocket error {exc}; retrying in {backoff:.1f}s", severity="warning")
                 await self._poll_rest_data(backoff)
                 backoff = min(backoff * 1.5, 300.0)
                 await self._refresh_reference_price()
@@ -265,7 +279,7 @@ class MarketDataStream:
                             raise msg.data
                         break
                     elif msg.type == aiohttp.WSMsgType.TEXT and "rate" in (msg.data or "").lower():
-                        print("[market-stream] rate-limit notice from server; backing off 15s")
+                        log_message("market-stream", "rate-limit notice from server; backing off 15s", severity="warning")
                         await asyncio.sleep(15.0)
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                         break
@@ -306,7 +320,7 @@ class MarketDataStream:
                 dispatched = True
                 break
             if not dispatched:
-                print("[market-stream] unable to obtain consensus price during REST poll cycle.")
+                log_message("market-stream", "unable to obtain consensus price during REST poll cycle.", severity="warning")
                 await self._handle_consensus_failure()
             await asyncio.sleep(self.rest_poll_interval)
 
@@ -327,7 +341,7 @@ class MarketDataStream:
             try:
                 await self._dispatch(sample)
             except Exception as exc:
-                print(f"[market-stream] on-chain dispatch error: {exc}")
+                log_message("market-stream", f"on-chain dispatch error: {exc}", severity="error")
 
     async def _dispatch(self, sample: Dict[str, Any]) -> None:
         try:
@@ -353,8 +367,10 @@ class MarketDataStream:
         now = time.time()
         if now - self._last_sample_log >= 30.0:
             self._last_sample_log = now
-            print(
-                f"[market-stream] {self.symbol} flow: {self._sample_count} samples (latest {price_val:.6f}) via {source}"
+            log_message(
+                "market-stream",
+                f"{self.symbol} flow samples",
+                details={"count": self._sample_count, "price": price_val, "source": source},
             )
         self._db.insert_market_sample(
             chain=sample.get("chain", self.chain),
@@ -385,7 +401,7 @@ class MarketDataStream:
                 else:
                     callback(sample)  # type: ignore[misc]
             except Exception as exc:
-                print(f"[market-stream] callback error: {exc}")
+                log_message("market-stream", f"callback error: {exc}", severity="error")
 
     def _should_skip_duplicate(self, source: str, price: float, ts_val: float) -> bool:
         last = self._last_emitted_by_source.get(source)
@@ -512,6 +528,15 @@ class MarketDataStream:
                     "failures": self._consensus_failures,
                 },
             )
+        if self._consensus_failures % 4 == 0:
+            limit = self._base_rest_interval * 6
+            self.rest_poll_interval = min(limit, self.rest_poll_interval * 1.25)
+            log_message(
+                "market-stream",
+                "consensus failure throttling REST polls",
+                severity="warning",
+                details={"symbol": self.symbol, "rest_interval": self.rest_poll_interval, "failures": self._consensus_failures},
+            )
 
     def _fallback_consensus_price(self) -> Optional[float]:
         now = time.time()
@@ -613,8 +638,11 @@ class MarketDataStream:
             )
             return True
 
-        print(
-            f"[market-stream] price {price:.6f} deviates from reference {self.reference_price:.6f}; waiting for confirmation"
+        log_message(
+            "market-stream",
+            "price deviates from reference; waiting for confirmation",
+            severity="warning",
+            details={"price": price, "reference": self.reference_price, "symbol": self.symbol},
         )
         return False
 
@@ -720,6 +748,10 @@ class MarketDataStream:
     def _record_endpoint_success(self, name: str, *, price: Optional[float] = None, consensus: Optional[float] = None) -> None:
         self._endpoint_scores[name] = self._endpoint_scores.get(name, 0.0) + 1.0
         self._endpoint_failures[name] = 0
+        if self.rest_poll_interval > self._base_rest_interval:
+            self.rest_poll_interval = max(self._base_rest_interval, self.rest_poll_interval * 0.8)
+        if self._consensus_failures > 0:
+            self._consensus_failures -= 1
         if price is not None and consensus is not None:
             self._update_source_stats(name, price, consensus)
 
@@ -727,7 +759,12 @@ class MarketDataStream:
         self._endpoint_scores[name] = self._endpoint_scores.get(name, 0.0) - 2.0
         self._endpoint_failures[name] = self._endpoint_failures.get(name, 0) + 1
         if self._endpoint_failures[name] in (3, 10):
-            print(f"[market-stream] endpoint {name} failing consensus check ({self._endpoint_failures[name]} strikes).")
+            log_message(
+                "market-stream",
+                f"endpoint {name} failing consensus check",
+                severity="warning",
+                details={"strikes": self._endpoint_failures[name]},
+            )
 
     def _confirm_consensus(self, name: str, price: float) -> Tuple[bool, bool, Optional[float]]:
         now = time.time()
@@ -806,16 +843,22 @@ class MarketDataStream:
             self._record_endpoint_success(endpoint.name, price=price, consensus=consensus)
             self._update_price_stats(consensus)
             self.reference_price = consensus
-            print(f"[market-stream] reference price from {endpoint.name}: {consensus:.6f}")
+            log_message(
+                "market-stream",
+                f"reference price from {endpoint.name}",
+                details={"price": consensus, "symbol": self.symbol},
+            )
             return
         if self.reference_price is None:
             if self._historical_reference:
                 self.reference_price = self._historical_reference
-                print(
-                    f"[market-stream] using historical reference for {self.symbol}: {self.reference_price:.6f}"
+                log_message(
+                    "market-stream",
+                    "using historical reference",
+                    details={"symbol": self.symbol, "price": self.reference_price},
                 )
             else:
-                print("[market-stream] unable to establish reference price; will retry")
+                log_message("market-stream", "unable to establish reference price; will retry", severity="warning")
         else:
             self.reference_price = max(self.reference_price, 1e-9)
 
@@ -827,6 +870,16 @@ class MarketDataStream:
             return None
         headers = endpoint.headers or {}
         try:
+            host = url.split("/")[2]
+            try:
+                self.rate_limiter.acquire(host, tokens=1.0, timeout=5.0)
+            except TimeoutError:
+                log_message(
+                    "market-stream",
+                    f"rate limiter blocked REST call to {host}",
+                    severity="warning",
+                )
+                return None
             async with self._http_session.get(url, timeout=10, headers=headers) as resp:
                 if resp.status != 200:
                     return None
@@ -848,7 +901,7 @@ class MarketDataStream:
                 self.url = ws_url
                 self.subscribe_template = ep.subscribe_template
                 self.current_endpoint = ep.name
-                print(f"[market-stream] using {ep.name} endpoint -> {self.url}")
+                log_message("market-stream", f"using {ep.name} endpoint", details={"url": self.url})
                 return
         self.url = None
         self.current_endpoint = "unavailable"

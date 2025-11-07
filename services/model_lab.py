@@ -72,6 +72,9 @@ class ModelLabRunner:
             )
         return records
 
+    def resolve_paths(self, entries: Sequence[str]) -> List[str]:
+        return self._resolve_paths(entries)
+
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
             return json.loads(json.dumps(self._status))

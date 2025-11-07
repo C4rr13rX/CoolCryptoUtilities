@@ -1,49 +1,54 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
-from typing import Optional
+from typing import Optional, Sequence
 
 from trading.pipeline import TrainingPipeline
 from trading.selector import GhostTradingSupervisor
+from trading.metrics import MetricStage, FeedbackSeverity
 from services.background_workers import TokenDownloadSupervisor
+from services.task_orchestrator import ParallelTaskManager
+from services.logging_bus import log_message
 
 
 class ProductionManager:
     def __init__(self) -> None:
         self.pipeline = TrainingPipeline()
         self.supervisor = GhostTradingSupervisor(pipeline=self.pipeline)
-        self._trainer: Optional[threading.Thread] = None
         self._loop_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = threading.Event()
         self._download_supervisor: Optional[TokenDownloadSupervisor] = TokenDownloadSupervisor(db=self.pipeline.db)
+        self.task_manager = ParallelTaskManager()
+        self._cycle_thread: Optional[threading.Thread] = None
+        self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "45"))
         self._active_flag_key = "production_manager_active"
 
     def start(self) -> None:
         if self.is_running:
-            print("[production] manager already running.")
+            log_message("production", "manager already running.")
             self._set_active_flag(True)
             return
         self._stop.clear()
         self.supervisor.build()
         try:
-            self._trainer = threading.Thread(target=self._training_loop, daemon=True)
-            self._trainer.start()
             self._loop_thread = threading.Thread(target=self._run_supervisor_loop, daemon=True)
             self._loop_thread.start()
-            if self._download_supervisor:
-                self._download_supervisor.start()
+            self.task_manager.start()
+            self._cycle_thread = threading.Thread(target=self._cycle_loop, daemon=True)
+            self._cycle_thread.start()
             self._set_active_flag(True)
-            print("[production] manager started.")
+            log_message("production", "manager started.")
         except Exception:
             self._set_active_flag(False)
             raise
 
     def stop(self, timeout: float = 15.0) -> None:
         if not self.is_running:
-            print("[production] manager is not running.")
+            log_message("production", "manager is not running.")
             return
         self._stop.set()
         if self._loop and self._loop.is_running():
@@ -51,25 +56,21 @@ class ProductionManager:
             try:
                 fut.result(timeout=timeout)
             except Exception as exc:
-                print(f"[production] supervisor stop error: {exc}")
+                log_message("production", f"supervisor stop error: {exc}", severity="error")
         if self._loop_thread:
             self._loop_thread.join(timeout=timeout)
-        if self._trainer:
-            self._trainer.join(timeout=timeout)
-        if self._download_supervisor:
-            try:
-                self._download_supervisor.stop()
-            except Exception as exc:
-                print(f"[production] download supervisor stop error: {exc}")
+        if self._cycle_thread:
+            self._cycle_thread.join(timeout=timeout)
+        self.task_manager.stop()
         self._loop = None
         self._loop_thread = None
-        self._trainer = None
+        self._cycle_thread = None
         self._set_active_flag(False)
-        print("[production] manager stopped.")
+        log_message("production", "manager stopped.")
 
     @property
     def is_running(self) -> bool:
-        return self._trainer is not None and self._trainer.is_alive()
+        return self._cycle_thread is not None and self._cycle_thread.is_alive()
 
     def _run_supervisor_loop(self) -> None:
         loop = asyncio.new_event_loop()
@@ -78,28 +79,11 @@ class ProductionManager:
         try:
             loop.run_until_complete(self.supervisor.start())
         except Exception as exc:
-            print(f"[production] supervisor loop error: {exc}")
+            log_message("production", f"supervisor loop error: {exc}", severity="error")
         finally:
             loop.run_until_complete(loop.shutdown_asyncgens())
             loop.close()
             self._loop = None
-
-    def _training_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                result = self.pipeline.train_candidate()
-                status = result.get("status") if isinstance(result, dict) else None
-                if status == "skipped":
-                    delay = 60.0
-                elif status == "paused":
-                    delay = 300.0
-                else:
-                    delay = 30.0
-            except Exception as exc:
-                print(f"[production] training loop error: {exc}")
-                delay = 60.0
-            if self._stop.wait(delay):
-                break
 
     def _set_active_flag(self, active: bool) -> None:
         try:
@@ -108,7 +92,101 @@ class ProductionManager:
             else:
                 self.pipeline.db.clear_control_flag(self._active_flag_key)
         except Exception as exc:
-            print(f"[production] unable to update active flag: {exc}")
+            log_message("production", f"unable to update active flag: {exc}", severity="warning")
+
+    def _cycle_loop(self) -> None:
+        while not self._stop.is_set():
+            cycle_id = str(int(time.time()))
+            focus_assets, _ = self.pipeline.ghost_focus_assets()
+            metadata = {"focus_assets": focus_assets}
+            self.task_manager.submit("data_ingest", self._task_data_ingest, cycle_id=cycle_id)
+            self.task_manager.submit(
+                "news_enrichment",
+                self._task_news_enrichment,
+                cycle_id=cycle_id,
+                kwargs={"focus_assets": focus_assets},
+                metadata=metadata,
+            )
+            self.task_manager.submit(
+                "dataset_warmup",
+                self._task_dataset_warmup,
+                cycle_id=cycle_id,
+                kwargs={"focus_assets": focus_assets},
+                metadata=metadata,
+            )
+            self.task_manager.submit(
+                "candidate_training",
+                self._task_candidate_training,
+                cycle_id=cycle_id,
+            )
+            self.task_manager.submit(
+                "ghost_metrics",
+                self._task_ghost_metrics,
+                cycle_id=cycle_id,
+            )
+            self.task_manager.submit(
+                "scheduler_refresh",
+                self._task_scheduler_refresh,
+                cycle_id=cycle_id,
+            )
+            self.task_manager.submit(
+                "telemetry_flush",
+                self._task_telemetry_flush,
+                cycle_id=cycle_id,
+            )
+            if self._stop.wait(self._cycle_interval):
+                break
+
+    # ------------------------------------------------------------------
+    # Parallel task implementations
+    # ------------------------------------------------------------------
+
+    def _task_data_ingest(self) -> None:
+        if self._download_supervisor:
+            self._download_supervisor.run_cycle()
+
+    def _task_news_enrichment(self, focus_assets: Optional[Sequence[str]] = None) -> None:
+        self.pipeline.reinforce_news_cache(focus_assets)
+
+    def _task_dataset_warmup(self, focus_assets: Optional[Sequence[str]] = None) -> None:
+        self.pipeline.warm_dataset_cache(focus_assets=focus_assets, oversample=False)
+
+    def _task_candidate_training(self) -> None:
+        result = self.pipeline.train_candidate()
+        status = result.get("status") if isinstance(result, dict) else None
+        if status and status not in {"trained", "skipped"}:
+            log_message("production", f"training status: {status}", severity="warning")
+
+    def _task_ghost_metrics(self) -> None:
+        trades = self.pipeline.metrics.ghost_trade_snapshot(limit=500, lookback_sec=self.pipeline.focus_lookback_sec)
+        aggregate = self.pipeline.metrics.aggregate_trade_metrics(trades)
+        self.pipeline.metrics.record(
+            MetricStage.GHOST_TRADING,
+            aggregate,
+            category="orchestrator_snapshot",
+        )
+
+    def _task_scheduler_refresh(self) -> None:
+        # Placeholder hook for bus/passenger scheduling or pair rotation.
+        self.pipeline.metrics.feedback(
+            "scheduler",
+            severity=FeedbackSeverity.INFO,
+            label="cycle_tick",
+            details={"ts": time.time()},
+        )
+
+    def _task_telemetry_flush(self) -> None:
+        summary = {
+            "active_accuracy": self.pipeline.active_accuracy,
+            "decision_threshold": self.pipeline.decision_threshold,
+            "temperature_scale": self.pipeline.temperature_scale,
+            "iteration": self.pipeline.iteration,
+        }
+        self.pipeline.metrics.record(
+            MetricStage.PIPELINE,
+            summary,
+            category="telemetry_flush",
+        )
 
 
 if __name__ == "__main__":

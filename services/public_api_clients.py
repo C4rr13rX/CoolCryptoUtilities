@@ -24,6 +24,9 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 import requests
 
+from services.adaptive_control import APIRateLimiter
+from services.logging_bus import log_message
+
 
 DEFAULT_TIMEOUT = 15
 USER_AGENT = "CoolCryptoUtilities/market-ingestor"
@@ -40,16 +43,56 @@ class MarketSnapshot:
     percent_change_24h: Optional[float] = None
     extra: Optional[Dict[str, float]] = None
 
+RATE_LIMITER = APIRateLimiter(default_capacity=5.0, default_refill_rate=1.5)
+RATE_LIMITER.configure("api.coingecko.com", capacity=3.0, refill_rate=0.5)
+RATE_LIMITER.configure("api.coincap.io", capacity=3.0, refill_rate=0.8)
+RATE_LIMITER.configure("api.coinpaprika.com", capacity=2.0, refill_rate=0.6)
+RATE_LIMITER.configure("api.coinlore.net", capacity=2.0, refill_rate=0.7)
+_HOST_BACKOFF: Dict[str, float] = {}
+_DNS_BACKOFF_SEC = 300.0
+
 
 def _http_get(url: str, *, params: Optional[Dict[str, str]] = None) -> dict | list:
+    host = url.split("/")[2]
+    now = time.time()
+    resume = _HOST_BACKOFF.get(host, 0.0)
+    if resume and now < resume:
+        raise RuntimeError(f"{host} temporarily suppressed for {int(resume - now)}s")
+    try:
+        RATE_LIMITER.acquire(host, tokens=1.0, timeout=10.0)
+    except TimeoutError as exc:
+        log_message("public-api", f"Rate limit exceeded for {host}", severity="warning")
+        raise
     resp = requests.get(
         url,
         params=params,
         timeout=DEFAULT_TIMEOUT,
         headers={"User-Agent": USER_AGENT},
     )
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.RequestException as exc:
+        _maybe_backoff_host(host, exc)
+        raise
+
+
+def _maybe_backoff_host(host: str, exc: Exception) -> None:
+    message = str(exc).lower()
+    backoff = False
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        backoff = True
+    elif "name or service not known" in message or "temporary failure in name resolution" in message:
+        backoff = True
+    if backoff:
+        until = time.time() + _DNS_BACKOFF_SEC
+        _HOST_BACKOFF[host] = until
+        log_message(
+            "public-apis",
+            f"suppressing {host} due to connectivity errors",
+            severity="warning",
+            details={"resume_at": until},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +233,13 @@ def aggregate_market_data(
     try:
         snapshots.extend(fetch_coincap(top=top_n))
     except Exception as exc:
-        print(f"[public-apis] CoinCap fetch failed: {exc}", file=sys.stderr)
+        log_message("public-apis", f"CoinCap fetch failed: {exc}", severity="warning")
     time.sleep(0.4)
 
     try:
         snapshots.extend(fetch_coinpaprika(top=top_n))
     except Exception as exc:
-        print(f"[public-apis] CoinPaprika fetch failed: {exc}", file=sys.stderr)
+        log_message("public-apis", f"CoinPaprika fetch failed: {exc}", severity="warning")
     time.sleep(0.4)
 
     try:

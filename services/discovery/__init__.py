@@ -10,7 +10,9 @@ def _ensure_django_ready() -> None:
     Guarantee Django can resolve the `discovery` app when these services are
     imported from outside the web project (e.g., production manager).
     """
-    repo_root = Path(__file__).resolve().parents[1]
+    module_path = Path(__file__).resolve()
+    # .../services/discovery/__init__.py -> repo root is two levels up
+    repo_root = module_path.parents[2]
     web_dir = repo_root / "web"
     if str(web_dir) not in sys.path:
         sys.path.insert(0, str(web_dir))

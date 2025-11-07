@@ -1,0 +1,39 @@
+{
+  "components": [
+    {
+      "name": "data_ingest",
+      "depends_on": [],
+      "workers": 2
+    },
+    {
+      "name": "news_enrichment",
+      "depends_on": [],
+      "workers": 2
+    },
+    {
+      "name": "dataset_warmup",
+      "depends_on": ["data_ingest", "news_enrichment"],
+      "workers": 1
+    },
+    {
+      "name": "candidate_training",
+      "depends_on": ["dataset_warmup"],
+      "workers": 1
+    },
+    {
+      "name": "ghost_metrics",
+      "depends_on": ["candidate_training"],
+      "workers": 1
+    },
+    {
+      "name": "scheduler_refresh",
+      "depends_on": ["ghost_metrics"],
+      "workers": 1
+    },
+    {
+      "name": "telemetry_flush",
+      "depends_on": ["scheduler_refresh"],
+      "workers": 1
+    }
+  ]
+}
