@@ -136,6 +136,11 @@ class ProductionManager:
                 self._task_telemetry_flush,
                 cycle_id=cycle_id,
             )
+            self.task_manager.submit(
+                "background_refresh",
+                self._task_background_refresh,
+                cycle_id=cycle_id,
+            )
             if self._stop.wait(self._cycle_interval):
                 break
 
@@ -189,6 +194,11 @@ class ProductionManager:
             summary,
             category="telemetry_flush",
         )
+
+    def _task_background_refresh(self) -> None:
+        worked = self.idle_worker.run_next_job()
+        if not worked:
+            log_message("idle-work", "no background job ready this cycle", severity="info")
 
 
 if __name__ == "__main__":
