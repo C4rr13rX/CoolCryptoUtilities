@@ -87,6 +87,7 @@ class HistoricalDataLoader:
         self._headline_digest: Optional[str] = None
         self._fulltext_digest: Optional[str] = None
         self._completion_index: Optional[Set[str]] = None
+        self._last_sample_meta: Dict[str, Any] = {}
 
     def reset_limits(self) -> None:
         self.max_files = self._initial_max_files
@@ -112,6 +113,7 @@ class HistoricalDataLoader:
         tech_count: int,
         focus_assets: Optional[Sequence[str]] = None,
         selected_files: Optional[Sequence[os.PathLike[str] | str]] = None,
+        oversample: bool = True,
     ) -> Tuple[Optional[Dict[str, np.ndarray]], Optional[Dict[str, np.ndarray]]]:
         price_windows: List[np.ndarray] = []
         sentiment_windows: List[np.ndarray] = []
@@ -124,6 +126,9 @@ class HistoricalDataLoader:
         full_articles: List[str] = []
         target_mu: List[float] = []
         asset_ids: List[int] = []
+        sample_meta: List[Dict[str, Any]] = []
+        oversample_multiplier = 1
+        oversample_indices: Optional[np.ndarray] = None
 
         if selected_files:
             files = []
@@ -173,6 +178,7 @@ class HistoricalDataLoader:
                 files = files[: self.max_files]
 
         if not files:
+            self._last_sample_meta = {}
             return None, None
 
         focus_set: Optional[set[str]] = None
@@ -276,6 +282,20 @@ class HistoricalDataLoader:
                     ret = 0.0
                 mu = ret
 
+                try:
+                    rel_path = str(file_path.resolve().relative_to(self.data_dir.resolve()))
+                except ValueError:
+                    rel_path = str(file_path.resolve())
+                sample_meta.append(
+                    {
+                        "timestamp": int(ts),
+                        "symbol": pair_label_upper,
+                        "current_price": float(current_price),
+                        "future_price": float(future_price),
+                        "file": rel_path,
+                    }
+                )
+
                 price_windows.append(window)
                 sentiment_windows.append(sentiment_window)
                 tech_inputs.append(tech_features)
@@ -290,6 +310,7 @@ class HistoricalDataLoader:
                 asset_ids.append(asset_id)
 
         if not price_windows:
+            self._last_sample_meta = {}
             return None, None
 
         price_windows_arr = np.array(price_windows, dtype=np.float32)
@@ -346,10 +367,12 @@ class HistoricalDataLoader:
         dir_flat = targets["price_dir"].reshape(-1)
         pos_idx = np.where(dir_flat > 0.5)[0]
         pos_ratio = float(dir_flat.mean()) if dir_flat.size else 0.0
-        if pos_idx.size > 0 and 0.0 < pos_ratio < positive_floor:
+        if oversample and pos_idx.size > 0 and 0.0 < pos_ratio < positive_floor:
             multiplier = int(np.ceil((positive_floor / max(pos_ratio, 1e-6))))
             multiplier = min(multiplier, int(os.getenv("TRAIN_OVERSAMPLE_MAX", "6")))
             if multiplier > 1:
+                oversample_multiplier = multiplier
+                oversample_indices = pos_idx.copy()
                 inputs, targets = self._oversample(inputs, targets, pos_idx, multiplier)
 
         self._headline_digest = self._digest_array(headline_arr)
@@ -359,11 +382,42 @@ class HistoricalDataLoader:
         targets_copy = {name: value.copy() for name, value in targets.items()}
         self._dataset_cache[cache_key] = (inputs_copy, targets_copy)
 
+        if sample_meta:
+            meta_records = [dict(record) for record in sample_meta]
+            if oversample_multiplier > 1 and oversample_indices is not None:
+                dup_template = [meta_records[int(idx)].copy() for idx in oversample_indices.tolist()]
+                for _ in range(max(0, oversample_multiplier - 1)):
+                    meta_records.extend([rec.copy() for rec in dup_template])
+            self._last_sample_meta = {
+                "records": meta_records,
+                "timestamps": [record["timestamp"] for record in meta_records],
+                "symbols": [record["symbol"] for record in meta_records],
+                "current_prices": [record["current_price"] for record in meta_records],
+                "future_prices": [record["future_price"] for record in meta_records],
+                "files": [record["file"] for record in meta_records],
+            }
+        else:
+            self._last_sample_meta = {}
+
         return inputs, targets
 
     def dataset_signature(self) -> str:
         digest_source = ":".join(filter(None, [self._headline_digest, self._fulltext_digest]))
         return digest_source or ""
+
+    def last_sample_meta(self) -> Dict[str, Any]:
+        if not self._last_sample_meta:
+            return {}
+        meta_copy: Dict[str, Any] = {}
+        for key, value in self._last_sample_meta.items():
+            if isinstance(value, list):
+                if key == "records":
+                    meta_copy[key] = [dict(record) for record in value]
+                else:
+                    meta_copy[key] = list(value)
+            else:
+                meta_copy[key] = value
+        return meta_copy
 
     def _oversample(
         self,

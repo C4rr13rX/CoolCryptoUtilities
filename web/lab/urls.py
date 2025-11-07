@@ -11,4 +11,5 @@ urlpatterns = [
     path("status/", views.LabStatusView.as_view(), name="status"),
     path("run/", views.LabStartView.as_view(), name="run"),
     path("news/", views.LabNewsView.as_view(), name="news"),
+    path("preview/", views.LabPreviewView.as_view(), name="preview"),
 ]

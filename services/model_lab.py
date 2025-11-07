@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -11,6 +12,7 @@ import tensorflow as tf
 
 from db import TradingDatabase, get_db
 from trading.pipeline import TrainingPipeline
+from services.news_lab import collect_news_for_files
 
 
 @dataclass
@@ -36,8 +38,11 @@ class ModelLabRunner:
             "error": None,
             "log": [],
             "history": [],
+            "events": [],
+            "snapshot": {},
         }
         self._history: List[Dict[str, Any]] = []
+        self._events: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -86,10 +91,29 @@ class ModelLabRunner:
                     "log": [],
                     "history": list(self._history),
                     "job_type": "model_lab",
+                    "events": [],
+                    "snapshot": {},
                 }
             )
-        self._append_log(
-            f"Starting model lab job with train_files={config.train_files} eval_files={config.eval_files} epochs={config.epochs} batch_size={config.batch_size}"
+            self._events = []
+        self._update_snapshot(
+            config={
+                "epochs": config.epochs,
+                "batch_size": config.batch_size,
+                "train_files": list(config.train_files),
+                "eval_files": list(config.eval_files),
+            },
+            started_at=self._status.get("started_at"),
+        )
+        self._record_event(
+            "info",
+            "job_started",
+            {
+                "train_files": list(config.train_files),
+                "eval_files": list(config.eval_files),
+                "epochs": config.epochs,
+                "batch_size": config.batch_size,
+            },
         )
         thread = threading.Thread(target=self._run_job, args=(config,), daemon=True)
         self._thread = thread
@@ -136,6 +160,53 @@ class ModelLabRunner:
             self._status["log"] = log
             self._status["history"] = list(self._history)
 
+    def _record_event(self, level: str, message: str, context: Optional[Dict[str, Any]] = None) -> None:
+        event = {
+            "ts": time.time(),
+            "level": level,
+            "message": message,
+        }
+        if context:
+            event["context"] = context
+        self._events.append(event)
+        self._events = self._events[-128:]
+        with self._lock:
+            snapshot = dict(self._status.get("snapshot") or {})
+            snapshot_events = list(snapshot.get("events", []))
+            snapshot_events.append(event)
+            snapshot["events"] = snapshot_events[-128:]
+            self._status["snapshot"] = snapshot
+            self._status["events"] = list(self._events)
+        self._append_log(f"[{level.upper()}] {message}")
+
+    def _update_snapshot(self, **fields: Any) -> None:
+        with self._lock:
+            snapshot = dict(self._status.get("snapshot") or {})
+            snapshot.update(fields)
+            self._status["snapshot"] = snapshot
+
+    def _should_pause_pipeline(self, pipeline: Optional[TrainingPipeline] = None) -> bool:
+        flag = None
+        try:
+            flag = self.db.get_control_flag("production_manager_active")
+        except Exception:
+            flag = None
+        if self._flag_truthy(flag):
+            return True
+        try:
+            instance = pipeline or TrainingPipeline(db=self.db)
+            return instance.is_paused()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _flag_truthy(flag: Optional[Any]) -> bool:
+        if flag is None:
+            return False
+        if isinstance(flag, (int, float)):
+            return bool(flag)
+        return str(flag).strip().lower() in {"1", "true", "yes", "on", "running"}
+
     def _record_history(self, success: bool) -> None:
         with self._lock:
             entry = {
@@ -159,25 +230,91 @@ class ModelLabRunner:
         eval_files = self._resolve_paths(config.eval_files)
         train_rel = [self._relative_path(path) for path in train_files]
         eval_rel = [self._relative_path(path) for path in eval_files]
+        pipeline = TrainingPipeline(db=self.db)
         managed_pause = False
         original_flag = None
+        should_pause = self._should_pause_pipeline(pipeline)
+        self._update_snapshot(
+            config={
+                "epochs": config.epochs,
+                "batch_size": config.batch_size,
+                "train_files": train_rel,
+                "eval_files": eval_rel,
+            }
+        )
+        news_summary: Optional[Dict[str, Any]] = None
+        lab_model: Optional[tf.keras.Model] = None
+        train_summary: Optional[Dict[str, Any]] = None
+        eval_summary: Optional[Dict[str, Any]] = None
+        error_trace: Optional[str] = None
         try:
-            original_flag = self.db.get_control_flag("pipeline_pause")
-            if not original_flag or str(original_flag).strip().lower() not in {"1", "true", "yes", "paused"}:
-                self.db.set_control_flag("pipeline_pause", "1")
-                managed_pause = True
-            self._update_status(progress=0.05, message="Pausing training pipeline")
-            time.sleep(0.5)
-            self._append_log("Training pipeline paused.")
+            if should_pause:
+                original_flag = self.db.get_control_flag("pipeline_pause")
+                if not original_flag or str(original_flag).strip().lower() not in {"1", "true", "yes", "paused"}:
+                    self.db.set_control_flag("pipeline_pause", "1")
+                    managed_pause = True
+                self._update_status(progress=0.05, message="Pausing training pipeline")
+                time.sleep(0.5)
+                self._record_event(
+                    "info",
+                    "pipeline_pause_engaged",
+                    {
+                        "managed_pause": managed_pause,
+                        "existing_flag": original_flag,
+                    },
+                )
+            else:
+                self._update_status(progress=0.05, message="Pipeline idle; proceeding without pause")
+                self._record_event(
+                    "info",
+                    "pipeline_pause_skipped",
+                    {"reason": "production_manager_inactive"},
+                )
 
-            pipeline = TrainingPipeline(db=self.db)
-            lab_model: Optional[tf.keras.Model] = None
-            train_summary: Optional[Dict[str, Any]] = None
-            eval_summary: Optional[Dict[str, Any]] = None
+            news_targets = sorted({*train_rel, *eval_rel})
+            if news_targets:
+                self._update_status(progress=0.18, message="Collecting market context")
+                self._record_event(
+                    "info",
+                    "collecting_news_context",
+                    {"datasets": len(news_targets), "files": news_targets},
+                )
+                try:
+                    news_summary = collect_news_for_files(
+                        news_targets,
+                        db=self.db,
+                        hours_before=24,
+                        hours_after=24,
+                        cache_ttl_sec=2 * 3600,
+                    )
+                    total_news = len(news_summary.get("items", []))
+                    source_span = len(news_summary.get("sources", []))
+                    self._record_event(
+                        "info",
+                        "news_context_ready",
+                        {
+                            "articles": total_news,
+                            "sources": source_span,
+                            "symbols": news_summary.get("symbols") or [],
+                        },
+                    )
+                    self._update_status(progress=0.2, message="Market context captured")
+                    self._update_snapshot(news=news_summary)
+                except Exception as news_exc:
+                    self._record_event(
+                        "error",
+                        "news_context_failed",
+                        {"error": str(news_exc)},
+                    )
+                    self._update_status(progress=0.2, message="Market context skipped")
 
             if train_files:
                 self._update_status(progress=0.15, message="Building training dataset")
-                self._append_log(f"Building dataset from {len(train_files)} training files.")
+                self._record_event(
+                    "info",
+                    "building_training_dataset",
+                    {"files": train_rel, "count": len(train_files)},
+                )
                 lab_model, train_metrics, train_info = pipeline.lab_train_on_files(
                     train_files,
                     epochs=max(1, config.epochs),
@@ -189,17 +326,29 @@ class ModelLabRunner:
                     "info": train_info,
                 }
                 self._update_status(progress=0.65, message="Training completed")
-                self._append_log(f"Training completed with metrics: {json.dumps(train_metrics, default=str)}")
+                self._record_event(
+                    "info",
+                    "training_completed",
+                    {"metrics": train_metrics, "samples": train_info.get("samples")},
+                )
             else:
                 lab_model = pipeline.ensure_active_model()
                 self._update_status(progress=0.25, message="Using active model weights")
-                self._append_log("No training files supplied; using existing active model.")
+                self._record_event(
+                    "info",
+                    "training_skipped",
+                    {"reason": "no_training_files"},
+                )
 
             if eval_files:
                 if lab_model is None:
                     lab_model = pipeline.ensure_active_model()
                 self._update_status(progress=0.7, message="Running evaluation")
-                self._append_log(f"Evaluating {len(eval_files)} files.")
+                self._record_event(
+                    "info",
+                    "evaluation_started",
+                    {"files": eval_rel, "count": len(eval_files)},
+                )
                 eval_metrics = pipeline.lab_evaluate_on_files(
                     lab_model,
                     eval_files,
@@ -207,7 +356,11 @@ class ModelLabRunner:
                 )
                 eval_summary = {"metrics": eval_metrics, "files": eval_rel}
                 self._update_status(progress=0.95, message="Evaluation complete")
-                self._append_log(f"Evaluation metrics: {json.dumps(eval_metrics, default=str)}")
+                self._record_event(
+                    "info",
+                    "evaluation_completed",
+                    {"metrics": eval_metrics},
+                )
 
             self._update_status(
                 progress=1.0,
@@ -218,20 +371,38 @@ class ModelLabRunner:
                     "evaluation": eval_summary,
                     "train_files": train_rel,
                     "eval_files": eval_rel,
+                    "news": news_summary,
                 },
                 finished_at=time.time(),
             )
-            self._append_log("Model lab run completed successfully.")
+            self._update_snapshot(result=self._status.get("result"))
+            self._record_event(
+                "info",
+                "job_completed",
+                {
+                    "train_metrics": train_summary.get("metrics") if train_summary else None,
+                    "eval_metrics": eval_summary.get("metrics") if eval_summary else None,
+                },
+            )
             self._record_history(True)
         except Exception as exc:  # pragma: no cover - defensive
+            error_trace = traceback.format_exc()
             self._update_status(
                 running=False,
                 progress=1.0,
                 message="Model lab run failed",
                 error=str(exc),
+                error_detail=error_trace,
                 finished_at=time.time(),
             )
-            self._append_log(f"Model lab run failed: {exc}")
+            self._update_snapshot(error={"message": str(exc), "trace": error_trace})
+            self._record_event(
+                "error",
+                "job_failed",
+                {
+                    "error": str(exc),
+                },
+            )
             self._record_history(False)
         finally:
             if managed_pause:
@@ -240,7 +411,6 @@ class ModelLabRunner:
                 except Exception:
                     pass
             if original_flag and not managed_pause:
-                # ensure original flag value persists
                 try:
                     self.db.set_control_flag("pipeline_pause", original_flag)
                 except Exception:

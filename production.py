@@ -19,20 +19,27 @@ class ProductionManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = threading.Event()
         self._download_supervisor: Optional[TokenDownloadSupervisor] = TokenDownloadSupervisor(db=self.pipeline.db)
+        self._active_flag_key = "production_manager_active"
 
     def start(self) -> None:
         if self.is_running:
             print("[production] manager already running.")
+            self._set_active_flag(True)
             return
         self._stop.clear()
         self.supervisor.build()
-        self._trainer = threading.Thread(target=self._training_loop, daemon=True)
-        self._trainer.start()
-        self._loop_thread = threading.Thread(target=self._run_supervisor_loop, daemon=True)
-        self._loop_thread.start()
-        if self._download_supervisor:
-            self._download_supervisor.start()
-        print("[production] manager started.")
+        try:
+            self._trainer = threading.Thread(target=self._training_loop, daemon=True)
+            self._trainer.start()
+            self._loop_thread = threading.Thread(target=self._run_supervisor_loop, daemon=True)
+            self._loop_thread.start()
+            if self._download_supervisor:
+                self._download_supervisor.start()
+            self._set_active_flag(True)
+            print("[production] manager started.")
+        except Exception:
+            self._set_active_flag(False)
+            raise
 
     def stop(self, timeout: float = 15.0) -> None:
         if not self.is_running:
@@ -57,6 +64,7 @@ class ProductionManager:
         self._loop = None
         self._loop_thread = None
         self._trainer = None
+        self._set_active_flag(False)
         print("[production] manager stopped.")
 
     @property
@@ -92,6 +100,15 @@ class ProductionManager:
                 delay = 60.0
             if self._stop.wait(delay):
                 break
+
+    def _set_active_flag(self, active: bool) -> None:
+        try:
+            if active:
+                self.pipeline.db.set_control_flag(self._active_flag_key, "1")
+            else:
+                self.pipeline.db.clear_control_flag(self._active_flag_key)
+        except Exception as exc:
+            print(f"[production] unable to update active flag: {exc}")
 
 
 if __name__ == "__main__":

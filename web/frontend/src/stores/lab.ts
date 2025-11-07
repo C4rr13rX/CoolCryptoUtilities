@@ -1,5 +1,13 @@
 import { defineStore } from 'pinia';
-import { fetchLabFiles, fetchLabStatus, startLabJob, fetchLabNews, LabJobPayload } from '@/api';
+import {
+  fetchLabFiles,
+  fetchLabStatus,
+  startLabJob,
+  fetchLabNews,
+  fetchLabPreview,
+  LabJobPayload,
+  LabPreviewPayload,
+} from '@/api';
 
 interface LabState {
   files: Record<string, any>[];
@@ -12,6 +20,9 @@ interface LabState {
   newsMeta: Record<string, any> | null;
   newsLoading: boolean;
   newsError: string | null;
+  preview: Record<string, any> | null;
+  previewLoading: boolean;
+  previewError: string | null;
 }
 
 export const useLabStore = defineStore('lab', {
@@ -26,6 +37,9 @@ export const useLabStore = defineStore('lab', {
     newsMeta: null,
     newsLoading: false,
     newsError: null,
+    preview: null,
+    previewLoading: false,
+    previewError: null,
   }),
   getters: {
     running(state): boolean {
@@ -45,6 +59,12 @@ export const useLabStore = defineStore('lab', {
     },
     jobHistory(state): Record<string, any>[] {
       return state.history;
+    },
+    events(state): Record<string, any>[] {
+      return Array.isArray(state.status?.events) ? state.status?.events ?? [] : [];
+    },
+    snapshot(state): Record<string, any> | null {
+      return (state.status?.snapshot as Record<string, any>) || null;
     },
   },
   actions: {
@@ -100,6 +120,24 @@ export const useLabStore = defineStore('lab', {
       } finally {
         this.newsLoading = false;
       }
+    },
+    async loadPreview(payload: LabPreviewPayload) {
+      this.previewLoading = true;
+      try {
+        const data = await fetchLabPreview(payload);
+        this.preview = data || {};
+        this.previewError = null;
+      } catch (err: any) {
+        this.previewError = err?.message || 'Failed to generate preview';
+        this.preview = null;
+        throw err;
+      } finally {
+        this.previewLoading = false;
+      }
+    },
+    resetPreview() {
+      this.preview = null;
+      this.previewError = null;
     },
   },
 });

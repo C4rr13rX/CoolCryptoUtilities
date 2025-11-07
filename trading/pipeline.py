@@ -107,6 +107,7 @@ class TrainingPipeline:
         self._vectorizer_signature: Optional[str] = None
         self._vectorizer_cache: set[str] = set()
         self._last_dataset_meta: Dict[str, Any] = {}
+        self._last_sample_meta: Dict[str, Any] = {}
         self.primary_symbol = PRIMARY_SYMBOL
         self._pause_flag_key = "pipeline_pause"
 
@@ -508,11 +509,13 @@ class TrainingPipeline:
         focus_assets: Optional[Sequence[str]] = None,
         dataset_label: str = "full",
         selected_files: Optional[Sequence[str]] = None,
+        oversample: bool = True,
     ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, np.ndarray]]]:
         attempts = 0
         max_attempts = 4
         inputs: Optional[Dict[str, Any]] = None
         targets: Optional[Dict[str, Any]] = None
+        self._last_sample_meta = {}
         while attempts < max_attempts:
             inputs, targets = self.data_loader.build_dataset(
                 window_size=self.window_size,
@@ -520,6 +523,7 @@ class TrainingPipeline:
                 tech_count=self.tech_count,
                 focus_assets=focus_assets,
                 selected_files=selected_files,
+                oversample=oversample,
             )
             if inputs is not None and targets is not None:
                 break
@@ -542,6 +546,7 @@ class TrainingPipeline:
                 tech_count=self.tech_count,
                 focus_assets=focus_assets,
                 selected_files=selected_files,
+                oversample=oversample,
             )
         if inputs is None or targets is None:
             if self._auto_backfill_news(focus_assets):
@@ -552,6 +557,7 @@ class TrainingPipeline:
                     tech_count=self.tech_count,
                     focus_assets=focus_assets,
                     selected_files=selected_files,
+                    oversample=oversample,
                 )
         if inputs is not None and targets is not None:
             sample_count = int(inputs["price_vol_input"].shape[0])
@@ -606,6 +612,7 @@ class TrainingPipeline:
                 category=f"dataset_{dataset_label}",
                 meta=dataset_meta,
             )
+            self._last_sample_meta = self.data_loader.last_sample_meta()
             inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
             inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
             inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
@@ -631,6 +638,7 @@ class TrainingPipeline:
             label="dataset_generation_failed",
             details={"attempts": attempts, "focus_assets": list(focus_assets or [])},
         )
+        self._last_sample_meta = {}
         return None, None, None
 
     def _build_training_dataset(
@@ -641,25 +649,17 @@ class TrainingPipeline:
         sample_weights: Dict[str, np.ndarray],
         batch_size: int,
     ) -> tf.data.Dataset:
-        input_dict = {name: tf.convert_to_tensor(inputs[name]) for name in model.input_names}
-        target_dict = {name: tf.convert_to_tensor(targets[name]) for name in model.output_names}
+        input_names = getattr(model, "input_names", None) or [tensor.name.split(":")[0] for tensor in model.inputs]
+        output_names = getattr(model, "output_names", None) or [tensor.name.split(":")[0] for tensor in model.outputs]
+        input_dict = {name: tf.convert_to_tensor(inputs[name]) for name in input_names}
+        target_dict = {name: tf.convert_to_tensor(targets[name]) for name in output_names}
         weight_dict: Dict[str, tf.Tensor] = {}
-        for name in model.output_names:
+        for name in output_names:
             weights = sample_weights.get(name)
             if weights is None:
                 weights = np.ones(target_dict[name].shape[0], dtype=np.float32)
             weight_dict[name] = tf.convert_to_tensor(weights, dtype=tf.float32)
         dataset = tf.data.Dataset.from_tensor_slices((input_dict, target_dict, weight_dict))
-        return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
-
-    def _build_inference_dataset(
-        self,
-        model: tf.keras.Model,
-        inputs: Dict[str, Any],
-        batch_size: int,
-    ) -> tf.data.Dataset:
-        input_dict = {name: tf.convert_to_tensor(inputs[name]) for name in model.input_names}
-        dataset = tf.data.Dataset.from_tensor_slices(input_dict)
         return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     def lab_train_on_files(
@@ -715,11 +715,13 @@ class TrainingPipeline:
             batch_size=batch_size,
             dataset_label="lab_eval",
             selected_files=file_paths,
+            oversample=False,
         )
         if inputs is None or targets is None:
             raise RuntimeError("Unable to prepare evaluation dataset.")
-        eval_ds = self._build_inference_dataset(model, inputs, batch_size)
-        predictions = model.predict(eval_ds, verbose=0)
+        input_names = getattr(model, "input_names", None) or [tensor.name.split(":")[0] for tensor in model.inputs]
+        eval_inputs = [inputs[name] for name in input_names]
+        predictions = model.predict(eval_inputs, batch_size=batch_size, verbose=0)
         if isinstance(predictions, list):
             pred_map = {name: np.asarray(array) for name, array in zip(model.output_names, predictions)}
         elif isinstance(predictions, dict):
@@ -750,6 +752,120 @@ class TrainingPipeline:
 
         return collect_news_for_files(file_paths, db=self.db)
 
+    def lab_preview_series(
+        self,
+        file_paths: Sequence[str],
+        *,
+        batch_size: int = 16,
+        include_news: bool = True,
+    ) -> Dict[str, Any]:
+        if not file_paths:
+            raise ValueError("No files selected for preview.")
+        inputs, targets, _ = self._prepare_dataset(
+            batch_size=batch_size,
+            dataset_label="lab_preview",
+            selected_files=file_paths,
+            oversample=False,
+        )
+        if inputs is None or targets is None:
+            raise RuntimeError("Unable to build preview dataset.")
+        model = self.ensure_active_model()
+        input_names = getattr(model, "input_names", None) or [tensor.name.split(":")[0] for tensor in model.inputs]
+        eval_inputs = [inputs[name] for name in input_names]
+        predictions = model.predict(eval_inputs, batch_size=batch_size, verbose=0)
+        if isinstance(predictions, list):
+            pred_map = {name: np.asarray(array) for name, array in zip(model.output_names, predictions)}
+        elif isinstance(predictions, dict):
+            pred_map = {name: np.asarray(array) for name, array in predictions.items()}
+        else:
+            raise RuntimeError("Unexpected prediction structure from model.")
+
+        dir_true = np.asarray(targets["price_dir"]).reshape(-1)
+        dir_pred = pred_map["price_dir"].reshape(-1)
+        mu_true = np.asarray(targets["price_mu"]).reshape(-1)
+        mu_pred = pred_map["price_mu"].reshape(-1)
+        margin_true = np.asarray(targets["net_margin"]).reshape(-1)
+        margin_pred = pred_map["net_margin"].reshape(-1)
+
+        metrics: Dict[str, float] = {}
+        metrics["dir_accuracy"] = float(np.mean((dir_pred >= 0.5) == (dir_true >= 0.5))) if dir_true.size else 0.0
+        metrics["dir_confidence_mean"] = float(np.mean(dir_pred)) if dir_pred.size else 0.0
+        metrics["brier_score"] = float(np.mean((dir_pred - dir_true) ** 2)) if dir_true.size else 0.0
+        if margin_true.size:
+            metrics["margin_mae"] = float(np.mean(np.abs(margin_true - margin_pred)))
+            metrics["margin_mean_true"] = float(np.mean(margin_true))
+            metrics["margin_mean_pred"] = float(np.mean(margin_pred))
+        pnl_pred = pred_map.get("net_pnl")
+        if pnl_pred is not None:
+            metrics["pnl_mean_pred"] = float(np.mean(np.asarray(pnl_pred).reshape(-1)))
+        metrics["samples"] = float(dir_true.size)
+        metrics["file_count"] = int(len(file_paths))
+
+        meta_payload = self.last_sample_meta()
+        records_meta = meta_payload.get("records")
+        if not records_meta and meta_payload:
+            timestamps = meta_payload.get("timestamps", [])
+            symbols = meta_payload.get("symbols", [])
+            current_prices = meta_payload.get("current_prices", [])
+            future_prices = meta_payload.get("future_prices", [])
+            files = meta_payload.get("files", [])
+            records_meta = []
+            for idx, ts in enumerate(timestamps):
+                record = {
+                    "timestamp": int(ts),
+                    "symbol": symbols[idx] if idx < len(symbols) else "UNKNOWN",
+                    "current_price": float(current_prices[idx]) if idx < len(current_prices) else 0.0,
+                    "future_price": float(future_prices[idx]) if idx < len(future_prices) else 0.0,
+                    "file": files[idx] if idx < len(files) else "",
+                }
+                records_meta.append(record)
+
+        series: List[Dict[str, Any]] = []
+        sample_count = int(dir_true.size)
+        for idx in range(sample_count):
+            record_meta = records_meta[idx] if records_meta and idx < len(records_meta) else {}
+            ts = int(record_meta.get("timestamp", 0))
+            current_price = float(record_meta.get("current_price", 0.0))
+            future_price = float(record_meta.get("future_price", current_price))
+            predicted_return = float(mu_pred[idx]) if idx < mu_pred.size else 0.0
+            predicted_price = float(current_price * math.exp(predicted_return)) if current_price > 0 else 0.0
+            series.append(
+                {
+                    "index": idx,
+                    "timestamp": ts,
+                    "timestamp_iso": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
+                    "symbol": record_meta.get("symbol"),
+                    "file": record_meta.get("file"),
+                    "current_price": current_price,
+                    "future_price": future_price,
+                    "actual_return": float(mu_true[idx]) if idx < mu_true.size else 0.0,
+                    "predicted_return": predicted_return,
+                    "predicted_price": predicted_price,
+                    "dir_true": float(dir_true[idx]) if idx < dir_true.size else 0.0,
+                    "dir_probability": float(dir_pred[idx]) if idx < dir_pred.size else 0.0,
+                    "net_margin_true": float(margin_true[idx]) if idx < margin_true.size else 0.0,
+                    "net_margin_pred": float(margin_pred[idx]) if idx < margin_pred.size else 0.0,
+                }
+            )
+
+        series.sort(key=lambda entry: entry["timestamp"] or 0)
+
+        preview: Dict[str, Any] = {
+            "metrics": metrics,
+            "series": series,
+            "meta": {
+                "samples": len(series),
+                "files": [str(path) for path in file_paths],
+                "dataset": self._last_dataset_meta,
+            },
+        }
+        if include_news:
+            try:
+                preview["news"] = self.lab_collect_news(file_paths)
+            except Exception as exc:
+                preview["news_error"] = str(exc)
+        return preview
+
     # ------------------------------------------------------------------
     # Utilities
     # ------------------------------------------------------------------
@@ -774,6 +890,17 @@ class TrainingPipeline:
                 details={"positive_ratio": positive_ratio},
             )
         return True
+
+    def last_sample_meta(self) -> Dict[str, Any]:
+        if not self._last_sample_meta:
+            return {}
+        meta_copy: Dict[str, Any] = {}
+        for key, value in self._last_sample_meta.items():
+            if isinstance(value, list):
+                meta_copy[key] = [dict(item) for item in value] if key == "records" else list(value)
+            else:
+                meta_copy[key] = value
+        return meta_copy
 
     def _adapt_vectorizers(self, headline_vec, full_vec) -> None:
         texts = [text for text in self.data_loader.sample_texts(limit=512) if text]

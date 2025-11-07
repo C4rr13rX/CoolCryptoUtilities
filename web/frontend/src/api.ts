@@ -149,6 +149,17 @@ export async function fetchLabNews(payload: { train_files?: string[]; eval_files
   return data;
 }
 
+export interface LabPreviewPayload {
+  files: string[];
+  batch_size?: number;
+  include_news?: boolean;
+}
+
+export async function fetchLabPreview(payload: LabPreviewPayload) {
+  const { data } = await api.post('/lab/preview/', payload);
+  return data;
+}
+
 export interface DataLabDatasetParams {
   chain?: string;
   category?: string;

@@ -25,9 +25,11 @@ import random
 import re
 import sqlite3
 import time
+import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urljoin, urldefrag, urlparse
@@ -54,6 +56,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         r"(^|\.)bitcointalk\.org$",
         r"(^|\.)lists\.metzdowd\.com$",
         r"(^|\.)bitcoinmagazine\.com$",
+        r"(^|\.)blog\.ethereum\.org$",
+        r"(^|\.)ethereum\.org$",
+        r"(^|\.)kraken\.com$",
     ],
     "include_patterns": [r".+"],
     "exclude_patterns": [
@@ -377,6 +382,33 @@ def _extract_html_date(html: str) -> Optional[str]:
     return _try_parse_dates(candidates)
 
 
+def _parse_rss_timestamp(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    try:
+        dt = parsedate_to_datetime(raw)
+        if not dt.tzinfo:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    except Exception:
+        try:
+            # fallback: ISO style already
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+        except Exception:
+            return None
+
+
+def _renders_query_match(text: str, queries: Sequence[str]) -> bool:
+    haystack = text.lower()
+    for term in queries:
+        needle = term.strip().lower()
+        if not needle:
+            continue
+        if all(part in haystack for part in needle.split()):
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Core crawler
 # ---------------------------------------------------------------------------
@@ -508,6 +540,26 @@ class PoliteCryptoCrawler:
             tasks.append(asyncio.create_task(self._search_bitcoinmagazine(session, queries)))
             tasks.append(asyncio.create_task(self._search_metzdowd(session, queries)))
             tasks.append(asyncio.create_task(self._search_bitcointalk(session, queries)))
+            tasks.append(
+                asyncio.create_task(
+                    self._search_rss_feed(
+                        session,
+                        "https://blog.ethereum.org/en/feed.xml",
+                        queries,
+                        "ethereum_blog",
+                    )
+                )
+            )
+            tasks.append(
+                asyncio.create_task(
+                    self._search_rss_feed(
+                        session,
+                        "https://blog.kraken.com/feed",
+                        queries,
+                        "kraken_blog",
+                    )
+                )
+            )
             await asyncio.gather(*tasks)
 
     async def _search_bitcoinmagazine(self, session: aiohttp.ClientSession, queries: Sequence[str]) -> None:
@@ -593,6 +645,59 @@ class PoliteCryptoCrawler:
                     host = urlparse(abs_url).hostname or ""
                     if _host_allowed(host) and _url_allowed(abs_url):
                         self.store.upsert_url(_normalise(abs_url), host, hint_date=None, query_match="bitcointalk")
+
+    async def _search_rss_feed(
+        self,
+        session: aiohttp.ClientSession,
+        feed_url: str,
+        queries: Sequence[str],
+        query_tag: str,
+        max_items: int = 150,
+    ) -> None:
+        text = await self._get_text(session, feed_url)
+        if not text:
+            return
+        try:
+            root = ET.fromstring(text)
+        except Exception:
+            return
+
+        count = 0
+        for item in root.findall(".//item"):
+            if count >= max_items:
+                break
+            title = (item.findtext("title") or "").strip()
+            description = (item.findtext("description") or "").strip()
+            summary = f"{title} {description}".strip()
+            matched = False
+            if summary:
+                matched = _renders_query_match(summary, queries)
+            if not matched:
+                categories = " ".join(cat.text or "" for cat in item.findall("category"))
+                if categories:
+                    matched = _renders_query_match(categories, queries)
+            if not matched:
+                continue
+            link = (item.findtext("link") or "").strip()
+            if not link:
+                atom_link = item.find("{http://www.w3.org/2005/Atom}link")
+                if atom_link is not None:
+                    link = atom_link.attrib.get("href", "").strip()
+            if not link:
+                continue
+            normalized = _normalise(link)
+            host = urlparse(normalized).hostname or ""
+            if not host or not _host_allowed(host) or not _url_allowed(normalized):
+                continue
+
+            hint_date = None
+            for tag in ("pubDate", "published", "updated"):
+                raw_val = item.findtext(tag)
+                hint_date = _parse_rss_timestamp(raw_val)
+                if hint_date:
+                    break
+            self.store.upsert_url(normalized, host, hint_date=hint_date, query_match=query_tag)
+            count += 1
 
     async def _get_text(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
         host = urlparse(url).hostname or ""
@@ -749,12 +854,14 @@ class PoliteCryptoCrawler:
             size_bytes=len(body_bytes),
             error=None,
         )
+        query_row = self.store.conn.execute("SELECT query_match FROM urls WHERE url=?", (url,)).fetchone()
+        query_match = query_row[0] if query_row and query_row[0] else None
         return CrawlResult(
             url=url,
             title=title,
             description=desc,
             detected_date=detected_date,
-            query_match=self.store.conn.execute("SELECT query_match FROM urls WHERE url=?", (url,)).fetchone()[0],
+            query_match=query_match,
             source=host,
         )
 
@@ -795,4 +902,3 @@ def collect_news(
             }
         )
     return output
-

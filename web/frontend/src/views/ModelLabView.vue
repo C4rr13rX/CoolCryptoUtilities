@@ -14,6 +14,9 @@
         >
           {{ store.newsLoading ? 'Fetching…' : 'Fetch News' }}
         </button>
+        <button type="button" class="btn ghost" :disabled="selectedEval.length === 0 || previewLoading" @click="openPreview">
+          Preview Eval
+        </button>
         <button
           type="button"
           class="btn"
@@ -83,6 +86,41 @@
           <h3>Job Log</h3>
           <pre>{{ jobLog.join('\n') }}</pre>
         </div>
+        <div v-if="statusEvents.length" class="events-block">
+          <h3>Recent Events</h3>
+          <ul>
+            <li v-for="event in statusEvents.slice(-6)" :key="`${event.ts}-${event.message}`">
+              <span class="event-time">{{ formatEpoch(event.ts) }}</span>
+              <span class="event-level" :class="event.level">{{ event.level }}</span>
+              <span class="event-message">{{ event.message }}</span>
+            </li>
+          </ul>
+        </div>
+        <div v-if="statusSnapshot?.config" class="snapshot-block">
+          <h3>Snapshot</h3>
+          <dl>
+            <div>
+              <dt>Epochs</dt>
+              <dd>{{ statusSnapshot.config.epochs }}</dd>
+            </div>
+            <div>
+              <dt>Batch Size</dt>
+              <dd>{{ statusSnapshot.config.batch_size }}</dd>
+            </div>
+            <div>
+              <dt>Train Files</dt>
+              <dd>{{ (statusSnapshot.config.train_files || []).length }}</dd>
+            </div>
+            <div>
+              <dt>Eval Files</dt>
+              <dd>{{ (statusSnapshot.config.eval_files || []).length }}</dd>
+            </div>
+            <div v-if="statusSnapshot.error">
+              <dt>Error</dt>
+              <dd>{{ statusSnapshot.error.message }}</dd>
+            </div>
+          </dl>
+        </div>
       </article>
       <article v-if="historyEntries.length" class="panel history-panel">
         <h2>Job History</h2>
@@ -115,12 +153,50 @@
         <h2>Historical Windows</h2>
         <button type="button" class="btn ghost" @click="refreshAll" :disabled="store.loading">Refresh</button>
       </header>
+      <div class="filters">
+        <div class="filters-row">
+          <label>
+            <span>Search</span>
+            <input type="search" v-model.trim="filters.search" placeholder="Symbol or file…" />
+          </label>
+          <label>
+            <span>Chain</span>
+            <select v-model="filters.chain">
+              <option value="all">All chains</option>
+              <option v-for="chain in chains" :key="chain" :value="chain">{{ chain }}</option>
+            </select>
+          </label>
+          <label>
+            <span>Start Date</span>
+            <input type="date" v-model="filters.startDate" />
+          </label>
+          <label>
+            <span>End Date</span>
+            <input type="date" v-model="filters.endDate" />
+          </label>
+        </div>
+        <div class="filters-row">
+          <label>
+            <span>Min Size (kB)</span>
+            <input type="number" min="0" v-model.number="filters.minSize" />
+          </label>
+          <label>
+            <span>Max Size (kB)</span>
+            <input type="number" min="0" v-model.number="filters.maxSize" />
+          </label>
+          <button type="button" class="btn ghost reset" @click="resetFilters">Reset</button>
+        </div>
+      </div>
       <table class="table">
         <thead>
           <tr>
             <th>#</th>
-            <th>Train</th>
-            <th>Eval</th>
+            <th>
+              <input type="checkbox" :checked="allTrainSelected" @change="toggleAll('train')" />
+            </th>
+            <th>
+              <input type="checkbox" :checked="allEvalSelected" @change="toggleAll('eval')" />
+            </th>
             <th>Chain</th>
             <th>
               <button type="button" class="link" @click="toggleFileSort('symbol')">
@@ -188,11 +264,115 @@
       <p v-else-if="store.newsLoading" class="empty">Fetching contextual news…</p>
       <p v-else class="empty">Select one or more windows and fetch news to see contextual headlines.</p>
     </section>
+
+    <transition name="modal-fade">
+      <div v-if="showPreview" class="preview-modal__backdrop" @click.self="closePreview">
+        <div class="preview-modal">
+          <header>
+            <div>
+              <h2>Evaluation Preview</h2>
+              <p class="caption">
+                {{ previewSeries.length }} samples · {{ previewMeta.files?.length || selectedEval.length }} files
+              </p>
+            </div>
+            <button type="button" class="close-btn" @click="closePreview" aria-label="Close preview">×</button>
+          </header>
+          <section class="preview-modal__body">
+            <div v-if="previewLoading" class="preview-loading">Generating preview…</div>
+            <div v-else-if="previewError" class="error">{{ previewError }}</div>
+            <div v-else-if="!previewSeries.length" class="preview-empty">No preview data available for the selected files.</div>
+            <div v-else class="preview-content">
+              <PreviewChart :series="previewSeries" :selected-index="previewIndex" />
+              <div class="preview-controls">
+                <label>
+                  <span>Sample</span>
+                  <input
+                    v-model.number="previewIndex"
+                    type="range"
+                    min="0"
+                    :max="previewSeries.length - 1"
+                  />
+                </label>
+                <label>
+                  <span>Date &amp; Time</span>
+                  <input
+                    type="datetime-local"
+                    v-model="previewDatetime"
+                    @change="selectNearestByDate(previewDatetime)"
+                  />
+                </label>
+                <div class="preview-nav">
+                  <button type="button" class="btn ghost" @click="adjustPreviewIndex(-1)" :disabled="previewIndex <= 0">
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    class="btn ghost"
+                    @click="adjustPreviewIndex(1)"
+                    :disabled="previewIndex >= previewSeries.length - 1"
+                  >
+                    ›
+                  </button>
+                </div>
+              </div>
+              <div v-if="previewPoint" class="preview-stats">
+                <div>
+                  <span class="label">Current</span>
+                  <span class="value">{{ formatNumber(previewPoint.current_price) }}</span>
+                </div>
+                <div>
+                  <span class="label">Predicted</span>
+                  <span class="value">{{ formatNumber(previewPoint.predicted_price) }}</span>
+                </div>
+                <div>
+                  <span class="label">Future</span>
+                  <span class="value">{{ formatNumber(previewPoint.future_price) }}</span>
+                </div>
+                <div>
+                  <span class="label">Dir Prob</span>
+                  <span class="value">{{ formatNumber(previewPoint.dir_probability) }}</span>
+                </div>
+                <div>
+                  <span class="label">Net Margin</span>
+                  <span class="value">{{ formatNumber(previewPoint.net_margin_pred) }}</span>
+                </div>
+              </div>
+              <div class="preview-metrics" v-if="Object.keys(previewMetrics).length">
+                <h3>Summary Metrics</h3>
+                <ul>
+                  <li v-for="(value, key) in previewMetrics" :key="key">
+                    <strong>{{ key }}</strong>
+                    <span>{{ formatNumber(value) }}</span>
+                  </li>
+                </ul>
+              </div>
+              <div class="preview-news" v-if="previewNews.length">
+                <h3>Contextual News</h3>
+                <ul>
+                  <li v-for="item in previewNews" :key="item.url || item.title">
+                    <div class="headline">
+                      <a v-if="item.url" :href="item.url" target="_blank" rel="noopener noreferrer">{{ item.title }}</a>
+                      <span v-else>{{ item.title }}</span>
+                    </div>
+                    <div class="meta">
+                      <span>{{ formatDateText(item.datetime || item.timestamp) }}</span>
+                      <span>Source: {{ item.source || item.origin }}</span>
+                      <span v-if="item.sentiment">Sentiment: {{ item.sentiment }}</span>
+                    </div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import PreviewChart from '@/components/PreviewChart.vue';
 import { useLabStore } from '@/stores/lab';
 
 const store = useLabStore();
@@ -201,27 +381,65 @@ const batchSize = ref(32);
 const selectedTrain = ref<string[]>([]);
 const selectedEval = ref<string[]>([]);
 const isStarting = ref(false);
+const filters = reactive({
+  search: '',
+  chain: 'all',
+  minSize: null as number | null,
+  maxSize: null as number | null,
+  startDate: '',
+  endDate: '',
+});
+
+const fileSort = reactive({ key: 'modified', dir: 'desc' as 'asc' | 'desc' });
+const showPreview = ref(false);
+const previewIndex = ref(0);
+const previewDatetime = ref('');
 let pollHandle: number | undefined;
 
 const progress = computed(() => store.progress);
 const result = computed(() => store.result);
 const jobLog = computed(() => store.jobLog || []);
 const historyEntries = computed(() => store.jobHistory || []);
+const statusEvents = computed(() => store.events);
+const statusSnapshot = computed(() => store.snapshot);
 const newsItems = computed(() => store.news || []);
 const newsMeta = computed(() => store.newsMeta);
 const hasSelection = computed(() => selectedTrain.value.length > 0 || selectedEval.value.length > 0);
-const newsRange = computed(() => {
-  if (!newsMeta.value) return '';
-  const start = newsMeta.value.start ? formatDateText(newsMeta.value.start) : '—';
-  const end = newsMeta.value.end ? formatDateText(newsMeta.value.end) : '—';
-  return `${start} → ${end}`;
+const chains = computed(() => {
+  const values = new Set<string>();
+  store.files.forEach((file) => {
+    if (file.chain) values.add(file.chain);
+  });
+  return Array.from(values).sort();
 });
 
-const fileSort = reactive({ key: 'modified', dir: 'desc' as 'asc' | 'desc' });
+const filteredFiles = computed(() => {
+  const search = filters.search.trim().toLowerCase();
+  const chain = filters.chain;
+  const minSize = filters.minSize != null ? filters.minSize * 1024 : null;
+  const maxSize = filters.maxSize != null ? filters.maxSize * 1024 : null;
+  const startTs = filters.startDate ? Math.floor(Date.parse(filters.startDate) / 1000) : null;
+  const endTs = filters.endDate ? Math.floor(Date.parse(filters.endDate) / 1000) : null;
+  return store.files.filter((file) => {
+    if (chain !== 'all' && file.chain !== chain) return false;
+    if (search) {
+      const haystack = `${file.symbol} ${file.path}`.toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    if (minSize != null && file.size_bytes < minSize) return false;
+    if (maxSize != null && file.size_bytes > maxSize) return false;
+    if (startTs != null && file.modified < startTs) return false;
+    if (endTs != null && file.modified > endTs) return false;
+    return true;
+  });
+});
+
+const filteredPaths = computed(() => filteredFiles.value.map((file) => file.path));
+
 const sortedFiles = computed(() => {
   const key = fileSort.key;
   const dir = fileSort.dir === 'asc' ? 1 : -1;
-  return [...store.files].sort((a, b) => {
+  return [...filteredFiles.value].sort((a, b) => {
     if (key === 'size') {
       return (a.size_bytes - b.size_bytes) * dir;
     }
@@ -231,6 +449,106 @@ const sortedFiles = computed(() => {
     return (a.modified - b.modified) * dir;
   });
 });
+
+const allTrainSelected = computed(() => filteredPaths.value.length > 0 && filteredPaths.value.every((path) => selectedTrain.value.includes(path)));
+const allEvalSelected = computed(() => filteredPaths.value.length > 0 && filteredPaths.value.every((path) => selectedEval.value.includes(path)));
+
+const newsRange = computed(() => {
+  if (!newsMeta.value) return '';
+  const start = newsMeta.value.start ? formatDateText(newsMeta.value.start) : '—';
+  const end = newsMeta.value.end ? formatDateText(newsMeta.value.end) : '—';
+  return `${start} → ${end}`;
+});
+
+const previewData = computed(() => store.preview || {});
+const previewSeries = computed(() => (Array.isArray(previewData.value.series) ? previewData.value.series : []));
+const previewMetrics = computed(() => (previewData.value.metrics as Record<string, any>) || {});
+const previewMeta = computed(() => (previewData.value.meta as Record<string, any>) || {});
+const previewNews = computed(() => {
+  const payload = previewData.value.news;
+  if (!payload) return [];
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload.items)) return payload.items;
+  return [];
+});
+const previewLoading = computed(() => store.previewLoading);
+const previewError = computed(() => store.previewError);
+const previewPoint = computed(() => previewSeries.value[previewIndex.value] || null);
+
+watch(
+  selectedTrain,
+  (value) => {
+    const unique = Array.from(new Set(value));
+    if (unique.length !== value.length) {
+      selectedTrain.value = unique;
+    }
+  },
+  { deep: true },
+);
+
+watch(
+  selectedEval,
+  (value) => {
+    const unique = Array.from(new Set(value));
+    if (unique.length !== value.length) {
+      selectedEval.value = unique;
+    }
+  },
+  { deep: true },
+);
+
+watch(previewSeries, (series) => {
+  if (!series.length) {
+    previewIndex.value = 0;
+    previewDatetime.value = '';
+    return;
+  }
+  if (previewIndex.value >= series.length) {
+    previewIndex.value = series.length - 1;
+  }
+  const ts = series[previewIndex.value]?.timestamp;
+  if (ts) {
+    previewDatetime.value = toInputValue(ts);
+  }
+});
+
+watch(previewIndex, (idx) => {
+  const point = previewSeries.value[idx];
+  if (point?.timestamp) {
+    previewDatetime.value = toInputValue(point.timestamp);
+  }
+});
+
+function toggleFileSort(key: string) {
+  if (fileSort.key === key) {
+    fileSort.dir = fileSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    fileSort.key = key;
+    fileSort.dir = key === 'symbol' ? 'asc' : 'desc';
+  }
+}
+
+function toggleAll(mode: 'train' | 'eval') {
+  const paths = filteredPaths.value;
+  if (!paths.length) return;
+  const target = mode === 'train' ? selectedTrain : selectedEval;
+  if (paths.every((path) => target.value.includes(path))) {
+    target.value = target.value.filter((path) => !paths.includes(path));
+  } else {
+    const merged = new Set(target.value);
+    paths.forEach((path) => merged.add(path));
+    target.value = Array.from(merged);
+  }
+}
+
+function resetFilters() {
+  filters.search = '';
+  filters.chain = 'all';
+  filters.minSize = null;
+  filters.maxSize = null;
+  filters.startDate = '';
+  filters.endDate = '';
+}
 
 async function refreshAll() {
   await Promise.all([store.loadFiles(), store.refreshStatus()]);
@@ -277,6 +595,55 @@ async function fetchNews() {
   });
 }
 
+async function openPreview() {
+  if (!selectedEval.value.length) return;
+  showPreview.value = true;
+  store.resetPreview();
+  previewIndex.value = 0;
+  previewDatetime.value = '';
+  try {
+    await store.loadPreview({
+      files: selectedEval.value,
+      batch_size: batchSize.value,
+      include_news: true,
+    });
+  } catch (err) {
+    // errors exposed via previewError
+  }
+}
+
+function closePreview() {
+  showPreview.value = false;
+  store.resetPreview();
+  previewIndex.value = 0;
+  previewDatetime.value = '';
+}
+
+function selectNearestByDate(value: string) {
+  if (!value) return;
+  const ts = Math.floor(new Date(value).getTime() / 1000);
+  if (!Number.isFinite(ts)) return;
+  let nearest = 0;
+  let minDiff = Number.POSITIVE_INFINITY;
+  previewSeries.value.forEach((point: any, idx: number) => {
+    const diff = Math.abs(Number(point.timestamp || 0) - ts);
+    if (diff < minDiff) {
+      minDiff = diff;
+      nearest = idx;
+    }
+  });
+  previewIndex.value = nearest;
+  const nearestTs = previewSeries.value[nearest]?.timestamp;
+  if (nearestTs) previewDatetime.value = toInputValue(nearestTs);
+}
+
+function adjustPreviewIndex(delta: number) {
+  const next = Math.min(Math.max(previewIndex.value + delta, 0), previewSeries.value.length - 1);
+  previewIndex.value = next;
+  const ts = previewSeries.value[next]?.timestamp;
+  if (ts) previewDatetime.value = toInputValue(ts);
+}
+
 function schedulePolling() {
   clearPolling();
   pollHandle = window.setInterval(() => store.refreshStatus(), 4000);
@@ -286,15 +653,6 @@ function clearPolling() {
   if (pollHandle) {
     window.clearInterval(pollHandle);
     pollHandle = undefined;
-  }
-}
-
-function toggleFileSort(key: string) {
-  if (fileSort.key === key) {
-    fileSort.dir = fileSort.dir === 'asc' ? 'desc' : 'asc';
-  } else {
-    fileSort.key = key;
-    fileSort.dir = key === 'symbol' ? 'asc' : 'desc';
   }
 }
 
@@ -311,9 +669,14 @@ function formatDate(ts: number) {
   return date.toLocaleString();
 }
 
-function formatDateText(value: string) {
-  if (!value) return '—';
-  const dt = new Date(value);
+function formatDateText(value: any) {
+  if (value === null || value === undefined || value === '') return '—';
+  let dt: Date;
+  if (typeof value === 'number') {
+    dt = new Date((value > 1e12 ? value : value * 1000));
+  } else {
+    dt = new Date(value);
+  }
   if (Number.isNaN(dt.getTime())) return value;
   return dt.toLocaleString();
 }
@@ -330,6 +693,10 @@ function formatEpoch(value: any) {
   const num = Number(value);
   if (!Number.isFinite(num)) return '—';
   return new Date(num * 1000).toLocaleString();
+}
+
+function toInputValue(ts: number): string {
+  return new Date(ts * 1000).toISOString().slice(0, 16);
 }
 
 onMounted(async () => {
@@ -374,6 +741,7 @@ watch(
 .action-buttons {
   display: flex;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .lab-header h1 {
@@ -458,6 +826,11 @@ watch(
 }
 
 .error {
+  color: #f87171;
+  font-size: 0.85rem;
+}
+
+.error-text {
   color: #f87171;
   font-size: 0.85rem;
 }
@@ -620,8 +993,279 @@ watch(
   color: #f87171;
 }
 
-.error-text {
-  color: #f87171;
-  font-size: 0.85rem;
+.events-block {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.events-block ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.events-block li {
+  display: grid;
+  grid-template-columns: auto 64px 1fr;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  align-items: center;
+}
+
+.event-time {
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.event-level {
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.15);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  text-align: center;
+  color: rgba(191, 219, 254, 0.9);
+}
+
+.event-level.error {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fecaca;
+}
+
+.snapshot-block {
+  margin-top: 1.2rem;
+}
+
+.snapshot-block dl {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+.snapshot-block dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.snapshot-block dd {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #dbeafe;
+}
+
+.filters {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.filters-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: rgba(191, 219, 254, 0.8);
+}
+
+.filters input,
+.filters select {
+  background: rgba(12, 22, 38, 0.9);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  color: #e2e8f0;
+  padding: 0.45rem 0.6rem;
+}
+
+.filters .reset {
+  align-self: flex-end;
+}
+
+.preview-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 16, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(1rem, 2vw, 2rem);
+  z-index: 80;
+}
+
+.preview-modal {
+  width: min(960px, 100%);
+  max-height: 90vh;
+  background: rgba(7, 14, 24, 0.97);
+  border-radius: 20px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  box-shadow: 0 32px 76px rgba(2, 8, 24, 0.65);
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-modal header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.2rem 1.5rem;
+  border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.preview-modal header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.preview-modal header .caption {
+  font-size: 0.8rem;
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.preview-modal__body {
+  padding: 1.4rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.preview-loading,
+.preview-empty {
+  padding: 2rem;
+  text-align: center;
+  background: rgba(10, 19, 33, 0.85);
+  border-radius: 16px;
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  color: rgba(226, 232, 240, 0.85);
+}
+
+.preview-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  align-items: center;
+}
+
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.preview-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: rgba(191, 219, 254, 0.75);
+}
+
+.preview-controls input {
+  background: rgba(9, 17, 30, 0.85);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  color: #e2e8f0;
+  padding: 0.45rem 0.6rem;
+}
+
+.preview-nav {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.preview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border-radius: 14px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: rgba(11, 23, 40, 0.65);
+}
+
+.preview-stats .label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.preview-stats .value {
+  font-size: 1rem;
+  color: #f8fafc;
+}
+
+.preview-metrics ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.preview-metrics li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: rgba(226, 232, 240, 0.85);
+  font-size: 0.88rem;
+}
+
+.preview-news ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.preview-news .headline {
+  font-weight: 600;
+  color: #e0f2fe;
+}
+
+.preview-news .meta {
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.75);
+  display: flex;
+  gap: 1.25rem;
+}
+
+.close-btn {
+  border: none;
+  background: rgba(59, 130, 246, 0.15);
+  color: #dbeafe;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  font-size: 1.2rem;
+  cursor: pointer;
+}
+
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+
+@media (max-width: 768px) {
+  .preview-modal__body {
+    padding: 1rem;
+  }
 }
 </style>

@@ -5,10 +5,11 @@ import json
 import os
 import re
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 
@@ -32,6 +33,24 @@ TOKEN_OVERRIDES: Dict[str, Sequence[str]] = {
     "WMATIC": ["MATIC"],
     "WFTM": ["FTM"],
 }
+
+BASE_CONTEXT_TOKENS: Dict[str, Sequence[str]] = {
+    "BTC": ["bitcoin", "btc price", "bitcoin network", "hashrate"],
+    "ETH": ["ethereum", "eth price", "ethereum mainnet", "gas fees"],
+    "BNB": ["bnb chain", "binance smart chain", "bnb price"],
+    "SOL": ["solana", "sol price", "solana transactions"],
+    "MATIC": ["polygon", "matic price", "polygon pos"],
+    "AVAX": ["avalanche", "avax price", "avax c-chain"],
+    "ARB": ["arbitrum", "arb token", "arbitrum network"],
+    "OP": ["optimism", "op token", "optimism superchain"],
+    "FTM": ["fantom", "ftm price", "fantom opera"],
+    "ADA": ["cardano", "ada price", "cardano updates"],
+    "USDC": ["usd coin", "circle", "stablecoin regulation"],
+    "USDT": ["tether", "usdt issuance", "stablecoin flows"],
+    "DAI": ["makerdao", "dai stability", "stablecoin governance"],
+}
+
+NEWS_LOG_PREFIX = "news:log"
 
 
 @dataclass
@@ -94,6 +113,129 @@ def _expand_tokens(symbols: Iterable[str]) -> List[str]:
                 tokens.extend([tok.upper() for tok in TOKEN_SYNONYMS[part]])
     unique = sorted({tok.upper() for tok in tokens if tok})
     return unique
+
+
+def _sanitize_symbol_key(value: str) -> str:
+    cleaned = re.sub(r"[^A-Z0-9]+", "_", value.upper())
+    cleaned = cleaned.strip("_")
+    return cleaned or "UNKNOWN"
+
+
+def _iter_days(start_dt: datetime, end_dt: datetime) -> Iterable[datetime]:
+    cursor = start_dt.date()
+    last = end_dt.date()
+    while cursor <= last:
+        yield datetime.combine(cursor, datetime.min.time(), tzinfo=timezone.utc)
+        cursor += timedelta(days=1)
+
+
+def _build_query_terms(symbols: Sequence[str], tokens: Sequence[str]) -> Tuple[List[str], List[str]]:
+    base_tokens = sorted({tok.upper() for tok in tokens if tok})
+    query_terms: Set[str] = set()
+    for symbol in symbols:
+        if not symbol:
+            continue
+        query_terms.add(symbol)
+        query_terms.add(symbol.replace("-", " "))
+        query_terms.add(symbol.replace("_", " "))
+    if len(symbols) > 1:
+        query_terms.add(" ".join(symbols))
+    for token in base_tokens:
+        query_terms.add(token)
+        for ctx in BASE_CONTEXT_TOKENS.get(token, []):
+            query_terms.add(ctx)
+    query_terms = {term.strip() for term in query_terms if term and term.strip()}
+    return base_tokens, sorted(query_terms)
+
+
+def _derive_log_keys(symbols: Sequence[str], tokens: Sequence[str]) -> List[str]:
+    keys = {_sanitize_symbol_key(symbol) for symbol in symbols if symbol}
+    keys.update(_sanitize_symbol_key(token) for token in tokens if token)
+    return sorted(keys)
+
+
+def _load_seen_entries(
+    db: TradingDatabase,
+    symbol_keys: Sequence[str],
+    start_dt: datetime,
+    end_dt: datetime,
+) -> Tuple[Set[str], Set[str]]:
+    seen_urls: Set[str] = set()
+    seen_titles: Set[str] = set()
+    for day_dt in _iter_days(start_dt, end_dt):
+        day = day_dt.date().isoformat()
+        for key in symbol_keys:
+            entry = db.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day}") or {}
+            seen_urls.update(entry.get("urls") or [])
+            seen_titles.update(entry.get("titles") or [])
+    return seen_urls, seen_titles
+
+
+def _group_items_by_day(items: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        timestamp = item.get("timestamp")
+        if not timestamp:
+            continue
+        try:
+            ts = int(timestamp)
+        except Exception:
+            continue
+        day = datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+        grouped[day].append(item)
+    return grouped
+
+
+def _record_news_attempt(
+    db: TradingDatabase,
+    symbol_keys: Sequence[str],
+    start_dt: datetime,
+    end_dt: datetime,
+    items: Sequence[Dict[str, Any]],
+) -> None:
+    grouped = _group_items_by_day(items)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for day_dt in _iter_days(start_dt, end_dt):
+        day_str = day_dt.date().isoformat()
+        day_items = grouped.get(day_str, [])
+        for key in symbol_keys:
+            existing = db.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
+            urls = set(existing.get("urls") or [])
+            titles = set(existing.get("titles") or [])
+            sources = existing.get("sources") or {}
+            attempts = int(existing.get("attempts", 0)) + 1
+            for item in day_items:
+                url = item.get("url")
+                title = item.get("title")
+                source = (item.get("source") or item.get("origin") or "unknown").lower()
+                if url:
+                    urls.add(url)
+                    source_urls = set(sources.get(source, []))
+                    source_urls.add(url)
+                    sources[source] = sorted(source_urls)
+                if title:
+                    titles.add(title)
+            payload = {
+                "symbol": key,
+                "date": day_str,
+                "urls": sorted(urls),
+                "titles": sorted(titles),
+                "sources": sources,
+                "attempts": attempts,
+                "updated": now_iso,
+            }
+            db.set_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}", payload)
+
+
+def _summarize_sources(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for item in items:
+        source = (item.get("source") or item.get("origin") or "unknown").lower()
+        counts[source] = counts.get(source, 0) + 1
+    return sorted(
+        ({"source": key, "count": value} for key, value in counts.items()),
+        key=lambda row: (-row["count"], row["source"]),
+    )
 
 
 def _parse_article_link(article_text: str) -> Optional[str]:
@@ -197,10 +339,15 @@ def collect_news_for_files(
         return cached["payload"]
 
     tokens = _expand_tokens(symbols)
+    api_tokens, query_terms = _build_query_terms(symbols, tokens or symbols)
+    api_tokens = api_tokens or (symbols if symbols else ["BTC"])
+    symbol_keys = _derive_log_keys(symbols, api_tokens)
+    seen_urls, seen_titles = _load_seen_entries(database, symbol_keys, start_dt, end_dt)
+
     crypto_items: List[Dict[str, Any]] = []
     try:
         archiver = CryptoNewsArchiver()
-        news_df = archiver.collect_window(symbols=tokens or symbols, start=start_dt, end=end_dt, persist=False)
+        news_df = archiver.collect_window(symbols=api_tokens, start=start_dt, end=end_dt, persist=False)
         if not news_df.empty:
             crypto_items = [_format_crypto_news(row) for row in news_df.to_dict("records")]
     except RuntimeError:
@@ -210,30 +357,48 @@ def collect_news_for_files(
 
     crawler_items: List[Dict[str, Any]] = []
     try:
-        query_terms = tokens + [" ".join(symbols)]
-        crawler_records = crawl_news(queries=query_terms, start=start_dt, end=end_dt, max_pages=120)
+        crawler_records = crawl_news(queries=query_terms, start=start_dt, end=end_dt, max_pages=160)
         crawler_items = _format_crawler_news(crawler_records)
     except Exception:
         crawler_items = []
 
+    total_attempted = len(crypto_items) + len(crawler_items)
+    dedup_skipped = 0
     combined: Dict[str, Dict[str, Any]] = {}
     for item in crypto_items + crawler_items:
-        key = item.get("url") or item.get("title")
-        if not key:
-            key = f"{item['origin']}:{item['timestamp']}"
-        if key in combined:
-            existing = combined[key]
-            if item["timestamp"] > existing["timestamp"]:
-                combined[key] = item
-        else:
-            combined[key] = item
+        url = item.get("url")
+        title = item.get("title")
+        if url and url in seen_urls:
+            dedup_skipped += 1
+            continue
+        if title and title in seen_titles:
+            dedup_skipped += 1
+            continue
+        key = url or title or f"{item['origin']}:{item['timestamp']}"
+        existing = combined.get(key)
+        if existing and item["timestamp"] <= existing["timestamp"]:
+            continue
+        combined[key] = item
+        if url:
+            seen_urls.add(url)
+        if title:
+            seen_titles.add(title)
 
     items = sorted(combined.values(), key=lambda row: row["timestamp"], reverse=True)
+    _record_news_attempt(database, symbol_keys, start_dt, end_dt, items)
     payload = {
         "symbols": symbols,
+        "tokens": api_tokens,
+        "query_terms": query_terms,
         "start": start_dt.isoformat(),
         "end": end_dt.isoformat(),
         "items": items,
+        "sources": _summarize_sources(items),
+        "meta": {
+            "attempted": total_attempted,
+            "deduplicated": dedup_skipped,
+            "returned": len(items),
+        },
     }
 
     database.set_json(cache_key, {"expires": time.time() + cache_ttl_sec, "payload": payload})
@@ -250,7 +415,22 @@ def collect_news_for_terms(
     cache_key: Optional[str] = None,
     cache_ttl_sec: int = 3 * 3600,
 ) -> Dict[str, Any]:
-    tokens = sorted({tok.upper() for tok in tokens if tok})
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    else:
+        start = start.astimezone(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    else:
+        end = end.astimezone(timezone.utc)
+
+    input_symbols = [str(tok).upper() for tok in tokens if tok]
+    symbol_seed = input_symbols or [str(tok).upper() for tok in tokens if tok] or ["BTC"]
+    expanded_tokens = _expand_tokens(symbol_seed)
+    api_tokens, query_terms = _build_query_terms(symbol_seed, expanded_tokens or symbol_seed)
+    api_tokens = api_tokens or symbol_seed
+    symbol_keys = _derive_log_keys(symbol_seed, api_tokens)
+
     database = get_db()
     if cache_key:
         cached = database.get_json(cache_key)
@@ -265,38 +445,64 @@ def collect_news_for_terms(
                 results = {**results, "items": filtered_items}
             return results
 
+    seen_urls, seen_titles = _load_seen_entries(database, symbol_keys, start, end)
+
     try:
         archiver = CryptoNewsArchiver()
-        crypto_df = archiver.collect_window(symbols=tokens or ["BTC"], start=start, end=end, persist=False)
+        crypto_df = archiver.collect_window(symbols=api_tokens, start=start, end=end, persist=False)
         crypto_items = [_format_crypto_news(row) for row in crypto_df.to_dict("records")] if not crypto_df.empty else []
     except Exception:
         crypto_items = []
 
     crawler_records = crawl_news(
-        queries=tokens or ["crypto"],
+        queries=query_terms or api_tokens,
         start=start,
         end=end,
         max_pages=max_pages or 200,
     )
     crawler_items = _format_crawler_news(crawler_records)
 
+    total_attempted = len(crypto_items) + len(crawler_items)
+    dedup_skipped = 0
     combined: Dict[str, Dict[str, Any]] = {}
     for item in crypto_items + crawler_items:
-        key = item.get("url") or f"{item['origin']}:{item['timestamp']}"
-        if key in combined and item["timestamp"] <= combined[key]["timestamp"]:
+        url = item.get("url")
+        title = item.get("title")
+        if url and url in seen_urls:
+            dedup_skipped += 1
+            continue
+        if title and title in seen_titles:
+            dedup_skipped += 1
+            continue
+        key = url or f"{item['origin']}:{item['timestamp']}"
+        existing = combined.get(key)
+        if existing and item["timestamp"] <= existing["timestamp"]:
             continue
         combined[key] = item
+        if url:
+            seen_urls.add(url)
+        if title:
+            seen_titles.add(title)
 
     items = sorted(combined.values(), key=lambda row: row["timestamp"], reverse=True)
     if query:
         query_lower = query.lower()
         items = [item for item in items if query_lower in (item["title"] + " " + item.get("summary", "")).lower()]
 
+    _record_news_attempt(database, symbol_keys, start, end, items)
     result = {
-        "symbols": tokens,
+        "symbols": input_symbols or api_tokens,
+        "tokens": api_tokens,
+        "query_terms": query_terms,
         "start": start.isoformat(),
         "end": end.isoformat(),
         "items": items,
+        "sources": _summarize_sources(items),
+        "meta": {
+            "attempted": total_attempted,
+            "deduplicated": dedup_skipped,
+            "returned": len(items),
+        },
     }
     if cache_key:
         database.set_json(cache_key, {"expires": time.time() + cache_ttl_sec, "payload": result})

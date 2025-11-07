@@ -66,3 +66,33 @@ class LabNewsView(APIView):
         except Exception as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(news_payload, status=status.HTTP_200_OK)
+
+
+class LabPreviewView(APIView):
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        payload = request.data or {}
+        files = payload.get("files") or payload.get("eval_files") or []
+        if not isinstance(files, list):
+            return Response({"detail": "files must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+        file_paths = [str(item) for item in files if item]
+        if not file_paths:
+            return Response({"detail": "No files provided for preview"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            batch_size = max(8, int(payload.get("batch_size", 16)))
+        except (TypeError, ValueError):
+            return Response({"detail": "batch_size must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
+        include_news = bool(payload.get("include_news", True))
+        pipeline = TrainingPipeline()
+        try:
+            preview = pipeline.lab_preview_series(
+                file_paths,
+                batch_size=batch_size,
+                include_news=include_news,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except RuntimeError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        except Exception as exc:  # pragma: no cover - defensive
+            return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(preview, status=status.HTTP_200_OK)
