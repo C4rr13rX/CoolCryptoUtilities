@@ -27,6 +27,7 @@ class ProductionManager:
         self._cycle_thread: Optional[threading.Thread] = None
         self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "45"))
         self._active_flag_key = "production_manager_active"
+        self.idle_worker = IdleWorkManager(db=self.pipeline.db)
 
     def start(self) -> None:
         if self.is_running:
