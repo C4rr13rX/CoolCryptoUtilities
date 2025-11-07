@@ -36,6 +36,7 @@ from trading.metrics import (
     classification_report,
     distribution_report,
 )
+from services.logging_bus import log_message
 
 
 CUSTOM_OBJECTS = {
@@ -857,11 +858,19 @@ class TrainingPipeline:
                 raise ValueError(f"Tensor '{name}' contains NaN or infinite values.")
             return arr_np
 
-        price_vol = _finite("price_vol_input", inputs["price_vol_input"])
+        price_vol = _finite("price_vol_input", inputs["price_vol_input"]).copy()
         if np.any(price_vol[..., 0] < 0):
             raise ValueError("Price channel contains negative values.")
-        if np.any(np.abs(price_vol[..., 1]) > 1e12):
-            raise ValueError("Volume channel magnitude exceeds safety threshold (1e12).")
+        vol_thresh = float(os.getenv("VOLUME_ABSOLUTE_LIMIT", "1e12"))
+        if np.any(np.abs(price_vol[..., 1]) > vol_thresh):
+            log_message(
+                "training",
+                "clipping anomalous volumes in dataset",
+                severity="warning",
+                details={"threshold": vol_thresh},
+            )
+            price_vol[..., 1] = np.clip(price_vol[..., 1], -vol_thresh, vol_thresh)
+            inputs["price_vol_input"][..., 1] = price_vol[..., 1]
 
         _finite("sentiment_seq", inputs["sentiment_seq"])
 

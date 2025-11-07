@@ -18,6 +18,7 @@ class MetricStage:
     DATA_STREAM = "data_stream"
     MODEL_FINE_TUNE = "model_fine_tune"
     NEWS = "news_enrichment"
+    PIPELINE = "pipeline"
 
 
 class FeedbackSeverity:
