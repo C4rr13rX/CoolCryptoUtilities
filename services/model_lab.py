@@ -185,6 +185,16 @@ class ModelLabRunner:
             snapshot.update(fields)
             self._status["snapshot"] = snapshot
 
+    def _emit_trace_events(self, trace: Optional[List[Dict[str, Any]]], *, prefix: str = "") -> None:
+        if not trace:
+            return
+        for entry in trace[:32]:
+            stage = entry.get("stage", "trace")
+            level = entry.get("level") or ("error" if entry.get("status") == "error" else "info")
+            ctx = {k: v for k, v in entry.items() if k not in {"stage", "level"}}
+            name = f"{prefix}_{stage}" if prefix else stage
+            self._record_event(level, name, ctx or None)
+
     def _should_pause_pipeline(self, pipeline: Optional[TrainingPipeline] = None) -> bool:
         flag = None
         try:
@@ -193,11 +203,8 @@ class ModelLabRunner:
             flag = None
         if self._flag_truthy(flag):
             return True
-        try:
-            instance = pipeline or TrainingPipeline(db=self.db)
-            return instance.is_paused()
-        except Exception:
-            return False
+        # When production manager isn't running, avoid pausing the pipeline to keep lab jobs responsive.
+        return False
 
     @staticmethod
     def _flag_truthy(flag: Optional[Any]) -> bool:
@@ -280,12 +287,19 @@ class ModelLabRunner:
                     {"datasets": len(news_targets), "files": news_targets},
                 )
                 try:
+                    def _news_progress(entry: Dict[str, Any]) -> None:
+                        stage = entry.get("stage", "trace")
+                        level = entry.get("level") or "info"
+                        context = {k: v for k, v in entry.items() if k not in {"stage", "level"}}
+                        self._record_event(level, f"news_{stage}", context or None)
+
                     news_summary = collect_news_for_files(
                         news_targets,
                         db=self.db,
                         hours_before=24,
                         hours_after=24,
                         cache_ttl_sec=2 * 3600,
+                        progress_cb=_news_progress,
                     )
                     total_news = len(news_summary.get("items", []))
                     source_span = len(news_summary.get("sources", []))
@@ -298,6 +312,23 @@ class ModelLabRunner:
                             "symbols": news_summary.get("symbols") or [],
                         },
                     )
+                    self._emit_trace_events(news_summary.get("trace"), prefix="news")
+                    items = news_summary.get("items") or []
+                    if items:
+                        sample = items[: min(2, len(items))]
+                        for idx, entry in enumerate(sample):
+                            self._record_event(
+                                "info",
+                                f"news_sample_{idx+1}",
+                                {
+                                    "title": (entry.get("title") or "")[:160],
+                                    "source": entry.get("source") or entry.get("origin"),
+                                    "sentiment": entry.get("sentiment"),
+                                    "timestamp": entry.get("datetime") or entry.get("timestamp"),
+                                },
+                            )
+                    else:
+                        self._record_event("info", "news_sample_none", {})
                     self._update_status(progress=0.2, message="Market context captured")
                     self._update_snapshot(news=news_summary)
                 except Exception as news_exc:

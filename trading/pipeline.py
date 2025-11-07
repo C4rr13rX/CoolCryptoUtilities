@@ -11,9 +11,10 @@ import math
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.keras.losses import BinaryCrossentropy
 
 from db import TradingDatabase, get_db
-from trading.constants import PRIMARY_SYMBOL
+from trading.constants import PRIMARY_SYMBOL, top_pairs
 from model_definition import (
     ExponentialDecay,
     StateSaver,
@@ -132,7 +133,7 @@ class TrainingPipeline:
     def ensure_active_model(self) -> tf.keras.Model:
         model = self.load_active_model()
         if model is not None:
-            return model
+            return self._ensure_vectorizers_ready(model)
         print("[training] no active model found; building a fresh baseline.")
         model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
             window_size=self.window_size,
@@ -143,7 +144,89 @@ class TrainingPipeline:
         self._adapt_vectorizers(headline_vec, full_vec)
         path = self.model_dir / "active_model.keras"
         model.save(path, include_optimizer=False)
-        self._active_model = model
+        self._active_model = self._ensure_vectorizers_ready(model)
+        return self._active_model
+
+    def _load_active_clone(self) -> tf.keras.Model:
+        path = self.model_dir / "active_model.keras"
+        if path.exists():
+            model = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
+        else:
+            base = self.ensure_active_model()
+            model = tf.keras.models.clone_model(base)
+            model.build(base.input_shape)
+            model.set_weights(base.get_weights())
+        model = self._ensure_asset_embedding_capacity(model)
+        return self._ensure_vectorizers_ready(model)
+
+    def _ensure_asset_embedding_capacity(self, model: tf.keras.Model) -> tf.keras.Model:
+        try:
+            layer = model.get_layer("asset_embedding")
+        except ValueError:
+            return model
+        required = int(self.data_loader.asset_vocab_size)
+        current = int(getattr(layer, "input_dim", required))
+        if required <= current:
+            return model
+        print(f"[training] expanding asset vocabulary from {current} to {required}.")
+        upgraded = self._rebuild_model_with_asset_vocab(required, model)
+        path = self.model_dir / "active_model.keras"
+        upgraded.save(path, include_optimizer=False)
+        self._active_model = upgraded
+        reloaded = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
+        return reloaded
+
+    def _rebuild_model_with_asset_vocab(self, asset_vocab_size: int, source_model: tf.keras.Model) -> tf.keras.Model:
+        new_model, _, _, _, _ = build_multimodal_model(
+            window_size=self.window_size,
+            tech_count=self.tech_count,
+            sent_seq_len=self.sent_seq_len,
+            asset_vocab_size=asset_vocab_size,
+        )
+        self._transfer_weights(source_model, new_model)
+        return self._ensure_vectorizers_ready(new_model)
+
+    def _transfer_weights(self, source_model: tf.keras.Model, target_model: tf.keras.Model) -> None:
+        source_layers = {layer.name: layer for layer in source_model.layers}
+        text_layer_cls = tf.keras.layers.TextVectorization
+        for layer in target_model.layers:
+            source_layer = source_layers.get(layer.name)
+            if source_layer is None:
+                continue
+            if isinstance(layer, text_layer_cls):
+                try:
+                    vocab = source_layer.get_vocabulary()
+                except Exception:
+                    vocab = None
+                if vocab:
+                    layer.set_vocabulary(vocab)
+                continue
+            source_weights = source_layer.get_weights()
+            target_weights = layer.get_weights()
+            if not source_weights or not target_weights:
+                continue
+            if layer.name == "asset_embedding":
+                kernel = target_weights[0]
+                old_kernel = source_weights[0]
+                copy_count = min(kernel.shape[0], old_kernel.shape[0])
+                copy_cols = min(kernel.shape[1], old_kernel.shape[1])
+                if copy_count and copy_cols:
+                    kernel[:copy_count, :copy_cols] = old_kernel[:copy_count, :copy_cols]
+                layer.set_weights([kernel])
+                continue
+            if len(source_weights) != len(target_weights):
+                continue
+            if not all(sw.shape == tw.shape for sw, tw in zip(source_weights, target_weights)):
+                continue
+            layer.set_weights(source_weights)
+
+    def _ensure_vectorizers_ready(self, model: tf.keras.Model) -> tf.keras.Model:
+        try:
+            headline_vec = model.get_layer("headline_vectorizer")
+            full_vec = model.get_layer("full_vectorizer")
+        except ValueError:
+            return model
+        self._adapt_vectorizers(headline_vec, full_vec)
         return model
 
     # ------------------------------------------------------------------
@@ -651,15 +734,16 @@ class TrainingPipeline:
     ) -> tf.data.Dataset:
         input_names = getattr(model, "input_names", None) or [tensor.name.split(":")[0] for tensor in model.inputs]
         output_names = getattr(model, "output_names", None) or [tensor.name.split(":")[0] for tensor in model.outputs]
-        input_dict = {name: tf.convert_to_tensor(inputs[name]) for name in input_names}
-        target_dict = {name: tf.convert_to_tensor(targets[name]) for name in output_names}
-        weight_dict: Dict[str, tf.Tensor] = {}
-        for name in output_names:
+        input_tensors = tuple(tf.convert_to_tensor(inputs[name]) for name in input_names)
+        target_tensors = tuple(tf.convert_to_tensor(targets[name]) for name in output_names)
+        weight_tensors = []
+        for idx, name in enumerate(output_names):
             weights = sample_weights.get(name)
             if weights is None:
-                weights = np.ones(target_dict[name].shape[0], dtype=np.float32)
-            weight_dict[name] = tf.convert_to_tensor(weights, dtype=tf.float32)
-        dataset = tf.data.Dataset.from_tensor_slices((input_dict, target_dict, weight_dict))
+                weights = np.ones(target_tensors[idx].shape[0], dtype=np.float32)
+            weight_tensors.append(tf.convert_to_tensor(weights, dtype=tf.float32))
+        weight_tensors = tuple(weight_tensors)
+        dataset = tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors, weight_tensors))
         return dataset.batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     def lab_train_on_files(
@@ -678,19 +762,33 @@ class TrainingPipeline:
         )
         if inputs is None or targets is None or sample_weights is None:
             raise RuntimeError("Unable to build dataset from selected files.")
-        base_model = self.ensure_active_model()
-        lab_model, _, _, losses, loss_weights = build_multimodal_model(
-            window_size=self.window_size,
-            tech_count=self.tech_count,
-            sent_seq_len=self.sent_seq_len,
-            asset_vocab_size=self.data_loader.asset_vocab_size,
-        )
-        lab_model.set_weights(base_model.get_weights())
+        lab_model = self._load_active_clone()
+        brier_metric = BinaryCrossentropy(name="brier_like", from_logits=False)
+        losses = {
+            "exit_conf": "binary_crossentropy",
+            "price_mu": zero_loss,
+            "price_log_var": zero_loss,
+            "price_dir": "binary_crossentropy",
+            "net_margin": "mse",
+            "net_pnl": "mse",
+            "tech_recon": "mse",
+            "price_gaussian": gaussian_nll_loss,
+        }
+        loss_weights = {
+            "exit_conf": 0.5,
+            "price_mu": 0.0,
+            "price_log_var": 0.0,
+            "price_dir": 0.5,
+            "net_margin": 1.0,
+            "net_pnl": 0.0,
+            "tech_recon": 0.25,
+            "price_gaussian": 1.0,
+        }
         lab_model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
             loss=losses,
             loss_weights=loss_weights,
-            metrics={"price_dir": [tf.keras.metrics.AUC(name="auroc"), "accuracy"]},
+            metrics={"price_dir": [tf.keras.metrics.AUC(name="auroc"), "accuracy", brier_metric]},
         )
         train_ds = self._build_training_dataset(lab_model, inputs, targets, sample_weights, batch_size)
         history = lab_model.fit(train_ds, epochs=max(1, int(epochs)), verbose=0)

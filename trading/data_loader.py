@@ -53,9 +53,11 @@ class HistoricalDataLoader:
         max_files: Optional[int] = 5,
         max_samples_per_file: Optional[int] = 256,
     ) -> None:
-        root_default = Path(os.getenv("HISTORICAL_DATA_DIR", ""))
-        if not root_default:
-            root_default = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv"))
+        env_data_dir = os.getenv("HISTORICAL_DATA_DIR", "").strip()
+        if env_data_dir:
+            root_default = Path(env_data_dir).expanduser()
+        else:
+            root_default = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")).expanduser()
         self.data_dir = Path(data_dir or root_default).expanduser()
         self.max_files = max_files
         self.max_samples_per_file = max_samples_per_file

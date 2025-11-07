@@ -9,7 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 
@@ -317,11 +317,14 @@ def collect_news_for_files(
     hours_before: int = 12,
     hours_after: int = 12,
     cache_ttl_sec: int = 6 * 3600,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     if not file_paths:
         return {"items": [], "symbols": [], "start": None, "end": None}
 
     database = db or get_db()
+    trace: List[Dict[str, Any]] = []
+
     windows: List[FileWindow] = []
     for candidate in file_paths:
         resolved = _resolve_path(candidate)
@@ -333,34 +336,95 @@ def collect_news_for_files(
     start_dt = datetime.fromtimestamp(start_ts, tz=timezone.utc) - timedelta(hours=hours_before)
     end_dt = datetime.fromtimestamp(end_ts, tz=timezone.utc) + timedelta(hours=hours_after)
 
+    def _trace(stage: str, level: str = "info", **details: Any) -> None:
+        entry = {"stage": stage, "level": level, **details}
+        trace.append(entry)
+        if progress_cb:
+            try:
+                progress_cb(dict(entry))
+            except Exception:
+                pass
+
+    _trace(
+        "resolved_windows",
+        files=len(windows),
+        symbols=symbols,
+        window_start=start_dt.isoformat(),
+        window_end=end_dt.isoformat(),
+    )
+
     cache_key = _cache_key(symbols, start_dt, end_dt)
     cached = database.get_json(cache_key)
     if cached and cached.get("expires", 0) > time.time():
-        return cached["payload"]
+        payload = cached["payload"]
+        _trace(
+            "cache_hit",
+            articles=len(payload.get("items", [])),
+            sources=len(payload.get("sources", [])),
+        )
+        return payload
 
     tokens = _expand_tokens(symbols)
     api_tokens, query_terms = _build_query_terms(symbols, tokens or symbols)
     api_tokens = api_tokens or (symbols if symbols else ["BTC"])
     symbol_keys = _derive_log_keys(symbols, api_tokens)
     seen_urls, seen_titles = _load_seen_entries(database, symbol_keys, start_dt, end_dt)
+    for window in windows:
+        _trace(
+            "window_loaded",
+            file=str(window.path),
+            symbol=window.symbol,
+            start=window.start_dt.isoformat(),
+            end=window.end_dt.isoformat(),
+            span_hours=round((window.end_ts - window.start_ts) / 3600.0, 2),
+        )
+    _trace(
+        "token_plan",
+        tokens=api_tokens,
+        query_preview=query_terms[:12],
+        query_count=len(query_terms),
+    )
 
     crypto_items: List[Dict[str, Any]] = []
     try:
         archiver = CryptoNewsArchiver()
+        _trace("cryptopanic_start", tokens=api_tokens)
         news_df = archiver.collect_window(symbols=api_tokens, start=start_dt, end=end_dt, persist=False)
         if not news_df.empty:
             crypto_items = [_format_crypto_news(row) for row in news_df.to_dict("records")]
-    except RuntimeError:
+        _trace("cryptopanic_complete", articles=len(crypto_items))
+        if crypto_items:
+            for idx, item in enumerate(crypto_items[:2]):
+                _trace(
+                    "cryptopanic_sample",
+                    title=item.get("title"),
+                    source=item.get("source"),
+                    timestamp=item.get("timestamp"),
+                )
+    except RuntimeError as exc:
         crypto_items = []
-    except Exception:
+        _trace("cryptopanic_error", level="error", error=str(exc))
+    except Exception as exc:
         crypto_items = []
+        _trace("cryptopanic_error", level="error", error=str(exc))
 
     crawler_items: List[Dict[str, Any]] = []
     try:
+        _trace("crawler_start", terms=query_terms)
         crawler_records = crawl_news(queries=query_terms, start=start_dt, end=end_dt, max_pages=160)
         crawler_items = _format_crawler_news(crawler_records)
-    except Exception:
+        _trace("crawler_complete", articles=len(crawler_items))
+        if crawler_items:
+            for idx, item in enumerate(crawler_items[:2]):
+                _trace(
+                    "crawler_sample",
+                    title=item.get("title"),
+                    origin=item.get("origin"),
+                    timestamp=item.get("timestamp"),
+                )
+    except Exception as exc:
         crawler_items = []
+        _trace("crawler_error", level="error", error=str(exc))
 
     total_attempted = len(crypto_items) + len(crawler_items)
     dedup_skipped = 0
@@ -385,6 +449,21 @@ def collect_news_for_files(
             seen_titles.add(title)
 
     items = sorted(combined.values(), key=lambda row: row["timestamp"], reverse=True)
+    _trace(
+        "dedupe_complete",
+        attempted=total_attempted,
+        deduplicated=dedup_skipped,
+        retained=len(items),
+    )
+    for idx, entry in enumerate(items[:3]):
+        _trace(
+            "news_sample",
+            slot=idx + 1,
+            title=(entry.get("title") or "")[:180],
+            source=entry.get("source"),
+            timestamp=entry.get("timestamp"),
+            sentiment=entry.get("sentiment"),
+        )
     _record_news_attempt(database, symbol_keys, start_dt, end_dt, items)
     payload = {
         "symbols": symbols,
@@ -399,6 +478,7 @@ def collect_news_for_files(
             "deduplicated": dedup_skipped,
             "returned": len(items),
         },
+        "trace": trace,
     }
 
     database.set_json(cache_key, {"expires": time.time() + cache_ttl_sec, "payload": payload})
@@ -414,6 +494,7 @@ def collect_news_for_terms(
     max_pages: Optional[int] = None,
     cache_key: Optional[str] = None,
     cache_ttl_sec: int = 3 * 3600,
+    progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
@@ -424,12 +505,29 @@ def collect_news_for_terms(
     else:
         end = end.astimezone(timezone.utc)
 
+    trace: List[Dict[str, Any]] = []
+
+    def _trace(stage: str, level: str = "info", **details: Any) -> None:
+        entry = {"stage": stage, "level": level, **details}
+        trace.append(entry)
+        if progress_cb:
+            try:
+                progress_cb(dict(entry))
+            except Exception:
+                pass
+
     input_symbols = [str(tok).upper() for tok in tokens if tok]
     symbol_seed = input_symbols or [str(tok).upper() for tok in tokens if tok] or ["BTC"]
     expanded_tokens = _expand_tokens(symbol_seed)
     api_tokens, query_terms = _build_query_terms(symbol_seed, expanded_tokens or symbol_seed)
     api_tokens = api_tokens or symbol_seed
     symbol_keys = _derive_log_keys(symbol_seed, api_tokens)
+    _trace(
+        "resolved_terms",
+        tokens=api_tokens,
+        start=start.isoformat(),
+        end=end.isoformat(),
+    )
 
     database = get_db()
     if cache_key:
@@ -449,10 +547,13 @@ def collect_news_for_terms(
 
     try:
         archiver = CryptoNewsArchiver()
+        _trace("cryptopanic_start", tokens=api_tokens)
         crypto_df = archiver.collect_window(symbols=api_tokens, start=start, end=end, persist=False)
         crypto_items = [_format_crypto_news(row) for row in crypto_df.to_dict("records")] if not crypto_df.empty else []
-    except Exception:
+        _trace("cryptopanic_complete", articles=len(crypto_items))
+    except Exception as exc:
         crypto_items = []
+        _trace("cryptopanic_error", level="error", error=str(exc))
 
     crawler_records = crawl_news(
         queries=query_terms or api_tokens,
@@ -461,6 +562,7 @@ def collect_news_for_terms(
         max_pages=max_pages or 200,
     )
     crawler_items = _format_crawler_news(crawler_records)
+    _trace("crawler_complete", articles=len(crawler_items))
 
     total_attempted = len(crypto_items) + len(crawler_items)
     dedup_skipped = 0
@@ -489,6 +591,13 @@ def collect_news_for_terms(
         query_lower = query.lower()
         items = [item for item in items if query_lower in (item["title"] + " " + item.get("summary", "")).lower()]
 
+    _trace(
+        "dedupe_complete",
+        attempted=total_attempted,
+        deduplicated=dedup_skipped,
+        retained=len(items),
+    )
+
     _record_news_attempt(database, symbol_keys, start, end, items)
     result = {
         "symbols": input_symbols or api_tokens,
@@ -503,6 +612,7 @@ def collect_news_for_terms(
             "deduplicated": dedup_skipped,
             "returned": len(items),
         },
+        "trace": trace,
     }
     if cache_key:
         database.set_json(cache_key, {"expires": time.time() + cache_ttl_sec, "payload": result})
