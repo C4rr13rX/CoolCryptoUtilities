@@ -34,6 +34,11 @@
       "name": "telemetry_flush",
       "depends_on": ["scheduler_refresh"],
       "workers": 1
+    },
+    {
+      "name": "background_refresh",
+      "depends_on": [],
+      "workers": 1
     }
   ]
 }
