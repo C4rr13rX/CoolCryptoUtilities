@@ -25,3 +25,4 @@ web/frontend/.vite/
 web/frontend/.cache/
 logs/
 web/collected_static/
+data/news/ethical_news.parquet

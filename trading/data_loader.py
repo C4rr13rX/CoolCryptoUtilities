@@ -6,7 +6,7 @@ import json
 import os
 import re
 import time
-from collections import deque
+from collections import deque, OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
 
@@ -19,6 +19,23 @@ from datetime import datetime, timezone
 
 from trading.constants import PRIMARY_CHAIN, top_pairs
 from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
+
+HORIZON_WINDOWS_SEC: Tuple[int, ...] = (
+    5 * 60,
+    15 * 60,
+    30 * 60,
+    60 * 60,
+    3 * 60 * 60,
+    6 * 60 * 60,
+    12 * 60 * 60,
+    24 * 60 * 60,
+    3 * 24 * 60 * 60,
+    5 * 24 * 60 * 60,
+    7 * 24 * 60 * 60,
+    30 * 24 * 60 * 60,
+    90 * 24 * 60 * 60,
+    180 * 24 * 60 * 60,
+)
 
 TOKEN_SYNONYMS = {
     "BTC": ["bitcoin", "btc"],
@@ -84,17 +101,24 @@ class HistoricalDataLoader:
         self._cryptopanic_failed_windows: Set[str] = set()
         self.news_items = self._load_news()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
+        self._dataset_profile_cache: Dict[Tuple[Any, ...], Dict[str, Dict[str, float]]] = {}
         self._tech_pca_components: Optional[np.ndarray] = None
         self._tech_pca_mean: Optional[np.ndarray] = None
         self._headline_digest: Optional[str] = None
         self._fulltext_digest: Optional[str] = None
         self._completion_index: Optional[Set[str]] = None
         self._last_sample_meta: Dict[str, Any] = {}
+        self._file_cache: OrderedDict[Tuple[str, int], Dict[str, np.ndarray]] = OrderedDict()
+        self._file_cache_limit = max(8, int(os.getenv("DATA_FILE_CACHE_LIMIT", "48")))
+        horizon_env = os.getenv("TRAINING_HORIZON_WINDOWS_SEC", "").strip()
+        self._horizon_windows: Tuple[int, ...] = self._parse_horizon_windows(horizon_env)
+        self._horizon_profile: Dict[str, Dict[str, float]] = {}
 
     def reset_limits(self) -> None:
         self.max_files = self._initial_max_files
         self.max_samples_per_file = self._initial_max_samples
         self._dataset_cache.clear()
+        self._dataset_profile_cache.clear()
 
     def expand_limits(self, factor: float = 1.5, file_cap: int = 96, sample_cap: int = 4096) -> None:
         new_files = min(file_cap, max(int(self.max_files * factor), self.max_files + 1))
@@ -103,9 +127,29 @@ class HistoricalDataLoader:
             self.max_files = new_files
             self.max_samples_per_file = new_samples
             self._dataset_cache.clear()
+            self._dataset_profile_cache.clear()
 
     def invalidate_dataset_cache(self) -> None:
         self._dataset_cache.clear()
+        self._dataset_profile_cache.clear()
+
+    def _parse_horizon_windows(self, raw: str) -> Tuple[int, ...]:
+        if raw:
+            parsed: List[int] = []
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    value = int(part)
+                except Exception:
+                    continue
+                if value > 0:
+                    parsed.append(int(value))
+            if parsed:
+                unique_sorted = tuple(sorted({int(value) for value in parsed}))
+                return unique_sorted
+        return HORIZON_WINDOWS_SEC
 
     def build_dataset(
         self,
@@ -131,6 +175,9 @@ class HistoricalDataLoader:
         sample_meta: List[Dict[str, Any]] = []
         oversample_multiplier = 1
         oversample_indices: Optional[np.ndarray] = None
+        horizon_returns = {h: [] for h in self._horizon_windows}
+        horizon_volumes = {h: [] for h in self._horizon_windows}
+        self._horizon_profile = {}
 
         if selected_files:
             files = []
@@ -194,25 +241,24 @@ class HistoricalDataLoader:
         cached = self._dataset_cache.get(cache_key)
         if cached is not None:
             inputs_cached, targets_cached = cached
+            cached_profile = self._dataset_profile_cache.get(cache_key) or {}
+            self._horizon_profile = {key: dict(value) for key, value in cached_profile.items()}
             return (
                 {name: value.copy() for name, value in inputs_cached.items()},
                 {name: value.copy() for name, value in targets_cached.items()},
             )
 
         for file_path in files:
-            try:
-                with file_path.open("r", encoding="utf-8") as handle:
-                    rows = json.load(handle)
-            except Exception:
+            arrays = self._load_file_arrays(file_path)
+            if arrays is None:
                 continue
-            if not isinstance(rows, list) or len(rows) <= window_size + 1:
+            closes = arrays["closes"]
+            net_volumes = arrays["net_volumes"]
+            buy_volumes = arrays["buy_volumes"]
+            sell_volumes = arrays["sell_volumes"]
+            timestamps = arrays["timestamps"]
+            if closes.shape[0] <= window_size + 1:
                 continue
-
-            closes = np.array([float(row.get("close", 0.0)) for row in rows], dtype=np.float32)
-            net_volumes = np.array([float(row.get("net_volume", 0.0)) for row in rows], dtype=np.float32)
-            buy_volumes = np.array([float(row.get("buy_volume", 0.0)) for row in rows], dtype=np.float32)
-            sell_volumes = np.array([float(row.get("sell_volume", 0.0)) for row in rows], dtype=np.float32)
-            timestamps = np.array([int(row.get("timestamp", 0)) for row in rows])
 
             pair_label = file_path.stem.split("_", 1)[-1]
             pair_label_upper = pair_label.upper()
@@ -222,7 +268,7 @@ class HistoricalDataLoader:
             tokens = [t.lower() for t in raw_tokens]
             asset_id = self._get_asset_id(pair_label_upper)
 
-            limit = len(rows) - window_size - 1
+            limit = closes.shape[0] - window_size - 1
             if self.max_samples_per_file:
                 limit = min(limit, self.max_samples_per_file)
 
@@ -310,6 +356,16 @@ class HistoricalDataLoader:
                 self._headline_samples.append(news_text["article"])
                 target_mu.append(mu)
                 asset_ids.append(asset_id)
+                self._maybe_collect_horizon_metrics(
+                    timestamp=int(ts),
+                    end_index=end,
+                    current_price=current_price,
+                    net_volumes=net_volumes,
+                    closes=closes,
+                    timestamps=timestamps,
+                    horizon_returns=horizon_returns,
+                    horizon_volumes=horizon_volumes,
+                )
 
         if not price_windows:
             self._last_sample_meta = {}
@@ -379,10 +435,12 @@ class HistoricalDataLoader:
 
         self._headline_digest = self._digest_array(headline_arr)
         self._fulltext_digest = self._digest_array(full_arr)
+        profile_snapshot = self._finalize_horizon_profile(horizon_returns, horizon_volumes)
 
         inputs_copy = {name: value.copy() for name, value in inputs.items()}
         targets_copy = {name: value.copy() for name, value in targets.items()}
         self._dataset_cache[cache_key] = (inputs_copy, targets_copy)
+        self._dataset_profile_cache[cache_key] = {k: dict(v) for k, v in profile_snapshot.items()}
 
         if sample_meta:
             meta_records = [dict(record) for record in sample_meta]
@@ -402,6 +460,39 @@ class HistoricalDataLoader:
             self._last_sample_meta = {}
 
         return inputs, targets
+
+    def _finalize_horizon_profile(
+        self,
+        horizon_returns: Dict[int, List[float]],
+        horizon_volumes: Dict[int, List[float]],
+    ) -> Dict[str, Dict[str, float]]:
+        profile: Dict[str, Dict[str, float]] = {}
+        for horizon in self._horizon_windows:
+            values = horizon_returns.get(horizon) or []
+            if not values:
+                continue
+            arr = np.asarray(values, dtype=np.float32)
+            mean_return = float(np.mean(arr))
+            median_return = float(np.median(arr))
+            std_return = float(np.std(arr))
+            positive_ratio = float(np.mean(arr > 0))
+            stats: Dict[str, float] = {
+                "samples": float(len(values)),
+                "mean_return": mean_return,
+                "median_return": median_return,
+                "std_return": std_return,
+                "positive_ratio": positive_ratio,
+            }
+            volumes = horizon_volumes.get(horizon) or []
+            if volumes:
+                vol_arr = np.asarray(volumes, dtype=np.float32)
+                stats["mean_volume"] = float(np.mean(vol_arr))
+            profile[str(horizon)] = stats
+        self._horizon_profile = profile
+        return profile
+
+    def horizon_profile(self) -> Dict[str, Dict[str, float]]:
+        return {key: dict(value) for key, value in self._horizon_profile.items()}
 
     def dataset_signature(self) -> str:
         digest_source = ":".join(filter(None, [self._headline_digest, self._fulltext_digest]))
@@ -695,6 +786,69 @@ class HistoricalDataLoader:
                     tokens.update(mapped)
         return {t.upper() for t in tokens}
 
+    def _load_file_arrays(self, file_path: Path) -> Optional[Dict[str, np.ndarray]]:
+        try:
+            stat = file_path.stat()
+        except OSError:
+            return None
+        cache_key = (str(file_path.resolve()), int(stat.st_mtime))
+        cached = self._file_cache.get(cache_key)
+        if cached is not None:
+            self._file_cache.move_to_end(cache_key)
+            return cached
+        try:
+            with file_path.open("r", encoding="utf-8") as handle:
+                rows = json.load(handle)
+        except Exception:
+            return None
+        if not isinstance(rows, list) or len(rows) <= 2:
+            return None
+        closes = np.array([float(row.get("close", 0.0)) for row in rows], dtype=np.float32)
+        net_volumes = np.array([float(row.get("net_volume", 0.0)) for row in rows], dtype=np.float32)
+        buy_volumes = np.array([float(row.get("buy_volume", 0.0)) for row in rows], dtype=np.float32)
+        sell_volumes = np.array([float(row.get("sell_volume", 0.0)) for row in rows], dtype=np.float32)
+        timestamps = np.array([int(row.get("timestamp", 0)) for row in rows], dtype=np.int64)
+        payload = {
+            "closes": closes,
+            "net_volumes": net_volumes,
+            "buy_volumes": buy_volumes,
+            "sell_volumes": sell_volumes,
+            "timestamps": timestamps,
+        }
+        self._file_cache[cache_key] = payload
+        while len(self._file_cache) > self._file_cache_limit:
+            self._file_cache.popitem(last=False)
+        return payload
+
+    def _maybe_collect_horizon_metrics(
+        self,
+        *,
+        timestamp: int,
+        end_index: int,
+        current_price: float,
+        net_volumes: np.ndarray,
+        closes: np.ndarray,
+        timestamps: np.ndarray,
+        horizon_returns: Dict[int, List[float]],
+        horizon_volumes: Dict[int, List[float]],
+    ) -> None:
+        if not self._horizon_windows or current_price <= 0:
+            return
+        for horizon in self._horizon_windows:
+            target_ts = timestamp + horizon
+            future_idx = int(np.searchsorted(timestamps, target_ts, side="left"))
+            if future_idx <= end_index or future_idx >= closes.shape[0]:
+                continue
+            future_price = float(closes[future_idx])
+            if future_price <= 0:
+                continue
+            ret = float(np.log(future_price) - np.log(current_price))
+            horizon_returns[horizon].append(ret)
+            if future_idx > end_index:
+                vol_slice = np.abs(net_volumes[end_index:future_idx])
+                if vol_slice.size:
+                    horizon_volumes[horizon].append(float(np.sum(vol_slice)))
+
     def _build_keyword_map(self) -> Dict[str, set[str]]:
         tokens: set[str] = set(getattr(self, "_historical_tokens", set()))
         if not tokens:
@@ -752,6 +906,11 @@ class HistoricalDataLoader:
         rss_df = self._load_rss_news(cache_dir / "rss_news.parquet", since_ts)
         if rss_df is not None:
             frames.append(rss_df)
+
+        ethical_path = Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))
+        ethical_df = self._load_ethical_news(ethical_path, since_ts)
+        if ethical_df is not None:
+            frames.append(ethical_df)
 
         cryptopanic_df = self._load_cryptopanic_news(cache_dir / "cryptopanic_news.parquet", since_ts)
         if cryptopanic_df is not None:
@@ -952,6 +1111,55 @@ class HistoricalDataLoader:
         df["tokens"] = df.get("tokens", pd.Series([[]] * len(df), index=df.index)).apply(
             lambda values: [self._normalize_token(tok) for tok in values if self._normalize_token(tok)]
         )
+        df = df[df["tokens"].map(bool)]
+        if df.empty:
+            return None
+        return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
+
+    def _load_ethical_news(self, path: Path, since_ts: int) -> Optional[pd.DataFrame]:
+        if not path.exists():
+            return None
+        try:
+            df = pd.read_parquet(path)
+        except Exception:
+            return None
+        if df.empty:
+            return None
+        df = df.copy()
+        df["timestamp"] = pd.to_numeric(df.get("timestamp"), errors="coerce")
+        df = df.dropna(subset=["timestamp"])
+        if df.empty:
+            return None
+        df["timestamp"] = df["timestamp"].astype(np.int64)
+        df = df[df["timestamp"] >= since_ts]
+        if df.empty:
+            return None
+        df["headline"] = df.get("headline", pd.Series("", index=df.index)).astype(str)
+        df["article"] = df.get("article", pd.Series("", index=df.index)).astype(str)
+        sentiments = df.get("sentiment")
+        if sentiments is None:
+            df["sentiment"] = "neutral"
+        else:
+            df["sentiment"] = sentiments.astype(str).where(sentiments.astype(bool), "neutral")
+
+        def _coerce_tokens(raw: Any) -> List[str]:
+            if isinstance(raw, (list, tuple, set)):
+                seq = list(raw)
+            elif isinstance(raw, np.ndarray):
+                seq = raw.tolist()
+            elif isinstance(raw, str):
+                seq = re.findall(r"[A-Za-z0-9$]{2,}", raw)
+            elif raw is None:
+                seq = []
+            else:
+                try:
+                    seq = list(raw)
+                except Exception:
+                    seq = []
+            normalized = [self._normalize_token(tok) for tok in seq if self._normalize_token(tok)]
+            return sorted({tok for tok in normalized if tok})
+
+        df["tokens"] = df.get("tokens", pd.Series([[]] * len(df), index=df.index)).apply(_coerce_tokens)
         df = df[df["tokens"].map(bool)]
         if df.empty:
             return None

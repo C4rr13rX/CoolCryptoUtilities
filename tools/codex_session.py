@@ -32,6 +32,9 @@ class CodexSession:
         verbose_default: bool = False,
         term_rows: int = 40,
         term_cols: int = 120,
+        sandbox_mode: Optional[str] = "danger-full-access",
+        approval_policy: Optional[str] = None,
+        bypass_sandbox_confirm: bool = True,
     ) -> None:
         self.session_name = session_name
         self.executable = executable
@@ -44,6 +47,11 @@ class CodexSession:
         self.transcript_dir = Path(transcript_dir)
         self.transcript_dir.mkdir(parents=True, exist_ok=True)
         self.transcript_path = self.transcript_dir / f"{session_name}.log"
+
+        self.sandbox_mode = sandbox_mode
+        self.approval_policy = approval_policy
+        self.bypass_sandbox_confirm = bypass_sandbox_confirm
+        self._cli_prefix = self._build_cli_prefix()
 
         self._codex_available = shutil.which(self.executable) is not None
 
@@ -63,38 +71,40 @@ class CodexSession:
         # 1) Try non-interactive flags first (some builds support these)
         # Prefer the non-interactive exec subcommand when available (streams stderr/stdout live)
         exec_out, exec_rc, exec_err = self._run_exec_stream(prompt, stream=stream, verbose=verbose)
-        if exec_rc == 0 and (exec_out.strip() or exec_err.strip()):
-            combined = exec_out.strip() or exec_err
+        exec_text = exec_out.strip()
+        exec_err_text = exec_err.strip()
+        if exec_rc != 127 and (exec_text or exec_err_text):
+            combined = exec_text or exec_err_text
             self._append_transcript(
                 prompt,
-                exec_out if not exec_err.strip() else f"{exec_out}\n[stderr]\n{exec_err}",
+                exec_out if not exec_err_text else f"{exec_out}\n[stderr]\n{exec_err}",
             )
             if not stream:
-                self._print(combined)
+                self._print(combined + ("\n" if not combined.endswith("\n") else ""))
             return combined
 
-        out, rc, _ = self._run_simple([self.executable, "--input", prompt])
+        out, rc, _ = self._run_simple([*self._cli_prefix, "--input", prompt])
         if rc == 0 and out.strip():
             self._append_transcript(prompt, out)
             if stream:
                 self._print(out)
             return out
 
-        out2, rc2, _ = self._run_simple([self.executable, "--prompt", prompt])
+        out2, rc2, _ = self._run_simple([*self._cli_prefix, "--prompt", prompt])
         if rc2 == 0 and out2.strip():
             self._append_transcript(prompt, out2)
             if stream:
                 self._print(out2)
             return out2
 
-        out3, rc3, _ = self._run_simple([self.executable, prompt])
+        out3, rc3, _ = self._run_simple([*self._cli_prefix, prompt])
         if rc3 == 0 and out3.strip():
             self._append_transcript(prompt, out3)
             if stream:
                 self._print(out3)
             return out3
 
-        out4, rc4, _ = self._run_simple([self.executable], input_text=prompt)
+        out4, rc4, _ = self._run_simple([*self._cli_prefix], input_text=prompt)
         if rc4 == 0 and out4.strip():
             self._append_transcript(prompt, out4)
             if stream:
@@ -102,13 +112,13 @@ class CodexSession:
             return out4
 
         # 2) Interactive PTY fallback with progressive actions
-        final, rc5 = self._run_streaming_pty([self.executable], prompt, verbose=verbose)
+        final, rc5 = self._run_streaming_pty(self._cli_prefix, prompt, verbose=verbose)
         if rc5 == 0 and final.strip():
             self._append_transcript(prompt, final)
             return final
 
         # Last resort: PTY with positional arg
-        final2, rc6 = self._run_streaming_pty([self.executable, prompt], None, verbose=verbose)
+        final2, rc6 = self._run_streaming_pty([*self._cli_prefix, prompt], None, verbose=verbose)
         self._append_transcript(prompt, final2 if final2.strip() else f"[codex error] exit {rc6}")
         return final2
 
@@ -280,7 +290,7 @@ class CodexSession:
     # ===== Non-interactive exec runner with live streaming =====================
 
     def _run_exec_stream(self, prompt: str, *, stream: bool, verbose: bool) -> Tuple[str, int, str]:
-        cmd = [self.executable, "exec", "--color", "never", "-"]
+        cmd = [*self._cli_prefix, "exec", "--color", "never", "-"]
         if verbose:
             self._print(f"[codex] exec-stream: {' '.join(map(self._q, cmd))}\n")
         try:
@@ -318,16 +328,16 @@ class CodexSession:
         _register(stdout_fd, "stdout")
         _register(stderr_fd, "stderr")
 
-        deadline = time.time() + self.read_timeout_s
         while fd_map:
             try:
                 ready, _, _ = select.select(list(fd_map.keys()), [], [], 0.1)
             except (InterruptedError, OSError):
                 ready = []
             if not ready:
-                if proc.poll() is not None or time.time() > deadline:
-                    break
-                continue
+                if proc.poll() is None:
+                    continue
+                # child exited; drain remaining pipes
+                ready = list(fd_map.keys())
             for fd in ready:
                 try:
                     chunk = os.read(fd, 4096)
@@ -343,12 +353,18 @@ class CodexSession:
                     stderr_buf.extend(chunk)
                 if stream:
                     self._print(chunk.decode("utf-8", errors="replace"))
-                deadline = time.time() + self.read_timeout_s
-
         try:
-            rc = proc.wait(timeout=1.0)
+            rc = proc.wait()
         except Exception:
-            rc = 1
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                rc = proc.wait(timeout=1.0)
+            except Exception:
+                rc = 1
+
         finally:
             if proc.stdout:
                 proc.stdout.close()
@@ -422,6 +438,16 @@ class CodexSession:
     def _print(self, s: str) -> None:
         sys.stdout.write(s)
         sys.stdout.flush()
+
+    def _build_cli_prefix(self) -> list[str]:
+        parts = [self.executable]
+        if self.sandbox_mode:
+            parts.extend(["--sandbox", self.sandbox_mode])
+        if self.bypass_sandbox_confirm:
+            parts.append("--dangerously-bypass-approvals-and-sandbox")
+        elif self.approval_policy:
+            parts.extend(["--ask-for-approval", self.approval_policy])
+        return parts
 
     @staticmethod
     def _q(x: str) -> str:

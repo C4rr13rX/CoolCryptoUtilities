@@ -108,10 +108,12 @@ class TrainingPipeline:
         self.focus_max_assets = int(os.getenv("GHOST_FOCUS_MAX_ASSETS", "6"))
         self._vectorizer_signature: Optional[str] = None
         self._vectorizer_cache: set[str] = set()
+        self._last_asset_vocab_requirement: int = 1
         self._last_dataset_meta: Dict[str, Any] = {}
         self._last_sample_meta: Dict[str, Any] = {}
         self.primary_symbol = PRIMARY_SYMBOL
         self._pause_flag_key = "pipeline_pause"
+        self._last_news_top_up: float = 0.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -136,11 +138,20 @@ class TrainingPipeline:
         if model is not None:
             return self._ensure_vectorizers_ready(model)
         print("[training] no active model found; building a fresh baseline.")
+        loader_vocab = int(self.data_loader.asset_vocab_size)
+        required_vocab = max(loader_vocab, int(getattr(self, "_last_asset_vocab_requirement", loader_vocab)))
+        if required_vocab > loader_vocab:
+            log_message(
+                "training",
+                "expanding asset vocabulary for candidate model",
+                severity="info",
+                details={"required": required_vocab, "loader_vocab": loader_vocab},
+            )
         model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
             sent_seq_len=self.sent_seq_len,
-            asset_vocab_size=self.data_loader.asset_vocab_size,
+            asset_vocab_size=required_vocab,
         )
         self._adapt_vectorizers(headline_vec, full_vec)
         path = self.model_dir / "active_model.keras"
@@ -195,7 +206,7 @@ class TrainingPipeline:
             layer = model.get_layer("asset_embedding")
         except ValueError:
             return model
-        required = int(self.data_loader.asset_vocab_size)
+        required = int(max(self.data_loader.asset_vocab_size, getattr(self, "_last_asset_vocab_requirement", 1)))
         current = int(getattr(layer, "input_dim", required))
         if required <= current:
             return model
@@ -742,6 +753,14 @@ class TrainingPipeline:
                 "news_coverage_ratio": news_coverage,
                 "positive_ratio": positive_ratio,
             }
+            horizon_profile = self.data_loader.horizon_profile()
+            if horizon_profile:
+                dataset_metrics["horizon_window_count"] = float(len(horizon_profile))
+                avg_horizon_samples = float(
+                    np.mean([profile.get("samples", 0.0) for profile in horizon_profile.values()])
+                )
+                dataset_metrics["horizon_samples_avg"] = avg_horizon_samples
+                dataset_meta["horizon_profile_keys"] = list(sorted(horizon_profile.keys()))
             if per_asset_ratio:
                 top_symbol, top_ratio = max(per_asset_ratio.items(), key=lambda kv: kv[1])
                 low_symbol, low_ratio = min(per_asset_ratio.items(), key=lambda kv: kv[1])
@@ -761,6 +780,8 @@ class TrainingPipeline:
                 **dataset_metrics,
                 **dataset_meta,
             }
+            if horizon_profile:
+                self._last_dataset_meta["horizon_profile"] = horizon_profile
             self.metrics.record(
                 MetricStage.TRAINING,
                 dataset_metrics,
@@ -768,6 +789,7 @@ class TrainingPipeline:
                 meta=dataset_meta,
             )
             self._last_sample_meta = self.data_loader.last_sample_meta()
+            self._maybe_trigger_news_top_up(news_coverage, focus_assets)
             inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
             inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
             inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
@@ -887,6 +909,10 @@ class TrainingPipeline:
         asset_ids = _finite("asset_id_input", inputs["asset_id_input"])
         if np.any(asset_ids < 0):
             raise ValueError("Asset IDs must be non-negative.")
+        if asset_ids.size:
+            self._last_asset_vocab_requirement = max(1, int(np.max(asset_ids)) + 1)
+        else:
+            self._last_asset_vocab_requirement = 1
 
         gas = _finite("gas_fee_input", inputs["gas_fee_input"])
         tax = _finite("tax_rate_input", inputs["tax_rate_input"])
@@ -1241,6 +1267,23 @@ class TrainingPipeline:
         except Exception as exc:
             log_message("training", f"news backfill skipped due to error: {exc}", severity="warning")
             return False
+
+    def _maybe_trigger_news_top_up(self, coverage_ratio: float, focus_assets: Optional[Sequence[str]]) -> None:
+        min_ratio = float(os.getenv("NEWS_MIN_COVERAGE", "0.4"))
+        if coverage_ratio >= min_ratio:
+            return
+        now = time.time()
+        interval = float(os.getenv("NEWS_TOPUP_INTERVAL_SEC", "900"))
+        if (now - self._last_news_top_up) < interval:
+            return
+        candidate_assets: List[str] = list(focus_assets or [])
+        if not candidate_assets and self._last_sample_meta.get("symbols"):
+            symbols = self._last_sample_meta.get("symbols", [])
+            candidate_assets = list(dict.fromkeys(symbols))[: self.focus_max_assets]
+        if not candidate_assets:
+            return
+        if self._auto_backfill_news(candidate_assets):
+            self._last_news_top_up = now
 
     def _load_state(self) -> None:
         try:

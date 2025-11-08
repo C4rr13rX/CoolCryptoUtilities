@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -8,7 +9,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from db import TradingDatabase, get_db
 from services.public_api_clients import aggregate_market_data
@@ -226,12 +227,7 @@ class MarketDataWorker:
         )
         if not snapshots:
             return
-        rows = []
-        now = time.time()
-        for snap in snapshots:
-            if not snap.price_usd:
-                continue
-            rows.append(("global", snap.symbol, float(snap.price_usd), snap.source, now))
+        rows = self._build_price_rows(snapshots)
         if rows:
             try:
                 self.db.upsert_prices(rows)
@@ -252,6 +248,28 @@ class MarketDataWorker:
                 log_message("market-data", f"cycle error: {exc}", severity="error")
             if self._stop_event.wait(self.interval):
                 break
+
+    def _build_price_rows(self, snapshots) -> List[Tuple[str, str, float, str, float]]:
+        rows: Dict[Tuple[str, str], Tuple[str, str, float, str, float]] = {}
+        now = time.time()
+        for snap in snapshots:
+            symbol = str(getattr(snap, "symbol", "") or "").upper()
+            if not symbol:
+                continue
+            try:
+                price = float(getattr(snap, "price_usd", 0.0))
+            except Exception:
+                continue
+            if not math.isfinite(price) or price <= 0:
+                continue
+            source = str(getattr(snap, "source", "unknown") or "unknown").lower()
+            ts = float(getattr(snap, "ts", now) or now)
+            key = (symbol, source)
+            candidate = ("global", symbol, price, source, ts)
+            existing = rows.get(key)
+            if existing is None or candidate[-1] >= existing[-1]:
+                rows[key] = candidate
+        return list(rows.values())
 
 
 class DiscoveryWorker:

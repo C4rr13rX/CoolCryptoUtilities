@@ -16,6 +16,7 @@ from trading.data_stream import MarketDataStream
 from trading.pipeline import TrainingPipeline
 from trading.portfolio import PortfolioState, NATIVE_SYMBOL
 from trading.scheduler import BusScheduler, TradeDirective
+from trading.equilibrium import EquilibriumTracker
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
 from trading.constants import (
@@ -122,6 +123,8 @@ class TradingBot:
         self.swap_validator = SwapValidator(db=self.db)
         self._wallet_sync_lock = asyncio.Lock()
         self._bridge_init_attempted = False
+        self.equilibrium = EquilibriumTracker()
+        self._nash_equilibrium_reached: bool = False
         self._cache_balances = CacheBalances(db=self.db)
         self._cache_transfers = CacheTransfers(db=self.db)
         self._bridge = self._init_bridge()
@@ -1239,6 +1242,9 @@ class TradingBot:
                 "bus_index": 0,
                 "target_price": directive.target_price if directive else None,
                 "brain_snapshot": brain_payload,
+                "expected_margin": margin,
+                "entry_confidence": exit_conf_val,
+                "direction_prob": direction_prob,
             }
             if brain.get("fingerprint"):
                 try:
@@ -1329,7 +1335,18 @@ class TradingBot:
                 self.wins += 1
             checkpoint = 0.0
             next_stop = route[1] if len(route) > 1 else None
-            if profit > 0:
+            notional = max(exit_size * pos["entry_price"], 1e-9)
+            realized_margin = profit / notional if notional else 0.0
+            predicted_margin = float(pos.get("expected_margin", margin))
+            entry_confidence = float(pos.get("entry_confidence", exit_conf_val))
+            self.equilibrium.observe(
+                predicted_margin=predicted_margin,
+                realized_margin=realized_margin,
+                confidence=entry_confidence,
+            )
+            equilibrium_ready = self.equilibrium.is_equilibrium()
+            self._nash_equilibrium_reached = equilibrium_ready
+            if profit > 0 and equilibrium_ready:
                 checkpoint = profit * self.stable_checkpoint_ratio
                 self.stable_bank += checkpoint
                 profit -= checkpoint
@@ -1338,6 +1355,7 @@ class TradingBot:
                 return decision
             self.total_profit += profit
             self.realized_profit += profit
+            equilibrium_score = self.equilibrium.score()
             trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
             entry_ts = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
             duration_sec = max(0.0, sample_ts - entry_ts)
@@ -1388,6 +1406,8 @@ class TradingBot:
                     "duration_sec": duration_sec,
                     "wallet": "live" if self.live_trading_enabled else "ghost",
                     "session_id": self.ghost_session_id,
+                    "equilibrium_score": equilibrium_score,
+                    "nash_equilibrium": equilibrium_ready,
                 }
             )
             if isinstance(decision.get("brain"), dict):
@@ -1407,6 +1427,8 @@ class TradingBot:
                 "win_rate": self.wins / max(1, self.total_trades),
                 "exit_price": price,
                 "entry_price": pos["entry_price"],
+                "equilibrium_score": equilibrium_score,
+                "nash_equilibrium": equilibrium_ready,
             }
             self.metrics.record(
                 MetricStage.GHOST_TRADING,

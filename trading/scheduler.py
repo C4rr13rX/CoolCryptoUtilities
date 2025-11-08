@@ -4,7 +4,7 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass, field, asdict
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -31,6 +31,44 @@ HORIZON_DEFAULTS: List[Tuple[str, int]] = [
 ]
 
 
+class HorizonAccuracyTracker:
+    def __init__(self, horizons: Sequence[Tuple[str, int]], window: int = 256) -> None:
+        self.window = max(16, int(window))
+        self._history: Dict[str, Deque[Dict[str, float]]] = {
+            label: deque(maxlen=self.window) for label, _ in horizons
+        }
+
+    def record(self, label: str, predicted_return: float, realized_return: float) -> None:
+        error = abs(predicted_return - realized_return)
+        bucket = self._history.setdefault(label, deque(maxlen=self.window))
+        bucket.append(
+            {
+                "error": error,
+                "realized": realized_return,
+            }
+        )
+
+    def mae(self, label: str) -> float:
+        bucket = self._history.get(label)
+        if not bucket:
+            return 0.0
+        return float(np.mean([entry["error"] for entry in bucket]))
+
+    def quality(self, label: str) -> float:
+        mae = self.mae(label)
+        return float(1.0 / (1.0 + mae))
+
+    def summary(self) -> Dict[str, Dict[str, float]]:
+        return {
+            label: {
+                "samples": float(len(records)),
+                "mae": float(np.mean([r["error"] for r in records])) if records else 0.0,
+                "avg_realized": float(np.mean([r["realized"] for r in records])) if records else 0.0,
+            }
+            for label, records in self._history.items()
+        }
+
+
 @dataclass
 class HorizonSignal:
     label: str
@@ -38,6 +76,7 @@ class HorizonSignal:
     predicted_price: float
     expected_return: float
     zscore: float
+    historical_mae: float = 0.0
 
 
 @dataclass
@@ -73,6 +112,7 @@ class RouteState:
     last_signature: Optional[Tuple[float, float]] = None
     cached_signals: Optional[List[HorizonSignal]] = None
     forecast_signature: Optional[Tuple[int, float, float]] = None
+    pending_predictions: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=2048))
 
 
 class BusScheduler:
@@ -98,6 +138,7 @@ class BusScheduler:
         self.tax_buffer = tax_buffer
         self.history_limit_sec = history_limit_sec
         self.routes: Dict[str, RouteState] = {}
+        self.accuracy = HorizonAccuracyTracker(self.horizons)
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,13 +172,14 @@ class BusScheduler:
         if native_balance < 0.01:
             return None
 
-        best_long = max(signals, key=lambda s: s.expected_return)
-        best_short = min(signals, key=lambda s: s.expected_return)
+        best_long = max(signals, key=self._score_signal)
+        best_short = min(signals, key=self._score_signal)
 
         fee_rate = self.fee_buffer + self.tax_buffer
         # Enter: use quote asset to buy base
         if available_quote > 0:
-            expected = best_long.expected_return
+            long_quality = self.accuracy.quality(best_long.label)
+            expected = best_long.expected_return * long_quality
             risk_factor = min(1.0, max(expected - self.min_profit, 0.0) * 5.0)
             allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
             max_allocation = max(allocation * risk_budget, 0.0)
@@ -170,7 +212,8 @@ class BusScheduler:
 
         # Exit: sell base into quote when projected drawdown
         if available_base > 0:
-            expected = best_short.expected_return
+            short_quality = self.accuracy.quality(best_short.label)
+            expected = best_short.expected_return * short_quality
             if expected < -self.min_profit or direction_prob <= 0.4 or net_margin < 0:
                 size_base = available_base * 0.5
                 if size_base > 0:
@@ -234,6 +277,7 @@ class BusScheduler:
         state.cached_signals = None
         state.forecast_signature = None
         self._trim_history(state)
+        self._resolve_predictions(state)
         return state
 
     def _prefill_history(self, state: RouteState) -> None:
@@ -322,8 +366,60 @@ class BusScheduler:
                     predicted_price=predicted_price,
                     expected_return=expected_return,
                     zscore=zscore,
+                    historical_mae=self.accuracy.mae(label),
                 )
             )
+        self._queue_predictions(state, signals)
         state.cached_signals = signals
         state.forecast_signature = signature_key
         return signals
+
+    def _queue_predictions(self, state: RouteState, signals: List[HorizonSignal]) -> None:
+        if not signals or not state.samples:
+            return
+        current_ts, current_price, _ = state.samples[-1]
+        for signal in signals:
+            state.pending_predictions.append(
+                {
+                    "label": signal.label,
+                    "resolve_ts": current_ts + signal.seconds,
+                    "predicted_return": signal.expected_return,
+                    "start_price": current_price,
+                }
+            )
+
+    def _resolve_predictions(self, state: RouteState) -> None:
+        if not state.pending_predictions or not state.samples:
+            return
+        current_ts = state.samples[-1][0]
+        while state.pending_predictions and state.pending_predictions[0]["resolve_ts"] <= current_ts:
+            entry = state.pending_predictions.popleft()
+            actual = self._realized_return(state, entry["resolve_ts"], entry["start_price"])
+            if actual is None:
+                continue
+            self.accuracy.record(entry["label"], entry["predicted_return"], actual)
+
+    def _realized_return(self, state: RouteState, target_ts: float, start_price: float) -> Optional[float]:
+        if start_price <= 0:
+            return None
+        price = self._price_near_timestamp(state, target_ts)
+        if price is None or price <= 0:
+            return None
+        return (price - start_price) / max(start_price, 1e-9)
+
+    def _price_near_timestamp(self, state: RouteState, target_ts: float) -> Optional[float]:
+        if not state.samples:
+            return None
+        best_price: Optional[float] = None
+        best_delta: Optional[float] = None
+        for ts, price, _ in reversed(state.samples):
+            delta = abs(ts - target_ts)
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_price = price
+            if ts < target_ts and best_delta is not None and ts < target_ts:
+                break
+        return best_price
+
+    def _score_signal(self, signal: HorizonSignal) -> float:
+        return signal.expected_return * self.accuracy.quality(signal.label)

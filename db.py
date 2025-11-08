@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -614,18 +615,48 @@ class TradingDatabase:
     def upsert_prices(self, entries: Sequence[Tuple[str, str, str, str, float]]) -> None:
         if not entries:
             return
-        with self._conn:
-            self._conn.executemany(
-                """
-                INSERT INTO prices (chain, token, usd, source, ts)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(chain, token) DO UPDATE SET
-                    usd=excluded.usd,
-                    source=excluded.source,
-                    ts=excluded.ts;
-                """,
-                [( _lower(chain), _lower(token), usd, source, ts) for chain, token, usd, source, ts in entries],
-            )
+        sanitized = self._sanitize_price_entries(entries)
+        if not sanitized:
+            return
+        with self._lock:
+            with self._conn:
+                self._conn.executemany(
+                    """
+                    INSERT INTO prices (chain, token, usd, source, ts)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(chain, token) DO UPDATE SET
+                        usd=excluded.usd,
+                        source=excluded.source,
+                        ts=excluded.ts;
+                    """,
+                    sanitized,
+                )
+
+    def _sanitize_price_entries(
+        self, entries: Sequence[Tuple[str, str, Any, Any, Any]]
+    ) -> List[Tuple[str, str, float, str, float]]:
+        sanitized: List[Tuple[str, str, float, str, float]] = []
+        now = time.time()
+        for entry in entries:
+            if not isinstance(entry, (tuple, list)) or len(entry) != 5:
+                continue
+            chain, token, usd, source, ts = entry
+            chain_l = _lower(chain)
+            token_l = _lower(token)
+            if not chain_l or not token_l:
+                continue
+            try:
+                usd_float = float(usd)
+            except Exception:
+                continue
+            if not math.isfinite(usd_float):
+                continue
+            try:
+                ts_float = float(ts) if ts is not None else now
+            except Exception:
+                ts_float = now
+            sanitized.append((chain_l, token_l, usd_float, str(source or "unknown"), ts_float))
+        return sanitized
 
     # ------------------------------------------------------------------
     # Trading / experiment utilities
