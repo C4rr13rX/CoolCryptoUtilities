@@ -4,9 +4,14 @@ import {
   startDataLabJob,
   fetchDataLabJobStatus,
   fetchDataLabNews,
+  fetchDataLabSignals,
+  fetchDataLabWatchlists,
+  updateDataLabWatchlist,
   DataLabDatasetParams,
   DataLabJobPayload,
   DataLabNewsPayload,
+  DataLabSignalParams,
+  DataLabWatchlistUpdatePayload,
 } from '@/api';
 
 interface DataLabState {
@@ -21,6 +26,14 @@ interface DataLabState {
   newsMeta: Record<string, any> | null;
   newsLoading: boolean;
   newsError: string | null;
+  signals: Record<string, any>[];
+  signalsLoading: boolean;
+  signalsError: string | null;
+  signalsMeta: Record<string, any> | null;
+  watchlists: Record<string, string[]>;
+  watchlistsLoading: boolean;
+  watchlistsError: string | null;
+  lastActionMessage: string | null;
 }
 
 export const useDataLabStore = defineStore('dataLab', {
@@ -36,6 +49,14 @@ export const useDataLabStore = defineStore('dataLab', {
     newsMeta: null,
     newsLoading: false,
     newsError: null,
+    signals: [],
+    signalsLoading: false,
+    signalsError: null,
+    signalsMeta: null,
+    watchlists: { stream: [], ghost: [], live: [] },
+    watchlistsLoading: false,
+    watchlistsError: null,
+    lastActionMessage: null,
   }),
   getters: {
     runningJob(state): boolean {
@@ -98,6 +119,48 @@ export const useDataLabStore = defineStore('dataLab', {
         this.newsMeta = null;
       } finally {
         this.newsLoading = false;
+      }
+    },
+    async loadSignals(params?: DataLabSignalParams) {
+      this.signalsLoading = true;
+      try {
+        const data = await fetchDataLabSignals(params);
+        this.signals = Array.isArray(data?.items) ? data.items : [];
+        this.signalsMeta = data?.meta || null;
+        if (data?.watchlists) {
+          this.watchlists = data.watchlists;
+        }
+        this.signalsError = null;
+      } catch (err: any) {
+        this.signalsError = err?.message || 'Failed to fetch price signals';
+        this.signals = [];
+        this.signalsMeta = null;
+      } finally {
+        this.signalsLoading = false;
+      }
+    },
+    async refreshWatchlists() {
+      this.watchlistsLoading = true;
+      try {
+        const data = await fetchDataLabWatchlists();
+        this.watchlists = data?.watchlists || { stream: [], ghost: [], live: [] };
+        this.watchlistsError = null;
+      } catch (err: any) {
+        this.watchlistsError = err?.message || 'Failed to load watchlists';
+      } finally {
+        this.watchlistsLoading = false;
+      }
+    },
+    async updateWatchlist(target: 'stream' | 'ghost' | 'live', action: 'add' | 'remove' | 'set', symbols: string[]) {
+      if (!symbols?.length) return;
+      const payload: DataLabWatchlistUpdatePayload = { target, action, symbols };
+      try {
+        const data = await updateDataLabWatchlist(payload);
+        this.watchlists = data?.watchlists || this.watchlists;
+        this.lastActionMessage = `Watchlist ${target} updated (${action}).`;
+      } catch (err: any) {
+        this.watchlistsError = err?.message || 'Failed to update watchlist';
+        throw err;
       }
     },
   },

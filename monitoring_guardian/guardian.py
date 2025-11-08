@@ -11,7 +11,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import psutil
 
@@ -30,11 +30,19 @@ except (ImportError, ValueError):
         from tools.codex_session import CodexSession  # type: ignore[no-redef]
 # -------------------------------------------------------------------------------
 
+from monitoring_guardian.prompt_text import DEFAULT_GUARDIAN_PROMPT
+
+try:  # Optional dependency when running inside Django
+    from services.guardian_state import consume_one_time_prompt, get_guardian_settings
+except Exception:  # pragma: no cover - fallback for standalone CLI
+    consume_one_time_prompt = None  # type: ignore
+    get_guardian_settings = None  # type: ignore
+
 session = CodexSession("guardian-session")
 
 DEFAULT_CONFIG: Dict[str, object] = {
     "log_files": ["logs/system.log"],
-    "report_interval_minutes": 60,
+    "report_interval_minutes": 120,
     "sample_tail_lines": 200,
 }
 
@@ -104,7 +112,13 @@ def load_config(path: Path) -> Dict[str, object]:
 
 
 class Guardian:
-    def __init__(self, config: Dict[str, object]) -> None:
+    def __init__(
+        self,
+        config: Dict[str, object],
+        *,
+        prompt_provider: Optional[Callable[[], str]] = None,
+        status_hook: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> None:
         root = Path(__file__).resolve().parents[1]
         self.followers: List[LogFollower] = [
             LogFollower((root / Path(str(path))).resolve())
@@ -114,11 +128,14 @@ class Guardian:
         self.sample_tail = int(config.get("sample_tail_lines", 200))
         self.last_report_ts = 0.0
         self.shutdown = threading.Event()
+        self._force_report = threading.Event()
         self.recent_events: deque[Tuple[float, str, str, str]] = deque(maxlen=4096)
         self.window_seconds = 30 * 60
         self._log_regex = re.compile(
             r"\[(?P<ts>[^]]+)\]\s+\[(?P<level>[A-Z]+)\]\s+(?P<src>[^:]+):\s+(?P<msg>.*)"
         )
+        self.prompt_provider = prompt_provider
+        self.status_hook = status_hook
 
     def run(self) -> None:
         self.last_report_ts = time.time()
@@ -130,9 +147,10 @@ class Guardian:
                 self._poll_logs()
                 self._check_process_health()
                 now = time.time()
-                if now - self.last_report_ts >= self.report_interval:
+                if self._force_report.is_set() or now - self.last_report_ts >= self.report_interval:
                     self._emit_report()
                     self.last_report_ts = now
+                    self._force_report.clear()
                 time.sleep(10)
         except KeyboardInterrupt:
             print("[guardian] stopping...")
@@ -212,6 +230,17 @@ class Guardian:
         )
         response = session.send(report)
         print(response)
+        if self.status_hook:
+            try:
+                self.status_hook(
+                    {
+                        "timestamp": time.time(),
+                        "findings": unique_findings,
+                        "response": response,
+                    }
+                )
+            except Exception:
+                pass
 
     def _gather_unique_findings(self, limit: int = 30) -> List[str]:
         cutoff = time.time() - self.window_seconds
@@ -246,28 +275,37 @@ class Guardian:
 
     def _build_cli_prompt(self, findings: List[str]) -> str:
         findings_snippet = "\n".join(f"- {line}" for line in findings) or "No warnings captured in this window."
-        prompt = (
-            f"{findings_snippet}\n"
-            "Instructions:\n"
-            "1. Fix any errors found in the logs by making meaningful upgrades while following a fix/test/fix/test loop.\n"
-            "2. Answer the following question:\n"
-            '"What are 15 improvements to make for this system to (A) enhance it toward equilibrium in producing the most accurate crypto price and volume predictions for windows from 5 minutes to 6 months—from the current data stream onward—while finding buy-low/sell-high opportunities and scheduling them in ghost and live trading with 15% of each profitable swap flowing into stablecoin savings once Nash equilibrium is reached; (B) operate efficiently on an i5 CPU with 32GB RAM without downgrading functionality or accuracy—only more efficient engineering; (C) draw on additional ethical, free news sources at arbitrary dates, scrape/store them per design, and inject them into model training; (D) Try to get ghost trading to start trading accurately sooner than later and let it become more accurate as the system evolves. To such a point that live trading kicks in on what it is doing. We want to get live trading to start as soon as possible, but it does need some pretty decent degree of accuracy. Where can you be accurate most of the time with what changes? Make sure to validate your solution by testing predictions in confusion matrices if you use classification such as predicing an upward climb or a downard fall, and try to integrate that with other metrics to find a margin, for example, but you could also test it on historical ohlcv data we already have if you are using regression, and refine as needed before implementing. Try to expand your horizons all across the ML domain keeping it to methods that will run on a pc with a core i5 cpu and 32 GB of ram and no dedicated GPU with CUDA (E) how can we improve the Django website/command center to show more of what is happening in the trading bot system and implement tools that will help us visualize new outcomes and experiment with refining accuracy and collecting meaningful data for the system to injest. How can we demonstrate all of this better within the organism 3D area to show the processes and data and where they are in snapshots and cluster them better in the visualization to push it to make it more energetic and biology-like pushing our ability to run the snapshots in a sequence one after the other and show a vast network of processes working to predict crypto prices and volume and trade accurately. (F) how can we upgrade the swarm? (G) how can we coordinate the transition of swaps in ghost and live trading for higher gains and lower risks? fix errors as you go using a fix/test loop running all relevant unit tests for changed components)."\n'
-            "3. Implement those improvements.\n"
-            "4. After each fix, run the relevant tests (unit tests, lab regression, etc.) and report the results.\n"
-            "5. Stop only after all items are addressed or when manual approval is required.\n"
-            "6. Make sure to update the .gitignore if you add anything that creates many downloaded files like node_modules, insecure information to release to the public, or anything else a .gitignore entry would be qualified for.\n"
-            "7. Start main.py and option 7 again. make sure the program is running before you stop, because it has to start using the upgrades as soon as possible to gather data on how it is working. Don't shut the program back down before you stop working. Let it run.\n"
-            "8. Make sure not to touch anything in the monitoring_guardian folder or tools/codex_session.py as you are working.\n"
+        if self.prompt_provider:
+            try:
+                instructions = self.prompt_provider() or DEFAULT_GUARDIAN_PROMPT
+            except Exception:
+                instructions = DEFAULT_GUARDIAN_PROMPT
+        else:
+            instructions = DEFAULT_GUARDIAN_PROMPT
+        return f"{findings_snippet}\n{instructions}"
 
-        )
-        return prompt
+    def request_report(self) -> None:
+        self._force_report.set()
 
 
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    guardian = Guardian(config)
+    guardian = Guardian(config, prompt_provider=_default_prompt_provider)
     guardian.run()
+
+
+def _default_prompt_provider() -> str:
+    if get_guardian_settings:
+        try:
+            settings = get_guardian_settings()
+            one_time = consume_one_time_prompt() if consume_one_time_prompt else None
+            if one_time:
+                return one_time
+            return settings.get("default_prompt") or DEFAULT_GUARDIAN_PROMPT
+        except Exception:
+            return DEFAULT_GUARDIAN_PROMPT
+    return DEFAULT_GUARDIAN_PROMPT
 
 
 if __name__ == "__main__":

@@ -1,4 +1,3 @@
-++*** End Patch
 <template>
   <svg
     class="hacker-icon"
@@ -62,6 +61,10 @@ const ICON_PATHS: Record<string, string[]> = {
     'M12 3l8.25 14.25H3.75L12 3z',
     'M12 9v3.75',
     'M12 16.5h.008',
+  ],
+  guardian: [
+    'M12 3l7 3v5c0 4.8-3.2 9-7 9s-7-4.2-7-9V6l7-3z',
+    'M9 11.5l2.5 2.5 4-4',
   ],
   datalab: [
     'M4.5 6c0-1.657 3.357-3 7.5-3s7.5 1.343 7.5 3-3.357 3-7.5 3-7.5-1.343-7.5-3z',

@@ -10,5 +10,6 @@ urlpatterns = [
     path("api/console/", include("opsconsole.urls")),
     path("api/datalab/", include("datalab.urls")),
     path("api/lab/", include("lab.urls")),
+    path("api/guardian/", include("guardianpanel.urls")),
     path("", include("core.urls")),
 ]

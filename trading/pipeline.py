@@ -47,6 +47,7 @@ from trading.metrics import (
     distribution_report,
 )
 from services.logging_utils import log_message
+from services.watchlists import load_watchlists
 
 
 CUSTOM_OBJECTS = {
@@ -2030,6 +2031,21 @@ class TrainingPipeline:
         ][: self.focus_max_assets]
         if not focus_assets and self.primary_symbol:
             focus_assets = [self.primary_symbol]
+
+        manual_overrides: Dict[str, List[str]] = {}
+        try:
+            watchlists = load_watchlists(self.db)
+        except Exception:
+            watchlists = {}
+        manual_ghost = [sym for sym in (watchlists or {}).get("ghost", []) if sym]
+        if manual_ghost:
+            merged: List[str] = []
+            for sym in manual_ghost + focus_assets:
+                if sym not in merged:
+                    merged.append(sym)
+            focus_assets = merged[: self.focus_max_assets] or manual_ghost[: self.focus_max_assets]
+            manual_overrides["ghost"] = manual_ghost
+
         self.metrics.record(
             MetricStage.GHOST_TRADING,
             aggregate,
@@ -2038,9 +2054,13 @@ class TrainingPipeline:
                 "iteration": self.iteration,
                 "focus_candidates": focus_assets,
                 "ranked": ranked[: self.focus_max_assets],
+                "manual_overrides": manual_overrides or None,
             },
         )
-        return focus_assets, {"aggregate": aggregate, "ranked": ranked}
+        focus_stats = {"aggregate": aggregate, "ranked": ranked}
+        if manual_overrides:
+            focus_stats["manual_overrides"] = manual_overrides
+        return focus_assets, focus_stats
 
     def _build_candidate_signals(
         self,

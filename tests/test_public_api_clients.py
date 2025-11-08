@@ -114,6 +114,25 @@ def test_aggregate_market_data_uses_archive_when_sources_fail(
     assert all(snap.price_usd > 0 for snap in snaps)
 
 
+def test_market_health_report_written(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from services import public_api_clients as pac
+
+    base = MarketSnapshot(source="cache", symbol="BTC", name="Bitcoin", price_usd=1.0)
+    monkeypatch.setattr(pac, "fetch_coincap", lambda top=5: [base])
+    monkeypatch.setattr(pac, "fetch_coinpaprika", lambda top=5: [base])
+    monkeypatch.setattr(pac, "fetch_coinlore", lambda limit=5: [base])
+    monkeypatch.setattr(pac, "fetch_coingecko", lambda ids: [])
+    health_path = tmp_path / "health.json"
+    monkeypatch.setattr(pac, "_MARKET_HEALTH_PATH", health_path)
+
+    snaps = pac.aggregate_market_data(symbols=["BTC"], top_n=1)
+    assert snaps
+    payload = json.loads(health_path.read_text(encoding="utf-8"))
+    assert payload["samples"] == 1
+    assert payload["symbols"] == ["BTC"]
+    assert payload["fallback"] == "none"
+
+
 def test_historical_fallback_used_when_no_network(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

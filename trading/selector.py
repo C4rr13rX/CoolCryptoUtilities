@@ -20,6 +20,7 @@ from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs, pair_index_entries
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
 from services.logging_utils import log_message
+from services.watchlists import load_watchlists
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
 
@@ -234,6 +235,27 @@ def select_pairs(
 ) -> List[PairCandidate]:
     candidates = analyse_historical_pairs(data_dir=data_dir)
     candidate_map = {cand.symbol: cand for cand in candidates}
+    try:
+        watchlists = load_watchlists(_db)
+    except Exception:
+        watchlists = {}
+    manual_symbols = list(
+        dict.fromkeys((watchlists.get("stream") or []) + (watchlists.get("live") or []))
+    )
+    manual_candidates: List[PairCandidate] = []
+    for symbol in manual_symbols:
+        symbol_u = symbol.upper()
+        if symbol_u not in candidate_map:
+            tokens = [part.strip().upper() for part in symbol_u.split("-") if part.strip()]
+            candidate_map[symbol_u] = PairCandidate(
+                symbol=symbol_u,
+                tokens=tokens or [symbol_u],
+                avg_volume=0.0,
+                volatility=0.0,
+                score=0.0,
+                datapath=Path("."),
+            )
+        manual_candidates.append(candidate_map[symbol_u])
     best: List[PairCandidate] = []
     seen_tokens: set[str] = set()
 
@@ -248,6 +270,11 @@ def select_pairs(
             return
         best.append(cand)
         seen_tokens.add(token_key)
+
+    for cand in manual_candidates:
+        if len(best) >= limit:
+            break
+        try_add_candidate(cand.symbol)
 
     for symbol in DEFAULT_LIVE_PAIRS:
         if len(best) >= limit:

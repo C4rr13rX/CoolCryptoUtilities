@@ -199,3 +199,52 @@ export async function fetchDataLabNews(payload: DataLabNewsPayload) {
   const { data } = await api.post('/datalab/news/', payload);
   return data;
 }
+
+export interface GuardianSettingsPayload {
+  enabled?: boolean;
+  default_prompt?: string;
+  interval_minutes?: number;
+}
+
+export async function fetchGuardianSettings() {
+  const { data } = await api.get('/guardian/settings/');
+  return data;
+}
+
+export async function updateGuardianSettings(payload: GuardianSettingsPayload) {
+  const { data } = await api.post('/guardian/settings/', payload);
+  return data;
+}
+
+export async function runGuardianJob(payload: { prompt?: string; save_default?: boolean }) {
+  const { data } = await api.post('/guardian/run/', payload);
+  return data;
+}
+
+export interface DataLabSignalParams {
+  window?: string;
+  direction?: 'bullish' | 'bearish' | 'all';
+  limit?: number;
+  min_volume?: number;
+}
+
+export async function fetchDataLabSignals(params?: DataLabSignalParams) {
+  const { data } = await api.get('/datalab/signals/', { params });
+  return data;
+}
+
+export interface DataLabWatchlistUpdatePayload {
+  target: 'stream' | 'ghost' | 'live';
+  action?: 'add' | 'remove' | 'set' | 'replace';
+  symbols: string[];
+}
+
+export async function fetchDataLabWatchlists() {
+  const { data } = await api.get('/datalab/watchlists/');
+  return data;
+}
+
+export async function updateDataLabWatchlist(payload: DataLabWatchlistUpdatePayload) {
+  const { data } = await api.post('/datalab/watchlists/', payload);
+  return data;
+}

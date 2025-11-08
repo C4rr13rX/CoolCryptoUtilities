@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "discovery.apps.DiscoveryConfig",
     "lab.apps.LabConfig",
     "datalab.apps.DatalabConfig",
+    "guardianpanel.apps.GuardianPanelConfig",
 ]
 
 MIDDLEWARE = [

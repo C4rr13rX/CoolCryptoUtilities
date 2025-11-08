@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from db import get_db  # noqa: E402
+from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 
 
 def _load_report(path: Path) -> Dict[str, Any]:
@@ -80,6 +81,10 @@ class DashboardContextMixin:
         }
 
     def _base_context(self, initial_route: str) -> Dict[str, Any]:
+        try:
+            guardian_supervisor.ensure_running()
+        except Exception:
+            pass
         use_vite = settings.DEBUG and os.getenv("DJANGO_USE_VITE_DEV", "0").lower() in {"1", "true", "yes", "on"}
         return {
             "debug": settings.DEBUG,

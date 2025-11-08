@@ -350,6 +350,57 @@ class TradingDatabase:
             self._conn.execute("DELETE FROM control_flags WHERE key=?", (str(key),))
 
     # ------------------------------------------------------------------
+    # Market stream helpers
+    # ------------------------------------------------------------------
+
+    def list_market_pairs_since(self, start_ts: float) -> List[Tuple[str, str]]:
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT symbol, chain FROM market_stream WHERE ts >= ?",
+                (float(start_ts),),
+            )
+            rows = cur.fetchall()
+        return [(row["symbol"], row["chain"]) for row in rows]
+
+    def get_market_price(
+        self,
+        symbol: str,
+        chain: str,
+        *,
+        ts: Optional[float] = None,
+        after: bool = True,
+    ) -> Optional[Tuple[float, float, Optional[float]]]:
+        query = "SELECT price, ts, volume FROM market_stream WHERE symbol=? AND chain=?"
+        params: List[Any] = [symbol, chain]
+        if ts is not None:
+            comparator = ">=" if after else "<="
+            query += f" AND ts {comparator} ?"
+            params.append(float(ts))
+        order = "ASC" if after else "DESC"
+        query += f" ORDER BY ts {order} LIMIT 1"
+        with self._cursor() as cur:
+            cur.execute(query, tuple(params))
+            row = cur.fetchone()
+        if not row:
+            return None
+        return float(row["price"]), float(row["ts"]), row["volume"]
+
+    def average_volume(self, symbol: str, chain: str, start_ts: float) -> Optional[float]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT AVG(volume) AS avg_volume
+                FROM market_stream
+                WHERE symbol=? AND chain=? AND ts >= ?
+                """,
+                (symbol, chain, float(start_ts)),
+            )
+            row = cur.fetchone()
+        if not row or row["avg_volume"] is None:
+            return None
+        return float(row["avg_volume"])
+
+    # ------------------------------------------------------------------
     # Fills / execution feedback
     # ------------------------------------------------------------------
 

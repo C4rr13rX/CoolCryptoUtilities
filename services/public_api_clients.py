@@ -42,8 +42,15 @@ _HISTORICAL_DATA_ROOT = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_
 _HISTORICAL_CACHE_LABEL = "historical_snapshots"
 _HISTORICAL_CACHE_TTL = max(300, int(os.getenv("HISTORICAL_SNAPSHOT_CACHE_SEC", "1800")))
 _GLOBAL_BACKOFF_SEC = max(60.0, float(os.getenv("PUBLIC_API_GLOBAL_BACKOFF_SEC", "600")))
+_MARKET_HEALTH_PATH = Path(os.getenv("MARKET_HEALTH_PATH", "runtime/market_health.json")).expanduser()
 
 _NETWORK_BLOCKED_UNTIL: float = 0.0
+_PROVIDER_CACHE: Dict[str, Tuple[float, Any]] = {}
+_PROVIDER_CACHE_TTL = max(60.0, float(os.getenv("PUBLIC_API_PROVIDER_CACHE_SEC", "240")))
+_HTTP_STATUS_BACKOFF = {
+    429: max(120.0, float(os.getenv("PUBLIC_API_BACKOFF_429_SEC", "300"))),
+    451: max(900.0, float(os.getenv("PUBLIC_API_BACKOFF_451_SEC", "1800"))),
+}
 
 
 @dataclass
@@ -78,13 +85,43 @@ def _mark_network_blocked() -> None:
     _NETWORK_BLOCKED_UNTIL = time.time() + _GLOBAL_BACKOFF_SEC
 
 
+def _provider_cache_key(url: str, params: Optional[Dict[str, str]]) -> str:
+    if not params:
+        return url
+    ordered = "&".join(f"{key}={params[key]}" for key in sorted(params))
+    return f"{url}?{ordered}"
+
+
+def _load_provider_cache(key: str) -> Optional[Any]:
+    cached = _PROVIDER_CACHE.get(key)
+    if not cached:
+        return None
+    ts, payload = cached
+    if (time.time() - ts) <= _PROVIDER_CACHE_TTL:
+        return payload
+    _PROVIDER_CACHE.pop(key, None)
+    return None
+
+
+def _persist_provider_cache(key: str, payload: Any) -> None:
+    if payload is None:
+        return
+    _PROVIDER_CACHE[key] = (time.time(), payload)
+
+
 def _http_get(url: str, *, params: Optional[Dict[str, str]] = None) -> dict | list:
     host = url.split("/")[2]
     now = time.time()
+    cache_key = _provider_cache_key(url, params)
+    cached_payload = _load_provider_cache(cache_key)
     if not _network_available():
+        if cached_payload is not None:
+            return cached_payload
         raise RuntimeError("network_offline")
     resume = _HOST_BACKOFF.get(host, 0.0)
     if resume and now < resume:
+        if cached_payload is not None:
+            return cached_payload
         raise RuntimeError(f"{host} temporarily suppressed for {int(resume - now)}s")
     try:
         RATE_LIMITER.acquire(host, tokens=1.0, timeout=10.0)
@@ -99,8 +136,18 @@ def _http_get(url: str, *, params: Optional[Dict[str, str]] = None) -> dict | li
     )
     try:
         resp.raise_for_status()
-        return resp.json()
+        payload = resp.json()
+        _persist_provider_cache(cache_key, payload)
+        return payload
     except requests.exceptions.RequestException as exc:
+        if cached_payload is not None:
+            _log_api_failure_once(
+                host,
+                "serving cached payload due to provider error",
+                severity="info",
+                details={"provider": host, "error": str(exc)},
+            )
+            return cached_payload
         _maybe_backoff_host(host, exc)
         raise
 
@@ -108,12 +155,19 @@ def _http_get(url: str, *, params: Optional[Dict[str, str]] = None) -> dict | li
 def _maybe_backoff_host(host: str, exc: Exception) -> None:
     message = str(exc).lower()
     backoff = False
+    resume_at: Optional[float] = None
     if isinstance(exc, requests.exceptions.ConnectionError):
         backoff = True
+    elif isinstance(exc, requests.exceptions.HTTPError) and getattr(exc, "response", None) is not None:
+        status = getattr(exc.response, "status_code", None)
+        penalty = _HTTP_STATUS_BACKOFF.get(status or 0)
+        if penalty:
+            backoff = True
+            resume_at = time.time() + penalty
     elif "name or service not known" in message or "temporary failure in name resolution" in message:
         backoff = True
     if backoff:
-        until = time.time() + _DNS_BACKOFF_SEC
+        until = resume_at or (time.time() + _DNS_BACKOFF_SEC)
         _HOST_BACKOFF[host] = until
         _mark_network_blocked()
         log_message(
@@ -291,7 +345,10 @@ def _cached_coincap_snapshots(limit: int) -> List[MarketSnapshot]:
         cached = _coincap_payload_to_snapshots(cached_payload, limit)
         if cached:
             return cached
-    return _load_local_market_snapshots(limit, sources=("coincap",))
+    fallback = _load_local_market_snapshots(limit, sources=("coincap",))
+    if fallback:
+        return fallback
+    return _offline_market_snapshots(limit, symbols=None)
 
 
 def _cached_generic_snapshots(source: str, limit: int) -> List[MarketSnapshot]:
@@ -732,12 +789,34 @@ def aggregate_market_data(
             save_snapshots(merged, _LOCAL_SNAPSHOT)
         except Exception:
             pass
+    health_report = {
+        "generated_at": time.time(),
+        "providers": errors,
+        "fallback": "historical" if fallback_used else "none",
+        "samples": len(merged),
+        "symbols": [snap.symbol for snap in merged],
+    }
+    _persist_market_health(health_report)
     if errors:
         severity = "info" if fallback_used else "warning"
         message = "market data served from fallback" if fallback_used else "market data fetch degraded"
-        details = {"providers": errors, "fallback": "historical" if fallback_used else "none"}
-        log_message("public-apis", message, severity=severity, details=details)
+        log_message("public-apis", message, severity=severity, details={k: v for k, v in health_report.items() if k != "generated_at"})
     return merged
+
+
+def _persist_market_health(status: Dict[str, Any]) -> None:
+    try:
+        _MARKET_HEALTH_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "generated_at": status.get("generated_at", time.time()),
+            "providers": status.get("providers", {}),
+            "fallback": status.get("fallback"),
+            "samples": status.get("samples"),
+            "symbols": status.get("symbols"),
+        }
+        _MARKET_HEALTH_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def save_snapshots(snapshots: Sequence[MarketSnapshot], path: Path) -> None:

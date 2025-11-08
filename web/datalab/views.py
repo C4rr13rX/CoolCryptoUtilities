@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Dict, List
 
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from discovery.models import DiscoveredToken, HoneypotCheck
 from services.data_lab import fetch_news, get_runner, list_datasets
+from services.signal_scanner import WINDOW_OPTIONS, scan_price_signals
+from services.watchlists import load_watchlists, mutate_watchlist
 
 
 class DatasetListView(APIView):
@@ -69,3 +73,118 @@ class NewsFetchView(APIView):
         except Exception as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class SignalListView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        window = request.query_params.get("window") or "24h"
+        if window not in WINDOW_OPTIONS:
+            window = "24h"
+        direction = request.query_params.get("direction", "bullish").lower()
+        if direction not in {"bullish", "bearish", "all"}:
+            direction = "bullish"
+        limit_param = request.query_params.get("limit", "60")
+        min_volume_param = request.query_params.get("min_volume", "0")
+        try:
+            limit = max(1, min(int(limit_param), 200))
+        except ValueError:
+            limit = 60
+        try:
+            min_volume = max(0.0, float(min_volume_param))
+        except ValueError:
+            min_volume = 0.0
+
+        signals, scan_meta = scan_price_signals(
+            window,
+            direction="bullish" if direction == "all" else direction,  # scanner expects "bullish"/"bearish"
+            limit=limit,
+            min_volume=min_volume,
+        )
+        if direction == "all":
+            # merge both bullish and bearish lists
+            bear_signals, bear_meta = scan_price_signals(window, direction="bearish", limit=limit, min_volume=min_volume)
+            scan_meta["bearish_hits"] = bear_meta.get("result_count", 0)
+            union_map: Dict[str, Dict[str, object]] = {item["symbol"]: item for item in signals}
+            for item in bear_signals:
+                union_map.setdefault(item["symbol"], item)
+            signals = list(union_map.values())
+        watchlists = load_watchlists()
+        membership: Dict[str, set[str]] = {
+            name: set(items) for name, items in watchlists.items()
+        }
+
+        symbols = [str(entry.get("symbol") or "").upper() for entry in signals if entry.get("symbol")]
+        risk_map: Dict[str, Dict[str, object]] = {}
+        if symbols:
+            token_map = {
+                token.symbol.upper(): token
+                for token in DiscoveredToken.objects.filter(symbol__in=symbols)
+            }
+            latest_checks: Dict[str, HoneypotCheck] = {}
+            for check in HoneypotCheck.objects.filter(symbol__in=symbols).order_by("symbol", "-created_at"):
+                symbol_key = check.symbol.upper()
+                if symbol_key in latest_checks:
+                    continue
+                latest_checks[symbol_key] = check
+            for symbol in symbols:
+                token = token_map.get(symbol)
+                check = latest_checks.get(symbol)
+                risk: Dict[str, object] = {}
+                if token:
+                    risk["status"] = token.status
+                    risk["last_updated"] = token.last_updated.isoformat()
+                if check:
+                    risk["verdict"] = check.verdict
+                    risk["confidence"] = check.confidence
+                    risk["checked_at"] = check.created_at.isoformat()
+                    if check.details:
+                        risk["details"] = check.details
+                if risk:
+                    risk_map[symbol] = risk
+
+        enriched: List[Dict[str, object]] = []
+        for item in signals:
+            symbol = str(item.get("symbol") or "").upper()
+            entry = dict(item)
+            entry["watchlists"] = {
+                name: symbol in members for name, members in membership.items()
+            }
+            if symbol in risk_map:
+                entry["risk"] = risk_map[symbol]
+            enriched.append(entry)
+        return Response(
+            {
+                "items": enriched,
+                "count": len(enriched),
+                "watchlists": watchlists,
+                "window": window,
+                "meta": scan_meta,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class WatchlistView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        data = load_watchlists()
+        return Response({"watchlists": data}, status=status.HTTP_200_OK)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        payload = request.data or {}
+        target = str(payload.get("target") or "").lower()
+        action = str(payload.get("action") or "add").lower()
+        symbols = payload.get("symbols") or []
+        if not isinstance(symbols, list):
+            return Response({"detail": "symbols must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+        kwargs = {}
+        if action == "remove":
+            kwargs["remove"] = symbols
+        elif action in {"set", "replace"}:
+            kwargs["replace"] = symbols
+        else:
+            kwargs["add"] = symbols
+        try:
+            updated = mutate_watchlist(target, **kwargs)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"watchlists": updated}, status=status.HTTP_200_OK)

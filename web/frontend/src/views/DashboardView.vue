@@ -44,6 +44,27 @@
       </RouterLink>
     </section>
 
+    <section class="panel nav-map">
+      <header>
+        <h2>Command Map</h2>
+        <span class="caption">Jump to any surface from the control room</span>
+      </header>
+      <div class="nav-grid">
+        <RouterLink
+          v-for="link in siteLinks"
+          :key="link.to"
+          :to="link.to"
+          class="nav-tile"
+        >
+          <div class="tile-header">
+            <HackerIcon :name="link.icon" :size="20" />
+            <strong>{{ link.label }}</strong>
+          </div>
+          <p>{{ link.detail }}</p>
+        </RouterLink>
+      </div>
+    </section>
+
     <section class="panels-grid">
       <article class="panel">
         <header>
@@ -297,16 +318,73 @@ const quickLinks = computed(() => [
     icon: 'pipeline',
   },
   {
+    to: '/datalab',
+    label: 'Data Lab',
+    detail: 'Run ingestion jobs, discover signals, and fetch news.',
+    icon: 'datalab',
+  },
+  {
+    to: '/lab',
+    label: 'Model Lab',
+    detail: 'Train, evaluate, and preview candidate models.',
+    icon: 'lab',
+  },
+]);
+
+const siteLinks = computed(() => [
+  {
+    to: '/pipeline',
+    label: 'Pipeline',
+    detail: 'Full training telemetry, ghost metrics, and readiness.',
+    icon: 'pipeline',
+  },
+  {
     to: '/streams',
     label: 'Market Streams',
-    detail: 'Inspect consensus prices and per-exchange flows.',
+    detail: 'Live consensus feed, per-source diagnostics, and fallbacks.',
     icon: 'streams',
+  },
+  {
+    to: '/telemetry',
+    label: 'Telemetry',
+    detail: 'Metrics timelines, feedback history, and advisories.',
+    icon: 'activity',
+  },
+  {
+    to: '/organism',
+    label: 'Organism',
+    detail: 'Inspect the organism snapshot and adjust label scaling.',
+    icon: 'organism',
+  },
+  {
+    to: '/datalab',
+    label: 'Data Lab',
+    detail: 'Discover bullish/bearish movers and run news/scam tooling.',
+    icon: 'datalab',
+  },
+  {
+    to: '/lab',
+    label: 'Model Lab',
+    detail: 'Drive model training/eval jobs with ghost parity previews.',
+    icon: 'lab',
   },
   {
     to: '/console',
     label: 'Ops Console',
-    detail: 'Launch main.py, send commands, and tail live logs.',
+    detail: 'Start/stop main.py option 9 and send live commands.',
     icon: 'terminal',
+  },
+  {
+    to: '/advisories',
+    label: 'Advisories',
+    detail: 'Review outstanding warnings and mitigation steps.',
+    icon: 'shield',
+  },
+  {
+    to: '/guardian',
+    label: 'Guardian',
+    detail: 'Configure prompts and auto-restart policies.',
+    icon: 'guardian',
   },
 ]);
 
@@ -410,6 +488,70 @@ function formatWhen(ts: number | string) {
 .link-card small {
   color: rgba(255, 255, 255, 0.6);
   font-size: 0.75rem;
+}
+
+.nav-map {
+  margin-top: -0.4rem;
+}
+
+.nav-map header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 1rem;
+}
+
+.nav-map h2 {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.18rem;
+  font-size: 0.95rem;
+  color: #93c5fd;
+}
+
+.nav-map .caption {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.nav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.9rem;
+}
+
+.nav-tile {
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 16px;
+  padding: 0.9rem 1rem;
+  background: rgba(10, 19, 34, 0.85);
+  color: #e2e8f0;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nav-tile:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(7, 15, 30, 0.45);
+}
+
+.nav-tile .tile-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12rem;
+}
+
+.nav-tile p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(226, 232, 240, 0.75);
 }
 
 .status-grid {

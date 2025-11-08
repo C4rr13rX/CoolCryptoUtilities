@@ -1,0 +1,44 @@
+{
+  "1762634936": {
+    "data_ingest": {
+      "status": "queued",
+      "updated_at": 1762634936.5524948
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762634936.5529203,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": true,
+          "reason": "",
+          "horizon": "1h",
+          "precision": 0.5985401459854015,
+          "recall": 1.0,
+          "samples": 137,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762634936.5564783,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": true,
+          "reason": "",
+          "horizon": "1h",
+          "precision": 0.5985401459854015,
+          "recall": 1.0,
+          "samples": 137,
+          "threshold": 0.3
+        }
+      }
+    }
+  }
+}
