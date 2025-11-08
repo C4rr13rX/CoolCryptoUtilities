@@ -6,7 +6,8 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
+from datetime import datetime
 
 import feedparser
 
@@ -44,7 +45,13 @@ class EthicalNewsIngestor:
         fetcher: Optional[Callable[[NewsSource], List[dict]]] = None,
         max_tokens: int = 12,
     ) -> None:
-        self.sources: Sequence[NewsSource] = tuple(sources or DEFAULT_SOURCES)
+        base_sources = list(sources or DEFAULT_SOURCES)
+        catalog_path = Path(os.getenv("ETHICAL_NEWS_SOURCES_PATH", "config/ethical_news_sources.json"))
+        custom_sources = self._load_custom_sources(catalog_path)
+        merged: Dict[str, NewsSource] = {source.name: source for source in base_sources}
+        for source in custom_sources:
+            merged[source.name] = source
+        self.sources = tuple(merged.values())
         root_cache = cache_dir or Path(os.getenv("ETHICAL_NEWS_CACHE", "data/news/cache"))
         self.cache_dir = root_cache.expanduser()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -67,6 +74,7 @@ class EthicalNewsIngestor:
         keyword_set = {token.lower() for token in tokens if token}
         rows: List[dict] = []
         for source in self.sources:
+            source_keywords = keyword_set | {topic.lower() for topic in getattr(source, "topics", []) if topic}
             entries = self._pull_entries(source)
             for entry in entries:
                 ts = self._entry_timestamp(entry)
@@ -78,9 +86,9 @@ class EthicalNewsIngestor:
                 if not body:
                     continue
                 article_tokens = self._extract_tokens(body)
-                if keyword_set and not (article_tokens & keyword_set):
+                if source_keywords and not (article_tokens & source_keywords):
                     continue
-                selected_tokens = self._select_tokens(article_tokens, keyword_set)
+                selected_tokens = self._select_tokens(article_tokens, source_keywords)
                 if not selected_tokens:
                     continue
                 rows.append(
@@ -97,6 +105,17 @@ class EthicalNewsIngestor:
         if rows:
             self._write_parquet(rows)
         return rows
+
+    def harvest_window(
+        self,
+        *,
+        tokens: Iterable[str],
+        start: datetime,
+        end: datetime,
+    ) -> List[dict]:
+        start_ts = int(start.timestamp())
+        end_ts = int(end.timestamp())
+        return self.harvest(tokens=tokens, start_ts=start_ts, end_ts=end_ts)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -194,6 +213,26 @@ class EthicalNewsIngestor:
             df.to_parquet(self.output_path, index=False)
         except Exception:
             pass
+
+    def _load_custom_sources(self, path: Path) -> List[NewsSource]:
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        sources: List[NewsSource] = []
+        if isinstance(payload, list):
+            for entry in payload:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "").strip()
+                url = str(entry.get("url") or "").strip()
+                topics = entry.get("topics") or ()
+                if not name or not url:
+                    continue
+                sources.append(NewsSource(name=name, url=url, topics=tuple(topics)))
+        return sources
 
     def _cache_file(self, source: NewsSource) -> Path:
         slug = re.sub(r"[^A-Za-z0-9]+", "-", source.name.lower()).strip("-") or "source"

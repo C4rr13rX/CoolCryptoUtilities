@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from trading.constants import PRIMARY_CHAIN, top_pairs
 from services.logging_bus import log_message
 from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
+from services.system_profile import SystemProfile
 
 HORIZON_WINDOWS_SEC: Tuple[int, ...] = (
     5 * 60,
@@ -134,6 +135,7 @@ class HistoricalDataLoader:
         horizon_env = os.getenv("TRAINING_HORIZON_WINDOWS_SEC", "").strip()
         self._horizon_windows: Tuple[int, ...] = self._parse_horizon_windows(horizon_env)
         self._horizon_profile: Dict[str, Dict[str, float]] = {}
+        self._system_profile: Optional[SystemProfile] = None
 
     def reset_limits(self) -> None:
         self.max_files = self._initial_max_files
@@ -151,6 +153,20 @@ class HistoricalDataLoader:
             self._dataset_cache.clear()
             self._dataset_profile_cache.clear()
             self._invalidate_file_index()
+
+    def apply_system_profile(self, profile: SystemProfile) -> None:
+        old_limits = (self.max_files, self.max_samples_per_file)
+        self._system_profile = profile
+        if profile.is_low_power or profile.memory_pressure:
+            self.max_files = min(self.max_files, 6)
+            self.max_samples_per_file = min(self.max_samples_per_file, 512)
+        else:
+            target_files = max(self.max_files, min(12, self._initial_max_files * 2))
+            target_samples = max(self.max_samples_per_file, min(1024, self._initial_max_samples * 2))
+            self.max_files = min(target_files, 96)
+            self.max_samples_per_file = min(target_samples, 4096)
+        if (self.max_files, self.max_samples_per_file) != old_limits:
+            self.invalidate_dataset_cache()
 
     def invalidate_dataset_cache(self) -> None:
         self._dataset_cache.clear()

@@ -332,6 +332,7 @@ class TradingBot:
                     label=opportunity_signal.kind,
                     details=opportunity_signal.to_dict(),
                 )
+                self.scheduler.record_opportunity(opportunity_signal)
             except Exception:
                 pass
         swarm_votes = []
@@ -1024,6 +1025,20 @@ class TradingBot:
                     np.clip(direction_prob + np.tanh(memory_bias) * 0.05, 0.0, 1.0)
                 )
                 margin += memory_bias * 0.02
+            except Exception:
+                pass
+        opportunity_bias = brain.get("opportunity") or {}
+        if opportunity_bias:
+            try:
+                opp_kind = str(opportunity_bias.get("kind") or "")
+                opp_strength = abs(float(opportunity_bias.get("zscore") or 0.0))
+                boost = min(0.15, opp_strength * 0.03)
+                if opp_kind == "buy-low":
+                    direction_prob = float(np.clip(direction_prob + boost, 0.0, 1.0))
+                    margin += boost * 0.01
+                elif opp_kind == "sell-high":
+                    direction_prob = float(np.clip(direction_prob - boost, 0.0, 1.0))
+                    margin -= boost * 0.01
             except Exception:
                 pass
         threshold_scale = float(brain.get("threshold_scale", 1.0) or 1.0)

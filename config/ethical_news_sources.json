@@ -1,0 +1,17 @@
+[
+  {
+    "name": "DLNews",
+    "url": "https://www.dlnews.com/feed/",
+    "topics": ["DEFI", "ETH", "L2"]
+  },
+  {
+    "name": "The Defiant",
+    "url": "https://newsletter.thedefiant.io/feed",
+    "topics": ["DEFI", "YIELD"]
+  },
+  {
+    "name": "Messari Hub",
+    "url": "https://messari.io/rss",
+    "topics": ["MACRO", "BTC", "ETH"]
+  }
+]

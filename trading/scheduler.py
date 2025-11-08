@@ -12,6 +12,7 @@ from db import get_db, TradingDatabase
 from trading.data_stream import _split_symbol
 from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN
+from trading.opportunity import OpportunitySignal
 
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("5m", 5 * 60),
@@ -146,6 +147,7 @@ class BusScheduler:
         seconds = [sec for _, sec in self.horizons]
         self._horizon_min = min(seconds) if seconds else 60
         self._horizon_span = max(seconds) - self._horizon_min if seconds else 1
+        self._opportunity_bias: Dict[str, OpportunitySignal] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -381,7 +383,7 @@ class BusScheduler:
         self._queue_predictions(state, signals)
         state.cached_signals = signals
         state.forecast_signature = signature_key
-        return signals
+        return self._apply_opportunity_bias(state.symbol, signals)
 
     def _queue_predictions(self, state: RouteState, signals: List[HorizonSignal]) -> None:
         if not signals or not state.samples:
@@ -430,6 +432,9 @@ class BusScheduler:
                 break
         return best_price
 
+    def record_opportunity(self, signal: OpportunitySignal) -> None:
+        self._opportunity_bias[signal.symbol] = signal
+
     def _score_signal(self, signal: HorizonSignal) -> float:
         return signal.expected_return * self.accuracy.quality(signal.label)
 
@@ -441,3 +446,19 @@ class BusScheduler:
         samples = self.accuracy.count(label)
         scarcity = 1.0 - min(0.6, samples / 256.0)
         return float(max(0.4, bell + 0.2 * scarcity))
+
+    def _apply_opportunity_bias(self, symbol: str, signals: List[HorizonSignal]) -> List[HorizonSignal]:
+        if not signals:
+            return signals
+        opportunity = self._opportunity_bias.get(symbol)
+        if not opportunity:
+            return signals
+        if time.time() - opportunity.timestamp > 1800:
+            self._opportunity_bias.pop(symbol, None)
+            return signals
+        direction = 1.0 if opportunity.kind == "buy-low" else -1.0
+        bias_strength = min(0.03, abs(opportunity.zscore) * 0.005)
+        for signal in signals:
+            horizon_scale = min(1.0, signal.seconds / (12 * 3600))  # emphasize <= 12h windows
+            signal.expected_return += direction * bias_strength * (0.5 + 0.5 * horizon_scale)
+        return signals

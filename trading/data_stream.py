@@ -53,6 +53,9 @@ TOKEN_NORMALIZATION = {
     "USDT": "USDT",
     "DAI": "DAI",
     "SPX": "SPX",
+    "USDBC": "USDC",
+    "USDCE": "USDC",
+    "USDC.E": "USDC",
 }
 
 COINGECKO_IDS = {
@@ -153,6 +156,7 @@ class MarketDataStream:
         self._consensus_relax_until = 0.0
         vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
         self._window_prices: deque = deque(maxlen=vol_window)
+        self._ws_warning_logged = False
         if not self.url:
             self._select_next_endpoint()
         self.bias_alpha = float(os.getenv("PRICE_BIAS_ALPHA", "0.2"))
@@ -193,6 +197,7 @@ class MarketDataStream:
         backoff = 5.0
         while not self._stop_event.is_set():
             if not self.url:
+                self._warn_websocket_unavailable()
                 await self._poll_rest_data(max(backoff, self.consensus_timeout))
                 if self._template:
                     symbol_lower = self.symbol.lower().replace("/", "-")
@@ -903,9 +908,22 @@ class MarketDataStream:
                 self.subscribe_template = ep.subscribe_template
                 self.current_endpoint = ep.name
                 log_message("market-stream", f"using {ep.name} endpoint", details={"url": self.url})
+                self._ws_warning_logged = False
                 return
         self.url = None
         self.current_endpoint = "unavailable"
+        self._warn_websocket_unavailable()
+
+    def _warn_websocket_unavailable(self) -> None:
+        if self._ws_warning_logged:
+            return
+        log_message(
+            "market-stream",
+            "websocket URL unavailable; using REST consensus fallback",
+            severity="warning",
+            details={"symbol": self.symbol},
+        )
+        self._ws_warning_logged = True
 
     def _load_historical_reference(self) -> Optional[float]:
         data_dir = Path(os.getenv("HISTORICAL_DATA_DIR", "data/historical_ohlcv"))

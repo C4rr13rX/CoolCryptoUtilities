@@ -10,6 +10,7 @@ import pytest
 import time
 
 from trading.data_loader import HistoricalDataLoader
+from services.system_profile import SystemProfile
 
 
 def _write_pair_index(path: Path, symbols: List[str]) -> None:
@@ -99,6 +100,15 @@ def test_expand_limits_invalidate_cache(historical_tmp: Path) -> None:
     assert loader.max_files == 2
     assert loader.max_samples_per_file >= 32
     assert not loader._dataset_cache  # expanding clears cache
+
+
+def test_apply_system_profile_caps_limits(historical_tmp: Path) -> None:
+    (historical_tmp / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(80)), encoding="utf-8")
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=8, max_samples_per_file=1024)
+    profile = SystemProfile(cpu_count=4, total_memory_gb=12.0, max_threads=4, is_low_power=True, memory_pressure=True)
+    loader.apply_system_profile(profile)
+    assert loader.max_files <= 6
+    assert loader.max_samples_per_file <= 512
 
 
 def test_dataset_builds_without_news(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

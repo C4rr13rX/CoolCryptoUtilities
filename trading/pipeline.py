@@ -5,11 +5,17 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone, timedelta
+import threading
 
 import hashlib
 import math
 
 import numpy as np
+
+from services.tf_runtime import configure_tensorflow
+from services.system_profile import SystemProfile, detect_system_profile
+
+configure_tensorflow()
 import tensorflow as tf
 from tensorflow.keras.losses import BinaryCrossentropy
 
@@ -62,6 +68,17 @@ MODEL_OUTPUT_ORDER: Tuple[str, ...] = (
 )
 
 
+def _format_horizon_label(seconds: int) -> str:
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h"
+    if seconds < 30 * 86400:
+        return f"{int(seconds // 86400)}d"
+    months = max(1, int(seconds // (30 * 86400)))
+    return f"{months}mth"
+
+
 class TrainingPipeline:
     """
     Coordinates model training, ghost validation, and promotion of candidate models.
@@ -76,6 +93,7 @@ class TrainingPipeline:
         model_dir: Optional[Path] = None,
         promotion_threshold: float = 0.65,
     ) -> None:
+        self.system_profile: SystemProfile = detect_system_profile()
         self.db = db or get_db()
         self.optimizer = optimizer or BayesianBruteForceOptimizer(
             {
@@ -86,6 +104,7 @@ class TrainingPipeline:
         self.model_dir = model_dir or Path(os.getenv("MODEL_DIR", "models"))
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.promotion_threshold = promotion_threshold
+        self._train_lock = threading.Lock()
 
         self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", "25"))
         self.max_false_positive_rate = float(os.getenv("MAX_FALSE_POSITIVE_RATE", "0.15"))
@@ -96,6 +115,7 @@ class TrainingPipeline:
         self.sent_seq_len = 24
         self.tech_count = 35
         self.data_loader = HistoricalDataLoader()
+        self.data_loader.apply_system_profile(self.system_profile)
         self.iteration: int = 0
         self.active_accuracy: float = 0.0
         self.target_positive_floor = float(os.getenv("TRAIN_POSITIVE_FLOOR", "0.15"))
@@ -299,6 +319,19 @@ class TrainingPipeline:
             pass
 
     def train_candidate(self) -> Optional[Dict[str, Any]]:
+        if not self._train_lock.acquire(blocking=False):
+            log_message("training", "train_candidate already running; skipping overlap", severity="warning")
+            return {
+                "iteration": self.iteration,
+                "status": "busy",
+                "score": self.active_accuracy,
+            }
+        try:
+            return self._train_candidate_impl()
+        finally:
+            self._train_lock.release()
+
+    def _train_candidate_impl(self) -> Optional[Dict[str, Any]]:
         proposal = self.optimizer.propose()
         lr = float(proposal.get("learning_rate", 3e-4))
         epochs = max(1, int(round(proposal.get("epochs", 2))))
@@ -371,6 +404,7 @@ class TrainingPipeline:
                 "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
             },
         )
+        self._record_horizon_metrics()
         self._preflight_checks(inputs, targets)
 
         self.iteration = pending_iteration
@@ -1200,6 +1234,24 @@ class TrainingPipeline:
                 details={"positive_ratio": positive_ratio},
             )
         return True
+
+    def _record_horizon_metrics(self) -> None:
+        profile = self.data_loader.horizon_profile()
+        if not profile:
+            return
+        summary: Dict[str, float] = {}
+        for horizon, stats in profile.items():
+            label = _format_horizon_label(int(horizon))
+            summary[f"{label}_samples"] = float(stats.get("samples", 0.0))
+            summary[f"{label}_mae"] = float(stats.get("mae", 0.0))
+        if summary:
+            self.metrics.record(
+                MetricStage.PIPELINE,
+                summary,
+                category="horizon_profile",
+                meta={"iteration": self.iteration},
+            )
+            self._last_dataset_meta["horizon_profile"] = profile
 
     def last_sample_meta(self) -> Dict[str, Any]:
         if not self._last_sample_meta:
