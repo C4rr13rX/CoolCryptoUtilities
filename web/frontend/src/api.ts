@@ -221,6 +221,34 @@ export async function runGuardianJob(payload: { prompt?: string; save_default?: 
   return data;
 }
 
+export interface SecureSettingPayload {
+  id?: number;
+  name: string;
+  category?: string;
+  is_secret: boolean;
+  value?: string;
+}
+
+export async function fetchSecureSettings(params?: { reveal?: boolean }) {
+  const { data } = await api.get('/secure/settings/', { params: params?.reveal ? { reveal: '1' } : undefined });
+  return data;
+}
+
+export async function createSecureSetting(payload: SecureSettingPayload) {
+  const { data } = await api.post('/secure/settings/', payload);
+  return data;
+}
+
+export async function updateSecureSetting(id: number, payload: SecureSettingPayload) {
+  const { data } = await api.patch(`/secure/settings/${id}/`, payload);
+  return data;
+}
+
+export async function deleteSecureSetting(id: number) {
+  const { data } = await api.delete(`/secure/settings/${id}/`);
+  return data;
+}
+
 export interface DataLabSignalParams {
   window?: string;
   direction?: 'bullish' | 'bearish' | 'all';

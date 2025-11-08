@@ -9,6 +9,8 @@ from collections import deque
 from pathlib import Path
 from typing import Dict, Optional
 
+from services.secure_settings import build_process_env
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PYTHON = os.getenv("PYTHON_BIN")
 if not DEFAULT_PYTHON:
@@ -39,7 +41,7 @@ class ConsoleProcessManager:
             if self._process and self._process.poll() is None:
                 return {"status": "running", "pid": str(self._process.pid)}
             logfile = LOG_PATH.open("a", encoding="utf-8")
-            env = os.environ.copy()
+            env = build_process_env()
             try:
                 proc = subprocess.Popen(
                     cmd,

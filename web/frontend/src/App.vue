@@ -190,6 +190,7 @@ const navItems = computed(() => [
   { route: 'datalab', label: 'Data Lab', icon: 'datalab', path: '/datalab', intent: pipelineIntent.value },
   { route: 'lab', label: 'Model Lab', icon: 'lab', path: '/lab', intent: pipelineIntent.value },
   { route: 'guardian', label: 'Guardian', icon: 'guardian', path: '/guardian', intent: pipelineIntent.value },
+  { route: 'settings', label: 'Settings', icon: 'settings', path: '/settings', intent: pipelineIntent.value },
 ]);
 
 const isActive = (name: string) => route.name === name;

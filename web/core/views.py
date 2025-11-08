@@ -105,7 +105,8 @@ class LandingView(DashboardContextMixin, TemplateView):
 
     def dispatch(self, request: HttpRequest, *args, **kwargs) -> HttpResponse:
         if request.user.is_authenticated:
-            return redirect("core:dashboard")
+            context = self._base_context(initial_route="dashboard")
+            return self.render_to_response(context)
         return super().dispatch(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs: Any) -> Dict[str, Any]:
@@ -120,7 +121,8 @@ class LandingView(DashboardContextMixin, TemplateView):
         form = AuthenticationForm(request, data=request.POST)
         if form.is_valid():
             login(request, form.get_user())
-            return redirect("core:dashboard")
+            context = self._base_context(initial_route="dashboard")
+            return self.render_to_response(context)
         context = self.get_context_data()
         context["auth_form"] = form
         return self.render_to_response(context)
@@ -161,3 +163,23 @@ class ConsoleView(BaseSecureView):
 
 class OrganismView(BaseSecureView):
     initial_route = "organism"
+
+
+class PipelinePageView(BaseSecureView):
+    initial_route = "pipeline"
+
+
+class DataLabPageView(BaseSecureView):
+    initial_route = "datalab"
+
+
+class ModelLabPageView(BaseSecureView):
+    initial_route = "lab"
+
+
+class GuardianPageView(BaseSecureView):
+    initial_route = "guardian"
+
+
+class SecureSettingsPageView(BaseSecureView):
+    initial_route = "settings"
