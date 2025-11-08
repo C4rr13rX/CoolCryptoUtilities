@@ -44,6 +44,10 @@ if (mountEl) {
     telemetry: '/telemetry',
     console: '/console',
     advisories: '/advisories',
+    datalab: '/datalab',
+    lab: '/lab',
+    guardian: '/guardian',
+    settings: '/settings',
   };
   const initialPath = targetRoutes[initialRoute] || '/';
 
