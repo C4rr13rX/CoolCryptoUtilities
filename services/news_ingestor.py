@@ -134,6 +134,37 @@ class EthicalNewsIngestor:
         end_ts = int(end.timestamp())
         return self.harvest(tokens=tokens, start_ts=start_ts, end_ts=end_ts)
 
+    def harvest_schedule_file(
+        self,
+        schedule_path: Path,
+        *,
+        fallback_tokens: Optional[Iterable[str]] = None,
+    ) -> int:
+        path = schedule_path.expanduser()
+        if not path.exists():
+            return 0
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return 0
+        collected = 0
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            token_payload = entry.get("tokens") or fallback_tokens
+            if not token_payload:
+                continue
+            start_ts = self._coerce_schedule_ts(entry.get("start_ts") or entry.get("start"))
+            end_ts = self._coerce_schedule_ts(entry.get("end_ts") or entry.get("end"))
+            if start_ts is None or end_ts is None:
+                continue
+            try:
+                rows = self.harvest(tokens=token_payload, start_ts=start_ts, end_ts=end_ts)
+                collected += len(rows)
+            except Exception:
+                continue
+        return collected
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -193,6 +224,22 @@ class EthicalNewsIngestor:
                     return int(time.mktime(parsed))
             except Exception:
                 return None
+        return None
+
+    def _coerce_schedule_ts(self, value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(float(value))
+            except Exception:
+                try:
+                    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                    return int(parsed.timestamp())
+                except Exception:
+                    return None
         return None
 
     def _clean_text(self, text: Any) -> str:

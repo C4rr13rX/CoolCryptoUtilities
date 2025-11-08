@@ -12,6 +12,7 @@ urlpatterns = [
     path("trades/", views.TradeLogView.as_view(), name="trades"),
     path("advisories/", views.AdvisoryListView.as_view(), name="advisories"),
     path("dashboard/", views.DashboardSummaryView.as_view(), name="dashboard"),
+    path("pipeline/readiness/", views.PipelineReadinessView.as_view(), name="pipeline-readiness"),
     path("organism/latest/", views.OrganismLatestView.as_view(), name="organism-latest"),
     path("organism/history/", views.OrganismHistoryView.as_view(), name="organism-history"),
     path("organism/settings/", views.OrganismSettingsView.as_view(), name="organism-settings"),

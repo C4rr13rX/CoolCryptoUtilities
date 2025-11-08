@@ -145,6 +145,7 @@ class MarketDataStream:
         self._last_consensus_ts = time.time()
         self._endpoint_failures: Dict[str, int] = {}
         self._historical_reference = self._load_historical_reference()
+        self._snapshot_seed_attempted = False
         self._endpoint_backoff_until: Dict[str, float] = {}
         self.current_endpoint: str = "bootstrap"
         self._sample_count = 0
@@ -934,31 +935,51 @@ class MarketDataStream:
         self._ws_warning_logged = True
 
     def _load_historical_reference(self) -> Optional[float]:
-        data_dir = Path(os.getenv("HISTORICAL_DATA_DIR", "data/historical_ohlcv"))
         symbol_upper = self.symbol.upper()
-        try:
-            for json_file in data_dir.glob(f"*_{symbol_upper}.json"):
-                with json_file.open("r", encoding="utf-8") as handle:
-                    rows = json.load(handle)
-                if isinstance(rows, list) and rows:
-                    last = rows[-1]
-                    price = float(last.get("close") or last.get("price") or 0.0)
+        roots = [
+            Path(os.getenv("HISTORICAL_DATA_DIR", "data/historical_ohlcv")),
+            Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")),
+        ]
+        for root in roots:
+            if not root.exists():
+                continue
+            try:
+                candidates = list(root.glob(f"*_{symbol_upper}.json"))
+                if not candidates:
+                    candidates = list(root.rglob(f"*_{symbol_upper}.json"))
+            except Exception:
+                candidates = []
+            for json_file in candidates:
+                try:
+                    with json_file.open("r", encoding="utf-8") as handle:
+                        rows = json.load(handle)
+                except Exception:
+                    continue
+                if not isinstance(rows, list) or not rows:
+                    continue
+                tail = rows[-min(len(rows), 96) :]
+                prices: List[float] = []
+                for entry in tail[-16:]:
+                    try:
+                        price = float(entry.get("close") or entry.get("price") or 0.0)
+                    except Exception:
+                        price = 0.0
                     if price > 0:
-                        return price
-        except Exception:
-            return None
+                        prices.append(price)
+                if prices:
+                    return float(statistics.fmean(prices))
         return None
 
     def _load_snapshot_reference(self) -> Optional[float]:
         snapshot_path = Path(os.getenv("LOCAL_MARKET_CACHE", "data/market_snapshots.json")).expanduser()
+        symbol_upper = self.symbol.upper()
         if not snapshot_path.exists():
-            return None
+            return self._prime_reference_from_local_market()
         try:
             payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
         except Exception:
             return None
         records = payload.get("data") or []
-        symbol_upper = self.symbol.upper()
         for entry in records:
             try:
                 entry_symbol = str(entry.get("symbol") or "").upper()
@@ -973,6 +994,43 @@ class MarketDataStream:
                 continue
             if value > 0:
                 return value
+        return self._prime_reference_from_local_market()
+
+    def _prime_reference_from_local_market(self) -> Optional[float]:
+        if getattr(self, "_snapshot_seed_attempted", False):
+            return None
+        self._snapshot_seed_attempted = True
+        try:
+            from services.public_api_clients import aggregate_market_data
+        except Exception:
+            return None
+        try:
+            snapshots = aggregate_market_data(symbols=[self.symbol], top_n=5)
+        except Exception as exc:
+            log_message(
+                "market-stream",
+                "snapshot seed failed",
+                severity="warning",
+                details={"symbol": self.symbol, "error": str(exc)},
+            )
+            return None
+        symbol_upper = self.symbol.upper()
+        for snap in snapshots:
+            if getattr(snap, "symbol", "").upper() != symbol_upper:
+                continue
+            try:
+                value = float(getattr(snap, "price_usd", 0.0))
+            except Exception:
+                value = 0.0
+            if value <= 0:
+                continue
+            log_message(
+                "market-stream",
+                "seeded reference from cached market data",
+                severity="info",
+                details={"symbol": self.symbol, "price": value},
+            )
+            return value
         return None
 
 

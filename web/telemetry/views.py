@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
+from typing import Any, Dict
 
 from django.db.models import Count
 from rest_framework import generics, status
@@ -22,6 +24,15 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from db import get_db  # noqa: E402
+
+
+def _load_report(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 class MetricsListView(generics.ListAPIView):
@@ -122,6 +133,26 @@ class DashboardSummaryView(APIView):
             "total_profit": total_profit,
         }
         return Response(summary, status=status.HTTP_200_OK)
+
+
+class PipelineReadinessView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        readiness = _load_report(Path("data/reports/live_readiness.json"))
+        confusion_meta = _load_report(Path("data/reports/confusion_matrices.json"))
+        horizon = _load_report(Path("data/reports/horizon_profile.json"))
+        payload = {
+            "live_readiness": readiness or {"ready": False},
+            "confusion": confusion_meta.get("confusion") if confusion_meta else {},
+            "decision_threshold": confusion_meta.get("decision_threshold") if confusion_meta else None,
+            "horizon_profile": horizon.get("profile") if horizon else {},
+        }
+        timestamps = [
+            readiness.get("updated_at") if isinstance(readiness, dict) else None,
+            confusion_meta.get("updated_at") if isinstance(confusion_meta, dict) else None,
+            horizon.get("updated_at") if isinstance(horizon, dict) else None,
+        ]
+        payload["updated_at"] = max((ts for ts in timestamps if isinstance(ts, (int, float))), default=None)
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class OrganismLatestView(APIView):

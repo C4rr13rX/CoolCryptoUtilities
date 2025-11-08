@@ -319,6 +319,9 @@ class GhostTradingSupervisor:
             return
         focus_assets, _ = self.pipeline.ghost_focus_assets()
         readiness = self.pipeline.live_readiness_report()
+        if readiness and readiness.get("reason") == "no_confusion_data":
+            if self.pipeline.prime_confusion_windows():
+                readiness = self.pipeline.live_readiness_report()
         if readiness:
             log_message(
                 "ghost-supervisor",

@@ -157,6 +157,7 @@ class TrainingPipeline:
         self._last_news_top_up: float = 0.0
         self._confusion_windows: Dict[str, int] = {label: seconds for label, seconds in CONFUSION_WINDOW_BUCKETS}
         self._last_confusion_report: Dict[str, Dict[str, Any]] = {}
+        self._load_cached_confusion_report()
 
     # ------------------------------------------------------------------
     # Public API
@@ -1298,6 +1299,18 @@ class TrainingPipeline:
                 meta={"iteration": self.iteration},
             )
             self._last_dataset_meta["horizon_profile"] = profile
+            try:
+                path = Path("data/reports/horizon_profile.json")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                snapshot = {
+                    "iteration": int(self.iteration),
+                    "updated_at": int(time.time()),
+                    "summary": summary,
+                    "profile": profile,
+                }
+                path.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+            except Exception:
+                pass
         self._horizon_bias = self.data_loader.horizon_bias_snapshot()
 
     def last_sample_meta(self) -> Dict[str, Any]:
@@ -1587,6 +1600,13 @@ class TrainingPipeline:
                     anchor_payload.get("threshold", self.decision_threshold)
                 )
             self._persist_confusion_report(confusion_report)
+            capped = self._cap_false_positive_rate(confusion_report)
+            if capped is not None:
+                summary["best_threshold"] = self._safe_float(capped)
+                current_fp = self._safe_float(
+                    summary.get("false_positive_rate_best", summary.get("false_positive_rate", 1.0))
+                )
+                summary["false_positive_rate_best"] = min(current_fp, self.max_false_positive_rate)
         else:
             self._last_confusion_report = {}
 
@@ -1687,7 +1707,8 @@ class TrainingPipeline:
             if best_summary is None:
                 continue
             payload = best_summary.to_dict()
-            payload["thresholds_tested"] = list(sweep.keys())
+            payload["thresholds_tested"] = [float(value) for value in sweep.keys()]
+            payload["curve"] = {f"{thr:.4f}": summary.to_dict() for thr, summary in sweep.items()}
             report[label] = payload
         return report
 
@@ -1748,11 +1769,58 @@ class TrainingPipeline:
                 "iteration": int(self.iteration),
                 "updated_at": int(time.time()),
                 "confusion": report,
+                "decision_threshold": float(self.decision_threshold),
             }
             path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
             pass
         self._persist_live_readiness_snapshot()
+
+    def _load_cached_confusion_report(self) -> None:
+        path = Path("data/reports/confusion_matrices.json")
+        if not path.exists():
+            return
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        report = payload.get("confusion")
+        if isinstance(report, dict) and report:
+            self._last_confusion_report = report
+            threshold = payload.get("decision_threshold")
+            if threshold is not None:
+                try:
+                    self.decision_threshold = float(threshold)
+                except Exception:
+                    pass
+
+    def _cap_false_positive_rate(self, report: Dict[str, Dict[str, Any]]) -> Optional[float]:
+        if not report:
+            return None
+        _, anchor = self._select_confusion_anchor(report)
+        if not anchor:
+            return None
+        curve = anchor.get("curve") or {}
+        if not isinstance(curve, dict):
+            return None
+        ordered = sorted(
+            (entry for entry in curve.values() if isinstance(entry, dict)),
+            key=lambda entry: float(entry.get("threshold", 0.5)),
+        )
+        for entry in ordered:
+            try:
+                fp_rate = float(entry.get("false_positive_rate", 1.0))
+            except Exception:
+                continue
+            if fp_rate > self.max_false_positive_rate:
+                continue
+            try:
+                threshold = float(entry.get("threshold"))
+            except Exception:
+                threshold = self.decision_threshold
+            self.decision_threshold = float(max(0.05, min(0.95, threshold)))
+            return self.decision_threshold
+        return None
 
     def _persist_live_readiness_snapshot(self) -> None:
         snapshot = self.live_readiness_report()
@@ -1790,6 +1858,53 @@ class TrainingPipeline:
             "samples": samples,
             "threshold": threshold,
         }
+
+    def prime_confusion_windows(self, *, min_samples: int = 128, force: bool = False) -> bool:
+        if self._last_confusion_report and not force:
+            return True
+        if not self._train_lock.acquire(blocking=False):
+            return False
+        try:
+            model = self.ensure_active_model()
+            dataset = self._prepare_dataset(
+                batch_size=32,
+                dataset_label="primer",
+                focus_assets=None,
+                selected_files=None,
+                oversample=False,
+            )
+            inputs, targets, _ = dataset
+            if inputs is None or targets is None:
+                return False
+            sample_count = inputs["price_vol_input"].shape[0] if "price_vol_input" in inputs else 0
+            if sample_count < min_samples and not force:
+                return False
+            input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+            target_order = list(MODEL_OUTPUT_ORDER)
+            input_tensors = tuple(inputs[name] for name in input_order)
+            target_tensors = tuple(targets[name] for name in target_order)
+            eval_ds = (
+                tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
+                .batch(32)
+                .prefetch(tf.data.AUTOTUNE)
+            )
+            evaluation = self._evaluate_candidate(model, eval_ds, targets)
+            confusion = evaluation.get("confusion_matrices")
+            if confusion:
+                self._persist_confusion_report(confusion)
+                capped = self._cap_false_positive_rate(confusion)
+                if capped is not None:
+                    self._save_state()
+                log_message(
+                    "training",
+                    "confusion matrices primed",
+                    severity="info",
+                    details={"samples": sample_count, "threshold": self.decision_threshold},
+                )
+                return True
+            return False
+        finally:
+            self._train_lock.release()
 
     def _execution_bias(self, window: int = 50) -> float:
         fills = self.db.fetch_trade_fills(limit=window)

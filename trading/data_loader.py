@@ -1339,9 +1339,76 @@ class HistoricalDataLoader:
             tokens = {"BTC", "ETH", "USDC", "DAI"}
         ingestor = EthicalNewsIngestor(output_path=path)
         try:
-            ingestor.harvest(tokens=tokens, start_ts=since_ts, end_ts=int(now))
+            harvested = ingestor.harvest(tokens=tokens, start_ts=since_ts, end_ts=int(now))
         except Exception:
+            harvested = []
+        schedule_path = Path(os.getenv("ETHICAL_NEWS_WINDOWS_PATH", "config/news_windows.json"))
+        try:
+            ingestor.harvest_schedule_file(schedule_path, fallback_tokens=tokens)
+        except Exception:
+            pass
+        if harvested:
             return
+        self._mirror_local_news_sources(path, since_ts)
+
+    def _mirror_local_news_sources(self, path: Path, since_ts: int) -> bool:
+        candidates = [
+            Path("data/arweave_mirror_news.parquet"),
+            Path("data/news/rss_news.parquet"),
+            Path("data/news/cryptocompare_news.parquet"),
+            Path("data/news/cryptonews.parquet"),
+        ]
+        frames: List[pd.DataFrame] = []
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                df = pd.read_parquet(candidate)
+            except Exception:
+                continue
+            if "timestamp" not in df.columns:
+                continue
+            filtered = df[pd.to_numeric(df["timestamp"], errors="coerce") >= since_ts].copy()
+            if filtered.empty:
+                continue
+            frames.append(filtered)
+        if not frames:
+            return False
+        merged = pd.concat(frames, ignore_index=True)
+        merged["headline"] = merged.get("headline", "")
+        merged["article"] = merged.get("article", merged.get("summary", ""))
+        merged["sentiment"] = merged.get("sentiment", "neutral").fillna("neutral")
+
+        def _coerce_tokens(raw: Any) -> List[str]:
+            if isinstance(raw, list):
+                return [str(token).upper() for token in raw if token]
+            if isinstance(raw, str):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return [str(token).upper() for token in parsed if token]
+                except Exception:
+                    return []
+            return []
+
+        merged["tokens"] = merged.get("tokens", pd.Series([[]] * len(merged))).apply(_coerce_tokens)
+        merged = merged[merged["tokens"].map(bool)]
+        if merged.empty:
+            return False
+        merged = merged.sort_values("timestamp")
+        payload = merged[["timestamp", "headline", "article", "sentiment", "tokens"]]
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload.to_parquet(path, index=False)
+            log_message(
+                "training",
+                "ethical news cache mirrored from local archives",
+                severity="info",
+                details={"rows": int(payload.shape[0])},
+            )
+            return True
+        except Exception:
+            return False
 
     def _load_news_window_schedule(self) -> Dict[str, List[Tuple[int, int]]]:
         schedule_path = Path(os.getenv("ETHICAL_NEWS_WINDOWS_PATH", "config/news_windows.json"))

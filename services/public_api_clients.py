@@ -40,6 +40,9 @@ _SNAPSHOT_HISTORY_LIMIT = max(12, int(os.getenv("MARKET_SNAPSHOT_HISTORY_LIMIT",
 _HISTORICAL_DATA_ROOT = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")).expanduser()
 _HISTORICAL_CACHE_LABEL = "historical_snapshots"
 _HISTORICAL_CACHE_TTL = max(300, int(os.getenv("HISTORICAL_SNAPSHOT_CACHE_SEC", "1800")))
+_GLOBAL_BACKOFF_SEC = max(60.0, float(os.getenv("PUBLIC_API_GLOBAL_BACKOFF_SEC", "600")))
+
+_NETWORK_BLOCKED_UNTIL: float = 0.0
 
 
 @dataclass
@@ -64,9 +67,20 @@ _FAILURE_LOG_INTERVAL = float(os.getenv("PUBLIC_API_FAILURE_LOG_SEC", "300"))
 _LAST_PROVIDER_FAILURE: Dict[str, float] = {}
 
 
+def _network_available() -> bool:
+    return time.time() >= _NETWORK_BLOCKED_UNTIL
+
+
+def _mark_network_blocked() -> None:
+    global _NETWORK_BLOCKED_UNTIL
+    _NETWORK_BLOCKED_UNTIL = time.time() + _GLOBAL_BACKOFF_SEC
+
+
 def _http_get(url: str, *, params: Optional[Dict[str, str]] = None) -> dict | list:
     host = url.split("/")[2]
     now = time.time()
+    if not _network_available():
+        raise RuntimeError("network_offline")
     resume = _HOST_BACKOFF.get(host, 0.0)
     if resume and now < resume:
         raise RuntimeError(f"{host} temporarily suppressed for {int(resume - now)}s")
@@ -99,6 +113,7 @@ def _maybe_backoff_host(host: str, exc: Exception) -> None:
     if backoff:
         until = time.time() + _DNS_BACKOFF_SEC
         _HOST_BACKOFF[host] = until
+        _mark_network_blocked()
         log_message(
             "public-apis",
             f"suppressing {host} due to connectivity errors",
@@ -282,6 +297,14 @@ def _historical_snapshot_from_file(path: Path) -> Optional[MarketSnapshot]:
     volume = float(sum(volumes)) if volumes else None
     timestamp = int(last_row.get("timestamp", 0))
     symbol = path.stem.split("_", 1)[-1].upper()
+    first_price = 0.0
+    try:
+        first_price = float(tail[0].get("close") or tail[0].get("price") or 0.0)
+    except Exception:
+        first_price = 0.0
+    pct_change = None
+    if first_price > 0:
+        pct_change = ((price - first_price) / first_price) * 100.0
     return MarketSnapshot(
         source="historical-cache",
         symbol=symbol,
@@ -289,8 +312,12 @@ def _historical_snapshot_from_file(path: Path) -> Optional[MarketSnapshot]:
         price_usd=price,
         volume_24h=volume,
         market_cap_usd=None,
-        percent_change_24h=None,
-        extra={"source_file": str(path), "updated_at": timestamp},
+        percent_change_24h=pct_change,
+        extra={
+            "source_file": str(path),
+            "updated_at": timestamp,
+            "sample_span": len(tail),
+        },
     )
 
 
@@ -561,29 +588,37 @@ def aggregate_market_data(
     snapshots: List[MarketSnapshot] = []
     errors: Dict[str, str] = {}
     fallback_used = False
-    try:
-        snapshots.extend(fetch_coincap(top=top_n))
-    except Exception as exc:
-        errors["coincap"] = str(exc)
-    time.sleep(0.4)
-
-    try:
-        snapshots.extend(fetch_coinpaprika(top=top_n))
-    except Exception as exc:
-        errors["coinpaprika"] = str(exc)
-    time.sleep(0.4)
-
-    try:
-        snapshots.extend(fetch_coinlore(limit=top_n))
-    except Exception as exc:
-        errors["coinlore"] = str(exc)
-    time.sleep(0.4)
-
-    if coingecko_ids:
+    offline_mode = not _network_available()
+    if offline_mode:
+        log_message(
+            "public-apis",
+            "network unavailable; using cached/historical market data",
+            severity="info",
+        )
+    if not offline_mode:
         try:
-            snapshots.extend(fetch_coingecko(coingecko_ids))
+            snapshots.extend(fetch_coincap(top=top_n))
         except Exception as exc:
-            errors["coingecko"] = str(exc)
+            errors["coincap"] = str(exc)
+        time.sleep(0.4)
+
+        try:
+            snapshots.extend(fetch_coinpaprika(top=top_n))
+        except Exception as exc:
+            errors["coinpaprika"] = str(exc)
+        time.sleep(0.4)
+
+        try:
+            snapshots.extend(fetch_coinlore(limit=top_n))
+        except Exception as exc:
+            errors["coinlore"] = str(exc)
+        time.sleep(0.4)
+
+        if coingecko_ids:
+            try:
+                snapshots.extend(fetch_coingecko(coingecko_ids))
+            except Exception as exc:
+                errors["coingecko"] = str(exc)
 
     # Filter to requested symbols if provided
     wanted = {sym.upper() for sym in symbols} if symbols else None
