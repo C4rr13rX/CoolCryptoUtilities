@@ -255,6 +255,8 @@ class Guardian:
             "3. Implement those improvements.\n"
             "4. After each fix, run the relevant tests (unit tests, lab regression, etc.) and report the results.\n"
             "5. Stop only after all items are addressed or when manual approval is required.\n"
+            "6. Start main.py and option 7 again.\n"
+            "7. Make sure not to touch anything in the monitoring_guardian folder or tools/codex_session.py.\n"
         )
         return prompt
 
