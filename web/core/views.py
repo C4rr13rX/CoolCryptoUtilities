@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -18,6 +19,16 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from db import get_db  # noqa: E402
+
+
+def _load_report(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _empty_payload() -> Dict[str, Any]:
@@ -46,6 +57,14 @@ class DashboardContextMixin:
         db = get_db()
         state = db.load_state() or {}
         ghost_state = state.get("ghost_trading") or {}
+        readiness = _load_report(Path("data/reports/live_readiness.json"))
+        confusion = _load_report(Path("data/reports/confusion_eval.json"))
+        horizon = _load_report(Path("data/reports/horizon_profile.json"))
+        timeline = _load_report(Path("runtime/organism_timeline.json"))
+        timeline_frames = []
+        raw_frames = timeline.get("snapshots") if isinstance(timeline, dict) else []
+        if isinstance(raw_frames, list):
+            timeline_frames = raw_frames[-8:]
         return {
             "latest_metrics": db.fetch_metrics(limit=6),
             "latest_feedback": db.fetch_feedback_events(limit=8),
@@ -54,6 +73,10 @@ class DashboardContextMixin:
             "stable_bank": float(ghost_state.get("stable_bank", 0.0)),
             "total_profit": float(ghost_state.get("total_profit", 0.0)),
             "advisories": db.fetch_advisories(limit=8, include_resolved=False),
+            "live_readiness": readiness,
+            "confusion_eval": confusion,
+            "horizon_profile": horizon.get("summary") if isinstance(horizon, dict) else {},
+            "organism_timeline": timeline_frames,
         }
 
     def _base_context(self, initial_route: str) -> Dict[str, Any]:

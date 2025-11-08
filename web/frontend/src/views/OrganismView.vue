@@ -88,6 +88,7 @@
             <li v-for="vote in brain.swarm_votes || []" :key="vote.horizon">
               <span>{{ vote.horizon }}</span>
               <span>{{ formatPercent(vote.expected) }}</span>
+              <span class="energy">{{ formatPercent(vote.energy) }}</span>
               <span class="confidence">{{ formatPercent(vote.confidence) }}</span>
             </li>
           </ul>
@@ -180,6 +181,56 @@
           </div>
         </div>
       </div>
+
+      <div class="info-card cluster-card">
+        <h2>Process Clusters</h2>
+        <ul class="cluster-list">
+          <li v-for="cluster in processClusters" :key="cluster.label">
+            <header>
+              <strong>{{ cluster.label }}</strong>
+              <span>{{ cluster.nodes }} nodes</span>
+            </header>
+            <div class="energy-bar">
+              <div class="energy-fill" :style="{ width: formatPercentValue(cluster.energy) }"></div>
+            </div>
+            <footer>
+              <span>Energy {{ formatPercent(cluster.energy) }}</span>
+            </footer>
+          </li>
+        </ul>
+        <p v-if="!processClusters.length" class="empty">No cluster telemetry yet.</p>
+      </div>
+
+      <div class="info-card transition-card">
+        <h2>Live Transition</h2>
+        <div class="transition-status" :class="{ live: isLiveMode, ready: liveTransition.ready && !isLiveMode }">
+          <span v-if="isLiveMode">Live trading active</span>
+          <span v-else-if="liveTransition.ready">Ready for hand-off</span>
+          <span v-else>Ghost calibration running</span>
+        </div>
+        <div class="transition-metrics">
+          <div>
+            <span>Precision</span>
+            <strong>{{ formatPercent(liveTransition.precision) }}</strong>
+          </div>
+          <div>
+            <span>Recall</span>
+            <strong>{{ formatPercent(liveTransition.recall) }}</strong>
+          </div>
+          <div>
+            <span>Samples</span>
+            <strong>{{ liveTransition.samples ?? '—' }}</strong>
+          </div>
+          <div>
+            <span>Threshold</span>
+            <strong>{{ liveTransition.threshold ? liveTransition.threshold.toFixed(2) : '—' }}</strong>
+          </div>
+        </div>
+        <p class="transition-note">
+          Targets {{ formatPercent(requiredLiveWinRate) }} precision/recall and {{ requiredLiveTrades }} qualifying trades
+          before moving swaps from ghost to live execution.
+        </p>
+      </div>
     </div>
   </div>
 </template>
@@ -216,6 +267,11 @@ const formattedTimestamp = computed(() => {
 });
 
 const brain = computed(() => snapshot.value?.brain || {});
+const processClusters = computed(() => snapshot.value?.process_clusters || []);
+const liveTransition = computed(() => snapshot.value?.brain?.live_transition || {});
+const isLiveMode = computed(() => (snapshot.value?.mode || '').toLowerCase() === 'live');
+const requiredLiveWinRate = computed(() => Number(liveTransition.value?.required_win_rate ?? 0.9));
+const requiredLiveTrades = computed(() => Number(liveTransition.value?.required_trades ?? 120));
 const exposure = computed(() => snapshot.value?.exposure || {});
 const totalExposure = computed(() =>
   Object.values(exposure.value).reduce((sum: number, val: any) => sum + Number(val || 0), 0),
@@ -258,6 +314,13 @@ function formatPercent(value: any) {
   const num = Number(value);
   if (!Number.isFinite(num)) return '—';
   return `${(num * 100).toFixed(1)}%`;
+}
+
+function formatPercentValue(value: any) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '0%';
+  const clamped = Math.max(0, Math.min(1, num));
+  return `${(clamped * 100).toFixed(1)}%`;
 }
 
 function formatCurrency(value: any) {
@@ -604,6 +667,102 @@ watch(
 
 .swarm-votes .confidence {
   color: #38bdf8;
+}
+.swarm-votes .energy {
+  color: #facc15;
+}
+
+.cluster-card .cluster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.cluster-card li {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 14px;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+}
+
+.cluster-card li header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  color: #cbd5f5;
+}
+
+.cluster-card .energy-bar {
+  height: 6px;
+  background: rgba(59, 130, 246, 0.15);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 0.6rem 0;
+}
+
+.cluster-card .energy-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #34d399, #fbbf24);
+  border-radius: 999px;
+}
+
+.cluster-card footer {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  display: flex;
+  justify-content: space-between;
+}
+
+.transition-card .transition-status {
+  padding: 0.65rem 0.9rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  background: rgba(59, 130, 246, 0.18);
+  color: #bfdbfe;
+  margin-bottom: 1rem;
+}
+
+.transition-card .transition-status.live {
+  background: rgba(16, 185, 129, 0.2);
+  color: #bbf7d0;
+}
+
+.transition-card .transition-status.ready {
+  background: rgba(250, 191, 36, 0.2);
+  color: #fde68a;
+}
+
+.transition-card .transition-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.transition-card .transition-metrics span {
+  display: block;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
+.transition-card .transition-metrics strong {
+  display: block;
+  font-size: 1rem;
+  color: #e2e8f0;
+}
+
+.transition-card .transition-note {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  margin: 0;
 }
 
 .positions-table {

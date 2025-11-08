@@ -28,6 +28,7 @@ import requests
 
 from services.adaptive_control import APIRateLimiter
 from services.logging_utils import log_message
+from services.offline_market import OfflinePriceStore
 
 
 DEFAULT_TIMEOUT = 15
@@ -65,6 +66,7 @@ _HOST_BACKOFF: Dict[str, float] = {}
 _DNS_BACKOFF_SEC = 300.0
 _FAILURE_LOG_INTERVAL = float(os.getenv("PUBLIC_API_FAILURE_LOG_SEC", "300"))
 _LAST_PROVIDER_FAILURE: Dict[str, float] = {}
+_OFFLINE_STORE = OfflinePriceStore()
 
 
 def _network_available() -> bool:
@@ -131,6 +133,13 @@ def _log_api_failure_once(provider: str, message: str, *, severity: str = "warni
     log_message("public-apis", message, severity=severity, details=details)
 
 
+def _classify_failure(exc: Exception) -> str:
+    message = str(exc).lower()
+    if any(term in message for term in ("network_offline", "name or service not known", "temporary failure in name resolution")):
+        return "info"
+    return "warning"
+
+
 def _cache_path(name: str) -> Path:
     return _CACHE_ROOT / f"{name}.json"
 
@@ -187,11 +196,11 @@ def _append_snapshot_history(records: Sequence[Dict[str, Any]]) -> None:
 
 def _load_local_market_snapshots(limit: int, sources: Optional[Sequence[str]] = None) -> List[MarketSnapshot]:
     if not _LOCAL_SNAPSHOT.exists():
-        return []
+        return _offline_market_snapshots(limit, sources=sources)
     try:
         payload = json.loads(_LOCAL_SNAPSHOT.read_text(encoding="utf-8"))
     except Exception:
-        return []
+        return _offline_market_snapshots(limit, sources=sources)
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, list):
         return []
@@ -202,7 +211,41 @@ def _load_local_market_snapshots(limit: int, sources: Optional[Sequence[str]] = 
             for entry in data
             if str(entry.get("source", "")).lower() in allowed
         ]
-    return _snapshots_from_records(data, source=None, limit=limit)
+    snapshots = _snapshots_from_records(data, source=None, limit=limit)
+    if snapshots:
+        return snapshots
+    return _offline_market_snapshots(limit, sources=sources)
+
+
+def _offline_market_snapshots(
+    limit: int,
+    *,
+    sources: Optional[Sequence[str]] = None,
+    symbols: Optional[Sequence[str]] = None,
+) -> List[MarketSnapshot]:
+    entries = _OFFLINE_STORE.snapshots(symbols=symbols, limit=limit)
+    if not entries:
+        return []
+    allowed = {src.lower() for src in sources} if sources else None
+    snapshots: List[MarketSnapshot] = []
+    for entry in entries:
+        if allowed and entry.source.lower() not in allowed:
+            continue
+        snapshots.append(
+            MarketSnapshot(
+                source=entry.source,
+                symbol=entry.symbol,
+                name=entry.name,
+                price_usd=entry.price,
+                volume_24h=entry.volume,
+                market_cap_usd=None,
+                percent_change_24h=entry.change_24h,
+                extra={"source": entry.source, "offline": True},
+            )
+        )
+        if len(snapshots) >= limit:
+            break
+    return snapshots
 
 
 def _snapshots_from_records(records: Iterable[Dict[str, Any]], *, source: Optional[str], limit: int) -> List[MarketSnapshot]:
@@ -369,6 +412,7 @@ def fetch_coincap(top: int = 25) -> List[MarketSnapshot]:
         _log_api_failure_once(
             "coincap",
             f"CoinCap fetch failed: {exc}",
+            severity=_classify_failure(exc),
             details={"limit": limit},
         )
         snapshots = _cached_coincap_snapshots(limit)
@@ -413,6 +457,7 @@ def fetch_coinpaprika(top: int = 25) -> List[MarketSnapshot]:
         _log_api_failure_once(
             "coinpaprika",
             f"CoinPaprika fetch failed: {exc}",
+            severity=_classify_failure(exc),
             details={"limit": limit},
         )
         fallback = _cached_generic_snapshots("coinpaprika", limit)
@@ -467,8 +512,20 @@ def fetch_coingecko(ids: Sequence[str]) -> List[MarketSnapshot]:
         _log_api_failure_once(
             "coingecko",
             f"CoinGecko fetch failed: {exc}",
+            severity=_classify_failure(exc),
             details={"ids": len(ids)},
         )
+        fallback = _cached_generic_snapshots("coingecko", len(ids))
+        if not fallback:
+            fallback = _offline_market_snapshots(len(ids), symbols=None)
+        if fallback:
+            log_message(
+                "public-apis",
+                "CoinGecko offline fallback in use",
+                severity="info",
+                details={"error": str(exc), "records": len(fallback)},
+            )
+            return fallback
         raise
     snapshots: List[MarketSnapshot] = []
     for entry in payload:
@@ -493,6 +550,16 @@ def fetch_coingecko(ids: Sequence[str]) -> List[MarketSnapshot]:
             continue
     if snapshots:
         _persist_snapshot_records("coingecko_snapshots", snapshots)
+    else:
+        fallback = _offline_market_snapshots(len(ids), symbols=None)
+        if fallback:
+            log_message(
+                "public-apis",
+                "CoinGecko returned empty payload; using offline snapshots",
+                severity="warning",
+                details={"records": len(fallback)},
+            )
+            return fallback
     return snapshots
 
 
@@ -510,6 +577,7 @@ def fetch_coinlore(start: int = 0, limit: int = 25) -> List[MarketSnapshot]:
         _log_api_failure_once(
             "coinlore",
             f"CoinLore fetch failed: {exc}",
+            severity=_classify_failure(exc),
             details={"start": start, "limit": limit},
         )
         fallback = _cached_generic_snapshots("coinlore", max(1, limit))

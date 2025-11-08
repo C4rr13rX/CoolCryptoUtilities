@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
-import time
 import os
+import time
 from collections import deque
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -111,6 +113,7 @@ class TradingBot:
         self._asset_vocab_limit: Optional[int] = None
         self.portfolio = PortfolioState(db=self.db)
         self._snapshot_interval = max(1.0, float(os.getenv("ORGANISM_SNAPSHOT_INTERVAL", "5.0")))
+        self._timeline_path = Path(os.getenv("ORGANISM_TIMELINE_PATH", "runtime/organism_timeline.json"))
         self._last_snapshot_ts: float = 0.0
         self._discovery_cache: Dict[str, Any] = {}
         self._discovery_cache_ts: float = 0.0
@@ -139,6 +142,8 @@ class TradingBot:
         self._processing_sample: bool = False
         self._last_sample_signature: Optional[Tuple[str, float]] = None
         self._last_gas_advisory_signature: Optional[str] = None
+        self._pair_adjustments: Dict[str, Dict[str, Any]] = {}
+        self._live_transition_state: Dict[str, Any] = {}
         self.primary_chain: str = PRIMARY_CHAIN
         self.primary_symbol: str = PRIMARY_SYMBOL
         self.gas_buffer_multiplier: float = max(1.0, float(os.getenv("GAS_BUFFER_MULTIPLIER", str(GAS_PROFIT_BUFFER))))
@@ -159,6 +164,7 @@ class TradingBot:
             self._sim_initial_pool = sum(self.sim_quote_balances.values()) or self._sim_initial_pool
             if not self.sim_native_balances:
                 self.sim_native_balances[self.primary_chain.lower()] = 0.5
+        self._ensure_runtime_state()
 
     async def start(self) -> None:
         if self._running:
@@ -186,6 +192,41 @@ class TradingBot:
             self._peak_equity = self._sim_initial_pool
         self.ghost_session_id = max(1, self.ghost_session_id)
         self.active_exposure.clear()
+
+    # ------------------------------------------------------------------
+    # State compatibility helpers
+    # ------------------------------------------------------------------
+
+    def _ensure_runtime_state(self) -> None:
+        """
+        Guards against partially restored TradingBot objects (e.g. when loaded
+        from cached orchestrator state) by recreating transient members that
+        older snapshots may not contain. This prevents attribute errors such as
+        `_pair_adjustments` missing during callbacks.
+        """
+        if not hasattr(self, "_pair_adjustments") or not isinstance(self._pair_adjustments, dict):
+            self._pair_adjustments = {}
+        if not hasattr(self, "_live_transition_state") or not isinstance(self._live_transition_state, dict):
+            self._live_transition_state = {}
+        queue_max = int(os.getenv("STREAM_QUEUE_MAX", "8"))
+        if not hasattr(self, "_pending_queue") or not isinstance(self._pending_queue, deque):
+            self._pending_queue = deque(maxlen=queue_max)
+        if not hasattr(self, "_latency_window") or not isinstance(self._latency_window, deque):
+            self._latency_window = deque(maxlen=500)
+        if not hasattr(self, "savings") or not isinstance(self.savings, StableSavingsPlanner):
+            savings_batch = float(os.getenv("SAVINGS_TRANSFER_MIN_USD", "50"))
+            self.savings = StableSavingsPlanner(min_batch=savings_batch)
+        if not hasattr(self, "_timeline_path"):
+            self._timeline_path = Path(os.getenv("ORGANISM_TIMELINE_PATH", "runtime/organism_timeline.json"))
+
+    def __getstate__(self) -> Dict[str, Any]:
+        state = dict(self.__dict__)
+        state["_state_version"] = 2
+        return state
+
+    def __setstate__(self, state: Dict[str, Any]) -> None:  # pragma: no cover - exercised via ensure method
+        self.__dict__.update(state)
+        self._ensure_runtime_state()
 
     def _token_key(self, chain: str, symbol: str) -> Tuple[str, str]:
         return (chain.lower(), symbol.upper())
@@ -335,17 +376,26 @@ class TradingBot:
                 self.scheduler.record_opportunity(opportunity_signal)
             except Exception:
                 pass
-        swarm_votes = []
+        swarm_votes: List[Any] = []
         try:
             swarm_votes = self.swarm.vote(price_windows, sentiment_windows)
         except Exception:
             swarm_votes = []
-        weight_sum = sum(v.confidence for v in swarm_votes) or 1.0
-        swarm_bias = (
-            sum(v.expected_return * v.confidence for v in swarm_votes) / weight_sum
-            if swarm_votes
-            else 0.0
-        )
+        swarm_weights = {}
+        try:
+            swarm_weights = self.swarm.weights()
+        except Exception:
+            swarm_weights = {}
+        if swarm_votes:
+            numerator = 0.0
+            denom = 0.0
+            for vote in swarm_votes:
+                weight = float(swarm_weights.get(vote.horizon, vote.confidence))
+                numerator += vote.expected_return * weight
+                denom += weight
+            swarm_bias = numerator / denom if denom else 0.0
+        else:
+            swarm_bias = 0.0
         volatility = float(sample.get("rolling_volatility") or 0.0)
         if volatility == 0.0 and history_prices.size > 3:
             volatility = float(np.std(np.diff(history_prices[-min(20, history_prices.size):])))
@@ -458,13 +508,21 @@ class TradingBot:
             threshold_scale *= max(0.75, 1.0 - min(0.2, memory_bias / 5.0))
         elif memory_bias < 0:
             threshold_scale *= min(1.25, 1.0 + min(0.2, abs(memory_bias) / 5.0))
+        swarm_diagnostics = self.swarm.diagnostics()
         brain_summary = {
             "graph_confidence": graph_conf,
             "swarm_bias": swarm_bias,
             "swarm_votes": [
-                {"horizon": vote.horizon, "expected": vote.expected_return, "confidence": vote.confidence}
+                {
+                    "horizon": vote.horizon,
+                    "expected": vote.expected_return,
+                    "confidence": vote.confidence,
+                    "energy": vote.energy,
+                    "samples": vote.samples,
+                }
                 for vote in swarm_votes
             ],
+            "swarm_diagnostics": swarm_diagnostics,
             "memory_bias": memory_bias,
             "memory_meta": memory_meta,
             "scenario_spread": scenario_spread,
@@ -483,6 +541,7 @@ class TradingBot:
             "opportunity": opportunity_signal.to_dict() if opportunity_signal else None,
             "threshold_scale": threshold_scale,
             "fingerprint": fingerprint.tolist(),
+            "live_transition": self._live_transition_state,
         }
         try:
             self.metrics.record(
@@ -543,6 +602,52 @@ class TradingBot:
         print(
             f"[savings] mode={event.mode} token={event.token} amount={event.amount:.4f} equilibrium={event.equilibrium_score:.3f}"
         )
+
+    def _maybe_transition_to_live(self, *, latest_decision: Optional[Dict[str, Any]]) -> None:
+        if not self.auto_promote_live:
+            self._live_transition_state = {"enabled": self.live_trading_enabled, "reason": "auto_promote_disabled"}
+            return
+        readiness = self.pipeline.live_readiness_report()
+        self._live_transition_state = readiness or {"enabled": self.live_trading_enabled}
+        if readiness:
+            readiness.setdefault("required_win_rate", self.required_live_win_rate)
+            readiness.setdefault("required_trades", self.required_live_trades)
+            readiness.setdefault("required_profit", self.required_live_profit)
+        if self.live_trading_enabled:
+            return
+        if not readiness or not readiness.get("ready"):
+            return
+        precision = float(readiness.get("precision", 0.0))
+        recall = float(readiness.get("recall", 0.0))
+        samples = int(readiness.get("samples", 0))
+        threshold = float(readiness.get("threshold", self.decision_threshold))
+        if precision < self.required_live_win_rate or recall < self.required_live_win_rate:
+            return
+        if samples < self.required_live_trades:
+            return
+        plan = self.swap_validator.plan_transition(
+            positions=self.positions,
+            exposure=self.active_exposure,
+            readiness=readiness,
+            risk_budget=self.global_risk_budget,
+            pending_decision=latest_decision,
+        )
+        if not plan.get("allowed", True):
+            self.metrics.feedback(
+                "live_transition",
+                severity=FeedbackSeverity.WARNING,
+                label="blocked",
+                details=plan,
+            )
+            return
+        self.live_trading_enabled = True
+        self.metrics.feedback(
+            "live_transition",
+            severity=FeedbackSeverity.INFO,
+            label="live_enabled",
+            details={"threshold": threshold, "precision": precision, "recall": recall, "samples": samples, "plan": plan},
+        )
+        self._save_state()
 
     def _get_pair_adjustment(self, symbol: str) -> Dict[str, Any]:
         cache = self._pair_adjustments.get(symbol)
@@ -937,6 +1042,7 @@ class TradingBot:
                 decision=decision,
                 latency_s=snapshot_latency,
             )
+            self._maybe_transition_to_live(latest_decision=decision)
         finally:
             latency = time.perf_counter() - cycle_start
             self._latency_window.append(latency)
@@ -1980,6 +2086,24 @@ class TradingBot:
         if isinstance(exposure, dict):
             self.active_exposure = {str(sym): float(value) for sym, value in exposure.items()}
 
+    def _append_organism_timeline(self, snapshot: Dict[str, Any], limit: int = 32) -> None:
+        path = getattr(self, "_timeline_path", Path("runtime/organism_timeline.json"))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                payload = {}
+            frames = payload.get("snapshots")
+            if not isinstance(frames, list):
+                frames = []
+            frames.append(snapshot)
+            payload["snapshots"] = frames[-limit:]
+            payload["updated_at"] = int(time.time())
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        except Exception:
+            pass
+
     def _record_organism_snapshot(
         self,
         *,
@@ -2018,6 +2142,10 @@ class TradingBot:
             self._last_snapshot_ts = now
         except Exception as exc:
             print(f"[organism] snapshot persist failed: {exc}")
+        try:
+            self._append_organism_timeline(snapshot)
+        except Exception:
+            pass
 
     def _get_discovery_snapshot(self, now: float) -> Dict[str, Any]:
         if self._discovery_cache and (now - self._discovery_cache_ts) < 300:

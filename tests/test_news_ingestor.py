@@ -8,7 +8,7 @@ from typing import List
 from services.news_ingestor import EthicalNewsIngestor, NewsSource
 
 
-def test_ethic_news_ingestor_writes_parquet(tmp_path):
+def test_ethic_news_ingestor_writes_parquet(monkeypatch, tmp_path):
     now = int(time.time())
     source = NewsSource(name="TestSource", url="http://example.com/feed")
     sample_entries = [
@@ -20,6 +20,7 @@ def test_ethic_news_ingestor_writes_parquet(tmp_path):
         }
     ]
 
+    monkeypatch.setenv("ETHICAL_NEWS_ARCHIVE_DIR", str(tmp_path / "archive"))
     ingestor = EthicalNewsIngestor(
         sources=[source],
         output_path=tmp_path / "ethical.parquet",
@@ -41,6 +42,7 @@ def test_custom_catalog_and_harvest_window(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setenv("ETHICAL_NEWS_SOURCES_PATH", str(config_path))
+    monkeypatch.setenv("ETHICAL_NEWS_ARCHIVE_DIR", str(tmp_path / "archive"))
     now = datetime.now(timezone.utc)
     sample_entries = [
         {
@@ -73,6 +75,7 @@ def test_harvest_windows_batches_requests_multiple_ranges(monkeypatch, tmp_path)
     empty_catalog = tmp_path / "sources.json"
     empty_catalog.write_text("[]", encoding="utf-8")
     monkeypatch.setenv("ETHICAL_NEWS_SOURCES_PATH", str(empty_catalog))
+    monkeypatch.setenv("ETHICAL_NEWS_ARCHIVE_DIR", str(tmp_path / "archive"))
 
     def fake_fetch(_src):
         idx = len(calls)

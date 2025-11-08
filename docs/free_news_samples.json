@@ -1,0 +1,35 @@
+[
+  {
+    "timestamp": 1715798400,
+    "headline": "Volunteer validator set funds refugee broadband through ETH tips",
+    "article": "Grassroots node operators in Eastern Europe pooled their staking rewards to sponsor community broadband links that keep displaced students online. The group open-sourced its budgeting sheets so other DAOs can copy the playbook.",
+    "sentiment": "positive",
+    "tokens": [
+      "ETH",
+      "DAO",
+      "BROADBAND"
+    ]
+  },
+  {
+    "timestamp": 1719380400,
+    "headline": "Solar-powered miners throttle hash rate to stabilize island grid",
+    "article": "A civic energy co-op in the Pacific published telemetry proving that dynamically curbing GPU miners during peak load helped the local grid avoid brownouts while still funding battery expansion.",
+    "sentiment": "positive",
+    "tokens": [
+      "SOL",
+      "GPU",
+      "ENERGY"
+    ]
+  },
+  {
+    "timestamp": 1722048000,
+    "headline": "Indie researchers publish open OHLCV audit trail for BASE meme pairs",
+    "article": "Three independent quants collected and anonymized an OHLCV dataset for new BASE pairs that lacked transparent price history. They released the files under a Creative Commons license so small funds can benchmark risk models.",
+    "sentiment": "neutral",
+    "tokens": [
+      "BASE",
+      "OHLCV",
+      "DATA"
+    ]
+  }
+]

@@ -28,12 +28,16 @@ class NewsSource:
 
 DEFAULT_SOURCES: Sequence[NewsSource] = (
     NewsSource(name="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/", topics=("BTC", "ETH")),
-    NewsSource(name="CoinTelegraph", url="https://cointelegraph.com/rss", topics=("L2", "DeFi")),
-    NewsSource(name="Blockworks", url="https://blockworks.co/feed", topics=("macro", "markets")),
+    NewsSource(name="CoinTelegraph", url="https://cointelegraph.com/rss", topics=("L2", "DEFI")),
+    NewsSource(name="Blockworks", url="https://blockworks.co/feed", topics=("MACRO", "MARKETS")),
     NewsSource(name="Ethereum Foundation", url="https://blog.ethereum.org/en/feed.xml", topics=("ETH", "STAKING", "L2")),
     NewsSource(name="US Treasury Press", url="https://home.treasury.gov/news/press-releases/rss", topics=("USD", "POLICY")),
     NewsSource(name="IMF Fintech", url="https://www.imf.org/external/pubs/ft/fandd/fintech/rss.xml", topics=("MACRO", "REGULATION")),
     NewsSource(name="GitHub Security Advisories", url="https://github.com/security-advisories.atom", topics=("SECURITY", "DEVOPS")),
+    NewsSource(name="Decrypt", url="https://decrypt.co/feed", topics=("NFT", "GAMEFI", "DEFI")),
+    NewsSource(name="The Defiant", url="https://thedefiant.io/feed", topics=("DEFI", "STABLECOIN")),
+    NewsSource(name="ECB Press", url="https://www.ecb.europa.eu/rss/press.html", topics=("EURO", "MACRO")),
+    NewsSource(name="BIS Press", url="https://www.bis.org/rss/press.xml", topics=("CBDC", "CENTRALBANK")),
 )
 
 
@@ -61,6 +65,8 @@ class EthicalNewsIngestor:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.output_path = (output_path or Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))).expanduser()
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.archive_root = Path(os.getenv("ETHICAL_NEWS_ARCHIVE_DIR", "data/news/free_news")).expanduser()
+        self.archive_root.mkdir(parents=True, exist_ok=True)
         self._fetcher = fetcher or self._fetch_source
         self.max_tokens = max_tokens
 
@@ -108,6 +114,7 @@ class EthicalNewsIngestor:
                 )
         if rows:
             self._write_parquet(rows)
+            self._archive_rows(rows, start_ts, end_ts, keyword_set)
         return rows
 
     def harvest_windows(
@@ -275,6 +282,23 @@ class EthicalNewsIngestor:
             df = df_new
         try:
             df.to_parquet(self.output_path, index=False)
+        except Exception:
+            pass
+
+    def _archive_rows(self, rows: List[dict], start_ts: int, end_ts: int, tokens: Iterable[str]) -> None:
+        if not rows:
+            return
+        payload = {
+            "start_ts": int(start_ts),
+            "end_ts": int(end_ts),
+            "tokens": sorted({str(token).upper() for token in tokens if token}),
+            "count": len(rows),
+            "articles": rows,
+        }
+        filename = f"{int(start_ts)}_{int(end_ts)}.json"
+        path = self.archive_root / filename
+        try:
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
             pass
 

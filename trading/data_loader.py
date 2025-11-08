@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from trading.constants import PRIMARY_CHAIN, top_pairs
 from services.logging_utils import log_message
+from services.offline_market import OfflinePriceStore
 from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
 from services.system_profile import SystemProfile
 
@@ -151,6 +152,10 @@ class HistoricalDataLoader:
         self._prefer_long_horizon = False
         self._horizon_bias: Dict[str, float] = {"short": 1.0, "mid": 1.0, "long": 1.0}
         self._file_stats_cache: Dict[str, float] = {}
+        self._offline_store = OfflinePriceStore()
+        self._synthetic_data_dir = Path(os.getenv("SYNTHETIC_DATA_DIR", "data/intermediate/synthetic_ohlcv")).expanduser()
+        self._synthetic_data_dir.mkdir(parents=True, exist_ok=True)
+        self._synthetic_files: Dict[str, Path] = {}
 
     def _disk_cache_path(self, cache_key: Tuple[Any, ...]) -> Path:
         digest = hashlib.sha1(repr(cache_key).encode("utf-8")).hexdigest()
@@ -287,6 +292,36 @@ class HistoricalDataLoader:
             adjustments["focus"] = list(focus_assets)
         return adjustments
 
+    def backfill_shortfall(
+        self,
+        deficits: Dict[str, float],
+        focus_assets: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        short_deficit = max(0.0, float(deficits.get("short", 0.0)))
+        mid_deficit = max(0.0, float(deficits.get("mid", 0.0)))
+        if short_deficit <= 0 and mid_deficit <= 0:
+            return {}
+        symbols: List[str] = []
+        if focus_assets:
+            expanded = self._expand_focus_assets(focus_assets)
+            symbols.extend(sorted(expanded))
+        if not symbols:
+            symbols = top_pairs(limit=min(8, (self.max_files or 8)))
+        bars = 240 if short_deficit > 0 else 120
+        created: List[str] = []
+        for symbol in symbols[:8]:
+            normalized = self._normalize_pair_label(symbol)
+            tail = self._offline_store.get_ohlcv_tail(normalized, bars=bars)
+            if not tail:
+                continue
+            path = self._write_synthetic_series(normalized, tail)
+            if path:
+                created.append(str(path))
+        if created:
+            self.invalidate_dataset_cache()
+            return {"synthetic_files": created, "bars": bars}
+        return {}
+
     def apply_system_profile(self, profile: SystemProfile) -> None:
         old_limits = (self.max_files, self.max_samples_per_file)
         self._system_profile = profile
@@ -385,10 +420,42 @@ class HistoricalDataLoader:
         if cache_valid:
             return list(self._file_listing_cache)
         files = sorted(self.data_dir.rglob("*.json")) if self.data_dir.is_dir() else []
+        synthetic = sorted(self._synthetic_files.values()) if self._synthetic_files else []
+        if synthetic:
+            files.extend(synthetic)
         self._file_listing_cache = files
         self._file_listing_ts = now
         self._file_listing_mtime = dir_mtime
         return files
+
+    def _write_synthetic_series(self, symbol: str, rows: Sequence[dict]) -> Optional[Path]:
+        if not rows:
+            return None
+        trimmed: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                trimmed.append(
+                    {
+                        "timestamp": int(row.get("timestamp") or row.get("ts") or 0),
+                        "open": float(row.get("open", row.get("price")) or 0.0),
+                        "high": float(row.get("high", row.get("price")) or 0.0),
+                        "low": float(row.get("low", row.get("price")) or 0.0),
+                        "close": float(row.get("close", row.get("price")) or 0.0),
+                        "net_volume": float(row.get("net_volume", row.get("volume", 0.0)) or 0.0),
+                    }
+                )
+            except Exception:
+                continue
+        if not trimmed:
+            return None
+        label = symbol.replace("/", "-").replace(":", "-")
+        path = self._synthetic_data_dir / f"{label}.json"
+        try:
+            path.write_text(json.dumps(trimmed), encoding="utf-8")
+        except Exception:
+            return None
+        self._synthetic_files[symbol] = path
+        return path
 
     def _normalize_token_symbol(self, token: str) -> str:
         token_u = re.sub(r"[^A-Z0-9]", "", token.upper())
@@ -1271,6 +1338,15 @@ class HistoricalDataLoader:
                     frames.append(archive_df)
             except Exception:
                 pass
+        try:
+            from services.news_router import FreeNewsRouter
+
+            router = FreeNewsRouter()
+            window_df = router.window(start_ts=since_ts, end_ts=int(time.time()))
+            if window_df is not None and not window_df.empty:
+                frames.append(window_df)
+        except Exception:
+            pass
 
         if not frames:
             return []

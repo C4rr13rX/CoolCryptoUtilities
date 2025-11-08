@@ -1405,6 +1405,9 @@ class TrainingPipeline:
             details={"deficits": deficits, "focus": list(focus_assets or [])},
         )
         adjustments = self.data_loader.rebalance_horizons(deficits, focus_assets)
+        synthetic = self.data_loader.backfill_shortfall(deficits, focus_assets)
+        if synthetic:
+            adjustments["synthetic"] = synthetic
         self._horizon_bias = self.data_loader.horizon_bias_snapshot()
         if adjustments:
             self.metrics.feedback(
@@ -1599,7 +1602,9 @@ class TrainingPipeline:
                 summary["anchor_threshold"] = self._safe_float(
                     anchor_payload.get("threshold", self.decision_threshold)
                 )
+                self._auto_tune_threshold(anchor_payload)
             self._persist_confusion_report(confusion_report)
+            self._persist_confusion_eval(summary)
             capped = self._cap_false_positive_rate(confusion_report)
             if capped is not None:
                 summary["best_threshold"] = self._safe_float(capped)
@@ -1762,13 +1767,38 @@ class TrainingPipeline:
             )
         except Exception:
             pass
+
+    def _persist_confusion_eval(self, summary: Dict[str, Any]) -> None:
+        report_payload: Dict[str, Any] = (
+            dict(self._last_confusion_report) if isinstance(self._last_confusion_report, dict) else {}
+        )
+        payload = {
+            "updated_at": int(time.time()),
+            "iteration": int(self.iteration),
+            "dir_accuracy": self._safe_float(summary.get("dir_accuracy", 0.0)),
+            "ghost_trades": int(summary.get("ghost_trades", 0)),
+            "ghost_pred_margin": self._safe_float(summary.get("ghost_pred_margin", 0.0)),
+            "ghost_realized_margin": self._safe_float(summary.get("ghost_realized_margin", 0.0)),
+            "ghost_win_rate": self._safe_float(summary.get("ghost_win_rate", 0.0)),
+            "confusion_anchor": summary.get("confusion_anchor"),
+            "anchor_threshold": self._safe_float(summary.get("anchor_threshold", self.decision_threshold)),
+            "best_threshold": self._safe_float(summary.get("best_threshold", self.decision_threshold)),
+            "false_positive_rate": self._safe_float(summary.get("false_positive_rate_best", 1.0)),
+            "margin_confidence": self._safe_float(summary.get("margin_confidence", 0.0)),
+        }
+        path = Path("data/reports/confusion_eval.json")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
         try:
             path = Path("data/reports/confusion_matrices.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "iteration": int(self.iteration),
                 "updated_at": int(time.time()),
-                "confusion": report,
+                "confusion": report_payload,
                 "decision_threshold": float(self.decision_threshold),
             }
             path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -1821,6 +1851,40 @@ class TrainingPipeline:
             self.decision_threshold = float(max(0.05, min(0.95, threshold)))
             return self.decision_threshold
         return None
+
+    def _auto_tune_threshold(self, anchor: Dict[str, Any]) -> None:
+        if not anchor:
+            return
+        target_f1 = float(os.getenv("AUTO_THRESHOLD_MIN_F1", "0.62"))
+        f1_score = self._safe_float(anchor.get("f1_score", 0.0))
+        if f1_score < target_f1:
+            return
+        try:
+            candidate = float(anchor.get("threshold", self.decision_threshold))
+        except Exception:
+            return
+        if candidate <= 0.0:
+            return
+        blended = round((self.decision_threshold * 0.7) + (candidate * 0.3), 4)
+        if abs(blended - self.decision_threshold) < 1e-4:
+            return
+        previous = self.decision_threshold
+        self.decision_threshold = blended
+        self._save_state()
+        try:
+            self.metrics.feedback(
+                "training",
+                severity=FeedbackSeverity.INFO,
+                label="threshold_auto_tune",
+                details={
+                    "previous": previous,
+                    "updated": blended,
+                    "anchor_threshold": candidate,
+                    "anchor_f1": f1_score,
+                },
+            )
+        except Exception:
+            pass
 
     def _persist_live_readiness_snapshot(self) -> None:
         snapshot = self.live_readiness_report()

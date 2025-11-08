@@ -94,6 +94,13 @@ def build_snapshot(
         "organism_graph": organism_graph,
         "totals": totals_payload,
         "activity": activity_payload,
+        "process_clusters": _build_process_clusters(
+            brain_payload,
+            scheduler_payload,
+            exposure_payload,
+            activity_payload,
+            totals_payload,
+        ),
     }
     return snapshot
 
@@ -322,6 +329,72 @@ def _prepare_activity(bot: Any) -> Dict[str, Any]:
     ]
 
     return activity
+
+
+def _build_process_clusters(
+    brain: Dict[str, Any],
+    scheduler: List[Dict[str, Any]],
+    exposure: Dict[str, float],
+    activity: Dict[str, Any],
+    totals: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    clusters: List[Dict[str, Any]] = []
+    diagnostics = brain.get("swarm_diagnostics") or []
+    if diagnostics:
+        avg_energy = sum(entry.get("energy", 0.0) for entry in diagnostics) / max(len(diagnostics), 1)
+        clusters.append(
+            {
+                "label": "Swarm",
+                "energy": float(avg_energy),
+                "nodes": len(diagnostics),
+                "detail": diagnostics[:6],
+            }
+        )
+    if scheduler:
+        pressure = min(1.0, len(scheduler) / 10.0)
+        clusters.append(
+            {
+                "label": "Scheduler",
+                "energy": float(pressure),
+                "nodes": len(scheduler),
+                "detail": scheduler[:6],
+            }
+        )
+    if exposure:
+        gross = sum(abs(val) for val in exposure.values())
+        clusters.append(
+            {
+                "label": "Exposure",
+                "energy": float(min(1.0, gross)),
+                "nodes": len(exposure),
+                "detail": [{"symbol": sym, "value": val} for sym, val in list(exposure.items())[:8]],
+            }
+        )
+    if totals:
+        equity = float(totals.get("equity") or 0.0)
+        stable = float(totals.get("stable_bank") or 0.0)
+        denom = max(1.0, equity + stable)
+        clusters.append(
+            {
+                "label": "Equity",
+                "energy": float(min(1.0, (equity + stable) / denom)),
+                "nodes": 1,
+                "detail": totals,
+            }
+        )
+    if activity:
+        clusters.append(
+            {
+                "label": "Activity",
+                "energy": 0.5,
+                "nodes": len(activity.get("metrics", [])) + len(activity.get("ghost_trades", [])),
+                "detail": {
+                    "ghost_trades": activity.get("ghost_trades", [])[:3],
+                    "live_trades": activity.get("live_trades", [])[:3],
+                },
+            }
+        )
+    return clusters
 
 
 def _series_to_list(values: Any, *, limit: int) -> List[float]:

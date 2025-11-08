@@ -16,6 +16,7 @@ import aiohttp
 
 from services.adaptive_control import APIRateLimiter
 from services.logging_utils import log_message
+from services.offline_market import OfflinePriceStore, OfflineSnapshot
 
 try:  # pragma: no cover - optional dependency may fail at import time
     from services.onchain_feed import OnChainPairFeed
@@ -180,7 +181,14 @@ class MarketDataStream:
         self._onchain_queue: Optional[asyncio.Queue] = None
         self._onchain_task: Optional[asyncio.Task] = None
         self._onchain_consumer: Optional[asyncio.Task] = None
-
+        self._offline_enabled = os.getenv("MARKET_OFFLINE_FALLBACK", "1").lower() in {"1", "true", "yes", "on"}
+        self._offline_store: Optional[OfflinePriceStore] = None
+        if self._offline_enabled:
+            try:
+                self._offline_store = OfflinePriceStore()
+            except Exception as exc:
+                log_message("market-stream", f"offline store unavailable: {exc}", severity="warning")
+                self._offline_enabled = False
         self.rate_limiter = APIRateLimiter(default_capacity=5.0, default_refill_rate=1.0)
 
     def register(self, callback: CallbackType) -> None:
@@ -526,6 +534,20 @@ class MarketDataStream:
             )
             await self._dispatch(sample)
         else:
+            offline = await self._offline_failover_sample()
+            if offline:
+                await self._dispatch(offline)
+                self.metrics.feedback(
+                    "market_stream",
+                    severity=FeedbackSeverity.WARNING,
+                    label="offline_price_injected",
+                    details={
+                        "symbol": self.symbol,
+                        "price": offline.get("price"),
+                        "source": offline.get("source", "offline"),
+                    },
+                )
+                return
             self.metrics.feedback(
                 "market_stream",
                 severity=FeedbackSeverity.CRITICAL,
@@ -556,7 +578,73 @@ class MarketDataStream:
             return float(statistics.median(valid))
         if self.reference_price:
             return float(self.reference_price)
+        offline_hit = self._offline_snapshot()
+        if offline_hit:
+            alias, snapshot = offline_hit
+            self._recent_price_by_source[f"offline:{alias}"] = (snapshot.price, snapshot.ts or now)
+            return float(snapshot.price)
         return None
+
+    async def _offline_failover_sample(self) -> Optional[Dict[str, Any]]:
+        offline_hit = self._offline_snapshot()
+        if not offline_hit:
+            return None
+        alias, snapshot = offline_hit
+        volume = snapshot.volume if snapshot.volume is not None else self._last_volume
+        return {
+            "ts": snapshot.ts or time.time(),
+            "symbol": self.symbol,
+            "chain": self.chain,
+            "price": snapshot.price,
+            "volume": volume,
+            "rest": "offline",
+            "source": snapshot.source or alias,
+            "alias": alias,
+        }
+
+    def _offline_snapshot(self) -> Optional[Tuple[str, OfflineSnapshot]]:
+        if not (self._offline_enabled and self._offline_store):
+            return None
+        seen = set()
+        for label in self._offline_symbol_candidates():
+            if label in seen:
+                continue
+            seen.add(label)
+            snapshot = self._offline_store.get_price(label)
+            if snapshot:
+                return label, snapshot
+        return None
+
+    def _offline_symbol_candidates(self) -> List[str]:
+        symbol_upper = self.symbol.upper()
+        candidates: List[str] = [symbol_upper]
+        raw_parts: List[str] = []
+        if "-" in symbol_upper:
+            raw_parts = symbol_upper.split("-")
+        elif "/" in symbol_upper:
+            raw_parts = symbol_upper.split("/")
+        base_norm, quote_norm = _split_symbol(self.symbol)
+        augmented = raw_parts + [base_norm, quote_norm]
+        for token in list(augmented):
+            norm = TOKEN_NORMALIZATION.get(token.upper(), token.upper())
+            if norm not in augmented:
+                augmented.append(norm)
+        for token in augmented:
+            token_clean = token.upper().strip()
+            if not token_clean:
+                continue
+            candidates.append(token_clean)
+            if token_clean not in {"USD", "USDC", "USDT"}:
+                candidates.append(f"{token_clean}-USDC")
+                candidates.append(f"{token_clean}-USD")
+        ordered: List[str] = []
+        for label in candidates:
+            key = label.upper()
+            if key and key not in ordered:
+                ordered.append(key)
+            if len(ordered) >= 24:
+                break
+        return ordered
 
     def _build_subscribe_payload(self, symbol: str) -> Optional[str]:
         if not self.subscribe_template:

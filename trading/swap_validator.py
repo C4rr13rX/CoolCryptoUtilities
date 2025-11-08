@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -155,3 +155,38 @@ class SwapValidator:
         if returns.size == 0:
             return 0.0
         return float(np.std(returns) * np.sqrt(min(len(returns), 60)))
+
+    def plan_transition(
+        self,
+        *,
+        positions: Dict[str, Dict[str, Any]],
+        exposure: Dict[str, float],
+        readiness: Dict[str, Any],
+        risk_budget: float,
+        pending_decision: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        gross_exposure = float(sum(abs(val) for val in exposure.values()))
+        max_pending = max(1, int(os.getenv("LIVE_MAX_PENDING_POSITIONS", "4")))
+        precision = float(readiness.get("precision", 0.0))
+        recall = float(readiness.get("recall", 0.0))
+        confidence_floor = float(os.getenv("LIVE_CONFIDENCE_FLOOR", "0.65"))
+        confidence_margin = min(precision, recall) - confidence_floor
+        budget_scale = max(0.2, min(1.0, 0.6 + confidence_margin))
+        adjusted_budget = max(0.05, risk_budget * budget_scale)
+        allowed = gross_exposure <= adjusted_budget and len(positions) <= max_pending
+        snapshot = {
+            "allowed": allowed,
+            "gross_exposure": gross_exposure,
+            "risk_budget": risk_budget,
+            "adjusted_risk_budget": adjusted_budget,
+            "confidence_margin": confidence_margin,
+            "pending_positions": len(positions),
+            "readiness": readiness,
+        }
+        if pending_decision:
+            snapshot["pending_decision"] = {
+                "action": pending_decision.get("action"),
+                "symbol": pending_decision.get("symbol"),
+                "size": pending_decision.get("size"),
+            }
+        return snapshot

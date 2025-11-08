@@ -1,0 +1,8 @@
+{
+  "sources": [
+    {
+      "label": "sample_reports",
+      "path": "docs/free_news_samples.json"
+    }
+  ]
+}

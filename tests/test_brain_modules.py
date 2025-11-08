@@ -54,6 +54,14 @@ def test_multi_resolution_swarm_vote_and_learn() -> None:
     assert swarm.stats["fast"]["total"] == pre_total + 1.0
 
 
+def test_multi_resolution_swarm_weights_normalised() -> None:
+    swarm = MultiResolutionSwarm([("fast", 5), ("medium", 8)])
+    weights = swarm.weights()
+    assert weights
+    total = sum(weights.values())
+    assert abs(total - 1.0) < 1e-9
+
+
 def test_pattern_memory_match() -> None:
     memory = PatternMemory(dim=3, max_entries=8)
     vec_a = np.array([1.0, 0.5, 0.25], dtype=np.float32)
