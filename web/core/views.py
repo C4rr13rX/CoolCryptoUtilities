@@ -183,3 +183,34 @@ class GuardianPageView(BaseSecureView):
 
 class SecureSettingsPageView(BaseSecureView):
     initial_route = "settings"
+
+
+class AdvisoriesPageView(BaseSecureView):
+    initial_route = "advisories"
+
+
+class SpaRouteView(BaseSecureView):
+    """
+    Catch-all view so refreshing /<route> stays inside the SPA shell.
+    Only accepts known slug characters and still requires authentication.
+    """
+
+    def dispatch(self, request, *args, **kwargs):
+        slug = kwargs.get("route") or "dashboard"
+        allowed = {
+            "dashboard",
+            "organism",
+            "streams",
+            "telemetry",
+            "console",
+            "pipeline",
+            "datalab",
+            "lab",
+            "guardian",
+            "settings",
+            "advisories",
+        }
+        if slug not in allowed:
+            return redirect("core:dashboard")
+        self.initial_route = slug
+        return super().dispatch(request, *args, **kwargs)
