@@ -1,0 +1,7 @@
+{
+  "log_files": [
+    "logs/system.log"
+  ],
+  "report_interval_minutes": 60,
+  "sample_tail_lines": 200
+}

@@ -5,7 +5,10 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
+from threading import Lock
 from typing import Optional
+import os
 
 
 @dataclass
@@ -27,6 +30,10 @@ class LogBus:
         self._queue: queue.Queue[Optional[LogRecord]] = queue.Queue()
         self._thread = threading.Thread(target=self._loop, name="log-bus", daemon=True)
         self._thread.start()
+        log_path = Path(os.getenv("LOG_BUS_PATH", "logs/system.log"))
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log_path = log_path
+        self._file_lock = Lock()
 
     def publish(self, source: str, message: str, *, severity: str = "info", details: Optional[dict] = None) -> None:
         record = LogRecord(ts=time.time(), source=source, severity=severity.lower(), message=message, details=details)
@@ -46,6 +53,9 @@ class LogBus:
             if record.details:
                 payload += f" -> {record.details}"
             print(payload, file=sys.stdout, flush=True)
+            with self._file_lock:
+                with self._log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(payload + "\n")
 
 
 _GLOBAL_BUS = LogBus()
