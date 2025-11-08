@@ -19,6 +19,7 @@ from trading.pipeline import TrainingPipeline
 from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs, pair_index_entries
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
+from services.logging_utils import log_message
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
 
@@ -316,13 +317,51 @@ class GhostTradingSupervisor:
     def build(self) -> None:
         if self.bots:
             return
+        focus_assets, _ = self.pipeline.ghost_focus_assets()
+        readiness = self.pipeline.live_readiness_report()
+        if readiness:
+            log_message(
+                "ghost-supervisor",
+                "live readiness snapshot",
+                severity="info" if readiness.get("ready") else "warning",
+                details=readiness,
+            )
         pairs = select_pairs(limit=self.pair_limit)
-        for pair in pairs:
+        prioritized: List[PairCandidate] = []
+        for symbol in focus_assets:
+            tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
+            if not tokens:
+                tokens = [symbol.upper()]
+            prioritized.append(
+                PairCandidate(
+                    symbol=symbol.upper(),
+                    tokens=tokens,
+                    avg_volume=0.0,
+                    volatility=0.0,
+                    score=0.0,
+                    datapath=Path("."),
+                )
+            )
+        ordered: List[PairCandidate] = []
+        seen: set[str] = set()
+        for candidate in prioritized + pairs:
+            symbol_u = candidate.symbol.upper()
+            if symbol_u in seen:
+                continue
+            ordered.append(candidate)
+            seen.add(symbol_u)
+            if len(ordered) >= self.pair_limit:
+                break
+        if not ordered:
+            ordered = pairs[: self.pair_limit]
+        for pair in ordered:
             stream = MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN)
             bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
             bot.configure_route(pair.symbol, pair.tokens)
             bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
             bot.max_trade_share = 0.12
+            if readiness and not readiness.get("ready"):
+                bot.live_trading_enabled = False
             self.bots.append(bot)
 
     async def start(self) -> None:

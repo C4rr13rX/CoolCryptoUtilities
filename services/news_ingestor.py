@@ -30,6 +30,10 @@ DEFAULT_SOURCES: Sequence[NewsSource] = (
     NewsSource(name="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/", topics=("BTC", "ETH")),
     NewsSource(name="CoinTelegraph", url="https://cointelegraph.com/rss", topics=("L2", "DeFi")),
     NewsSource(name="Blockworks", url="https://blockworks.co/feed", topics=("macro", "markets")),
+    NewsSource(name="Ethereum Foundation", url="https://blog.ethereum.org/en/feed.xml", topics=("ETH", "STAKING", "L2")),
+    NewsSource(name="US Treasury Press", url="https://home.treasury.gov/news/press-releases/rss", topics=("USD", "POLICY")),
+    NewsSource(name="IMF Fintech", url="https://www.imf.org/external/pubs/ft/fandd/fintech/rss.xml", topics=("MACRO", "REGULATION")),
+    NewsSource(name="GitHub Security Advisories", url="https://github.com/security-advisories.atom", topics=("SECURITY", "DEVOPS")),
 )
 
 

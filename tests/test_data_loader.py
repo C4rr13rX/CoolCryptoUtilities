@@ -89,6 +89,21 @@ def test_build_dataset_shapes(historical_tmp: Path) -> None:
     assert np.array_equal(targets["price_mu"], targets_cached["price_mu"])
 
 
+def test_sample_meta_includes_horizons(historical_tmp: Path) -> None:
+    data_path = historical_tmp / "history_ETH-USDC.json"
+    data_path.write_text(json.dumps(_synthetic_rows(240)), encoding="utf-8")
+
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=1, max_samples_per_file=64)
+    loader.build_dataset(window_size=20, sent_seq_len=12, tech_count=8)
+    meta = loader.last_sample_meta()
+    records = meta.get("records", [])
+    assert records, "sample metadata records should be captured"
+    record = records[0]
+    assert record.get("lookahead_sec") is not None and record["lookahead_sec"] > 0
+    horizons = record.get("horizons")
+    assert isinstance(horizons, dict) and horizons, "per-horizon returns should be recorded"
+
+
 def test_expand_limits_invalidate_cache(historical_tmp: Path) -> None:
     (historical_tmp / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(80)), encoding="utf-8")
     loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=1, max_samples_per_file=16)

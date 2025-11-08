@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from services.adaptive_control import AdaptiveLimiter
 from services.logging_utils import log_message
+from services.system_profile import SystemProfile, detect_system_profile
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class ParallelTaskManager:
         self,
         map_path: Path = Path("orchestration/dependency_map.json"),
         limiter: Optional[AdaptiveLimiter] = None,
+        system_profile: Optional[SystemProfile] = None,
     ) -> None:
         self.graph = DependencyGraph(map_path)
         self.queues: Dict[str, queue.Queue[Optional[TaskDescriptor]]] = {
@@ -80,12 +82,14 @@ class ParallelTaskManager:
         self._state_lock = threading.Lock()
         self._state_path = map_path.with_name("dependency_state.json")
         self.limiter = limiter or AdaptiveLimiter()
+        self.system_profile = system_profile or detect_system_profile()
 
     def start(self) -> None:
         if self.threads:
             return
         for name, spec in self.graph.nodes.items():
-            for worker_idx in range(spec.workers):
+            worker_cap = self._workers_for_component(spec.workers)
+            for worker_idx in range(worker_cap):
                 thread = threading.Thread(
                     target=self._worker,
                     args=(name,),
@@ -131,6 +135,12 @@ class ParallelTaskManager:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _workers_for_component(self, requested: int) -> int:
+        if not self.system_profile:
+            return requested
+        budget = max(1, self.system_profile.max_threads // 2)
+        return max(1, min(requested, budget))
 
     def _worker(self, component: str) -> None:
         spec = self.graph.nodes[component]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone, timedelta
@@ -39,6 +40,8 @@ from trading.metrics import (
     FeedbackSeverity,
     MetricStage,
     MetricsCollector,
+    ConfusionMatrixSummary,
+    confusion_sweep,
     classification_report,
     distribution_report,
 )
@@ -65,6 +68,17 @@ MODEL_OUTPUT_ORDER: Tuple[str, ...] = (
     "net_pnl",
     "tech_recon",
     "price_gaussian",
+)
+
+CONFUSION_WINDOW_BUCKETS: Tuple[Tuple[str, int], ...] = (
+    ("5m", 5 * 60),
+    ("15m", 15 * 60),
+    ("1h", 60 * 60),
+    ("6h", 6 * 60 * 60),
+    ("1d", 24 * 60 * 60),
+    ("7d", 7 * 24 * 60 * 60),
+    ("30d", 30 * 24 * 60 * 60),
+    ("180d", 180 * 24 * 60 * 60),
 )
 
 
@@ -140,6 +154,8 @@ class TrainingPipeline:
         self.primary_symbol = PRIMARY_SYMBOL
         self._pause_flag_key = "pipeline_pause"
         self._last_news_top_up: float = 0.0
+        self._confusion_windows: Dict[str, int] = {label: seconds for label, seconds in CONFUSION_WINDOW_BUCKETS}
+        self._last_confusion_report: Dict[str, Dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -1463,6 +1479,7 @@ class TrainingPipeline:
             ghost_pred_margin = 0.0
             ghost_real_margin = 0.0
             ghost_win_rate = 0.0
+        thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
 
         summary = {
             "dir_accuracy": dir_accuracy,
@@ -1547,7 +1564,13 @@ class TrainingPipeline:
         summary["payoff_ratio"] = payoff_ratio
         summary["kelly_fraction"] = kelly
 
-        thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
+        confusion_report = self._build_confusion_report(price_dir_scores, thresholds)
+        if confusion_report:
+            summary["confusion_matrices"] = confusion_report
+            self._persist_confusion_report(confusion_report)
+        else:
+            self._last_confusion_report = {}
+
         best_score = -np.inf
         best_info: Optional[Dict[str, Any]] = None
         for thr in thresholds:
@@ -1608,6 +1631,119 @@ class TrainingPipeline:
             summary["best_tn"] = int(best_info["tn"])
             summary["best_fn"] = int(best_info["fn"])
         return summary
+
+    def _build_confusion_report(
+        self,
+        price_dir_scores: np.ndarray,
+        thresholds: Sequence[float],
+    ) -> Dict[str, Dict[str, Any]]:
+        meta = self.data_loader.last_sample_meta()
+        records = meta.get("records") or []
+        if not records:
+            return {}
+        limit = min(len(records), int(price_dir_scores.shape[0]))
+        if limit <= 0:
+            return {}
+        report: Dict[str, Dict[str, Any]] = {}
+        for label, horizon_sec in self._confusion_windows.items():
+            key = str(int(horizon_sec))
+            score_bucket: List[float] = []
+            truth_bucket: List[float] = []
+            for idx in range(limit):
+                horizons = records[idx].get("horizons") or {}
+                if key not in horizons:
+                    continue
+                score_bucket.append(float(price_dir_scores[idx]))
+                truth_bucket.append(1.0 if float(horizons[key]) > 0 else 0.0)
+            if len(score_bucket) < 12:
+                continue
+            sweep = confusion_sweep(score_bucket, truth_bucket, thresholds)
+            if not sweep:
+                continue
+            best_summary = max(
+                sweep.values(),
+                key=lambda summary: summary.report().get("f1_score", 0.0),
+                default=None,
+            )
+            if best_summary is None:
+                continue
+            payload = best_summary.to_dict()
+            payload["thresholds_tested"] = list(sweep.keys())
+            report[label] = payload
+        return report
+
+    def _persist_confusion_report(self, report: Dict[str, Dict[str, Any]]) -> None:
+        if not report:
+            self._last_confusion_report = {}
+            return
+        self._last_confusion_report = report
+        try:
+            best_label, best_payload = max(
+                report.items(),
+                key=lambda item: item[1].get("f1_score", 0.0),
+            )
+        except ValueError:
+            best_label, best_payload = next(iter(report.items()))
+        metrics_payload = {
+            "horizon": best_label,
+            "precision": float(best_payload.get("precision", 0.0)),
+            "recall": float(best_payload.get("recall", 0.0)),
+            "f1_score": float(best_payload.get("f1_score", 0.0)),
+            "samples": float(best_payload.get("samples", 0)),
+            "threshold": float(best_payload.get("threshold", self.decision_threshold)),
+        }
+        try:
+            self.metrics.record(
+                MetricStage.TRAINING,
+                metrics_payload,
+                category="confusion_best",
+                meta={"horizons": list(report.keys())},
+            )
+        except Exception:
+            pass
+        try:
+            path = Path("data/reports/confusion_matrices.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "iteration": int(self.iteration),
+                "updated_at": int(time.time()),
+                "confusion": report,
+            }
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def live_readiness_report(self) -> Dict[str, Any]:
+        report = self._last_confusion_report or {}
+        if not report:
+            return {"ready": False, "reason": "no_confusion_data"}
+        preferred = ("5m", "15m", "1h", "6h")
+        anchor_label = None
+        anchor = None
+        for label in preferred:
+            if label in report:
+                anchor_label = label
+                anchor = report[label]
+                break
+        if anchor is None and report:
+            anchor_label, anchor = next(iter(report.items()))
+        if anchor is None:
+            return {"ready": False, "reason": "no_confusion_data"}
+        precision = float(anchor.get("precision", 0.0))
+        recall = float(anchor.get("recall", 0.0))
+        samples = int(anchor.get("samples", 0))
+        threshold = float(anchor.get("threshold", self.decision_threshold))
+        ready = precision >= 0.58 and recall >= 0.55 and samples >= 64
+        reason = "" if ready else "insufficient_accuracy"
+        return {
+            "ready": ready,
+            "reason": reason,
+            "horizon": anchor_label,
+            "precision": precision,
+            "recall": recall,
+            "samples": samples,
+            "threshold": threshold,
+        }
 
     def _execution_bias(self, window: int = 50) -> float:
         fills = self.db.fetch_trade_fills(limit=window)
@@ -1726,6 +1862,17 @@ class TrainingPipeline:
             penalties = [item.get("score") for item in ranked if item.get("score") is not None]
             if penalties:
                 _add("focus_penalty_mean", np.mean(penalties))
+
+        confusion = self._last_confusion_report or {}
+        for label in ("5m", "15m", "1h", "6h"):
+            bucket = confusion.get(label)
+            if not bucket:
+                continue
+            _add(f"confusion_{label}_precision", bucket.get("precision"))
+            _add(f"confusion_{label}_recall", bucket.get("recall"))
+            _add(f"confusion_{label}_f1", bucket.get("f1_score"))
+            _add(f"confusion_{label}_samples", bucket.get("samples"))
+            break
         return signals
 
     def _apply_focus_adaptation(

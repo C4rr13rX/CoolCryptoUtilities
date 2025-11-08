@@ -30,3 +30,4 @@ data/public_api_cache/
 data/news/cache/
 data/cache/datasets/
 data/market_snapshots_history/
+orchestration/dependency_state.json

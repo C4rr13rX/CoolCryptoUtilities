@@ -151,6 +151,63 @@ def kelly_fraction(prob_win: float, payoff_ratio: float) -> float:
     return max(0.0, min(1.0, numerator / denominator))
 
 
+@dataclass
+class ConfusionMatrixSummary:
+    threshold: float
+    tp: int
+    fp: int
+    tn: int
+    fn: int
+
+    @property
+    def samples(self) -> int:
+        return self.tp + self.fp + self.tn + self.fn
+
+    def report(self) -> Dict[str, float]:
+        return classification_report(self.tp, self.fp, self.tn, self.fn)
+
+    def to_dict(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "threshold": self.threshold,
+            "tp": self.tp,
+            "fp": self.fp,
+            "tn": self.tn,
+            "fn": self.fn,
+            "samples": self.samples,
+        }
+        payload.update(self.report())
+        return payload
+
+
+def confusion_from_scores(scores: Sequence[float], labels: Sequence[float | bool], threshold: float) -> ConfusionMatrixSummary:
+    prob = np.asarray(list(scores), dtype=np.float64).reshape(-1)
+    truth = np.asarray(list(labels), dtype=np.float64).reshape(-1)
+    limit = min(prob.shape[0], truth.shape[0])
+    if limit == 0:
+        return ConfusionMatrixSummary(threshold=threshold, tp=0, fp=0, tn=0, fn=0)
+    prob = prob[:limit]
+    truth = truth[:limit]
+    truths = truth > 0.5
+    preds = prob > float(threshold)
+    tp = int(np.sum(preds & truths))
+    fp = int(np.sum(preds & ~truths))
+    tn = int(np.sum(~preds & ~truths))
+    fn = int(np.sum(~preds & truths))
+    return ConfusionMatrixSummary(threshold=float(threshold), tp=tp, fp=fp, tn=tn, fn=fn)
+
+
+def confusion_sweep(
+    scores: Sequence[float],
+    labels: Sequence[float | bool],
+    thresholds: Sequence[float],
+) -> Dict[float, ConfusionMatrixSummary]:
+    results: Dict[float, ConfusionMatrixSummary] = {}
+    for threshold in thresholds:
+        summary = confusion_from_scores(scores, labels, threshold)
+        results[float(threshold)] = summary
+    return results
+
+
 class MetricsCollector:
     """
     Thin wrapper around TradingDatabase metrics + feedback tables that also

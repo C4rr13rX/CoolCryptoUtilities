@@ -60,6 +60,8 @@ RATE_LIMITER.configure("api.coinpaprika.com", capacity=2.0, refill_rate=0.6)
 RATE_LIMITER.configure("api.coinlore.net", capacity=2.0, refill_rate=0.7)
 _HOST_BACKOFF: Dict[str, float] = {}
 _DNS_BACKOFF_SEC = 300.0
+_FAILURE_LOG_INTERVAL = float(os.getenv("PUBLIC_API_FAILURE_LOG_SEC", "300"))
+_LAST_PROVIDER_FAILURE: Dict[str, float] = {}
 
 
 def _http_get(url: str, *, params: Optional[Dict[str, str]] = None) -> dict | list:
@@ -103,6 +105,15 @@ def _maybe_backoff_host(host: str, exc: Exception) -> None:
             severity="warning",
             details={"resume_at": until},
         )
+
+
+def _log_api_failure_once(provider: str, message: str, *, severity: str = "warning", details: Optional[Dict[str, Any]] = None) -> None:
+    now = time.time()
+    last = _LAST_PROVIDER_FAILURE.get(provider)
+    if last and (now - last) < _FAILURE_LOG_INTERVAL:
+        return
+    _LAST_PROVIDER_FAILURE[provider] = now
+    log_message("public-apis", message, severity=severity, details=details)
 
 
 def _cache_path(name: str) -> Path:
@@ -328,6 +339,11 @@ def fetch_coincap(top: int = 25) -> List[MarketSnapshot]:
             params={"limit": str(limit)},
         )
     except Exception as exc:
+        _log_api_failure_once(
+            "coincap",
+            f"CoinCap fetch failed: {exc}",
+            details={"limit": limit},
+        )
         snapshots = _cached_coincap_snapshots(limit)
         if snapshots:
             log_message(
@@ -367,6 +383,11 @@ def fetch_coinpaprika(top: int = 25) -> List[MarketSnapshot]:
             params={"limit": str(limit)},
         )
     except Exception as exc:
+        _log_api_failure_once(
+            "coinpaprika",
+            f"CoinPaprika fetch failed: {exc}",
+            details={"limit": limit},
+        )
         fallback = _cached_generic_snapshots("coinpaprika", limit)
         if fallback:
             log_message(
@@ -413,7 +434,15 @@ def fetch_coingecko(ids: Sequence[str]) -> List[MarketSnapshot]:
         "ids": ",".join(ids),
         "price_change_percentage": "24h,7d",
     }
-    payload = _http_get("https://api.coingecko.com/api/v3/coins/markets", params=params)
+    try:
+        payload = _http_get("https://api.coingecko.com/api/v3/coins/markets", params=params)
+    except Exception as exc:
+        _log_api_failure_once(
+            "coingecko",
+            f"CoinGecko fetch failed: {exc}",
+            details={"ids": len(ids)},
+        )
+        raise
     snapshots: List[MarketSnapshot] = []
     for entry in payload:
         try:
@@ -451,6 +480,11 @@ def fetch_coinlore(start: int = 0, limit: int = 25) -> List[MarketSnapshot]:
             params={"start": str(max(0, start)), "limit": str(max(1, limit))},
         )
     except Exception as exc:
+        _log_api_failure_once(
+            "coinlore",
+            f"CoinLore fetch failed: {exc}",
+            details={"start": start, "limit": limit},
+        )
         fallback = _cached_generic_snapshots("coinlore", max(1, limit))
         if fallback:
             log_message(

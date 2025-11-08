@@ -580,10 +580,23 @@ class HistoricalDataLoader:
                     ret = 0.0
                 mu = ret
 
+                sample_horizons = self._maybe_collect_horizon_metrics(
+                    timestamp=int(ts),
+                    end_index=end,
+                    current_price=current_price,
+                    net_volumes=net_volumes,
+                    closes=closes,
+                    timestamps=timestamps,
+                    horizon_returns=horizon_returns,
+                    horizon_volumes=horizon_volumes,
+                )
+                horizon_payload = {str(int(key)): float(value) for key, value in sample_horizons.items()}
+
                 try:
                     rel_path = str(file_path.resolve().relative_to(self.data_dir.resolve()))
                 except ValueError:
                     rel_path = str(file_path.resolve())
+                lookahead_target = timestamps[min(next_idx, timestamps.shape[0] - 1)]
                 sample_meta.append(
                     {
                         "timestamp": int(ts),
@@ -591,6 +604,8 @@ class HistoricalDataLoader:
                         "current_price": float(current_price),
                         "future_price": float(future_price),
                         "file": rel_path,
+                        "lookahead_sec": int(max(0, int(lookahead_target) - int(ts))),
+                        "horizons": horizon_payload,
                     }
                 )
 
@@ -606,16 +621,6 @@ class HistoricalDataLoader:
                 self._headline_samples.append(news_text["article"])
                 target_mu.append(mu)
                 asset_ids.append(asset_id)
-                self._maybe_collect_horizon_metrics(
-                    timestamp=int(ts),
-                    end_index=end,
-                    current_price=current_price,
-                    net_volumes=net_volumes,
-                    closes=closes,
-                    timestamps=timestamps,
-                    horizon_returns=horizon_returns,
-                    horizon_volumes=horizon_volumes,
-                )
 
         if not price_windows:
             self._last_sample_meta = {}
@@ -1105,9 +1110,10 @@ class HistoricalDataLoader:
         timestamps: np.ndarray,
         horizon_returns: Dict[int, List[float]],
         horizon_volumes: Dict[int, List[float]],
-    ) -> None:
+    ) -> Dict[int, float]:
+        sample_returns: Dict[int, float] = {}
         if not self._horizon_windows or current_price <= 0:
-            return
+            return sample_returns
         for horizon in self._horizon_windows:
             target_ts = timestamp + horizon
             future_idx = int(np.searchsorted(timestamps, target_ts, side="left"))
@@ -1118,10 +1124,12 @@ class HistoricalDataLoader:
                 continue
             ret = float(np.log(future_price) - np.log(current_price))
             horizon_returns[horizon].append(ret)
+            sample_returns[horizon] = ret
             if future_idx > end_index:
                 vol_slice = np.abs(net_volumes[end_index:future_idx])
                 if vol_slice.size:
                     horizon_volumes[horizon].append(float(np.sum(vol_slice)))
+        return sample_returns
 
     def _build_keyword_map(self) -> Dict[str, set[str]]:
         tokens: set[str] = set(getattr(self, "_historical_tokens", set()))

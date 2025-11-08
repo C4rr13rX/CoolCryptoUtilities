@@ -24,7 +24,7 @@ class ProductionManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = threading.Event()
         self._download_supervisor: Optional[TokenDownloadSupervisor] = TokenDownloadSupervisor(db=self.pipeline.db)
-        self.task_manager = ParallelTaskManager()
+        self.task_manager = ParallelTaskManager(system_profile=self.pipeline.system_profile)
         self._cycle_thread: Optional[threading.Thread] = None
         self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "45"))
         self._active_flag_key = "production_manager_active"
@@ -109,13 +109,17 @@ class ProductionManager:
         while not self._stop.is_set():
             cycle_id = str(int(time.time()))
             focus_assets, _ = self.pipeline.ghost_focus_assets()
-            metadata = {"focus_assets": focus_assets}
+            readiness = self.pipeline.live_readiness_report()
+            metadata = {"focus_assets": focus_assets, "readiness": readiness}
             self.heartbeat.update(
                 "running",
                 metadata={
                     "cycle": cycle_id,
                     "focus_assets": focus_assets,
                     "queue_depth": self.task_manager.pending_tasks,
+                    "live_ready": readiness.get("ready") if readiness else False,
+                    "live_precision": (readiness or {}).get("precision"),
+                    "live_samples": (readiness or {}).get("samples"),
                 },
             )
             self.task_manager.submit("data_ingest", self._task_data_ingest, cycle_id=cycle_id)
