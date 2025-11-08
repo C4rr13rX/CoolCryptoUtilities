@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
 
@@ -30,6 +31,9 @@ from services.logging_bus import log_message
 
 DEFAULT_TIMEOUT = 15
 USER_AGENT = "CoolCryptoUtilities/market-ingestor"
+_CACHE_ROOT = Path(os.getenv("PUBLIC_API_CACHE_DIR", "data/public_api_cache")).expanduser()
+_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+_LOCAL_SNAPSHOT = Path(os.getenv("LOCAL_MARKET_CACHE", "data/market_snapshots.json")).expanduser()
 
 
 @dataclass
@@ -95,32 +99,123 @@ def _maybe_backoff_host(host: str, exc: Exception) -> None:
         )
 
 
+def _cache_path(name: str) -> Path:
+    return _CACHE_ROOT / f"{name}.json"
+
+
+def _persist_cache(name: str, payload: Any) -> None:
+    path = _cache_path(name)
+    try:
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    except Exception:
+        path.unlink(missing_ok=True)
+
+
+def _load_cached_payload(name: str) -> Optional[Any]:
+    path = _cache_path(name)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _load_local_market_snapshots(limit: int, source: str = "coincap") -> List[MarketSnapshot]:
+    if not _LOCAL_SNAPSHOT.exists():
+        return []
+    try:
+        payload = json.loads(_LOCAL_SNAPSHOT.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, list):
+        return []
+    return _snapshots_from_records(data, source=source, limit=limit)
+
+
+def _snapshots_from_records(records: Iterable[Dict[str, Any]], *, source: str, limit: int) -> List[MarketSnapshot]:
+    snapshots: List[MarketSnapshot] = []
+    for entry in records:
+        if len(snapshots) >= limit:
+            break
+        try:
+            snapshots.append(
+                MarketSnapshot(
+                    source=source,
+                    symbol=str(entry.get("symbol", "")).upper(),
+                    name=str(entry.get("name") or ""),
+                    price_usd=float(entry.get("priceUsd") or entry.get("price_usd") or 0.0),
+                    volume_24h=float(entry.get("volumeUsd24Hr") or entry.get("volume_24h"))
+                    if entry.get("volumeUsd24Hr") or entry.get("volume_24h")
+                    else None,
+                    market_cap_usd=float(entry.get("marketCapUsd") or entry.get("market_cap_usd"))
+                    if entry.get("marketCapUsd") or entry.get("market_cap_usd")
+                    else None,
+                    percent_change_24h=float(entry.get("changePercent24Hr") or entry.get("percent_change_24h"))
+                    if entry.get("changePercent24Hr") or entry.get("percent_change_24h")
+                    else None,
+                    extra=entry.get("extra") if isinstance(entry.get("extra"), dict) else None,
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    return snapshots
+
+
+def _coincap_payload_to_snapshots(payload: Dict[str, Any], top: int) -> List[MarketSnapshot]:
+    data = payload.get("data") if isinstance(payload, dict) else []
+    if not isinstance(data, list):
+        data = []
+    return _snapshots_from_records(data, source="coincap", limit=top)
+
+
+def _cached_coincap_snapshots(limit: int) -> List[MarketSnapshot]:
+    cached_payload = _load_cached_payload("coincap_latest")
+    if isinstance(cached_payload, dict):
+        cached = _coincap_payload_to_snapshots(cached_payload, limit)
+        if cached:
+            return cached
+    return _load_local_market_snapshots(limit)
+
+
 # ---------------------------------------------------------------------------
 # CoinCap (https://docs.coincap.io/)
 # ---------------------------------------------------------------------------
 
 def fetch_coincap(top: int = 25) -> List[MarketSnapshot]:
-    payload = _http_get(
-        "https://api.coincap.io/v2/assets",
-        params={"limit": str(max(1, top))},
-    )
-    data = payload.get("data") or []
-    snapshots: List[MarketSnapshot] = []
-    for entry in data:
-        try:
-            snapshots.append(
-                MarketSnapshot(
-                    source="coincap",
-                    symbol=str(entry.get("symbol", "")).upper(),
-                    name=str(entry.get("name") or ""),
-                    price_usd=float(entry.get("priceUsd", 0.0)),
-                    volume_24h=float(entry.get("volumeUsd24Hr")) if entry.get("volumeUsd24Hr") else None,
-                    market_cap_usd=float(entry.get("marketCapUsd")) if entry.get("marketCapUsd") else None,
-                    percent_change_24h=float(entry.get("changePercent24Hr")) if entry.get("changePercent24Hr") else None,
-                )
+    limit = max(1, top)
+    try:
+        payload = _http_get(
+            "https://api.coincap.io/v2/assets",
+            params={"limit": str(limit)},
+        )
+    except Exception as exc:
+        snapshots = _cached_coincap_snapshots(limit)
+        if snapshots:
+            log_message(
+                "public-apis",
+                "CoinCap offline fallback in use",
+                severity="warning",
+                details={"error": str(exc), "records": len(snapshots)},
             )
-        except (TypeError, ValueError):
-            continue
+            return snapshots
+        raise
+    snapshots = _coincap_payload_to_snapshots(payload, limit)
+    if snapshots:
+        _persist_cache("coincap_latest", payload)
+        _persist_cache("coincap_snapshots", [asdict(s) for s in snapshots])
+        return snapshots
+    cached = _cached_coincap_snapshots(limit)
+    if cached:
+        log_message(
+            "public-apis",
+            "CoinCap returned empty payload; using cached snapshots",
+            severity="warning",
+            details={"records": len(cached)},
+        )
+        return cached
     return snapshots
 
 

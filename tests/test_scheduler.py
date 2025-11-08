@@ -103,3 +103,12 @@ def test_scheduler_exit_directive_when_expected_return_negative() -> None:
     assert directive is not None
     assert directive.action == "exit"
     assert directive.size > 0.0
+
+
+def test_horizon_weight_prioritises_sparse_buckets() -> None:
+    scheduler = BusScheduler(horizons=[("5m", 300), ("6m", 6 * 30 * 24 * 3600)])
+    for _ in range(200):
+        scheduler.accuracy.record("6m", 0.01, 0.0)
+    sparse_weight = scheduler._horizon_weight("5m", 300)
+    saturated_weight = scheduler._horizon_weight("6m", 6 * 30 * 24 * 3600)
+    assert sparse_weight > saturated_weight

@@ -26,3 +26,5 @@ web/frontend/.cache/
 logs/
 web/collected_static/
 data/news/ethical_news.parquet
+data/public_api_cache/
+data/news/cache/

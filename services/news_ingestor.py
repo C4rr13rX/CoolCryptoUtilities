@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Iterable, List, Optional, Sequence, Set
+
+import feedparser
+
+try:  # feedparser 6.x exposes util.parse_date, older builds do not
+    from feedparser.util import parse_date as _fp_parse_date  # type: ignore
+except Exception:  # pragma: no cover - fallback path
+    _fp_parse_date = None
+import pandas as pd
+from bs4 import BeautifulSoup
+
+
+@dataclass
+class NewsSource:
+    name: str
+    url: str
+    topics: Sequence[str] = ()
+
+
+DEFAULT_SOURCES: Sequence[NewsSource] = (
+    NewsSource(name="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/", topics=("BTC", "ETH")),
+    NewsSource(name="CoinTelegraph", url="https://cointelegraph.com/rss", topics=("L2", "DeFi")),
+    NewsSource(name="Blockworks", url="https://blockworks.co/feed", topics=("macro", "markets")),
+)
+
+
+class EthicalNewsIngestor:
+    """Collects free/ethical crypto headlines and stores them locally for training."""
+
+    def __init__(
+        self,
+        *,
+        sources: Optional[Sequence[NewsSource]] = None,
+        output_path: Optional[Path] = None,
+        cache_dir: Optional[Path] = None,
+        fetcher: Optional[Callable[[NewsSource], List[dict]]] = None,
+        max_tokens: int = 12,
+    ) -> None:
+        self.sources: Sequence[NewsSource] = tuple(sources or DEFAULT_SOURCES)
+        root_cache = cache_dir or Path(os.getenv("ETHICAL_NEWS_CACHE", "data/news/cache"))
+        self.cache_dir = root_cache.expanduser()
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.output_path = (output_path or Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))).expanduser()
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fetcher = fetcher or self._fetch_source
+        self.max_tokens = max_tokens
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def harvest(
+        self,
+        *,
+        tokens: Iterable[str],
+        start_ts: int,
+        end_ts: int,
+    ) -> List[dict]:
+        keyword_set = {token.lower() for token in tokens if token}
+        rows: List[dict] = []
+        for source in self.sources:
+            entries = self._pull_entries(source)
+            for entry in entries:
+                ts = self._entry_timestamp(entry)
+                if ts is None or ts < start_ts or ts > end_ts:
+                    continue
+                title = self._clean_text(entry.get("title"))
+                summary = self._clean_text(entry.get("summary") or entry.get("description") or "")
+                body = f"{title}\n{summary}".strip()
+                if not body:
+                    continue
+                article_tokens = self._extract_tokens(body)
+                if keyword_set and not (article_tokens & keyword_set):
+                    continue
+                selected_tokens = self._select_tokens(article_tokens, keyword_set)
+                if not selected_tokens:
+                    continue
+                rows.append(
+                    {
+                        "timestamp": int(ts),
+                        "headline": title[:256] or summary[:256],
+                        "article": summary or title,
+                        "sentiment": "neutral",
+                        "tokens": sorted(selected_tokens),
+                        "source": source.name,
+                        "url": entry.get("link"),
+                    }
+                )
+        if rows:
+            self._write_parquet(rows)
+        return rows
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _pull_entries(self, source: NewsSource) -> List[dict]:
+        try:
+            entries = self._fetcher(source)
+            if entries:
+                self._persist_cache(source, entries)
+                return entries
+        except Exception:
+            entries = None
+        cached = self._load_cache(source)
+        return cached or []
+
+    def _fetch_source(self, source: NewsSource) -> List[dict]:
+        parsed = feedparser.parse(source.url)
+        if getattr(parsed, "bozo", False):
+            raise RuntimeError(getattr(parsed, "bozo_exception", "invalid feed"))
+        entries: List[dict] = []
+        for entry in parsed.entries:
+            entries.append(self._normalize_entry(entry))
+        return entries
+
+    def _normalize_entry(self, entry: Any) -> dict:
+        summary = entry.get("summary") if isinstance(entry, dict) else getattr(entry, "summary", "")
+        data = {
+            "title": entry.get("title") if isinstance(entry, dict) else getattr(entry, "title", ""),
+            "summary": summary,
+            "description": entry.get("description") if isinstance(entry, dict) else getattr(entry, "description", ""),
+            "link": entry.get("link") if isinstance(entry, dict) else getattr(entry, "link", ""),
+            "published": entry.get("published") if isinstance(entry, dict) else getattr(entry, "published", ""),
+        }
+        if hasattr(entry, "published_parsed") and entry.published_parsed:
+            data["published_parsed"] = time.mktime(entry.published_parsed)
+        elif isinstance(entry, dict) and isinstance(entry.get("published_parsed"), (tuple, list)):
+            try:
+                data["published_parsed"] = time.mktime(entry["published_parsed"])  # type: ignore[index]
+            except Exception:
+                pass
+        return data
+
+    def _entry_timestamp(self, entry: dict) -> Optional[int]:
+        ts = entry.get("published_parsed")
+        if isinstance(ts, (int, float)):
+            return int(ts)
+        published = entry.get("published")
+        if isinstance(published, (int, float)):
+            return int(published)
+        if published:
+            try:
+                if _fp_parse_date:
+                    parsed = _fp_parse_date(published)
+                else:
+                    parsed = feedparser._parse_date(published)  # type: ignore[attr-defined]
+                if parsed:
+                    return int(time.mktime(parsed))
+            except Exception:
+                return None
+        return None
+
+    def _clean_text(self, text: Any) -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        soup = BeautifulSoup(raw, "html.parser")
+        clean = soup.get_text(" ", strip=True)
+        return re.sub(r"\s+", " ", clean).strip()
+
+    def _extract_tokens(self, text: str) -> Set[str]:
+        tokens = set(re.findall(r"[A-Za-z0-9]{3,}", text.lower()))
+        return tokens
+
+    def _select_tokens(self, article_tokens: Set[str], keyword_set: Set[str]) -> Set[str]:
+        if keyword_set:
+            matched = article_tokens & keyword_set
+        else:
+            matched = article_tokens
+        trimmed = sorted(matched)[: self.max_tokens]
+        return {token.upper() for token in trimmed}
+
+    def _write_parquet(self, rows: List[dict]) -> None:
+        df_new = pd.DataFrame(rows)
+        if self.output_path.exists():
+            try:
+                df_old = pd.read_parquet(self.output_path)
+            except Exception:
+                df_old = pd.DataFrame()
+            df = pd.concat([df_old, df_new], ignore_index=True)
+            df = df.drop_duplicates(subset=["timestamp", "headline", "source"])
+        else:
+            df = df_new
+        try:
+            df.to_parquet(self.output_path, index=False)
+        except Exception:
+            pass
+
+    def _cache_file(self, source: NewsSource) -> Path:
+        slug = re.sub(r"[^A-Za-z0-9]+", "-", source.name.lower()).strip("-") or "source"
+        return self.cache_dir / f"{slug}.json"
+
+    def _persist_cache(self, source: NewsSource, entries: Iterable[dict]) -> None:
+        path = self._cache_file(source)
+        try:
+            path.write_text(json.dumps(list(entries)), encoding="utf-8")
+        except Exception:
+            path.unlink(missing_ok=True)
+
+    def _load_cache(self, source: NewsSource) -> Optional[List[dict]]:
+        path = self._cache_file(source)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            path.unlink(missing_ok=True)
+            return None
+        if not isinstance(payload, list):
+            return None
+        return [entry for entry in payload if isinstance(entry, dict)]

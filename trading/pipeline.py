@@ -753,6 +753,11 @@ class TrainingPipeline:
                 "news_coverage_ratio": news_coverage,
                 "positive_ratio": positive_ratio,
             }
+            dataset_meta = {
+                "iteration": self.iteration,
+                "focus_assets": list(focus_assets or []),
+                "signature": self.data_loader.dataset_signature(),
+            }
             horizon_profile = self.data_loader.horizon_profile()
             if horizon_profile:
                 dataset_metrics["horizon_window_count"] = float(len(horizon_profile))
@@ -768,11 +773,6 @@ class TrainingPipeline:
                 dataset_metrics["asset_positive_bottom"] = low_ratio
                 dataset_metrics["asset_positive_span"] = top_ratio - low_ratio
             dataset_metrics.update({f"net_margin_{k}": v for k, v in margin_stats.items()})
-            dataset_meta = {
-                "iteration": self.iteration,
-                "focus_assets": list(focus_assets or []),
-                "signature": self.data_loader.dataset_signature(),
-            }
             if per_asset_ratio:
                 dataset_meta["asset_positive_top_symbol"] = top_symbol
                 dataset_meta["asset_positive_bottom_symbol"] = low_symbol

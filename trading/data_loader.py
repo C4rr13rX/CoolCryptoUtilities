@@ -18,6 +18,7 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 
 from trading.constants import PRIMARY_CHAIN, top_pairs
+from services.logging_bus import log_message
 from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
 
 HORIZON_WINDOWS_SEC: Tuple[int, ...] = (
@@ -54,6 +55,22 @@ TOKEN_SYNONYMS = {
     "ADA": ["cardano", "ada"],
     "DOGE": ["dogecoin", "doge"],
     "SHIB": ["shiba", "shib"],
+}
+
+PAIR_TOKEN_EQUIVALENTS = {
+    "USDBC": "USDC",
+    "USDCE": "USDC",
+    "USDC.E": "USDC",
+    "USDC": "USDC",
+    "USDT": "USDT",
+    "DAI": "DAI",
+    "ETH": "WETH",
+    "WETH": "WETH",
+    "WBETH": "WETH",
+    "WBTC": "BTC",
+    "BTC": "BTC",
+    "WSTETH": "STETH",
+    "STETH": "STETH",
 }
 
 
@@ -110,6 +127,10 @@ class HistoricalDataLoader:
         self._last_sample_meta: Dict[str, Any] = {}
         self._file_cache: OrderedDict[Tuple[str, int], Dict[str, np.ndarray]] = OrderedDict()
         self._file_cache_limit = max(8, int(os.getenv("DATA_FILE_CACHE_LIMIT", "48")))
+        self._file_listing_cache: List[Path] = []
+        self._file_listing_ts: float = 0.0
+        self._file_listing_mtime: Optional[float] = None
+        self._file_refresh_interval = max(5.0, float(os.getenv("DATA_FILE_REFRESH_SEC", "45")))
         horizon_env = os.getenv("TRAINING_HORIZON_WINDOWS_SEC", "").strip()
         self._horizon_windows: Tuple[int, ...] = self._parse_horizon_windows(horizon_env)
         self._horizon_profile: Dict[str, Dict[str, float]] = {}
@@ -119,6 +140,7 @@ class HistoricalDataLoader:
         self.max_samples_per_file = self._initial_max_samples
         self._dataset_cache.clear()
         self._dataset_profile_cache.clear()
+        self._invalidate_file_index()
 
     def expand_limits(self, factor: float = 1.5, file_cap: int = 96, sample_cap: int = 4096) -> None:
         new_files = min(file_cap, max(int(self.max_files * factor), self.max_files + 1))
@@ -128,10 +150,17 @@ class HistoricalDataLoader:
             self.max_samples_per_file = new_samples
             self._dataset_cache.clear()
             self._dataset_profile_cache.clear()
+            self._invalidate_file_index()
 
     def invalidate_dataset_cache(self) -> None:
         self._dataset_cache.clear()
         self._dataset_profile_cache.clear()
+        self._invalidate_file_index()
+
+    def _invalidate_file_index(self) -> None:
+        self._file_listing_cache = []
+        self._file_listing_ts = 0.0
+        self._file_listing_mtime = None
 
     def _parse_horizon_windows(self, raw: str) -> Tuple[int, ...]:
         if raw:
@@ -150,6 +179,53 @@ class HistoricalDataLoader:
                 unique_sorted = tuple(sorted({int(value) for value in parsed}))
                 return unique_sorted
         return HORIZON_WINDOWS_SEC
+
+    def _list_data_files(self) -> List[Path]:
+        if not self.data_dir.exists():
+            self._invalidate_file_index()
+            return []
+        now = time.time()
+        dir_mtime = 0.0
+        try:
+            dir_mtime = self.data_dir.stat().st_mtime
+        except Exception:
+            dir_mtime = 0.0
+        cache_valid = (
+            self._file_listing_cache
+            and (now - self._file_listing_ts) < self._file_refresh_interval
+            and (self._file_listing_mtime == dir_mtime)
+        )
+        if cache_valid:
+            return list(self._file_listing_cache)
+        files = sorted(self.data_dir.rglob("*.json")) if self.data_dir.is_dir() else []
+        self._file_listing_cache = files
+        self._file_listing_ts = now
+        self._file_listing_mtime = dir_mtime
+        return files
+
+    def _normalize_token_symbol(self, token: str) -> str:
+        token_u = re.sub(r"[^A-Z0-9]", "", token.upper())
+        return PAIR_TOKEN_EQUIVALENTS.get(token_u, token_u)
+
+    def _normalize_pair_label(self, pair: str) -> str:
+        parts = [self._normalize_token_symbol(part) for part in pair.split("-") if part]
+        return "-".join(parts)
+
+    def _expand_focus_assets(self, focus_assets: Sequence[str]) -> Set[str]:
+        resolved: Set[str] = set()
+        for asset in focus_assets:
+            pair = str(asset).upper().replace("/", "-")
+            if not pair:
+                continue
+            resolved.add(pair)
+            resolved.add(self._normalize_pair_label(pair))
+            tokens = [part for part in pair.split("-") if part]
+            if len(tokens) == 2:
+                reversed_pair = f"{tokens[1]}-{tokens[0]}"
+                resolved.add(reversed_pair)
+                resolved.add(self._normalize_pair_label(reversed_pair))
+        cleaned = {item for item in resolved if item}
+        return cleaned
 
     def build_dataset(
         self,
@@ -203,7 +279,7 @@ class HistoricalDataLoader:
                 ordered_files.append(path)
             files = ordered_files
         else:
-            files = sorted(self.data_dir.rglob("*.json")) if self.data_dir.is_dir() else []
+            files = self._list_data_files()
             completed = self._load_completion_index()
             if completed:
                 filtered = [path for path in files if path.stem.upper() in completed]
@@ -230,9 +306,9 @@ class HistoricalDataLoader:
             self._last_sample_meta = {}
             return None, None
 
-        focus_set: Optional[set[str]] = None
+        focus_set: Optional[Set[str]] = None
         if focus_assets:
-            focus_set = {str(asset).upper() for asset in focus_assets if asset}
+            focus_set = self._expand_focus_assets(focus_assets)
 
         file_signature = tuple((str(path), int(path.stat().st_mtime)) for path in files)
         focus_key = ",".join(sorted(focus_set)) if focus_set else "*"
@@ -262,7 +338,8 @@ class HistoricalDataLoader:
 
             pair_label = file_path.stem.split("_", 1)[-1]
             pair_label_upper = pair_label.upper()
-            if focus_set and pair_label_upper not in focus_set:
+            normalized_pair = self._normalize_pair_label(pair_label_upper)
+            if focus_set and pair_label_upper not in focus_set and normalized_pair not in focus_set:
                 continue
             raw_tokens = [part.strip().upper() for part in pair_label.split("-") if part]
             tokens = [t.lower() for t in raw_tokens]
@@ -1518,6 +1595,29 @@ class HistoricalDataLoader:
             self.news_index[token] = sorted(set(indices))
         self._cryptopanic_last_fetch[key] = time.time()
 
+    def _augment_news_from_ethics(self, tokens_upper: Set[str], start_ts: int, end_ts: int) -> bool:
+        if not tokens_upper:
+            return False
+        try:
+            from services.news_ingestor import EthicalNewsIngestor
+        except Exception as exc:
+            log_message(
+                "training",
+                f"ethical news ingestion unavailable: {exc}",
+                severity="warning",
+            )
+            return False
+        try:
+            ingestor = EthicalNewsIngestor()
+            rows = ingestor.harvest(tokens=tokens_upper, start_ts=int(start_ts), end_ts=int(end_ts))
+        except Exception as exc:
+            log_message("training", f"ethical news ingest failed: {exc}", severity="warning")
+            return False
+        if not rows:
+            return False
+        self.news_items = self._load_news()
+        return True
+
     def request_news_backfill(
         self,
         *,
@@ -1544,6 +1644,9 @@ class HistoricalDataLoader:
             before = len(self.news_items)
             self._augment_news_from_cryptopanic(token_set, start_ts, end_ts)
             if len(self.news_items) > before:
+                added = True
+                continue
+            if self._augment_news_from_ethics(token_set, start_ts, end_ts):
                 added = True
         return added
 

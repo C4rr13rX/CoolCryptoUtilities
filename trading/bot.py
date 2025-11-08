@@ -19,6 +19,8 @@ from trading.scheduler import BusScheduler, TradeDirective
 from trading.equilibrium import EquilibriumTracker
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
+from trading.opportunity import OpportunityTracker
+from trading.savings import StableSavingsPlanner, SavingsEvent
 from trading.constants import (
     PRIMARY_CHAIN,
     PRIMARY_SYMBOL,
@@ -121,6 +123,9 @@ class TradingBot:
         self.metrics = MetricsCollector(self.db)
         self._ghost_trade_counter = 0
         self.swap_validator = SwapValidator(db=self.db)
+        self.opportunity_tracker = OpportunityTracker()
+        savings_batch = float(os.getenv("SAVINGS_TRANSFER_MIN_USD", "50"))
+        self.savings = StableSavingsPlanner(min_batch=savings_batch)
         self._wallet_sync_lock = asyncio.Lock()
         self._bridge_init_attempted = False
         self.equilibrium = EquilibriumTracker()
@@ -314,6 +319,21 @@ class TradingBot:
                 self.swarm.learn(price_windows, sentiment_windows, realized_returns)
             except Exception:
                 pass
+        opportunity_signal = None
+        try:
+            opportunity_signal = self.opportunity_tracker.evaluate(symbol, history_prices)
+        except Exception:
+            opportunity_signal = None
+        if opportunity_signal:
+            try:
+                self.metrics.feedback(
+                    "opportunity",
+                    severity=FeedbackSeverity.INFO if opportunity_signal.kind == "buy-low" else FeedbackSeverity.WARNING,
+                    label=opportunity_signal.kind,
+                    details=opportunity_signal.to_dict(),
+                )
+            except Exception:
+                pass
         swarm_votes = []
         try:
             swarm_votes = self.swarm.vote(price_windows, sentiment_windows)
@@ -459,6 +479,7 @@ class TradingBot:
             "reflex_block_active": reflex_active,
             "reflex_block_until": self._reflex_blocked_until if reflex_active else None,
             "reflex_reason": self._reflex_block_reason,
+            "opportunity": opportunity_signal.to_dict() if opportunity_signal else None,
             "threshold_scale": threshold_scale,
             "fingerprint": fingerprint.tolist(),
         }
@@ -485,6 +506,32 @@ class TradingBot:
         total = sum(qty for (ch, _), qty in self.sim_quote_balances.items() if ch == chain_l)
         total += max(0.0, self.stable_bank)
         return total
+
+    def _handle_savings_transfer(self, event: SavingsEvent) -> None:
+        payload = event.to_dict()
+        try:
+            self.db.log_trade(
+                wallet=event.mode,
+                chain=self.primary_chain,
+                symbol=event.token,
+                action="savings_transfer",
+                status="queued",
+                details=payload,
+            )
+        except Exception:
+            pass
+        try:
+            self.metrics.feedback(
+                "savings",
+                severity=FeedbackSeverity.INFO,
+                label=event.reason,
+                details=payload,
+            )
+        except Exception:
+            pass
+        print(
+            f"[savings] mode={event.mode} token={event.token} amount={event.amount:.4f} equilibrium={event.equilibrium_score:.3f}"
+        )
 
     def _get_pair_adjustment(self, symbol: str) -> Dict[str, Any]:
         cache = self._pair_adjustments.get(symbol)
@@ -1039,6 +1086,8 @@ class TradingBot:
             "session_id": self.ghost_session_id,
             "brain": brain_payload,
         }
+        if brain.get("opportunity"):
+            decision["opportunity"] = brain["opportunity"]
         if chain_name != self.primary_chain:
             required_float = float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000"))
             if self.portfolio.stable_liquidity(self.primary_chain) < required_float:
@@ -1346,16 +1395,28 @@ class TradingBot:
             )
             equilibrium_ready = self.equilibrium.is_equilibrium()
             self._nash_equilibrium_reached = equilibrium_ready
+            savings_event = None
+            equilibrium_score = self.equilibrium.score()
             if profit > 0 and equilibrium_ready:
                 checkpoint = profit * self.stable_checkpoint_ratio
                 self.stable_bank += checkpoint
                 profit -= checkpoint
+                savings_event = self.savings.record_allocation(
+                    amount=checkpoint,
+                    token=stable_target,
+                    mode="live" if self.live_trading_enabled else "ghost",
+                    equilibrium_score=self.equilibrium.score(),
+                    trade_id=pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}",
+                )
+                decision.setdefault("savings", {})["checkpoint"] = savings_event.to_dict()
+                transfers = self.savings.drain_ready_transfers()
+                for transfer in transfers:
+                    self._handle_savings_transfer(transfer)
             elif profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
                 decision.update({"status": "hold-negative", "reason": reason or "hold"})
                 return decision
             self.total_profit += profit
             self.realized_profit += profit
-            equilibrium_score = self.equilibrium.score()
             trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
             entry_ts = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
             duration_sec = max(0.0, sample_ts - entry_ts)

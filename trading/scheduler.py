@@ -68,6 +68,10 @@ class HorizonAccuracyTracker:
             for label, records in self._history.items()
         }
 
+    def count(self, label: str) -> int:
+        bucket = self._history.get(label)
+        return len(bucket) if bucket else 0
+
 
 @dataclass
 class HorizonSignal:
@@ -139,6 +143,9 @@ class BusScheduler:
         self.history_limit_sec = history_limit_sec
         self.routes: Dict[str, RouteState] = {}
         self.accuracy = HorizonAccuracyTracker(self.horizons)
+        seconds = [sec for _, sec in self.horizons]
+        self._horizon_min = min(seconds) if seconds else 60
+        self._horizon_span = max(seconds) - self._horizon_min if seconds else 1
 
     # ------------------------------------------------------------------
     # Public API
@@ -179,7 +186,8 @@ class BusScheduler:
         # Enter: use quote asset to buy base
         if available_quote > 0:
             long_quality = self.accuracy.quality(best_long.label)
-            expected = best_long.expected_return * long_quality
+            weight = self._horizon_weight(best_long.label, best_long.seconds)
+            expected = best_long.expected_return * long_quality * weight
             risk_factor = min(1.0, max(expected - self.min_profit, 0.0) * 5.0)
             allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
             max_allocation = max(allocation * risk_budget, 0.0)
@@ -213,7 +221,8 @@ class BusScheduler:
         # Exit: sell base into quote when projected drawdown
         if available_base > 0:
             short_quality = self.accuracy.quality(best_short.label)
-            expected = best_short.expected_return * short_quality
+            weight = self._horizon_weight(best_short.label, best_short.seconds)
+            expected = best_short.expected_return * short_quality * weight
             if expected < -self.min_profit or direction_prob <= 0.4 or net_margin < 0:
                 size_base = available_base * 0.5
                 if size_base > 0:
@@ -423,3 +432,12 @@ class BusScheduler:
 
     def _score_signal(self, signal: HorizonSignal) -> float:
         return signal.expected_return * self.accuracy.quality(signal.label)
+
+    def _horizon_weight(self, label: str, seconds: int) -> float:
+        span = max(self._horizon_span, 1)
+        position = (seconds - self._horizon_min) / span
+        position = float(np.clip(position, 0.0, 1.0))
+        bell = 0.75 + 0.25 * (1.0 - abs(0.5 - position) * 2.0)
+        samples = self.accuracy.count(label)
+        scarcity = 1.0 - min(0.6, samples / 256.0)
+        return float(max(0.4, bell + 0.2 * scarcity))

@@ -43,7 +43,7 @@ def _synthetic_rows(count: int = 128) -> List[Dict[str, float]]:
 @pytest.fixture
 def historical_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     pair_index = tmp_path / "pair_index_base.json"
-    _write_pair_index(pair_index, ["ETH-USDC"])
+    _write_pair_index(pair_index, ["ETH-USDC", "USDC-WETH"])
     monkeypatch.setenv("PAIR_INDEX_PATH", str(pair_index))
     monkeypatch.setenv("HISTORICAL_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CRYPTO_RSS_FEEDS", "")
@@ -153,3 +153,16 @@ def test_request_news_backfill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     added_second = loader.request_news_backfill(symbols=["ETH-USDC"], lookback_sec=3600, center_ts=int(time.time()))
     assert added_second is False
     assert len(loader.news_items) == count_after_first
+
+
+def test_focus_alias_handles_usdbc(historical_tmp: Path) -> None:
+    rows = _synthetic_rows(160)
+    (historical_tmp / "history_USDC-WETH.json").write_text(json.dumps(rows), encoding="utf-8")
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=1, max_samples_per_file=64)
+    inputs, targets = loader.build_dataset(
+        window_size=20,
+        sent_seq_len=12,
+        tech_count=8,
+        focus_assets=["WETH-USDBC"],
+    )
+    assert inputs is not None and targets is not None

@@ -133,6 +133,7 @@ class MarketDataStream:
         self._endpoint_scores: Dict[str, float] = {ep.name: 0.0 for ep in self.endpoints}
         self._endpoint_order = {ep.name: idx for idx, ep in enumerate(self.endpoints)}
         self.rest_poll_interval = float(os.getenv("REST_POLL_INTERVAL", "5"))
+        self._base_rest_interval = self.rest_poll_interval
         self._last_volume: float = 0.0
         self.consensus_sources = int(os.getenv("PRICE_CONSENSUS_SOURCES", "2"))
         self.consensus_window = float(os.getenv("PRICE_CONSENSUS_WINDOW", "60"))
