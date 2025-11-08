@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from db import TradingDatabase, get_db
 from services.public_api_clients import aggregate_market_data
 from services.discovery.coordinator import DiscoveryCoordinator
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 
 
 def _load_assignment(path: Path) -> Optional[Dict[str, Any]]:

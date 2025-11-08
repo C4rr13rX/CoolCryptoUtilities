@@ -19,6 +19,7 @@ class MetricStage:
     MODEL_FINE_TUNE = "model_fine_tune"
     NEWS = "news_enrichment"
     PIPELINE = "pipeline"
+    SAVINGS = "savings"
 
 
 class FeedbackSeverity:

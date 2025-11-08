@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -26,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import requests
 
 from services.adaptive_control import APIRateLimiter
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 
 
 DEFAULT_TIMEOUT = 15
@@ -34,6 +35,8 @@ USER_AGENT = "CoolCryptoUtilities/market-ingestor"
 _CACHE_ROOT = Path(os.getenv("PUBLIC_API_CACHE_DIR", "data/public_api_cache")).expanduser()
 _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 _LOCAL_SNAPSHOT = Path(os.getenv("LOCAL_MARKET_CACHE", "data/market_snapshots.json")).expanduser()
+_SNAPSHOT_HISTORY_DIR = Path(os.getenv("MARKET_SNAPSHOT_HISTORY_DIR", "data/market_snapshots_history")).expanduser()
+_SNAPSHOT_HISTORY_LIMIT = max(12, int(os.getenv("MARKET_SNAPSHOT_HISTORY_LIMIT", "96")))
 
 
 @dataclass
@@ -45,7 +48,7 @@ class MarketSnapshot:
     volume_24h: Optional[float] = None
     market_cap_usd: Optional[float] = None
     percent_change_24h: Optional[float] = None
-    extra: Optional[Dict[str, float]] = None
+    extra: Optional[Dict[str, Any]] = None
 
 RATE_LIMITER = APIRateLimiter(default_capacity=5.0, default_refill_rate=1.5)
 RATE_LIMITER.configure("api.coingecko.com", capacity=3.0, refill_rate=0.5)
@@ -122,7 +125,38 @@ def _load_cached_payload(name: str) -> Optional[Any]:
         return None
 
 
-def _load_local_market_snapshots(limit: int, source: str = "coincap") -> List[MarketSnapshot]:
+def _persist_snapshot_records(label: str, snapshots: Sequence[MarketSnapshot]) -> None:
+    if not snapshots:
+        return
+    _persist_cache(label, [asdict(snapshot) for snapshot in snapshots])
+
+
+def _load_snapshot_records(label: str, limit: int) -> List[MarketSnapshot]:
+    payload = _load_cached_payload(label)
+    if not isinstance(payload, list):
+        return []
+    return _snapshots_from_records(payload, source=None, limit=limit)
+
+
+def _append_snapshot_history(records: Sequence[Dict[str, Any]]) -> None:
+    if not records:
+        return
+    try:
+        _SNAPSHOT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = int(time.time())
+        path = _SNAPSHOT_HISTORY_DIR / f"{timestamp}.json"
+        payload = {"generated_at": timestamp, "data": list(records)}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        history = sorted(_SNAPSHOT_HISTORY_DIR.glob("*.json"))
+        excess = len(history) - _SNAPSHOT_HISTORY_LIMIT
+        if excess > 0:
+            for old_path in history[:excess]:
+                old_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _load_local_market_snapshots(limit: int, sources: Optional[Sequence[str]] = None) -> List[MarketSnapshot]:
     if not _LOCAL_SNAPSHOT.exists():
         return []
     try:
@@ -132,18 +166,26 @@ def _load_local_market_snapshots(limit: int, source: str = "coincap") -> List[Ma
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, list):
         return []
-    return _snapshots_from_records(data, source=source, limit=limit)
+    if sources:
+        allowed = {src.lower() for src in sources if src}
+        data = [
+            entry
+            for entry in data
+            if str(entry.get("source", "")).lower() in allowed
+        ]
+    return _snapshots_from_records(data, source=None, limit=limit)
 
 
-def _snapshots_from_records(records: Iterable[Dict[str, Any]], *, source: str, limit: int) -> List[MarketSnapshot]:
+def _snapshots_from_records(records: Iterable[Dict[str, Any]], *, source: Optional[str], limit: int) -> List[MarketSnapshot]:
     snapshots: List[MarketSnapshot] = []
     for entry in records:
         if len(snapshots) >= limit:
             break
         try:
+            entry_source = source or str(entry.get("source") or "unknown")
             snapshots.append(
                 MarketSnapshot(
-                    source=source,
+                    source=str(entry_source),
                     symbol=str(entry.get("symbol", "")).upper(),
                     name=str(entry.get("name") or ""),
                     price_usd=float(entry.get("priceUsd") or entry.get("price_usd") or 0.0),
@@ -177,7 +219,14 @@ def _cached_coincap_snapshots(limit: int) -> List[MarketSnapshot]:
         cached = _coincap_payload_to_snapshots(cached_payload, limit)
         if cached:
             return cached
-    return _load_local_market_snapshots(limit)
+    return _load_local_market_snapshots(limit, sources=("coincap",))
+
+
+def _cached_generic_snapshots(source: str, limit: int) -> List[MarketSnapshot]:
+    cached = _load_snapshot_records(f"{source}_snapshots", limit)
+    if cached:
+        return cached
+    return _load_local_market_snapshots(limit, sources=(source,))
 
 
 # ---------------------------------------------------------------------------
@@ -224,10 +273,23 @@ def fetch_coincap(top: int = 25) -> List[MarketSnapshot]:
 # ---------------------------------------------------------------------------
 
 def fetch_coinpaprika(top: int = 25) -> List[MarketSnapshot]:
-    payload = _http_get(
-        "https://api.coinpaprika.com/v1/tickers",
-        params={"limit": str(max(1, top))},
-    )
+    limit = max(1, top)
+    try:
+        payload = _http_get(
+            "https://api.coinpaprika.com/v1/tickers",
+            params={"limit": str(limit)},
+        )
+    except Exception as exc:
+        fallback = _cached_generic_snapshots("coinpaprika", limit)
+        if fallback:
+            log_message(
+                "public-apis",
+                "CoinPaprika offline fallback in use",
+                severity="warning",
+                details={"error": str(exc), "records": len(fallback)},
+            )
+            return fallback
+        raise
     snapshots: List[MarketSnapshot] = []
     for entry in payload:
         quotes = entry.get("quotes") or {}
@@ -247,6 +309,8 @@ def fetch_coinpaprika(top: int = 25) -> List[MarketSnapshot]:
             )
         except (TypeError, ValueError):
             continue
+    if snapshots:
+        _persist_snapshot_records("coinpaprika_snapshots", snapshots)
     return snapshots
 
 
@@ -284,6 +348,8 @@ def fetch_coingecko(ids: Sequence[str]) -> List[MarketSnapshot]:
             )
         except (TypeError, ValueError):
             continue
+    if snapshots:
+        _persist_snapshot_records("coingecko_snapshots", snapshots)
     return snapshots
 
 
@@ -292,10 +358,22 @@ def fetch_coingecko(ids: Sequence[str]) -> List[MarketSnapshot]:
 # ---------------------------------------------------------------------------
 
 def fetch_coinlore(start: int = 0, limit: int = 25) -> List[MarketSnapshot]:
-    payload = _http_get(
-        "https://api.coinlore.net/api/tickers/",
-        params={"start": str(max(0, start)), "limit": str(max(1, limit))},
-    )
+    try:
+        payload = _http_get(
+            "https://api.coinlore.net/api/tickers/",
+            params={"start": str(max(0, start)), "limit": str(max(1, limit))},
+        )
+    except Exception as exc:
+        fallback = _cached_generic_snapshots("coinlore", max(1, limit))
+        if fallback:
+            log_message(
+                "public-apis",
+                "CoinLore offline fallback in use",
+                severity="warning",
+                details={"error": str(exc), "records": len(fallback)},
+            )
+            return fallback
+        raise
     data = payload.get("data") or []
     snapshots: List[MarketSnapshot] = []
     for entry in data:
@@ -313,7 +391,42 @@ def fetch_coinlore(start: int = 0, limit: int = 25) -> List[MarketSnapshot]:
             )
         except (TypeError, ValueError):
             continue
+    if snapshots:
+        _persist_snapshot_records("coinlore_snapshots", snapshots)
     return snapshots
+
+
+def _merge_symbol_consensus(snapshots: Sequence[MarketSnapshot]) -> List[MarketSnapshot]:
+    grouped: Dict[str, List[MarketSnapshot]] = {}
+    for snap in snapshots:
+        symbol = snap.symbol.upper()
+        grouped.setdefault(symbol, []).append(snap)
+    merged: List[MarketSnapshot] = []
+    for symbol, group in grouped.items():
+        valid_prices = [snap.price_usd for snap in group if snap.price_usd > 0]
+        if not valid_prices:
+            continue
+        median_price = statistics.median(valid_prices)
+        base = max(group, key=lambda s: ((s.volume_24h or 0.0), (s.market_cap_usd or 0.0)))
+        contributors = sorted({snap.source for snap in group})
+        spread = max(valid_prices) - min(valid_prices) if len(valid_prices) > 1 else 0.0
+        merged.append(
+            MarketSnapshot(
+                source="consensus" if len(group) > 1 else base.source,
+                symbol=symbol,
+                name=base.name or symbol,
+                price_usd=float(median_price),
+                volume_24h=max((snap.volume_24h or 0.0) for snap in group) or None,
+                market_cap_usd=base.market_cap_usd,
+                percent_change_24h=base.percent_change_24h,
+                extra={
+                    "contributors": contributors,
+                    "sample_size": len(group),
+                    "price_spread": float(spread),
+                },
+            )
+        )
+    return merged
 
 
 def aggregate_market_data(
@@ -325,47 +438,74 @@ def aggregate_market_data(
     """Fetch and merge snapshots from the public APIs."""
 
     snapshots: List[MarketSnapshot] = []
+    errors: Dict[str, str] = {}
     try:
         snapshots.extend(fetch_coincap(top=top_n))
     except Exception as exc:
-        log_message("public-apis", f"CoinCap fetch failed: {exc}", severity="warning")
+        errors["coincap"] = str(exc)
     time.sleep(0.4)
 
     try:
         snapshots.extend(fetch_coinpaprika(top=top_n))
     except Exception as exc:
-        log_message("public-apis", f"CoinPaprika fetch failed: {exc}", severity="warning")
+        errors["coinpaprika"] = str(exc)
     time.sleep(0.4)
 
     try:
         snapshots.extend(fetch_coinlore(limit=top_n))
     except Exception as exc:
-        print(f"[public-apis] CoinLore fetch failed: {exc}", file=sys.stderr)
+        errors["coinlore"] = str(exc)
     time.sleep(0.4)
 
     if coingecko_ids:
         try:
             snapshots.extend(fetch_coingecko(coingecko_ids))
         except Exception as exc:
-            print(f"[public-apis] CoinGecko fetch failed: {exc}", file=sys.stderr)
+            errors["coingecko"] = str(exc)
 
     # Filter to requested symbols if provided
-    if symbols:
-        wanted = {sym.upper() for sym in symbols}
+    wanted = {sym.upper() for sym in symbols} if symbols else None
+    if wanted:
         snapshots = [snap for snap in snapshots if snap.symbol.upper() in wanted]
 
-    # Deduplicate by (source, symbol)
-    unique: Dict[tuple[str, str], MarketSnapshot] = {}
-    for snap in snapshots:
-        key = (snap.source.lower(), snap.symbol.upper())
-        unique[key] = snap
-    return list(unique.values())
+    if not snapshots:
+        archive = _load_local_market_snapshots(top_n)
+        if archive:
+            log_message(
+                "public-apis",
+                "market snapshot archive used",
+                severity="warning",
+                details={"records": len(archive)},
+            )
+            snapshots = archive
+            if wanted:
+                snapshots = [snap for snap in snapshots if snap.symbol.upper() in wanted]
+
+    if not snapshots:
+        return []
+
+    merged = _merge_symbol_consensus(snapshots)
+    if wanted:
+        merged = [snap for snap in merged if snap.symbol.upper() in wanted]
+    merged.sort(key=lambda snap: snap.volume_24h or 0.0, reverse=True)
+    if top_n:
+        merged = merged[: max(1, top_n)]
+    if errors:
+        log_message(
+            "public-apis",
+            "market data fetch degraded",
+            severity="warning",
+            details=errors,
+        )
+    return merged
 
 
 def save_snapshots(snapshots: Sequence[MarketSnapshot], path: Path) -> None:
     records = [asdict(snapshot) for snapshot in snapshots]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"generated_at": time.time(), "data": records}, indent=2))
+    payload = {"generated_at": time.time(), "data": records}
+    path.write_text(json.dumps(payload, indent=2))
+    _append_snapshot_history(records)
 
 
 def _parse_args() -> argparse.Namespace:

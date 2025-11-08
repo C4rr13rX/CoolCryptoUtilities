@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from datetime import datetime
 
 import feedparser
@@ -104,6 +104,19 @@ class EthicalNewsIngestor:
                 )
         if rows:
             self._write_parquet(rows)
+        return rows
+
+    def harvest_windows(
+        self,
+        *,
+        tokens: Iterable[str],
+        ranges: Sequence[Tuple[int, int]],
+    ) -> List[dict]:
+        rows: List[dict] = []
+        for start_ts, end_ts in ranges:
+            start_int = int(min(start_ts, end_ts))
+            end_int = int(max(start_ts, end_ts))
+            rows.extend(self.harvest(tokens=tokens, start_ts=start_int, end_ts=end_int))
         return rows
 
     def harvest_window(

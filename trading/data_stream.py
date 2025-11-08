@@ -15,7 +15,7 @@ from collections import deque
 import aiohttp
 
 from services.adaptive_control import APIRateLimiter
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 
 try:  # pragma: no cover - optional dependency may fail at import time
     from services.onchain_feed import OnChainPairFeed

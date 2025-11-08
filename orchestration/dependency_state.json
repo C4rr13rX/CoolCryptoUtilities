@@ -1,12 +1,12 @@
 {
-  "1762583609": {
+  "1762592270": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762583610.593566
+      "updated_at": 1762592271.6515117
     },
     "news_enrichment": {
       "status": "completed",
-      "updated_at": 1762583609.556815,
+      "updated_at": 1762592270.8714306,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -15,7 +15,7 @@
     },
     "dataset_warmup": {
       "status": "completed",
-      "updated_at": 1762583612.2399204,
+      "updated_at": 1762592273.3728054,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -24,23 +24,23 @@
     },
     "candidate_training": {
       "status": "running",
-      "updated_at": 1762583612.2917166
+      "updated_at": 1762592273.4242482
     },
     "ghost_metrics": {
       "status": "waiting_deps",
-      "updated_at": 1762583609.3188114
+      "updated_at": 1762592270.3686695
     },
     "scheduler_refresh": {
       "status": "waiting_deps",
-      "updated_at": 1762583609.3201723
+      "updated_at": 1762592270.3691719
     },
     "telemetry_flush": {
       "status": "waiting_deps",
-      "updated_at": 1762583609.3211493
+      "updated_at": 1762592270.3695652
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762583610.662639
+      "updated_at": 1762592271.7270265
     }
   }
 }

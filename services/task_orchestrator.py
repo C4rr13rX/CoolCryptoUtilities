@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from services.adaptive_control import AdaptiveLimiter
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 
 
 @dataclass(frozen=True)

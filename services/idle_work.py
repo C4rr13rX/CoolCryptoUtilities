@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from db import get_db, TradingDatabase
 from services.adaptive_control import AdaptiveLimiter
 from services.background_workers import TokenDownloadSupervisor
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 from services.news_lab import collect_news_for_terms
 from trading.constants import top_pairs
 

@@ -18,7 +18,7 @@ from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
 
 from trading.constants import PRIMARY_CHAIN, top_pairs
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 from trading.advanced_algorithms import ENGINE as ADV_ENGINE, feature_names as advanced_feature_names
 from services.system_profile import SystemProfile
 
@@ -118,8 +118,14 @@ class HistoricalDataLoader:
         self._news_seen_keys: Set[str] = set()
         self._cryptopanic_failed_windows: Set[str] = set()
         self.news_items = self._load_news()
+        self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
         self._dataset_profile_cache: Dict[Tuple[Any, ...], Dict[str, Dict[str, float]]] = {}
+        self._disk_cache_enabled = os.getenv("DATASET_DISK_CACHE", "1").lower() in {"1", "true", "yes", "on"}
+        self._disk_cache_dir = Path(os.getenv("DATASET_CACHE_DIR", "data/cache/datasets")).expanduser()
+        self._disk_cache_version = 1
+        if self._disk_cache_enabled:
+            self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
         self._tech_pca_components: Optional[np.ndarray] = None
         self._tech_pca_mean: Optional[np.ndarray] = None
         self._headline_digest: Optional[str] = None
@@ -136,6 +142,64 @@ class HistoricalDataLoader:
         self._horizon_windows: Tuple[int, ...] = self._parse_horizon_windows(horizon_env)
         self._horizon_profile: Dict[str, Dict[str, float]] = {}
         self._system_profile: Optional[SystemProfile] = None
+
+    def _disk_cache_path(self, cache_key: Tuple[Any, ...]) -> Path:
+        digest = hashlib.sha1(repr(cache_key).encode("utf-8")).hexdigest()
+        return self._disk_cache_dir / f"{digest}.npz"
+
+    def _disk_cache_meta_path(self, cache_key: Tuple[Any, ...]) -> Path:
+        return self._disk_cache_path(cache_key).with_suffix(".meta.json")
+
+    def _load_disk_dataset(
+        self,
+        cache_key: Tuple[Any, ...],
+    ) -> Optional[Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], Dict[str, Dict[str, float]]]]:
+        if not self._disk_cache_enabled:
+            return None
+        path = self._disk_cache_path(cache_key)
+        meta_path = self._disk_cache_meta_path(cache_key)
+        if not path.exists() or not meta_path.exists():
+            return None
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if int(meta.get("version", 0)) != self._disk_cache_version:
+                return None
+            with np.load(path, allow_pickle=False) as payload:
+                inputs = {name.split("::", 1)[1]: payload[name] for name in payload.files if name.startswith("in::")}
+                targets = {name.split("::", 1)[1]: payload[name] for name in payload.files if name.startswith("t::")}
+            return (
+                {key: value.copy() for key, value in inputs.items()},
+                {key: value.copy() for key, value in targets.items()},
+                meta.get("profile") or {},
+            )
+        except Exception:
+            path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+            return None
+
+    def _persist_disk_dataset(
+        self,
+        cache_key: Tuple[Any, ...],
+        inputs: Dict[str, np.ndarray],
+        targets: Dict[str, np.ndarray],
+        profile_snapshot: Dict[str, Dict[str, float]],
+    ) -> None:
+        if not self._disk_cache_enabled:
+            return
+        path = self._disk_cache_path(cache_key)
+        meta_path = self._disk_cache_meta_path(cache_key)
+        payload: Dict[str, np.ndarray] = {}
+        for name, value in inputs.items():
+            payload[f"in::{name}"] = value
+        for name, value in targets.items():
+            payload[f"t::{name}"] = value
+        try:
+            np.savez_compressed(path, **payload)
+            meta = {"profile": profile_snapshot, "version": self._disk_cache_version}
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        except Exception:
+            path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
 
     def reset_limits(self) -> None:
         self.max_files = self._initial_max_files
@@ -330,6 +394,19 @@ class HistoricalDataLoader:
         focus_key = ",".join(sorted(focus_set)) if focus_set else "*"
         selected_key = ",".join(str(path) for path in files) if selected_files else "*"
         cache_key = (window_size, sent_seq_len, tech_count, focus_key, selected_key, file_signature)
+        disk_cached = self._load_disk_dataset(cache_key)
+        if disk_cached is not None:
+            disk_inputs, disk_targets, profile_snapshot = disk_cached
+            self._horizon_profile = {key: dict(value) for key, value in profile_snapshot.items()}
+            self._dataset_cache[cache_key] = (
+                {name: value.copy() for name, value in disk_inputs.items()},
+                {name: value.copy() for name, value in disk_targets.items()},
+            )
+            self._dataset_profile_cache[cache_key] = profile_snapshot
+            return (
+                {name: value.copy() for name, value in disk_inputs.items()},
+                {name: value.copy() for name, value in disk_targets.items()},
+            )
         cached = self._dataset_cache.get(cache_key)
         if cached is not None:
             inputs_cached, targets_cached = cached
@@ -534,6 +611,7 @@ class HistoricalDataLoader:
         targets_copy = {name: value.copy() for name, value in targets.items()}
         self._dataset_cache[cache_key] = (inputs_copy, targets_copy)
         self._dataset_profile_cache[cache_key] = {k: dict(v) for k, v in profile_snapshot.items()}
+        self._persist_disk_dataset(cache_key, inputs_copy, targets_copy, profile_snapshot)
 
         if sample_meta:
             meta_records = [dict(record) for record in sample_meta]
@@ -586,6 +664,23 @@ class HistoricalDataLoader:
 
     def horizon_profile(self) -> Dict[str, Dict[str, float]]:
         return {key: dict(value) for key, value in self._horizon_profile.items()}
+
+    def horizon_category_summary(self) -> Dict[str, float]:
+        summary = {"short": 0.0, "mid": 0.0, "long": 0.0}
+        for key, stats in self._horizon_profile.items():
+            try:
+                horizon = int(float(key))
+            except Exception:
+                continue
+            samples = float(stats.get("samples", 0.0))
+            if horizon <= 30 * 60:
+                summary["short"] += samples
+            elif horizon <= 24 * 3600:
+                summary["mid"] += samples
+            else:
+                summary["long"] += samples
+        summary["total"] = summary["short"] + summary["mid"] + summary["long"]
+        return summary
 
     def dataset_signature(self) -> str:
         digest_source = ":".join(filter(None, [self._headline_digest, self._fulltext_digest]))
@@ -1062,6 +1157,46 @@ class HistoricalDataLoader:
             indices.sort()
 
         return items
+
+    def _load_news_window_schedule(self) -> Dict[str, List[Tuple[int, int]]]:
+        schedule_path = Path(os.getenv("ETHICAL_NEWS_WINDOWS_PATH", "config/news_windows.json"))
+        if not schedule_path.exists():
+            return {}
+        try:
+            raw = json.loads(schedule_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        schedule: Dict[str, List[Tuple[int, int]]] = {}
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            tokens = [str(token).upper() for token in entry.get("tokens", []) if token]
+            if not tokens:
+                continue
+            start_ts = self._coerce_timestamp(entry.get("start_ts") or entry.get("start"))
+            end_ts = self._coerce_timestamp(entry.get("end_ts") or entry.get("end"))
+            if start_ts is None or end_ts is None:
+                continue
+            window = (min(start_ts, end_ts), max(start_ts, end_ts))
+            for token in tokens:
+                schedule.setdefault(token, []).append(window)
+        return schedule
+
+    @staticmethod
+    def _coerce_timestamp(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                dt = datetime.fromisoformat(value)
+            except Exception:
+                return None
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp())
+        return None
 
     def _load_cryptocompare_news(self, cache_path: Path, since_ts: int) -> Optional[pd.DataFrame]:
         df: Optional[pd.DataFrame] = None
@@ -1625,14 +1760,50 @@ class HistoricalDataLoader:
             return False
         try:
             ingestor = EthicalNewsIngestor()
-            rows = ingestor.harvest(tokens=tokens_upper, start_ts=int(start_ts), end_ts=int(end_ts))
+            windows: List[Tuple[int, int]] = [(int(start_ts), int(end_ts))]
+            history_days = int(os.getenv("ETHICAL_NEWS_HISTORY_DAYS", "7"))
+            if history_days > 0:
+                offset = history_days * 24 * 3600
+                windows.append((max(0, start_ts - offset), max(0, end_ts - offset)))
+            for token in tokens_upper:
+                for win in self._news_window_schedule.get(token, []):
+                    windows.append(win)
+            rows = ingestor.harvest_windows(tokens=tokens_upper, ranges=windows)
         except Exception as exc:
             log_message("training", f"ethical news ingest failed: {exc}", severity="warning")
             return False
         if not rows:
             return False
-        self.news_items = self._load_news()
-        return True
+        added = 0
+        for row in rows:
+            tokens = {token.upper() for token in row.get("tokens") or []}
+            if not tokens:
+                continue
+            ts = int(row.get("timestamp", start_ts))
+            entry = {
+                "timestamp": ts,
+                "headline": row.get("headline"),
+                "article": row.get("article"),
+                "sentiment": row.get("sentiment", "neutral"),
+                "tokens": tokens,
+            }
+            digest = f"{ts}:{entry['headline']}"
+            if digest in self._news_seen_keys:
+                continue
+            self.news_items.append(entry)
+            idx = len(self.news_items) - 1
+            self._news_seen_keys.add(digest)
+            for token in tokens:
+                bucket = self.news_index.setdefault(token, [])
+                bucket.append(idx)
+            added += 1
+        if added:
+            for token in tokens_upper:
+                bucket = self.news_index.get(token)
+                if bucket:
+                    self.news_index[token] = sorted(set(bucket))
+            return True
+        return False
 
     def request_news_backfill(
         self,

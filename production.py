@@ -11,7 +11,7 @@ from trading.selector import GhostTradingSupervisor
 from trading.metrics import MetricStage, FeedbackSeverity
 from services.background_workers import TokenDownloadSupervisor
 from services.task_orchestrator import ParallelTaskManager
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 from services.idle_work import IdleWorkManager
 
 

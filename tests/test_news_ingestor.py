@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 from datetime import datetime, timedelta, timezone
+from typing import List
 
 from services.news_ingestor import EthicalNewsIngestor, NewsSource
 
@@ -62,3 +63,36 @@ def test_custom_catalog_and_harvest_window(monkeypatch, tmp_path):
     )
     assert rows
     assert rows[0]["source"] == "ConfigSource"
+
+
+def test_harvest_windows_batches_requests_multiple_ranges(monkeypatch, tmp_path):
+    now = int(time.time())
+    source = NewsSource(name="BatchSource", url="http://batch.test/feed", topics=("ETH",))
+    ranges = [(now - 300, now - 200), (now - 100, now)]
+    calls: List[int] = []
+    empty_catalog = tmp_path / "sources.json"
+    empty_catalog.write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("ETHICAL_NEWS_SOURCES_PATH", str(empty_catalog))
+
+    def fake_fetch(_src):
+        idx = len(calls)
+        calls.append(idx)
+        ts = ranges[idx][0] + 10
+        return [
+            {
+                "title": f"Batch {idx}",
+                "summary": "ETH window coverage",
+                "published_parsed": ts,
+                "link": f"http://batch.test/{idx}",
+            }
+        ]
+
+    ingestor = EthicalNewsIngestor(
+        sources=[source],
+        output_path=tmp_path / "batches.parquet",
+        cache_dir=tmp_path / "cache",
+        fetcher=fake_fetch,
+    )
+    rows = ingestor.harvest_windows(tokens={"ETH"}, ranges=ranges)
+    assert len(rows) == 2
+    assert calls == [0, 1]

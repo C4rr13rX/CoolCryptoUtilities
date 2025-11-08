@@ -42,7 +42,7 @@ from trading.metrics import (
     classification_report,
     distribution_report,
 )
-from services.logging_bus import log_message
+from services.logging_utils import log_message
 
 
 CUSTOM_OBJECTS = {
@@ -126,6 +126,11 @@ class TrainingPipeline:
         self.metrics = MetricsCollector(self.db)
         self.focus_lookback_sec = int(os.getenv("GHOST_FOCUS_LOOKBACK_SEC", "172800"))
         self.focus_max_assets = int(os.getenv("GHOST_FOCUS_MAX_ASSETS", "6"))
+        self._horizon_targets = {
+            "short": float(os.getenv("HORIZON_SHORT_MIN_SAMPLES", "32")),
+            "mid": float(os.getenv("HORIZON_MID_MIN_SAMPLES", "24")),
+            "long": float(os.getenv("HORIZON_LONG_MIN_SAMPLES", "12")),
+        }
         self._vectorizer_signature: Optional[str] = None
         self._vectorizer_cache: set[str] = set()
         self._last_asset_vocab_requirement: int = 1
@@ -800,6 +805,17 @@ class TrainingPipeline:
                 )
                 dataset_metrics["horizon_samples_avg"] = avg_horizon_samples
                 dataset_meta["horizon_profile_keys"] = list(sorted(horizon_profile.keys()))
+                coverage = self.data_loader.horizon_category_summary()
+                if coverage:
+                    for bucket in ("short", "mid", "long"):
+                        dataset_metrics[f"horizon_{bucket}_samples"] = float(coverage.get(bucket, 0.0))
+                    deficits = {
+                        bucket: max(0.0, self._horizon_targets.get(bucket, 0.0) - coverage.get(bucket, 0.0))
+                        for bucket in self._horizon_targets
+                    }
+                    if any(value > 0 for value in deficits.values()):
+                        dataset_meta["horizon_deficit"] = deficits
+                        self._handle_horizon_deficit(deficits, focus_assets)
             if per_asset_ratio:
                 top_symbol, top_ratio = max(per_asset_ratio.items(), key=lambda kv: kv[1])
                 low_symbol, low_ratio = min(per_asset_ratio.items(), key=lambda kv: kv[1])
@@ -1336,6 +1352,15 @@ class TrainingPipeline:
             return
         if self._auto_backfill_news(candidate_assets):
             self._last_news_top_up = now
+
+    def _handle_horizon_deficit(self, deficits: Dict[str, float], focus_assets: Optional[Sequence[str]]) -> None:
+        log_message(
+            "training",
+            "horizon coverage below target",
+            severity="warning",
+            details={"deficits": deficits, "focus": list(focus_assets or [])},
+        )
+        self.data_loader.expand_limits(factor=1.1)
 
     def _load_state(self) -> None:
         try:

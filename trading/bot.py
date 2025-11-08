@@ -510,6 +510,7 @@ class TradingBot:
 
     def _handle_savings_transfer(self, event: SavingsEvent) -> None:
         payload = event.to_dict()
+        payload["checkpoint_ratio"] = float(self.stable_checkpoint_ratio)
         try:
             self.db.log_trade(
                 wallet=event.mode,
@@ -527,6 +528,15 @@ class TradingBot:
                 severity=FeedbackSeverity.INFO,
                 label=event.reason,
                 details=payload,
+            )
+        except Exception:
+            pass
+        try:
+            self.metrics.record(
+                MetricStage.SAVINGS,
+                {"amount": float(event.amount), "equilibrium_score": event.equilibrium_score},
+                category=event.mode,
+                meta=payload,
             )
         except Exception:
             pass

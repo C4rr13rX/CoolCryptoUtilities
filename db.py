@@ -618,6 +618,30 @@ class TradingDatabase:
         sanitized = self._sanitize_price_entries(entries)
         if not sanitized:
             return
+        try:
+            self._write_price_rows(sanitized)
+            return
+        except sqlite3.Error as exc:
+            _log_db_warning(
+                "bulk price upsert failed; retrying individually",
+                {"error": str(exc), "rows": len(sanitized)},
+            )
+        failures: List[Tuple[Tuple[str, str, float, str, float], str]] = []
+        for entry in sanitized:
+            try:
+                self._write_price_rows([entry])
+            except sqlite3.Error as exc:
+                failures.append((entry, str(exc)))
+        if failures and len(failures) == len(sanitized):
+            raise RuntimeError(f"price upsert failed: {failures[0][1]}") from None
+        if failures:
+            _log_db_warning(
+                "dropped invalid price rows",
+                {"failures": len(failures)},
+            )
+    def _write_price_rows(self, entries: Sequence[Tuple[str, str, float, str, float]]) -> None:
+        if not entries:
+            return
         with self._lock:
             with self._conn:
                 self._conn.executemany(
@@ -629,7 +653,7 @@ class TradingDatabase:
                         source=excluded.source,
                         ts=excluded.ts;
                     """,
-                    sanitized,
+                    entries,
                 )
 
     def _sanitize_price_entries(
@@ -1441,6 +1465,15 @@ def save_db(state: Dict[str, Any]) -> None:
 # ----------------------------------------------------------------------
 # Local helpers (reuse from cache)
 # ----------------------------------------------------------------------
+
+def _log_db_warning(message: str, details: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        from services.logging_utils import log_message as _log
+
+        _log("database", message, severity="warning", details=details)
+    except Exception:
+        pass
+
 
 def _lower(val: Optional[str]) -> str:
     return (val or "").lower()
