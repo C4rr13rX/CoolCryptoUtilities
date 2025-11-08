@@ -13,6 +13,7 @@ from services.background_workers import TokenDownloadSupervisor
 from services.task_orchestrator import ParallelTaskManager
 from services.logging_utils import log_message
 from services.idle_work import IdleWorkManager
+from services.heartbeat import HeartbeatFile
 
 
 class ProductionManager:
@@ -28,6 +29,7 @@ class ProductionManager:
         self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "45"))
         self._active_flag_key = "production_manager_active"
         self.idle_worker = IdleWorkManager(db=self.pipeline.db)
+        self.heartbeat = HeartbeatFile(label="production_manager")
 
     def start(self) -> None:
         if self.is_running:
@@ -43,9 +45,14 @@ class ProductionManager:
             self._cycle_thread = threading.Thread(target=self._cycle_loop, daemon=True)
             self._cycle_thread.start()
             self._set_active_flag(True)
+            self.heartbeat.update(
+                "running",
+                metadata={"iteration": self.pipeline.iteration, "cycle_interval": self._cycle_interval},
+            )
             log_message("production", "manager started.")
         except Exception:
             self._set_active_flag(False)
+            self.heartbeat.update("error", metadata={"reason": "startup_failed"})
             raise
 
     def stop(self, timeout: float = 15.0) -> None:
@@ -68,6 +75,8 @@ class ProductionManager:
         self._loop_thread = None
         self._cycle_thread = None
         self._set_active_flag(False)
+        self.heartbeat.update("stopped", metadata={"iteration": self.pipeline.iteration})
+        self.heartbeat.clear()
         log_message("production", "manager stopped.")
 
     @property
@@ -101,6 +110,14 @@ class ProductionManager:
             cycle_id = str(int(time.time()))
             focus_assets, _ = self.pipeline.ghost_focus_assets()
             metadata = {"focus_assets": focus_assets}
+            self.heartbeat.update(
+                "running",
+                metadata={
+                    "cycle": cycle_id,
+                    "focus_assets": focus_assets,
+                    "queue_depth": self.task_manager.pending_tasks,
+                },
+            )
             self.task_manager.submit("data_ingest", self._task_data_ingest, cycle_id=cycle_id)
             self.task_manager.submit(
                 "news_enrichment",

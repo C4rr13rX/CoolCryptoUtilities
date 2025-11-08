@@ -176,3 +176,15 @@ def test_focus_alias_handles_usdbc(historical_tmp: Path) -> None:
         focus_assets=["WETH-USDBC"],
     )
     assert inputs is not None and targets is not None
+
+
+def test_rebalance_horizons_adjusts_stride(monkeypatch: pytest.MonkeyPatch, historical_tmp: Path) -> None:
+    monkeypatch.setenv("DATASET_SAMPLING_STRIDE", "3")
+    (historical_tmp / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(80)), encoding="utf-8")
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=1, max_samples_per_file=32)
+    assert loader.sampling_stride() == 3
+    adjustments = loader.rebalance_horizons({"short": 16.0}, focus_assets=["ETH-USDC"])
+    assert loader.sampling_stride() == 1
+    assert adjustments.get("sampling_stride") == 1
+    loader.rebalance_horizons({"short": 0.0, "mid": 0.0, "long": 0.0}, focus_assets=None)
+    assert loader.sampling_stride() == 3

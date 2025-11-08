@@ -37,6 +37,9 @@ _CACHE_ROOT.mkdir(parents=True, exist_ok=True)
 _LOCAL_SNAPSHOT = Path(os.getenv("LOCAL_MARKET_CACHE", "data/market_snapshots.json")).expanduser()
 _SNAPSHOT_HISTORY_DIR = Path(os.getenv("MARKET_SNAPSHOT_HISTORY_DIR", "data/market_snapshots_history")).expanduser()
 _SNAPSHOT_HISTORY_LIMIT = max(12, int(os.getenv("MARKET_SNAPSHOT_HISTORY_LIMIT", "96")))
+_HISTORICAL_DATA_ROOT = Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv")).expanduser()
+_HISTORICAL_CACHE_LABEL = "historical_snapshots"
+_HISTORICAL_CACHE_TTL = max(300, int(os.getenv("HISTORICAL_SNAPSHOT_CACHE_SEC", "1800")))
 
 
 @dataclass
@@ -229,6 +232,90 @@ def _cached_generic_snapshots(source: str, limit: int) -> List[MarketSnapshot]:
     return _load_local_market_snapshots(limit, sources=(source,))
 
 
+def _historical_file_candidates(limit: int) -> List[Path]:
+    if not _HISTORICAL_DATA_ROOT.exists():
+        return []
+    files: List[Path] = []
+    try:
+        entries = sorted(_HISTORICAL_DATA_ROOT.glob("*.json"))
+        if not entries:
+            entries = sorted(_HISTORICAL_DATA_ROOT.rglob("*.json"))
+    except Exception:
+        return []
+    for path in entries:
+        files.append(path)
+        if len(files) >= limit * 4:
+            break
+    return files
+
+
+def _historical_snapshot_from_file(path: Path) -> Optional[MarketSnapshot]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, list) or not payload:
+        return None
+    tail = payload[-min(len(payload), 288) :]
+    last_row = tail[-1]
+    try:
+        price = float(last_row.get("close") or last_row.get("price") or 0.0)
+    except Exception:
+        price = 0.0
+    if price <= 0:
+        return None
+    try:
+        volumes = [abs(float(row.get("net_volume", 0.0))) for row in tail if row.get("net_volume") is not None]
+    except Exception:
+        volumes = []
+    volume = float(sum(volumes)) if volumes else None
+    timestamp = int(last_row.get("timestamp", 0))
+    symbol = path.stem.split("_", 1)[-1].upper()
+    return MarketSnapshot(
+        source="historical-cache",
+        symbol=symbol,
+        name=symbol.replace("-", "/"),
+        price_usd=price,
+        volume_24h=volume,
+        market_cap_usd=None,
+        percent_change_24h=None,
+        extra={"source_file": str(path), "updated_at": timestamp},
+    )
+
+
+def _historical_snapshot_fallback(limit: int, symbols: Optional[Sequence[str]] = None) -> List[MarketSnapshot]:
+    cached = _load_snapshot_records(_HISTORICAL_CACHE_LABEL, limit)
+    now = time.time()
+    cache_file = _cache_path(_HISTORICAL_CACHE_LABEL)
+    if cache_file.exists():
+        try:
+            cache_age = now - cache_file.stat().st_mtime
+        except OSError:
+            cache_age = float("inf")
+    else:
+        cache_age = float("inf")
+    symbol_filter = {sym.upper() for sym in symbols} if symbols else None
+    if cached and cache_age < _HISTORICAL_CACHE_TTL:
+        if symbol_filter:
+            cached = [snap for snap in cached if snap.symbol.upper() in symbol_filter]
+        if cached:
+            return cached[:limit]
+    files = _historical_file_candidates(limit)
+    snapshots: List[MarketSnapshot] = []
+    for path in files:
+        snap = _historical_snapshot_from_file(path)
+        if not snap:
+            continue
+        if symbol_filter and snap.symbol.upper() not in symbol_filter:
+            continue
+        snapshots.append(snap)
+        if len(snapshots) >= limit:
+            break
+    if snapshots:
+        _persist_snapshot_records(_HISTORICAL_CACHE_LABEL, snapshots)
+    return snapshots
+
+
 # ---------------------------------------------------------------------------
 # CoinCap (https://docs.coincap.io/)
 # ---------------------------------------------------------------------------
@@ -246,7 +333,7 @@ def fetch_coincap(top: int = 25) -> List[MarketSnapshot]:
             log_message(
                 "public-apis",
                 "CoinCap offline fallback in use",
-                severity="warning",
+                severity="info",
                 details={"error": str(exc), "records": len(snapshots)},
             )
             return snapshots
@@ -285,7 +372,7 @@ def fetch_coinpaprika(top: int = 25) -> List[MarketSnapshot]:
             log_message(
                 "public-apis",
                 "CoinPaprika offline fallback in use",
-                severity="warning",
+                severity="info",
                 details={"error": str(exc), "records": len(fallback)},
             )
             return fallback
@@ -369,7 +456,7 @@ def fetch_coinlore(start: int = 0, limit: int = 25) -> List[MarketSnapshot]:
             log_message(
                 "public-apis",
                 "CoinLore offline fallback in use",
-                severity="warning",
+                severity="info",
                 details={"error": str(exc), "records": len(fallback)},
             )
             return fallback
@@ -439,6 +526,7 @@ def aggregate_market_data(
 
     snapshots: List[MarketSnapshot] = []
     errors: Dict[str, str] = {}
+    fallback_used = False
     try:
         snapshots.extend(fetch_coincap(top=top_n))
     except Exception as exc:
@@ -469,17 +557,24 @@ def aggregate_market_data(
         snapshots = [snap for snap in snapshots if snap.symbol.upper() in wanted]
 
     if not snapshots:
-        archive = _load_local_market_snapshots(top_n)
+        archive = _load_local_market_snapshots(top_n, sources=None)
         if archive:
             log_message(
                 "public-apis",
                 "market snapshot archive used",
-                severity="warning",
+                severity="info",
                 details={"records": len(archive)},
             )
             snapshots = archive
+            fallback_used = True
             if wanted:
                 snapshots = [snap for snap in snapshots if snap.symbol.upper() in wanted]
+
+    if len(snapshots) < max(1, top_n):
+        offline = _historical_snapshot_fallback(top_n, symbols=wanted or None)
+        if offline:
+            snapshots.extend(offline)
+            fallback_used = True
 
     if not snapshots:
         return []
@@ -491,12 +586,10 @@ def aggregate_market_data(
     if top_n:
         merged = merged[: max(1, top_n)]
     if errors:
-        log_message(
-            "public-apis",
-            "market data fetch degraded",
-            severity="warning",
-            details=errors,
-        )
+        severity = "info" if fallback_used else "warning"
+        message = "market data served from fallback" if fallback_used else "market data fetch degraded"
+        details = {"providers": errors, "fallback": "historical" if fallback_used else "none"}
+        log_message("public-apis", message, severity=severity, details=details)
     return merged
 
 

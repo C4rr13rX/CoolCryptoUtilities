@@ -112,3 +112,33 @@ def test_aggregate_market_data_uses_archive_when_sources_fail(
     snaps = pac.aggregate_market_data(top_n=2)
     assert {snap.symbol for snap in snaps} == {"BTC", "ETH"}
     assert all(snap.price_usd > 0 for snap in snaps)
+
+
+def test_historical_fallback_used_when_no_network(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from services import public_api_clients as pac
+
+    rows = [
+        {"timestamp": 1700000000 + idx * 60, "close": 100 + idx, "net_volume": 5 + idx}
+        for idx in range(64)
+    ]
+    hist_path = tmp_path / "0000_ETH-USDC.json"
+    hist_path.write_text(json.dumps(rows), encoding="utf-8")
+    monkeypatch.setattr(pac, "_HISTORICAL_DATA_ROOT", tmp_path)
+    empty_cache = tmp_path / "empty.json"
+    empty_cache.write_text(json.dumps({"data": []}), encoding="utf-8")
+    monkeypatch.setattr(pac, "_LOCAL_SNAPSHOT", empty_cache)
+
+    def offline(*_args: object, **_kwargs: object) -> list[MarketSnapshot]:
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(pac, "fetch_coincap", offline)
+    monkeypatch.setattr(pac, "fetch_coinpaprika", offline)
+    monkeypatch.setattr(pac, "fetch_coinlore", offline)
+    monkeypatch.setattr(pac, "fetch_coingecko", offline)
+
+    snaps = pac.aggregate_market_data(top_n=1, symbols=["ETH-USDC"])
+    assert snaps, "historical fallback should provide snapshots"
+    assert snaps[0].symbol == "ETH-USDC"

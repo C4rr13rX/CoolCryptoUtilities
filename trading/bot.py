@@ -630,6 +630,17 @@ class TradingBot:
             return {}
         return {symbol: available}
 
+    def _propagate_horizon_bias(self) -> None:
+        if not hasattr(self.scheduler, "set_bucket_bias"):
+            return
+        bias = {}
+        try:
+            bias = self.pipeline.horizon_bias()
+        except Exception:
+            return
+        if bias:
+            self.scheduler.set_bucket_bias(bias)
+
     def _maybe_promote_to_live(self) -> None:
         if self.live_trading_enabled or not self.auto_promote_live:
             return
@@ -889,6 +900,7 @@ class TradingBot:
             directive = None
             try:
                 allocation_map = self._compute_base_allocation(sample)
+                self._propagate_horizon_bias()
                 directive = self.scheduler.evaluate(
                     sample,
                     pred_summary,

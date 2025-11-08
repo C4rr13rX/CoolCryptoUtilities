@@ -142,6 +142,12 @@ class HistoricalDataLoader:
         self._horizon_windows: Tuple[int, ...] = self._parse_horizon_windows(horizon_env)
         self._horizon_profile: Dict[str, Dict[str, float]] = {}
         self._system_profile: Optional[SystemProfile] = None
+        self._default_sampling_stride = max(1, int(os.getenv("DATASET_SAMPLING_STRIDE", "1")))
+        self._sampling_stride = self._default_sampling_stride
+        self._prefer_short_horizon = False
+        self._prefer_long_horizon = False
+        self._horizon_bias: Dict[str, float] = {"short": 1.0, "mid": 1.0, "long": 1.0}
+        self._file_stats_cache: Dict[str, float] = {}
 
     def _disk_cache_path(self, cache_key: Tuple[Any, ...]) -> Path:
         digest = hashlib.sha1(repr(cache_key).encode("utf-8")).hexdigest()
@@ -218,6 +224,55 @@ class HistoricalDataLoader:
             self._dataset_profile_cache.clear()
             self._invalidate_file_index()
 
+    def rebalance_horizons(
+        self,
+        deficits: Dict[str, float],
+        focus_assets: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        buckets = {key: max(0.0, float(deficits.get(key, 0.0))) for key in ("short", "mid", "long")}
+        adjustments: Dict[str, Any] = {}
+        prefer_short = buckets["short"] > 0
+        prefer_long = buckets["long"] > 0
+
+        new_stride = 1 if prefer_short else self._default_sampling_stride
+        state_changed = False
+        if new_stride != self._sampling_stride:
+            self._sampling_stride = new_stride
+            adjustments["sampling_stride"] = new_stride
+            state_changed = True
+
+        if self._prefer_short_horizon != prefer_short:
+            self._prefer_short_horizon = prefer_short
+            adjustments["prefer_short"] = prefer_short
+            state_changed = True
+
+        if self._prefer_long_horizon != prefer_long:
+            self._prefer_long_horizon = prefer_long
+            adjustments["prefer_long"] = prefer_long
+            state_changed = True
+
+        if prefer_long:
+            self.expand_limits(factor=1.15)
+        elif buckets["mid"] > 0:
+            self.expand_limits(factor=1.05)
+
+        target_scale = max(8.0, float(self.max_samples_per_file or 64))
+        for bucket, deficit in buckets.items():
+            if deficit > 0:
+                boost = min(2.5, 1.0 + deficit / target_scale)
+            else:
+                boost = max(1.0, self._horizon_bias[bucket] - 0.1)
+            boost = round(boost, 3)
+            if abs(boost - self._horizon_bias[bucket]) >= 0.05:
+                self._horizon_bias[bucket] = boost
+                adjustments[f"bias_{bucket}"] = boost
+
+        if state_changed and not prefer_long:
+            self.invalidate_dataset_cache()
+        if focus_assets:
+            adjustments["focus"] = list(focus_assets)
+        return adjustments
+
     def apply_system_profile(self, profile: SystemProfile) -> None:
         old_limits = (self.max_files, self.max_samples_per_file)
         self._system_profile = profile
@@ -241,6 +296,7 @@ class HistoricalDataLoader:
         self._file_listing_cache = []
         self._file_listing_ts = 0.0
         self._file_listing_mtime = None
+        self._file_stats_cache.clear()
 
     def _parse_horizon_windows(self, raw: str) -> Tuple[int, ...]:
         if raw:
@@ -259,6 +315,29 @@ class HistoricalDataLoader:
                 unique_sorted = tuple(sorted({int(value) for value in parsed}))
                 return unique_sorted
         return HORIZON_WINDOWS_SEC
+
+    def _file_mtime(self, path: Path) -> float:
+        key = str(path)
+        cached = self._file_stats_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            value = path.stat().st_mtime
+        except OSError:
+            value = 0.0
+        self._file_stats_cache[key] = value
+        return value
+
+    def _apply_horizon_file_preferences(self, files: Sequence[Path]) -> List[Path]:
+        if not files:
+            return list(files)
+        if self._prefer_long_horizon and not self._prefer_short_horizon:
+            ordered = sorted(files, key=self._file_mtime)
+        elif self._prefer_short_horizon and not self._prefer_long_horizon:
+            ordered = sorted(files, key=self._file_mtime, reverse=True)
+        else:
+            return list(files)
+        return ordered
 
     def _list_data_files(self) -> List[Path]:
         if not self.data_dir.exists():
@@ -381,6 +460,7 @@ class HistoricalDataLoader:
                 files = ordered
             if self.max_files:
                 files = files[: self.max_files]
+            files = self._apply_horizon_file_preferences(files)
 
         if not files:
             self._last_sample_meta = {}
@@ -442,7 +522,7 @@ class HistoricalDataLoader:
             if self.max_samples_per_file:
                 limit = min(limit, self.max_samples_per_file)
 
-            for idx in range(limit):
+            for idx in range(0, limit, self._sampling_stride):
                 start = idx
                 end = idx + window_size
                 next_idx = end
@@ -664,6 +744,12 @@ class HistoricalDataLoader:
 
     def horizon_profile(self) -> Dict[str, Dict[str, float]]:
         return {key: dict(value) for key, value in self._horizon_profile.items()}
+
+    def horizon_bias_snapshot(self) -> Dict[str, float]:
+        return dict(self._horizon_bias)
+
+    def sampling_stride(self) -> int:
+        return int(self._sampling_stride)
 
     def horizon_category_summary(self) -> Dict[str, float]:
         summary = {"short": 0.0, "mid": 0.0, "long": 0.0}
@@ -1096,6 +1182,7 @@ class HistoricalDataLoader:
             frames.append(rss_df)
 
         ethical_path = Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))
+        self._ensure_ethical_news_cache(ethical_path, since_ts)
         ethical_df = self._load_ethical_news(ethical_path, since_ts)
         if ethical_df is not None:
             frames.append(ethical_df)
@@ -1157,6 +1244,33 @@ class HistoricalDataLoader:
             indices.sort()
 
         return items
+
+    def _ensure_ethical_news_cache(self, path: Path, since_ts: int) -> None:
+        refresh_interval = int(os.getenv("ETHICAL_NEWS_REFRESH_SEC", "1800"))
+        now = time.time()
+        if path.exists():
+            try:
+                if (now - path.stat().st_mtime) < refresh_interval:
+                    return
+            except OSError:
+                pass
+        try:
+            from services.news_ingestor import EthicalNewsIngestor
+        except Exception:
+            return
+        tokens: Set[str] = set()
+        for pair in top_pairs(limit=self.max_files or 10):
+            for part in pair.split("-"):
+                part = part.strip().upper()
+                if part:
+                    tokens.add(part)
+        if not tokens:
+            tokens = {"BTC", "ETH", "USDC", "DAI"}
+        ingestor = EthicalNewsIngestor(output_path=path)
+        try:
+            ingestor.harvest(tokens=tokens, start_ts=since_ts, end_ts=int(now))
+        except Exception:
+            return
 
     def _load_news_window_schedule(self) -> Dict[str, List[Tuple[int, int]]]:
         schedule_path = Path(os.getenv("ETHICAL_NEWS_WINDOWS_PATH", "config/news_windows.json"))

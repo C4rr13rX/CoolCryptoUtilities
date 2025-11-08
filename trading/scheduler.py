@@ -148,6 +148,7 @@ class BusScheduler:
         self._horizon_min = min(seconds) if seconds else 60
         self._horizon_span = max(seconds) - self._horizon_min if seconds else 1
         self._opportunity_bias: Dict[str, OpportunitySignal] = {}
+        self._bucket_bias: Dict[str, float] = {"short": 1.0, "mid": 1.0, "long": 1.0}
 
     # ------------------------------------------------------------------
     # Public API
@@ -245,6 +246,17 @@ class BusScheduler:
                     return directive
 
         return None
+
+    def set_bucket_bias(self, bucket_bias: Dict[str, float]) -> None:
+        if not bucket_bias:
+            return
+        for key, value in bucket_bias.items():
+            if key not in self._bucket_bias:
+                continue
+            try:
+                self._bucket_bias[key] = max(0.3, float(value))
+            except (TypeError, ValueError):
+                continue
 
     def snapshot(self) -> List[Dict[str, float]]:
         out: List[Dict[str, float]] = []
@@ -438,6 +450,13 @@ class BusScheduler:
     def _score_signal(self, signal: HorizonSignal) -> float:
         return signal.expected_return * self.accuracy.quality(signal.label)
 
+    def _bucket_for_seconds(self, seconds: int) -> str:
+        if seconds <= 30 * 60:
+            return "short"
+        if seconds <= 24 * 3600:
+            return "mid"
+        return "long"
+
     def _horizon_weight(self, label: str, seconds: int) -> float:
         span = max(self._horizon_span, 1)
         position = (seconds - self._horizon_min) / span
@@ -445,7 +464,9 @@ class BusScheduler:
         bell = 0.75 + 0.25 * (1.0 - abs(0.5 - position) * 2.0)
         samples = self.accuracy.count(label)
         scarcity = 1.0 - min(0.6, samples / 256.0)
-        return float(max(0.4, bell + 0.2 * scarcity))
+        bucket = self._bucket_for_seconds(seconds)
+        bias = self._bucket_bias.get(bucket, 1.0)
+        return float(max(0.4, (bell + 0.2 * scarcity) * bias))
 
     def _apply_opportunity_bias(self, symbol: str, signals: List[HorizonSignal]) -> List[HorizonSignal]:
         if not signals:

@@ -205,3 +205,7 @@ class ParallelTaskManager:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             with self._state_path.open("w", encoding="utf-8") as handle:
                 json.dump(self._state, handle, indent=2)
+
+    @property
+    def pending_tasks(self) -> int:
+        return sum(queue.qsize() for queue in self.queues.values())

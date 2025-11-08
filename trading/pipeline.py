@@ -131,6 +131,7 @@ class TrainingPipeline:
             "mid": float(os.getenv("HORIZON_MID_MIN_SAMPLES", "24")),
             "long": float(os.getenv("HORIZON_LONG_MIN_SAMPLES", "12")),
         }
+        self._horizon_bias: Dict[str, float] = {"short": 1.0, "mid": 1.0, "long": 1.0}
         self._vectorizer_signature: Optional[str] = None
         self._vectorizer_cache: set[str] = set()
         self._last_asset_vocab_requirement: int = 1
@@ -213,6 +214,9 @@ class TrainingPipeline:
 
     def ghost_focus_assets(self) -> Tuple[List[str], Dict[str, Any]]:
         return self._ghost_focus_assets()
+
+    def horizon_bias(self) -> Dict[str, float]:
+        return dict(self._horizon_bias)
 
     def _load_active_clone(self) -> tf.keras.Model:
         path = self.model_dir / "active_model.keras"
@@ -1268,6 +1272,7 @@ class TrainingPipeline:
                 meta={"iteration": self.iteration},
             )
             self._last_dataset_meta["horizon_profile"] = profile
+        self._horizon_bias = self.data_loader.horizon_bias_snapshot()
 
     def last_sample_meta(self) -> Dict[str, Any]:
         if not self._last_sample_meta:
@@ -1360,7 +1365,15 @@ class TrainingPipeline:
             severity="warning",
             details={"deficits": deficits, "focus": list(focus_assets or [])},
         )
-        self.data_loader.expand_limits(factor=1.1)
+        adjustments = self.data_loader.rebalance_horizons(deficits, focus_assets)
+        self._horizon_bias = self.data_loader.horizon_bias_snapshot()
+        if adjustments:
+            self.metrics.feedback(
+                "training",
+                severity=FeedbackSeverity.INFO,
+                label="horizon_rebalance",
+                details={"deficits": deficits, "adjustments": adjustments},
+            )
 
     def _load_state(self) -> None:
         try:
