@@ -856,7 +856,15 @@ class MarketDataStream:
             )
             return
         if self.reference_price is None:
-            if self._historical_reference:
+            snapshot_price = self._load_snapshot_reference()
+            if snapshot_price:
+                self.reference_price = snapshot_price
+                log_message(
+                    "market-stream",
+                    "using cached snapshot reference",
+                    details={"symbol": self.symbol, "price": self.reference_price},
+                )
+            elif self._historical_reference:
                 self.reference_price = self._historical_reference
                 log_message(
                     "market-stream",
@@ -939,6 +947,32 @@ class MarketDataStream:
                         return price
         except Exception:
             return None
+        return None
+
+    def _load_snapshot_reference(self) -> Optional[float]:
+        snapshot_path = Path(os.getenv("LOCAL_MARKET_CACHE", "data/market_snapshots.json")).expanduser()
+        if not snapshot_path.exists():
+            return None
+        try:
+            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        records = payload.get("data") or []
+        symbol_upper = self.symbol.upper()
+        for entry in records:
+            try:
+                entry_symbol = str(entry.get("symbol") or "").upper()
+            except Exception:
+                continue
+            if entry_symbol != symbol_upper:
+                continue
+            price = entry.get("price_usd") or entry.get("priceUsd")
+            try:
+                value = float(price)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
         return None
 
 

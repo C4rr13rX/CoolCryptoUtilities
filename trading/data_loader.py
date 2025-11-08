@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import deque, OrderedDict
+import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
 
@@ -121,6 +122,7 @@ class HistoricalDataLoader:
         self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
         self._dataset_profile_cache: Dict[Tuple[Any, ...], Dict[str, Dict[str, float]]] = {}
+        self._dataset_meta_cache: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
         self._disk_cache_enabled = os.getenv("DATASET_DISK_CACHE", "1").lower() in {"1", "true", "yes", "on"}
         self._disk_cache_dir = Path(os.getenv("DATASET_CACHE_DIR", "data/cache/datasets")).expanduser()
         self._disk_cache_version = 1
@@ -140,6 +142,7 @@ class HistoricalDataLoader:
         self._file_refresh_interval = max(5.0, float(os.getenv("DATA_FILE_REFRESH_SEC", "45")))
         horizon_env = os.getenv("TRAINING_HORIZON_WINDOWS_SEC", "").strip()
         self._horizon_windows: Tuple[int, ...] = self._parse_horizon_windows(horizon_env)
+        self._min_horizon_sec: int = min(self._horizon_windows) if self._horizon_windows else 0
         self._horizon_profile: Dict[str, Dict[str, float]] = {}
         self._system_profile: Optional[SystemProfile] = None
         self._default_sampling_stride = max(1, int(os.getenv("DATASET_SAMPLING_STRIDE", "1")))
@@ -159,7 +162,9 @@ class HistoricalDataLoader:
     def _load_disk_dataset(
         self,
         cache_key: Tuple[Any, ...],
-    ) -> Optional[Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], Dict[str, Dict[str, float]]]]:
+    ) -> Optional[
+        Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray], Dict[str, Dict[str, float]], Dict[str, Any]]
+    ]:
         if not self._disk_cache_enabled:
             return None
         path = self._disk_cache_path(cache_key)
@@ -177,6 +182,7 @@ class HistoricalDataLoader:
                 {key: value.copy() for key, value in inputs.items()},
                 {key: value.copy() for key, value in targets.items()},
                 meta.get("profile") or {},
+                meta.get("sample_meta") or {},
             )
         except Exception:
             path.unlink(missing_ok=True)
@@ -189,6 +195,8 @@ class HistoricalDataLoader:
         inputs: Dict[str, np.ndarray],
         targets: Dict[str, np.ndarray],
         profile_snapshot: Dict[str, Dict[str, float]],
+        *,
+        sample_meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not self._disk_cache_enabled:
             return
@@ -201,7 +209,12 @@ class HistoricalDataLoader:
             payload[f"t::{name}"] = value
         try:
             np.savez_compressed(path, **payload)
-            meta = {"profile": profile_snapshot, "version": self._disk_cache_version}
+            meta = {
+                "profile": profile_snapshot,
+                "version": self._disk_cache_version,
+            }
+            if sample_meta:
+                meta["sample_meta"] = sample_meta
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
         except Exception:
             path.unlink(missing_ok=True)
@@ -212,6 +225,7 @@ class HistoricalDataLoader:
         self.max_samples_per_file = self._initial_max_samples
         self._dataset_cache.clear()
         self._dataset_profile_cache.clear()
+        self._dataset_meta_cache.clear()
         self._invalidate_file_index()
 
     def expand_limits(self, factor: float = 1.5, file_cap: int = 96, sample_cap: int = 4096) -> None:
@@ -290,6 +304,7 @@ class HistoricalDataLoader:
     def invalidate_dataset_cache(self) -> None:
         self._dataset_cache.clear()
         self._dataset_profile_cache.clear()
+        self._dataset_meta_cache.clear()
         self._invalidate_file_index()
 
     def _invalidate_file_index(self) -> None:
@@ -327,6 +342,19 @@ class HistoricalDataLoader:
             value = 0.0
         self._file_stats_cache[key] = value
         return value
+
+    def _estimate_step_seconds(self, timestamps: np.ndarray) -> int:
+        if timestamps.size <= 1:
+            return 60
+        window = min(512, max(2, timestamps.shape[0]))
+        diffs = np.diff(timestamps[:window])
+        positive = diffs[diffs > 0]
+        if positive.size == 0:
+            return 60
+        try:
+            return int(max(1.0, float(np.median(positive))))
+        except Exception:
+            return 60
 
     def _apply_horizon_file_preferences(self, files: Sequence[Path]) -> List[Path]:
         if not files:
@@ -476,13 +504,18 @@ class HistoricalDataLoader:
         cache_key = (window_size, sent_seq_len, tech_count, focus_key, selected_key, file_signature)
         disk_cached = self._load_disk_dataset(cache_key)
         if disk_cached is not None:
-            disk_inputs, disk_targets, profile_snapshot = disk_cached
+            disk_inputs, disk_targets, profile_snapshot, sample_meta = disk_cached
             self._horizon_profile = {key: dict(value) for key, value in profile_snapshot.items()}
-            self._dataset_cache[cache_key] = (
-                {name: value.copy() for name, value in disk_inputs.items()},
-                {name: value.copy() for name, value in disk_targets.items()},
-            )
+            cloned_inputs = {name: value.copy() for name, value in disk_inputs.items()}
+            cloned_targets = {name: value.copy() for name, value in disk_targets.items()}
+            self._dataset_cache[cache_key] = (cloned_inputs, cloned_targets)
             self._dataset_profile_cache[cache_key] = profile_snapshot
+            if sample_meta:
+                self._last_sample_meta = self._copy_sample_meta(sample_meta)
+                self._dataset_meta_cache[cache_key] = self.last_sample_meta()
+            else:
+                self._last_sample_meta = {}
+                self._dataset_meta_cache.pop(cache_key, None)
             return (
                 {name: value.copy() for name, value in disk_inputs.items()},
                 {name: value.copy() for name, value in disk_targets.items()},
@@ -492,10 +525,14 @@ class HistoricalDataLoader:
             inputs_cached, targets_cached = cached
             cached_profile = self._dataset_profile_cache.get(cache_key) or {}
             self._horizon_profile = {key: dict(value) for key, value in cached_profile.items()}
+            cached_meta = self._dataset_meta_cache.get(cache_key) or {}
+            self._last_sample_meta = self._copy_sample_meta(cached_meta) if cached_meta else {}
             return (
                 {name: value.copy() for name, value in inputs_cached.items()},
                 {name: value.copy() for name, value in targets_cached.items()},
             )
+
+        min_horizon_sec = self._min_horizon_sec
 
         for file_path in files:
             arrays = self._load_file_arrays(file_path)
@@ -508,6 +545,10 @@ class HistoricalDataLoader:
             timestamps = arrays["timestamps"]
             if closes.shape[0] <= window_size + 1:
                 continue
+            step_seconds = self._estimate_step_seconds(timestamps)
+            tail_guard = 1
+            if min_horizon_sec > 0:
+                tail_guard = max(1, int(math.ceil(min_horizon_sec / max(step_seconds, 1))))
 
             pair_label = file_path.stem.split("_", 1)[-1]
             pair_label_upper = pair_label.upper()
@@ -518,9 +559,13 @@ class HistoricalDataLoader:
             tokens = [t.lower() for t in raw_tokens]
             asset_id = self._get_asset_id(pair_label_upper)
 
-            limit = closes.shape[0] - window_size - 1
+            limit = closes.shape[0] - window_size - tail_guard
+            if limit <= 0:
+                continue
             if self.max_samples_per_file:
                 limit = min(limit, self.max_samples_per_file)
+            if limit <= 0:
+                continue
 
             for idx in range(0, limit, self._sampling_stride):
                 start = idx
@@ -692,19 +737,13 @@ class HistoricalDataLoader:
         self._fulltext_digest = self._digest_array(full_arr)
         profile_snapshot = self._finalize_horizon_profile(horizon_returns, horizon_volumes)
 
-        inputs_copy = {name: value.copy() for name, value in inputs.items()}
-        targets_copy = {name: value.copy() for name, value in targets.items()}
-        self._dataset_cache[cache_key] = (inputs_copy, targets_copy)
-        self._dataset_profile_cache[cache_key] = {k: dict(v) for k, v in profile_snapshot.items()}
-        self._persist_disk_dataset(cache_key, inputs_copy, targets_copy, profile_snapshot)
-
         if sample_meta:
             meta_records = [dict(record) for record in sample_meta]
             if oversample_multiplier > 1 and oversample_indices is not None:
                 dup_template = [meta_records[int(idx)].copy() for idx in oversample_indices.tolist()]
                 for _ in range(max(0, oversample_multiplier - 1)):
                     meta_records.extend([rec.copy() for rec in dup_template])
-            self._last_sample_meta = {
+            meta_payload = {
                 "records": meta_records,
                 "timestamps": [record["timestamp"] for record in meta_records],
                 "symbols": [record["symbol"] for record in meta_records],
@@ -712,8 +751,29 @@ class HistoricalDataLoader:
                 "future_prices": [record["future_price"] for record in meta_records],
                 "files": [record["file"] for record in meta_records],
             }
+            self._last_sample_meta = meta_payload
+            self._dataset_meta_cache[cache_key] = self._copy_sample_meta(meta_payload)
         else:
             self._last_sample_meta = {}
+            self._dataset_meta_cache.pop(cache_key, None)
+
+        inputs_copy = {name: value.copy() for name, value in inputs.items()}
+        targets_copy = {name: value.copy() for name, value in targets.items()}
+        self._dataset_cache[cache_key] = (inputs_copy, targets_copy)
+        self._dataset_profile_cache[cache_key] = {k: dict(v) for k, v in profile_snapshot.items()}
+        cached_meta_entry = self._dataset_meta_cache.get(cache_key) or {}
+        sample_meta_snapshot = self._copy_sample_meta(cached_meta_entry) if cached_meta_entry else {}
+        if sample_meta_snapshot:
+            self._dataset_meta_cache[cache_key] = sample_meta_snapshot
+        else:
+            self._dataset_meta_cache.pop(cache_key, None)
+        self._persist_disk_dataset(
+            cache_key,
+            inputs_copy,
+            targets_copy,
+            profile_snapshot,
+            sample_meta=sample_meta_snapshot,
+        )
 
         return inputs, targets
 
@@ -777,11 +837,9 @@ class HistoricalDataLoader:
         digest_source = ":".join(filter(None, [self._headline_digest, self._fulltext_digest]))
         return digest_source or ""
 
-    def last_sample_meta(self) -> Dict[str, Any]:
-        if not self._last_sample_meta:
-            return {}
+    def _copy_sample_meta(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         meta_copy: Dict[str, Any] = {}
-        for key, value in self._last_sample_meta.items():
+        for key, value in meta.items():
             if isinstance(value, list):
                 if key == "records":
                     meta_copy[key] = [dict(record) for record in value]
@@ -790,6 +848,11 @@ class HistoricalDataLoader:
             else:
                 meta_copy[key] = value
         return meta_copy
+
+    def last_sample_meta(self) -> Dict[str, Any]:
+        if not self._last_sample_meta:
+            return {}
+        return self._copy_sample_meta(self._last_sample_meta)
 
     def _oversample(
         self,

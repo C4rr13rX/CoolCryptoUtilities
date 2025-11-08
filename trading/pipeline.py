@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone, timedelta
 import threading
+from collections import Counter
 
 import hashlib
 import math
@@ -444,11 +445,20 @@ class TrainingPipeline:
                 "message": "active model at target accuracy",
             }
 
+        loader_vocab = int(self.data_loader.asset_vocab_size)
+        required_vocab = int(max(loader_vocab, getattr(self, "_last_asset_vocab_requirement", loader_vocab)))
+        if required_vocab > loader_vocab:
+            log_message(
+                "training",
+                "expanding asset vocabulary for candidate model",
+                severity="info",
+                details={"required": required_vocab, "loader_vocab": loader_vocab},
+            )
         model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
             sent_seq_len=self.sent_seq_len,
-            asset_vocab_size=self.data_loader.asset_vocab_size,
+            asset_vocab_size=required_vocab,
         )
         self._adapt_vectorizers(headline_vec, full_vec)
 
@@ -1567,6 +1577,15 @@ class TrainingPipeline:
         confusion_report = self._build_confusion_report(price_dir_scores, thresholds)
         if confusion_report:
             summary["confusion_matrices"] = confusion_report
+            anchor_label, anchor_payload = self._select_confusion_anchor(confusion_report)
+            if anchor_label and anchor_payload:
+                anchor_f1 = self._safe_float(anchor_payload.get("f1_score", 0.0))
+                margin_boost = max(0.0, summary.get("ghost_realized_margin", 0.0))
+                summary["margin_confidence"] = self._safe_float(anchor_f1 * (1.0 + margin_boost))
+                summary["confusion_anchor"] = anchor_label
+                summary["anchor_threshold"] = self._safe_float(
+                    anchor_payload.get("threshold", self.decision_threshold)
+                )
             self._persist_confusion_report(confusion_report)
         else:
             self._last_confusion_report = {}
@@ -1672,6 +1691,27 @@ class TrainingPipeline:
             report[label] = payload
         return report
 
+    def _select_confusion_anchor(
+        self, report: Dict[str, Dict[str, Any]]
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        if not report:
+            return None, None
+        preferred = ("5m", "15m", "1h", "6h")
+        for label in preferred:
+            payload = report.get(label)
+            if payload:
+                return label, payload
+        best_label: Optional[str] = None
+        best_payload: Optional[Dict[str, Any]] = None
+        best_score = float("-inf")
+        for label, payload in report.items():
+            f1 = self._safe_float(payload.get("f1_score", 0.0))
+            if f1 > best_score:
+                best_score = f1
+                best_label = label
+                best_payload = payload
+        return best_label, best_payload
+
     def _persist_confusion_report(self, report: Dict[str, Dict[str, Any]]) -> None:
         if not report:
             self._last_confusion_report = {}
@@ -1712,21 +1752,27 @@ class TrainingPipeline:
             path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
             pass
+        self._persist_live_readiness_snapshot()
+
+    def _persist_live_readiness_snapshot(self) -> None:
+        snapshot = self.live_readiness_report()
+        try:
+            path = Path("data/reports/live_readiness.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                **snapshot,
+                "iteration": int(self.iteration),
+                "updated_at": int(time.time()),
+            }
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     def live_readiness_report(self) -> Dict[str, Any]:
         report = self._last_confusion_report or {}
         if not report:
             return {"ready": False, "reason": "no_confusion_data"}
-        preferred = ("5m", "15m", "1h", "6h")
-        anchor_label = None
-        anchor = None
-        for label in preferred:
-            if label in report:
-                anchor_label = label
-                anchor = report[label]
-                break
-        if anchor is None and report:
-            anchor_label, anchor = next(iter(report.items()))
+        anchor_label, anchor = self._select_confusion_anchor(report)
         if anchor is None:
             return {"ready": False, "reason": "no_confusion_data"}
         precision = float(anchor.get("precision", 0.0))
@@ -1760,6 +1806,12 @@ class TrainingPipeline:
     def _ghost_focus_assets(self) -> Tuple[List[str], Dict[str, Any]]:
         trades = self.metrics.ghost_trade_snapshot(limit=500, lookback_sec=self.focus_lookback_sec)
         aggregate = self.metrics.aggregate_trade_metrics(trades)
+        sample_meta = self.last_sample_meta()
+        dataset_symbols = [str(symbol).upper() for symbol in sample_meta.get("symbols", []) if symbol]
+        symbol_counts = Counter(dataset_symbols)
+        total_symbol_samples = sum(symbol_counts.values())
+        news_ratio = float(self._last_dataset_meta.get("news_coverage_ratio", 0.0))
+        short_bias = float(self._horizon_bias.get("short", 1.0))
         symbol_stats: Dict[str, Dict[str, Any]] = {}
         for trade in trades:
             symbol = str(trade.symbol or "UNKNOWN").upper()
@@ -1776,12 +1828,20 @@ class TrainingPipeline:
             avg_profit = float(np.mean(info["profits"])) if info["profits"] else 0.0
             win_rate = float(info["wins"] / max(1, info["count"]))
             penalty = max(0.0, -avg_profit) + max(0.0, 0.55 - win_rate)
+            coverage = 0.0
+            if total_symbol_samples:
+                coverage = symbol_counts.get(symbol, 0) / total_symbol_samples
+                penalty = max(0.0, penalty - coverage * (0.5 + news_ratio))
+            if short_bias > 1.0:
+                penalty = penalty / short_bias
             ranked.append(
                 {
                     "symbol": symbol,
                     "avg_profit": avg_profit,
                     "win_rate": win_rate,
                     "count": info["count"],
+                    "coverage": coverage,
+                    "news_ratio": news_ratio,
                     "score": penalty,
                 }
             )

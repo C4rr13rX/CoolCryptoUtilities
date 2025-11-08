@@ -1,46 +1,54 @@
 {
-  "1762592270": {
+  "1762602640": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762592271.6515117
+      "updated_at": 1762602645.5312731
     },
     "news_enrichment": {
       "status": "completed",
-      "updated_at": 1762592270.8714306,
+      "updated_at": 1762602641.5699732,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
-        ]
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "no_confusion_data"
+        }
       }
     },
     "dataset_warmup": {
       "status": "completed",
-      "updated_at": 1762592273.3728054,
+      "updated_at": 1762602645.6108687,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
-        ]
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "no_confusion_data"
+        }
       }
     },
     "candidate_training": {
-      "status": "running",
-      "updated_at": 1762592273.4242482
+      "status": "completed",
+      "updated_at": 1762602664.6144164
     },
     "ghost_metrics": {
-      "status": "waiting_deps",
-      "updated_at": 1762592270.3686695
+      "status": "completed",
+      "updated_at": 1762602664.6668193
     },
     "scheduler_refresh": {
-      "status": "waiting_deps",
-      "updated_at": 1762592270.3691719
+      "status": "completed",
+      "updated_at": 1762602664.722258
     },
     "telemetry_flush": {
-      "status": "waiting_deps",
-      "updated_at": 1762592270.3695652
+      "status": "completed",
+      "updated_at": 1762602664.7774856
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762592271.7270265
+      "updated_at": 1762602645.5349932
     }
   }
 }

@@ -589,6 +589,11 @@ def aggregate_market_data(
     wanted = {sym.upper() for sym in symbols} if symbols else None
     if wanted:
         snapshots = [snap for snap in snapshots if snap.symbol.upper() in wanted]
+        if not snapshots:
+            offline_specific = _historical_snapshot_fallback(top_n, symbols=wanted or None)
+            if offline_specific:
+                snapshots.extend(offline_specific)
+                fallback_used = True
 
     if not snapshots:
         archive = _load_local_market_snapshots(top_n, sources=None)
@@ -619,6 +624,11 @@ def aggregate_market_data(
     merged.sort(key=lambda snap: snap.volume_24h or 0.0, reverse=True)
     if top_n:
         merged = merged[: max(1, top_n)]
+    if merged:
+        try:
+            save_snapshots(merged, _LOCAL_SNAPSHOT)
+        except Exception:
+            pass
     if errors:
         severity = "info" if fallback_used else "warning"
         message = "market data served from fallback" if fallback_used else "market data fetch degraded"
