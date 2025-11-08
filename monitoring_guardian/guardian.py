@@ -255,8 +255,10 @@ class Guardian:
             "3. Implement those improvements.\n"
             "4. After each fix, run the relevant tests (unit tests, lab regression, etc.) and report the results.\n"
             "5. Stop only after all items are addressed or when manual approval is required.\n"
-            "6. Start main.py and option 7 again.\n"
-            "7. Make sure not to touch anything in the monitoring_guardian folder or tools/codex_session.py.\n"
+            "6. Make sure to update the .gitignore if you add anything that creates many downloaded files like node_modules, insecure information to release to the public, or anything else a .gitignore entry would be qualified for, and run git add . git commit -m \"[comment about what you did]\" and git push whenever you are done before stopping.\n"
+            "7. Start main.py and option 7 again.\n"
+            "8. Make sure not to touch anything in the monitoring_guardian folder or tools/codex_session.py as you are working.\n"
+
         )
         return prompt
 
