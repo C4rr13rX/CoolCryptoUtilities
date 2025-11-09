@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from monitoring_guardian.guardian import DEFAULT_CONFIG, Guardian, load_config
 from monitoring_guardian.prompt_text import DEFAULT_GUARDIAN_PROMPT
 from opsconsole.manager import manager as console_manager
+from services.guardian_lock import GuardianLease
 from services.guardian_state import (
     consume_one_time_prompt,
     get_guardian_settings,
@@ -26,6 +27,7 @@ class GuardianSupervisor:
         self._console_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._guardian: Optional[Guardian] = None
+        self._lease: Optional[GuardianLease] = None
         self._status_lock = threading.Lock()
         self._status: Dict[str, Any] = {
             "running": False,
@@ -60,6 +62,9 @@ class GuardianSupervisor:
         if self._thread:
             self._thread.join(timeout=5.0)
         self._thread = None
+        if self._lease:
+            self._lease.release()
+            self._lease = None
         if self._console_thread:
             self._console_thread.join(timeout=5.0)
         self._console_thread = None
@@ -112,6 +117,11 @@ class GuardianSupervisor:
 
     # ------------------------------------------------------------------ internal helpers
     def _run_guardian(self) -> None:
+        lease = GuardianLease("guardian-process", poll_interval=2.0)
+        if not lease.acquire(cancel_event=self._stop):
+            log_message("guardian", "guardian lease unavailable; aborting startup", severity="warning")
+            return
+        self._lease = lease
         try:
             config = load_config(CONFIG_PATH)
         except Exception:
@@ -131,6 +141,8 @@ class GuardianSupervisor:
             log_message("guardian", f"guardian loop crashed: {exc}", severity="error")
         finally:
             self._guardian = None
+            lease.release()
+            self._lease = None
             with self._status_lock:
                 self._status["running"] = False
 

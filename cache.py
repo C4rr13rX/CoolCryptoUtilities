@@ -581,7 +581,39 @@ class CacheBalances:
 
         snapshot = tp.build()
 
-        for chain, tokens in tokens_by_chain.items():
+        tokens_to_keep: Dict[str, List[str]] = {}
+        for chain in tokens_by_chain.keys():
+            try:
+                rows = self.db.fetch_balances(wallet, chain)
+            except Exception as exc:
+                print(f"[cache.balances] fetch_balances failed for {wallet}@{chain}: {exc}")
+                tokens_to_keep[chain] = list(tokens_by_chain.get(chain, []))
+                continue
+            keep: List[str] = []
+            for row in rows:
+                qty = Decimal(0)
+                qty_raw = row.get("quantity")
+                if qty_raw is not None:
+                    try:
+                        qty = Decimal(str(qty_raw))
+                    except Exception:
+                        qty = Decimal(0)
+                elif row.get("balance_hex"):
+                    try:
+                        qty = Decimal(_hex_to_int(row["balance_hex"]))
+                    except Exception:
+                        qty = Decimal(0)
+                if qty > 0:
+                    keep.append(row["token"])
+            tokens_to_keep[chain] = keep
+            wallet_log(
+                "cache.rebuild.prune_plan",
+                wallet=wallet,
+                chain=chain,
+                keep_tokens=keep,
+            )
+
+        for chain, tokens in tokens_to_keep.items():
             try:
                 self.db.delete_balances_except(wallet, chain, tokens)
             except Exception as exc:

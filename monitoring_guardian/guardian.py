@@ -38,6 +38,11 @@ except Exception:  # pragma: no cover - fallback for standalone CLI
     consume_one_time_prompt = None  # type: ignore
     get_guardian_settings = None  # type: ignore
 
+try:  # Optional but preferred for multi-process coordination
+    from services.guardian_lock import GuardianLease
+except Exception:  # pragma: no cover - fallback when services import fails
+    GuardianLease = None  # type: ignore
+
 session = CodexSession("guardian-session")
 
 DEFAULT_CONFIG: Dict[str, object] = {
@@ -228,7 +233,18 @@ class Guardian:
             f"{self._build_cli_prompt(unique_findings)}\n"
             f"{'='*80}"
         )
-        response = session.send(report)
+        response: str
+        if GuardianLease is not None:
+            lease = GuardianLease("guardian-codex", timeout=900, poll_interval=2.0)
+            if not lease.acquire(cancel_event=self.shutdown):
+                print("[guardian] codex session currently busy; skipping report this cycle.")
+                return
+            try:
+                response = session.send(report)
+            finally:
+                lease.release()
+        else:
+            response = session.send(report)
         print(response)
         if self.status_hook:
             try:
@@ -291,8 +307,18 @@ class Guardian:
 def main() -> None:
     args = parse_args()
     config = load_config(args.config)
-    guardian = Guardian(config, prompt_provider=_default_prompt_provider)
-    guardian.run()
+    lease = None
+    if GuardianLease is not None:
+        lease = GuardianLease("guardian-process", poll_interval=2.0)
+        if not lease.acquire():
+            print("[guardian] unable to obtain guardian-process lease; exiting.")
+            return
+    try:
+        guardian = Guardian(config, prompt_provider=_default_prompt_provider)
+        guardian.run()
+    finally:
+        if lease:
+            lease.release()
 
 
 def _default_prompt_provider() -> str:

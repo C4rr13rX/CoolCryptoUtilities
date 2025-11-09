@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from django.conf import settings
 from django.contrib.auth import login
@@ -219,3 +220,44 @@ class SpaRouteView(BaseSecureView):
             return redirect("core:dashboard")
         self.initial_route = slug
         return super().dispatch(request, *args, **kwargs)
+
+
+class GuardianFallbackView(TemplateView):
+    """
+    Minimal HTML fallback that surfaces guardian console output even when the
+    main SPA is unavailable (e.g., during server restarts). Accessible without
+    authentication so operators can confirm guardian activity.
+    """
+
+    template_name = "core/guardian_fallback.html"
+
+    def get_context_data(self, **kwargs: Any) -> Dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        status = {}
+        try:
+            status = guardian_supervisor.status()
+        except Exception:
+            status = {"running": False}
+        console_tail = _tail_lines(Path("codex_transcripts/guardian-session.log"), limit=400)
+        last_report = status.get("last_report")
+        if isinstance(last_report, (int, float)):
+            last_report = datetime.fromtimestamp(last_report)
+        else:
+            last_report = None
+        context.update(
+            {
+                "guardian_status": status,
+                "console_tail": console_tail,
+                "last_report": last_report,
+            }
+        )
+        return context
+def _tail_lines(path: Path, limit: int = 400) -> List[str]:
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            lines = handle.readlines()
+    except Exception:
+        return []
+    return [line.rstrip("\n") for line in lines[-limit:]]

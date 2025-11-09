@@ -26,6 +26,8 @@ urlpatterns = [
     path("lab", views.ModelLabPageView.as_view()),
     path("guardian/", views.GuardianPageView.as_view(), name="guardian"),
     path("guardian", views.GuardianPageView.as_view()),
+    path("guardian/fallback/", views.GuardianFallbackView.as_view(), name="guardian-fallback"),
+    path("guardian/fallback", views.GuardianFallbackView.as_view()),
     path("settings/", views.SecureSettingsPageView.as_view(), name="settings"),
     path("settings", views.SecureSettingsPageView.as_view()),
     path("integrations/", views.IntegrationsPageView.as_view(), name="integrations"),

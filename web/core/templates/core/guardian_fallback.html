@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Guardian Console Fallback</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      margin: 0;
+      font-family: "Fira Code", "SFMono-Regular", Consolas, Menlo, monospace;
+      background: #030712;
+      color: #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 1.5rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+    }
+    header h1 {
+      margin: 0 0 0.25rem 0;
+      font-size: 1.4rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    header p {
+      margin: 0;
+      color: rgba(226, 232, 240, 0.75);
+    }
+    main {
+      flex: 1;
+      padding: 1.5rem;
+    }
+    pre {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      padding: 1rem;
+      color: #cbd5f5;
+      max-height: calc(100vh - 200px);
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .status {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .status span {
+      font-size: 0.9rem;
+      color: rgba(226, 232, 240, 0.75);
+    }
+    .badge {
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 0.75rem;
+    }
+    .badge.running {
+      background: rgba(74, 222, 128, 0.15);
+      color: #4ade80;
+    }
+    .badge.stopped {
+      background: rgba(248, 113, 113, 0.15);
+      color: #f87171;
+    }
+    footer {
+      padding: 1rem 1.5rem;
+      font-size: 0.85rem;
+      color: rgba(148, 163, 184, 0.8);
+      border-top: 1px solid rgba(148, 163, 184, 0.15);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Guardian Console</h1>
+    <p>Fallback display — served even if the main dashboard is offline.</p>
+  </header>
+  <main>
+    <div class="status">
+      {% if guardian_status.running %}
+        <span class="badge running">running</span>
+      {% else %}
+        <span class="badge stopped">stopped</span>
+      {% endif %}
+      {% if last_report %}
+        <span>Last report: {{ last_report|date:"Y-m-d H:i:s" }}</span>
+      {% endif %}
+      {% if guardian_status.settings %}
+        <span>Interval: {{ guardian_status.settings.interval_minutes }} min</span>
+      {% endif %}
+    </div>
+    <pre>{% for line in console_tail %}{{ line }}
+{% endfor %}</pre>
+  </main>
+  <footer>
+    This view auto-reloads every 30 seconds. Close the tab once the main site is responsive again.
+  </footer>
+  <script>
+    setTimeout(() => {
+      window.location.reload();
+    }, 30000);
+  </script>
+</body>
+</html>

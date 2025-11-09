@@ -36,6 +36,7 @@ from cache import CacheBalances, CacheTransfers
 from services.token_catalog import get_core_token_map
 from services.token_safety import TokenSafetyRegistry, enforce_token_safety
 from services.wallet_optimizer import AdaptiveGasOracle
+from services.providers.rpc_health import RpcHealthTracker
 
 
 # =============================================================================
