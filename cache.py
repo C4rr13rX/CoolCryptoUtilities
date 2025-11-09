@@ -575,6 +575,7 @@ class CacheBalances:
             cache_balances=self,
             cache_transfers=transfers_cache,
             price_mode=price_mode,
+            force_refresh=force_refresh,
             max_transfers_per_token=0,
             verbose=os.getenv("TOKEN_PORTFOLIO_VERBOSE", "").strip().lower() in ("1", "true", "yes"),
         )

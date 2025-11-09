@@ -404,6 +404,7 @@ class UltraSwapBridge:
         )
         self._rpc_clients: Dict[str, Tuple[Web3, str]] = {}
         self._rpc_latency: Dict[str, float] = {}
+        self._rpc_health = RpcHealthTracker()
         # Adaptive gas oracle keeps EIP-1559 tips reasonable while avoiding stalls.
         ttl_env = os.getenv("GAS_ORACLE_TTL", "15")
         sample_env = os.getenv("GAS_ORACLE_SAMPLE", "8")
@@ -462,11 +463,13 @@ class UltraSwapBridge:
         urls = [u for u in cfg["rpcs"] if u]
         if not urls:
             raise RuntimeError(f"No RPC URLs configured for {chain}")
-        urls.sort(key=lambda u: self._rpc_latency.get(u, float("inf")))
+        latency_sorted = sorted(urls, key=lambda u: self._rpc_latency.get(u, float("inf")))
+        ranked = self._rpc_health.rank(latency_sorted)
+        urls_to_try = ranked or latency_sorted
 
         errs: List[str] = []
         best_choice: Optional[Tuple[float, Web3, str]] = None
-        for url in urls:
+        for url in urls_to_try:
             start = time.perf_counter()
             try:
                 provider = Web3.HTTPProvider(url, request_kwargs=REQ_KW)
@@ -477,10 +480,12 @@ class UltraSwapBridge:
                 if cfg.get("poa") and POA_MIDDLEWARE:
                     w3.middleware_onion.inject(POA_MIDDLEWARE, layer=0)
                 self._rpc_latency[url] = elapsed
+                self._rpc_health.record_success(url, elapsed)
                 best_choice = (elapsed, w3, url)
                 break  # first healthy URL after sorting is the winner
             except Exception as e:
                 self._rpc_latency[url] = float("inf")
+                self._rpc_health.record_failure(url)
                 errs.append(f"{url} -> {type(e).__name__}: {e}")
                 continue
 

@@ -85,7 +85,7 @@
     <p>Fallback display — served even if the main dashboard is offline.</p>
   </header>
   <main>
-    <div class="status">
+    <section class="status">
       {% if guardian_status.running %}
         <span class="badge running">running</span>
       {% else %}
@@ -97,8 +97,52 @@
       {% if guardian_status.settings %}
         <span>Interval: {{ guardian_status.settings.interval_minutes }} min</span>
       {% endif %}
-    </div>
-    <pre>{% for line in console_tail %}{{ line }}
+    </section>
+
+    {% with slots=queue_state.slots|default:{} %}
+      {% if slots.codex %}
+        <section>
+          <h3>Active Codex Session</h3>
+          <p>Ticket {{ slots.codex.ticket }} · Owner {{ slots.codex.owner }} · Started {{ slots.codex.started_at }}</p>
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% with queue=queue_state.queue|default:{} %}
+      {% if queue.codex %}
+        <section>
+          <h3>Waiting Queue</h3>
+          <ul>
+            {% for item in queue.codex %}
+              <li>{{ item.ticket }} — {{ item.owner }} (queued {{ item.requested_at }})</li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% with history=queue_state.history|default:{} %}
+      {% if history.codex %}
+        <section>
+          <h3>Recent Runs</h3>
+          <ul>
+            {% for item in history.codex|slice:":5" %}
+              <li>{{ item.finished_at }} · {{ item.state }} · {{ item.ticket }}</li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if production.running %}
+      <section>
+        <h3>Production Manager</h3>
+        <p class="badge running">online</p>
+        <p>Updated {{ production.updated_at }}</p>
+      </section>
+    {% endif %}
+
+    <pre class="console">{% for line in console_tail %}{{ line }}
 {% endfor %}</pre>
   </main>
   <footer>

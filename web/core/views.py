@@ -249,6 +249,8 @@ class GuardianFallbackView(TemplateView):
                 "guardian_status": status,
                 "console_tail": console_tail,
                 "last_report": last_report,
+                "queue_state": status.get("queue") or {},
+                "production": status.get("production") or {},
             }
         )
         return context

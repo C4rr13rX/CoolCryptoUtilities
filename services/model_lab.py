@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from services.tf_runtime import configure_tensorflow
+
+configure_tensorflow()
 import tensorflow as tf
 
 from db import TradingDatabase, get_db

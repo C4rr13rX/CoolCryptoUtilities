@@ -34,9 +34,15 @@ from monitoring_guardian.prompt_text import DEFAULT_GUARDIAN_PROMPT
 
 try:  # Optional dependency when running inside Django
     from services.guardian_state import consume_one_time_prompt, get_guardian_settings
+    from services.guardian_status import (
+        enqueue_slot,
+        mark_slot_finished,
+        mark_slot_running,
+    )
 except Exception:  # pragma: no cover - fallback for standalone CLI
     consume_one_time_prompt = None  # type: ignore
     get_guardian_settings = None  # type: ignore
+    enqueue_slot = mark_slot_finished = mark_slot_running = None  # type: ignore
 
 try:  # Optional but preferred for multi-process coordination
     from services.guardian_lock import GuardianLease
@@ -234,29 +240,42 @@ class Guardian:
             f"{'='*80}"
         )
         response: str
-        if GuardianLease is not None:
-            lease = GuardianLease("guardian-codex", timeout=900, poll_interval=2.0)
-            if not lease.acquire(cancel_event=self.shutdown):
-                print("[guardian] codex session currently busy; skipping report this cycle.")
-                return
-            try:
+        owner_id = f"guardian@{os.getpid()}:{threading.get_ident()}"
+        ticket_id = enqueue_slot("codex", owner_id, {"findings": len(unique_findings)}) if enqueue_slot else None
+        try:
+            if GuardianLease is not None:
+                lease = GuardianLease("guardian-codex", timeout=900, poll_interval=2.0)
+                if not lease.acquire(cancel_event=self.shutdown):
+                    if mark_slot_finished and ticket_id:
+                        mark_slot_finished("codex", ticket_id, outcome="skipped", message="lease busy")
+                    print("[guardian] codex session currently busy; skipping report this cycle.")
+                    return
+                try:
+                    if mark_slot_running and ticket_id:
+                        mark_slot_running("codex", ticket_id)
+                    response = session.send(report)
+                finally:
+                    lease.release()
+            else:
                 response = session.send(report)
-            finally:
-                lease.release()
-        else:
-            response = session.send(report)
-        print(response)
-        if self.status_hook:
-            try:
-                self.status_hook(
-                    {
-                        "timestamp": time.time(),
-                        "findings": unique_findings,
-                        "response": response,
-                    }
-                )
-            except Exception:
-                pass
+            if mark_slot_finished and ticket_id:
+                mark_slot_finished("codex", ticket_id, outcome="success")
+            print(response)
+            if self.status_hook:
+                try:
+                    self.status_hook(
+                        {
+                            "timestamp": time.time(),
+                            "findings": unique_findings,
+                            "response": response,
+                        }
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            if mark_slot_finished and ticket_id:
+                mark_slot_finished("codex", ticket_id, outcome="error", message=str(exc))
+            raise
 
     def _gather_unique_findings(self, limit: int = 30) -> List[str]:
         cutoff = time.time() - self.window_seconds

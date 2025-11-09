@@ -16,6 +16,8 @@ from services.guardian_state import (
     set_one_time_prompt,
     update_guardian_settings,
 )
+from services.guardian_status import snapshot_status as guardian_queue_snapshot
+from services.production_supervisor import production_supervisor
 from services.logging_utils import log_message
 
 CONFIG_PATH = Path("monitoring_guardian/config.json")
@@ -50,6 +52,7 @@ class GuardianSupervisor:
                 return
             self._stop.clear()
             self._ensure_console_running()
+            production_supervisor.ensure_running()
             self._thread = threading.Thread(target=self._run_guardian, name="guardian-loop", daemon=True)
             self._thread.start()
             self._start_console_monitor()
@@ -68,6 +71,7 @@ class GuardianSupervisor:
         if self._console_thread:
             self._console_thread.join(timeout=5.0)
         self._console_thread = None
+        production_supervisor.stop()
 
     def set_enabled(self, enabled: bool) -> Dict[str, Any]:
         settings = update_guardian_settings({"enabled": bool(enabled)})
@@ -104,6 +108,8 @@ class GuardianSupervisor:
         status["settings"] = get_guardian_settings()
         status["console"] = console_manager.status()
         status["running"] = bool(self._guardian and not self._guardian.shutdown.is_set())
+        status["queue"] = guardian_queue_snapshot()
+        status["production"] = production_supervisor.status()
         return status
 
     def ensure_running(self) -> None:
@@ -114,6 +120,7 @@ class GuardianSupervisor:
             self.start()
         else:
             self._ensure_console_running()
+            production_supervisor.ensure_running()
 
     # ------------------------------------------------------------------ internal helpers
     def _run_guardian(self) -> None:

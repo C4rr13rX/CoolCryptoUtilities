@@ -173,6 +173,7 @@ class MultiChainTokenPortfolio:
         reorg_safety_blocks: Optional[int] = None,
         cache_prices: Optional[CachePrices] = None,
         price_ttl_sec: Optional[int] = None,
+        force_refresh: Optional[bool] = None,
         # NEW: pricing behavior
         price_mode: Optional[str] = None, # "cache_only" (default) | "hybrid"
     ):
@@ -253,7 +254,18 @@ class MultiChainTokenPortfolio:
         # If you DID wire a price cache, stay cache-only here.
         pm = (price_mode or ("hybrid" if self.cp is None else "cache_only")).strip().lower()
         self.price_mode = pm if pm in ("cache_only","hybrid") else "cache_only"
-        self.v.log("Modes — price_mode={}, reorg_safety_blocks={}", self.price_mode, self.reorg_safety_blocks)
+        force_refresh_flag = (
+            force_refresh
+            if force_refresh is not None
+            else os.getenv("TOKEN_PORTFOLIO_FORCE_REFRESH", "").strip().lower() in ("1", "true", "yes", "force")
+        )
+        self.force_refresh = bool(force_refresh_flag)
+        self.v.log(
+            "Modes — price_mode={}, reorg_safety_blocks={}, force_refresh={}",
+            self.price_mode,
+            self.reorg_safety_blocks,
+            self.force_refresh,
+        )
 
         # Parse/resolve tokens
         self.tokens: List[Tuple[str,str]] = self._parse_tokens(tokens)
@@ -316,7 +328,7 @@ class MultiChainTokenPortfolio:
 
             # -------- Super-fast path: everything cached & no movement since
             fast = None
-            if self.alchemy_urls.get(ch):
+            if not self.force_refresh and self.alchemy_urls.get(ch):
                 fast = self._fast_return_if_all_cached(ch, token_list)
             if fast is not None:
                 self.v.log("Fast-return from cache for {}", ch)
@@ -358,8 +370,18 @@ class MultiChainTokenPortfolio:
                 since = max(min_block - self.reorg_safety_blocks, 0)
                 touched = self._touched_tokens_since(ch, since)
 
-            refresh: List[str] = [a for a in token_list if (a not in cached_entries) or (a.lower() in {x.lower() for x in touched})]
-            keep: List[str] = [a for a in token_list if a not in refresh]
+            refresh: List[str]
+            keep: List[str]
+            if self.force_refresh:
+                refresh = list(token_list)
+                keep = []
+            else:
+                refresh = [
+                    a
+                    for a in token_list
+                    if (a not in cached_entries) or (a.lower() in {x.lower() for x in touched})
+                ]
+                keep = [a for a in token_list if a not in refresh]
 
             # No Alchemy endpoint means we cannot rely on touched-token detection; force refresh.
             if not (self.alchemy_urls.get(ch) or ""):

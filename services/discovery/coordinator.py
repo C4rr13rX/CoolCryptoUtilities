@@ -167,7 +167,9 @@ class DiscoveryCoordinator:
         volume = trending.volume_24h_usd or 0.0
 
         simulated_success = False
-        failure_reason = None
+        # Keep prior failure_reason until we have a definitive probe result so dashboards
+        # can distinguish between "never tried" and "failed due to metrics".
+        failure_reason = probe.failure_reason or "probe_pending"
         if liquidity >= min_liquidity and volume >= min_volume:
             simulated_success = True
             metadata["mode"] = "virtual"
