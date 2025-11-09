@@ -1,6 +1,6 @@
 <template>
   <div class="app-layout">
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar__brand">
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
@@ -14,12 +14,12 @@
           :to="item.path"
           class="nav-link"
           :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
+          @click="handleNavClick"
         >
           <span class="icon">
             <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
           </span>
           <span class="label">{{ item.label }}</span>
-          <span class="status-dot" />
         </RouterLink>
       </nav>
       <footer class="sidebar__foot">
@@ -35,39 +35,22 @@
         </div>
       </footer>
     </aside>
+
+    <div class="sidebar-overlay" :class="{ visible: sidebarOpen }" @click="closeSidebar" />
+
     <main class="content">
       <header class="content__header">
+        <button class="hamburger" type="button" aria-label="Toggle navigation" @click="toggleSidebar">
+          <span />
+          <span />
+          <span />
+        </button>
         <div class="header-metrics">
-          <StatusIndicator
-            label="Streams"
-            :level="streamIntent"
-            :detail="streamSummary"
-            icon="radar"
-          />
-          <StatusIndicator
-            label="Feedback"
-            :level="feedbackIntent"
-            :detail="feedbackSummary"
-            icon="shield"
-          />
-          <StatusIndicator
-            label="Console"
-            :level="consoleIntent"
-            :detail="consoleSummary"
-            icon="terminal"
-          />
-          <StatusIndicator
-            label="Pipeline"
-            :level="pipelineIntent"
-            :detail="pipelineSummary"
-            icon="pipeline"
-          />
-          <StatusIndicator
-            label="Advisories"
-            :level="advisoryIntent"
-            :detail="advisorySummary"
-            icon="lightning"
-          />
+          <StatusIndicator label="Streams" :level="streamIntent" :detail="streamSummary" icon="radar" />
+          <StatusIndicator label="Feedback" :level="feedbackIntent" :detail="feedbackSummary" icon="shield" />
+          <StatusIndicator label="ProdMgr" :level="consoleIntent" :detail="consoleSummary" icon="terminal" />
+          <StatusIndicator label="Pipeline" :level="pipelineIntent" :detail="pipelineSummary" icon="pipeline" />
+          <StatusIndicator label="Advisories" :level="advisoryIntent" :detail="advisorySummary" icon="lightning" />
         </div>
         <div class="header-right">
           <span v-if="store.loading" class="loading-pill">Refreshing…</span>
@@ -81,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import StatusIndicator from '@/components/StatusIndicator.vue';
 import HackerIcon from '@/components/HackerIcon.vue';
@@ -89,6 +72,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 
 const store = useDashboardStore();
 const route = useRoute();
+const sidebarOpen = ref(false);
 
 let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
@@ -102,6 +86,27 @@ onBeforeUnmount(() => {
   if (refreshTimer) window.clearInterval(refreshTimer);
   if (consoleTimer) window.clearInterval(consoleTimer);
 });
+
+watch(
+  () => route.fullPath,
+  () => {
+    closeSidebar();
+  }
+);
+
+const toggleSidebar = () => {
+  sidebarOpen.value = !sidebarOpen.value;
+};
+
+const closeSidebar = () => {
+  sidebarOpen.value = false;
+};
+
+const handleNavClick = () => {
+  if (window.matchMedia('(max-width: 959px)').matches) {
+    closeSidebar();
+  }
+};
 
 const streamIntent = computed(() => {
   const keys = Object.keys(store.streams || {});
@@ -183,13 +188,14 @@ const navItems = computed(() => [
   { route: 'dashboard', label: 'Overview', icon: 'overview', path: '/', intent: streamIntent.value },
   { route: 'organism', label: 'Organism', icon: 'organism', path: '/organism', intent: pipelineIntent.value },
   { route: 'pipeline', label: 'Pipeline', icon: 'pipeline', path: '/pipeline', intent: pipelineIntent.value },
-  { route: 'streams', label: 'Market Streams', icon: 'streams', path: '/streams', intent: streamIntent.value },
+  { route: 'streams', label: 'Streams', icon: 'streams', path: '/streams', intent: streamIntent.value },
   { route: 'telemetry', label: 'Telemetry', icon: 'activity', path: '/telemetry', intent: feedbackIntent.value },
-  { route: 'console', label: 'Console', icon: 'terminal', path: '/console', intent: consoleIntent.value },
+  { route: 'wallet', label: 'Wallet', icon: 'wallet', path: '/wallet', intent: consoleIntent.value },
   { route: 'advisories', label: 'Advisories', icon: 'shield', path: '/advisories', intent: advisoryIntent.value },
   { route: 'datalab', label: 'Data Lab', icon: 'datalab', path: '/datalab', intent: pipelineIntent.value },
   { route: 'lab', label: 'Model Lab', icon: 'lab', path: '/lab', intent: pipelineIntent.value },
   { route: 'guardian', label: 'Guardian', icon: 'guardian', path: '/guardian', intent: pipelineIntent.value },
+  { route: 'integrations', label: 'API Integrations', icon: 'link', path: '/integrations', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', path: '/settings', intent: pipelineIntent.value },
 ]);
 
@@ -211,47 +217,49 @@ const totalProfitDisplay = computed(() =>
 
 <style scoped>
 .app-layout {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
   min-height: 100vh;
   width: 100%;
-  overflow-x: hidden;
-  background: radial-gradient(circle at 20% 0%, rgba(10, 40, 85, 0.25), rgba(2, 8, 17, 0.95));
+  display: flex;
+  background: radial-gradient(circle at 10% 0%, rgba(11, 28, 60, 0.4), rgba(3, 10, 22, 0.96));
 }
 
 .sidebar {
+  width: 260px;
+  flex: 0 0 260px;
+  background: rgba(5, 12, 22, 0.96);
+  border-right: 1px solid rgba(127, 176, 255, 0.2);
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 1rem;
-  background: linear-gradient(180deg, rgba(5, 12, 22, 0.96), rgba(9, 20, 36, 0.88));
-  backdrop-filter: blur(16px) saturate(160%);
-  border-bottom: 1px solid rgba(79, 168, 255, 0.2);
-  box-sizing: border-box;
-  overflow: hidden;
-  width: 100%;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1.8rem 1.3rem 2rem;
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  transition: transform 0.3s ease;
+  z-index: 1000;
 }
 
 .sidebar__brand {
-  flex: 1 1 auto;
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .brand-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
   text-transform: uppercase;
   letter-spacing: 0.18rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
-.sidebar .title {
+.title {
   font-size: 1rem;
   color: var(--accent-3);
 }
 
-.sidebar .subtitle {
+.subtitle {
   font-size: 0.64rem;
   letter-spacing: 0.14rem;
   color: rgba(240, 245, 255, 0.55);
@@ -259,149 +267,101 @@ const totalProfitDisplay = computed(() =>
 
 .sidebar__nav {
   display: flex;
-  flex: 1 1 100%;
-  gap: 0.4rem;
-  padding: 0.4rem 0 0.25rem;
-  width: 100%;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  position: relative;
-  top: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(79, 168, 255, 0.35) rgba(5, 12, 22, 0.95);
+  flex-direction: column;
+  gap: 0.45rem;
 }
 
 .nav-link {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.85rem 1rem;
+  padding: 0.8rem 0.9rem;
   border-radius: 12px;
   text-decoration: none;
   color: rgba(207, 225, 255, 0.82);
   background: rgba(12, 26, 45, 0.6);
-  position: relative;
-  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 3.25rem;
-  justify-content: flex-start;
-  box-sizing: border-box;
-  touch-action: manipulation;
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .nav-link .icon {
-  width: 24px;
+  width: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(240, 245, 255, 0.8);
-}
-
-.nav-link .status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  margin-left: auto;
-  background: rgba(255, 255, 255, 0.25);
-  flex: 0 0 auto;
-}
-
-.nav-link.intent-ok .status-dot {
-  background: var(--accent-ok);
-}
-.nav-link.intent-warn .status-dot {
-  background: var(--accent-warn);
-}
-.nav-link.intent-error .status-dot {
-  background: var(--accent-err);
-}
-
-.nav-link:hover,
-.nav-link.active {
-  color: #ecf3ff;
-  background: rgba(23, 48, 80, 0.72);
-  transform: translateX(2px);
 }
 
 .nav-link.active {
-  box-shadow: 0 14px 32px rgba(9, 24, 42, 0.38);
-}
-
-.sidebar__nav::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
-}
-
-.sidebar__nav::-webkit-scrollbar-track {
-  background: rgba(5, 12, 22, 0.8);
-  border-radius: 999px;
-}
-
-.sidebar__nav::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, rgba(79, 168, 255, 0.6), rgba(28, 121, 255, 0.4));
-  border-radius: 999px;
-  border: 2px solid rgba(5, 12, 22, 0.9);
-}
-
-.sidebar__nav::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(135deg, rgba(119, 198, 255, 0.85), rgba(58, 151, 255, 0.6));
+  background: rgba(45, 117, 196, 0.25);
+  color: #fefefe;
+  border: 1px solid rgba(127, 176, 255, 0.4);
 }
 
 .sidebar__foot {
-  flex: 1 1 100%;
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  font-size: 0.8rem;
-  color: rgba(240, 245, 255, 0.75);
+  margin-top: auto;
 }
 
 .sidebar__stats {
   display: flex;
-  gap: 1.2rem;
+  flex-direction: column;
+  gap: 0.6rem;
 }
 
 .sidebar__stats .label {
-  display: block;
   text-transform: uppercase;
   letter-spacing: 0.12rem;
   color: rgba(240, 245, 255, 0.6);
 }
 
 .sidebar__stats .value {
-  font-size: 0.95rem;
   font-weight: 600;
-  color: #f8fbff;
+}
+
+.sidebar-overlay {
+  display: none;
 }
 
 .content {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: clamp(1.2rem, 2vw + 0.5rem, 2rem);
+  padding: 1.5rem;
   gap: 1.5rem;
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-  overflow-x: hidden;
-  max-width: 100vw;
 }
 
 .content__header {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: 1rem;
-  width: 100%;
+  align-items: center;
+}
+
+.hamburger {
+  display: none;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(12, 26, 45, 0.9);
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.hamburger span {
+  width: 18px;
+  height: 2px;
+  background: #f8fbff;
 }
 
 .header-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1rem;
-  width: 100%;
+  flex: 1;
 }
 
 .header-right .loading-pill {
@@ -415,79 +375,45 @@ const totalProfitDisplay = computed(() =>
 }
 
 .content__body {
-  background: rgba(6, 14, 26, 0.9);
+  flex: 1;
+  background: rgba(6, 14, 26, 0.92);
   border: 1px solid rgba(79, 168, 255, 0.18);
   border-radius: 18px;
-  padding: clamp(1.2rem, 1.5vw + 0.6rem, 1.6rem);
+  padding: 1.5rem;
   box-shadow: 0 28px 56px rgba(3, 12, 25, 0.45);
-  min-height: 60vh;
-  width: 100%;
-  box-sizing: border-box;
   overflow: hidden;
 }
 
-@media (min-width: 960px) {
-  .app-layout {
-    flex-direction: row;
-    align-items: stretch;
-    max-width: 100vw;
-  }
+@media (max-width: 959px) {
   .sidebar {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1.5rem;
-  padding: 1.8rem 1.2rem;
-  border-bottom: none;
-  border-right: 1px solid rgba(79, 168, 255, 0.2);
-  width: 260px;
-  flex: 0 0 260px;
-  min-height: 100vh;
-  position: sticky;
-  top: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-  .sidebar__brand {
-    width: 100%;
+    position: fixed;
+    inset: 0 auto 0 0;
+    transform: translateX(-100%);
+    max-height: none;
+    width: 300px;
   }
-  .sidebar__nav {
-    flex-direction: column;
-    width: 220px !important;
-    position: absolute !important;
-    top: 75px !important;
-    gap: 0.4rem;
-    overflow-x: hidden;
-    scrollbar-width: thin;
+  .sidebar.open {
+    transform: translateX(0);
   }
-  .nav-link {
-    width: 100%;
-    min-width: unset;
-    min-height: 3.4rem;
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 500;
   }
-  .sidebar__foot {
-    flex-direction: column;
-    align-items: flex-start;
+  .sidebar-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .hamburger {
+    display: flex;
   }
   .content {
-    flex: 1 1 auto;
-    min-height: 100vh;
-    overflow: hidden;
-    max-width: calc(100vw - 260px);
-  }
-}
-
-@media (max-width: 959px) {
-  .nav-link {
-    flex: 0 0 auto;
-    min-width: 120px;
-    max-width: calc(100vw - 2rem);
-  }
-  .sidebar__nav {
-    position: relative !important;
-    top: auto !important;
-    width: 100% !important;
-    overflow-x: auto;
-    padding-bottom: 0.5rem;
+    padding-top: 1rem;
   }
 }
 </style>

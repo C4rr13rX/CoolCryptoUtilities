@@ -458,6 +458,7 @@ class CacheBalances:
         *,
         filter_scams: bool = True,
         price_mode: Optional[str] = None,
+        force_refresh: bool = False,
     ) -> Dict[str, Any]:
         """
         Full refresh of cached balances using UltraSwapBridge + MultiChainTokenPortfolio.
@@ -481,6 +482,11 @@ class CacheBalances:
         except Exception as e:
             print(f"[cache.balances] token discovery failed: {e}")
             token_pairs = []
+
+        tokens_by_chain: Dict[str, List[str]] = {}
+        for ch, addr in token_pairs:
+            if ch and addr:
+                tokens_by_chain.setdefault(ch, []).append(addr)
 
         tokens_annotated = [f"{ch}:{addr}" for ch, addr in token_pairs if ch and addr]
 
@@ -513,6 +519,12 @@ class CacheBalances:
         )
 
         snapshot = tp.build()
+
+        for chain, tokens in tokens_by_chain.items():
+            try:
+                self.db.delete_balances_except(wallet, chain, tokens)
+            except Exception as exc:
+                print(f"[cache.balances] prune failed for {wallet}@{chain}: {exc}")
 
         print(
             f"[cache.balances] rebuilt snapshot for {len(tokens_annotated)} tokens across {len(chain_list)} chains"

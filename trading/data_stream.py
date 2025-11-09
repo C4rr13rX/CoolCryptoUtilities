@@ -151,14 +151,19 @@ class MarketDataStream:
         self._session: Optional[aiohttp.ClientSession] = None
         self._http_session: Optional[aiohttp.ClientSession] = None
         self._stop_event = asyncio.Event()
+        self._rest_only_mode = False
+        self._rest_only_last_check = 0.0
+        self._rest_only_reason = "init"
+        self._rest_only_retry = max(30.0, float(os.getenv("REST_ONLY_RETRY_SEC", "120")))
         self.reference_price: Optional[float] = None
         self.price_tolerance = float(os.getenv("PRICE_FEED_TOLERANCE", "0.05"))
         self.endpoints = self._build_endpoints()
         self._endpoint_scores: Dict[str, float] = {ep.name: 0.0 for ep in self.endpoints}
         self._endpoint_order = {ep.name: idx for idx, ep in enumerate(self.endpoints)}
         self._endpoint_health: Dict[str, EndpointHealth] = {ep.name: EndpointHealth() for ep in self.endpoints}
-        self.rest_poll_interval = float(os.getenv("REST_POLL_INTERVAL", "5"))
-        self._base_rest_interval = self.rest_poll_interval
+        self._rest_metric_last = 0.0
+        self._rest_metric_interval = max(5.0, float(os.getenv("REST_METRIC_LOG_INTERVAL", "30")))
+        self._init_rest_intervals()
         self._last_volume: float = 0.0
         self.consensus_sources = int(os.getenv("PRICE_CONSENSUS_SOURCES", "2"))
         self.consensus_window = float(os.getenv("PRICE_CONSENSUS_WINDOW", "60"))
@@ -177,6 +182,15 @@ class MarketDataStream:
         self._duplicate_drops = 0
         self._consensus_failures = 0
         self._consensus_relax_until = 0.0
+        self._consensus_cooldown_threshold = max(4, int(os.getenv("CONSENSUS_FAILURE_COOLDOWN", "48")))
+        self._consensus_cooldown_backoff = max(30.0, float(os.getenv("CONSENSUS_COOLDOWN_SEC", "180")))
+        self._consensus_cooldown_until = 0.0
+        self._last_cooldown_log = 0.0
+        self._liquidity_alpha = min(1.0, max(1e-3, float(os.getenv("LIQUIDITY_ALPHA", "0.05"))))
+        self._liquidity_score = 0.0
+        self._liquidity_floor = max(0.0, float(os.getenv("LIQUIDITY_SCORE_FLOOR", "25.0")))
+        self._low_liquidity_pause = max(15.0, float(os.getenv("LOW_LIQUIDITY_COOLDOWN_SEC", "90")))
+        self._low_liquidity_pause_until = 0.0
         vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
         self._window_prices: deque = deque(maxlen=vol_window)
         self._ws_warning_logged = False
@@ -638,13 +652,16 @@ class MarketDataStream:
         if self._consensus_failures % self._snapshot_refresh_interval == 0:
             await self._refresh_market_snapshots()
         if self._consensus_failures % 4 == 0:
-            limit = self._base_rest_interval * 6
-            self.rest_poll_interval = min(limit, self.rest_poll_interval * 1.25)
+            self._grow_rest_interval(reason="consensus_failure")
             log_message(
                 "market-stream",
                 "consensus failure throttling REST polls",
                 severity="warning",
-                details={"symbol": self.symbol, "rest_interval": self.rest_poll_interval, "failures": self._consensus_failures},
+                details={
+                    "symbol": self.symbol,
+                    "rest_interval": self.rest_poll_interval,
+                    "failures": self._consensus_failures,
+                },
             )
 
     def _fallback_consensus_price(self) -> Optional[float]:
@@ -983,7 +1000,7 @@ class MarketDataStream:
         if name in self._endpoint_backoff_until and health.cooldown_until == 0.0:
             self._endpoint_backoff_until.pop(name, None)
         if self.rest_poll_interval > self._base_rest_interval:
-            self.rest_poll_interval = max(self._base_rest_interval, self.rest_poll_interval * 0.8)
+            self._relax_rest_interval(reason="endpoint_success")
         if self._consensus_failures > 0:
             self._consensus_failures -= 1
         if price is not None and consensus is not None:

@@ -10,6 +10,8 @@ class SecureSettingSerializer(serializers.ModelSerializer):
     value = serializers.CharField(write_only=True, required=False, allow_blank=True)
     preview = serializers.SerializerMethodField()
     revealed_value = serializers.SerializerMethodField()
+    label = serializers.SerializerMethodField()
+    is_placeholder = serializers.SerializerMethodField()
 
     class Meta:
         model = SecureSetting
@@ -22,8 +24,10 @@ class SecureSettingSerializer(serializers.ModelSerializer):
             "revealed_value",
             "value",
             "updated_at",
+            "label",
+            "is_placeholder",
         ]
-        read_only_fields = ["updated_at", "preview", "revealed_value"]
+        read_only_fields = ["updated_at", "preview", "revealed_value", "label", "is_placeholder"]
 
     def get_preview(self, obj: SecureSetting) -> str:
         if obj.is_secret:
@@ -38,7 +42,10 @@ class SecureSettingSerializer(serializers.ModelSerializer):
         if obj.is_secret:
             if not (obj.encapsulated_key and obj.ciphertext and obj.nonce):
                 return None
-            return decrypt_secret(obj.encapsulated_key, obj.ciphertext, obj.nonce)
+            try:
+                return decrypt_secret(obj.encapsulated_key, obj.ciphertext, obj.nonce)
+            except Exception:
+                return obj.value_plain or ""
         return obj.value_plain or ""
 
     def create(self, validated_data):
@@ -72,3 +79,13 @@ class SecureSettingSerializer(serializers.ModelSerializer):
             instance.ciphertext = None
             instance.encapsulated_key = None
             instance.nonce = None
+
+    def get_label(self, obj: SecureSetting) -> str | None:
+        from services.secure_settings_catalog import CATALOG_LOOKUP
+
+        key = ((obj.category or "default").lower(), obj.name)
+        entry = CATALOG_LOOKUP.get(key)
+        return entry.get("label") if entry else None
+
+    def get_is_placeholder(self, obj: SecureSetting) -> bool:
+        return False

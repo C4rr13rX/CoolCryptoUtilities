@@ -33,7 +33,8 @@ class RunJobView(APIView):
         options = payload.get("options") or {}
         runner = get_runner()
         try:
-            runner.start(job_type, options)
+            user = request.user if request.user and request.user.is_authenticated else None
+            runner.start(job_type, options, user=user)
         except RuntimeError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except Exception as exc:

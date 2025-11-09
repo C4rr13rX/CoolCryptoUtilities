@@ -42,6 +42,8 @@ INSTALLED_APPS = [
     "datalab.apps.DatalabConfig",
     "guardianpanel.apps.GuardianPanelConfig",
     "securevault.apps.SecureVaultConfig",
+    "walletpanel.apps.WalletPanelConfig",
+    "integrations.apps.IntegrationsConfig",
 ]
 
 MIDDLEWARE = [

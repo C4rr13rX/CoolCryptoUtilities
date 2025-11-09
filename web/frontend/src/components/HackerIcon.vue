@@ -108,6 +108,15 @@ const ICON_PATHS: Record<string, string[]> = {
   activity: [
     'M3 12l4.5-7.5L12 15l4.5-7.5L21 12',
   ],
+  wallet: [
+    'M3.75 7.5h16.5v9H3.75a1.5 1.5 0 01-1.5-1.5v-6a1.5 1.5 0 011.5-1.5z',
+    'M18 12a1.5 1.5 0 110 3h-2.25',
+  ],
+  link: [
+    'M8.25 15.75l-2.5 2.5a3 3 0 104.242 4.242l2.5-2.5',
+    'M15.75 8.25l2.5-2.5a3 3 0 10-4.242-4.242l-2.5 2.5',
+    'M9.75 14.25l4.5-4.5',
+  ],
 };
 
 const paths = computed(() => ICON_PATHS[props.name] || ICON_PATHS['overview']);

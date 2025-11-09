@@ -3,71 +3,67 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Dict, Optional
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from django.contrib.auth import get_user_model
-
-
-def _ensure_pqcrypto_import():
-    try:
-        from pqcrypto.kem.ml_kem_512 import decrypt as kyber_decrypt  # type: ignore
-        from pqcrypto.kem.ml_kem_512 import encrypt as kyber_encrypt  # type: ignore
-        from pqcrypto.kem.ml_kem_512 import generate_keypair as kyber_generate  # type: ignore
-        return kyber_decrypt, kyber_encrypt, kyber_generate
-    except ModuleNotFoundError:
-        import site
-        import sys
-        candidates = []
-        try:
-            candidates.append(site.getusersitepackages())
-        except Exception:
-            pass
-        major, minor = sys.version_info[:2]
-        candidates.append(Path.home() / f".local/lib/python{major}.{minor}/site-packages")
-        for candidate in candidates:
-            if not candidate:
-                continue
-            candidate_path = Path(candidate)
-            if candidate_path.exists() and str(candidate_path) not in sys.path:
-                sys.path.append(str(candidate_path))
-        from pqcrypto.kem.ml_kem_512 import decrypt as kyber_decrypt  # type: ignore
-        from pqcrypto.kem.ml_kem_512 import encrypt as kyber_encrypt  # type: ignore
-        from pqcrypto.kem.ml_kem_512 import generate_keypair as kyber_generate  # type: ignore
-        return kyber_decrypt, kyber_encrypt, kyber_generate
-
-
-kyber_decrypt, kyber_encrypt, kyber_generate = _ensure_pqcrypto_import()
+from kyber_py import kyber
 
 from securevault.models import SecureSetting
 
 PLACEHOLDER_PATTERN = re.compile(r"\${([A-Z0-9_]+)}")
+_KYBER = kyber.Kyber512
+_KEY_LOCK = threading.Lock()
 
-KEY_DIR = Path("storage/secure_vault")
-PUBLIC_KEY_PATH = KEY_DIR / "kyber_public.bin"
-PRIVATE_KEY_PATH = KEY_DIR / "kyber_private.bin"
+
+def _key_dir() -> Path:
+    override = os.getenv("SECURE_VAULT_KEY_DIR")
+    if override:
+        return Path(override)
+    return Path("storage/secure_vault")
+
+
+def key_directory() -> Path:
+    return _key_dir()
+
+
+def _key_paths() -> tuple[Path, Path, Path]:
+    base = _key_dir()
+    return base, base / "kyber_public.bin", base / "kyber_private.bin"
 
 
 def _ensure_keys() -> None:
-    KEY_DIR.mkdir(parents=True, exist_ok=True)
-    if PUBLIC_KEY_PATH.exists() and PRIVATE_KEY_PATH.exists():
+    key_dir, public_path, private_path = _key_paths()
+    key_dir.mkdir(parents=True, exist_ok=True)
+    if public_path.exists() and private_path.exists():
         return
-    public_key, private_key = kyber_generate()
-    PUBLIC_KEY_PATH.write_bytes(public_key)
-    PRIVATE_KEY_PATH.write_bytes(private_key)
+    with _KEY_LOCK:
+        if public_path.exists() and private_path.exists():
+            return
+        public_key, private_key = _KYBER.keygen()
+        public_path.write_bytes(public_key)
+        private_path.write_bytes(private_key)
 
 
-def _load_keys() -> tuple[bytes, bytes]:
+def _load_public_key() -> bytes:
     _ensure_keys()
-    return PUBLIC_KEY_PATH.read_bytes(), PRIVATE_KEY_PATH.read_bytes()
+    _, public_path, _ = _key_paths()
+    return public_path.read_bytes()
+
+
+def _load_private_key() -> bytes:
+    _ensure_keys()
+    _, _, private_path = _key_paths()
+    return private_path.read_bytes()
 
 
 def encrypt_secret(value: str) -> Dict[str, bytes]:
     if value is None:
         raise ValueError("value must be provided for secret settings")
-    public_key, _ = _load_keys()
-    capsule, shared_key = kyber_encrypt(public_key)
+    public_key = _load_public_key()
+    shared_key, capsule = _KYBER.encaps(public_key)
     aes_key = hashlib.sha256(shared_key).digest()
     aesgcm = AESGCM(aes_key)
     nonce = os.urandom(12)
@@ -82,12 +78,24 @@ def encrypt_secret(value: str) -> Dict[str, bytes]:
 def decrypt_secret(encapsulated_key: bytes, ciphertext: bytes, nonce: bytes) -> str:
     if not (encapsulated_key and ciphertext and nonce):
         raise ValueError("encrypted payload incomplete")
-    _, private_key = _load_keys()
-    shared_key = kyber_decrypt(encapsulated_key, private_key)
+    private_key = _load_private_key()
+    shared_key = _KYBER.decaps(private_key, encapsulated_key)
     aes_key = hashlib.sha256(shared_key).digest()
     aesgcm = AESGCM(aes_key)
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
     return plaintext.decode("utf-8")
+
+
+def rotate_keys() -> None:
+    key_dir, public_path, private_path = _key_paths()
+    with _KEY_LOCK:
+        for path in (public_path, private_path):
+            if path.exists():
+                path.unlink()
+        key_dir.mkdir(parents=True, exist_ok=True)
+        public_key, private_key = _KYBER.keygen()
+        public_path.write_bytes(public_key)
+        private_path.write_bytes(private_key)
 
 
 def mask_value(value: Optional[str]) -> str:

@@ -42,11 +42,12 @@ if (mountEl) {
     pipeline: '/pipeline',
     streams: '/streams',
     telemetry: '/telemetry',
-    console: '/console',
+    wallet: '/wallet',
     advisories: '/advisories',
     datalab: '/datalab',
     lab: '/lab',
     guardian: '/guardian',
+    integrations: '/integrations',
     settings: '/settings',
   };
   const initialPath = targetRoutes[initialRoute] || '/';

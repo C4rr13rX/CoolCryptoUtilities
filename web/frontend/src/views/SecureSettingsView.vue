@@ -4,7 +4,7 @@
       <header>
         <div>
           <h1>Secure Settings</h1>
-          <p>Store wallet keys, API credentials, and endpoint overrides per user.</p>
+          <p>Vaulted values pulled into every subprocess (Guardian, console, wallet, labs).</p>
         </div>
         <div class="header-actions">
           <button type="button" class="btn ghost" @click="refresh" :disabled="store.loading">
@@ -19,16 +19,37 @@
       <div v-for="group in groupedSettings" :key="group.key" class="category-block">
         <h3 class="category-title">{{ group.label }}</h3>
         <div class="settings-grid">
-          <article v-for="item in group.items" :key="item.id" class="setting-card">
+          <article v-for="item in group.items" :key="item.name + String(item.id)" class="setting-card">
             <div class="card-head">
-              <strong>{{ item.name }}</strong>
+              <div>
+                <strong>{{ item.label || item.name }}</strong>
+                <small class="field-code">{{ item.name }}</small>
+              </div>
+              <div class="card-actions">
+                <button type="button" class="link" @click="edit(item)">{{ item.is_placeholder ? 'Add' : 'Edit' }}</button>
+                <button v-if="item.id" type="button" class="link danger" @click="remove(item)">Delete</button>
+              </div>
             </div>
-            <div class="card-actions under">
-              <button type="button" class="link" @click="edit(item)">Edit</button>
-              <button type="button" class="link danger" @click="remove(item)">Delete</button>
+            <div class="value-row">
+              <span v-if="item.is_secret">
+                <template v-if="item.id && revealVisible[item.id]">
+                  {{ revealValues[item.id] || '—' }}
+                </template>
+                <template v-else>
+                  {{ item.preview || '••••••' }}
+                </template>
+              </span>
+              <span v-else>{{ item.preview || 'Not set' }}</span>
+              <button
+                v-if="item.is_secret && item.id"
+                type="button"
+                class="link"
+                @click="toggleReveal(item)"
+              >
+                {{ item.id && revealVisible[item.id] ? 'Hide' : 'Reveal' }}
+              </button>
             </div>
-            <p v-if="item.is_secret">Secret · {{ item.preview }}</p>
-            <p v-else>{{ item.preview }}</p>
+            <p v-if="item.is_placeholder" class="placeholder-note">This value has not been configured yet.</p>
           </article>
         </div>
       </div>
@@ -41,7 +62,7 @@
       <header>
         <div>
           <h2>Import from .env</h2>
-          <p>Paste entries (comments with # are ignored). All values save under the Default category exactly as provided.</p>
+          <p>Paste entries (comments beginning with # are ignored). The parsed values populate the Default category.</p>
         </div>
         <label class="switch-row import-secret-toggle">
           <input type="checkbox" v-model="importForm.is_secret" />
@@ -52,7 +73,7 @@
         <label>
           <span>.env contents</span>
           <textarea v-model="importForm.content" rows="6" placeholder="API_KEY=example123
-RPC_URL=https://..."></textarea>
+RPC_URL=https://..." />
         </label>
         <div class="actions">
           <button type="submit" class="btn" :disabled="!importForm.content.trim()">Import</button>
@@ -112,6 +133,8 @@ const store = useSecureSettingsStore();
 const showCreate = ref(false);
 const editing = ref<number | null>(null);
 const confirmingClear = ref(false);
+const revealVisible = reactive<Record<number, boolean>>({});
+const revealValues = reactive<Record<number, string>>({});
 const form = reactive({
   name: '',
   category: 'Default',
@@ -154,7 +177,7 @@ async function clearAll() {
 }
 
 function edit(item: any) {
-  editing.value = item.id;
+  editing.value = item.id || null;
   form.name = item.name;
   form.category = item.category ? (item.category === 'default' ? 'Default' : item.category) : 'Default';
   form.is_secret = !!item.is_secret;
@@ -163,6 +186,7 @@ function edit(item: any) {
 }
 
 function remove(item: any) {
+  if (!item.id) return;
   if (!confirm(`Delete ${item.name}?`)) return;
   store.remove(item.id);
 }
@@ -201,6 +225,19 @@ async function importEnv() {
 
 function resetImport() {
   importForm.content = '';
+}
+
+async function toggleReveal(item: any) {
+  if (!item.id) return;
+  if (revealVisible[item.id]) {
+    revealVisible[item.id] = false;
+    delete revealValues[item.id];
+    return;
+  }
+  const data = await store.reveal(item.id);
+  const secret = data?.revealed_value || data?.value || '';
+  revealValues[item.id] = secret;
+  revealVisible[item.id] = true;
 }
 </script>
 
@@ -270,8 +307,25 @@ function resetImport() {
   gap: 0.5rem;
 }
 
-.card-actions.under {
-  margin-top: 0.45rem;
+.field-code {
+  display: block;
+  font-size: 0.75rem;
+  letter-spacing: 0.08rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.value-row {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.placeholder-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .link {
@@ -279,22 +333,13 @@ function resetImport() {
   border: none;
   color: #93c5fd;
   cursor: pointer;
-}
-
-.link.danger {
-  color: #f87171;
+  padding: 0;
 }
 
 .form-grid {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
-}
-
-.form-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
 }
 
 .form-grid input,
@@ -310,10 +355,6 @@ function resetImport() {
   flex-direction: row;
   align-items: center;
   gap: 0.5rem;
-}
-
-.import-secret-toggle {
-  margin-left: auto;
 }
 
 .actions {

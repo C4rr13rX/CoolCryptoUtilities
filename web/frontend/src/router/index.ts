@@ -4,13 +4,14 @@ import DashboardView from '@/views/DashboardView.vue';
 import PipelineView from '@/views/PipelineView.vue';
 import StreamsView from '@/views/StreamsView.vue';
 import TelemetryView from '@/views/TelemetryView.vue';
-import ConsoleView from '@/views/ConsoleView.vue';
+import WalletView from '@/views/WalletView.vue';
 import AdvisoriesView from '@/views/AdvisoriesView.vue';
 import OrganismView from '@/views/OrganismView.vue';
 import ModelLabView from '@/views/ModelLabView.vue';
 import DataLabView from '@/views/DataLabView.vue';
 import GuardianView from '@/views/GuardianView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
+import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -39,9 +40,14 @@ const routes: RouteRecordRaw[] = [
     component: OrganismView,
   },
   {
-    path: '/console',
-    name: 'console',
-    component: ConsoleView,
+    path: '/wallet',
+    name: 'wallet',
+    component: WalletView,
+  },
+  {
+    path: '/integrations',
+    name: 'integrations',
+    component: ApiIntegrationsView,
   },
   {
     path: '/advisories',

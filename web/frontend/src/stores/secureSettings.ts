@@ -6,6 +6,7 @@ import {
   updateSecureSetting,
   importSecureSettings,
   clearSecureSettings,
+  revealSecureSetting,
   SecureSettingPayload,
   SecureSettingImportPayload,
 } from '@/api';
@@ -54,6 +55,10 @@ export const useSecureSettingsStore = defineStore('secureSettings', {
     async importFromEnv(payload: SecureSettingImportPayload) {
       await importSecureSettings(payload);
       await this.load();
+    },
+    async reveal(id: number) {
+      const data = await revealSecureSetting(id);
+      return data;
     },
   },
 });

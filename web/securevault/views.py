@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from services.secure_settings import encrypt_secret
+from services.secure_settings_catalog import CATALOG_LOOKUP, SECURE_SETTINGS_CATALOG
 from .models import SecureSetting
 from .serializers import SecureSettingSerializer
 
@@ -16,6 +19,45 @@ class SecureSettingListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         return SecureSetting.objects.filter(user=self.request.user).order_by("category", "name")
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        items = serializer.data
+        present_keys = {
+            ((item.get("category") or "default").lower(), item.get("name")) for item in items
+        }
+        enriched = []
+        for item in items:
+            enriched.append(self._attach_metadata(item))
+        placeholders = []
+        for entry in SECURE_SETTINGS_CATALOG:
+            key = (entry["category"].lower(), entry["name"])
+            if key in present_keys:
+                continue
+            placeholders.append(
+                {
+                    "id": None,
+                    "name": entry["name"],
+                    "category": entry["category"],
+                    "is_secret": entry["is_secret"],
+                    "preview": "",
+                    "revealed_value": None,
+                    "updated_at": None,
+                    "is_placeholder": True,
+                    "label": entry.get("label"),
+                }
+            )
+        return Response(enriched + placeholders)
+
+    def _attach_metadata(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        key = ((item.get("category") or "default").lower(), item.get("name"))
+        entry = CATALOG_LOOKUP.get(key)
+        if entry:
+            item = dict(item)
+            item["label"] = entry.get("label")
+            item["is_placeholder"] = False
+        return item
 
     def delete(self, request, *args, **kwargs):
         category = request.query_params.get("category") or request.data.get("category")

@@ -6,6 +6,37 @@ You will need to get an API key from both ANKR and TheGraph.
 ANKR: https://www.ankr.com/web3-api/
 TheGraph: https://thegraph.com/studio/
 
+## Secure Settings Vault (Quantum-Safe)
+
+- Secrets, RPC URLs, wallet mnemonics, etc. now live in **Settings → Secure Settings** inside the Django UI. Every value is stored per-user using Kyber ML-KEM-512 (quantum-safe) plus AES-GCM.
+- Console, Guardian, the process manager, and Data Lab jobs all inherit their environment from that vault automatically; no code paths read `.env` anymore.
+- Import legacy variable sets by pasting your `.env` into the new textarea on the Settings page (comments beginning with `#` are ignored, placeholders such as `${ALCHEMY_API_KEY}` are preserved). Use the toggle to decide whether the incoming values are stored as encrypted secrets or plain text.
+- The legacy `.env` file is still on disk for manual reference, but it will only be parsed if you explicitly set `ALLOW_DOTENV_LOADING=1` in the hosting environment. Leave that flag unset (default) to keep the vault as the single source of truth.
+
+### Rotating vault keys / recovery
+
+Kyber key material is written to `storage/secure_vault`. To rotate the key pair in a safe, repeatable way:
+
+```bash
+python3 ./web/manage.py rotatevaultkeys
+```
+
+This command deletes the existing Kyber public/private key files, generates a fresh pair, and keeps current secret values accessible (they are re-encrypted on next write). Back up the `storage/secure_vault` folder if you need cross-host portability.
+
+### Resetting admin credentials
+
+Use Django’s tooling whenever you need to roll the admin password again:
+
+```bash
+python3 ./web/manage.py shell -c "from django.contrib.auth import get_user_model; \
+User = get_user_model(); \
+user = User.objects.filter(is_superuser=True).order_by('id').first(); \
+user.set_password('NEW_PASSWORD'); \
+user.save()"
+```
+
+Record the temporary password securely and change it after first login.
+
 Run files in this order.
 - python make2000index.py
 - python makeServiceAssignment.py
@@ -172,4 +203,3 @@ POLY_USDCe_ADDR=0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174 # bridged USDC.e
 DEBUG_PRICING=0
 
 DEBUG_FILTER=0
-

@@ -75,6 +75,15 @@ def load_env_robust() -> None:
 
 load_env_robust()
 
+
+def wallet_secrets_available() -> bool:
+    """Return True when either MNEMONIC or PRIVATE_KEY env var is present."""
+    if os.getenv("MNEMONIC") and os.getenv("MNEMONIC").strip():
+        return True
+    if os.getenv("PRIVATE_KEY") and os.getenv("PRIVATE_KEY").strip():
+        return True
+    return False
+
 REQ_KW = {"timeout": 30, "verify": certifi.where()}
 JSON_HEADERS = {"accept": "application/json", "content-type": "application/json"}
 
@@ -791,11 +800,25 @@ class UltraSwapBridge:
                 cached_map = (cb.get_state(self.acct.address, ch) or {}).get("tokens", {}) or {}
                 if cached_map:
                     addrs = []
-                    for a in cached_map.keys():
+                    for addr, meta in cached_map.items():
+                        raw = meta.get("balance_hex") or meta.get("raw") or "0x0"
                         try:
-                            addrs.append(Web3.to_checksum_address(a))
+                            raw_int = int(str(raw), 16) if str(raw).startswith("0x") else int(str(raw))
                         except Exception:
-                            pass
+                            raw_int = 0
+                        if raw_int < int(min_balance_wei):
+                            continue
+                        quantity = meta.get("quantity")
+                        if quantity is not None:
+                            try:
+                                if float(quantity) <= 0:
+                                    continue
+                            except Exception:
+                                pass
+                        try:
+                            addrs.append(Web3.to_checksum_address(addr))
+                        except Exception:
+                            continue
                     out.extend((ch, a) for a in addrs)
                     print(f"[discover] {ch}: using {len(cached_map)} cached tokens (balances)")
                     continue

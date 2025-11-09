@@ -138,7 +138,7 @@ pexpect==4.9.0
 pillow==11.3.0
 pkginfo==1.12.1.2
 plotly==6.3.0
-pqcrypto==0.3.1
+kyber-py==1.0.1
 prompt_toolkit==3.0.52
 propcache==0.3.2
 protobuf==4.25.8

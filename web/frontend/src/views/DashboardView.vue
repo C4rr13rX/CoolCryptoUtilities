@@ -369,7 +369,7 @@ const siteLinks = computed(() => [
     icon: 'lab',
   },
   {
-    to: '/console',
+    to: '/wallet',
     label: 'Ops Console',
     detail: 'Start/stop main.py option 9 and send live commands.',
     icon: 'terminal',

@@ -530,6 +530,21 @@ class TradingDatabase:
                 params,
             )
 
+    def delete_balances_except(self, wallet: str, chain: str, keep_tokens: Sequence[str]) -> None:
+        wallet_l = _lower(wallet)
+        chain_l = _lower(chain)
+        with self._conn:
+            if keep_tokens:
+                placeholders = ",".join("?" for _ in keep_tokens)
+                params = [wallet_l, chain_l] + [_lower(tok) for tok in keep_tokens]
+                query = f"DELETE FROM balances WHERE wallet=? AND chain=? AND token NOT IN ({placeholders})"
+                self._conn.execute(query, params)
+            else:
+                self._conn.execute(
+                    "DELETE FROM balances WHERE wallet=? AND chain=?",
+                    (wallet_l, chain_l),
+                )
+
     # ------------------------------------------------------------------
     # Transfer operations
     # ------------------------------------------------------------------

@@ -9,6 +9,10 @@
   --border: rgba(127, 176, 255, 0.25);
   --accent: #2d75c4;
   --accent-soft: rgba(45, 117, 196, 0.35);
+  --accent-3: #7fb0ff;
+  --accent-ok: #34d399;
+  --accent-warn: #f6b143;
+  --accent-err: #ff5a5f;
   --positive: #1fe29a;
   --warning: #f6b143;
   --negative: #ff5a5f;
@@ -199,6 +203,18 @@ main.dashboard-content {
 
 .table tbody tr:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.table-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+}
+
+.table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
 }
 
 @media (max-width: 960px) {

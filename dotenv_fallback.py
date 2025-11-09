@@ -5,8 +5,18 @@ import sys
 from pathlib import Path
 from typing import Dict
 
+_FLAG = "ALLOW_DOTENV_LOADING"
+
+
+def _dotenv_enabled() -> bool:
+    value = os.environ.get(_FLAG, "")
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
 try:  # pragma: no cover - prefer real package when available
-    from dotenv import load_dotenv, find_dotenv, dotenv_values  # type: ignore
+    from dotenv import load_dotenv as _real_load_dotenv  # type: ignore
+    from dotenv import find_dotenv as _real_find_dotenv  # type: ignore
+    from dotenv import dotenv_values as _real_dotenv_values  # type: ignore
 except Exception:  # pragma: no cover - fallback used when python-dotenv missing
 
     def _parse_dotenv(path: Path) -> Dict[str, str]:
@@ -28,13 +38,13 @@ except Exception:  # pragma: no cover - fallback used when python-dotenv missing
             return {}
         return result
 
-    def dotenv_values(path: str | os.PathLike[str], stream=None) -> Dict[str, str]:
+    def _real_dotenv_values(path: str | os.PathLike[str], stream=None) -> Dict[str, str]:
         path_obj = Path(path)
         if not path_obj.exists():
             return {}
         return _parse_dotenv(path_obj)
 
-    def find_dotenv(usecwd: bool = False) -> str:
+    def _real_find_dotenv(usecwd: bool = False) -> str:
         candidates = []
         if usecwd:
             candidates.append(Path.cwd() / ".env")
@@ -53,13 +63,30 @@ except Exception:  # pragma: no cover - fallback used when python-dotenv missing
                 continue
         return ""
 
-    def load_dotenv(path: str | os.PathLike[str] | None = None, override: bool = False) -> bool:
-        target = Path(path) if path else Path(find_dotenv())
+    def _real_load_dotenv(path: str | os.PathLike[str] | None = None, override: bool = False) -> bool:
+        target = Path(path) if path else Path(_real_find_dotenv())
         if not target or not target.exists():
             return False
-        values = dotenv_values(target)
+        values = _real_dotenv_values(target)
         for key, value in values.items():
             if override or key not in os.environ:
                 os.environ[key] = value
         return True
 
+
+def find_dotenv(usecwd: bool = False) -> str:
+    if not _dotenv_enabled():
+        return ""
+    return _real_find_dotenv(usecwd=usecwd)
+
+
+def dotenv_values(path: str | os.PathLike[str], stream=None) -> Dict[str, str]:
+    if not _dotenv_enabled():
+        return {}
+    return _real_dotenv_values(path=path, stream=stream)
+
+
+def load_dotenv(path: str | os.PathLike[str] | None = None, override: bool = False) -> bool:
+    if not _dotenv_enabled():
+        return False
+    return _real_load_dotenv(path=path, override=override)

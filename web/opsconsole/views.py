@@ -10,7 +10,8 @@ from .manager import manager
 
 class StartProcessView(APIView):
     def post(self, request: Request, *args, **kwargs) -> Response:
-        data = manager.start()
+        user = request.user if request.user and request.user.is_authenticated else None
+        data = manager.start(user=user)
         http_status = status.HTTP_200_OK if data.get("status") == "started" else status.HTTP_409_CONFLICT
         return Response(data, status=http_status)
 

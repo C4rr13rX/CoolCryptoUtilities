@@ -35,13 +35,13 @@ class ConsoleProcessManager:
         self._stdin_lock = threading.Lock()
         self._bootstrap_thread: Optional[threading.Thread] = None
 
-    def start(self, command: Optional[list[str]] = None) -> Dict[str, str]:
+    def start(self, command: Optional[list[str]] = None, user=None) -> Dict[str, str]:
         cmd = command or DEFAULT_COMMAND
         with self._lock:
             if self._process and self._process.poll() is None:
                 return {"status": "running", "pid": str(self._process.pid)}
             logfile = LOG_PATH.open("a", encoding="utf-8")
-            env = build_process_env()
+            env = build_process_env(user)
             try:
                 proc = subprocess.Popen(
                     cmd,

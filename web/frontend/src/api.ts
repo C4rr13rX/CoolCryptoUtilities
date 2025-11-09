@@ -249,6 +249,11 @@ export async function deleteSecureSetting(id: number) {
   return data;
 }
 
+export async function revealSecureSetting(id: number) {
+  const { data } = await api.get(`/secure/settings/${id}/`, { params: { reveal: '1' } });
+  return data;
+}
+
 export interface SecureSettingImportPayload {
   content: string;
   category?: string;
@@ -262,6 +267,51 @@ export async function importSecureSettings(payload: SecureSettingImportPayload) 
 
 export async function clearSecureSettings(category?: string) {
   const { data } = await api.delete('/secure/settings/', { params: category ? { category } : undefined });
+  return data;
+}
+
+export async function fetchWalletStatus() {
+  const { data } = await api.get('/wallet/actions/');
+  return data;
+}
+
+export async function runWalletAction(payload: { action: string; options?: Record<string, any> }) {
+  const { data } = await api.post('/wallet/run/', payload);
+  return data;
+}
+
+export async function fetchWalletMnemonic() {
+  const { data } = await api.get('/wallet/mnemonic/');
+  return data;
+}
+
+export async function updateWalletMnemonic(mnemonic: string | null) {
+  const { data } = await api.post('/wallet/mnemonic/', { mnemonic });
+  return data;
+}
+
+export async function fetchWalletState() {
+  const { data } = await api.get('/wallet/state/');
+  return data;
+}
+
+export async function fetchIntegrations() {
+  const { data } = await api.get('/integrations/keys/');
+  return data;
+}
+
+export async function updateIntegration(name: string, value: string | null) {
+  const { data } = await api.post(`/integrations/keys/${name}/`, { value });
+  return data;
+}
+
+export async function testIntegration(name: string, value: string) {
+  const { data } = await api.post(`/integrations/keys/${name}/test/`, { value });
+  return data;
+}
+
+export async function revealIntegrationValue(name: string) {
+  const { data } = await api.get(`/integrations/keys/${name}/`, { params: { reveal: '1' } });
   return data;
 }
 

@@ -157,8 +157,8 @@ class TelemetryView(BaseSecureView):
     initial_route = "telemetry"
 
 
-class ConsoleView(BaseSecureView):
-    initial_route = "console"
+class WalletPageView(BaseSecureView):
+    initial_route = "wallet"
 
 
 class OrganismView(BaseSecureView):
@@ -189,6 +189,10 @@ class AdvisoriesPageView(BaseSecureView):
     initial_route = "advisories"
 
 
+class IntegrationsPageView(BaseSecureView):
+    initial_route = "integrations"
+
+
 class SpaRouteView(BaseSecureView):
     """
     Catch-all view so refreshing /<route> stays inside the SPA shell.
@@ -202,13 +206,14 @@ class SpaRouteView(BaseSecureView):
             "organism",
             "streams",
             "telemetry",
-            "console",
+            "wallet",
             "pipeline",
             "datalab",
             "lab",
             "guardian",
             "settings",
             "advisories",
+            "integrations",
         }
         if slug not in allowed:
             return redirect("core:dashboard")

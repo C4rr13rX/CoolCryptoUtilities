@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
-from datetime import datetime
 
 from services.news_lab import collect_news_for_terms
+from services.secure_settings import build_process_env
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = REPO_ROOT / "data"
@@ -156,7 +156,7 @@ class DataLabRunner:
         with self._lock:
             return dict(self._status)
 
-    def start(self, job_type: str, options: Dict[str, Any]) -> None:
+    def start(self, job_type: str, options: Dict[str, Any], user=None) -> None:
         with self._lock:
             if self._status.get("running"):
                 raise RuntimeError("Data lab job already running.")
@@ -174,12 +174,12 @@ class DataLabRunner:
                 }
             )
         self._append_log(f"Queued job `{job_type}` with options: {json.dumps(options, sort_keys=True)}")
-        thread = threading.Thread(target=self._run_job, args=(job_type, options), daemon=True)
+        thread = threading.Thread(target=self._run_job, args=(job_type, options, user), daemon=True)
         self._thread = thread
         thread.start()
 
-    def _run_job(self, job_type: str, options: Dict[str, Any]) -> None:
-        env = self._prepare_env(job_type, options)
+    def _run_job(self, job_type: str, options: Dict[str, Any], user=None) -> None:
+        env = self._prepare_env(job_type, options, user=user)
         command = self._build_command(job_type, options)
         if not command:
             self._append_log(f"Unknown job type requested: {job_type}")
@@ -251,8 +251,8 @@ class DataLabRunner:
             self._status["history"] = list(self._history)
         self._record_history(success, message, returncode)
 
-    def _prepare_env(self, job_type: str, options: Dict[str, Any]) -> Dict[str, str]:
-        env = os.environ.copy()
+    def _prepare_env(self, job_type: str, options: Dict[str, Any], *, user=None) -> Dict[str, str]:
+        env = build_process_env(user)
         chain = (options.get("chain") or "base").strip().lower()
         env["CHAIN_NAME"] = chain
         years_back = int(options.get("years_back") or 3)

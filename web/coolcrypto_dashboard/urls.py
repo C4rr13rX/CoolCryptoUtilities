@@ -12,5 +12,7 @@ urlpatterns = [
     path("api/lab/", include("lab.urls")),
     path("api/guardian/", include("guardianpanel.urls")),
     path("api/secure/", include("securevault.urls")),
+    path("api/wallet/", include("walletpanel.urls")),
+    path("api/integrations/", include("integrations.urls")),
     path("", include("core.urls")),
 ]
