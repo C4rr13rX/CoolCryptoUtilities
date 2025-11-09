@@ -6,9 +6,14 @@
           <h1>Secure Settings</h1>
           <p>Store wallet keys, API credentials, and endpoint overrides per user.</p>
         </div>
-        <button type="button" class="btn ghost" @click="refresh" :disabled="store.loading">
-          {{ store.loading ? 'Refreshing…' : 'Refresh' }}
-        </button>
+        <div class="header-actions">
+          <button type="button" class="btn ghost" @click="refresh" :disabled="store.loading">
+            {{ store.loading ? 'Refreshing…' : 'Refresh' }}
+          </button>
+          <button type="button" class="btn danger" @click="confirmingClear = true" :disabled="store.loading || !store.items.length">
+            Clear All
+          </button>
+        </div>
       </header>
 
       <div v-for="group in groupedSettings" :key="group.key" class="category-block">
@@ -17,10 +22,10 @@
           <article v-for="item in group.items" :key="item.id" class="setting-card">
             <div class="card-head">
               <strong>{{ item.name }}</strong>
-              <div class="card-actions">
-                <button type="button" class="link" @click="edit(item)">Edit</button>
-                <button type="button" class="link danger" @click="remove(item)">Delete</button>
-              </div>
+            </div>
+            <div class="card-actions under">
+              <button type="button" class="link" @click="edit(item)">Edit</button>
+              <button type="button" class="link danger" @click="remove(item)">Delete</button>
             </div>
             <p v-if="item.is_secret">Secret · {{ item.preview }}</p>
             <p v-else>{{ item.preview }}</p>
@@ -30,6 +35,30 @@
       <article class="setting-card add-card" @click="showCreate = true">
         <span>+ Add Setting</span>
       </article>
+    </section>
+
+    <section class="panel">
+      <header>
+        <div>
+          <h2>Import from .env</h2>
+          <p>Paste entries (comments with # are ignored). All values save under the Default category exactly as provided.</p>
+        </div>
+        <label class="switch-row import-secret-toggle">
+          <input type="checkbox" v-model="importForm.is_secret" />
+          <span>Store imported values as secrets</span>
+        </label>
+      </header>
+      <form class="form-grid" @submit.prevent="importEnv">
+        <label>
+          <span>.env contents</span>
+          <textarea v-model="importForm.content" rows="6" placeholder="API_KEY=example123
+RPC_URL=https://..."></textarea>
+        </label>
+        <div class="actions">
+          <button type="submit" class="btn" :disabled="!importForm.content.trim()">Import</button>
+          <button type="button" class="btn ghost" @click="resetImport">Clear Text</button>
+        </div>
+      </form>
     </section>
 
     <section class="panel" v-if="showCreate">
@@ -61,6 +90,17 @@
         </div>
       </form>
     </section>
+
+    <div v-if="confirmingClear" class="modal-backdrop">
+      <div class="modal-card">
+        <h3>Clear all settings?</h3>
+        <p>This removes every stored value for your account. This cannot be undone.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn danger" @click="clearAll">Yes</button>
+          <button type="button" class="btn ghost" @click="confirmingClear = false">Cancel</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -71,11 +111,16 @@ import { useSecureSettingsStore } from '@/stores/secureSettings';
 const store = useSecureSettingsStore();
 const showCreate = ref(false);
 const editing = ref<number | null>(null);
+const confirmingClear = ref(false);
 const form = reactive({
   name: '',
   category: 'Default',
   is_secret: true,
   value: '',
+});
+const importForm = reactive({
+  content: '',
+  is_secret: true,
 });
 
 onMounted(() => {
@@ -101,6 +146,11 @@ const groupedSettings = computed(() => {
 
 function refresh() {
   store.load();
+}
+
+async function clearAll() {
+  confirmingClear.value = false;
+  await store.clearAll();
 }
 
 function edit(item: any) {
@@ -138,6 +188,20 @@ async function save() {
   });
   cancel();
 }
+
+async function importEnv() {
+  if (!importForm.content.trim()) return;
+  await store.importFromEnv({
+    content: importForm.content,
+    category: 'default',
+    is_secret: importForm.is_secret,
+  });
+  resetImport();
+}
+
+function resetImport() {
+  importForm.content = '';
+}
 </script>
 
 <style scoped>
@@ -145,6 +209,12 @@ async function save() {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
 }
 
 .panel {
@@ -200,6 +270,10 @@ async function save() {
   gap: 0.5rem;
 }
 
+.card-actions.under {
+  margin-top: 0.45rem;
+}
+
 .link {
   background: none;
   border: none;
@@ -238,8 +312,39 @@ async function save() {
   gap: 0.5rem;
 }
 
+.import-secret-toggle {
+  margin-left: auto;
+}
+
 .actions {
   display: flex;
   gap: 0.8rem;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 3, 8, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.modal-card {
+  background: rgba(9, 15, 24, 0.95);
+  border-radius: 20px;
+  padding: 1.5rem;
+  width: min(90vw, 360px);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
 }
 </style>

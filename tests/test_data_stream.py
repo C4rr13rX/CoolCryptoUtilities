@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+import statistics
+import time
 
 from trading.data_stream import MarketDataStream, _split_symbol
 
@@ -41,3 +43,36 @@ def test_market_stream_offline_failover_sample_includes_alias():
     assert sample["price"] == snapshot.price
     assert sample["source"] == snapshot.source
     assert sample.get("alias") in {"WETH", "ETH", "ETH-USDC", "USDC-ETH"}
+
+
+def test_endpoint_failure_applies_backoff(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    stream._endpoint_backoff_until.clear()
+    target_endpoint = next(iter(stream._endpoint_scores))
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._record_endpoint_failure(target_endpoint)
+    assert target_endpoint in stream._endpoint_backoff_until
+    assert stream._endpoint_backoff_until[target_endpoint] > base_time
+
+
+def test_price_rejection_recenters_reference(monkeypatch):
+    monkeypatch.setenv("PRICE_REJECTION_BUFFER", "4")
+    stream = MarketDataStream(symbol="WETH-USDC")
+    base_time = time.time()
+    tick = {"value": 0}
+
+    def fake_time():
+        return base_time + tick["value"]
+
+    monkeypatch.setattr("trading.data_stream.time.time", fake_time)
+    stream.reference_price = 100.0
+    stream._global_price_ema = 100.0
+    stream._global_price_var = 0.0
+    prices = [130.0, 129.6, 129.9, 130.1]
+    accepted = False
+    for idx, price in enumerate(prices):
+        tick["value"] = idx * 5
+        accepted = stream._validate_price(price)
+    assert accepted is True
+    assert abs(stream.reference_price - statistics.median(prices)) < 1e-6

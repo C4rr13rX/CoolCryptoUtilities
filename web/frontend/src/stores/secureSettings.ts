@@ -1,5 +1,14 @@
 import { defineStore } from 'pinia';
-import { createSecureSetting, deleteSecureSetting, fetchSecureSettings, updateSecureSetting, SecureSettingPayload } from '@/api';
+import {
+  createSecureSetting,
+  deleteSecureSetting,
+  fetchSecureSettings,
+  updateSecureSetting,
+  importSecureSettings,
+  clearSecureSettings,
+  SecureSettingPayload,
+  SecureSettingImportPayload,
+} from '@/api';
 
 interface SecureSettingState {
   items: Record<string, any>[];
@@ -36,6 +45,14 @@ export const useSecureSettingsStore = defineStore('secureSettings', {
     },
     async remove(id: number) {
       await deleteSecureSetting(id);
+      await this.load();
+    },
+    async clearAll(category?: string) {
+      await clearSecureSettings(category);
+      await this.load();
+    },
+    async importFromEnv(payload: SecureSettingImportPayload) {
+      await importSecureSettings(payload);
       await this.load();
     },
   },

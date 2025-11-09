@@ -119,6 +119,9 @@ class HistoricalDataLoader:
         self._cryptopanic_last_fetch: Dict[str, float] = {}
         self._news_seen_keys: Set[str] = set()
         self._cryptopanic_failed_windows: Set[str] = set()
+        self._news_backfill_cooldown = max(60, int(os.getenv("NEWS_BACKFILL_COOLDOWN_SEC", "900")))
+        self._news_backfill_bucket = max(300, int(os.getenv("NEWS_BACKFILL_BUCKET_SEC", "3600")))
+        self._news_backfill_log: Dict[str, float] = {}
         self.news_items = self._load_news()
         self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
@@ -1247,7 +1250,7 @@ class HistoricalDataLoader:
         for horizon in self._horizon_windows:
             target_ts = timestamp + horizon
             future_idx = int(np.searchsorted(timestamps, target_ts, side="left"))
-            if future_idx <= end_index or future_idx >= closes.shape[0]:
+            if future_idx < end_index or future_idx >= closes.shape[0]:
                 continue
             future_price = float(closes[future_idx])
             if future_price <= 0:
@@ -2156,6 +2159,9 @@ class HistoricalDataLoader:
             token_set = {tok for tok in tokens if tok}
             if not token_set:
                 continue
+            window_key = self._news_backfill_window_key(token_set, start_ts, lookback_sec)
+            if self._is_news_backfill_recent(window_key):
+                continue
             before = len(self.news_items)
             self._augment_news_from_cryptopanic(token_set, start_ts, end_ts)
             if len(self.news_items) > before:
@@ -2163,7 +2169,28 @@ class HistoricalDataLoader:
                 continue
             if self._augment_news_from_ethics(token_set, start_ts, end_ts):
                 added = True
+            self._mark_news_backfill(window_key)
         return added
+
+    def _news_backfill_window_key(self, tokens: Set[str], start_ts: int, lookback_sec: int) -> str:
+        token_key = "|".join(sorted(tokens))
+        bucket_span = max(60, min(self._news_backfill_bucket, abs(int(lookback_sec)) or 60))
+        bucket_slot = int(start_ts // bucket_span)
+        return f"{token_key}:{bucket_span}:{bucket_slot}"
+
+    def _is_news_backfill_recent(self, window_key: str) -> bool:
+        last = self._news_backfill_log.get(window_key, 0.0)
+        if not last:
+            return False
+        return (time.time() - last) < self._news_backfill_cooldown
+
+    def _mark_news_backfill(self, window_key: str) -> None:
+        self._news_backfill_log[window_key] = time.time()
+        if len(self._news_backfill_log) > 2048:
+            cutoff = time.time() - (self._news_backfill_cooldown * 2)
+            stale = [key for key, ts in self._news_backfill_log.items() if ts < cutoff]
+            for key in stale:
+                self._news_backfill_log.pop(key, None)
 
     def _download_cryptocompare_news(self, since_ts: int) -> Optional[pd.DataFrame]:
         url = "https://min-api.cryptocompare.com/data/v2/news/"

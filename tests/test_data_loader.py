@@ -104,6 +104,20 @@ def test_sample_meta_includes_horizons(historical_tmp: Path) -> None:
     assert isinstance(horizons, dict) and horizons, "per-horizon returns should be recorded"
 
 
+def test_short_horizon_metrics_recorded(historical_tmp: Path) -> None:
+    data_path = historical_tmp / "history_ETH-USDC.json"
+    data_path.write_text(json.dumps(_synthetic_rows(360)), encoding="utf-8")
+
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=1, max_samples_per_file=96)
+    loader.build_dataset(window_size=24, sent_seq_len=12, tech_count=8)
+    profile = loader.horizon_profile()
+    short_horizons = [
+        stats for key, stats in profile.items() if int(float(key)) <= 5 * 60
+    ]
+    assert short_horizons, "expected short-horizon windows to be captured"
+    assert all(stats.get("samples", 0.0) > 0 for stats in short_horizons), "short horizons should accumulate samples"
+
+
 def test_sample_meta_persists_through_caches(monkeypatch: pytest.MonkeyPatch, historical_tmp: Path) -> None:
     cache_dir = historical_tmp / "ds_cache"
     monkeypatch.setenv("DATASET_CACHE_DIR", str(cache_dir))

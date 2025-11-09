@@ -249,6 +249,22 @@ export async function deleteSecureSetting(id: number) {
   return data;
 }
 
+export interface SecureSettingImportPayload {
+  content: string;
+  category?: string;
+  is_secret?: boolean;
+}
+
+export async function importSecureSettings(payload: SecureSettingImportPayload) {
+  const { data } = await api.post('/secure/settings/import/', payload);
+  return data;
+}
+
+export async function clearSecureSettings(category?: string) {
+  const { data } = await api.delete('/secure/settings/', { params: category ? { category } : undefined });
+  return data;
+}
+
 export interface DataLabSignalParams {
   window?: string;
   direction?: 'bullish' | 'bearish' | 'all';

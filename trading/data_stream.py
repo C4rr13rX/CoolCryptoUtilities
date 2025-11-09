@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import statistics
 from urllib.parse import quote_plus
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, Set
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, Set, Sequence
 from collections import deque
 
 import aiohttp
@@ -98,6 +98,26 @@ class Endpoint:
     headers: Optional[Dict[str, str]] = None
 
 
+@dataclass
+class EndpointHealth:
+    strikes: int = 0
+    successes: int = 0
+    cooldown_until: float = 0.0
+
+    def register_failure(self) -> float:
+        self.strikes += 1
+        backoff = min(900.0, 2.0 * (2 ** min(6, self.strikes - 1)))
+        self.cooldown_until = time.time() + backoff
+        return backoff
+
+    def register_success(self) -> None:
+        self.successes += 1
+        if self.strikes > 0:
+            self.strikes -= 1
+        if self.strikes == 0:
+            self.cooldown_until = 0.0
+
+
 
 class MarketDataStream:
     """
@@ -136,6 +156,7 @@ class MarketDataStream:
         self.endpoints = self._build_endpoints()
         self._endpoint_scores: Dict[str, float] = {ep.name: 0.0 for ep in self.endpoints}
         self._endpoint_order = {ep.name: idx for idx, ep in enumerate(self.endpoints)}
+        self._endpoint_health: Dict[str, EndpointHealth] = {ep.name: EndpointHealth() for ep in self.endpoints}
         self.rest_poll_interval = float(os.getenv("REST_POLL_INTERVAL", "5"))
         self._base_rest_interval = self.rest_poll_interval
         self._last_volume: float = 0.0
@@ -169,6 +190,14 @@ class MarketDataStream:
         self._source_var: Dict[str, float] = {}
         self._global_price_ema: Optional[float] = None
         self._global_price_var: float = 0.0
+        self._last_consensus_confidence: float = 0.0
+        rejection_buffer = max(4, int(os.getenv("PRICE_REJECTION_BUFFER", "12")))
+        default_confirmations = max(4, rejection_buffer // 2 + 1)
+        rejection_confirmations = int(
+            os.getenv("PRICE_REJECTION_CONFIRMATIONS", str(default_confirmations))
+        )
+        self._rejection_confirmations = max(3, min(rejection_confirmations, rejection_buffer))
+        self._price_rejections: deque[Tuple[float, float]] = deque(maxlen=rejection_buffer)
         self._onchain_listener = None
         if OnChainPairFeed is not None:
             try:
@@ -190,6 +219,13 @@ class MarketDataStream:
                 log_message("market-stream", f"offline store unavailable: {exc}", severity="warning")
                 self._offline_enabled = False
         self.rate_limiter = APIRateLimiter(default_capacity=5.0, default_refill_rate=1.0)
+        self._rest_parallel = max(1, int(os.getenv("REST_CONSENSUS_PARALLEL", "3")))
+        self._rest_batch_retry = max(1, int(os.getenv("REST_CONSENSUS_BATCHES", "3")))
+        self._rest_latency: Dict[str, deque] = {name: deque(maxlen=32) for name in self._endpoint_scores}
+        self._last_rest_health: Dict[str, Any] = {}
+        self._snapshot_refresh_interval = max(1, int(os.getenv("MARKET_SNAPSHOT_REFRESH_FAILS", "6")))
+        self._last_snapshot_refresh = 0.0
+        self._last_rest_unavailable_log = 0.0
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -306,37 +342,70 @@ class MarketDataStream:
         end_time = time.time() + max(duration, self.rest_poll_interval)
         while not self._stop_event.is_set() and time.time() < end_time:
             dispatched = False
-            for endpoint in self._ranked_endpoints():
-                if self._endpoint_backoff_until.get(endpoint.name, 0.0) > time.time():
-                    continue
-                price = await self._fetch_rest_price(endpoint, base, quote)
-                if not price or price <= 0:
-                    self._record_endpoint_failure(endpoint.name)
-                    continue
-                accepted, pending, consensus = self._confirm_consensus(endpoint.name, price)
-                if pending:
-                    continue
-                if not accepted or consensus is None:
-                    self._record_endpoint_failure(endpoint.name)
-                    continue
-                if not self._validate_price(consensus):
-                    self._record_endpoint_failure(endpoint.name)
-                    continue
-                self._record_endpoint_success(endpoint.name)
-                sample = {
-                    "ts": time.time(),
-                    "symbol": self.symbol,
-                    "chain": self.chain,
-                    "price": consensus,
-                    "volume": self._last_volume,
-                    "rest": endpoint.name,
-                }
-                await self._dispatch(sample)
-                dispatched = True
-                break
-            if not dispatched:
-                log_message("market-stream", "unable to obtain consensus price during REST poll cycle.", severity="warning")
+            endpoints = self._eligible_rest_endpoints()
+            if not endpoints:
+                now = time.time()
+                if now - self._last_rest_unavailable_log >= 30.0:
+                    log_message(
+                        "market-stream",
+                        "all REST endpoints cooling down.",
+                        severity="warning",
+                        details={"symbol": self.symbol},
+                    )
+                    self._last_rest_unavailable_log = now
                 await self._handle_consensus_failure()
+                await asyncio.sleep(min(self.rest_poll_interval, 2.0))
+                continue
+            attempts = 0
+            for idx in range(0, len(endpoints), self._rest_parallel):
+                if attempts >= self._rest_batch_retry:
+                    break
+                batch = endpoints[idx : idx + self._rest_parallel]
+                if not batch:
+                    break
+                attempts += 1
+                results = await asyncio.gather(
+                    *(self._timed_rest_fetch(endpoint, base, quote) for endpoint in batch),
+                    return_exceptions=False,
+                )
+                for endpoint, price, latency in results:
+                    self._record_rest_latency(endpoint.name, latency)
+                    if not price or price <= 0:
+                        self._record_endpoint_failure(endpoint.name)
+                        continue
+                    accepted, pending, consensus, confidence = self._confirm_consensus(endpoint.name, price)
+                    if pending:
+                        continue
+                    if not accepted or consensus is None:
+                        self._record_endpoint_failure(endpoint.name)
+                        continue
+                    if not self._validate_price(consensus):
+                        self._record_endpoint_failure(endpoint.name)
+                        continue
+                    self._record_endpoint_success(endpoint.name, price=price, consensus=consensus)
+                    sample = {
+                        "ts": time.time(),
+                        "symbol": self.symbol,
+                        "chain": self.chain,
+                        "price": consensus,
+                        "volume": self._last_volume,
+                        "rest": endpoint.name,
+                        "consensus_confidence": confidence,
+                    }
+                    await self._dispatch(sample)
+                    dispatched = True
+                    break
+                if dispatched:
+                    break
+            if not dispatched:
+                log_message(
+                    "market-stream",
+                    "unable to obtain consensus price during REST poll cycle.",
+                    severity="warning",
+                    details={"symbol": self.symbol, "active_endpoints": len(endpoints)},
+                )
+                await self._handle_consensus_failure()
+            self._last_rest_health = self.rest_health()
             await asyncio.sleep(self.rest_poll_interval)
 
     async def _consume_onchain_queue(self) -> None:
@@ -366,6 +435,11 @@ class MarketDataStream:
         source = str(sample.get("rest") or self.current_endpoint or "stream")
         price_val = float(sample.get("price") or 0.0)
         ts_val = float(sample.get("ts") or time.time())
+        consensus_conf = float(sample.get("consensus_confidence") or self._last_consensus_confidence or 0.0)
+        if consensus_conf < 0.0:
+            consensus_conf = 0.0
+        sample["consensus_confidence"] = consensus_conf
+        self._last_consensus_confidence = consensus_conf
         if self._should_skip_duplicate(source, price_val, ts_val):
             if self._duplicate_drops % 25 == 0:
                 self.metrics.record(
@@ -453,6 +527,7 @@ class MarketDataStream:
             "duplicate_rate": self._duplicate_drops / max(1, self._sample_count),
             "consensus_failures": self._consensus_failures,
             "tolerance": tolerance,
+            "consensus_confidence": float(self._last_consensus_confidence),
         }
         self.metrics.record(
             MetricStage.DATA_STREAM,
@@ -521,6 +596,7 @@ class MarketDataStream:
                 "price": fallback_price,
                 "volume": self._last_volume,
                 "rest": "fallback",
+                "consensus_confidence": min(0.4, self._last_consensus_confidence or 0.25),
             }
             self.metrics.feedback(
                 "market_stream",
@@ -533,10 +609,12 @@ class MarketDataStream:
                 },
             )
             await self._dispatch(sample)
+            self._seed_recent_reference(fallback_price)
         else:
             offline = await self._offline_failover_sample()
             if offline:
                 await self._dispatch(offline)
+                self._seed_recent_reference(_safe_float(offline.get("price") or 0.0))
                 self.metrics.feedback(
                     "market_stream",
                     severity=FeedbackSeverity.WARNING,
@@ -557,6 +635,8 @@ class MarketDataStream:
                     "failures": self._consensus_failures,
                 },
             )
+        if self._consensus_failures % self._snapshot_refresh_interval == 0:
+            await self._refresh_market_snapshots()
         if self._consensus_failures % 4 == 0:
             limit = self._base_rest_interval * 6
             self.rest_poll_interval = min(limit, self.rest_poll_interval * 1.25)
@@ -705,6 +785,7 @@ class MarketDataStream:
         if self.reference_price is None:
             self.reference_price = price
             self._update_price_stats(price)
+            self._seed_recent_reference(price)
             return True
 
         tolerance = self._dynamic_tolerance(self.reference_price)
@@ -713,12 +794,16 @@ class MarketDataStream:
             blend = self.vol_alpha
             self.reference_price = (1 - blend) * self.reference_price + blend * price
             self._update_price_stats(price)
+            self._seed_recent_reference(self.reference_price)
+            self._price_rejections.clear()
             return True
 
         if diff <= tolerance * 2:
             blend = self.vol_alpha * 0.25
             self.reference_price = (1 - blend) * self.reference_price + blend * price
             self._update_price_stats(price)
+            self._seed_recent_reference(self.reference_price)
+            self._price_rejections.clear()
             self.metrics.feedback(
                 "market_stream",
                 severity=FeedbackSeverity.WARNING,
@@ -730,6 +815,15 @@ class MarketDataStream:
                     "tolerance": tolerance,
                     "diff": diff,
                 },
+            )
+            return True
+
+        if self._handle_price_rejection(price, tolerance):
+            log_message(
+                "market-stream",
+                "reference recalibrated after repeated deviations",
+                severity="info",
+                details={"price": price, "reference": self.reference_price, "symbol": self.symbol},
             )
             return True
 
@@ -840,9 +934,54 @@ class MarketDataStream:
             ),
         )
 
+    def _eligible_rest_endpoints(self) -> List[Endpoint]:
+        now = time.time()
+        eligible: List[Endpoint] = []
+        for endpoint in self._ranked_endpoints():
+            resume = self._endpoint_backoff_until.get(endpoint.name, 0.0)
+            if resume and resume > now:
+                continue
+            eligible.append(endpoint)
+        return eligible
+
+    def _record_rest_latency(self, name: str, latency: float) -> None:
+        bucket = self._rest_latency.setdefault(name, deque(maxlen=32))
+        bucket.append(max(0.0, float(latency)))
+
+    def rest_health(self) -> Dict[str, Any]:
+        health: Dict[str, Any] = {}
+        now = time.time()
+        for endpoint in self.endpoints:
+            name = endpoint.name
+            scores = {
+                "score": round(self._endpoint_scores.get(name, 0.0), 3),
+                "strikes": self._endpoint_failures.get(name, 0),
+                "latency_ms": None,
+                "backoff_until": self._endpoint_backoff_until.get(name, 0.0),
+            }
+            latencies = self._rest_latency.get(name)
+            if latencies:
+                scores["latency_ms"] = round(statistics.fmean(latencies) * 1000.0, 3)
+            resume = scores["backoff_until"]
+            if resume and resume <= now:
+                scores["backoff_until"] = 0.0
+            scores["cooldown_until"] = self._endpoint_health.get(name, EndpointHealth()).cooldown_until
+            health[name] = scores
+        return health
+
+    async def _timed_rest_fetch(self, endpoint: Endpoint, base: str, quote: str) -> Tuple[Endpoint, Optional[float], float]:
+        start = time.time()
+        price = await self._fetch_rest_price(endpoint, base, quote)
+        latency = time.time() - start
+        return endpoint, price, latency
+
     def _record_endpoint_success(self, name: str, *, price: Optional[float] = None, consensus: Optional[float] = None) -> None:
         self._endpoint_scores[name] = self._endpoint_scores.get(name, 0.0) + 1.0
         self._endpoint_failures[name] = 0
+        health = self._endpoint_health.setdefault(name, EndpointHealth())
+        health.register_success()
+        if name in self._endpoint_backoff_until and health.cooldown_until == 0.0:
+            self._endpoint_backoff_until.pop(name, None)
         if self.rest_poll_interval > self._base_rest_interval:
             self.rest_poll_interval = max(self._base_rest_interval, self.rest_poll_interval * 0.8)
         if self._consensus_failures > 0:
@@ -853,19 +992,108 @@ class MarketDataStream:
     def _record_endpoint_failure(self, name: str) -> None:
         self._endpoint_scores[name] = self._endpoint_scores.get(name, 0.0) - 2.0
         self._endpoint_failures[name] = self._endpoint_failures.get(name, 0) + 1
+        health = self._endpoint_health.setdefault(name, EndpointHealth())
+        backoff = health.register_failure()
+        previous = self._endpoint_backoff_until.get(name, 0.0)
+        self._endpoint_backoff_until[name] = max(previous, health.cooldown_until)
+        self.metrics.feedback(
+            "market_stream",
+            severity=FeedbackSeverity.WARNING,
+            label="endpoint_failure",
+            details={
+                "endpoint": name,
+                "strikes": health.strikes,
+                "backoff_sec": round(max(0.0, health.cooldown_until - time.time()), 2),
+            },
+        )
         if self._endpoint_failures[name] in (3, 10):
             log_message(
                 "market-stream",
                 f"endpoint {name} failing consensus check",
                 severity="warning",
-                details={"strikes": self._endpoint_failures[name]},
+                details={"strikes": self._endpoint_failures[name], "backoff_sec": round(backoff, 2)},
             )
 
-    def _confirm_consensus(self, name: str, price: float) -> Tuple[bool, bool, Optional[float]]:
+    def _prune_recent_prices(self, now: Optional[float] = None) -> None:
+        if not self._recent_price_by_source:
+            return
+        now = now or time.time()
+        expiry = now - self.consensus_window * 3
+        for source, (_, ts) in list(self._recent_price_by_source.items()):
+            if ts < expiry:
+                self._recent_price_by_source.pop(source, None)
+        while len(self._recent_price_by_source) > 64:
+            oldest = min(self._recent_price_by_source.items(), key=lambda item: item[1][1])
+            self._recent_price_by_source.pop(oldest[0], None)
+
+    def _seed_recent_reference(self, price: Optional[float] = None) -> None:
+        value = price or self.reference_price
+        if not value or value <= 0:
+            return
+        self._recent_price_by_source["reference"] = (value, time.time())
+
+    def _handle_price_rejection(self, price: float, tolerance: float) -> bool:
         now = time.time()
+        self._price_rejections.append((price, now))
+        window = [val for val, ts in self._price_rejections if now - ts <= self.consensus_window]
+        if len(window) < max(3, self._price_rejections.maxlen // 2):
+            return False
+        median_price = statistics.median(window)
+        span = max(window) - min(window)
+        rel_span = span / max(median_price, 1e-9)
+        if rel_span > tolerance:
+            return False
+        self.reference_price = median_price
+        self._update_price_stats(median_price)
+        self._seed_recent_reference(median_price)
+        self.metrics.feedback(
+            "market_stream",
+            severity=FeedbackSeverity.INFO,
+            label="reference_recenter",
+            details={"symbol": self.symbol, "price": median_price, "span": rel_span},
+        )
+        self._price_rejections.clear()
+        return True
+
+    def _augment_consensus_sources(self, *, missing: int, now: float) -> List[Tuple[str, float]]:
+        if missing <= 0:
+            return []
+        augmented: List[Tuple[str, float]] = []
+        reference = self.reference_price
+        if reference and reference > 0:
+            self._recent_price_by_source.setdefault("reference", (reference, now))
+            augmented.append(("reference", reference))
+        offline_hit = self._offline_snapshot()
+        if offline_hit:
+            alias, snapshot = offline_hit
+            ts = snapshot.ts or now
+            key = f"offline:{alias}"
+            self._recent_price_by_source[key] = (snapshot.price, ts)
+            augmented.append((key, snapshot.price))
+        return augmented
+
+    def _consensus_confidence_score(
+        self,
+        values: Sequence[float],
+        median_price: float,
+        tolerance: float,
+        min_sources: int,
+    ) -> float:
+        if not values or median_price <= 0:
+            return 0.0
+        spread = max(values) - min(values)
+        rel_spread = spread / max(median_price, 1e-9)
+        tightness = max(0.0, 1.0 - min(1.0, rel_spread / max(tolerance, 1e-9)))
+        sample_bonus = min(1.0, len(values) / max(1, min_sources))
+        score = max(0.05, min(1.0, tightness * sample_bonus))
+        return float(round(score, 4))
+
+    def _confirm_consensus(self, name: str, price: float) -> Tuple[bool, bool, Optional[float], float]:
+        now = time.time()
+        self._prune_recent_prices(now)
         if price <= 0:
             self._recent_price_by_source.pop(name, None)
-            return False, False, None
+            return False, False, None, 0.0
         self._recent_price_by_source[name] = (price, now)
 
         adjusted_values: List[Tuple[str, float]] = []
@@ -877,9 +1105,17 @@ class MarketDataStream:
             adjusted_values.append((source, adjusted))
 
         if not adjusted_values:
-            return False, True, None
+            return False, True, None, 0.0
 
         min_required = min(self.consensus_sources, max(1, len(adjusted_values)))
+        missing = max(0, self.consensus_sources - len(adjusted_values))
+        if missing > 0:
+            augmented = self._augment_consensus_sources(missing=missing, now=now)
+            for source, value in augmented:
+                bias_ratio = self._source_bias.get(source, 0.0)
+                adjusted = value / (1.0 + bias_ratio)
+                adjusted_values.append((source, adjusted))
+            min_required = min(self.consensus_sources, max(1, len(adjusted_values)))
         if time.time() < self._consensus_relax_until:
             min_required = 1
         values_only = [val for _, val in adjusted_values]
@@ -891,19 +1127,31 @@ class MarketDataStream:
         diff = abs(price_adjusted - median_price) / max(median_price, 1e-9)
 
         if len(adjusted_values) < min_required:
-            return False, True, median_price
+            return False, True, median_price, 0.0
 
         if diff <= tolerance:
+            confidence = self._consensus_confidence_score(values_only, median_price, tolerance, min_required)
             self._last_consensus_ts = now
             self._consensus_relax_until = 0.0
             self._consensus_failures = 0
             for source, (value, ts) in list(self._recent_price_by_source.items()):
                 if now - ts <= self.consensus_window and value > 0:
                     self._update_source_stats(source, value, median_price)
-            return True, False, median_price
+            self._last_consensus_confidence = confidence
+            return True, False, median_price, confidence
 
         overdue = now - self._last_consensus_ts >= self.consensus_timeout
         if overdue and diff <= tolerance * 2:
+            confidence = max(
+                0.2,
+                0.8
+                * self._consensus_confidence_score(
+                    values_only,
+                    median_price,
+                    tolerance * 2,
+                    max(1, min_required),
+                ),
+            )
             self._last_consensus_ts = now
             self._consensus_relax_until = 0.0
             self._consensus_failures = 0
@@ -911,9 +1159,10 @@ class MarketDataStream:
                 if now - ts <= self.consensus_window and value > 0:
                     self._update_source_stats(source, value, median_price)
             self._endpoint_scores[name] -= 0.5
-            return True, False, median_price
+            self._last_consensus_confidence = confidence
+            return True, False, median_price, confidence
 
-        return False, False, median_price
+        return False, False, median_price, 0.0
 
     async def _refresh_reference_price(self) -> None:
         if self._http_session is None:
@@ -926,7 +1175,7 @@ class MarketDataStream:
             if not price or price <= 0:
                 self._record_endpoint_failure(endpoint.name)
                 continue
-            accepted, pending, consensus = self._confirm_consensus(endpoint.name, price)
+            accepted, pending, consensus, confidence = self._confirm_consensus(endpoint.name, price)
             if pending:
                 continue
             if not accepted or consensus is None:
@@ -938,6 +1187,8 @@ class MarketDataStream:
             self._record_endpoint_success(endpoint.name, price=price, consensus=consensus)
             self._update_price_stats(consensus)
             self.reference_price = consensus
+            self._seed_recent_reference(consensus)
+            self._last_consensus_confidence = confidence
             log_message(
                 "market-stream",
                 f"reference price from {endpoint.name}",
@@ -948,6 +1199,7 @@ class MarketDataStream:
             snapshot_price = self._load_snapshot_reference()
             if snapshot_price:
                 self.reference_price = snapshot_price
+                self._seed_recent_reference(snapshot_price)
                 log_message(
                     "market-stream",
                     "using cached snapshot reference",
@@ -955,6 +1207,7 @@ class MarketDataStream:
                 )
             elif self._historical_reference:
                 self.reference_price = self._historical_reference
+                self._seed_recent_reference(self.reference_price)
                 log_message(
                     "market-stream",
                     "using historical reference",
@@ -1121,7 +1374,34 @@ class MarketDataStream:
             return value
         return None
 
-
+    async def _refresh_market_snapshots(self) -> None:
+        if time.time() - self._last_snapshot_refresh < 60.0:
+            return
+        self._last_snapshot_refresh = time.time()
+        try:
+            from services.public_api_clients import aggregate_market_data
+        except Exception:
+            return
+        symbol = self.symbol
+        try:
+            snapshots = await asyncio.to_thread(aggregate_market_data, symbols=[symbol], top_n=3)
+        except Exception:
+            return
+        symbol_upper = symbol.upper()
+        now = time.time()
+        for snap in snapshots:
+            if getattr(snap, "symbol", "").upper() != symbol_upper:
+                continue
+            try:
+                value = float(getattr(snap, "price_usd", 0.0))
+            except Exception:
+                value = 0.0
+            if value <= 0:
+                continue
+            self._recent_price_by_source[f"snapshot:{snap.source}"] = (value, now)
+            if not self.reference_price:
+                self.reference_price = value
+        return
 def _split_symbol(symbol: str) -> Tuple[str, str]:
     if "-" in symbol:
         base, quote = symbol.split("-", 1)
