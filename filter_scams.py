@@ -73,6 +73,12 @@ SCAM_STRICT = bool(int(os.getenv("SCAM_STRICT", "0") or "0"))
 HTTP_TIMEOUT_SEC = float(os.getenv("HTTP_TIMEOUT_SEC", "8") or "8")
 PRICE_WORKERS = int(os.getenv("PRICE_WORKERS", "8") or "8") # not used here, kept for symmetry
 GOPLUS_RATE_PER_MIN = int(os.getenv("GOPLUS_RATE_PER_MIN", "25") or "25") # stay < 30/min
+SCAM_TAX_CHECK = str(os.getenv("SCAM_TAX_CHECK", "1") or "1").strip().lower() not in {"0", "false", "no"}
+try:
+    _tax_pct_raw = float(os.getenv("SCAM_TAX_THRESHOLD_PERCENT", "30") or "30")
+except Exception:
+    _tax_pct_raw = 30.0
+SCAM_TAX_THRESHOLD_PERCENT = min(95.0, max(5.0, _tax_pct_raw))
 
 # Chain name -> chain_id mapping (only the networks you use)
 CHAIN_IDS: Dict[str, int] = {
@@ -213,6 +219,24 @@ def _must_flag(fields: Dict[str, Any], strict: bool) -> Tuple[bool, List[str]]:
     if strict:
         for k in ("transfer_pausable", "is_blacklisted", "personal_slippage_modifiable"):
             if is_true(k): reasons.append(k)
+
+    if SCAM_TAX_CHECK:
+        def _tax_pct(key: str) -> float:
+            raw = fields.get(key)
+            if raw in (None, ""):
+                return 0.0
+            try:
+                val = float(raw)
+            except Exception:
+                return 0.0
+            if abs(val) <= 1:
+                return val * 100.0
+            return val
+
+        buy_tax = _tax_pct("buy_tax")
+        sell_tax = _tax_pct("sell_tax")
+        if max(buy_tax, sell_tax) >= SCAM_TAX_THRESHOLD_PERCENT:
+            reasons.append("high_tax")
 
     return (len(reasons) > 0, reasons)
 

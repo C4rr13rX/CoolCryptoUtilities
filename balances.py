@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 # NEW: caching (optional)
 from cache import CacheBalances, CacheTransfers, CachePrices
+from services.wallet_logger import wallet_log
 
 getcontext().prec = 50 # high precision for token math
 
@@ -35,6 +36,11 @@ class _V:
         if self._indent > 0: self._indent -= 1
 
 _VL = _V(enabled=os.getenv("TOKEN_PORTFOLIO_VERBOSE", "").strip().lower() in ("1","true","yes","on"))
+
+def _expand_env(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return os.path.expandvars(str(value)).strip()
 
 def _mask_key(k: Optional[str]) -> str:
     if not k: return ""
@@ -69,11 +75,71 @@ load_env_robust()
 # ---------------- Helper types ----------------
 Chains = ("ethereum", "base", "arbitrum", "optimism", "polygon")
 CHAIN_CONFIG = {
-    "ethereum": {"alchemy_slug":"eth-mainnet","alchemy_prices_network":"eth-mainnet","chain_id":1,"env_alchemy_url":"ALCHEMY_ETH_URL","env_infura_url":"INFURA_ETH_URL","infura_base":"https://mainnet.infura.io/v3/"},
-    "base": {"alchemy_slug":"base-mainnet","alchemy_prices_network":"base-mainnet","chain_id":8453,"env_alchemy_url":"ALCHEMY_BASE_URL","env_infura_url":None,"infura_base":None},
-    "arbitrum": {"alchemy_slug":"arb-mainnet","alchemy_prices_network":"arb-mainnet","chain_id":42161,"env_alchemy_url":"ALCHEMY_ARB_URL","env_infura_url":"INFURA_ARB_URL","infura_base":"https://arbitrum-mainnet.infura.io/v3/"},
-    "optimism": {"alchemy_slug":"opt-mainnet","alchemy_prices_network":"opt-mainnet","chain_id":10,"env_alchemy_url":"ALCHEMY_OP_URL","env_infura_url":"INFURA_OP_URL","infura_base":"https://optimism-mainnet.infura.io/v3/"},
-    "polygon": {"alchemy_slug":"polygon-mainnet","alchemy_prices_network":"polygon-mainnet","chain_id":137,"env_alchemy_url":"ALCHEMY_POLY_URL","env_infura_url":"INFURA_POLY_URL","infura_base":"https://polygon-mainnet.infura.io/v3/"},
+    "ethereum": {
+        "alchemy_slug": "eth-mainnet",
+        "alchemy_prices_network": "eth-mainnet",
+        "chain_id": 1,
+        "env_alchemy_url": "ALCHEMY_ETH_URL",
+        "env_infura_url": "INFURA_ETH_URL",
+        "infura_base": "https://mainnet.infura.io/v3/",
+        "public_rpcs": [
+            "https://rpc.ankr.com/eth",
+            "https://1rpc.io/eth",
+            "https://eth.drpc.org",
+            "https://eth.llamarpc.com",
+            "https://rpc.flashbots.net",
+        ],
+    },
+    "base": {
+        "alchemy_slug": "base-mainnet",
+        "alchemy_prices_network": "base-mainnet",
+        "chain_id": 8453,
+        "env_alchemy_url": "ALCHEMY_BASE_URL",
+        "env_infura_url": None,
+        "infura_base": None,
+        "public_rpcs": [
+            "https://mainnet.base.org",
+            "https://base-rpc.publicnode.com",
+            "https://1rpc.io/base",
+            "https://base.drpc.org",
+        ],
+    },
+    "arbitrum": {
+        "alchemy_slug": "arb-mainnet",
+        "alchemy_prices_network": "arb-mainnet",
+        "chain_id": 42161,
+        "env_alchemy_url": "ALCHEMY_ARB_URL",
+        "env_infura_url": "INFURA_ARB_URL",
+        "infura_base": "https://arbitrum-mainnet.infura.io/v3/",
+        "public_rpcs": [
+            "https://arb1.arbitrum.io/rpc",
+            "https://arbitrum.drpc.org",
+        ],
+    },
+    "optimism": {
+        "alchemy_slug": "opt-mainnet",
+        "alchemy_prices_network": "opt-mainnet",
+        "chain_id": 10,
+        "env_alchemy_url": "ALCHEMY_OP_URL",
+        "env_infura_url": "INFURA_OP_URL",
+        "infura_base": "https://optimism-mainnet.infura.io/v3/",
+        "public_rpcs": [
+            "https://mainnet.optimism.io",
+            "https://optimism.drpc.org",
+        ],
+    },
+    "polygon": {
+        "alchemy_slug": "polygon-mainnet",
+        "alchemy_prices_network": "polygon-mainnet",
+        "chain_id": 137,
+        "env_alchemy_url": "ALCHEMY_POLY_URL",
+        "env_infura_url": "INFURA_POLY_URL",
+        "infura_base": "https://polygon-mainnet.infura.io/v3/",
+        "public_rpcs": [
+            "https://polygon-rpc.com",
+            "https://polygon.drpc.org",
+        ],
+    },
 }
 ZERO = "0x" + "0"*40
 
@@ -135,11 +201,20 @@ class MultiChainTokenPortfolio:
         self.infura_urls: Dict[str, Optional[str]] = {}
         self.v.section("ENDPOINT BUILD")
         for ch, cfg in CHAIN_CONFIG.items():
-            alc_env = cfg["env_alchemy_url"]; alc_url = os.getenv(alc_env) if alc_env else None
-            if alc_url: self.alchemy_urls[ch] = alc_url.strip()
-            else: self.alchemy_urls[ch] = f"https://{cfg['alchemy_slug']}.g.alchemy.com/v2/{self.alchemy_key}" if self.alchemy_key else ""
-            inf_env = cfg["env_infura_url"]; inf_url = os.getenv(inf_env).strip() if inf_env and os.getenv(inf_env) else None
-            if not inf_url and cfg["infura_base"] and self.infura_key: inf_url = cfg["infura_base"] + self.infura_key
+            alc_env = cfg["env_alchemy_url"]
+            alc_raw = os.getenv(alc_env) if alc_env else None
+            alc_url = _expand_env(alc_raw)
+            if alc_url:
+                self.alchemy_urls[ch] = alc_url
+            else:
+                self.alchemy_urls[ch] = (
+                    f"https://{cfg['alchemy_slug']}.g.alchemy.com/v2/{self.alchemy_key}" if self.alchemy_key else ""
+                )
+            inf_env = cfg["env_infura_url"]
+            inf_raw = os.getenv(inf_env) if inf_env else None
+            inf_url = _expand_env(inf_raw) if inf_raw else None
+            if not inf_url and cfg["infura_base"] and self.infura_key:
+                inf_url = cfg["infura_base"] + self.infura_key
             self.infura_urls[ch] = inf_url
 
         # Policy
@@ -227,20 +302,25 @@ class MultiChainTokenPortfolio:
     # ---------------- Public API ----------------
     def build(self) -> Dict[str, Dict[str, Any]]:
         self.v.section("BUILD PORTFOLIO")
+        wallet_log("portfolio.build_start", wallet=self.wallet, tokens=self.tokens)
         by_chain: Dict[str, List[str]] = {}
         for ch, addr in self.tokens: by_chain.setdefault(ch, []).append(addr)
         result: Dict[str, Dict[str, Any]] = {}
 
         for ch, token_list in by_chain.items():
             self.v.push(f"Chain: {ch} ({len(token_list)} tokens)")
-            if not (self.alchemy_urls.get(ch) or ""):
+            wallet_log("portfolio.chain_start", wallet=self.wallet, chain=ch, tokens=token_list)
+            if not self._native_rpc_urls(ch):
                 for a in token_list: result[a] = {"quantity":"0", "usd_amount":"0", "transactions":{}}
                 self.v.pop(); continue
 
             # -------- Super-fast path: everything cached & no movement since
-            fast = self._fast_return_if_all_cached(ch, token_list)
+            fast = None
+            if self.alchemy_urls.get(ch):
+                fast = self._fast_return_if_all_cached(ch, token_list)
             if fast is not None:
                 self.v.log("Fast-return from cache for {}", ch)
+                wallet_log("portfolio.chain_fast_path", wallet=self.wallet, chain=ch, tokens=token_list, reason="cache")
                 result.update(fast); self.v.pop(); continue
 
             # -------- Determine which tokens must refresh (movement or missing)
@@ -266,6 +346,12 @@ class MultiChainTokenPortfolio:
                 if ent and "asof_block" in ent:
                     b = int(ent["asof_block"])
                     min_block = b if min_block is None else min(min_block, b)
+            wallet_log(
+                "portfolio.cached_entries",
+                wallet=self.wallet,
+                chain=ch,
+                cached={a: {"quantity": cached_entries[a].get("quantity"), "balance_hex": cached_entries[a].get("balance_hex")} for a in cached_entries},
+            )
 
             touched: Set[str] = set()
             if min_block is not None:
@@ -275,7 +361,20 @@ class MultiChainTokenPortfolio:
             refresh: List[str] = [a for a in token_list if (a not in cached_entries) or (a.lower() in {x.lower() for x in touched})]
             keep: List[str] = [a for a in token_list if a not in refresh]
 
+            # No Alchemy endpoint means we cannot rely on touched-token detection; force refresh.
+            if not (self.alchemy_urls.get(ch) or ""):
+                refresh = list(token_list)
+                keep = []
+
             self.v.log("To refresh: {} | keep from cache: {}", len(refresh), len(keep))
+            wallet_log(
+                "portfolio.refresh_plan",
+                wallet=self.wallet,
+                chain=ch,
+                refresh=refresh,
+                keep=keep,
+                touched=list(touched),
+            )
 
             # -------- Metadata & decimals
             decimals_map: Dict[str,int] = {}
@@ -314,6 +413,12 @@ class MultiChainTokenPortfolio:
             if refresh:
                 fetched = self._safe_get_balances(ch, self.wallet, refresh)
                 balances_raw.update(fetched)
+                wallet_log(
+                    "portfolio.fetched_balances",
+                    wallet=self.wallet,
+                    chain=ch,
+                    fetched=fetched,
+                )
                 # choose an asof block and persist rich cache (incl. decimals)
                 asof_block = self._chain_tip_block(ch)
                 if self.cb:
@@ -348,6 +453,13 @@ class MultiChainTokenPortfolio:
             for a in token_list:
                 dec = int(decimals_map.get(a, 18))
                 qty_map[a] = self._hex_to_decimal(balances_raw.get(a, "0x0"), dec)
+            wallet_log(
+                "portfolio.quantities",
+                wallet=self.wallet,
+                chain=ch,
+                quantities={a: str(qty_map[a]) for a in qty_map},
+                balances_raw=balances_raw,
+            )
 
             # -------- USD amounts (cache-first)
             usd_map: Dict[str, str] = {}
@@ -417,6 +529,12 @@ class MultiChainTokenPortfolio:
                     "usd_amount": usd_map[a],
                     "transactions": tx_dict,
                 }
+            wallet_log(
+                "portfolio.chain_complete",
+                wallet=self.wallet,
+                chain=ch,
+                result={a: result[a] for a in token_list},
+            )
 
             self.v.pop()
 
@@ -537,29 +655,73 @@ class MultiChainTokenPortfolio:
 
     def _eth_call(self, chain: str, to_addr: str, data_hex: str) -> Optional[str]:
         params = [{"to": to_addr, "data": data_hex}, "latest"]
-        try:
-            res = self._alchemy(chain, "eth_call", params)
-            if isinstance(res, str): return res
-        except Exception: pass
-        inf = self.infura_urls.get(chain)
-        if inf:
+        for url in self._native_rpc_urls(chain):
             try:
-                res = self._rpc(inf, "eth_call", params)
-                if isinstance(res, str): return res
-            except Exception: pass
+                res = self._rpc(url, "eth_call", params)
+                if isinstance(res, str):
+                    return res
+            except Exception:
+                continue
         return None
 
+    def _native_rpc_urls(self, chain: str) -> List[str]:
+        urls: List[str] = []
+        primary = self.alchemy_urls.get(chain)
+        if primary:
+            urls.append(primary)
+        inf = self.infura_urls.get(chain)
+        if inf:
+            urls.append(inf)
+        for candidate in CHAIN_CONFIG.get(chain, {}).get("public_rpcs", []) or []:
+            if candidate and candidate not in urls:
+                urls.append(candidate)
+        return [u for u in urls if u]
+
+    def _get_native_balance_hex(self, chain: str, wallet: str) -> str:
+        params = [wallet, "latest"]
+        for url in self._native_rpc_urls(chain):
+            try:
+                res = self._rpc(url, "eth_getBalance", params)
+                if isinstance(res, str) and res.startswith("0x"):
+                    return res
+            except Exception:
+                continue
+        return "0x0"
+
     def _chain_tip_block(self, chain: str) -> int:
-        try:
-            h = self._alchemy(chain, "eth_blockNumber", [])
-            return int(h, 16) if isinstance(h, str) and h.startswith("0x") else int(h or 0)
-        except Exception:
-            return 0
+        for url in self._native_rpc_urls(chain):
+            try:
+                h = self._rpc(url, "eth_blockNumber", [])
+                if isinstance(h, str) and h.startswith("0x"):
+                    return int(h, 16)
+                if isinstance(h, int):
+                    return int(h)
+            except Exception:
+                continue
+        return 0
 
     # ---------------- Balances (RPC fetchers) ----------------
     def _safe_get_balances(self, chain: str, wallet: str, tokens: List[str]) -> Dict[str, str]:
-        try: return self._get_balances_alchemy(chain, wallet, tokens)
-        except Exception: return self._get_balances_eth_call(chain, wallet, tokens)
+        native_tokens = [t for t in tokens if t.lower() == ZERO.lower()]
+        erc_tokens = [t for t in tokens if t.lower() != ZERO.lower()]
+        balances: Dict[str, str] = {}
+        if erc_tokens:
+            try:
+                balances.update(self._get_balances_alchemy(chain, wallet, erc_tokens))
+            except Exception:
+                balances.update(self._get_balances_eth_call(chain, wallet, erc_tokens))
+        if native_tokens:
+            native_hex = self._get_native_balance_hex(chain, wallet)
+            for addr in native_tokens:
+                balances[addr] = native_hex
+        wallet_log(
+            "portfolio.safe_get_balances",
+            wallet=wallet,
+            chain=chain,
+            tokens=tokens,
+            result=balances,
+        )
+        return balances
 
     def _get_balances_alchemy(self, chain: str, wallet: str, tokens: List[str]) -> Dict[str, str]:
         balances: Dict[str, str] = {}
@@ -722,8 +884,12 @@ class MultiChainTokenPortfolio:
     def _ensure_detected_chains(self) -> None:
         resolved: List[Tuple[str,str]] = []
         for ch, addr in self.tokens:
-            if ch in CHAIN_CONFIG and (self.alchemy_urls.get(ch) or ""): resolved.append((ch, addr)); continue
-            detected = self._detect_chain_for_token(addr); resolved.append((detected or self.default_chain, addr))
+            if ch in CHAIN_CONFIG:
+                # Keep explicit chain hint even if we currently lack a dedicated Alchemy URL.
+                resolved.append((ch, addr))
+                continue
+            detected = self._detect_chain_for_token(addr)
+            resolved.append((detected or self.default_chain, addr))
         self.tokens = resolved
 
     def _detect_chain_for_token(self, addr: str) -> Optional[str]:

@@ -1,11 +1,12 @@
 # router_wallet.py  —  clean OOP version
 from __future__ import annotations
 
-import os, sys, time, json, certifi, requests
+import os, sys, time, json, certifi, requests, threading
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, getcontext as _getctx
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Tuple
 
 from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
 
@@ -32,7 +33,9 @@ except ImportError:
         POA_MIDDLEWARE = None
 
 from cache import CacheBalances, CacheTransfers
-from filter_scams import FilterScamTokens
+from services.token_catalog import get_core_token_map
+from services.token_safety import TokenSafetyRegistry, enforce_token_safety
+from services.wallet_optimizer import AdaptiveGasOracle
 
 
 # =============================================================================
@@ -101,6 +104,8 @@ ALCHEMY_SLUGS: Dict[str, str] = {
     "arbitrum": "arb-mainnet",
     "optimism": "opt-mainnet",
     "polygon": "polygon-mainnet",
+    "bsc": "bnb-mainnet",
+    "avalanche": "avax-mainnet",
 }
 
 ALCHEMY_ENV: Dict[str, str] = {
@@ -109,6 +114,26 @@ ALCHEMY_ENV: Dict[str, str] = {
     "arbitrum": "ALCHEMY_ARB_URL",
     "optimism": "ALCHEMY_OP_URL",
     "polygon": "ALCHEMY_POLY_URL",
+    "bsc": "ALCHEMY_BSC_URL",
+    "avalanche": "ALCHEMY_AVAX_URL",
+}
+
+CHAIN_NATIVE_SYMBOL: Dict[str, str] = {
+    "ethereum": "ETH",
+    "base": "ETH",
+    "arbitrum": "ETH",
+    "optimism": "ETH",
+    "polygon": "MATIC",
+    "bsc": "BNB",
+    "avalanche": "AVAX",
+    "zksync": "ETH",
+}
+
+NATIVE_SENTINELS = {
+    NATIVE.lower(),
+    "eth",
+    "native",
+    "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
 }
 
 def _env(url: Optional[str]) -> List[str]:
@@ -165,7 +190,46 @@ CHAINS: Dict[str, Dict[str, Any]] = {
             + ["https://polygon-rpc.com", "https://polygon.drpc.org"]
         ),
     },
+    "bsc": {
+        "id": 56, "poa": True,
+        "rpcs": (
+            _env(os.getenv("BSC_RPC_URL"))
+            + [
+                "https://bsc-dataseed.binance.org",
+                "https://bsc.publicnode.com",
+                "https://bscrpc.com",
+            ]
+        ),
+    },
+    "avalanche": {
+        "id": 43114, "poa": False,
+        "rpcs": (
+            _env(os.getenv("AVAX_RPC_URL"))
+            + [
+                "https://api.avax.network/ext/bc/C/rpc",
+                "https://avalanche-c-chain-rpc.publicnode.com",
+                "https://avalanche.drpc.org",
+            ]
+        ),
+    },
+    "zksync": {
+        "id": 324, "poa": False,
+        "rpcs": (
+            _env(os.getenv("ZKSYNC_RPC_URL"))
+            + [
+                "https://mainnet.era.zksync.io",
+                "https://zksync.drpc.org",
+            ]
+        ),
+    },
 }
+
+CHAIN_BY_ID: Dict[int, str] = {
+    cfg["id"]: name for name, cfg in CHAINS.items() if isinstance(cfg.get("id"), int)
+}
+
+CORE_TOKEN_DISCOVERY = os.getenv("WALLET_INCLUDE_CORE_TOKENS", "1").strip().lower() not in {"0", "false", "no"}
+CORE_TRACKED_TOKENS: Dict[str, Dict[str, str]] = get_core_token_map()
 
 ERC20_ABI = [
     {"constant": True, "inputs": [], "name": "decimals", "outputs":[{"name":"","type":"uint8"}], "type":"function"},
@@ -212,6 +276,23 @@ def _normalize_addr(a: str) -> str:
     if s.upper() in ("ETH", "NATIVE"): return NATIVE
     if not s.startswith("0x"): s = "0x" + s
     return Web3.to_checksum_address(s)
+
+def _parse_watch_token_blob(blob: Optional[str]) -> Dict[str, List[str]]:
+    """Parse WALLET_PINNED_TOKENS style env (chain:token,chain:0x...)."""
+    result: Dict[str, List[str]] = {}
+    if not blob:
+        return result
+    entries = [chunk.strip() for chunk in str(blob).split(",") if chunk.strip()]
+    for entry in entries:
+        if ":" not in entry:
+            continue
+        chain, token = entry.split(":", 1)
+        chain = chain.strip().lower()
+        token = token.strip()
+        if not chain or not token:
+            continue
+        result.setdefault(chain, []).append(token)
+    return result
 
 def _to_decimal(value: Any) -> Decimal:
     try:
@@ -320,6 +401,37 @@ class UltraSwapBridge:
             int(os.getenv("PORTFOLIO_REORG_SAFETY", "12"))
             if reorg_safety_blocks is None else int(reorg_safety_blocks)
         )
+        self._rpc_clients: Dict[str, Tuple[Web3, str]] = {}
+        self._rpc_latency: Dict[str, float] = {}
+        # Adaptive gas oracle keeps EIP-1559 tips reasonable while avoiding stalls.
+        ttl_env = os.getenv("GAS_ORACLE_TTL", "15")
+        sample_env = os.getenv("GAS_ORACLE_SAMPLE", "8")
+        try:
+            oracle_ttl = max(3, int(ttl_env))
+        except Exception:
+            oracle_ttl = 15
+        try:
+            oracle_sample = max(4, int(sample_env))
+        except Exception:
+            oracle_sample = 8
+        percentile_map = None
+        pct_blob = os.getenv("GAS_ORACLE_PERCENTILES")
+        if pct_blob:
+            try:
+                raw = json.loads(pct_blob)
+                percentile_map = {str(k).lower(): float(v) for k, v in raw.items()}
+            except Exception:
+                percentile_map = None
+        self._gas_oracle = AdaptiveGasOracle(
+            ttl_sec=oracle_ttl,
+            sample_size=oracle_sample,
+            percentile_map=percentile_map,
+            default_strategy=os.getenv("GAS_STRATEGY_DEFAULT", "balanced"),
+        )
+        safety_flag = os.getenv("TOKEN_SAFETY_ENFORCE", "1").strip().lower() not in {"0", "false", "no"}
+        self._token_safety = TokenSafetyRegistry() if safety_flag else None
+        self._token_safety_enabled = safety_flag
+        self._gas_scope_defaults = self._load_gas_scope_defaults()
 
     def get_address(self) -> str:
         return self.acct.address
@@ -334,49 +446,154 @@ class UltraSwapBridge:
         return ""
 
     def _w3(self, chain: str) -> Web3:
-        """Try env RPCs first; then public list. Inject POA middleware if needed."""
+        """Return a healthy Web3 connection, preferring the fastest known RPC per chain."""
         cfg = CHAINS[chain]
-        errs: List[str] = []
-        for url in cfg["rpcs"]:
+        cached = self._rpc_clients.get(chain)
+        if cached:
+            w3, url = cached
             try:
-                if not url:
-                    continue
-                w3 = Web3(Web3.HTTPProvider(url, request_kwargs=REQ_KW))
                 if w3.is_connected():
-                    if cfg.get("poa") and POA_MIDDLEWARE:
-                        w3.middleware_onion.inject(POA_MIDDLEWARE, layer=0)
                     return w3
+            except Exception:
+                pass
+            self._rpc_clients.pop(chain, None)
+
+        urls = [u for u in cfg["rpcs"] if u]
+        if not urls:
+            raise RuntimeError(f"No RPC URLs configured for {chain}")
+        urls.sort(key=lambda u: self._rpc_latency.get(u, float("inf")))
+
+        errs: List[str] = []
+        best_choice: Optional[Tuple[float, Web3, str]] = None
+        for url in urls:
+            start = time.perf_counter()
+            try:
+                provider = Web3.HTTPProvider(url, request_kwargs=REQ_KW)
+                w3 = Web3(provider)
+                if not w3.is_connected():
+                    raise RuntimeError("not connected")
+                elapsed = max(time.perf_counter() - start, 1e-3)
+                if cfg.get("poa") and POA_MIDDLEWARE:
+                    w3.middleware_onion.inject(POA_MIDDLEWARE, layer=0)
+                self._rpc_latency[url] = elapsed
+                best_choice = (elapsed, w3, url)
+                break  # first healthy URL after sorting is the winner
             except Exception as e:
+                self._rpc_latency[url] = float("inf")
                 errs.append(f"{url} -> {type(e).__name__}: {e}")
-        raise RuntimeError(f"RPC not reachable for {chain}. Tried:\n" + "\n".join(errs))
+                continue
+
+        if not best_choice:
+            raise RuntimeError(f"RPC not reachable for {chain}. Tried:\n" + "\n".join(errs))
+
+        _, w3_obj, good_url = best_choice
+        self._rpc_clients[chain] = (w3_obj, good_url)
+        return w3_obj
 
     # ------------------------ Fees / Sending ------------------------
 
-    @staticmethod
-    def _suggest_fees(w3) -> dict:
+    def _gas_urgency(self, scope: Optional[str] = None) -> Optional[str]:
+        if not scope:
+            return None
+        key = f"GAS_STRATEGY_{scope.upper()}"
+        val = os.getenv(key)
+        if not val:
+            return None
+        trimmed = val.strip().lower()
+        return trimmed or None
+
+    def _load_gas_scope_defaults(self) -> Dict[str, str]:
         """
-        EIP-1559 fees with dynamic priority tip:
-        - Honors GAS_PRICE_GWEI to force legacy if set.
-        - Else: uses fee_history to pick a realistic tip, with env/floor overrides.
-            Env:
-            GAS_TIP_GWEI           (default 3)
-            GAS_TIP_FLOOR_GWEI     (default 1)      # global floor
-            GAS_BASE_MULT          (default 2.0)
+        Optional JSON or comma-delimited mapping for default gas urgencies per scope.
+        Examples:
+            GAS_SCOPE_DEFAULTS='{"send": "eco", "swap": "balanced"}'
+            GAS_SCOPE_DEFAULTS='send:eco,swap:balanced'
         """
+        blob = os.getenv("GAS_SCOPE_DEFAULTS")
+        if not blob:
+            return {}
+        mapping: Dict[str, str] = {}
+        raw = blob.strip()
+        try:
+            if raw.startswith("{"):
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    for scope, urgency in data.items():
+                        scope_key = str(scope).strip().lower()
+                        urg_val = str(urgency).strip().lower()
+                        if scope_key and urg_val:
+                            mapping[scope_key] = urg_val
+                    return mapping
+        except Exception:
+            mapping.clear()
+        parts = [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+        for part in parts:
+            if ":" not in part:
+                continue
+            scope, urgency = part.split(":", 1)
+            scope_key = scope.strip().lower()
+            urg_val = urgency.strip().lower()
+            if scope_key and urg_val:
+                mapping[scope_key] = urg_val
+        return mapping
+
+    # ------------------------ Safety helpers ------------------------
+
+    def ensure_token_safe(self, chain: str, token: str) -> None:
+        """
+        Enforce the token safety registry (no-op for non-address inputs).
+        """
+        enforce_token_safety(chain, token, self._token_safety)
+
+    def _resolve_scope_urgency(self, scope: Optional[str], explicit: Optional[str]) -> Optional[str]:
+        """
+        Priority:
+          1. Explicit urgency argument.
+          2. GAS_SCOPE_<SCOPE> env variable.
+          3. GAS_SCOPE_DEFAULTS map entry.
+        """
+        if explicit:
+            trimmed = explicit.strip().lower()
+            return trimmed or None
+        if not scope:
+            return None
+        env_key = f"GAS_SCOPE_{scope.upper()}"
+        env_val = os.getenv(env_key)
+        if env_val:
+            trimmed = env_val.strip().lower()
+            if trimmed:
+                return trimmed
+        default = self._gas_scope_defaults.get(scope.lower())
+        if default:
+            trimmed = str(default).strip().lower()
+            return trimmed or None
+        return None
+
+    def _apply_fee_strategy(
+        self,
+        chain: str,
+        w3,
+        tx: MutableMapping[str, Any],
+        *,
+        scope: Optional[str] = None,
+        urgency: Optional[str] = None,
+    ) -> Dict[str, int]:
+        resolved = self._resolve_scope_urgency(scope, urgency)
+        return self._gas_oracle.apply_to_tx(chain, w3, tx, urgency=resolved)
+
+    def _legacy_fee_strategy(self, w3) -> Dict[str, int]:
         gp_override = os.getenv("GAS_PRICE_GWEI")
         if gp_override:
             return {"gasPrice": _gwei(float(gp_override))}
 
         tip_default = float(os.getenv("GAS_TIP_GWEI", "3"))
-        tip_floor   = float(os.getenv("GAS_TIP_FLOOR_GWEI", "1"))
-        mult        = float(os.getenv("GAS_BASE_MULT", "2.0"))
+        tip_floor = float(os.getenv("GAS_TIP_FLOOR_GWEI", "1"))
+        mult = float(os.getenv("GAS_BASE_MULT", "2.0"))
 
         try:
-            # rewards is list[blocks][percentiles]; use high percentile to avoid underbidding
             hist = w3.eth.fee_history(6, "pending", [25, 50, 75, 90])
-            base = int(hist["baseFeePerGas"][-1])
-            # take the last few blocks’ 75–90th percentile as a guide
-            rewards = [max(r[-2:]) for r in hist["reward"] if r]  # pick max of 75/90 per block
+            base = int((hist.get("baseFeePerGas") or [0])[-1])
+            rewards = [max(r[-2:]) for r in hist.get("reward", []) if r]
             recent_tip = int(sum(rewards) / max(1, len(rewards))) if rewards else 0
 
             tip = max(_gwei(tip_default), recent_tip, _gwei(tip_floor))
@@ -385,15 +602,38 @@ class UltraSwapBridge:
                 max_fee = base + tip
             return {"maxFeePerGas": max_fee, "maxPriorityFeePerGas": tip}
         except Exception:
-            # Fallback: legacy gasPrice if fee_history isn’t available
             try:
                 gp = int(w3.eth.gas_price)
             except Exception:
-                gp = _gwei(30)  # conservative
+                gp = _gwei(30)
             return {"gasPrice": gp}
 
+    def _suggest_fees(
+        self,
+        chain: str,
+        w3,
+        *,
+        urgency: Optional[str] = None,
+        scope: Optional[str] = None,
+    ) -> Dict[str, int]:
+        tx: Dict[str, Any] = {}
+        try:
+            return self._apply_fee_strategy(chain, w3, tx, scope=scope, urgency=urgency)
+        except Exception:
+            return self._legacy_fee_strategy(w3)
 
-    def send_prebuilt_tx(self, chain: str, to: str, data: str, *, value: int = 0, gas: int | None = None):
+
+    def send_prebuilt_tx(
+        self,
+        chain: str,
+        to: str,
+        data: str,
+        *,
+        value: int = 0,
+        gas: int | None = None,
+        fee_scope: Optional[str] = None,
+        fee_urgency: Optional[str] = None,
+    ):
         """
         Generic sender for locally-built transactions.
         - Always ensures a gas value (estimate when not provided).
@@ -429,23 +669,8 @@ class UltraSwapBridge:
         else:
             tx["gas"] = int(gas)
 
-        # --- fees (EIP-1559 preferred; fallback to gasPrice) ---
-        try:
-            pending = w3.eth.get_block("pending")
-            base = pending.get("baseFeePerGas")
-            if base is not None:
-                tip_gwei = float(os.getenv("GAS_TIP_GWEI", "3"))
-                tip = w3.to_wei(tip_gwei, "gwei")
-                max_fee_mult = float(os.getenv("GAS_BASE_MULT", "2.0"))
-                max_fee = int(base * max_fee_mult) + int(tip)
-                if max_fee < base + tip:
-                    max_fee = int(base) + int(tip)
-                tx["maxPriorityFeePerGas"] = int(tip)
-                tx["maxFeePerGas"] = int(max_fee)
-            else:
-                tx["gasPrice"] = int(w3.eth.gas_price)
-        except Exception:
-            tx["gasPrice"] = int(getattr(w3.eth, "gas_price", w3.to_wei(10, "gwei")))
+        # --- fees (prefer adaptive oracle; fallback handled inside helper) ---
+        tx.update(self._suggest_fees(chain, w3, scope=fee_scope, urgency=fee_urgency))
 
         # Sign & send
         signed = w3.eth.account.sign_transaction(tx, private_key=acct.key)
@@ -468,7 +693,14 @@ class UltraSwapBridge:
         return w3.to_hex(txh)
 
 
-    def send_prebuilt_tx_from_0x(self, chain: str, txobj: dict):
+    def send_prebuilt_tx_from_0x(
+        self,
+        chain: str,
+        txobj: dict,
+        *,
+        fee_scope: Optional[str] = None,
+        fee_urgency: Optional[str] = None,
+    ):
         """
         Send a tx exactly as 0x v2 returned it (to, data, value, gas?, fee fields?).
         - Ensures 'gas' by estimating if missing.
@@ -522,24 +754,13 @@ class UltraSwapBridge:
         try:
             if mfpg is not None and mpfpg is not None:
                 tx["maxFeePerGas"] = int(mfpg if not (isinstance(mfpg, str) and mfpg.startswith("0x")) else int(mfpg, 16))
-                tx["maxPriorityFeePerGas"] = int(mpfpg if not (isinstance(mpfpg, str) and mpfpg.startswith("0x")) else int(mpfpg, 16))
+                tx["maxPriorityFeePerGas"] = int(
+                    mpfpg if not (isinstance(mpfpg, str) and mpfpg.startswith("0x")) else int(mpfpg, 16)
+                )
             elif gp is not None:
                 tx["gasPrice"] = int(gp if not (isinstance(gp, str) and gp.startswith("0x")) else int(gp, 16))
             else:
-                # fill EIP-1559
-                pending = w3.eth.get_block("pending")
-                base = pending.get("baseFeePerGas")
-                if base is not None:
-                    tip_gwei = float(os.getenv("GAS_TIP_GWEI", "3"))
-                    tip = w3.to_wei(tip_gwei, "gwei")
-                    mult = float(os.getenv("GAS_BASE_MULT", "2.0"))
-                    max_fee = int(base * mult) + int(tip)
-                    if max_fee < base + tip:
-                        max_fee = int(base) + int(tip)
-                    tx["maxPriorityFeePerGas"] = int(tip)
-                    tx["maxFeePerGas"] = int(max_fee)
-                else:
-                    tx["gasPrice"] = int(w3.eth.gas_price)
+                tx.update(self._suggest_fees(chain, w3, scope=fee_scope, urgency=fee_urgency))
         except Exception:
             tx["gasPrice"] = int(getattr(w3.eth, "gas_price", w3.to_wei(10, "gwei")))
 
@@ -615,7 +836,7 @@ class UltraSwapBridge:
             "nonce": w3.eth.get_transaction_count(sender, "pending"),
             "value": 0,
         }
-        base.update(self._suggest_fees(w3))
+        base.update(self._suggest_fees(chain, w3, scope="approve"))
         try:
             est = c.functions.approve(spend_cs, int(amount)).estimate_gas({"from": sender})
         except Exception:
@@ -643,7 +864,7 @@ class UltraSwapBridge:
             "from": sender,
             "nonce": w3.eth.get_transaction_count(sender, "pending"),
             "value": 0,
-            **self._suggest_fees(w3),
+            **self._suggest_fees(chain, w3, scope="send"),
         }
 
         if gas is None:
@@ -794,56 +1015,92 @@ class UltraSwapBridge:
         out: List[Tuple[str, str]] = []
 
         for ch in chains:
-            # try cached balances first
+            addr_set: set[str] = set()
+
             try:
                 cb = CacheBalances()
                 cached_map = (cb.get_state(self.acct.address, ch) or {}).get("tokens", {}) or {}
+                for addr, meta in cached_map.items():
+                    raw = meta.get("balance_hex") or meta.get("raw") or "0x0"
+                    try:
+                        raw_int = int(str(raw), 16) if str(raw).startswith("0x") else int(str(raw))
+                    except Exception:
+                        raw_int = 0
+                    if raw_int < int(min_balance_wei):
+                        continue
+                    quantity = meta.get("quantity")
+                    if quantity is not None:
+                        try:
+                            if float(quantity) <= 0:
+                                continue
+                        except Exception:
+                            pass
+                    try:
+                        addr_set.add(Web3.to_checksum_address(addr))
+                    except Exception:
+                        continue
                 if cached_map:
-                    addrs = []
-                    for addr, meta in cached_map.items():
-                        raw = meta.get("balance_hex") or meta.get("raw") or "0x0"
-                        try:
-                            raw_int = int(str(raw), 16) if str(raw).startswith("0x") else int(str(raw))
-                        except Exception:
-                            raw_int = 0
-                        if raw_int < int(min_balance_wei):
-                            continue
-                        quantity = meta.get("quantity")
-                        if quantity is not None:
-                            try:
-                                if float(quantity) <= 0:
-                                    continue
-                            except Exception:
-                                pass
-                        try:
-                            addrs.append(Web3.to_checksum_address(addr))
-                        except Exception:
-                            continue
-                    out.extend((ch, a) for a in addrs)
-                    print(f"[discover] {ch}: using {len(cached_map)} cached tokens (balances)")
-                    continue
+                    print(f"[discover] {ch}: seed {len(addr_set)} tokens from cache")
             except Exception:
                 pass
 
             url = self._alchemy_url(ch)
-            if not url:
+            if url:
+                try:
+                    remote = self._discover_via_balances(url, min_balance_wei=min_balance_wei)
+                    addr_set.update(remote)
+                    print(f"[discover] {ch}: found {len(remote)} tokens via balances")
+                except Exception as e:
+                    print(f"[discover] {ch}: balances error {type(e).__name__}: {e}")
+                    try:
+                        remote = self._discover_via_transfers(url, chain=ch)
+                        addr_set.update(remote)
+                        print(f"[discover] {ch}: found {len(remote)} tokens via transfers (cached)")
+                    except Exception as e2:
+                        print(f"[discover] {ch}: transfer fallback error {type(e2).__name__}: {e2}")
+            else:
                 print(f"[discover] {ch}: no Alchemy URL")
-                continue
 
             try:
-                addrs = self._discover_via_balances(url, min_balance_wei=min_balance_wei)
-                out.extend((ch, a) for a in addrs)
-                print(f"[discover] {ch}: found {len(addrs)} tokens via balances")
-            except Exception as e:
-                print(f"[discover] {ch}: balances error {type(e).__name__}: {e}")
-                try:
-                    addrs = self._discover_via_transfers(url, chain=ch)
-                    out.extend((ch, a) for a in addrs)
-                    print(f"[discover] {ch}: found {len(addrs)} tokens via transfers (cached)")
-                except Exception as e2:
-                    print(f"[discover] {ch}: transfer fallback error {type(e2).__name__}: {e2}")
+                w3 = self._w3(ch)
+                native_bal = w3.eth.get_balance(self.acct.address)
+                if native_bal >= int(min_balance_wei):
+                    addr_set.add(NATIVE)
+            except Exception:
+                pass
+
+            if CORE_TOKEN_DISCOVERY:
+                extras = self._discover_core_tokens(ch, addr_set, min_balance_wei)
+                if extras:
+                    print(f"[discover] {ch}: added {len(extras)} core tokens with balance")
+                    addr_set.update(extras)
+
+            out.extend((ch, addr) for addr in sorted(addr_set))
 
         return out
+
+    def _discover_core_tokens(self, chain: str, existing: Iterable[str], min_balance_wei: int) -> List[str]:
+        """Ensure common stables/majors are tracked even if not seen in cache yet."""
+        candidates = CORE_TRACKED_TOKENS.get(chain)
+        if not candidates:
+            return []
+        have = {addr.lower() for addr in existing}
+        additions: List[str] = []
+        holder = self.acct.address
+        for symbol, addr in candidates.items():
+            addr_lower = addr.lower()
+            if addr_lower in have:
+                continue
+            try:
+                bal = self.erc20_balance_of(chain, addr, holder)
+            except Exception:
+                continue
+            if bal >= int(min_balance_wei):
+                try:
+                    additions.append(Web3.to_checksum_address(addr))
+                except Exception:
+                    continue
+        return additions
 
     def discover_tokens(self, style: str = "portfolio", chains: Optional[Iterable[str]] = None) -> List[str]:
         """
@@ -1050,8 +1307,16 @@ class UltraSwapBridge:
             "value": int(value),
             "chainId": int(w3.eth.chain_id),
             "nonce": w3.eth.get_transaction_count(self.acct.address, "pending"),
-            **self._suggest_fees(w3),
         }
+        if not any(k in txreq for k in ("maxFeePerGas", "gasPrice")):
+            tx.update(self._suggest_fees(src_chain, w3, scope="bridge"))
+        else:
+            if "gasPrice" in txreq:
+                tx["gasPrice"] = _hexint(txreq.get("gasPrice"), 0)
+            if "maxFeePerGas" in txreq:
+                tx["maxFeePerGas"] = _hexint(txreq.get("maxFeePerGas"), 0)
+            if "maxPriorityFeePerGas" in txreq:
+                tx["maxPriorityFeePerGas"] = _hexint(txreq.get("maxPriorityFeePerGas"), 0)
 
         gl = txreq.get("gasLimit")
         if gl:

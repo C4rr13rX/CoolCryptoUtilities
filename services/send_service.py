@@ -12,7 +12,7 @@ class SendService:
         to_cs = w3.to_checksum_address(to)
         if is_native(token):
             value = to_base_units(amount_human, 18)
-            txh = self.bridge.send_prebuilt_tx(ch, to_cs, "0x", value=int(value))
+            txh = self.bridge.send_prebuilt_tx(ch, to_cs, "0x", value=int(value), fee_scope="send")
             print("TX:", txh)
             url = explorer_for(ch)
             if url:

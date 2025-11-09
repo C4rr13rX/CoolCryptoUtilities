@@ -1173,7 +1173,14 @@ def _try_camelot_fallback(bridge, chain, sell_id, buy_id, amount_raw, *, slippag
             return None, False
     # send
     try:
-        txh = bridge.send_prebuilt_tx(chain, q["to"], q["data"], value=int(q.get("value") or 0), gas=int(q.get("gas") or 250000))
+        txh = bridge.send_prebuilt_tx(
+            chain,
+            q["to"],
+            q["data"],
+            value=int(q.get("value") or 0),
+            gas=int(q.get("gas") or 250000),
+            fee_scope="swap",
+        )
         print(f"[Camelot] Swap TX: {txh}")
         print(f"Explorer: https://{ 'arbiscan.io' if chain=='arbitrum' else chain+'.etherscan.io' }/tx/{txh}")
         # wait for receipt

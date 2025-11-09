@@ -16,6 +16,7 @@ from securevault.models import SecureSetting
 PLACEHOLDER_PATTERN = re.compile(r"\${([A-Z0-9_]+)}")
 _KYBER = kyber.Kyber512
 _KEY_LOCK = threading.Lock()
+_LEGACY_ENV_CACHE: Optional[Dict[str, str]] = None
 
 
 def _key_dir() -> Path:
@@ -104,6 +105,37 @@ def mask_value(value: Optional[str]) -> str:
     return "•" * min(8, len(value))
 
 
+def _load_legacy_env() -> Dict[str, str]:
+    global _LEGACY_ENV_CACHE
+    if _LEGACY_ENV_CACHE is not None:
+        return _LEGACY_ENV_CACHE
+    env_data: Dict[str, str] = {}
+    candidates = [
+        Path(".env"),
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[1] / ".env",
+    ]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    name, value = line.split("=", 1)
+                    name = name.strip()
+                    if not name or name in env_data:
+                        continue
+                    env_data[name] = value.strip()
+            break
+        except Exception:
+            continue
+    _LEGACY_ENV_CACHE = env_data
+    return env_data
+
+
 def get_settings_for_user(user) -> Dict[str, str]:
     if user is None:
         return {}
@@ -153,5 +185,7 @@ def default_env_user():
 def build_process_env(user=None) -> Dict[str, str]:
     user = user or default_env_user()
     env = dict(os.environ)
+    for key, value in _load_legacy_env().items():
+        env.setdefault(key, value)
     env.update(get_settings_for_user(user))
-    return env
+    return _resolve_placeholders(env)

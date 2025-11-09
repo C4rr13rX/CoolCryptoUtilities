@@ -76,10 +76,15 @@ class TradingDatabase:
                     symbol TEXT,
                     name TEXT,
                     updated_at TEXT,
+                    stale INTEGER DEFAULT 0,
                     PRIMARY KEY (wallet, chain, token)
                 );
                 """
             )
+            try:
+                self._conn.execute("ALTER TABLE balances ADD COLUMN stale INTEGER DEFAULT 0;")
+            except sqlite3.OperationalError:
+                pass
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS transfers (
@@ -571,6 +576,45 @@ class TradingDatabase:
                 "SELECT token FROM transfers WHERE wallet=? AND chain=? AND block>?;",
                 (_lower(wallet), _lower(chain), int(since_block)),
             )
+            return cur.fetchall()
+
+    def popular_transfer_tokens(
+        self,
+        wallet: str,
+        chain: str,
+        *,
+        limit: int = 8,
+        since_ts: Optional[float] = None,
+    ) -> List[sqlite3.Row]:
+        """
+        Return the most recently seen tokens for a wallet/chain, ordered by recency
+        (inserted_at) and latest block height. Used by realtime refreshers so we can
+        keep balances for actively traded tokens up-to-date without rescanning every
+        asset on each tick.
+        """
+        wallet_l = _lower(wallet)
+        chain_l = _lower(chain)
+        lim = max(1, int(limit or 1))
+        clause = "WHERE wallet=? AND chain=? AND token IS NOT NULL AND token <> ''"
+        params: List[Any] = [wallet_l, chain_l]
+        if since_ts is not None:
+            clause += " AND COALESCE(inserted_at, 0) >= ?"
+            params.append(float(since_ts))
+        query = f"""
+            SELECT
+                token,
+                MAX(block)          AS last_block,
+                MAX(COALESCE(inserted_at, 0)) AS last_seen,
+                COUNT(*)            AS cnt
+            FROM transfers
+            {clause}
+            GROUP BY token
+            ORDER BY last_seen DESC, last_block DESC, cnt DESC
+            LIMIT ?
+        """
+        params.append(lim)
+        with self._cursor() as cur:
+            cur.execute(query, params)
             return cur.fetchall()
 
     def merge_transfers(self, wallet: str, chain: str, new_items: Sequence[Dict[str, Any]]) -> Dict[str, Any]:

@@ -5,9 +5,11 @@ import os
 import time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from db import get_db, TradingDatabase
+from services.wallet_logger import wallet_log
+from services.providers.covalent import CovalentClient, CovalentError
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -167,9 +169,15 @@ class CacheTransfers:
     throughout the project while delegating persistence to TradingDatabase.
     """
 
-    def __init__(self, db: Optional[TradingDatabase] = None) -> None:
+    def __init__(
+        self,
+        db: Optional[TradingDatabase] = None,
+        *,
+        indexer: Optional[CovalentClient] = None,
+    ) -> None:
         self.db = db or get_db()
         self._migrated: Set[Tuple[str, str]] = set()
+        self._indexer = indexer if indexer is not None else CovalentClient.from_env()
 
     def _maybe_migrate(self, wallet: str, chain: str) -> None:
         key = (_lower(wallet), _lower(chain))
@@ -227,6 +235,34 @@ class CacheTransfers:
                 out.add(_lower(tok))
         return out
 
+    def popular_tokens(
+        self,
+        wallet: str,
+        chain: str,
+        *,
+        limit: int = 8,
+        within_minutes: Optional[int] = None,
+    ) -> List[str]:
+        """
+        Surface the most recently used tokens so realtime balance refreshers can
+        prioritize assets the wallet actually interacts with.
+        """
+        since_ts = None
+        if within_minutes is not None and within_minutes > 0:
+            since_ts = time.time() - (int(within_minutes) * 60)
+        try:
+            rows = self.db.popular_transfer_tokens(wallet, chain, limit=limit, since_ts=since_ts)
+        except Exception:
+            return []
+        seen: List[str] = []
+        for row in rows:
+            tok = row["token"]
+            if tok:
+                tok_l = _lower(tok)
+                if tok_l not in seen:
+                    seen.append(tok_l)
+        return seen
+
     def rebuild_incremental(
         self,
         bridge,
@@ -255,6 +291,23 @@ class CacheTransfers:
         try:
             setattr(bridge, "ct", self)
             for ch in chain_list:
+                used_indexer = False
+                if self._indexer:
+                    try:
+                        rows = self._indexer.fetch_transfers(ch, wallet, max_pages=max_pages_per_dir)
+                        if rows:
+                            self.merge_new(wallet, ch, rows)
+                            state = self.get_state(wallet, ch)
+                            print(
+                                f"[cache.transfers] {ch}: cached {len(state.get('items', []))} transfers via indexer"
+                            )
+                        else:
+                            print(f"[cache.transfers] {ch}: indexer returned no transfers")
+                        used_indexer = True
+                    except CovalentError as exc:
+                        print(f"[cache.transfers] {ch}: indexer error -> {exc}")
+                if used_indexer:
+                    continue
                 try:
                     url = bridge._alchemy_url(ch) if hasattr(bridge, "_alchemy_url") else None
                 except Exception as e:
@@ -482,11 +535,18 @@ class CacheBalances:
         except Exception as e:
             print(f"[cache.balances] token discovery failed: {e}")
             token_pairs = []
+        wallet_log(
+            "cache.rebuild.tokens",
+            wallet=wallet,
+            chains=chain_list,
+            token_pairs=token_pairs,
+        )
 
         tokens_by_chain: Dict[str, List[str]] = {}
         for ch, addr in token_pairs:
             if ch and addr:
                 tokens_by_chain.setdefault(ch, []).append(addr)
+        wallet_log("cache.rebuild.tokens_by_chain", wallet=wallet, tokens_by_chain=tokens_by_chain)
 
         tokens_annotated = [f"{ch}:{addr}" for ch, addr in token_pairs if ch and addr]
 
@@ -496,6 +556,7 @@ class CacheBalances:
 
                 filt = FilterScamTokens()
                 res = filt.filter(tokens_annotated)
+                wallet_log("cache.rebuild.scam_filter", wallet=wallet, flagged=res.flagged, survivors=res.tokens)
                 tokens_annotated = res.tokens or tokens_annotated
                 if res.flagged:
                     print(f"[cache.balances] filtered {len(res.flagged)} tokens via scam filter")
@@ -528,5 +589,66 @@ class CacheBalances:
 
         print(
             f"[cache.balances] rebuilt snapshot for {len(tokens_annotated)} tokens across {len(chain_list)} chains"
+        )
+        wallet_log(
+            "cache.rebuild.complete",
+            wallet=wallet,
+            chains=chain_list,
+            token_count=len(tokens_annotated),
+        )
+        return snapshot
+
+    def refresh_subset(
+        self,
+        bridge,
+        tokens_by_chain: Mapping[str, Iterable[str]],
+        *,
+        price_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Refresh a targeted subset of tokens without rebuilding every chain.
+
+        Args:
+            bridge: UltraSwapBridge (or compatible) instance with signing context.
+            tokens_by_chain: Mapping of chain -> iterable of token addresses to refresh.
+            price_mode: forwarded to MultiChainTokenPortfolio for pricing strategy.
+        """
+        if not bridge or not hasattr(bridge, "get_address"):
+            raise ValueError("refresh_subset requires a signing bridge")
+
+        normalized: List[Tuple[str, str]] = []
+        for chain, tokens in (tokens_by_chain or {}).items():
+            chain_l = str(chain).strip().lower()
+            if not chain_l:
+                continue
+            for token in tokens or []:
+                addr = str(token or "").strip()
+                if not addr:
+                    continue
+                normalized.append((chain_l, addr))
+
+        if not normalized:
+            return {}
+
+        wallet = bridge.get_address()
+        transfers_cache = getattr(bridge, "ct", None) or CacheTransfers(self.db)
+
+        from balances import MultiChainTokenPortfolio  # local import to avoid cycles
+
+        tp = MultiChainTokenPortfolio(
+            wallet_address=wallet,
+            tokens=normalized,
+            cache_balances=self,
+            cache_transfers=transfers_cache,
+            price_mode=price_mode,
+            max_transfers_per_token=0,
+            verbose=os.getenv("TOKEN_PORTFOLIO_VERBOSE", "").strip().lower() in ("1", "true", "yes"),
+        )
+
+        snapshot = tp.build()
+        wallet_log(
+            "cache.refresh_subset",
+            wallet=wallet,
+            chains=sorted({ch for ch, _ in normalized}),
+            token_count=len(normalized),
         )
         return snapshot

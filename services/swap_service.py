@@ -79,7 +79,12 @@ class SwapService:
         try:
             # deposit() selector 0xd0e30db0 used by WETH/WMATIC-style wrappers
             txh = self.bridge.send_prebuilt_tx(
-                chain, to=wn_addr, data='0xd0e30db0', value=int(amount_raw), gas=None
+                chain,
+                to=wn_addr,
+                data='0xd0e30db0',
+                value=int(amount_raw),
+                gas=None,
+                fee_scope="swap",
             )
             print(f"[wrap] {chain}: native -> {wn_addr} amount={amount_raw} tx={txh}")
             rc = self.bridge._w3(chain).eth.wait_for_transaction_receipt(txh)
@@ -185,8 +190,12 @@ class SwapService:
     def _send(self, chain: str, to: str, data: str, value: int, gas_hint: Optional[int]) -> tuple[str,bool]:
         try:
             txh = self.bridge.send_prebuilt_tx(
-                chain, to=to, data=data, value=int(value or 0),
-                gas=(int(gas_hint) if gas_hint else None)
+                chain,
+                to=to,
+                data=data,
+                value=int(value or 0),
+                gas=(int(gas_hint) if gas_hint else None),
+                fee_scope="swap",
             )
             print("[swap] tx:", txh)
             url = explorer_for(chain)
@@ -369,7 +378,7 @@ class SwapService:
                     print("[0x] preflight (estimate_gas) failed"); return
 
                 print(f"[0x] to={tx.get('to')} value={val_int} gas≈{gas_hint or 'est.'}")
-                txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx)
+                txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
                 print(f"[0x] broadcast tx={txh}")
 
                 # Wait (do not fall back after broadcast)
@@ -524,7 +533,7 @@ class SwapService:
                 raise RuntimeError("0x preflight failed (estimate_gas)")
 
             print(f"[0x] to={tx.get('to')} value={val_int} gas≈{gas_hint or 'est.'}")
-            txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx)
+            txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
             print(f"[0x] broadcast tx={txh}")
             try:
                 rc = w3.eth.wait_for_transaction_receipt(txh)
@@ -596,4 +605,3 @@ class SwapService:
             print(f"[SushiV2] failed: {e!r}")
 
         print("❌ All routes failed.")
-
