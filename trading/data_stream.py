@@ -166,6 +166,7 @@ class MarketDataStream:
         self._init_rest_intervals()
         self._last_volume: float = 0.0
         self.consensus_sources = int(os.getenv("PRICE_CONSENSUS_SOURCES", "2"))
+
         self.consensus_window = float(os.getenv("PRICE_CONSENSUS_WINDOW", "60"))
         self.consensus_timeout = float(os.getenv("PRICE_CONSENSUS_TIMEOUT", "45"))
         self._recent_price_by_source: Dict[str, Tuple[float, float]] = {}
@@ -986,6 +987,55 @@ class MarketDataStream:
             health[name] = scores
         return health
 
+    def _init_rest_intervals(self) -> None:
+        base = max(0.5, float(os.getenv("REST_POLL_INTERVAL", "3.0")))
+        max_interval = max(base, float(os.getenv("REST_POLL_INTERVAL_MAX", "120.0")))
+        growth_factor = max(1.1, float(os.getenv("REST_POLL_GROWTH_FACTOR", "1.6")))
+        relax_factor = min(0.95, max(0.1, float(os.getenv("REST_POLL_RELAX_FACTOR", "0.7"))))
+        relax_step = max(0.1, float(os.getenv("REST_POLL_RELAX_STEP", "1.0")))
+        self._base_rest_interval = base
+        self._max_rest_interval = max_interval
+        self._rest_growth_factor = growth_factor
+        self._rest_relax_factor = relax_factor
+        self._rest_relax_step = relax_step
+        self.rest_poll_interval = base
+        self._rest_interval_last_change = time.time()
+        self._rest_interval_reason = "init"
+
+    def _grow_rest_interval(self, *, reason: str) -> None:
+        previous = self.rest_poll_interval
+        target = min(self._max_rest_interval, previous * self._rest_growth_factor)
+        if target <= previous + 0.01:
+            return
+        self.rest_poll_interval = target
+        self._rest_interval_last_change = time.time()
+        self._rest_interval_reason = reason
+        log_message(
+            "market-stream",
+            "REST polling slowed",
+            severity="info",
+            details={"interval": round(self.rest_poll_interval, 3), "reason": reason},
+        )
+
+    def _relax_rest_interval(self, *, reason: str) -> None:
+        previous = self.rest_poll_interval
+        if previous <= self._base_rest_interval:
+            return
+        reduced = max(self._base_rest_interval, previous * self._rest_relax_factor)
+        if previous - reduced < 0.01:
+            reduced = max(self._base_rest_interval, previous - self._rest_relax_step)
+        if reduced >= previous:
+            return
+        self.rest_poll_interval = reduced
+        self._rest_interval_last_change = time.time()
+        self._rest_interval_reason = reason
+        log_message(
+            "market-stream",
+            "REST polling relaxed",
+            severity="debug",
+            details={"interval": round(self.rest_poll_interval, 3), "reason": reason},
+        )
+
     async def _timed_rest_fetch(self, endpoint: Endpoint, base: str, quote: str) -> Tuple[Endpoint, Optional[float], float]:
         start = time.time()
         price = await self._fetch_rest_price(endpoint, base, quote)
@@ -1053,7 +1103,7 @@ class MarketDataStream:
         now = time.time()
         self._price_rejections.append((price, now))
         window = [val for val, ts in self._price_rejections if now - ts <= self.consensus_window]
-        if len(window) < max(3, self._price_rejections.maxlen // 2):
+        if len(window) < self._rejection_confirmations:
             return False
         median_price = statistics.median(window)
         span = max(window) - min(window)

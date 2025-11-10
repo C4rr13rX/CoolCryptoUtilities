@@ -8,6 +8,10 @@ PROJECT_ROOT = BASE_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
+from services.env_loader import EnvLoader
+
+EnvLoader.load()
+
 
 def main() -> None:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")

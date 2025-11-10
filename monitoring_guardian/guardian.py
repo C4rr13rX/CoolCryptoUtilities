@@ -49,7 +49,10 @@ try:  # Optional but preferred for multi-process coordination
 except Exception:  # pragma: no cover - fallback when services import fails
     GuardianLease = None  # type: ignore
 
-session = CodexSession("guardian-session")
+TRANSCRIPT_DIR = Path("runtime/guardian/transcripts")
+TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+
+session = CodexSession("guardian-session", transcript_dir=TRANSCRIPT_DIR)
 
 DEFAULT_CONFIG: Dict[str, object] = {
     "log_files": ["logs/system.log"],

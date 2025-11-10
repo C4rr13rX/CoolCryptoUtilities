@@ -2166,9 +2166,9 @@ class HistoricalDataLoader:
             self._augment_news_from_cryptopanic(token_set, start_ts, end_ts)
             if len(self.news_items) > before:
                 added = True
-                continue
-            if self._augment_news_from_ethics(token_set, start_ts, end_ts):
-                added = True
+            else:
+                if self._augment_news_from_ethics(token_set, start_ts, end_ts):
+                    added = True
             self._mark_news_backfill(window_key)
         return added
 

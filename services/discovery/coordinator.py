@@ -172,6 +172,7 @@ class DiscoveryCoordinator:
         failure_reason = probe.failure_reason or "probe_pending"
         if liquidity >= min_liquidity and volume >= min_volume:
             simulated_success = True
+            failure_reason = None
             metadata["mode"] = "virtual"
             metadata["slippage_buffer"] = float(os.getenv("DISCOVERY_PROBE_SLIPPAGE", "0.12"))
         else:

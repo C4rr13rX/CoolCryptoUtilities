@@ -169,6 +169,20 @@
       </header>
       <div class="pm-body">
         <p>The production manager is the always-on crypto day-trading engine. It streams data, trains candidates, and executes swaps based on guardian findings. Monitor its console output below.</p>
+        <div class="pm-meta">
+          <div>
+            <span class="label">Status</span>
+            <span class="value" :class="{ online: productionStatus.running }">{{ productionStatusLabel }}</span>
+          </div>
+          <div>
+            <span class="label">Last Update</span>
+            <span class="value">{{ productionUpdatedAt }}</span>
+          </div>
+          <div v-if="productionNote">
+            <span class="label">Note</span>
+            <span class="value">{{ productionNote }}</span>
+          </div>
+        </div>
         <pre class="console-output">{{ consoleLines.join('\n') }}</pre>
       </div>
     </section>
@@ -210,6 +224,19 @@ const consoleLines = computed(() => dashboard.consoleLogs || []);
 const isRunning = computed(() => dashboard.consoleStatus?.status?.includes('run'));
 const totalUsdDisplay = computed(() => currency(wallet.snapshot?.totals?.usd || 0));
 const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || 'Never');
+const productionStatus = computed(() => wallet.status?.production || {});
+const productionStatusLabel = computed(() => (productionStatus.value.running ? 'Running' : 'Idle'));
+const productionUpdatedAt = computed(() => {
+  const ts = productionStatus.value.updated_at;
+  if (!ts) return 'Unknown';
+  const parsed = new Date(ts);
+  if (Number.isNaN(parsed.getTime())) return ts;
+  return parsed.toLocaleString();
+});
+const productionNote = computed(() => {
+  const meta = productionStatus.value.metadata || {};
+  return meta.note || meta.reason || productionStatus.value.note || '';
+});
 
 const workerSummary = computed(() => {
   if (wallet.running || wallet.autoRefreshing || wallet.status?.running) {
@@ -514,6 +541,28 @@ function truncateHash(hash: string | undefined) {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.pm-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.6rem;
+}
+
+.pm-meta .label {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.pm-meta .value {
+  font-weight: 600;
+}
+
+.pm-meta .value.online {
+  color: #34d399;
 }
 
 .pm-actions {

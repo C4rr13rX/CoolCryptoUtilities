@@ -57,6 +57,7 @@ def _is_native(tok:str)->bool:
 # Uses per-chain threading to speed up rebuilds. Respects existing caches.
 
 import os, sys, time, json, concurrent.futures, math, math
+from decimal import Decimal
 from typing import List, Tuple
 from pathlib import Path
 
@@ -154,6 +155,7 @@ def _human(raw: int, decimals: int) -> float:
 from router_wallet import UltraSwapBridge, CHAINS
 from web3 import Web3
 from cache import CacheTransfers, CacheBalances
+from services.token_catalog import core_tokens_for_chain
 
 import json
 
@@ -209,25 +211,69 @@ def _show_balances():
     import runpy
     runpy.run_module("main", run_name="__main__")
 
+def _base_tracking_targets() -> List[Tuple[str, str]]:
+    tokens = core_tokens_for_chain("base")
+    usdc = os.getenv("BASE_USDC_ADDR") or tokens.get("USDC")
+    weth = os.getenv("WNATIVE_BASE") or tokens.get("WETH") or tokens.get("ETH")
+    targets: List[Tuple[str, str]] = []
+    if usdc:
+        try:
+            targets.append(("USDC", Web3.to_checksum_address(usdc)))
+        except Exception:
+            targets.append(("USDC", usdc))
+    if weth:
+        try:
+            targets.append(("ETH", Web3.to_checksum_address(weth)))
+        except Exception:
+            targets.append(("ETH", weth))
+    return targets
+
+
+def _report_base_balances(cache: CacheBalances, wallet: str) -> None:
+    targets = _base_tracking_targets()
+    if not targets:
+        return
+    print("\n[balances] Base verification:")
+    for label, addr in targets:
+        try:
+            row = cache.get_token(wallet, "base", addr)
+        except Exception:
+            row = {}
+        if not row:
+            print(f"  • {label}@Base missing from cache ({addr})")
+            continue
+        qty_raw = row.get("quantity") or row.get("raw") or "0"
+        usd_raw = row.get("usd_amount") or "0"
+        try:
+            qty = Decimal(str(qty_raw))
+        except Exception:
+            qty = Decimal(0)
+        try:
+            usd = Decimal(str(usd_raw))
+        except Exception:
+            usd = Decimal(0)
+        asof = row.get("asof_block")
+        status = "fresh" if asof else "stale"
+        print(f"  • {label}@Base balance={qty} (~${usd}) status={status}")
+
+
 def _refetch_balances_parallel(bridge: UltraSwapBridge, chains: List[str]) -> None:
     """
-    Force a fresh token-balance sweep per chain using the bridge's balances path.
-    This will naturally be incremental if your Alchemy path honors pageKey + your cache.
+    Force a fresh token-balance rebuild via CacheBalances so downstream reads
+    always reflect the latest RPC data instead of stale cache files.
     """
-    # if your _discover_via_balances requires only a URL, call it with URL
-    work = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(chains) or 1)) as ex:
-        for ch in chains:
-            url = bridge._alchemy_url(ch)
-            if not url:
-                print(f"[balances] {ch}: no RPC url configured; skip")
-                continue
-            work.append(ex.submit(bridge._discover_via_balances, url))
-        for fut in concurrent.futures.as_completed(work):
-            try:
-                fut.result()
-            except Exception as e:
-                print(f"[balances] worker error: {e!r}")
+    cb = CacheBalances()
+    try:
+        cb.rebuild_all(
+            bridge,
+            chains=chains or None,
+            force_refresh=True,
+            price_mode=os.getenv("TOKEN_PRICE_MODE"),
+        )
+    except Exception as exc:
+        print(f"[balances] rebuild failed: {exc!r}")
+        return
+    _report_base_balances(cb, bridge.get_address())
 
 def _refetch_transfers_parallel(bridge: UltraSwapBridge, chains: List[str]) -> None:
     """

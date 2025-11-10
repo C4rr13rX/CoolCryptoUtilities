@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+from services.env_loader import EnvLoader
+
+EnvLoader.load()
+
+TESTING = "test" in sys.argv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BASE_DIR.parent

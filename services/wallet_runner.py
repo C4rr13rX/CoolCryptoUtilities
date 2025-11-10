@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from services.guardian_status import snapshot_status as guardian_snapshot
 from services.secure_settings import build_process_env
 from services.wallet_actions import list_wallet_actions
 
@@ -46,6 +47,11 @@ class WalletActionRunner:
             payload = dict(self._status)
             payload["history"] = list(self._history)
             payload["actions"] = list_wallet_actions()
+        try:
+            guardian_state = guardian_snapshot()
+            payload["production"] = guardian_state.get("production", {})
+        except Exception:
+            payload["production"] = {"running": False, "updated_at": None, "metadata": {}}
         return payload
 
     def run(self, action: str, payload: Optional[Dict[str, Any]] = None, user=None) -> None:

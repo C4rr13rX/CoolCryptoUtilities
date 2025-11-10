@@ -42,6 +42,7 @@ class ConsoleProcessManager:
                 return {"status": "running", "pid": str(self._process.pid)}
             logfile = LOG_PATH.open("a", encoding="utf-8")
             env = build_process_env(user)
+            env.setdefault("WALLET_ALLOW_AUTOMATION", "1")
             try:
                 proc = subprocess.Popen(
                     cmd,

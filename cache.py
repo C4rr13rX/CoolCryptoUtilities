@@ -592,20 +592,29 @@ class CacheBalances:
                 continue
             keep: List[str] = []
             for row in rows:
+                if isinstance(row, dict):
+                    row_map = row
+                else:
+                    try:
+                        row_map = dict(row)
+                    except Exception:
+                        row_map = {}
                 qty = Decimal(0)
-                qty_raw = row.get("quantity")
+                qty_raw = row_map.get("quantity")
                 if qty_raw is not None:
                     try:
                         qty = Decimal(str(qty_raw))
                     except Exception:
                         qty = Decimal(0)
-                elif row.get("balance_hex"):
+                elif row_map.get("balance_hex"):
                     try:
-                        qty = Decimal(_hex_to_int(row["balance_hex"]))
+                        qty = Decimal(_hex_to_int(row_map["balance_hex"]))
                     except Exception:
                         qty = Decimal(0)
                 if qty > 0:
-                    keep.append(row["token"])
+                    token_addr = row_map.get("token")
+                    if token_addr:
+                        keep.append(token_addr)
             tokens_to_keep[chain] = keep
             wallet_log(
                 "cache.rebuild.prune_plan",

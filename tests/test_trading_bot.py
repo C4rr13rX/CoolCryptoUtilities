@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from trading.bot import TradingBot
 
 
@@ -28,3 +30,32 @@ def test_trading_bot_timeline_append(tmp_path) -> None:
     data = json.loads(bot._timeline_path.read_text())  # type: ignore[attr-defined]
     assert len(data["snapshots"]) == 3
     assert data["snapshots"][-1]["index"] == 4
+
+
+def test_base_allocation_respects_pair_multiplier() -> None:
+    bot = TradingBot.__new__(TradingBot)
+    TradingBot._ensure_runtime_state(bot)  # type: ignore[attr-defined]
+
+    class StubDB:
+        def __init__(self, record):
+            self.record = record
+
+        def get_pair_adjustment(self, symbol):
+            return dict(self.record)
+
+    bot.db = StubDB({"allocation_multiplier": 2.0})  # type: ignore[attr-defined]
+    bot.max_symbol_share = 0.1  # type: ignore[attr-defined]
+    bot.primary_chain = "base"  # type: ignore[attr-defined]
+    bot.live_trading_enabled = False  # type: ignore[attr-defined]
+    bot.sim_quote_balances = {("base", "USDC"): 1000.0}  # type: ignore[attr-defined]
+    bot.stable_bank = 0.0  # type: ignore[attr-defined]
+    bot.active_exposure = {}  # type: ignore[attr-defined]
+    bot._pair_adjustments = {}  # type: ignore[attr-defined]
+
+    sample = {"symbol": "ETH-USD", "chain": "base"}
+    allocation = bot._compute_base_allocation(sample)  # type: ignore[attr-defined]
+    assert allocation["ETH-USD"] == pytest.approx(200.0)
+
+    bot.active_exposure["ETH-USD"] = 150.0  # type: ignore[index]
+    allocation = bot._compute_base_allocation(sample)  # type: ignore[attr-defined]
+    assert allocation["ETH-USD"] == pytest.approx(50.0)

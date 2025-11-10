@@ -469,7 +469,7 @@ def capture_wallet_state(
     ct = cache_transfers or CacheTransfers()
     chain_list = [str(ch).lower() for ch in (chains or CHAINS.keys())]
     _maybe_fast_transfer_refresh(bridge, ct, chain_list, wallet_addr)
-    _maybe_fast_balance_refresh(bridge, cb, ct, chain_list)
+    _maybe_fast_balance_refresh(bridge, cb, ct, chain_list, wallet_addr)
     registry = registry or getattr(bridge, "_token_safety", None)
     balances_payload = _collect_balances(wallet_addr, cache_balances=cb, registry=registry)
     transfers_payload = _collect_transfers(wallet_addr, chains=chain_list, cache_transfers=ct)

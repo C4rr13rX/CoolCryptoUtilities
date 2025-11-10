@@ -13,5 +13,65 @@
     "name": "Messari Hub",
     "url": "https://messari.io/rss",
     "topics": ["MACRO", "BTC", "ETH"]
+  },
+  {
+    "name": "AMB Crypto",
+    "url": "https://ambcrypto.com/feed/",
+    "topics": ["ALT", "MACRO"]
+  },
+  {
+    "name": "BeInCrypto",
+    "url": "https://beincrypto.com/feed/",
+    "topics": ["ALT", "NFT"]
+  },
+  {
+    "name": "U.Today",
+    "url": "https://u.today/rss",
+    "topics": ["BTC", "ETH", "XRP"]
+  },
+  {
+    "name": "Coinspeaker",
+    "url": "https://www.coinspeaker.com/feed/",
+    "topics": ["MACRO", "BTC", "STABLECOIN"]
+  },
+  {
+    "name": "CryptoPotato",
+    "url": "https://cryptopotato.com/feed/",
+    "topics": ["BTC", "DEFI", "ALT"]
+  },
+  {
+    "name": "Chainlink Blog",
+    "url": "https://blog.chain.link/feed/",
+    "topics": ["LINK", "ORACLE", "DEFI"]
+  },
+  {
+    "name": "Altcoin Buzz",
+    "url": "https://www.altcoinbuzz.io/feed/",
+    "topics": ["ALT", "DEFI", "NFT"]
+  },
+  {
+    "name": "CryptoDaily",
+    "url": "https://cryptodaily.co.uk/feed/",
+    "topics": ["ALT", "MACRO"]
+  },
+  {
+    "name": "CoinQuora",
+    "url": "https://coinquora.com/feed/",
+    "topics": ["ALT", "GUIDES"]
+  },
+  {
+    "name": "The Cryptonomist",
+    "url": "https://en.cryptonomist.ch/feed/",
+    "topics": ["ALT", "EU", "MACRO"]
+  },
+  {
+    "name": "BSC News",
+    "url": "https://bsc.news/feed/",
+    "topics": ["BSC", "DEFI", "YIELD"]
+  },
+  {
+    "name": "Crypto Ninjas",
+    "url": "https://www.cryptoninjas.net/feed/",
+    "topics": ["INFRA", "DEVS", "DEFI"]
   }
 ]

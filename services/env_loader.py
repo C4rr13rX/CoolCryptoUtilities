@@ -4,10 +4,14 @@ from pathlib import Path
 from typing import List, Optional
 from dotenv_fallback import load_dotenv, dotenv_values, find_dotenv
 
+_ALLOW_FLAG = "ALLOW_DOTENV_LOADING"
+
 class EnvLoader:
     """Robust .env loader you can import anywhere."""
     @staticmethod
     def load() -> None:
+        # ensure the fallback shim is allowed to touch .env files
+        os.environ.setdefault(_ALLOW_FLAG, "1")
         repo_root = Path(__file__).resolve().parents[1]
         web_dir = repo_root / "web"
         for path in (repo_root, web_dir):

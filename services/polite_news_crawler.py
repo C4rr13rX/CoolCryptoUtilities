@@ -59,6 +59,41 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         r"(^|\.)blog\.ethereum\.org$",
         r"(^|\.)ethereum\.org$",
         r"(^|\.)kraken\.com$",
+        r"(^|\.)decrypt\.co$",
+        r"(^|\.)cryptobriefing\.com$",
+        r"(^|\.)news\.bitcoin\.com$",
+        r"(^|\.)coinjournal\.net$",
+        r"(^|\.)cryptoslate\.com$",
+        r"(^|\.)dlnews\.com$",
+        r"(^|\.)thedefiant\.io$",
+        r"(^|\.)messari\.io$",
+        r"(^|\.)chain\.link$",
+        r"(^|\.)u\.today$",
+        r"(^|\.)ambcrypto\.com$",
+        r"(^|\.)beincrypto\.com$",
+        r"(^|\.)coinspeaker\.com$",
+        r"(^|\.)cryptopotato\.com$",
+        r"(^|\.)blockworks\.co$",
+        r"(^|\.)bitcoinist\.com$",
+        r"(^|\.)coingape\.com$",
+        r"(^|\.)coinpedia\.org$",
+        r"(^|\.)cryptonews\.com$",
+        r"(^|\.)coinedition\.com$",
+        r"(^|\.)finbold\.com$",
+        r"(^|\.)coinchapter\.com$",
+        r"(^|\.)blockonomi\.com$",
+        r"(^|\.)cryptoglobe\.com$",
+        r"(^|\.)newsbtc\.com$",
+        r"(^|\.)cryptopolitan\.com$",
+        r"(^|\.)zycrypto\.com$",
+        r"(^|\.)crypto-news-flash\.com$",
+        r"(^|\.)btcmanager\.com$",
+        r"(^|\.)altcoinbuzz\.io$",
+        r"(^|\.)cryptodaily\.co\.uk$",
+        r"(^|\.)coinquora\.com$",
+        r"(^|\.)cryptonomist\.ch$",
+        r"(^|\.)bsc\.news$",
+        r"(^|\.)cryptoninjas\.net$",
     ],
     "include_patterns": [r".+"],
     "exclude_patterns": [
@@ -67,6 +102,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         r".*#.*",
     ],
     "politeness": {"min_delay_sec": 0.5, "max_delay_sec": 4.0},
+    "wordpress": {"pages_per_term": 3, "per_page": 40},
     "max_pages": 400,
     "allowed_statuses": [200, 304],
     "cache_dir": Path("storage/news_cache"),
@@ -86,6 +122,32 @@ def _now_ts() -> int:
 
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _ts_to_iso(ts: float) -> str:
+    try:
+        dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+    except Exception:
+        dt = datetime.now(timezone.utc)
+    return dt.isoformat()
+
+
+def _iso_to_ts(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
+    except Exception:
+        return None
+
+
+def _iso_in_window(value: Optional[str], start_ts: float, end_ts: float) -> bool:
+    if not value:
+        return True
+    ts = _iso_to_ts(value)
+    if ts is None:
+        return True
+    return start_ts <= ts <= end_ts
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +387,14 @@ def _clean_text(val: Optional[str]) -> Optional[str]:
     return re.sub(r"\s+", " ", val).strip()
 
 
+def _wp_text(value: Any) -> str:
+    if isinstance(value, dict):
+        value = value.get("rendered") or ""
+    if not isinstance(value, str):
+        return ""
+    return _clean_text(value) or ""
+
+
 def _extract_title_desc(html: str) -> Tuple[Optional[str], Optional[str]]:
     title = None
     match = TITLE_RE.search(html)
@@ -463,7 +533,7 @@ class PoliteCryptoCrawler:
         if max_pages is not None:
             self.cfg["max_pages"] = max_pages
         try:
-            await self._search(terms)
+            await self._search(terms, start_ts, end_ts)
             results: List[CrawlResult] = []
             async with self._session() as session:
                 collected = 0
@@ -534,35 +604,115 @@ class PoliteCryptoCrawler:
         ) as session:
             yield session
 
-    async def _search(self, queries: Sequence[str]) -> None:
+    async def _search(self, queries: Sequence[str], start_ts: float, end_ts: float) -> None:
         async with self._session() as session:
             tasks: List[asyncio.Task[None]] = []
-            tasks.append(asyncio.create_task(self._search_bitcoinmagazine(session, queries)))
-            tasks.append(asyncio.create_task(self._search_metzdowd(session, queries)))
-            tasks.append(asyncio.create_task(self._search_bitcointalk(session, queries)))
-            tasks.append(
-                asyncio.create_task(
-                    self._search_rss_feed(
-                        session,
-                        "https://blog.ethereum.org/en/feed.xml",
-                        queries,
-                        "ethereum_blog",
+            tasks.append(asyncio.create_task(self._search_bitcoinmagazine(session, queries, start_ts, end_ts)))
+            tasks.append(asyncio.create_task(self._search_metzdowd(session, queries, start_ts, end_ts)))
+            tasks.append(asyncio.create_task(self._search_bitcointalk(session, queries, start_ts, end_ts)))
+            rss_sources = [
+                ("https://blog.ethereum.org/en/feed.xml", "ethereum_blog"),
+                ("https://blog.kraken.com/feed", "kraken_blog"),
+                ("https://decrypt.co/feed", "decrypt"),
+                ("https://cryptobriefing.com/feed", "cryptobriefing"),
+                ("https://cryptoslate.com/feed", "cryptoslate"),
+                ("https://www.coinspeaker.com/feed/", "coinspeaker"),
+                ("https://ambcrypto.com/feed/", "ambcrypto"),
+                ("https://beincrypto.com/feed/", "beincrypto"),
+                ("https://u.today/rss", "utoday"),
+                ("https://cryptopotato.com/feed/", "cryptopotato"),
+                ("https://blog.chain.link/feed/", "chainlink_blog"),
+                ("https://www.dlnews.com/feed/", "dlnews"),
+                ("https://newsletter.thedefiant.io/feed", "thedefiant"),
+                ("https://messari.io/rss", "messari"),
+                ("https://blockworks.co/feed/", "blockworks"),
+                ("https://bitcoinist.com/feed/", "bitcoinist"),
+                ("https://www.coingape.com/feed/", "coingape"),
+                ("https://coinpedia.org/feed/", "coinpedia"),
+                ("https://www.cryptonews.com/feed/", "cryptonews"),
+                ("https://coinedition.com/feed/", "coinedition"),
+                ("https://finbold.com/feed/", "finbold"),
+                ("https://coinchapter.com/feed/", "coinchapter"),
+                ("https://blockonomi.com/feed/", "blockonomi"),
+                ("https://cryptoglobe.com/feed/", "cryptoglobe"),
+                ("https://newsbtc.com/feed/", "newsbtc"),
+                ("https://cryptopolitan.com/feed/", "cryptopolitan"),
+                ("https://zycrypto.com/feed/", "zycrypto"),
+                ("https://www.crypto-news-flash.com/feed/", "crypto_news_flash"),
+                ("https://btcmanager.com/feed/", "btcmanager"),
+                ("https://www.altcoinbuzz.io/feed/", "altcoinbuzz"),
+                ("https://cryptodaily.co.uk/feed/", "cryptodaily"),
+                ("https://coinquora.com/feed/", "coinquora"),
+                ("https://en.cryptonomist.ch/feed/", "cryptonomist"),
+                ("https://bsc.news/feed/", "bscnews"),
+                ("https://www.cryptoninjas.net/feed/", "cryptoninjas"),
+            ]
+            for feed_url, tag in rss_sources:
+                tasks.append(
+                    asyncio.create_task(
+                        self._search_rss_feed(
+                            session,
+                            feed_url,
+                            queries,
+                            tag,
+                            start_ts,
+                            end_ts,
+                        )
                     )
                 )
-            )
-            tasks.append(
-                asyncio.create_task(
-                    self._search_rss_feed(
-                        session,
-                        "https://blog.kraken.com/feed",
-                        queries,
-                        "kraken_blog",
+            wordpress_sources = [
+                ("https://news.bitcoin.com", "news_bitcoin"),
+                ("https://coinjournal.net", "coinjournal"),
+                ("https://cryptoslate.com", "cryptoslate_wp"),
+                ("https://u.today", "utoday_wp"),
+                ("https://ambcrypto.com", "ambcrypto_wp"),
+                ("https://beincrypto.com", "beincrypto_wp"),
+                ("https://www.coinspeaker.com", "coinspeaker_wp"),
+                ("https://cryptopotato.com", "cryptopotato_wp"),
+                ("https://blockworks.co", "blockworks_wp"),
+                ("https://bitcoinist.com", "bitcoinist_wp"),
+                ("https://www.coingape.com", "coingape_wp"),
+                ("https://coinpedia.org", "coinpedia_wp"),
+                ("https://www.cryptonews.com", "cryptonews_wp"),
+                ("https://coinedition.com", "coinedition_wp"),
+                ("https://finbold.com", "finbold_wp"),
+                ("https://coinchapter.com", "coinchapter_wp"),
+                ("https://blockonomi.com", "blockonomi_wp"),
+                ("https://cryptoglobe.com", "cryptoglobe_wp"),
+                ("https://newsbtc.com", "newsbtc_wp"),
+                ("https://cryptopolitan.com", "cryptopolitan_wp"),
+                ("https://zycrypto.com", "zycrypto_wp"),
+                ("https://www.crypto-news-flash.com", "crypto_news_flash_wp"),
+                ("https://btcmanager.com", "btcmanager_wp"),
+                ("https://www.altcoinbuzz.io", "altcoinbuzz_wp"),
+                ("https://cryptodaily.co.uk", "cryptodaily_wp"),
+                ("https://coinquora.com", "coinquora_wp"),
+                ("https://en.cryptonomist.ch", "cryptonomist_wp"),
+                ("https://bsc.news", "bscnews_wp"),
+                ("https://www.cryptoninjas.net", "cryptoninjas_wp"),
+            ]
+            for base_url, tag in wordpress_sources:
+                tasks.append(
+                    asyncio.create_task(
+                        self._search_wordpress_site(
+                            session,
+                            base_url,
+                            queries,
+                            tag,
+                            start_ts,
+                            end_ts,
+                        )
                     )
                 )
-            )
             await asyncio.gather(*tasks)
 
-    async def _search_bitcoinmagazine(self, session: aiohttp.ClientSession, queries: Sequence[str]) -> None:
+    async def _search_bitcoinmagazine(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
         sitemap_urls = [
             "https://bitcoinmagazine.com/sitemap.xml",
             "https://bitcoinmagazine.com/sitemap_index.xml",
@@ -592,7 +742,13 @@ class PoliteCryptoCrawler:
                 if _host_allowed(host) and _url_allowed(url):
                     self.store.upsert_url(_normalise(url), host, hint_date=lastmod_val, query_match="bitcoinmagazine")
 
-    async def _search_metzdowd(self, session: aiohttp.ClientSession, queries: Sequence[str]) -> None:
+    async def _search_metzdowd(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
         root = "https://www.metzdowd.com/pipermail/cryptography/"
         index_html = await self._get_text(session, root)
         if not index_html:
@@ -621,7 +777,13 @@ class PoliteCryptoCrawler:
                 if _host_allowed(host) and _url_allowed(url):
                     self.store.upsert_url(_normalise(url), host, hint_date=hint_date, query_match="metzdowd")
 
-    async def _search_bitcointalk(self, session: aiohttp.ClientSession, queries: Sequence[str]) -> None:
+    async def _search_bitcointalk(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
         boards = [
             "https://bitcointalk.org/index.php?board=1.0",
             "https://bitcointalk.org/index.php?board=67.0",
@@ -646,12 +808,84 @@ class PoliteCryptoCrawler:
                     if _host_allowed(host) and _url_allowed(abs_url):
                         self.store.upsert_url(_normalise(abs_url), host, hint_date=None, query_match="bitcointalk")
 
+    async def _search_wordpress_site(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        queries: Sequence[str],
+        query_tag: str,
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        api = base_url.rstrip("/") + "/wp-json/wp/v2/posts"
+        cfg = self.cfg.get("wordpress", {})
+        per_page = int(cfg.get("per_page", 40))
+        per_page = max(5, min(per_page, 100))
+        pages_per_term = int(cfg.get("pages_per_term", 3))
+        pages_per_term = max(1, min(pages_per_term, 6))
+        start_iso = _ts_to_iso(start_ts)
+        end_iso = _ts_to_iso(end_ts)
+        terms = [term.strip() for term in dict.fromkeys(queries) if term.strip()]
+        if not terms:
+            return
+        for term in terms:
+            page = 1
+            while page <= pages_per_term:
+                params = {
+                    "search": term,
+                    "after": start_iso,
+                    "before": end_iso,
+                    "orderby": "date",
+                    "order": "desc",
+                    "page": page,
+                    "per_page": per_page,
+                    "_fields": "link,date,date_gmt,title,excerpt",
+                }
+                payload = await self._get_json(session, api, params=params)
+                if not isinstance(payload, list) or not payload:
+                    break
+                queued = 0
+                for entry in payload:
+                    link = (entry.get("link") or "").strip()
+                    if not link:
+                        continue
+                    normalized = _normalise(link)
+                    host = urlparse(normalized).hostname or ""
+                    if not host or not _host_allowed(host) or not _url_allowed(normalized):
+                        continue
+                    published = entry.get("date_gmt") or entry.get("date")
+                    detected = None
+                    if isinstance(published, str):
+                        try:
+                            detected = datetime.fromisoformat(published.replace("Z", "+00:00")).astimezone(timezone.utc).isoformat()
+                        except Exception:
+                            detected = None
+                    if detected and not _iso_in_window(detected, start_ts, end_ts):
+                        continue
+                    title = _wp_text(entry.get("title"))
+                    excerpt = _wp_text(entry.get("excerpt"))
+                    summary = " ".join(part for part in (title, excerpt) if part)
+                    if summary and not _renders_query_match(summary, [term]):
+                        continue
+                    self.store.upsert_url(
+                        normalized,
+                        host,
+                        hint_date=detected,
+                        query_match=f"{query_tag}:{term.lower()}",
+                    )
+                    queued += 1
+                if queued < per_page:
+                    break
+                page += 1
+
     async def _search_rss_feed(
         self,
         session: aiohttp.ClientSession,
         feed_url: str,
         queries: Sequence[str],
         query_tag: str,
+        start_ts: float,
+        end_ts: float,
         max_items: int = 150,
     ) -> None:
         text = await self._get_text(session, feed_url)
@@ -696,6 +930,8 @@ class PoliteCryptoCrawler:
                 hint_date = _parse_rss_timestamp(raw_val)
                 if hint_date:
                     break
+            if hint_date and not _iso_in_window(hint_date, start_ts, end_ts):
+                continue
             self.store.upsert_url(normalized, host, hint_date=hint_date, query_match=query_tag)
             count += 1
 
@@ -713,6 +949,28 @@ class PoliteCryptoCrawler:
                     if resp.status != 200:
                         return None
                     return await resp.text(errors="ignore")
+        except Exception:
+            return None
+
+    async def _get_json(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Any]:
+        host = urlparse(url).hostname or ""
+        if not _host_allowed(host):
+            return None
+        await self.robots.ensure_loaded(session, host)
+        if not self.robots.allowed(host, url):
+            return None
+        await self.gate.wait(host, self.robots.crawl_delay(host))
+        try:
+            async with async_timeout.timeout(self.cfg["timeout_sec"]):
+                async with session.get(url, params=params) as resp:
+                    if resp.status != 200:
+                        return None
+                    return await resp.json(content_type=None)
         except Exception:
             return None
 

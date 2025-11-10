@@ -210,10 +210,17 @@ def bridge_flow(bridge: UltraSwapBridge | None, params: Dict[str, Any] | None = 
         print(f"❌ bridge error: {e!r}")
 
 
+def _automation_enabled() -> bool:
+    flag = os.getenv("WALLET_ALLOW_AUTOMATION", "")
+    return flag.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def menu():
     if not sys.stdin.isatty():
-        print("[cli] Non-interactive environment detected; exiting wallet console.")
-        return
+        if not _automation_enabled():
+            print("[cli] Non-interactive environment detected; exiting wallet console.")
+            return
+        print("[cli] Automation flag detected; continuing without interactive TTY.")
     # Reuse a single signer/connection pool across actions
     try:
         bridge: UltraSwapBridge | None = UltraSwapBridge()

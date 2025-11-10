@@ -96,4 +96,5 @@ class DiscoveryCoordinatorTest(TestCase):
         self.assertTrue(DiscoveryEvent.objects.filter(symbol="NEW-USDC").exists())
         self.assertGreaterEqual(HoneypotCheck.objects.filter(symbol="NEW-USDC").count(), 2)
         probe = SwapProbe.objects.get(symbol="NEW-USDC")
-        self.assertEqual(probe.failure_reason, "probe_pending")
+        self.assertIsNone(probe.failure_reason)
+        self.assertTrue(probe.success)

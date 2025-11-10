@@ -77,6 +77,11 @@ class PortfolioState:
             )
         path = os.getenv("DERIVATION_PATH", "m/44'/60'/0'/0/0")
         try:
+            if hasattr(Account, "enable_unaudited_hdwallet_features"):
+                try:
+                    Account.enable_unaudited_hdwallet_features()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
             acct = Account.from_mnemonic(mnemonic, account_path=path)  # type: ignore[arg-type]
             return acct.address.lower()
         except Exception as exc:  # pragma: no cover - depends on env secrets

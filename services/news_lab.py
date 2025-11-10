@@ -18,6 +18,11 @@ from services.news_archive import CryptoNewsArchiver
 from services.polite_news_crawler import collect_news as crawl_news
 from trading.data_loader import TOKEN_SYNONYMS
 
+try:  # Optional dependency – falls back to lexical scoring when unavailable.
+    from textblob import TextBlob
+except Exception:  # pragma: no cover - TextBlob is optional in minimal deployments.
+    TextBlob = None  # type: ignore[assignment]
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HIST_ROOT = REPO_ROOT / "data" / "historical_ohlcv"
@@ -51,6 +56,40 @@ BASE_CONTEXT_TOKENS: Dict[str, Sequence[str]] = {
 }
 
 NEWS_LOG_PREFIX = "news:log"
+
+_POSITIVE_LEXICON = {
+    "surge",
+    "rally",
+    "spike",
+    "partnership",
+    "upgrade",
+    "bullish",
+    "gain",
+    "record",
+    "milestone",
+    "adopt",
+    "expansion",
+    "growth",
+    "support",
+    "boom",
+}
+_NEGATIVE_LEXICON = {
+    "hack",
+    "exploit",
+    "breach",
+    "lawsuit",
+    "regulation",
+    "selloff",
+    "drop",
+    "collapse",
+    "bearish",
+    "loss",
+    "halt",
+    "delay",
+    "ban",
+    "fraud",
+    "scam",
+}
 
 
 @dataclass
@@ -271,6 +310,40 @@ def _format_crypto_news(row: Dict[str, Any]) -> Dict[str, Any]:
         "origin": "cryptopanic",
         "source": source,
     }
+
+
+def _score_sentiment(text: str) -> str:
+    """
+    Lightweight sentiment classifier used when crawling community sources.
+    Prefers TextBlob when available, and falls back to a lexical heuristic so
+    we always emit a label without external services.
+    """
+
+    content = (text or "").strip()
+    if not content:
+        return "neutral"
+    if TextBlob is not None:
+        try:
+            polarity = TextBlob(content).sentiment.polarity  # type: ignore[call-arg]
+            if polarity >= 0.12:
+                return "positive"
+            if polarity <= -0.12:
+                return "negative"
+            return "neutral"
+        except Exception:
+            pass
+    tokens = re.findall(r"[A-Za-z]+", content.lower())
+    score = 0
+    for token in tokens:
+        if token in _POSITIVE_LEXICON:
+            score += 1
+        elif token in _NEGATIVE_LEXICON:
+            score -= 1
+    if score > 0:
+        return "positive" if score > 1 else "neutral"
+    if score < 0:
+        return "negative" if score < -1 else "neutral"
+    return "neutral"
 
 
 def _format_crawler_news(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

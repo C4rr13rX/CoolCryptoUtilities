@@ -5,6 +5,7 @@ import time
 
 from django.apps import AppConfig
 from django.apps import apps
+from django.conf import settings
 
 
 class CoreConfig(AppConfig):
@@ -14,6 +15,8 @@ class CoreConfig(AppConfig):
     _guardian_started = False
 
     def ready(self):
+        if getattr(settings, "TESTING", False):
+            return
         if CoreConfig._guardian_started:
             return
         CoreConfig._guardian_started = True

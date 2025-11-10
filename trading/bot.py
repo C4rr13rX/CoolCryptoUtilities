@@ -729,6 +729,15 @@ class TradingBot:
             return {}
         max_share = max(0.01, min(self.max_symbol_share, 1.0))
         allocation = total_stable * max_share
+        adjustment = self._get_pair_adjustment(symbol)
+        multiplier = 1.0
+        if adjustment:
+            try:
+                multiplier = float(adjustment.get("allocation_multiplier", 1.0))
+            except Exception:
+                multiplier = 1.0
+        multiplier = max(0.25, min(3.0, multiplier))
+        allocation = min(total_stable, allocation * multiplier)
         current_exposure = self.active_exposure.get(symbol, 0.0)
         available = max(0.0, allocation - current_exposure)
         if available <= 0:
@@ -1542,19 +1551,31 @@ class TradingBot:
             equilibrium_score = self.equilibrium.score()
             if profit > 0 and equilibrium_ready:
                 checkpoint = profit * self.stable_checkpoint_ratio
-                self.stable_bank += checkpoint
-                profit -= checkpoint
-                savings_event = self.savings.record_allocation(
-                    amount=checkpoint,
-                    token=stable_target,
-                    mode="live" if self.live_trading_enabled else "ghost",
-                    equilibrium_score=self.equilibrium.score(),
-                    trade_id=pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}",
-                )
-                decision.setdefault("savings", {})["checkpoint"] = savings_event.to_dict()
-                transfers = self.savings.drain_ready_transfers()
-                for transfer in transfers:
-                    self._handle_savings_transfer(transfer)
+                estimated_fees = max(exit_size * price * fees, 0.0)
+                fee_guard = estimated_fees * 1.89
+                savings_slot = decision.setdefault("savings", {})
+                if checkpoint >= fee_guard:
+                    self.stable_bank += checkpoint
+                    profit -= checkpoint
+                    savings_event = self.savings.record_allocation(
+                        amount=checkpoint,
+                        token=stable_target,
+                        mode="live" if self.live_trading_enabled else "ghost",
+                        equilibrium_score=self.equilibrium.score(),
+                        trade_id=pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}",
+                    )
+                    savings_slot["checkpoint"] = savings_event.to_dict()
+                    transfers = self.savings.drain_ready_transfers()
+                    for transfer in transfers:
+                        self._handle_savings_transfer(transfer)
+                else:
+                    savings_slot["skipped"] = {
+                        "reason": "checkpoint_below_fee_buffer",
+                        "checkpoint": checkpoint,
+                        "required_min": fee_guard,
+                        "estimated_fees": estimated_fees,
+                    }
+                    checkpoint = 0.0
             elif profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
                 decision.update({"status": "hold-negative", "reason": reason or "hold"})
                 return decision

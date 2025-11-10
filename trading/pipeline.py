@@ -667,6 +667,8 @@ class TrainingPipeline:
                 meta={"iteration": self.iteration},
             )
 
+        if not promote:
+            self._maybe_update_threshold_from_evaluation(evaluation, gating_reason)
         self._save_state()
         return result
 
@@ -1397,6 +1399,40 @@ class TrainingPipeline:
             return
         if self._auto_backfill_news(candidate_assets):
             self._last_news_top_up = now
+
+    def _maybe_update_threshold_from_evaluation(
+        self,
+        evaluation: Optional[Dict[str, Any]],
+        gating_reason: Optional[str] = None,
+    ) -> None:
+        if not evaluation:
+            return
+        best_threshold = evaluation.get("best_threshold")
+        if best_threshold is None:
+            return
+        try:
+            candidate = float(best_threshold)
+        except (TypeError, ValueError):
+            return
+        if not 0.0 < candidate < 1.0:
+            return
+        delta = abs(candidate - self.decision_threshold)
+        if delta < 0.02:
+            return
+        blend = float(os.getenv("TRAINING_THRESHOLD_BLEND", "0.2") or "0.2")
+        blend = max(0.05, min(blend, 0.5))
+        updated = max(0.05, min(0.95, (1 - blend) * self.decision_threshold + blend * candidate))
+        self.decision_threshold = updated
+        self.metrics.feedback(
+            "training",
+            severity=FeedbackSeverity.INFO,
+            label="decision_threshold_tuned",
+            details={
+                "best_threshold": candidate,
+                "updated_threshold": updated,
+                "reason": gating_reason or "candidate_eval",
+            },
+        )
 
     def _handle_horizon_deficit(self, deficits: Dict[str, float], focus_assets: Optional[Sequence[str]]) -> None:
         log_message(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 DEFAULT_GUARDIAN_PROMPT = (
     "Instructions:\n"
+    "• Do not modify any files under monitoring_guardian/ or tools/codex_session.py; treat them as read-only infrastructure.\n"
+    "• You cannot access external networks or run git push from this sandbox; never attempt those operations—just note it for the operator if needed.\n"
     "1. Fix any errors found in the logs by making meaningful upgrades while following a fix/test/fix/test loop.\n"
     "2. Answer the following question:\n"
     "\"What are 15 improvements to make for this system to (A) enhance it toward equilibrium in producing the most accurate crypto price and "

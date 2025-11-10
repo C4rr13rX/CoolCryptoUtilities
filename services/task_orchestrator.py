@@ -66,11 +66,14 @@ class ParallelTaskManager:
 
     def __init__(
         self,
-        map_path: Path = Path("orchestration/dependency_map.json"),
+        map_path: Optional[Path] = None,
         limiter: Optional[AdaptiveLimiter] = None,
         system_profile: Optional[SystemProfile] = None,
     ) -> None:
-        self.graph = DependencyGraph(map_path)
+        repo_root = Path(__file__).resolve().parents[1]
+        default_map = repo_root / "orchestration" / "dependency_map.json"
+        target_map = (map_path or default_map).resolve()
+        self.graph = DependencyGraph(target_map)
         self.queues: Dict[str, queue.Queue[Optional[TaskDescriptor]]] = {
             name: queue.Queue() for name in self.graph.nodes
         }
@@ -80,7 +83,7 @@ class ParallelTaskManager:
         self._events_lock = threading.Lock()
         self._state: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._state_lock = threading.Lock()
-        self._state_path = map_path.with_name("dependency_state.json")
+        self._state_path = target_map.with_name("dependency_state.json")
         self.limiter = limiter or AdaptiveLimiter()
         self.system_profile = system_profile or detect_system_profile()
 
