@@ -4,7 +4,7 @@ import asyncio
 import os
 import threading
 import time
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from trading.pipeline import TrainingPipeline
 from trading.selector import GhostTradingSupervisor
@@ -30,6 +30,8 @@ class ProductionManager:
         self._active_flag_key = "production_manager_active"
         self.idle_worker = IdleWorkManager(db=self.pipeline.db)
         self.heartbeat = HeartbeatFile(label="production_manager")
+        self._startup_prewarm: Dict[str, Any] = {}
+        self._startup_prewarm_reported = False
 
     def start(self) -> None:
         if self.is_running:
@@ -37,6 +39,8 @@ class ProductionManager:
             self._set_active_flag(True)
             return
         self._stop.clear()
+        self._startup_prewarm = self._prewarm_pipeline()
+        self._startup_prewarm_reported = False
         self.supervisor.build()
         try:
             self._loop_thread = threading.Thread(target=self._run_supervisor_loop, daemon=True)
@@ -47,8 +51,13 @@ class ProductionManager:
             self._set_active_flag(True)
             self.heartbeat.update(
                 "running",
-                metadata={"iteration": self.pipeline.iteration, "cycle_interval": self._cycle_interval},
+                metadata={
+                    "iteration": self.pipeline.iteration,
+                    "cycle_interval": self._cycle_interval,
+                    "startup_prewarm": self._startup_prewarm,
+                },
             )
+            self._startup_prewarm_reported = True
             log_message("production", "manager started.")
         except Exception:
             self._set_active_flag(False)
@@ -110,7 +119,11 @@ class ProductionManager:
             cycle_id = str(int(time.time()))
             focus_assets, _ = self.pipeline.ghost_focus_assets()
             readiness = self.pipeline.live_readiness_report()
-            metadata = {"focus_assets": focus_assets, "readiness": readiness}
+            bias = self._safe_horizon_bias()
+            metadata = {"focus_assets": focus_assets, "readiness": readiness, "horizon_bias": bias}
+            if not self._startup_prewarm_reported and self._startup_prewarm:
+                metadata["startup_prewarm"] = self._startup_prewarm
+                self._startup_prewarm_reported = True
             self.heartbeat.update(
                 "running",
                 metadata={
@@ -120,6 +133,7 @@ class ProductionManager:
                     "live_ready": readiness.get("ready") if readiness else False,
                     "live_precision": (readiness or {}).get("precision"),
                     "live_samples": (readiness or {}).get("samples"),
+                    "horizon_bias": bias,
                 },
             )
             self.task_manager.submit("data_ingest", self._task_data_ingest, cycle_id=cycle_id)
@@ -220,6 +234,41 @@ class ProductionManager:
         worked = self.idle_worker.run_next_job()
         if not worked:
             log_message("idle-work", "no background job ready this cycle", severity="info")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _prewarm_pipeline(self) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        try:
+            focus_assets, _ = self.pipeline.ghost_focus_assets()
+            dataset_ready = bool(self.pipeline.warm_dataset_cache(focus_assets=focus_assets or None, oversample=False))
+            news_ready = bool(self.pipeline.reinforce_news_cache(focus_assets=focus_assets or None))
+            payload = {
+                "focus_assets": focus_assets[:8],
+                "dataset_ready": dataset_ready,
+                "news_ready": news_ready,
+            }
+            if not dataset_ready or not news_ready:
+                payload["note"] = "warmup_incomplete"
+        except Exception as exc:
+            log_message("production", f"pipeline prewarm failed: {exc}", severity="warning")
+            payload = {"error": str(exc)}
+        return payload
+
+    def _safe_horizon_bias(self) -> Dict[str, float]:
+        try:
+            bias = self.pipeline.horizon_bias()
+        except Exception:
+            return {}
+        result: Dict[str, float] = {}
+        for key, value in bias.items():
+            try:
+                result[key] = float(value)
+            except Exception:
+                continue
+        return result
 
 
 if __name__ == "__main__":

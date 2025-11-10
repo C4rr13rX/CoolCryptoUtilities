@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
@@ -21,6 +23,10 @@ def main() -> None:
         raise ImportError(
             "Couldn't import Django. Make sure it is installed and available on your PYTHONPATH."
         ) from exc
+    if any(arg.startswith("runserver") for arg in sys.argv[1:]):
+        from core.logtail import start_log_tails
+
+        start_log_tails()
     execute_from_command_line(sys.argv)
 
 

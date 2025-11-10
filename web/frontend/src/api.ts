@@ -221,6 +221,11 @@ export async function runGuardianJob(payload: { prompt?: string; save_default?: 
   return data;
 }
 
+export async function fetchGuardianLogs(limit = 200) {
+  const { data } = await api.get('/guardian/logs/', { params: { limit } });
+  return data;
+}
+
 export interface SecureSettingPayload {
   id?: number;
   name: string;

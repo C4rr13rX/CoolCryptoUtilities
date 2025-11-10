@@ -6,6 +6,7 @@ from pathlib import Path
 from django.core.management import BaseCommand, call_command
 
 
+
 class Command(BaseCommand):
     help = "Build frontend, apply migrations, collect static, then runserver (in that order)."
 

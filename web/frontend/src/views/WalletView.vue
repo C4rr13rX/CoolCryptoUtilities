@@ -183,7 +183,16 @@
             <span class="value">{{ productionNote }}</span>
           </div>
         </div>
-        <pre class="console-output">{{ consoleLines.join('\n') }}</pre>
+        <div class="console-stack">
+          <div>
+            <span class="label">Production Manager Console</span>
+            <pre class="console-output">{{ consoleLines.join('\n') || 'No output yet.' }}</pre>
+          </div>
+          <div>
+            <span class="label">Guardian · Codex Console</span>
+            <pre class="console-output">{{ guardianConsole.join('\n') || 'No guardian transcript yet.' }}</pre>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -217,10 +226,12 @@ const mnemonicInput = ref('');
 const formState = reactive<Record<string, Record<string, string>>>({});
 const activeAction = ref('');
 const statusTimer = ref<number>();
+const consoleTimer = ref<number>();
 
 const walletBalances = computed(() => wallet.balances);
 const transferEntries = computed(() => Object.entries(wallet.transfers || {}));
 const consoleLines = computed(() => dashboard.consoleLogs || []);
+const guardianConsole = computed(() => dashboard.guardianLogs || []);
 const isRunning = computed(() => dashboard.consoleStatus?.status?.includes('run'));
 const totalUsdDisplay = computed(() => currency(wallet.snapshot?.totals?.usd || 0));
 const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || 'Never');
@@ -287,14 +298,23 @@ async function clearMnemonic() {
 }
 
 onMounted(async () => {
-  await Promise.all([wallet.refreshStatus(), wallet.fetchSnapshot(), wallet.loadMnemonicPreview()]);
+  await Promise.all([
+    wallet.refreshStatus(),
+    wallet.fetchSnapshot(),
+    wallet.loadMnemonicPreview(),
+    dashboard.refreshConsole(),
+  ]);
   wallet.autoRefresh();
   statusTimer.value = window.setInterval(() => wallet.refreshStatus(), 6000);
+  consoleTimer.value = window.setInterval(() => dashboard.refreshConsole().catch(() => undefined), 10000);
 });
 
 onBeforeUnmount(() => {
   if (statusTimer.value) {
     window.clearInterval(statusTimer.value);
+  }
+  if (consoleTimer.value) {
+    window.clearInterval(consoleTimer.value);
   }
 });
 
@@ -563,6 +583,12 @@ function truncateHash(hash: string | undefined) {
 
 .pm-meta .value.online {
   color: #34d399;
+}
+
+.console-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
 }
 
 .pm-actions {

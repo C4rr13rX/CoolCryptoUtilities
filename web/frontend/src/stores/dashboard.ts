@@ -11,6 +11,7 @@ import {
   startConsoleProcess,
   stopConsoleProcess,
   sendConsoleInput,
+  fetchGuardianLogs,
 } from '@/api';
 
 interface DashboardState {
@@ -18,6 +19,7 @@ interface DashboardState {
   streams: Record<string, any>;
   consoleStatus: Record<string, any> | null;
   consoleLogs: string[];
+  guardianLogs: string[];
   advisories: any[];
   recentTrades: any[];
   latestFeedback: any[];
@@ -32,6 +34,7 @@ export const useDashboardStore = defineStore('dashboard', {
     streams: {},
     consoleStatus: null,
     consoleLogs: [],
+    guardianLogs: [],
     advisories: [],
     recentTrades: [],
     latestFeedback: [],
@@ -62,6 +65,7 @@ export const useDashboardStore = defineStore('dashboard', {
           streams,
           consoleStatus,
           consoleLogs,
+          guardianLogs,
           advisories,
           trades,
           feedback,
@@ -71,6 +75,7 @@ export const useDashboardStore = defineStore('dashboard', {
           fetchLatestStreams(),
           fetchConsoleStatus(),
           fetchConsoleLogs(200),
+          fetchGuardianLogs(200),
           fetchAdvisories(50),
           fetchRecentTrades(50),
           fetchFeedback(50),
@@ -80,6 +85,7 @@ export const useDashboardStore = defineStore('dashboard', {
         this.streams = streams;
         this.consoleStatus = consoleStatus;
         this.consoleLogs = consoleLogs.lines || [];
+        this.guardianLogs = guardianLogs.lines || [];
         const advisoryList = advisories?.results || advisories || summary?.active_advisories || [];
         this.advisories = advisoryList;
         this.recentTrades = trades?.results || trades || summary?.recent_trades || [];
@@ -93,12 +99,14 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
     async refreshConsole() {
-      const [consoleStatus, consoleLogs] = await Promise.all([
+      const [consoleStatus, consoleLogs, guardianLogs] = await Promise.all([
         fetchConsoleStatus(),
-        fetchConsoleLogs(200)
+        fetchConsoleLogs(200),
+        fetchGuardianLogs(200),
       ]);
       this.consoleStatus = consoleStatus;
       this.consoleLogs = consoleLogs.lines || [];
+      this.guardianLogs = guardianLogs.lines || [];
     },
     async startProcess() {
       await startConsoleProcess();

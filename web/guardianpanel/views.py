@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,6 +14,7 @@ from services.guardian_supervisor import guardian_supervisor
 
 
 class GuardianSettingsView(APIView):
+    permission_classes = [IsAuthenticated]
     def get(self, request: Request, *args, **kwargs) -> Response:
         settings = get_guardian_settings()
         status_payload = guardian_supervisor.status()
@@ -44,6 +48,7 @@ class GuardianSettingsView(APIView):
 
 
 class GuardianRunView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request: Request, *args, **kwargs) -> Response:
         payload = request.data or {}
         prompt = payload.get("prompt")
@@ -56,3 +61,28 @@ class GuardianRunView(APIView):
             prompt_arg = prompt
         guardian_supervisor.run_once(prompt_arg)
         return Response({"status": "queued"}, status=status.HTTP_202_ACCEPTED)
+
+
+class GuardianLogView(APIView):
+    permission_classes = [IsAuthenticated]
+    LOG_CANDIDATES = [
+        Path("runtime/guardian/transcripts/guardian-session.log"),
+        Path("codex_transcripts/guardian-session.log"),
+    ]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        limit = int(request.query_params.get("limit", "200"))
+        limit = max(10, min(limit, 2000))
+        lines: list[str] = []
+        for path in self.LOG_CANDIDATES:
+            if not path.exists():
+                continue
+            try:
+                with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                    entries = handle.readlines()
+            except Exception:
+                continue
+            if entries:
+                lines = [line.rstrip("\n") for line in entries[-limit:]]
+                break
+        return Response({"lines": lines}, status=status.HTTP_200_OK)

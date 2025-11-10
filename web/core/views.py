@@ -22,6 +22,8 @@ if str(ROOT) not in sys.path:
 from db import get_db  # noqa: E402
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 
+GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
+LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
 
 def _load_report(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -238,7 +240,8 @@ class GuardianFallbackView(TemplateView):
             status = guardian_supervisor.status()
         except Exception:
             status = {"running": False}
-        console_tail = _tail_lines(Path("codex_transcripts/guardian-session.log"), limit=400)
+        transcription_path = GUARDIAN_TRANSCRIPT if GUARDIAN_TRANSCRIPT.exists() else LEGACY_TRANSCRIPT
+        console_tail = _tail_lines(transcription_path, limit=400)
         last_report = status.get("last_report")
         if isinstance(last_report, (int, float)):
             last_report = datetime.fromtimestamp(last_report)
