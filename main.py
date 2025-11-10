@@ -12,6 +12,14 @@ from services.env_loader import EnvLoader
 from services.wallet_actions import WALLET_ACTIONS
 from services.wallet_state import capture_wallet_state
 
+try:
+    from services.process_names import set_process_name
+except Exception:  # pragma: no cover - optional dependency missing
+    def set_process_name(_: str) -> None:
+        return
+
+set_process_name("Codex Session")
+
 
 def _update_wallet_snapshot(bridge: UltraSwapBridge | None) -> None:
     if bridge is None:

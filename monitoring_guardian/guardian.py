@@ -31,6 +31,13 @@ except (ImportError, ValueError):
 # -------------------------------------------------------------------------------
 
 from monitoring_guardian.prompt_text import DEFAULT_GUARDIAN_PROMPT
+try:
+    from services.process_names import set_process_name
+except Exception:  # pragma: no cover - standalone fallback
+    def set_process_name(_: str) -> None:
+        return
+
+set_process_name("Guardian")
 
 try:  # Optional dependency when running inside Django
     from services.guardian_state import consume_one_time_prompt, get_guardian_settings
@@ -51,8 +58,18 @@ except Exception:  # pragma: no cover - fallback when services import fails
 
 TRANSCRIPT_DIR = Path("runtime/guardian/transcripts")
 TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
+RUN_REQUEST_PATH = Path("runtime/guardian/request_run")
 
 session = CodexSession("guardian-session", transcript_dir=TRANSCRIPT_DIR)
+
+if "DJANGO_SETTINGS_MODULE" not in os.environ:
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
+try:  # pragma: no cover - guardian may already run inside Django
+    import django
+
+    django.setup()
+except Exception:
+    pass
 
 DEFAULT_CONFIG: Dict[str, object] = {
     "log_files": ["logs/system.log"],
@@ -153,6 +170,7 @@ class Guardian:
 
     def run(self) -> None:
         self.last_report_ts = time.time()
+        self._consume_run_request()
         self._poll_logs()
         self._check_process_health()
         self._emit_report()
@@ -160,6 +178,7 @@ class Guardian:
             while not self.shutdown.is_set():
                 self._poll_logs()
                 self._check_process_health()
+                self._consume_run_request()
                 now = time.time()
                 if self._force_report.is_set() or now - self.last_report_ts >= self.report_interval:
                     self._emit_report()
@@ -229,6 +248,15 @@ class Guardian:
                         "WARNING",
                     )
                 )
+
+    def _consume_run_request(self) -> None:
+        if not RUN_REQUEST_PATH.exists():
+            return
+        try:
+            RUN_REQUEST_PATH.unlink()
+        except Exception:
+            pass
+        self._force_report.set()
 
     def _emit_report(self) -> None:
         unique_findings = self._gather_unique_findings()

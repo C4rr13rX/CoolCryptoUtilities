@@ -20,6 +20,7 @@
             <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
           </span>
           <span class="label">{{ item.label }}</span>
+          <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
         </RouterLink>
       </nav>
       <footer class="sidebar__foot">
@@ -40,7 +41,7 @@
 
     <main class="content">
       <header class="content__header">
-        <button class="hamburger" type="button" aria-label="Toggle navigation" @click="toggleSidebar">
+        <button class="hamburger" type="button" aria-label="Toggle navigation" :class="{ open: sidebarOpen }" @click="toggleSidebar">
           <span />
           <span />
           <span />
@@ -283,11 +284,43 @@ const totalProfitDisplay = computed(() =>
   transition: background 0.2s ease, color 0.2s ease;
 }
 
+.nav-link .label {
+  flex: 1;
+}
+
 .nav-link .icon {
   width: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.nav-led {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  margin-left: auto;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
+  transition: background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.nav-led.intent-ok {
+  background: #22c55e;
+  border-color: rgba(34, 197, 94, 0.7);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.7);
+}
+
+.nav-led.intent-warn {
+  background: #facc15;
+  border-color: rgba(250, 204, 21, 0.7);
+  box-shadow: 0 0 12px rgba(250, 204, 21, 0.65);
+}
+
+.nav-led.intent-error {
+  background: #f87171;
+  border-color: rgba(248, 113, 113, 0.8);
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
 }
 
 .nav-link.active {
@@ -325,6 +358,9 @@ const totalProfitDisplay = computed(() =>
   min-width: 0;
   display: flex;
   flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
+  align-self: stretch;
   padding: 1.5rem;
   gap: 1.5rem;
 }
@@ -355,6 +391,8 @@ const totalProfitDisplay = computed(() =>
   width: 18px;
   height: 2px;
   background: #f8fbff;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  display: block;
 }
 
 .header-metrics {
@@ -376,6 +414,7 @@ const totalProfitDisplay = computed(() =>
 
 .content__body {
   flex: 1;
+  width: 100%;
   background: rgba(6, 14, 26, 0.92);
   border: 1px solid rgba(79, 168, 255, 0.18);
   border-radius: 18px;
@@ -387,10 +426,13 @@ const totalProfitDisplay = computed(() =>
 @media (max-width: 959px) {
   .sidebar {
     position: fixed;
-    inset: 0 auto 0 0;
+    inset: 0;
     transform: translateX(-100%);
     max-height: none;
-    width: 300px;
+    width: 100vw;
+    max-width: none;
+    padding-top: 2.5rem;
+    z-index: 1000;
   }
   .sidebar.open {
     transform: translateX(0);
@@ -411,6 +453,15 @@ const totalProfitDisplay = computed(() =>
   }
   .hamburger {
     display: flex;
+  }
+  .hamburger.open span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+  }
+  .hamburger.open span:nth-child(2) {
+    opacity: 0;
+  }
+  .hamburger.open span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
   }
   .content {
     padding-top: 1rem;

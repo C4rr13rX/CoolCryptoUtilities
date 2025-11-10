@@ -167,3 +167,11 @@ def update_production_state(running: bool, metadata: Optional[Dict[str, Any]] = 
             state["production"] = payload
     except Exception:
         return
+
+
+RUN_REQUEST_PATH = STATUS_DIR / "request_run"
+
+
+def request_guardian_run() -> None:
+    RUN_REQUEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RUN_REQUEST_PATH.write_text(str(time.time()), encoding="utf-8")

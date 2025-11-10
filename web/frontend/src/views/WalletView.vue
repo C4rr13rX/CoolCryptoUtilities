@@ -152,48 +152,17 @@
       <p v-else class="empty-text">No NFTs detected for this wallet.</p>
     </section>
 
-    <section class="panel pm-panel">
+    <section class="panel console-panel">
       <header>
         <div>
-          <h2>Production Manager · Auto Trader</h2>
-          <p class="caption">Ghost + live trading orchestration (option 7)</p>
+          <h2>Automation Consoles</h2>
+          <p class="caption">Mirrors guardian + production manager logs.</p>
         </div>
-        <div class="pm-actions">
-          <button class="btn" type="button" @click="dashboard.startProcess" :disabled="isRunning">
-            Start Bot
-          </button>
-          <button class="btn danger" type="button" @click="dashboard.stopProcess" :disabled="!isRunning">
-            Stop
-          </button>
-        </div>
+        <button class="btn ghost" type="button" @click="refreshConsoleLogs" :disabled="consoleBusy">
+          {{ consoleBusy ? 'Refreshing…' : 'Refresh Logs' }}
+        </button>
       </header>
-      <div class="pm-body">
-        <p>The production manager is the always-on crypto day-trading engine. It streams data, trains candidates, and executes swaps based on guardian findings. Monitor its console output below.</p>
-        <div class="pm-meta">
-          <div>
-            <span class="label">Status</span>
-            <span class="value" :class="{ online: productionStatus.running }">{{ productionStatusLabel }}</span>
-          </div>
-          <div>
-            <span class="label">Last Update</span>
-            <span class="value">{{ productionUpdatedAt }}</span>
-          </div>
-          <div v-if="productionNote">
-            <span class="label">Note</span>
-            <span class="value">{{ productionNote }}</span>
-          </div>
-        </div>
-        <div class="console-stack">
-          <div>
-            <span class="label">Production Manager Console</span>
-            <pre class="console-output">{{ consoleLines.join('\n') || 'No output yet.' }}</pre>
-          </div>
-          <div>
-            <span class="label">Guardian · Codex Console</span>
-            <pre class="console-output">{{ guardianConsole.join('\n') || 'No guardian transcript yet.' }}</pre>
-          </div>
-        </div>
-      </div>
+      <AutomationConsoleStack :manager-lines="consoleLines" :guardian-lines="guardianConsole" />
     </section>
 
     <section class="panel mnemonic-panel">
@@ -219,6 +188,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useWalletStore } from '@/stores/wallet';
+import AutomationConsoleStack from '@/components/AutomationConsoleStack.vue';
 
 const dashboard = useDashboardStore();
 const wallet = useWalletStore();
@@ -227,27 +197,14 @@ const formState = reactive<Record<string, Record<string, string>>>({});
 const activeAction = ref('');
 const statusTimer = ref<number>();
 const consoleTimer = ref<number>();
+const consoleBusy = ref(false);
 
 const walletBalances = computed(() => wallet.balances);
 const transferEntries = computed(() => Object.entries(wallet.transfers || {}));
 const consoleLines = computed(() => dashboard.consoleLogs || []);
 const guardianConsole = computed(() => dashboard.guardianLogs || []);
-const isRunning = computed(() => dashboard.consoleStatus?.status?.includes('run'));
 const totalUsdDisplay = computed(() => currency(wallet.snapshot?.totals?.usd || 0));
 const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || 'Never');
-const productionStatus = computed(() => wallet.status?.production || {});
-const productionStatusLabel = computed(() => (productionStatus.value.running ? 'Running' : 'Idle'));
-const productionUpdatedAt = computed(() => {
-  const ts = productionStatus.value.updated_at;
-  if (!ts) return 'Unknown';
-  const parsed = new Date(ts);
-  if (Number.isNaN(parsed.getTime())) return ts;
-  return parsed.toLocaleString();
-});
-const productionNote = computed(() => {
-  const meta = productionStatus.value.metadata || {};
-  return meta.note || meta.reason || productionStatus.value.note || '';
-});
 
 const workerSummary = computed(() => {
   if (wallet.running || wallet.autoRefreshing || wallet.status?.running) {
@@ -295,6 +252,19 @@ async function saveMnemonic() {
 async function clearMnemonic() {
   mnemonicInput.value = '';
   await wallet.saveMnemonic(null);
+}
+
+async function refreshConsoleLogs() {
+  if (consoleBusy.value) return;
+  consoleBusy.value = true;
+  try {
+    await dashboard.refreshConsole();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('Failed to refresh console logs', error);
+  } finally {
+    consoleBusy.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -557,43 +527,8 @@ function truncateHash(hash: string | undefined) {
   gap: 0.2rem;
 }
 
-.pm-panel .pm-body {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.pm-meta {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0.6rem;
-}
-
-.pm-meta .label {
-  display: block;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08rem;
-  color: rgba(255, 255, 255, 0.55);
-}
-
-.pm-meta .value {
-  font-weight: 600;
-}
-
-.pm-meta .value.online {
-  color: #34d399;
-}
-
-.console-stack {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1rem;
-}
-
-.pm-actions {
-  display: flex;
-  gap: 0.6rem;
+.console-panel header {
+  align-items: center;
 }
 
 .mnemonic-form {

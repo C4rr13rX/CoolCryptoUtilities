@@ -272,6 +272,12 @@ class ProductionManager:
 
 
 if __name__ == "__main__":
+    try:
+        from services.process_names import set_process_name
+    except Exception:  # pragma: no cover
+        def set_process_name(_: str) -> None:
+            return
+    set_process_name("Production Manager")
     manager = ProductionManager()
     try:
         manager.start()
