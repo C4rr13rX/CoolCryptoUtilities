@@ -8061,8 +8061,8 @@
   },
   "1762739018": {
     "data_ingest": {
-      "status": "waiting_deps",
-      "updated_at": 1762739130.4278574
+      "status": "running",
+      "updated_at": 1762739130.9914265
     },
     "news_enrichment": {
       "status": "queued",
