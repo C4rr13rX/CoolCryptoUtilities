@@ -1,12 +1,136 @@
 {
-  "1762733611": {
+  "1762733040": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733698.380406
+      "updated_at": 1762733043.6028917
+    },
+    "news_enrichment": {
+      "status": "completed",
+      "updated_at": 1762738287.7319324,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "completed",
+      "updated_at": 1762738287.9686906,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "completed",
+      "updated_at": 1762738316.9258983
+    },
+    "ghost_metrics": {
+      "status": "completed",
+      "updated_at": 1762738316.9952192
+    },
+    "scheduler_refresh": {
+      "status": "completed",
+      "updated_at": 1762738317.0731995
+    },
+    "telemetry_flush": {
+      "status": "completed",
+      "updated_at": 1762738317.150989
+    },
+    "background_refresh": {
+      "status": "completed",
+      "updated_at": 1762733043.588965
+    }
+  },
+  "1762733085": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762733086.487027
+    },
+    "news_enrichment": {
+      "status": "completed",
+      "updated_at": 1762738641.251011,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "completed",
+      "updated_at": 1762738641.3600984,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "completed",
+      "updated_at": 1762738659.8127615
+    },
+    "ghost_metrics": {
+      "status": "completed",
+      "updated_at": 1762738659.8817706
+    },
+    "scheduler_refresh": {
+      "status": "completed",
+      "updated_at": 1762738659.951596
+    },
+    "telemetry_flush": {
+      "status": "completed",
+      "updated_at": 1762738660.021045
+    },
+    "background_refresh": {
+      "status": "completed",
+      "updated_at": 1762733207.509108
+    }
+  },
+  "1762733130": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762733145.8658404
     },
     "news_enrichment": {
       "status": "running",
-      "updated_at": 1762733611.533296,
+      "updated_at": 1762738287.8060408,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -24,7 +148,7 @@
     },
     "dataset_warmup": {
       "status": "waiting_deps",
-      "updated_at": 1762733611.4811256,
+      "updated_at": 1762738641.3807921,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -42,33 +166,33 @@
     },
     "candidate_training": {
       "status": "waiting_deps",
-      "updated_at": 1762733611.4819245
+      "updated_at": 1762738659.8217983
     },
     "ghost_metrics": {
       "status": "waiting_deps",
-      "updated_at": 1762733611.4829574
+      "updated_at": 1762738659.8903458
     },
     "scheduler_refresh": {
       "status": "waiting_deps",
-      "updated_at": 1762733611.483245
+      "updated_at": 1762738659.961827
     },
     "telemetry_flush": {
       "status": "waiting_deps",
-      "updated_at": 1762733611.483487
+      "updated_at": 1762738660.0297854
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762733684.7557209
+      "updated_at": 1762733484.8595033
     }
   },
-  "1762733656": {
+  "1762733175": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733690.2084298
+      "updated_at": 1762733199.374974
     },
     "news_enrichment": {
       "status": "running",
-      "updated_at": 1762733656.5386705,
+      "updated_at": 1762738641.3229175,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -86,7 +210,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733656.4863856,
+      "updated_at": 1762733175.2151928,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -104,33 +228,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733656.487443
+      "updated_at": 1762733175.215798
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733656.4878523
+      "updated_at": 1762733175.2163897
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733656.4886246
+      "updated_at": 1762733175.217067
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733656.4889991
+      "updated_at": 1762733175.217664
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762733920.9649174
+      "updated_at": 1762733484.9140344
     }
   },
-  "1762733701": {
+  "1762733220": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733780.7991047
+      "updated_at": 1762733239.7900145
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733701.4920096,
+      "updated_at": 1762733220.2199306,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -148,7 +272,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733701.492502,
+      "updated_at": 1762733220.2255638,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -166,33 +290,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733701.4930458
+      "updated_at": 1762733220.2266984
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733701.4939783
+      "updated_at": 1762733220.227246
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733701.4945118
+      "updated_at": 1762733220.22779
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733701.4949625
+      "updated_at": 1762733220.228321
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734182.5177238
+      "updated_at": 1762733499.361562
     }
   },
-  "1762733746": {
+  "1762733265": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733833.3816953
+      "updated_at": 1762733265.8049624
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733746.5004916,
+      "updated_at": 1762733265.2318838,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -210,7 +334,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733746.5016794,
+      "updated_at": 1762733265.2333472,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -228,33 +352,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733746.502261
+      "updated_at": 1762733265.233939
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733746.502871
+      "updated_at": 1762733265.2345788
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733746.503381
+      "updated_at": 1762733265.236319
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733746.5045233
+      "updated_at": 1762733265.2369728
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734182.5744731
+      "updated_at": 1762733682.8159995
     }
   },
-  "1762733791": {
+  "1762733310": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733906.9531932
+      "updated_at": 1762733334.3510358
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733791.5070415,
+      "updated_at": 1762733310.2397013,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -272,7 +396,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733791.5076208,
+      "updated_at": 1762733310.2427635,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -290,33 +414,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733791.5089781
+      "updated_at": 1762733310.2445645
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733791.5096855
+      "updated_at": 1762733310.2453763
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733791.5102546
+      "updated_at": 1762733310.2460272
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733791.5108187
+      "updated_at": 1762733310.2467377
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734286.3913238
+      "updated_at": 1762733905.7955563
     }
   },
-  "1762733836": {
+  "1762733355": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733951.954939
+      "updated_at": 1762733379.359097
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733836.5137599,
+      "updated_at": 1762733355.2496672,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -334,7 +458,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733836.5151846,
+      "updated_at": 1762733355.2553449,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -352,33 +476,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733836.5178444
+      "updated_at": 1762733355.2571929
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733836.5186307
+      "updated_at": 1762733355.2579238
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733836.5196192
+      "updated_at": 1762733355.258723
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733836.5202258
+      "updated_at": 1762733355.2595048
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734523.8877163
+      "updated_at": 1762733905.852045
     }
   },
-  "1762733881": {
+  "1762733400": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762733976.1798165
+      "updated_at": 1762733424.3660543
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733881.523798,
+      "updated_at": 1762733400.2641873,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -396,7 +520,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733881.5247781,
+      "updated_at": 1762733400.267402,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -414,33 +538,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733881.5256264
+      "updated_at": 1762733400.2692666
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733881.5264475
+      "updated_at": 1762733400.2713444
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733881.5272238
+      "updated_at": 1762733400.2725692
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733881.5279217
+      "updated_at": 1762733400.2740881
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734801.6956825
+      "updated_at": 1762733966.2911136
     }
   },
-  "1762733926": {
+  "1762733445": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734036.4596179
+      "updated_at": 1762733469.4000738
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733926.5313332,
+      "updated_at": 1762733445.278432,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -458,7 +582,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733926.5331082,
+      "updated_at": 1762733445.2803473,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -476,33 +600,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733926.534493
+      "updated_at": 1762733445.2814903
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733926.535893
+      "updated_at": 1762733445.2826793
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733926.5368047
+      "updated_at": 1762733445.28399
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733926.5380194
+      "updated_at": 1762733445.2867208
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734801.762302
+      "updated_at": 1762734203.6808457
     }
   },
-  "1762733971": {
+  "1762733490": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734073.9036157
+      "updated_at": 1762733514.3949268
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762733971.5413492,
+      "updated_at": 1762733490.29285,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -520,7 +644,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762733971.5426195,
+      "updated_at": 1762733490.2942884,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -538,33 +662,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762733971.5435712
+      "updated_at": 1762733490.2963574
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762733971.5447047
+      "updated_at": 1762733490.2973125
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762733971.545743
+      "updated_at": 1762733490.2982569
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762733971.5470283
+      "updated_at": 1762733490.2992156
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762734889.607185
+      "updated_at": 1762734481.3584251
     }
   },
-  "1762734016": {
+  "1762733535": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734123.3577483
+      "updated_at": 1762733537.6535761
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734016.6813278,
+      "updated_at": 1762733535.3029933,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -582,7 +706,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734016.787287,
+      "updated_at": 1762733535.308407,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -600,33 +724,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734016.8948069
+      "updated_at": 1762733535.3106298
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734016.8970678
+      "updated_at": 1762733535.3116808
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734016.9907634
+      "updated_at": 1762733535.313078
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734017.1031845
+      "updated_at": 1762733535.3141088
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735107.7920063
+      "updated_at": 1762734481.4236305
     }
   },
-  "1762734062": {
+  "1762733580": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734189.333128
+      "updated_at": 1762733593.655705
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734062.2577689,
+      "updated_at": 1762733580.3180213,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -644,7 +768,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734062.2590458,
+      "updated_at": 1762733580.3239346,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -662,33 +786,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734062.2600408
+      "updated_at": 1762733580.325019
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734062.2612042
+      "updated_at": 1762733580.326249
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734062.262548
+      "updated_at": 1762733580.3286495
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734062.2636228
+      "updated_at": 1762733580.329753
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735240.6684713
+      "updated_at": 1762734570.6047595
     }
   },
-  "1762734107": {
+  "1762733625": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734239.3412197
+      "updated_at": 1762733649.4405324
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734107.2730758,
+      "updated_at": 1762733625.3337705,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -706,7 +830,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734107.274114,
+      "updated_at": 1762733625.3366432,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -724,33 +848,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734107.275517
+      "updated_at": 1762733625.3378215
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734107.2769883
+      "updated_at": 1762733625.3391378
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734107.2782476
+      "updated_at": 1762733625.3426933
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734107.2807927
+      "updated_at": 1762733625.3438487
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735240.7423651
+      "updated_at": 1762734808.0516682
     }
   },
-  "1762734152": {
+  "1762733670": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734304.7768424
+      "updated_at": 1762733785.9229703
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734152.2857773,
+      "updated_at": 1762733670.3484242,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -768,7 +892,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734152.2872467,
+      "updated_at": 1762733670.3500109,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -786,33 +910,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734152.291661
+      "updated_at": 1762733670.35252
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734152.2937331
+      "updated_at": 1762733670.3536954
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734152.2951193
+      "updated_at": 1762733670.3556557
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734152.2964587
+      "updated_at": 1762733670.3569014
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735286.7572675
+      "updated_at": 1762735085.7043786
     }
   },
-  "1762734197": {
+  "1762733715": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734354.9367177
+      "updated_at": 1762733808.9227815
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734197.304496,
+      "updated_at": 1762733715.3638325,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -830,7 +954,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734197.3057244,
+      "updated_at": 1762733715.3659322,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -848,33 +972,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734197.3120546
+      "updated_at": 1762733715.3673284
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734197.3133554
+      "updated_at": 1762733715.3705492
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734197.3146446
+      "updated_at": 1762733715.372416
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734197.315837
+      "updated_at": 1762733715.3740795
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735425.5715606
+      "updated_at": 1762735085.77479
     }
   },
-  "1762734242": {
+  "1762733760": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734394.7225146
+      "updated_at": 1762733886.620936
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734242.320544,
+      "updated_at": 1762733760.3800676,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -892,7 +1016,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734242.3226295,
+      "updated_at": 1762733760.381474,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -910,33 +1034,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734242.324297
+      "updated_at": 1762733760.3830159
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734242.3269253
+      "updated_at": 1762733760.3843277
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734242.3284774
+      "updated_at": 1762733760.3857243
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734242.3297348
+      "updated_at": 1762733760.3876815
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735562.7146206
+      "updated_at": 1762735167.899927
     }
   },
-  "1762734287": {
+  "1762733805": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734470.4192317
+      "updated_at": 1762733889.562368
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734287.335849,
+      "updated_at": 1762733805.394437,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -954,7 +1078,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734287.3372042,
+      "updated_at": 1762733805.3960598,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -972,33 +1096,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734287.3393195
+      "updated_at": 1762733805.3976223
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734287.3407085
+      "updated_at": 1762733805.3991232
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734287.3420813
+      "updated_at": 1762733805.402006
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734287.3445175
+      "updated_at": 1762733805.4037645
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735562.7877312
+      "updated_at": 1762735289.4805987
     }
   },
-  "1762734332": {
+  "1762733850": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734480.4029646
+      "updated_at": 1762733942.2044363
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734332.3510244,
+      "updated_at": 1762733850.6255224,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1016,7 +1140,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734332.3541002,
+      "updated_at": 1762733850.7960668,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1034,33 +1158,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734332.3560867
+      "updated_at": 1762733851.0841496
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734332.357818
+      "updated_at": 1762733851.3347387
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734332.3603253
+      "updated_at": 1762733851.4220195
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734332.3621676
+      "updated_at": 1762733851.5430024
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735649.7024193
+      "updated_at": 1762735397.5574512
     }
   },
-  "1762734377": {
+  "1762733896": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734585.867914
+      "updated_at": 1762733964.337073
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734377.3686864,
+      "updated_at": 1762733896.776743,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1078,7 +1202,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734377.370619,
+      "updated_at": 1762733896.7799087,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1096,33 +1220,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734377.3720796
+      "updated_at": 1762733896.7815073
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734377.3743467
+      "updated_at": 1762733896.7855148
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734377.3775027
+      "updated_at": 1762733896.7872558
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734377.3791873
+      "updated_at": 1762733896.7892625
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762735887.7552114
+      "updated_at": 1762735397.6342754
     }
   },
-  "1762734422": {
+  "1762733941": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734595.846633
+      "updated_at": 1762734032.7361665
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734422.3917012,
+      "updated_at": 1762733941.7958019,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1140,7 +1264,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734422.394052,
+      "updated_at": 1762733941.798228,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1158,33 +1282,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734422.3972719
+      "updated_at": 1762733941.800184
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734422.399492
+      "updated_at": 1762733941.8021805
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734422.4023545
+      "updated_at": 1762733941.8038507
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734422.4050493
+      "updated_at": 1762733941.8056056
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736165.7094698
+      "updated_at": 1762735500.3821912
     }
   },
-  "1762734467": {
+  "1762733986": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734701.3415012
+      "updated_at": 1762734095.0229099
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734467.4157267,
+      "updated_at": 1762733986.8157363,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1202,7 +1326,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734467.4182315,
+      "updated_at": 1762733986.8193843,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1220,33 +1344,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734467.4207194
+      "updated_at": 1762733986.8229973
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734467.4281254
+      "updated_at": 1762733986.8278935
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734467.433179
+      "updated_at": 1762733986.830256
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734467.4352539
+      "updated_at": 1762733986.8333669
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736165.7819047
+      "updated_at": 1762735653.1374013
     }
   },
-  "1762734512": {
+  "1762734031": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734711.4348788
+      "updated_at": 1762734107.227647
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734512.4467666,
+      "updated_at": 1762734031.8417666,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1264,7 +1388,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734512.4485052,
+      "updated_at": 1762734031.84386,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1282,33 +1406,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734512.4521763
+      "updated_at": 1762734031.8460062
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734512.4541476
+      "updated_at": 1762734031.8484852
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734512.457045
+      "updated_at": 1762734031.8507338
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734512.4594166
+      "updated_at": 1762734031.8527825
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736267.3438118
+      "updated_at": 1762735793.047261
     }
   },
-  "1762734557": {
+  "1762734076": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734802.096327
+      "updated_at": 1762734183.8190153
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734557.4693282,
+      "updated_at": 1762734076.8650537,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1326,7 +1450,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734557.472374,
+      "updated_at": 1762734076.8670847,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1344,33 +1468,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734557.4746854
+      "updated_at": 1762734076.87148
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734557.4772277
+      "updated_at": 1762734076.8737621
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734557.4792325
+      "updated_at": 1762734076.8819454
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734557.4817178
+      "updated_at": 1762734076.8847437
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736488.184997
+      "updated_at": 1762735793.6273332
     }
   },
-  "1762734602": {
+  "1762734121": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734826.9032094
+      "updated_at": 1762734213.5829604
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734602.490335,
+      "updated_at": 1762734121.8983538,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1388,7 +1512,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734602.4965308,
+      "updated_at": 1762734121.9050875,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1406,33 +1530,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734602.4994657
+      "updated_at": 1762734121.9126723
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734602.5016348
+      "updated_at": 1762734121.9197898
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734602.5049736
+      "updated_at": 1762734121.9247699
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734602.5069244
+      "updated_at": 1762734121.9298623
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736766.7222528
+      "updated_at": 1762735906.0003166
     }
   },
-  "1762734647": {
+  "1762734166": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734858.4039893
+      "updated_at": 1762734299.276837
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734647.5192418,
+      "updated_at": 1762734166.9556363,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1450,7 +1574,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734647.5220494,
+      "updated_at": 1762734166.9582965,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1468,33 +1592,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734647.5260794
+      "updated_at": 1762734166.960792
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734647.5281622
+      "updated_at": 1762734166.9633992
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734647.5326614
+      "updated_at": 1762734166.9660277
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734647.5369117
+      "updated_at": 1762734166.9689043
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736766.7917285
+      "updated_at": 1762736129.812837
     }
   },
-  "1762734692": {
+  "1762734211": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734901.1083374
+      "updated_at": 1762734300.373037
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734692.549599,
+      "updated_at": 1762734211.977165,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1512,7 +1636,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734692.5515168,
+      "updated_at": 1762734211.9799528,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1530,33 +1654,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734692.5568376
+      "updated_at": 1762734211.983985
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734692.560406
+      "updated_at": 1762734211.9862437
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734692.5628726
+      "updated_at": 1762734211.9889603
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734692.5665355
+      "updated_at": 1762734211.9915946
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762736882.8113284
+      "updated_at": 1762736407.965552
     }
   },
-  "1762734737": {
+  "1762734256": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762734959.1956935
+      "updated_at": 1762734414.7989724
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734737.5793333,
+      "updated_at": 1762734257.0017045,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1574,7 +1698,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734737.584463,
+      "updated_at": 1762734257.0043693,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1592,33 +1716,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734737.589138
+      "updated_at": 1762734257.0074105
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734737.5923326
+      "updated_at": 1762734257.0114481
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734737.595611
+      "updated_at": 1762734257.013781
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734737.5980392
+      "updated_at": 1762734257.0169504
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737120.7965388
+      "updated_at": 1762736408.5470219
     }
   },
-  "1762734782": {
+  "1762734302": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735002.9573636
+      "updated_at": 1762734417.477647
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734782.6080105,
+      "updated_at": 1762734302.0260477,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1636,7 +1760,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734782.6117253,
+      "updated_at": 1762734302.0312943,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1654,33 +1778,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734782.6139987
+      "updated_at": 1762734302.040446
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734782.6180296
+      "updated_at": 1762734302.0433877
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734782.6217108
+      "updated_at": 1762734302.0466824
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734782.6241922
+      "updated_at": 1762734302.049544
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737399.7660365
+      "updated_at": 1762736524.5968263
     }
   },
-  "1762734827": {
+  "1762734347": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735074.6560304
+      "updated_at": 1762734515.550227
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734827.6401222,
+      "updated_at": 1762734347.0598552,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1698,7 +1822,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734827.6446798,
+      "updated_at": 1762734347.0643191,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1716,33 +1840,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734827.6497784
+      "updated_at": 1762734347.0668008
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734827.6553483
+      "updated_at": 1762734347.0702276
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734827.6614423
+      "updated_at": 1762734347.0734751
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734827.6700246
+      "updated_at": 1762734347.0762146
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737399.8432066
+      "updated_at": 1762736743.401255
     }
   },
-  "1762734872": {
+  "1762734392": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735106.96101
+      "updated_at": 1762734532.926986
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734872.6835601,
+      "updated_at": 1762734392.0917406,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1760,7 +1884,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734872.686976,
+      "updated_at": 1762734392.094428,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1778,33 +1902,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734872.689786
+      "updated_at": 1762734392.0990825
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734872.6934404
+      "updated_at": 1762734392.1022444
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734872.6962926
+      "updated_at": 1762734392.1052096
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734872.6998231
+      "updated_at": 1762734392.1089022
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737461.5989714
+      "updated_at": 1762737020.9542036
     }
   },
-  "1762734917": {
+  "1762734437": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735151.5812387
+      "updated_at": 1762734616.5638952
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734917.7149546,
+      "updated_at": 1762734437.1269166,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1822,7 +1946,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734917.717262,
+      "updated_at": 1762734437.1297014,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1840,33 +1964,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734917.7201288
+      "updated_at": 1762734437.13293
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734917.7229292
+      "updated_at": 1762734437.1365936
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734917.726516
+      "updated_at": 1762734437.1407835
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734917.7304718
+      "updated_at": 1762734437.1443226
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737680.1434996
+      "updated_at": 1762737021.0258873
     }
   },
-  "1762734962": {
+  "1762734482": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735200.2698975
+      "updated_at": 1762734648.3910236
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762734962.744774,
+      "updated_at": 1762734482.1581662,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1884,7 +2008,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762734962.7548664,
+      "updated_at": 1762734482.160728,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1902,33 +2026,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762734962.7635338
+      "updated_at": 1762734482.1644464
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762734962.770457
+      "updated_at": 1762734482.1675527
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762734962.7768412
+      "updated_at": 1762734482.1710553
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762734962.781684
+      "updated_at": 1762734482.1747653
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737872.7011228
+      "updated_at": 1762737117.4790125
     }
   },
-  "1762735007": {
+  "1762734527": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735210.9603136
+      "updated_at": 1762734708.3087533
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735007.792842,
+      "updated_at": 1762734527.1869943,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1946,7 +2070,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735007.8012352,
+      "updated_at": 1762734527.191655,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -1964,33 +2088,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735007.8040314
+      "updated_at": 1762734527.1994848
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735007.8078425
+      "updated_at": 1762734527.203448
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735007.8110647
+      "updated_at": 1762734527.2082458
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735007.8152807
+      "updated_at": 1762734527.2121825
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737872.7798157
+      "updated_at": 1762737355.5073197
     }
   },
-  "1762735052": {
+  "1762734572": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735276.0827422
+      "updated_at": 1762734763.8466783
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735052.8301105,
+      "updated_at": 1762734572.224064,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2008,7 +2132,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735052.8389096,
+      "updated_at": 1762734572.226777,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2026,33 +2150,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735052.8416378
+      "updated_at": 1762734572.2319708
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735052.8497818
+      "updated_at": 1762734572.235998
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735052.8540611
+      "updated_at": 1762734572.2418199
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735052.8573477
+      "updated_at": 1762734572.2477186
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762737918.4712012
+      "updated_at": 1762737590.4747741
     }
   },
-  "1762735097": {
+  "1762734617": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735314.94957
+      "updated_at": 1762734823.7687948
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735097.8730001,
+      "updated_at": 1762734617.261126,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2070,7 +2194,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735097.877838,
+      "updated_at": 1762734617.2660537,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2088,33 +2212,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735097.8812895
+      "updated_at": 1762734617.2713144
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735097.8854916
+      "updated_at": 1762734617.2772746
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735097.8916872
+      "updated_at": 1762734617.2819967
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735097.8970778
+      "updated_at": 1762734617.2863944
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762738155.307381
+      "updated_at": 1762737590.5498707
     }
   },
-  "1762735142": {
+  "1762734662": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735332.7310183
+      "updated_at": 1762734879.3484726
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735142.9158874,
+      "updated_at": 1762734662.302363,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2132,7 +2256,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735142.9230096,
+      "updated_at": 1762734662.307464,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2150,33 +2274,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735142.9287868
+      "updated_at": 1762734662.311673
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735142.9325423
+      "updated_at": 1762734662.316212
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735142.9362912
+      "updated_at": 1762734662.3198674
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735142.9410944
+      "updated_at": 1762734662.3236244
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762738376.124505
+      "updated_at": 1762737642.217264
     }
   },
-  "1762735187": {
+  "1762734707": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735352.7452917
+      "updated_at": 1762734939.2517998
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735187.959863,
+      "updated_at": 1762734707.3364952,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2194,7 +2318,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735187.9688838,
+      "updated_at": 1762734707.3405457,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2212,33 +2336,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735187.9740992
+      "updated_at": 1762734707.3455055
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735187.9786994
+      "updated_at": 1762734707.3514023
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735187.986124
+      "updated_at": 1762734707.3576021
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735187.9902267
+      "updated_at": 1762734707.3637412
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762738376.2034147
+      "updated_at": 1762737864.8113027
     }
   },
-  "1762735233": {
+  "1762734752": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735401.0584142
+      "updated_at": 1762734983.0965753
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735233.0114157,
+      "updated_at": 1762734752.382928,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2256,7 +2380,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735233.0164363,
+      "updated_at": 1762734752.386841,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2274,33 +2398,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735233.0202498
+      "updated_at": 1762734752.3912003
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735233.0233366
+      "updated_at": 1762734752.3972738
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735233.0277793
+      "updated_at": 1762734752.401809
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735233.031847
+      "updated_at": 1762734752.406523
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762738492.2791328
+      "updated_at": 1762738055.4307978
     }
   },
-  "1762735278": {
+  "1762734797": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735391.5933747
+      "updated_at": 1762735025.1716506
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735278.045704,
+      "updated_at": 1762734797.427975,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2318,7 +2442,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735278.0514746,
+      "updated_at": 1762734797.4390764,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2336,33 +2460,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735278.0628052
+      "updated_at": 1762734797.4439476
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735278.06721
+      "updated_at": 1762734797.451194
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735278.0723615
+      "updated_at": 1762734797.460172
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735278.0761518
+      "updated_at": 1762734797.4662485
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762738731.3530111
+      "updated_at": 1762738056.013807
     }
   },
-  "1762735323": {
+  "1762734842": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735482.617577
+      "updated_at": 1762735045.1566167
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735323.098338,
+      "updated_at": 1762734842.486712,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2380,7 +2504,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735323.1040423,
+      "updated_at": 1762734842.4905236,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2398,33 +2522,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735323.1127353
+      "updated_at": 1762734842.4938157
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735323.121915
+      "updated_at": 1762734842.4978497
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735323.1272593
+      "updated_at": 1762734842.5019724
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735323.1331043
+      "updated_at": 1762734842.505664
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762739009.7145073
+      "updated_at": 1762738172.131055
     }
   },
-  "1762735368": {
+  "1762734887": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735467.342967
+      "updated_at": 1762735125.9987028
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735368.1504254,
+      "updated_at": 1762734887.5193748,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2442,7 +2566,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735368.1541357,
+      "updated_at": 1762734887.522842,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2460,33 +2584,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735368.1617951
+      "updated_at": 1762734887.5262444
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735368.165348
+      "updated_at": 1762734887.5301068
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735368.1690438
+      "updated_at": 1762734887.533356
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735368.173084
+      "updated_at": 1762734887.5369446
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762739009.7984772
+      "updated_at": 1762738411.572348
     }
   },
-  "1762735413": {
+  "1762734932": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735501.5642748
+      "updated_at": 1762735131.015896
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735413.188637,
+      "updated_at": 1762734932.5554795,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2504,7 +2628,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735413.1944647,
+      "updated_at": 1762734932.5606477,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2522,33 +2646,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735413.199984
+      "updated_at": 1762734932.565101
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735413.2067966
+      "updated_at": 1762734932.5698867
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735413.212165
+      "updated_at": 1762734932.5746317
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735413.2168012
+      "updated_at": 1762734932.578499
     },
     "background_refresh": {
       "status": "completed",
-      "updated_at": 1762739125.8232276
+      "updated_at": 1762738690.1829345
     }
   },
-  "1762735458": {
+  "1762734977": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735487.492474
+      "updated_at": 1762735200.117853
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735458.2354455,
+      "updated_at": 1762734977.5984876,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2566,7 +2690,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735458.240329,
+      "updated_at": 1762734977.6048326,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2584,33 +2708,219 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735458.245433
+      "updated_at": 1762734977.6108694
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735458.2529728
+      "updated_at": 1762734977.6157253
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735458.2628515
+      "updated_at": 1762734977.620796
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735458.2662961
+      "updated_at": 1762734977.624388
+    },
+    "background_refresh": {
+      "status": "completed",
+      "updated_at": 1762738690.265727
+    }
+  },
+  "1762735022": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762735200.08184
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762735022.6421747,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762735022.6457038,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762735022.6503627
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762735022.655669
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762735022.6598818
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762735022.6652734
+    },
+    "background_refresh": {
+      "status": "completed",
+      "updated_at": 1762738795.6479597
+    }
+  },
+  "1762735067": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762735204.343922
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762735067.6927683,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762735067.6971953,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762735067.7052977
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762735067.7108736
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762735067.717493
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762735067.7228074
+    },
+    "background_refresh": {
+      "status": "completed",
+      "updated_at": 1762739033.6258342
+    }
+  },
+  "1762735112": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762735262.4607933
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762735112.743855,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762735112.7490227,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762735112.7538252
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762735112.75889
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762735112.7638028
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762735112.7703865
     },
     "background_refresh": {
       "status": "running",
-      "updated_at": 1762739126.9026842
+      "updated_at": 1762739033.6969812
     }
   },
-  "1762735503": {
+  "1762735157": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735582.2030258
+      "updated_at": 1762735266.8738394
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735503.288125,
+      "updated_at": 1762735157.7897723,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2628,7 +2938,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735503.2942812,
+      "updated_at": 1762735157.7956417,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2646,33 +2956,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735503.3064392
+      "updated_at": 1762735157.8083231
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735503.311227
+      "updated_at": 1762735157.8156307
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735503.3166757
+      "updated_at": 1762735157.8223383
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735503.3215728
+      "updated_at": 1762735157.8304617
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735503.3257375
+      "updated_at": 1762735157.8378928
     }
   },
-  "1762735548": {
+  "1762735202": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735616.374629
+      "updated_at": 1762735286.727593
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735548.3378365,
+      "updated_at": 1762735202.8530319,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2690,7 +3000,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735548.3413815,
+      "updated_at": 1762735202.8579938,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2708,33 +3018,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735548.352091
+      "updated_at": 1762735202.8628888
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735548.3631501
+      "updated_at": 1762735202.8685868
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735548.3684232
+      "updated_at": 1762735202.8740954
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735548.3750525
+      "updated_at": 1762735202.8794742
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735548.3803182
+      "updated_at": 1762735202.8844075
     }
   },
-  "1762735593": {
+  "1762735247": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735697.8365955
+      "updated_at": 1762735284.7206526
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735593.3897302,
+      "updated_at": 1762735247.897812,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2752,7 +3062,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735593.3993406,
+      "updated_at": 1762735247.9075701,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2770,33 +3080,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735593.4108493
+      "updated_at": 1762735247.9138155
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735593.4211152
+      "updated_at": 1762735247.9198287
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735593.4268534
+      "updated_at": 1762735247.924461
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735593.4325104
+      "updated_at": 1762735247.92951
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735593.4384098
+      "updated_at": 1762735247.9400766
     }
   },
-  "1762735638": {
+  "1762735292": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735753.991939
+      "updated_at": 1762735369.0706625
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735638.4538882,
+      "updated_at": 1762735292.9601092,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2814,7 +3124,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735638.4588928,
+      "updated_at": 1762735292.9647324,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2832,33 +3142,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735638.4708772
+      "updated_at": 1762735292.9691002
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735638.4787457
+      "updated_at": 1762735292.9830287
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735638.483467
+      "updated_at": 1762735292.9879215
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735638.4897254
+      "updated_at": 1762735292.992612
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735638.4935713
+      "updated_at": 1762735292.999396
     }
   },
-  "1762735683": {
+  "1762735338": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735734.3300166
+      "updated_at": 1762735407.9044485
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735683.5098908,
+      "updated_at": 1762735338.011817,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2876,7 +3186,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735683.5189006,
+      "updated_at": 1762735338.0185506,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2894,33 +3204,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735683.525831
+      "updated_at": 1762735338.0238261
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735683.5358565
+      "updated_at": 1762735338.030298
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735683.5430608
+      "updated_at": 1762735338.0484917
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735683.5520709
+      "updated_at": 1762735338.062758
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735683.5583959
+      "updated_at": 1762735338.068012
     }
   },
-  "1762735728": {
+  "1762735383": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735801.7104754
+      "updated_at": 1762735423.551493
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735728.5759199,
+      "updated_at": 1762735383.0860324,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2938,7 +3248,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735728.5816178,
+      "updated_at": 1762735383.0917552,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -2956,33 +3266,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735728.587293
+      "updated_at": 1762735383.107532
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735728.5925937
+      "updated_at": 1762735383.112003
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735728.5977027
+      "updated_at": 1762735383.1166742
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735728.6024675
+      "updated_at": 1762735383.1213808
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735728.610465
+      "updated_at": 1762735383.1261828
     }
   },
-  "1762735773": {
+  "1762735428": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735862.0863128
+      "updated_at": 1762735445.9773583
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735773.62339,
+      "updated_at": 1762735428.1400197,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3000,7 +3310,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735773.6310315,
+      "updated_at": 1762735428.14881,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3018,33 +3328,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735773.6437383
+      "updated_at": 1762735428.1655269
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735773.653272
+      "updated_at": 1762735428.1718948
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735773.6584706
+      "updated_at": 1762735428.1808577
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735773.6626675
+      "updated_at": 1762735428.1878288
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735773.6706738
+      "updated_at": 1762735428.1956997
     }
   },
-  "1762735818": {
+  "1762735473": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735883.8124006
+      "updated_at": 1762735498.070341
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735818.6836247,
+      "updated_at": 1762735473.212033,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3062,7 +3372,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735818.6894376,
+      "updated_at": 1762735473.2189777,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3080,33 +3390,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735818.7049508
+      "updated_at": 1762735473.2325454
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735818.7109175
+      "updated_at": 1762735473.2401633
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735818.7188027
+      "updated_at": 1762735473.246586
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735818.7245848
+      "updated_at": 1762735473.2535925
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735818.7299438
+      "updated_at": 1762735473.2597814
     }
   },
-  "1762735863": {
+  "1762735518": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762735949.5953314
+      "updated_at": 1762735582.2837126
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735863.7429125,
+      "updated_at": 1762735518.2720377,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3124,7 +3434,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735863.7519732,
+      "updated_at": 1762735518.2790036,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3142,33 +3452,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735863.7655294
+      "updated_at": 1762735518.298823
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735863.7745416
+      "updated_at": 1762735518.3047428
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735863.7814548
+      "updated_at": 1762735518.3105125
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735863.7981749
+      "updated_at": 1762735518.316944
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735863.8054411
+      "updated_at": 1762735518.3242278
     }
   },
-  "1762735908": {
+  "1762735563": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736016.7235444
+      "updated_at": 1762735638.9083455
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735908.8270538,
+      "updated_at": 1762735563.3396065,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3186,7 +3496,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735908.8353791,
+      "updated_at": 1762735563.3454783,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3204,33 +3514,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735908.8494532
+      "updated_at": 1762735563.3607066
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735908.865356
+      "updated_at": 1762735563.367104
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735908.8711898
+      "updated_at": 1762735563.3728373
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735908.8802252
+      "updated_at": 1762735563.3785434
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735908.8858871
+      "updated_at": 1762735563.3848894
     }
   },
-  "1762735953": {
+  "1762735608": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736069.4048822
+      "updated_at": 1762735694.991696
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735953.9063685,
+      "updated_at": 1762735608.3992536,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3248,7 +3558,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735953.9142869,
+      "updated_at": 1762735608.407114,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3266,33 +3576,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735953.9201314
+      "updated_at": 1762735608.4198558
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735953.9356418
+      "updated_at": 1762735608.4250133
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735953.9419048
+      "updated_at": 1762735608.4336238
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735953.9487448
+      "updated_at": 1762735608.440654
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735953.9573607
+      "updated_at": 1762735608.4470494
     }
   },
-  "1762735998": {
+  "1762735653": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736117.6310241
+      "updated_at": 1762735751.4187467
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762735998.974281,
+      "updated_at": 1762735653.465634,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3310,7 +3620,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762735998.98124,
+      "updated_at": 1762735653.47086,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3328,33 +3638,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762735998.9872909
+      "updated_at": 1762735653.4776566
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762735998.9928246
+      "updated_at": 1762735653.4912217
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762735999.0001924
+      "updated_at": 1762735653.4974036
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762735999.0071647
+      "updated_at": 1762735653.5037172
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762735999.0129964
+      "updated_at": 1762735653.511178
     }
   },
-  "1762736044": {
+  "1762735698": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736155.3905072
+      "updated_at": 1762735751.2105987
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736044.0297992,
+      "updated_at": 1762735698.5320163,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3372,7 +3682,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736044.0422344,
+      "updated_at": 1762735698.5369008,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3390,33 +3700,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736044.0506506
+      "updated_at": 1762735698.5509107
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736044.0580945
+      "updated_at": 1762735698.558034
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736044.0676157
+      "updated_at": 1762735698.565404
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736044.0737338
+      "updated_at": 1762735698.5715537
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736044.0803418
+      "updated_at": 1762735698.5774994
     }
   },
-  "1762736089": {
+  "1762735743": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736233.1951602
+      "updated_at": 1762735841.50037
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736089.0954626,
+      "updated_at": 1762735743.5955813,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3434,7 +3744,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736089.1017056,
+      "updated_at": 1762735743.6023393,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3452,33 +3762,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736089.1076353
+      "updated_at": 1762735743.6093554
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736089.1136355
+      "updated_at": 1762735743.6161783
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736089.1206508
+      "updated_at": 1762735743.6220822
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736089.1280856
+      "updated_at": 1762735743.6312034
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736089.134725
+      "updated_at": 1762735743.6371307
     }
   },
-  "1762736134": {
+  "1762735788": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736254.2431433
+      "updated_at": 1762735842.0154681
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736134.150952,
+      "updated_at": 1762735788.6507578,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3496,7 +3806,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736134.158088,
+      "updated_at": 1762735788.6570895,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3514,33 +3824,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736134.1643276
+      "updated_at": 1762735788.6730583
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736134.1721957
+      "updated_at": 1762735788.680346
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736134.178386
+      "updated_at": 1762735788.6900814
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736134.1974328
+      "updated_at": 1762735788.6999524
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736134.2039423
+      "updated_at": 1762735788.709051
     }
   },
-  "1762736179": {
+  "1762735833": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736348.730486
+      "updated_at": 1762735930.059186
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736179.2222674,
+      "updated_at": 1762735833.7252495,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3558,7 +3868,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736179.230747,
+      "updated_at": 1762735833.733584,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3576,33 +3886,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736179.2400632
+      "updated_at": 1762735833.7404387
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736179.2470946
+      "updated_at": 1762735833.7479873
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736179.2536
+      "updated_at": 1762735833.757172
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736179.2597399
+      "updated_at": 1762735833.7636623
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736179.2656536
+      "updated_at": 1762735833.7698147
     }
   },
-  "1762736224": {
+  "1762735878": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736341.156049
+      "updated_at": 1762735970.455651
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736224.2883902,
+      "updated_at": 1762735878.798288,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3620,7 +3930,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736224.297245,
+      "updated_at": 1762735878.8057199,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3638,33 +3948,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736224.3041873
+      "updated_at": 1762735878.814246
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736224.314372
+      "updated_at": 1762735878.8225238
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736224.3265097
+      "updated_at": 1762735878.8305254
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736224.3359895
+      "updated_at": 1762735878.8469353
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736224.3451152
+      "updated_at": 1762735878.8542683
     }
   },
-  "1762736269": {
+  "1762735923": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736456.6371417
+      "updated_at": 1762736016.708156
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736269.3648582,
+      "updated_at": 1762735923.879454,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3682,7 +3992,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736269.3763556,
+      "updated_at": 1762735923.8912144,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3700,33 +4010,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736269.3846567
+      "updated_at": 1762735923.8999279
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736269.391687
+      "updated_at": 1762735923.9093747
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736269.3985257
+      "updated_at": 1762735923.9183958
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736269.4074721
+      "updated_at": 1762735923.925645
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736269.4177496
+      "updated_at": 1762735923.9341557
     }
   },
-  "1762736314": {
+  "1762735968": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736449.4374118
+      "updated_at": 1762736058.9998126
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736314.4422147,
+      "updated_at": 1762735968.9482622,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3744,7 +4054,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736314.4493556,
+      "updated_at": 1762735968.9563231,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3762,33 +4072,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736314.4586055
+      "updated_at": 1762735968.9642818
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736314.4731483
+      "updated_at": 1762735968.97167
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736314.483607
+      "updated_at": 1762735968.9777472
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736314.494887
+      "updated_at": 1762735968.984093
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736314.5044062
+      "updated_at": 1762735968.9904332
     }
   },
-  "1762736359": {
+  "1762736013": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736564.98694
+      "updated_at": 1762736132.7234986
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736359.5245924,
+      "updated_at": 1762736014.0081105,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3806,7 +4116,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736359.5326047,
+      "updated_at": 1762736014.0158856,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3824,33 +4134,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736359.539961
+      "updated_at": 1762736014.0239415
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736359.5471094
+      "updated_at": 1762736014.0327315
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736359.5547388
+      "updated_at": 1762736014.0397913
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736359.561253
+      "updated_at": 1762736014.0472753
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736359.571247
+      "updated_at": 1762736014.056975
     }
   },
-  "1762736404": {
+  "1762736059": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736498.0386322
+      "updated_at": 1762736147.4849186
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736404.5938163,
+      "updated_at": 1762736059.075305,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3868,7 +4178,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736404.6043472,
+      "updated_at": 1762736059.081621,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3886,33 +4196,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736404.6138272
+      "updated_at": 1762736059.0882292
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736404.625222
+      "updated_at": 1762736059.0943644
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736404.6372337
+      "updated_at": 1762736059.101702
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736404.6478996
+      "updated_at": 1762736059.1095934
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736404.6571867
+      "updated_at": 1762736059.1165938
     }
   },
-  "1762736449": {
+  "1762736104": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736613.5751138
+      "updated_at": 1762736230.5557408
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736449.6772578,
+      "updated_at": 1762736104.1394885,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3930,7 +4240,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736449.6869483,
+      "updated_at": 1762736104.15044,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3948,33 +4258,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736449.6941082
+      "updated_at": 1762736104.1573563
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736449.7016542
+      "updated_at": 1762736104.1653893
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736449.7086935
+      "updated_at": 1762736104.1722043
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736449.7161555
+      "updated_at": 1762736104.1796472
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736449.7250838
+      "updated_at": 1762736104.1887324
     }
   },
-  "1762736494": {
+  "1762736149": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736666.7071118
+      "updated_at": 1762736206.7759123
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736494.74584,
+      "updated_at": 1762736149.2124174,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -3992,7 +4302,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736494.7560186,
+      "updated_at": 1762736149.2199395,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4010,33 +4320,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736494.7689574
+      "updated_at": 1762736149.2387261
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736494.7820418
+      "updated_at": 1762736149.2470157
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736494.7924101
+      "updated_at": 1762736149.2557943
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736494.8025265
+      "updated_at": 1762736149.2633977
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736494.8092318
+      "updated_at": 1762736149.2715893
     }
   },
-  "1762736539": {
+  "1762736194": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736729.303414
+      "updated_at": 1762736278.3388104
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736539.8251483,
+      "updated_at": 1762736194.2886794,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4054,7 +4364,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736539.8305817,
+      "updated_at": 1762736194.2973368,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4072,33 +4382,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736539.83633
+      "updated_at": 1762736194.3058546
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736539.8415833
+      "updated_at": 1762736194.3136988
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736539.84676
+      "updated_at": 1762736194.3218052
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736539.8535247
+      "updated_at": 1762736194.3292603
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736539.8595545
+      "updated_at": 1762736194.3386
     }
   },
-  "1762736584": {
+  "1762736239": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736752.8231602
+      "updated_at": 1762736342.8187482
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736584.993902,
+      "updated_at": 1762736239.3618648,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4116,7 +4426,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736585.0107095,
+      "updated_at": 1762736239.3735797,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4134,33 +4444,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736585.0362232
+      "updated_at": 1762736239.4118333
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736585.0447145
+      "updated_at": 1762736239.4278505
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736585.0523283
+      "updated_at": 1762736239.443449
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736585.0612345
+      "updated_at": 1762736239.4508083
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736585.0696
+      "updated_at": 1762736239.4661064
     }
   },
-  "1762736630": {
+  "1762736284": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736807.0736752
+      "updated_at": 1762736400.5190175
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736630.0865731,
+      "updated_at": 1762736284.4893124,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4178,7 +4488,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736630.0922446,
+      "updated_at": 1762736284.4971275,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4196,33 +4506,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736630.0978086
+      "updated_at": 1762736284.5040286
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736630.1032643
+      "updated_at": 1762736284.529021
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736630.108684
+      "updated_at": 1762736284.5376225
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736630.1141963
+      "updated_at": 1762736284.5443723
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736630.1199825
+      "updated_at": 1762736284.5517986
     }
   },
-  "1762736675": {
+  "1762736329": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736855.8783386
+      "updated_at": 1762736458.8072896
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736675.1355975,
+      "updated_at": 1762736329.5716894,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4240,7 +4550,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736675.141272,
+      "updated_at": 1762736329.579848,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4258,33 +4568,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736675.1468165
+      "updated_at": 1762736329.5867236
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736675.1522794
+      "updated_at": 1762736329.5935721
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736675.1582806
+      "updated_at": 1762736329.6011765
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736675.1637392
+      "updated_at": 1762736329.607718
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736675.169436
+      "updated_at": 1762736329.616881
     }
   },
-  "1762736720": {
+  "1762736374": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736892.8393683
+      "updated_at": 1762736516.6175632
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736720.184899,
+      "updated_at": 1762736374.6373816,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4302,7 +4612,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736720.1908994,
+      "updated_at": 1762736374.6480565,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4320,33 +4630,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736720.1973617
+      "updated_at": 1762736374.6576183
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736720.2039495
+      "updated_at": 1762736374.666445
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736720.209816
+      "updated_at": 1762736374.6737802
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736720.2161927
+      "updated_at": 1762736374.682152
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736720.2223456
+      "updated_at": 1762736374.6901405
     }
   },
-  "1762736765": {
+  "1762736419": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762736971.383275
+      "updated_at": 1762736552.351055
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736765.2366216,
+      "updated_at": 1762736419.7094247,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4364,7 +4674,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736765.242836,
+      "updated_at": 1762736419.7156541,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4382,33 +4692,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736765.2498665
+      "updated_at": 1762736419.7235975
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736765.2561698
+      "updated_at": 1762736419.7342439
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736765.2629347
+      "updated_at": 1762736419.7407281
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736765.268879
+      "updated_at": 1762736419.760297
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736765.2745845
+      "updated_at": 1762736419.7685044
     }
   },
-  "1762736810": {
+  "1762736464": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737008.2831373
+      "updated_at": 1762736626.4262807
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736810.2884083,
+      "updated_at": 1762736464.7865434,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4426,7 +4736,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736810.2957644,
+      "updated_at": 1762736464.7943923,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4444,33 +4754,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736810.304138
+      "updated_at": 1762736464.8080013
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736810.3104248
+      "updated_at": 1762736464.8174365
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736810.3166747
+      "updated_at": 1762736464.8265886
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736810.3283207
+      "updated_at": 1762736464.8369586
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736810.3348424
+      "updated_at": 1762736464.8454251
     }
   },
-  "1762736855": {
+  "1762736509": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737072.9713118
+      "updated_at": 1762736656.6020072
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736855.3528519,
+      "updated_at": 1762736509.8666058,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4488,7 +4798,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736855.40525,
+      "updated_at": 1762736509.8772166,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4506,33 +4816,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736855.6035628
+      "updated_at": 1762736509.8858788
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736855.6098537
+      "updated_at": 1762736509.8960445
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736855.615798
+      "updated_at": 1762736509.90469
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736855.6232574
+      "updated_at": 1762736509.913505
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736855.6294906
+      "updated_at": 1762736509.9215848
     }
   },
-  "1762736900": {
+  "1762736554": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737104.3671813
+      "updated_at": 1762736727.0671093
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736900.6419635,
+      "updated_at": 1762736554.9407415,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4550,7 +4860,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736900.649957,
+      "updated_at": 1762736554.9507475,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4568,33 +4878,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736900.6559894
+      "updated_at": 1762736554.9568372
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736900.6618872
+      "updated_at": 1762736554.962655
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736900.6702757
+      "updated_at": 1762736554.968365
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736900.6759899
+      "updated_at": 1762736554.974601
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736900.6836293
+      "updated_at": 1762736554.9801612
     }
   },
-  "1762736945": {
+  "1762736599": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737188.4326458
+      "updated_at": 1762736757.3951874
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736945.6961923,
+      "updated_at": 1762736599.995904,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4612,7 +4922,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736945.7018785,
+      "updated_at": 1762736600.0024168,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4630,33 +4940,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736945.7078185
+      "updated_at": 1762736600.0082345
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736945.7144995
+      "updated_at": 1762736600.013851
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736945.7206461
+      "updated_at": 1762736600.0197022
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736945.726599
+      "updated_at": 1762736600.025809
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736945.733405
+      "updated_at": 1762736600.0315812
     }
   },
-  "1762736990": {
+  "1762736645": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737222.0631747
+      "updated_at": 1762736842.5629466
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762736990.7477162,
+      "updated_at": 1762736645.0444891,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4674,7 +4984,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762736990.753474,
+      "updated_at": 1762736645.0505054,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4692,33 +5002,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762736990.7605915
+      "updated_at": 1762736645.0589118
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762736990.7664623
+      "updated_at": 1762736645.0655928
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762736990.772394
+      "updated_at": 1762736645.0747452
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762736990.7793489
+      "updated_at": 1762736645.0901396
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762736990.7852778
+      "updated_at": 1762736645.1073444
     }
   },
-  "1762737035": {
+  "1762736690": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737303.8832486
+      "updated_at": 1762736872.9030054
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737035.7996988,
+      "updated_at": 1762736690.132487,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4736,7 +5046,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737035.8067431,
+      "updated_at": 1762736690.1385922,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4754,33 +5064,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737035.8130376
+      "updated_at": 1762736690.1447835
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737035.8205295
+      "updated_at": 1762736690.1509361
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737035.8269122
+      "updated_at": 1762736690.1573832
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737035.8333752
+      "updated_at": 1762736690.1632555
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737035.8403625
+      "updated_at": 1762736690.169939
     }
   },
-  "1762737080": {
+  "1762736735": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737311.1710544
+      "updated_at": 1762736928.3909512
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737080.857566,
+      "updated_at": 1762736735.184836,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4798,7 +5108,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737080.8636725,
+      "updated_at": 1762736735.1919491,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4816,33 +5126,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737080.8701959
+      "updated_at": 1762736735.1978974
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737080.8763194
+      "updated_at": 1762736735.204314
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737080.8824906
+      "updated_at": 1762736735.2106283
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737080.8888621
+      "updated_at": 1762736735.2172577
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737080.8949654
+      "updated_at": 1762736735.2241082
     }
   },
-  "1762737125": {
+  "1762736780": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737414.3311734
+      "updated_at": 1762736960.0389676
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737125.9085515,
+      "updated_at": 1762736780.241086,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4860,7 +5170,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737125.9214501,
+      "updated_at": 1762736780.2471793,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4878,33 +5188,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737125.928827
+      "updated_at": 1762736780.2552466
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737125.9350603
+      "updated_at": 1762736780.2612908
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737125.9413924
+      "updated_at": 1762736780.2695177
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737125.9482846
+      "updated_at": 1762736780.275637
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737125.9546747
+      "updated_at": 1762736780.2821534
     }
   },
-  "1762737170": {
+  "1762736825": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737426.6237674
+      "updated_at": 1762737043.8350701
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737170.9682522,
+      "updated_at": 1762736825.2952423,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4922,7 +5232,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737170.9768143,
+      "updated_at": 1762736825.3018212,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4940,33 +5250,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737170.9830027
+      "updated_at": 1762736825.308459
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737170.9913893
+      "updated_at": 1762736825.3150923
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737170.997476
+      "updated_at": 1762736825.3221767
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737171.0043628
+      "updated_at": 1762736825.3292475
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737171.0125992
+      "updated_at": 1762736825.3356712
     }
   },
-  "1762737216": {
+  "1762736870": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737467.8274167
+      "updated_at": 1762737045.9791405
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737216.0264075,
+      "updated_at": 1762736870.3486629,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -4984,7 +5294,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737216.0333228,
+      "updated_at": 1762736870.4068747,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5002,33 +5312,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737216.0409195
+      "updated_at": 1762736870.5295694
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737216.047779
+      "updated_at": 1762736870.5359595
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737216.0549936
+      "updated_at": 1762736870.5433452
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737216.0615244
+      "updated_at": 1762736870.553164
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737216.06849
+      "updated_at": 1762736870.561317
     }
   },
-  "1762737261": {
+  "1762736915": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737512.239374
+      "updated_at": 1762737121.6566958
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737261.0831504,
+      "updated_at": 1762736915.5816715,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5046,7 +5356,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737261.0896003,
+      "updated_at": 1762736915.5880978,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5064,33 +5374,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737261.096089
+      "updated_at": 1762736915.596145
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737261.1026676
+      "updated_at": 1762736915.60297
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737261.1096032
+      "updated_at": 1762736915.6098113
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737261.1232417
+      "updated_at": 1762736915.6161995
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737261.130864
+      "updated_at": 1762736915.6231306
     }
   },
-  "1762737306": {
+  "1762736960": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737534.0311415
+      "updated_at": 1762737161.423146
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737306.154699,
+      "updated_at": 1762736960.6366003,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5108,7 +5418,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737306.165969,
+      "updated_at": 1762736960.6430705,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5126,33 +5436,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737306.1741226
+      "updated_at": 1762736960.650267
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737306.1839285
+      "updated_at": 1762736960.6566267
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737306.1941397
+      "updated_at": 1762736960.6627896
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737306.2016256
+      "updated_at": 1762736960.6700988
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737306.209194
+      "updated_at": 1762736960.676516
     }
   },
-  "1762737351": {
+  "1762737005": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737532.384291
+      "updated_at": 1762737184.86608
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737351.2290125,
+      "updated_at": 1762737005.6975663,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5170,7 +5480,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737351.2358158,
+      "updated_at": 1762737005.7046437,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5188,33 +5498,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737351.242523
+      "updated_at": 1762737005.711395
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737351.2492185
+      "updated_at": 1762737005.7178688
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737351.2558541
+      "updated_at": 1762737005.7245474
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737351.263761
+      "updated_at": 1762737005.7317076
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737351.2708309
+      "updated_at": 1762737005.7382019
     }
   },
-  "1762737396": {
+  "1762737050": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737588.548682
+      "updated_at": 1762737251.0270166
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737396.2847445,
+      "updated_at": 1762737050.752397,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5232,7 +5542,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737396.2919233,
+      "updated_at": 1762737050.7641263,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5250,33 +5560,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737396.2987945
+      "updated_at": 1762737050.7716599
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737396.3059115
+      "updated_at": 1762737050.7797866
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737396.3131146
+      "updated_at": 1762737050.7867727
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737396.3201597
+      "updated_at": 1762737050.794882
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737396.327015
+      "updated_at": 1762737050.8016176
     }
   },
-  "1762737441": {
+  "1762737095": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737602.5828412
+      "updated_at": 1762737288.531104
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737441.3422592,
+      "updated_at": 1762737095.81595,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5294,7 +5604,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737441.3508935,
+      "updated_at": 1762737095.8239415,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5312,33 +5622,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737441.3574748
+      "updated_at": 1762737095.830428
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737441.3644884
+      "updated_at": 1762737095.8372955
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737441.3713062
+      "updated_at": 1762737095.8439772
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737441.3788207
+      "updated_at": 1762737095.8504949
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737441.385914
+      "updated_at": 1762737095.8583572
     }
   },
-  "1762737486": {
+  "1762737140": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737600.2362225
+      "updated_at": 1762737354.8789833
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737486.4004014,
+      "updated_at": 1762737140.872547,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5356,7 +5666,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737486.4072456,
+      "updated_at": 1762737140.8799765,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5374,33 +5684,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737486.4143956
+      "updated_at": 1762737140.887838
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737486.42104
+      "updated_at": 1762737140.8947668
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737486.4279537
+      "updated_at": 1762737140.902818
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737486.4348602
+      "updated_at": 1762737140.9103434
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737486.441864
+      "updated_at": 1762737140.9189305
     }
   },
-  "1762737531": {
+  "1762737185": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737683.3809595
+      "updated_at": 1762737357.7455819
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737531.4570746,
+      "updated_at": 1762737185.9332554,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5418,7 +5728,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737531.4641714,
+      "updated_at": 1762737185.941098,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5436,33 +5746,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737531.4716187
+      "updated_at": 1762737185.9489737
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737531.4785085
+      "updated_at": 1762737185.9562068
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737531.4853544
+      "updated_at": 1762737185.9660628
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737531.4921184
+      "updated_at": 1762737185.9727652
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737531.4988935
+      "updated_at": 1762737185.980571
     }
   },
-  "1762737576": {
+  "1762737230": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737692.135312
+      "updated_at": 1762737419.5850663
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737576.5173619,
+      "updated_at": 1762737230.9956274,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5480,7 +5790,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737576.526178,
+      "updated_at": 1762737231.0022604,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5498,33 +5808,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737576.5336707
+      "updated_at": 1762737231.009967
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737576.541579
+      "updated_at": 1762737231.0166342
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737576.5488493
+      "updated_at": 1762737231.0243087
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737576.5566695
+      "updated_at": 1762737231.0312586
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737576.5642984
+      "updated_at": 1762737231.0378206
     }
   },
-  "1762737621": {
+  "1762737276": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737741.6391475
+      "updated_at": 1762737443.4862494
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737621.591078,
+      "updated_at": 1762737276.0542364,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5542,7 +5852,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737621.602364,
+      "updated_at": 1762737276.0610683,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5560,33 +5870,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737621.6094725
+      "updated_at": 1762737276.0681841
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737621.6189778
+      "updated_at": 1762737276.0749185
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737621.629149
+      "updated_at": 1762737276.0819757
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737621.6402571
+      "updated_at": 1762737276.0893703
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737621.6482844
+      "updated_at": 1762737276.096192
     }
   },
-  "1762737666": {
+  "1762737321": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737729.5159903
+      "updated_at": 1762737441.803871
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737666.6643066,
+      "updated_at": 1762737321.1104572,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5604,7 +5914,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737666.67155,
+      "updated_at": 1762737321.117516,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5622,33 +5932,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737666.6791618
+      "updated_at": 1762737321.1244357
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737666.6864274
+      "updated_at": 1762737321.1316812
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737666.6940367
+      "updated_at": 1762737321.1387842
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737666.7013261
+      "updated_at": 1762737321.145633
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737666.7085302
+      "updated_at": 1762737321.154654
     }
   },
-  "1762737711": {
+  "1762737366": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737793.5812383
+      "updated_at": 1762737466.3374796
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737711.7251523,
+      "updated_at": 1762737366.169264,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5666,7 +5976,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737711.7340941,
+      "updated_at": 1762737366.1763327,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5684,33 +5994,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737711.7415383
+      "updated_at": 1762737366.1833415
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737711.7487862
+      "updated_at": 1762737366.1901324
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737711.7561948
+      "updated_at": 1762737366.1972535
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737711.7640855
+      "updated_at": 1762737366.2044463
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737711.7717035
+      "updated_at": 1762737366.211714
     }
   },
-  "1762737756": {
+  "1762737411": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737832.2595255
+      "updated_at": 1762737548.3910427
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737756.7893636,
+      "updated_at": 1762737411.2263196,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5728,7 +6038,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737756.798403,
+      "updated_at": 1762737411.2344108,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5746,33 +6056,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737756.8064313
+      "updated_at": 1762737411.2411928
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737756.8135788
+      "updated_at": 1762737411.248052
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737756.8289745
+      "updated_at": 1762737411.256806
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737756.8365386
+      "updated_at": 1762737411.2637122
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737756.8441129
+      "updated_at": 1762737411.271331
     }
   },
-  "1762737801": {
+  "1762737456": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737838.1222372
+      "updated_at": 1762737568.2006443
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737801.8620508,
+      "updated_at": 1762737456.2866127,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5790,7 +6100,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737801.869657,
+      "updated_at": 1762737456.293901,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5808,33 +6118,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737801.8770552
+      "updated_at": 1762737456.3014102
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737801.8844204
+      "updated_at": 1762737456.3087454
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737801.8990932
+      "updated_at": 1762737456.3161802
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737801.9064648
+      "updated_at": 1762737456.3241088
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737801.9140403
+      "updated_at": 1762737456.33152
     }
   },
-  "1762737846": {
+  "1762737501": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737901.065964
+      "updated_at": 1762737642.1902654
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737846.9296288,
+      "updated_at": 1762737501.3469267,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5852,7 +6162,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737846.9369576,
+      "updated_at": 1762737501.3540974,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5870,33 +6180,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737846.9520795
+      "updated_at": 1762737501.3610966
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737846.9593825
+      "updated_at": 1762737501.3680859
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737846.9668846
+      "updated_at": 1762737501.3751655
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737846.9741015
+      "updated_at": 1762737501.3825057
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737846.9817615
+      "updated_at": 1762737501.390356
     }
   },
-  "1762737891": {
+  "1762737546": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762737984.9244063
+      "updated_at": 1762737666.1296566
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737891.9973142,
+      "updated_at": 1762737546.405665,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5914,7 +6224,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737892.0049243,
+      "updated_at": 1762737546.4136662,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5932,33 +6242,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737892.021041
+      "updated_at": 1762737546.4210134
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737892.0287135
+      "updated_at": 1762737546.429392
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737892.0363414
+      "updated_at": 1762737546.4367087
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737892.044028
+      "updated_at": 1762737546.4448328
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737892.051675
+      "updated_at": 1762737546.454341
     }
   },
-  "1762737937": {
+  "1762737591": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738038.407075
+      "updated_at": 1762737693.3440986
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737937.0693665,
+      "updated_at": 1762737591.4713843,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5976,7 +6286,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737937.077266,
+      "updated_at": 1762737591.4791856,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -5994,33 +6304,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737937.095099
+      "updated_at": 1762737591.4864533
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737937.1026773
+      "updated_at": 1762737591.4940255
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737937.110469
+      "updated_at": 1762737591.502037
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737937.1185222
+      "updated_at": 1762737591.5095234
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737937.126887
+      "updated_at": 1762737591.5173209
     }
   },
-  "1762737982": {
+  "1762737636": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738035.9319077
+      "updated_at": 1762737680.1510034
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762737982.1433263,
+      "updated_at": 1762737636.5336123,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6038,7 +6348,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762737982.1514037,
+      "updated_at": 1762737636.5413573,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6056,33 +6366,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762737982.1594841
+      "updated_at": 1762737636.549088
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762737982.1677904
+      "updated_at": 1762737636.5570593
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762737982.1769059
+      "updated_at": 1762737636.564957
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762737982.1848779
+      "updated_at": 1762737636.5731208
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762737982.192631
+      "updated_at": 1762737636.5821972
     }
   },
-  "1762738027": {
+  "1762737681": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738095.2751715
+      "updated_at": 1762737772.2031207
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738027.2099268,
+      "updated_at": 1762737681.5983107,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6100,7 +6410,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738027.2182314,
+      "updated_at": 1762737681.6070137,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6118,33 +6428,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738027.226483
+      "updated_at": 1762737681.6226354
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738027.2347124
+      "updated_at": 1762737681.6302776
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738027.2426796
+      "updated_at": 1762737681.6382828
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738027.250492
+      "updated_at": 1762737681.6458316
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738027.2581878
+      "updated_at": 1762737681.6541684
     }
   },
-  "1762738072": {
+  "1762737726": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738138.36065
+      "updated_at": 1762737821.8780198
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738072.2754588,
+      "updated_at": 1762737726.6709657,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6162,7 +6472,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738072.2835732,
+      "updated_at": 1762737726.6788557,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6180,33 +6490,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738072.2994423
+      "updated_at": 1762737726.6862981
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738072.3077908
+      "updated_at": 1762737726.6948233
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738072.3159761
+      "updated_at": 1762737726.7027845
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738072.3239875
+      "updated_at": 1762737726.7108498
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738072.332395
+      "updated_at": 1762737726.7187827
     }
   },
-  "1762738117": {
+  "1762737771": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738209.041179
+      "updated_at": 1762737821.7160122
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738117.3497713,
+      "updated_at": 1762737771.7472303,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6224,7 +6534,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738117.3580039,
+      "updated_at": 1762737771.7555017,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6242,33 +6552,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738117.3666613
+      "updated_at": 1762737771.7637308
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738117.3839648
+      "updated_at": 1762737771.7716959
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738117.3920033
+      "updated_at": 1762737771.7795498
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738117.400646
+      "updated_at": 1762737771.7887247
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738117.408816
+      "updated_at": 1762737771.7967465
     }
   },
-  "1762738162": {
+  "1762737816": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738270.367153
+      "updated_at": 1762737871.2757413
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738162.4259143,
+      "updated_at": 1762737816.8124425,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6286,7 +6596,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738162.434479,
+      "updated_at": 1762737816.8201597,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6304,33 +6614,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738162.4428327
+      "updated_at": 1762737816.8282201
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738162.459453
+      "updated_at": 1762737816.8360872
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738162.4678364
+      "updated_at": 1762737816.843623
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738162.4758782
+      "updated_at": 1762737816.851222
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738162.483896
+      "updated_at": 1762737816.8598015
     }
   },
-  "1762738207": {
+  "1762737861": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738324.8271034
+      "updated_at": 1762737950.6431854
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738207.5016744,
+      "updated_at": 1762737861.8778224,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6348,7 +6658,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738207.510235,
+      "updated_at": 1762737861.8899264,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6366,33 +6676,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738207.5189648
+      "updated_at": 1762737861.907397
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738207.5284393
+      "updated_at": 1762737861.915648
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738207.5371923
+      "updated_at": 1762737861.9236152
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738207.5463068
+      "updated_at": 1762737861.9315228
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738207.5549517
+      "updated_at": 1762737861.9395585
     }
   },
-  "1762738252": {
+  "1762737906": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738356.09919
+      "updated_at": 1762737992.8829794
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738252.5735993,
+      "updated_at": 1762737906.955843,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6410,7 +6720,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738252.5817034,
+      "updated_at": 1762737906.9639761,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6428,33 +6738,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738252.5904548
+      "updated_at": 1762737906.9720385
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738252.5989566
+      "updated_at": 1762737906.9799898
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738252.6077216
+      "updated_at": 1762737906.9880564
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738252.616653
+      "updated_at": 1762737906.9959881
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738252.626722
+      "updated_at": 1762737907.012474
     }
   },
-  "1762738297": {
+  "1762737952": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738440.311318
+      "updated_at": 1762738024.8073506
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738297.6477704,
+      "updated_at": 1762737952.0288298,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6472,7 +6782,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738297.6586795,
+      "updated_at": 1762737952.037261,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6490,33 +6800,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738297.6668737
+      "updated_at": 1762737952.0534801
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738297.6758406
+      "updated_at": 1762737952.0617177
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738297.6861124
+      "updated_at": 1762737952.0700362
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738297.6943903
+      "updated_at": 1762737952.07841
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738297.7050214
+      "updated_at": 1762737952.0863307
     }
   },
-  "1762738342": {
+  "1762737997": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738449.3470943
+      "updated_at": 1762738042.0246964
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738342.7250874,
+      "updated_at": 1762737997.106973,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6534,7 +6844,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738342.7338524,
+      "updated_at": 1762737997.115008,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6552,33 +6862,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738342.7446358
+      "updated_at": 1762737997.1319652
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738342.7531846
+      "updated_at": 1762737997.1402
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738342.761591
+      "updated_at": 1762737997.1482074
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738342.770227
+      "updated_at": 1762737997.1561444
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738342.7791796
+      "updated_at": 1762737997.164055
     }
   },
-  "1762738387": {
+  "1762738042": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738502.1852658
+      "updated_at": 1762738135.645436
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738387.7971563,
+      "updated_at": 1762738042.1816328,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6596,7 +6906,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738387.8053806,
+      "updated_at": 1762738042.190185,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6614,33 +6924,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738387.8132977
+      "updated_at": 1762738042.20788
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738387.8213618
+      "updated_at": 1762738042.2167141
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738387.8297167
+      "updated_at": 1762738042.2250352
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738387.8380108
+      "updated_at": 1762738042.2334359
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738387.8466825
+      "updated_at": 1762738042.2416518
     }
   },
-  "1762738432": {
+  "1762738087": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738538.3991354
+      "updated_at": 1762738173.9310951
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738432.8646343,
+      "updated_at": 1762738087.258836,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6658,7 +6968,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738432.8733842,
+      "updated_at": 1762738087.2673967,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6676,33 +6986,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738432.8822925
+      "updated_at": 1762738087.2754765
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738432.8909297
+      "updated_at": 1762738087.2838302
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738432.8993003
+      "updated_at": 1762738087.2918916
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738432.9079065
+      "updated_at": 1762738087.3007839
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738432.9164934
+      "updated_at": 1762738087.309045
     }
   },
-  "1762738477": {
+  "1762738132": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738617.6372635
+      "updated_at": 1762738241.6160939
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738477.9342322,
+      "updated_at": 1762738132.3259814,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6720,7 +7030,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738477.94293,
+      "updated_at": 1762738132.3343065,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6738,33 +7048,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738477.9512868
+      "updated_at": 1762738132.342266
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738477.9598799
+      "updated_at": 1762738132.3503194
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738477.9687796
+      "updated_at": 1762738132.358763
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738477.977066
+      "updated_at": 1762738132.3672476
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738477.9852915
+      "updated_at": 1762738132.3753533
     }
   },
-  "1762738522": {
+  "1762738177": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738653.9278107
+      "updated_at": 1762738280.862934
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738523.0033271,
+      "updated_at": 1762738177.393429,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6782,7 +7092,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738523.0122037,
+      "updated_at": 1762738177.402498,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6800,33 +7110,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738523.0271037
+      "updated_at": 1762738177.4107585
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738523.0354738
+      "updated_at": 1762738177.419665
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738523.0450702
+      "updated_at": 1762738177.4322093
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738523.0537791
+      "updated_at": 1762738177.441459
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738523.062192
+      "updated_at": 1762738177.4505184
     }
   },
-  "1762738568": {
+  "1762738222": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738733.0951388
+      "updated_at": 1762738302.8200886
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738568.0815423,
+      "updated_at": 1762738222.4779732,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6844,7 +7154,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738568.090494,
+      "updated_at": 1762738222.4861038,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6862,33 +7172,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738568.109504
+      "updated_at": 1762738222.4940524
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738568.126944
+      "updated_at": 1762738222.5036252
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738568.137006
+      "updated_at": 1762738222.5116963
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738568.145966
+      "updated_at": 1762738222.5202184
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738568.154718
+      "updated_at": 1762738222.5285795
     }
   },
-  "1762738613": {
+  "1762738267": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738745.383385
+      "updated_at": 1762738396.3548822
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738613.1767838,
+      "updated_at": 1762738267.5472088,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6906,7 +7216,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738613.1857293,
+      "updated_at": 1762738267.55807,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6924,33 +7234,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738613.194296
+      "updated_at": 1762738267.5708387
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738613.202867
+      "updated_at": 1762738267.5797653
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738613.2115328
+      "updated_at": 1762738267.5924575
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738613.2205966
+      "updated_at": 1762738267.6022668
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738613.229395
+      "updated_at": 1762738267.6152616
     }
   },
-  "1762738658": {
+  "1762738312": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738812.8450613
+      "updated_at": 1762738379.3472757
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738658.2690156,
+      "updated_at": 1762738312.6901314,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6959,6 +7269,502 @@
           "ready": false,
           "reason": "insufficient_accuracy",
           "horizon": "5m",
+          "precision": 0.5730622617534943,
+          "recall": 0.7898423817863398,
+          "samples": 1043,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738312.7136564,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5730622617534943,
+          "recall": 0.7898423817863398,
+          "samples": 1043,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738312.7560568
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738312.7947595
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738312.8434389
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738312.8702016
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738312.8923142
+    }
+  },
+  "1762738357": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738465.7029278
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738357.930506,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738357.9390776,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738357.9476902
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738357.9565372
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738357.9654446
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738357.9740238
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738357.9825912
+    }
+  },
+  "1762738402": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738507.768392
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738403.0011158,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738403.0104094,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738403.019284
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738403.036678
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738403.045324
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738403.054166
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738403.0630574
+    }
+  },
+  "1762738448": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738569.633342
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738448.0824835,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738448.0916727,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738448.1007843
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738448.1096315
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738448.118438
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738448.1275365
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738448.1365068
+    }
+  },
+  "1762738493": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738572.2778797
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738493.1550753,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738493.1639702,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738493.1728365
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738493.1819167
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738493.1905406
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738493.1993654
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738493.2079937
+    }
+  },
+  "1762738538": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738670.3477905
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738538.2270348,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738538.2364466,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738538.2464817
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738538.2553964
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738538.2644744
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738538.2733638
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738538.2822297
+    }
+  },
+  "1762738583": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738687.2589543
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738583.3017447,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738583.3112729,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738583.3292627
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738583.3418293
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738583.3509202
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738583.3601472
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738583.3700247
+    }
+  },
+  "1762738628": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738759.3069592
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738628.389334,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762738628.3983502,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762738628.4077191
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762738628.4179857
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762738628.427022
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762738628.4360156
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762738628.444743
+    }
+  },
+  "1762738673": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762738802.7629707
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762738673.464392,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
           "precision": 0.5519348268839104,
           "recall": 1.0,
           "samples": 491,
@@ -6968,7 +7774,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738658.28607,
+      "updated_at": 1762738673.4809668,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -6986,33 +7792,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738658.3111627
+      "updated_at": 1762738673.494471
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738658.3249738
+      "updated_at": 1762738673.5038545
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738658.340595
+      "updated_at": 1762738673.512974
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738658.356182
+      "updated_at": 1762738673.5221336
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738658.375913
+      "updated_at": 1762738673.5319865
     }
   },
-  "1762738703": {
+  "1762738718": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738860.8431835
+      "updated_at": 1762738875.5189402
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738703.4073904,
+      "updated_at": 1762738718.5515838,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7030,7 +7836,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738703.417258,
+      "updated_at": 1762738718.5610716,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7048,33 +7854,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738703.4274647
+      "updated_at": 1762738718.5703282
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738703.4375682
+      "updated_at": 1762738718.5794437
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738703.4479258
+      "updated_at": 1762738718.5885334
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738703.4573402
+      "updated_at": 1762738718.5974555
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738703.4667473
+      "updated_at": 1762738718.606483
     }
   },
-  "1762738748": {
+  "1762738763": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738928.4713507
+      "updated_at": 1762738918.8990915
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738748.4884758,
+      "updated_at": 1762738763.6273224,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7092,7 +7898,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738748.4976177,
+      "updated_at": 1762738763.6366513,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7110,33 +7916,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738748.5068297
+      "updated_at": 1762738763.646212
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738748.515889
+      "updated_at": 1762738763.6554644
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738748.5256603
+      "updated_at": 1762738763.6650035
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738748.5347497
+      "updated_at": 1762738763.674325
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738748.544454
+      "updated_at": 1762738763.6833692
     }
   },
-  "1762738793": {
+  "1762738808": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762738976.4031785
+      "updated_at": 1762738968.8589294
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738793.5654354,
+      "updated_at": 1762738808.7110875,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7154,7 +7960,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738793.5782204,
+      "updated_at": 1762738808.7241228,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7172,33 +7978,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738793.5892951
+      "updated_at": 1762738808.7341797
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738793.6030736
+      "updated_at": 1762738808.74341
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738793.6199906
+      "updated_at": 1762738808.7544425
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738793.642787
+      "updated_at": 1762738808.764066
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738793.659217
+      "updated_at": 1762738808.774298
     }
   },
-  "1762738838": {
+  "1762738853": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762739043.9872413
+      "updated_at": 1762739034.3550928
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738838.6854763,
+      "updated_at": 1762738853.8051527,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7216,7 +8022,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738838.6954367,
+      "updated_at": 1762738853.8166635,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7234,33 +8040,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738838.7046459
+      "updated_at": 1762738853.8262436
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738838.713792
+      "updated_at": 1762738853.8357623
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738838.723119
+      "updated_at": 1762738853.8481257
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738838.7326035
+      "updated_at": 1762738853.858026
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738838.7416744
+      "updated_at": 1762738853.8709846
     }
   },
-  "1762738883": {
+  "1762738898": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762739077.2280014
+      "updated_at": 1762739084.3628154
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738883.7611876,
+      "updated_at": 1762738898.891105,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7278,7 +8084,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738883.7703588,
+      "updated_at": 1762738898.9015174,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7296,33 +8102,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738883.7800922
+      "updated_at": 1762738898.911506
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738883.790708
+      "updated_at": 1762738898.920831
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738883.8000176
+      "updated_at": 1762738898.9313476
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738883.8092315
+      "updated_at": 1762738898.940709
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738883.8185842
+      "updated_at": 1762738898.951328
     }
   },
-  "1762738928": {
+  "1762738943": {
     "data_ingest": {
       "status": "completed",
-      "updated_at": 1762739159.5752769
+      "updated_at": 1762739149.819152
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738928.838582,
+      "updated_at": 1762738943.9733975,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7340,7 +8146,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738928.8480403,
+      "updated_at": 1762738943.9831972,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7358,33 +8164,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738928.8573713
+      "updated_at": 1762738943.9938102
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738928.8666632
+      "updated_at": 1762738944.0040276
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738928.8759613
+      "updated_at": 1762738944.0146558
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738928.8852184
+      "updated_at": 1762738944.025315
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738928.894455
+      "updated_at": 1762738944.0349488
     }
   },
-  "1762738973": {
+  "1762738989": {
     "data_ingest": {
       "status": "running",
-      "updated_at": 1762739077.8008425
+      "updated_at": 1762739084.4509382
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762738973.9144018,
+      "updated_at": 1762738989.059257,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7402,7 +8208,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762738973.9241946,
+      "updated_at": 1762738989.069725,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7420,33 +8226,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762738973.9346325
+      "updated_at": 1762738989.0797386
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762738973.9458847
+      "updated_at": 1762738989.0897796
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762738973.957906
+      "updated_at": 1762738989.099927
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762738973.9701998
+      "updated_at": 1762738989.110162
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762738973.9801939
+      "updated_at": 1762738989.1203701
     }
   },
-  "1762739018": {
+  "1762739034": {
     "data_ingest": {
       "status": "running",
-      "updated_at": 1762739160.6505835
+      "updated_at": 1762739149.898138
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762739019.0028775,
+      "updated_at": 1762739034.1459165,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7464,7 +8270,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762739019.0124302,
+      "updated_at": 1762739034.1561959,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7482,33 +8288,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762739019.0251262
+      "updated_at": 1762739034.166185
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762739019.0353537
+      "updated_at": 1762739034.1761599
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762739019.0451744
+      "updated_at": 1762739034.1860921
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762739019.0552967
+      "updated_at": 1762739034.1956174
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762739019.0650685
+      "updated_at": 1762739034.2057412
     }
   },
-  "1762739064": {
+  "1762739079": {
     "data_ingest": {
       "status": "queued",
-      "updated_at": 1762739064.0762272
+      "updated_at": 1762739079.2180946
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762739064.0857942,
+      "updated_at": 1762739079.2298594,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7526,7 +8332,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762739064.096457,
+      "updated_at": 1762739079.2407582,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7544,33 +8350,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762739064.1056979
+      "updated_at": 1762739079.2529871
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762739064.1164815
+      "updated_at": 1762739079.265008
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762739064.1272583
+      "updated_at": 1762739079.2763176
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762739064.1369033
+      "updated_at": 1762739079.2885807
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762739064.1478896
+      "updated_at": 1762739079.3010845
     }
   },
-  "1762739109": {
+  "1762739124": {
     "data_ingest": {
       "status": "queued",
-      "updated_at": 1762739109.1606474
+      "updated_at": 1762739124.3159015
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762739109.178217,
+      "updated_at": 1762739124.3274214,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7588,7 +8394,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762739109.199075,
+      "updated_at": 1762739124.3419745,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7606,33 +8412,33 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762739109.2113304
+      "updated_at": 1762739124.3529649
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762739109.2241623
+      "updated_at": 1762739124.3657198
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762739109.234983
+      "updated_at": 1762739124.3779747
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762739109.2466295
+      "updated_at": 1762739124.3889754
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762739109.259277
+      "updated_at": 1762739124.4019668
     }
   },
-  "1762739154": {
+  "1762739169": {
     "data_ingest": {
       "status": "queued",
-      "updated_at": 1762739154.275227
+      "updated_at": 1762739169.4161115
     },
     "news_enrichment": {
       "status": "queued",
-      "updated_at": 1762739154.286057,
+      "updated_at": 1762739169.4270499,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7650,7 +8456,7 @@
     },
     "dataset_warmup": {
       "status": "queued",
-      "updated_at": 1762739154.2959006,
+      "updated_at": 1762739169.4393754,
       "metadata": {
         "focus_assets": [
           "WETH-USDBC"
@@ -7668,23 +8474,23 @@
     },
     "candidate_training": {
       "status": "queued",
-      "updated_at": 1762739154.3059967
+      "updated_at": 1762739169.4502614
     },
     "ghost_metrics": {
       "status": "queued",
-      "updated_at": 1762739154.3217337
+      "updated_at": 1762739169.4641173
     },
     "scheduler_refresh": {
       "status": "queued",
-      "updated_at": 1762739154.3331463
+      "updated_at": 1762739169.4769814
     },
     "telemetry_flush": {
       "status": "queued",
-      "updated_at": 1762739154.3434014
+      "updated_at": 1762739169.4880688
     },
     "background_refresh": {
       "status": "queued",
-      "updated_at": 1762739154.3541107
+      "updated_at": 1762739169.4989269
     }
   }
 }
