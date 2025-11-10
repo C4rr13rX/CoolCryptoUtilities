@@ -7937,8 +7937,8 @@
   },
   "1762738928": {
     "data_ingest": {
-      "status": "running",
-      "updated_at": 1762739044.8338397
+      "status": "completed",
+      "updated_at": 1762739130.4168844
     },
     "news_enrichment": {
       "status": "queued",
@@ -8061,8 +8061,8 @@
   },
   "1762739018": {
     "data_ingest": {
-      "status": "queued",
-      "updated_at": 1762739018.6736937
+      "status": "waiting_deps",
+      "updated_at": 1762739130.4278574
     },
     "news_enrichment": {
       "status": "queued",
@@ -8181,6 +8181,68 @@
     "background_refresh": {
       "status": "queued",
       "updated_at": 1762739063.840298
+    }
+  },
+  "1762739108": {
+    "data_ingest": {
+      "status": "queued",
+      "updated_at": 1762739108.8525903
+    },
+    "news_enrichment": {
+      "status": "queued",
+      "updated_at": 1762739108.8630698,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "queued",
+      "updated_at": 1762739108.8777184,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.5519348268839104,
+          "recall": 1.0,
+          "samples": 491,
+          "threshold": 0.3
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "queued",
+      "updated_at": 1762739108.889561
+    },
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1762739108.9002917
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1762739108.9116352
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1762739108.9250398
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762739108.9359221
     }
   }
 }
