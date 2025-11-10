@@ -320,9 +320,15 @@ export async function revealIntegrationValue(name: string) {
   return data;
 }
 
-export async function fetchCodeGraph() {
-  const { data } = await api.get('/codegraph/');
+export async function fetchCodeGraph(refresh = false) {
+  const params = refresh ? { refresh: '1' } : undefined;
+  const { data } = await api.get('/codegraph/', { params, timeout: 30000 });
   return data;
+}
+
+export async function fetchCodeGraphFiles() {
+  const { data } = await api.get('/codegraph/files/', { timeout: 10000 });
+  return data?.files || [];
 }
 
 export async function uploadCodeGraphSnapshot(payload: { timestamp: string; node_id: string; image: string }) {

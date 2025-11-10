@@ -4,7 +4,7 @@ import math
 import time
 from collections import deque
 from dataclasses import dataclass, field, asdict
-from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -149,6 +149,9 @@ class BusScheduler:
         self._horizon_span = max(seconds) - self._horizon_min if seconds else 1
         self._opportunity_bias: Dict[str, OpportunitySignal] = {}
         self._bucket_bias: Dict[str, float] = {"short": 1.0, "mid": 1.0, "long": 1.0}
+        self._gas_alert_cb: Optional[Callable[[str, float], None]] = None
+        self._last_gas_alert_ts: float = 0.0
+        self._gas_alert_interval: float = 180.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -180,6 +183,7 @@ class BusScheduler:
         native_balance = portfolio.get_native_balance(chain_name)
         # crude gas safety
         if native_balance < 0.01:
+            self._emit_gas_alert(chain_name, native_balance)
             return None
 
         best_long = max(signals, key=self._score_signal)
@@ -257,6 +261,9 @@ class BusScheduler:
                 self._bucket_bias[key] = max(0.3, float(value))
             except (TypeError, ValueError):
                 continue
+
+    def set_gas_alert_callback(self, callback: Optional[Callable[[str, float], None]]) -> None:
+        self._gas_alert_cb = callback
 
     def snapshot(self) -> List[Dict[str, float]]:
         out: List[Dict[str, float]] = []
@@ -467,6 +474,18 @@ class BusScheduler:
         bucket = self._bucket_for_seconds(seconds)
         bias = self._bucket_bias.get(bucket, 1.0)
         return float(max(0.4, (bell + 0.2 * scarcity) * bias))
+
+    def _emit_gas_alert(self, chain: str, native_balance: float) -> None:
+        if not self._gas_alert_cb:
+            return
+        now = time.time()
+        if now - self._last_gas_alert_ts < self._gas_alert_interval:
+            return
+        self._last_gas_alert_ts = now
+        try:
+            self._gas_alert_cb(chain, native_balance)
+        except Exception:
+            pass
 
     def _apply_opportunity_bias(self, symbol: str, signals: List[HorizonSignal]) -> List[HorizonSignal]:
         if not signals:

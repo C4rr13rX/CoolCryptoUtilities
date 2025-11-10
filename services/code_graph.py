@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
+import logging
 import os
+import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
+
+from django.core.exceptions import ImproperlyConfigured
+from django.db import OperationalError, ProgrammingError
+
+try:
+    from core.models import CodeGraphCache
+except Exception:  # pragma: no cover - model unavailable before migrations
+    CodeGraphCache = None
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXCLUDE_DIRS = {
@@ -25,6 +39,34 @@ EXCLUDE_DIRS = {
     "bin",
     "include",
 }
+TARGET_DIRS = {
+    "web",
+    "services",
+    "monitoring_guardian",
+    "trading",
+    "tools",
+    "apps",
+    "orchestration",
+    "walletpanel",
+    "guardianpanel",
+    "opsconsole",
+}
+TARGET_FILES = {
+    "main.py",
+    "production.py",
+    "router_wallet.py",
+    "balances.py",
+    "wallet_cli.py",
+    "db.py",
+    "services.py",
+}
+CACHE_DIR = Path("runtime/code_graph")
+CACHE_PATH = CACHE_DIR / "graph_cache.json"
+CACHE_TTL = int(os.getenv("CODE_GRAPH_CACHE_TTL", "600"))
+CACHE_KEY = "codegraph:default"
+
+_BUILD_LOCK = threading.Lock()
+_BUILDING = False
 
 
 @dataclass
@@ -128,7 +170,6 @@ class FileAnalyzer(ast.NodeVisitor):
         container = self._current_container()
         kind = "function"
         if self.scope:
-            # if the immediate scope is a class, treat as method
             parent_kind = self.scope[-1][2]
             if parent_kind == "class":
                 kind = "method"
@@ -155,8 +196,9 @@ class FileAnalyzer(ast.NodeVisitor):
 
 
 class ProjectGraph:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, file_list: Optional[List[str]] = None) -> None:
         self.root = root
+        self.selected_files = file_list
         self.nodes: Dict[str, GraphNode] = {}
         self.edges: List[GraphEdge] = []
         self.call_records: List[Tuple[str, str]] = []
@@ -172,35 +214,40 @@ class ProjectGraph:
             self._process_file(file_path)
         self._resolve_references()
         self._mark_unused_nodes()
+        summary = {
+            "files": len([node for node in self.nodes.values() if node.kind == "file"]),
+            "classes": len([node for node in self.nodes.values() if node.kind == "class"]),
+            "functions": len([node for node in self.nodes.values() if node.kind in {"function", "method"}]),
+        }
         return {
             "nodes": [node.as_dict() for node in self.nodes.values()],
             "edges": [edge.as_dict() for edge in self.edges],
             "warnings": self.warnings,
             "errors": self.errors,
+            "summary": summary,
             "generated_at": time.time(),
-            "summary": {
-                "files": len([n for n in self.nodes.values() if n.kind == "file"]),
-                "classes": len([n for n in self.nodes.values() if n.kind == "class"]),
-                "functions": len([n for n in self.nodes.values() if n.kind in {"function", "method"}]),
-            },
         }
 
     # ------------------------------------------------------------------ helpers
     def _iter_source_files(self) -> Iterable[Path]:
+        if self.selected_files is not None:
+            for rel_path in self.selected_files:
+                path = (self.root / rel_path).resolve()
+                if path.exists():
+                    yield path
+            return
         for path in self.root.rglob("*.py"):
             rel = path.relative_to(self.root)
             if any(part in EXCLUDE_DIRS for part in rel.parts):
+                continue
+            top = rel.parts[0] if rel.parts else ""
+            if top not in TARGET_DIRS and rel.as_posix() not in TARGET_FILES:
                 continue
             yield path
 
     def _process_file(self, path: Path) -> None:
         rel_path = str(path.relative_to(self.root))
-        file_node = GraphNode(
-            id=f"file::{rel_path}",
-            label=rel_path,
-            kind="file",
-            file=rel_path,
-        )
+        file_node = GraphNode(id=f"file::{rel_path}", label=rel_path, kind="file", file=rel_path)
         self.nodes[file_node.id] = file_node
         try:
             source = path.read_text(encoding="utf-8")
@@ -247,6 +294,206 @@ class ProjectGraph:
             self.warnings.append(node.id)
 
 
-def build_code_graph() -> Dict[str, object]:
-    graph = ProjectGraph(PROJECT_ROOT)
+def build_code_graph(file_list: Optional[List[str]] = None) -> Dict[str, object]:
+    graph = ProjectGraph(PROJECT_ROOT, file_list=file_list)
     return graph.build()
+
+
+def get_code_graph(force_refresh: bool = False) -> Dict[str, object]:
+    file_paths = _list_source_files()
+    snapshot = _collect_file_snapshot(file_paths)
+    cached = None if force_refresh else _load_cached_graph()
+    if cached and not _files_changed(cached.get("files") or [], snapshot):
+        payload = dict(cached)
+        payload["cached"] = True
+        payload["building"] = False
+        return payload
+
+    _kickoff_background_build(file_paths, snapshot)
+    placeholder = cached or _empty_payload()
+    placeholder["files"] = cached.get("files") if cached else snapshot  # type: ignore[union-attr]
+    placeholder["cached"] = bool(cached)
+    placeholder["building"] = True
+    return placeholder
+
+
+def list_tracked_files() -> List[str]:
+    cached = _load_cached_graph()
+    if cached and cached.get("files"):
+        return [entry["path"] for entry in cached["files"]]  # type: ignore[index]
+    snapshot = _collect_file_snapshot(_list_source_files())
+    return [entry["path"] for entry in snapshot]
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _list_source_files() -> List[str]:
+    files: List[str] = []
+    for path in PROJECT_ROOT.rglob("*.py"):
+        rel = path.relative_to(PROJECT_ROOT)
+        if any(part in EXCLUDE_DIRS for part in rel.parts):
+            continue
+        top = rel.parts[0] if rel.parts else ""
+        rel_posix = rel.as_posix()
+        if top not in TARGET_DIRS and rel_posix not in TARGET_FILES:
+            continue
+        files.append(rel_posix)
+    files.sort()
+    return files
+
+
+def _collect_file_snapshot(file_paths: List[str]) -> List[Dict[str, object]]:
+    snapshot: List[Dict[str, object]] = []
+    for rel_path in file_paths:
+        full_path = (PROJECT_ROOT / rel_path).resolve()
+        try:
+            data = full_path.read_bytes()
+        except FileNotFoundError:
+            continue
+        stats = full_path.stat()
+        snapshot.append(
+            {
+                "path": rel_path,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "size": stats.st_size,
+                "mtime": stats.st_mtime,
+            }
+        )
+    return snapshot
+
+
+def _files_changed(old: List[Dict[str, object]], new: List[Dict[str, object]]) -> bool:
+    if len(old) != len(new):
+        return True
+    old_map = {entry["path"]: entry for entry in old}
+    for entry in new:
+        prev = old_map.get(entry["path"])
+        if not prev:
+            return True
+        if prev.get("sha256") != entry.get("sha256"):
+            return True
+    return False
+
+
+def _empty_payload() -> Dict[str, object]:
+    return {
+        "nodes": [],
+        "edges": [],
+        "warnings": [],
+        "errors": [],
+        "summary": {"files": 0, "classes": 0, "functions": 0},
+        "generated_at": None,
+        "files": [],
+        "cached": False,
+        "building": False,
+    }
+
+
+def _kickoff_background_build(file_paths: List[str], snapshot: Optional[List[Dict[str, object]]] = None) -> None:
+    with _BUILD_LOCK:
+        if _BUILDING:
+            return
+        state = {
+            "file_paths": file_paths,
+            "snapshot": snapshot,
+        }
+        globals()["_BUILDING"] = True
+
+    def _worker(state: Dict[str, object]) -> None:
+        try:
+            paths = state["file_paths"]  # type: ignore[index]
+            meta = state.get("snapshot") or _collect_file_snapshot(paths)  # type: ignore[arg-type]
+            payload = build_code_graph(paths)
+            payload["files"] = meta
+            payload["cached"] = False
+            payload["building"] = False
+            _save_cached_graph(payload)
+        except Exception:
+            logger.exception("Code graph build failed")
+        finally:
+            with _BUILD_LOCK:
+                globals()["_BUILDING"] = False
+
+    thread = threading.Thread(target=_worker, args=(state,), name="code-graph-build", daemon=True)
+    thread.start()
+
+
+def _load_cached_graph() -> Optional[Dict[str, object]]:
+    entry = _load_cached_graph_from_db()
+    if entry:
+        return entry
+    entry = _load_cached_graph_from_disk()
+    return entry
+
+
+def _save_cached_graph(payload: Dict[str, object]) -> None:
+    payload["generated_at"] = payload.get("generated_at") or time.time()
+    _save_cached_graph_to_db(payload)
+    _save_cached_graph_to_disk(payload)
+
+
+def _load_cached_graph_from_db() -> Optional[Dict[str, object]]:
+    if CodeGraphCache is None:
+        return None
+    try:
+        cache_entry = CodeGraphCache.objects.filter(cache_key=CACHE_KEY).first()
+    except (OperationalError, ProgrammingError, ImproperlyConfigured):
+        return None
+    if not cache_entry:
+        return None
+    graph = dict(cache_entry.graph or {})
+    graph["files"] = cache_entry.files or []
+    graph["cached"] = True
+    graph["building"] = False
+    return graph
+
+
+def _save_cached_graph_to_db(payload: Dict[str, object]) -> None:
+    if CodeGraphCache is None:
+        return
+    try:
+        CodeGraphCache.objects.update_or_create(
+            cache_key=CACHE_KEY,
+            defaults={
+                "graph": {
+                    key: value
+                    for key, value in payload.items()
+                    if key not in {"files", "cached", "building"}
+                },
+                "files": payload.get("files", []),
+            },
+        )
+    except (OperationalError, ProgrammingError, ImproperlyConfigured):
+        logger.debug("Skipping DB cache save (database unavailable)", exc_info=True)
+
+
+def _load_cached_graph_from_disk() -> Optional[Dict[str, object]]:
+    if not CACHE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    ts = payload.get("generated_at")
+    if not isinstance(ts, (int, float)):
+        return None
+    if (time.time() - ts) > CACHE_TTL:
+        return None
+    payload["cached"] = True
+    payload.setdefault("files", [])
+    payload["building"] = False
+    return payload
+
+
+def _save_cached_graph_to_disk(payload: Dict[str, object]) -> None:
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        serializable = {
+            key: value for key, value in payload.items() if key not in {"cached", "building"}
+        }
+        CACHE_PATH.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+    except Exception:
+        logger.debug("Unable to persist graph cache to disk", exc_info=True)

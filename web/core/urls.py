@@ -38,6 +38,8 @@ urlpatterns = [
     path("api/codegraph", views.CodeGraphDataView.as_view()),
     path("api/codegraph/snapshots/", views.CodeGraphSnapshotView.as_view(), name="codegraph-snapshots"),
     path("api/codegraph/snapshots", views.CodeGraphSnapshotView.as_view()),
+    path("api/codegraph/files/", views.CodeGraphFilesView.as_view(), name="codegraph-files"),
+    path("api/codegraph/files", views.CodeGraphFilesView.as_view()),
     path("advisories/", views.AdvisoriesPageView.as_view(), name="advisories"),
     path("advisories", views.AdvisoriesPageView.as_view()),
     path("<slug:route>/", views.SpaRouteView.as_view(), name="spa-route"),

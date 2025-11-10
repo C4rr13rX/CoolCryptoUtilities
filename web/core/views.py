@@ -25,7 +25,7 @@ if str(ROOT) not in sys.path:
 
 from db import get_db  # noqa: E402
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
-from services.code_graph import build_code_graph  # noqa: E402
+from services.code_graph import get_code_graph, list_tracked_files  # noqa: E402
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
@@ -274,7 +274,8 @@ class CodeGraphDataView(LoginRequiredMixin, View):
     login_url = "core:index"
 
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
-        payload = build_code_graph()
+        refresh = str(request.GET.get("refresh", "")).lower() in {"1", "true", "yes"}
+        payload = get_code_graph(force_refresh=refresh)
         return JsonResponse(payload, status=200)
 
 
@@ -310,6 +311,14 @@ class CodeGraphSnapshotView(LoginRequiredMixin, View):
         file_path = folder / f"{safe_node}.png"
         file_path.write_bytes(binary)
         return JsonResponse({"saved": str(file_path)}, status=201)
+
+
+class CodeGraphFilesView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        files = list_tracked_files()
+        return JsonResponse({"files": files}, status=200)
 
 
 def _tail_lines(path: Path, limit: int = 400) -> List[str]:

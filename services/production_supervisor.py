@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple
 from services.guardian_lock import GuardianLease
 from services.guardian_status import update_production_state
 from services.logging_utils import log_message
+from services.pipeline_prewarm import prewarm_training_pipeline
 
 try:  # pragma: no cover - defensive import when Django app not loaded yet.
     from web.opsconsole.manager import manager as console_manager
@@ -44,6 +45,8 @@ class ProductionSupervisor:
         self._heartbeat_ttl = float(os.getenv("PRODUCTION_HEARTBEAT_TTL", "150"))
         self._restart_cooldown = float(os.getenv("PRODUCTION_RESTART_COOLDOWN", "45"))
         self._last_boot_cmd = 0.0
+        self._prewarm_interval = float(os.getenv("PRODUCTION_PREWARM_INTERVAL", "600"))
+        self._last_prewarm = 0.0
 
     # ------------------------------------------------------------------ public API
     def ensure_running(self) -> None:
@@ -152,6 +155,7 @@ class ProductionSupervisor:
         if now - self._last_boot_cmd < self._restart_cooldown:
             return
         self._last_boot_cmd = now
+        self._prewarm_pipeline(metadata)
         try:
             console_status = console_manager.status()
             if console_status.get("status") not in {"running", "started"}:
@@ -173,6 +177,18 @@ class ProductionSupervisor:
             metadata.setdefault("error", str(exc))
             log_message("production", f"console start failed: {exc}", severity="error")
             self._increment_error()
+
+    def _prewarm_pipeline(self, metadata: Dict[str, Any]) -> None:
+        now = time.time()
+        if now - self._last_prewarm < self._prewarm_interval:
+            return
+        try:
+            summary = prewarm_training_pipeline(focus_assets=metadata.get("focus_assets") or None)
+        except Exception as exc:
+            log_message("production", f"pipeline prewarm skipped: {exc}", severity="warning")
+            return
+        self._last_prewarm = now
+        metadata.setdefault("prewarm", summary)
 
     def _stop_via_console(self) -> None:
         if console_manager is None:

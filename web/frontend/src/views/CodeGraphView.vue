@@ -2,8 +2,10 @@
   <div class="codegraph-view">
     <section class="panel toolbar">
       <div class="controls">
-        <button class="btn" type="button" @click="refreshGraph" :disabled="loading">
-          {{ loading ? 'Loading…' : 'Refresh Graph' }}
+        <button class="btn" type="button" @click="refreshGraph(true)" :disabled="loading || building">
+          <span v-if="loading">Loading…</span>
+          <span v-else-if="building">Building…</span>
+          <span v-else>Refresh Graph</span>
         </button>
         <button class="btn ghost" type="button" @click="resetView" :disabled="loading">
           Reset View
@@ -14,6 +16,15 @@
         <button class="btn danger" type="button" @click="captureSnapshots('errors')" :disabled="capturing || !graphReady">
           Snapshot Errors
         </button>
+      </div>
+      <div class="loading-bar" v-if="loading || building || loadingProgress > 0">
+        <div class="bar">
+          <span class="fill" :style="{ width: `${Math.min(loadingProgress * 100, 100)}%` }"></span>
+        </div>
+        <div class="loading-meta">
+          <span class="file-name">{{ loadingLabel }}</span>
+          <span class="build-name">{{ buildingLabel }}</span>
+        </div>
       </div>
       <div class="summary">
         <div>
@@ -46,10 +57,10 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, nextTick } from 'vue';
+import { onBeforeUnmount, onMounted, ref, nextTick, watch } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { fetchCodeGraph, uploadCodeGraphSnapshot } from '@/api';
+import { fetchCodeGraph, fetchCodeGraphFiles, uploadCodeGraphSnapshot } from '@/api';
 
 const canvasContainer = ref<HTMLElement | null>(null);
 const loading = ref(false);
@@ -59,6 +70,13 @@ const summary = ref<Record<string, number>>({});
 const warnings = ref<string[]>([]);
 const errors = ref<string[]>([]);
 const nodes = ref<any[]>([]);
+const building = ref(false);
+const fileNames = ref<string[]>([]);
+const currentFileName = ref('');
+const loadingProgress = ref(0);
+const loadingPhase = ref<'idle' | 'loading' | 'building' | 'done'>('idle');
+const loadingLabel = ref('Idle');
+const buildingLabel = ref('Awaiting build plan…');
 
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
@@ -75,19 +93,45 @@ const STATUS_COLORS: Record<string, number> = {
   unused: 0xffa726,
   broken: 0xef5350,
 };
+let loadingTimer: number | null = null;
+let progressTimer: number | null = null;
+let buildingLabelTimer: number | null = null;
+let pollTimer: number | null = null;
+let fileIndex = 0;
+let buildingIndex = 0;
+let phaseStart = performance.now();
+const LOADING_EXPECTED_MS = 9000;
+const BUILD_EXPECTED_MS = 15000;
+const BUILDING_MESSAGES = [
+  'Linking call graph…',
+  'Resolving class hierarchies…',
+  'Indexing functions…',
+  'Scoring unused definitions…',
+  'Drawing flow channels…',
+  'Assembling viewport chunks…',
+];
 
-async function refreshGraph() {
+async function refreshGraph(force = false) {
   loading.value = true;
+  startLoadingTicker();
+  setPhase('loading');
   try {
-    const data = await fetchCodeGraph();
+    const data = await fetchCodeGraph(force);
+    building.value = Boolean(data?.building);
     summary.value = data?.summary || {};
     warnings.value = data?.warnings || [];
     errors.value = data?.errors || [];
     nodes.value = data?.nodes || [];
     graphReady.value = Boolean(nodes.value.length);
-    buildScene(data);
-    await resetView();
+    if (graphReady.value) {
+      buildScene(data);
+    }
+    if (!graphReady.value) {
+await resetView();
+    }
+    schedulePoll();
   } finally {
+    stopLoadingTicker();
     loading.value = false;
   }
 }
@@ -357,13 +401,167 @@ async function resetView() {
   await animateCamera(defaultCameraPos.clone(), defaultTarget.clone(), 700);
 }
 
+async function loadFileList() {
+  try {
+    const files = await fetchCodeGraphFiles();
+    if (Array.isArray(files) && files.length) {
+      fileNames.value = files;
+    }
+  } catch (error) {
+    // ignore
+  }
+}
+
+function startLoadingTicker() {
+  if (!fileNames.value.length) {
+    loadFileList();
+  }
+  if (loadingTimer) return;
+  loadingTimer = window.setInterval(() => {
+    if (!fileNames.value.length) {
+      currentFileName.value = 'Scanning project…';
+    } else {
+      currentFileName.value = fileNames.value[fileIndex % fileNames.value.length];
+      fileIndex += 1;
+    }
+    if (loadingPhase.value === 'loading') {
+      loadingLabel.value = currentFileName.value || 'Scanning project…';
+    }
+  }, 25);
+  startProgressLoop();
+}
+
+function stopLoadingTicker() {
+  if (loadingTimer) {
+    window.clearInterval(loadingTimer);
+    loadingTimer = null;
+  }
+  currentFileName.value = '';
+}
+
+function setPhase(state: 'idle' | 'loading' | 'building' | 'done') {
+  loadingPhase.value = state;
+  phaseStart = performance.now();
+  if (state === 'loading') {
+    loadingProgress.value = 0;
+    loadingLabel.value = currentFileName.value || 'Scanning project…';
+    buildingLabel.value = 'Preparing build schematic…';
+    stopBuildingLabelTicker();
+  } else if (state === 'building') {
+    buildingLabel.value = BUILDING_MESSAGES[buildingIndex % BUILDING_MESSAGES.length];
+    startBuildingLabelTicker();
+  } else if (state === 'done') {
+    stopBuildingLabelTicker();
+    buildingLabel.value = 'Graph up to date.';
+    loadingProgress.value = 1;
+    window.setTimeout(() => {
+      loadingPhase.value = 'idle';
+      loadingProgress.value = 0;
+    }, 500);
+    return;
+  }
+  startProgressLoop();
+}
+
+function startProgressLoop() {
+  if (progressTimer) return;
+  const loop = () => {
+    updateProgress();
+    progressTimer = window.requestAnimationFrame(loop);
+  };
+  progressTimer = window.requestAnimationFrame(loop);
+}
+
+function stopProgressLoop() {
+  if (progressTimer) {
+    window.cancelAnimationFrame(progressTimer);
+    progressTimer = null;
+  }
+  if (loadingPhase.value === 'done' || loadingPhase.value === 'idle') {
+    loadingProgress.value = loadingPhase.value === 'done' ? 1 : 0;
+  }
+}
+
+function updateProgress() {
+  if (loadingPhase.value === 'idle') return;
+  const now = performance.now();
+  const elapsed = now - phaseStart;
+  if (loadingPhase.value === 'loading') {
+    const pct = Math.min(elapsed / LOADING_EXPECTED_MS, 1);
+    loadingProgress.value = Math.min(pct * 0.6, 0.6);
+    loadingLabel.value = currentFileName.value || 'Scanning project…';
+  } else if (loadingPhase.value === 'building') {
+    const pct = Math.min(elapsed / BUILD_EXPECTED_MS, 1);
+    loadingProgress.value = 0.6 + pct * 0.38;
+  }
+}
+
+function startBuildingLabelTicker() {
+  if (buildingLabelTimer) return;
+  buildingLabel.value = BUILDING_MESSAGES[buildingIndex % BUILDING_MESSAGES.length];
+  buildingIndex += 1;
+  buildingLabelTimer = window.setInterval(() => {
+    buildingLabel.value = BUILDING_MESSAGES[buildingIndex % BUILDING_MESSAGES.length];
+    buildingIndex += 1;
+  }, 600);
+}
+
+function stopBuildingLabelTicker() {
+  if (buildingLabelTimer) {
+    window.clearInterval(buildingLabelTimer);
+    buildingLabelTimer = null;
+  }
+}
+
+function schedulePoll() {
+  if (!building.value) {
+    if (pollTimer) {
+      window.clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    return;
+  }
+  if (pollTimer) {
+    return;
+  }
+  pollTimer = window.setTimeout(() => {
+    pollTimer = null;
+    refreshGraph();
+  }, 2000);
+}
+
 onMounted(() => {
   initScene();
+  loadFileList();
   refreshGraph();
+});
+
+watch(building, (value) => {
+  if (value) {
+    if (!loadingTimer) {
+      startLoadingTicker();
+    }
+    setPhase('building');
+  } else if (!loading.value) {
+    setPhase('done');
+  }
+});
+
+watch(loading, (value) => {
+  if (!value && !building.value) {
+    setPhase('done');
+  }
 });
 
 onBeforeUnmount(() => {
   if (animationId) cancelAnimationFrame(animationId);
+  stopLoadingTicker();
+  if (pollTimer) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  stopProgressLoop();
+  stopBuildingLabelTicker();
   if (renderer) {
     renderer.dispose();
     renderer = null;
@@ -403,6 +601,49 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 0.8rem;
+}
+
+.loading-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.loading-bar .bar {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.loading-bar .fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(71, 161, 255, 0.9), rgba(99, 255, 173, 0.9));
+  transition: width 0.1s linear;
+}
+
+.loading-bar .file-name {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.75);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.loading-meta .build-name {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  color: rgba(99, 255, 173, 0.85);
 }
 
 .summary .label {

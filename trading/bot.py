@@ -123,6 +123,7 @@ class TradingBot:
             print(f"[portfolio] initial refresh failed: {exc}")
         self._portfolio_next_refresh: float = time.time() + self.portfolio.refresh_interval
         self.scheduler = BusScheduler(db=self.db)
+        self.scheduler.set_gas_alert_callback(self._handle_gas_starvation)
         self.metrics = MetricsCollector(self.db)
         self._ghost_trade_counter = 0
         self.swap_validator = SwapValidator(db=self.db)
@@ -157,6 +158,8 @@ class TradingBot:
         self.required_live_profit: float = float(os.getenv("LIVE_PROMOTION_MIN_PROFIT", "50.0"))
         self.max_symbol_share: float = float(os.getenv("MAX_SYMBOL_SHARE", "0.25"))
         self.global_risk_budget: float = float(os.getenv("GLOBAL_RISK_BUDGET", "1.0"))
+        self._horizon_metrics_interval: float = max(60.0, float(os.getenv("HORIZON_METRICS_INTERVAL", "300")))
+        self._next_horizon_metrics: float = 0.0
         self._load_state()
         if not self.sim_quote_balances:
             self._init_sim_balances()
@@ -603,6 +606,42 @@ class TradingBot:
             f"[savings] mode={event.mode} token={event.token} amount={event.amount:.4f} equilibrium={event.equilibrium_score:.3f}"
         )
 
+    def _log_savings_checkpoint(self, payload: Dict[str, Any]) -> None:
+        try:
+            self.metrics.feedback("savings", severity=FeedbackSeverity.INFO, label="checkpoint_reserved", details=payload)
+            self.metrics.record(
+                MetricStage.SAVINGS,
+                {"checkpoint": float(payload.get("amount", 0.0))},
+                category=str(payload.get("mode") or "ghost"),
+                meta=payload,
+            )
+        except Exception:
+            pass
+
+    def _log_savings_skip(self, payload: Dict[str, Any]) -> None:
+        try:
+            self.metrics.feedback("savings", severity=FeedbackSeverity.WARNING, label="checkpoint_skipped", details=payload)
+        except Exception:
+            pass
+
+    def _handle_gas_starvation(self, chain: str, native_balance: float) -> None:
+        message = f"Scheduler paused directives on {chain} because native balance dropped to {native_balance:.4f}."
+        recommendation = "Bridge or swap into native gas on the affected chain to resume trading."
+        signature = f"gas-starved:{chain}:{round(native_balance, 4)}"
+        meta = {
+            "chain": chain,
+            "native_balance": native_balance,
+            "signature": signature,
+        }
+        self._record_advisory(
+            topic="native_gas_starved",
+            message=message,
+            severity=FeedbackSeverity.WARNING,
+            scope=chain,
+            recommendation=recommendation,
+            meta=meta,
+        )
+
     def _maybe_transition_to_live(self, *, latest_decision: Optional[Dict[str, Any]]) -> None:
         if not self.auto_promote_live:
             self._live_transition_state = {"enabled": self.live_trading_enabled, "reason": "auto_promote_disabled"}
@@ -754,6 +793,52 @@ class TradingBot:
             return
         if bias:
             self.scheduler.set_bucket_bias(bias)
+
+    def _maybe_record_horizon_summary(self, now: float) -> None:
+        if self._horizon_metrics_interval <= 0:
+            return
+        if now < self._next_horizon_metrics:
+            return
+        self._next_horizon_metrics = now + self._horizon_metrics_interval
+        try:
+            summary = self.scheduler.accuracy.summary()
+        except Exception:
+            return
+        if not summary:
+            return
+        horizon_map = {label: seconds for label, seconds in self.scheduler.horizons}
+        buckets = {
+            "short": {"mae_sum": 0.0, "count": 0, "samples": 0.0},
+            "mid": {"mae_sum": 0.0, "count": 0, "samples": 0.0},
+            "long": {"mae_sum": 0.0, "count": 0, "samples": 0.0},
+        }
+        for label, stats in summary.items():
+            seconds = horizon_map.get(label)
+            if seconds is None:
+                continue
+            if seconds <= 30 * 60:
+                bucket = "short"
+            elif seconds <= 24 * 3600:
+                bucket = "mid"
+            else:
+                bucket = "long"
+            buckets[bucket]["mae_sum"] += float(stats.get("mae", 0.0))
+            buckets[bucket]["count"] += 1
+            buckets[bucket]["samples"] += float(stats.get("samples", 0.0))
+        payload: Dict[str, float] = {}
+        for bucket, data in buckets.items():
+            if data["count"] == 0:
+                continue
+            count = max(1, data["count"])
+            payload[f"{bucket}_mae"] = data["mae_sum"] / count
+            payload[f"{bucket}_samples"] = data["samples"]
+        if not payload:
+            return
+        payload["timestamp"] = now
+        try:
+            self.metrics.record(MetricStage.PIPELINE, payload, category="horizon_accuracy")
+        except Exception:
+            pass
 
     def _maybe_promote_to_live(self) -> None:
         if self.live_trading_enabled or not self.auto_promote_live:
@@ -1024,6 +1109,7 @@ class TradingBot:
                 )
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
+            self._maybe_record_horizon_summary(sample_ts)
             decision = await self._interpret_predictions(
                 preds,
                 sample,
@@ -1549,6 +1635,7 @@ class TradingBot:
             self._nash_equilibrium_reached = equilibrium_ready
             savings_event = None
             equilibrium_score = self.equilibrium.score()
+            trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
             if profit > 0 and equilibrium_ready:
                 checkpoint = profit * self.stable_checkpoint_ratio
                 estimated_fees = max(exit_size * price * fees, 0.0)
@@ -1562,26 +1649,40 @@ class TradingBot:
                         token=stable_target,
                         mode="live" if self.live_trading_enabled else "ghost",
                         equilibrium_score=self.equilibrium.score(),
-                        trade_id=pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}",
+                        trade_id=trade_id,
                     )
-                    savings_slot["checkpoint"] = savings_event.to_dict()
+                    checkpoint_payload = savings_event.to_dict()
+                    checkpoint_payload.update(
+                        {
+                            "fee_guard": fee_guard,
+                            "estimated_fees": estimated_fees,
+                            "checkpoint_ratio": self.stable_checkpoint_ratio,
+                        }
+                    )
+                    savings_slot["checkpoint"] = checkpoint_payload
+                    self._log_savings_checkpoint(checkpoint_payload)
                     transfers = self.savings.drain_ready_transfers()
                     for transfer in transfers:
                         self._handle_savings_transfer(transfer)
                 else:
-                    savings_slot["skipped"] = {
+                    skip_payload = {
                         "reason": "checkpoint_below_fee_buffer",
                         "checkpoint": checkpoint,
                         "required_min": fee_guard,
                         "estimated_fees": estimated_fees,
+                        "mode": "live" if self.live_trading_enabled else "ghost",
+                        "trade_id": trade_id,
+                        "token": stable_target,
+                        "checkpoint_ratio": self.stable_checkpoint_ratio,
                     }
+                    savings_slot["skipped"] = skip_payload
+                    self._log_savings_skip(skip_payload)
                     checkpoint = 0.0
             elif profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
                 decision.update({"status": "hold-negative", "reason": reason or "hold"})
                 return decision
             self.total_profit += profit
             self.realized_profit += profit
-            trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
             entry_ts = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
             duration_sec = max(0.0, sample_ts - entry_ts)
             pos_fingerprint = pos.get("fingerprint")
