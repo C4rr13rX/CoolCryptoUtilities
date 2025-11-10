@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -11,8 +14,9 @@ from django.conf import settings
 from django.contrib.auth import login
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
+from django.views import View
 from django.views.generic import TemplateView
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,9 +25,11 @@ if str(ROOT) not in sys.path:
 
 from db import get_db  # noqa: E402
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
+from services.code_graph import build_code_graph  # noqa: E402
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
+SNAPSHOT_ROOT = Path("runtime/code_graph/snapshots")
 
 def _load_report(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -196,6 +202,10 @@ class IntegrationsPageView(BaseSecureView):
     initial_route = "integrations"
 
 
+class CodeGraphPageView(BaseSecureView):
+    initial_route = "codegraph"
+
+
 class SpaRouteView(BaseSecureView):
     """
     Catch-all view so refreshing /<route> stays inside the SPA shell.
@@ -217,6 +227,7 @@ class SpaRouteView(BaseSecureView):
             "settings",
             "advisories",
             "integrations",
+            "codegraph",
         }
         if slug not in allowed:
             return redirect("core:dashboard")
@@ -257,6 +268,50 @@ class GuardianFallbackView(TemplateView):
             }
         )
         return context
+
+
+class CodeGraphDataView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        payload = build_code_graph()
+        return JsonResponse(payload, status=200)
+
+
+def _safe_snapshot_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-")
+    return cleaned or "node"
+
+
+class CodeGraphSnapshotView(LoginRequiredMixin, View):
+    login_url = "core:index"
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        try:
+            payload = json.loads(request.body.decode("utf-8"))
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON payload"}, status=400)
+        image = payload.get("image")
+        node_id = payload.get("node_id")
+        timestamp = str(payload.get("timestamp") or "").strip() or time.strftime("%Y%m%d-%H%M%S")
+        if not image or not node_id:
+            return JsonResponse({"detail": "image and node_id are required"}, status=400)
+        if "," in image:
+            image = image.split(",", 1)[1]
+        try:
+            binary = base64.b64decode(image)
+        except Exception:
+            return JsonResponse({"detail": "Unable to decode image payload"}, status=400)
+        safe_ts = _safe_snapshot_name(timestamp)
+        safe_node = _safe_snapshot_name(node_id)
+        folder = SNAPSHOT_ROOT / safe_ts
+        folder.mkdir(parents=True, exist_ok=True)
+        file_path = folder / f"{safe_node}.png"
+        file_path.write_bytes(binary)
+        return JsonResponse({"saved": str(file_path)}, status=201)
+
+
 def _tail_lines(path: Path, limit: int = 400) -> List[str]:
     if not path.exists():
         return []

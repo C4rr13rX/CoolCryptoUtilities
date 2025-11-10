@@ -196,6 +196,7 @@ const navItems = computed(() => [
   { route: 'datalab', label: 'Data Lab', icon: 'datalab', path: '/datalab', intent: pipelineIntent.value },
   { route: 'lab', label: 'Model Lab', icon: 'lab', path: '/lab', intent: pipelineIntent.value },
   { route: 'guardian', label: 'Guardian', icon: 'guardian', path: '/guardian', intent: pipelineIntent.value },
+  { route: 'codegraph', label: 'Code Graph', icon: 'activity', path: '/codegraph', intent: pipelineIntent.value },
   { route: 'integrations', label: 'API Integrations', icon: 'link', path: '/integrations', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', path: '/settings', intent: pipelineIntent.value },
 ]);

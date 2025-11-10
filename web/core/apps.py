@@ -3,8 +3,10 @@ from __future__ import annotations
 import threading
 import time
 
-from django.apps import AppConfig
-from django.apps import apps
+import os
+import sys
+
+from django.apps import AppConfig, apps
 from django.conf import settings
 
 
@@ -16,6 +18,13 @@ class CoreConfig(AppConfig):
 
     def ready(self):
         if getattr(settings, "TESTING", False):
+            return
+        # Avoid duplicate guardian bootstrap when Django's autoreloader spawns the
+        # monitor parent process. Only the reloaded "main" process should manage it.
+        cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+        if cmd == "runserver" and os.environ.get("RUN_MAIN") != "true":
+            return
+        if os.environ.get("GUARDIAN_AUTO_DISABLED") == "1":
             return
         if CoreConfig._guardian_started:
             return

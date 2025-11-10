@@ -10,6 +10,7 @@ import OrganismView from '@/views/OrganismView.vue';
 import ModelLabView from '@/views/ModelLabView.vue';
 import DataLabView from '@/views/DataLabView.vue';
 import GuardianView from '@/views/GuardianView.vue';
+import CodeGraphView from '@/views/CodeGraphView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 
@@ -68,6 +69,11 @@ const routes: RouteRecordRaw[] = [
     path: '/guardian',
     name: 'guardian',
     component: GuardianView,
+  },
+  {
+    path: '/codegraph',
+    name: 'codegraph',
+    component: CodeGraphView,
   },
   {
     path: '/settings',

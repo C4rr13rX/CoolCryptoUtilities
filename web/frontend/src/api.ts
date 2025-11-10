@@ -320,6 +320,16 @@ export async function revealIntegrationValue(name: string) {
   return data;
 }
 
+export async function fetchCodeGraph() {
+  const { data } = await api.get('/codegraph/');
+  return data;
+}
+
+export async function uploadCodeGraphSnapshot(payload: { timestamp: string; node_id: string; image: string }) {
+  const { data } = await api.post('/codegraph/snapshots/', payload);
+  return data;
+}
+
 export interface DataLabSignalParams {
   window?: string;
   direction?: 'bullish' | 'bearish' | 'all';

@@ -15,8 +15,20 @@ from services.env_loader import EnvLoader
 EnvLoader.load()
 
 
+GUARDIAN_FLAG = "--guardian-off"
+GUARDIAN_ENV_VAR = "GUARDIAN_AUTO_DISABLED"
+
+
+def _consume_guardian_flag(argv: list[str]) -> None:
+    if GUARDIAN_FLAG not in argv:
+        return
+    argv.remove(GUARDIAN_FLAG)
+    os.environ[GUARDIAN_ENV_VAR] = "1"
+
+
 def main() -> None:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
+    _consume_guardian_flag(sys.argv)
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

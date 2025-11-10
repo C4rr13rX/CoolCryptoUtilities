@@ -33,6 +33,9 @@ class LogBus:
         log_path = Path(os.getenv("LOG_BUS_PATH", "logs/system.log"))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_path = log_path
+        service_dir = Path(os.getenv("LOG_BUS_SERVICE_DIR", "logs/services"))
+        service_dir.mkdir(parents=True, exist_ok=True)
+        self._service_dir = service_dir
         self._file_lock = Lock()
 
     def publish(self, source: str, message: str, *, severity: str = "info", details: Optional[dict] = None) -> None:
@@ -53,9 +56,20 @@ class LogBus:
             if record.details:
                 payload += f" -> {record.details}"
             print(payload, file=sys.stdout, flush=True)
-            with self._file_lock:
-                with self._log_path.open("a", encoding="utf-8") as handle:
-                    handle.write(payload + "\n")
+            self._write_aggregate(payload)
+            self._write_source_log(record.source, payload)
+
+    def _write_aggregate(self, payload: str) -> None:
+        with self._file_lock:
+            with self._log_path.open("a", encoding="utf-8") as handle:
+                handle.write(payload + "\n")
+
+    def _write_source_log(self, source: str, payload: str) -> None:
+        safe_name = "".join(ch.lower() if ch.isalnum() else "-" for ch in source).strip("-") or "misc"
+        target = self._service_dir / f"{safe_name}.log"
+        with self._file_lock:
+            with target.open("a", encoding="utf-8") as handle:
+                handle.write(payload + "\n")
 
 
 _GLOBAL_BUS = LogBus()

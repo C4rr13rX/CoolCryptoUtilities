@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,6 +22,11 @@ class Command(BaseCommand):
             nargs="*",
             default=None,
             help="Additional arguments to pass through to runserver (e.g. --runserver-args 0.0.0.0:8001)",
+        )
+        parser.add_argument(
+            "--guardian-off",
+            action="store_true",
+            help="Disable guardian/production auto-start even if enabled in settings.",
         )
 
     def handle(self, *args, **options):
@@ -44,4 +50,6 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.MIGRATE_HEADING("[4/4] Runserver"))
         runserver_args = options.get("runserver_args") or []
+        if options.get("guardian_off"):
+            os.environ["GUARDIAN_AUTO_DISABLED"] = "1"
         call_command("runserver", *runserver_args)

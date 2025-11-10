@@ -1439,8 +1439,16 @@ class TradingDatabase:
         with self._cursor() as cur:
             cur.execute(
                 """
-                SELECT symbol, priority, enter_offset, exit_offset, size_multiplier,
-                       margin_offset, allocation_multiplier, updated, details
+                SELECT symbol,
+                       priority,
+                       enter_offset,
+                       exit_offset,
+                       size_multiplier,
+                       margin_offset,
+                       allocation_multiplier,
+                       label_scale,
+                       updated,
+                       details
                 FROM pair_adjustments
                 WHERE symbol=?
                 """,
@@ -1454,18 +1462,23 @@ class TradingDatabase:
             details = json.loads(row["details"] or "{}")
         except Exception:
             details = {}
+        label_scale = row["label_scale"] if "label_scale" in row.keys() else None
+        try:
+            label_scale_value = float(label_scale) if label_scale is not None else 1.0
+        except Exception:
+            label_scale_value = 1.0
         return {
             "symbol": row["symbol"],
             "priority": int(row["priority"] or 0),
             "enter_offset": float(row["enter_offset"] or 0.0),
             "exit_offset": float(row["exit_offset"] or 0.0),
-           "size_multiplier": float(row["size_multiplier"] or 1.0),
-           "margin_offset": float(row["margin_offset"] or 0.0),
-           "allocation_multiplier": float(row["allocation_multiplier"] or 1.0),
-            "label_scale": float(row["label_scale"] or 1.0),
-           "updated": float(row["updated"] or 0.0),
-           "details": details,
-       }
+            "size_multiplier": float(row["size_multiplier"] or 1.0),
+            "margin_offset": float(row["margin_offset"] or 0.0),
+            "allocation_multiplier": float(row["allocation_multiplier"] or 1.0),
+            "label_scale": label_scale_value,
+            "updated": float(row["updated"] or 0.0),
+            "details": details,
+        }
 
     def upsert_pair_adjustment(
         self,

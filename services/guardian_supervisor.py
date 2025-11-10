@@ -19,6 +19,7 @@ from services.guardian_status import (
     request_guardian_run,
     snapshot_status as guardian_queue_snapshot,
 )
+from services.guardian_lock import GuardianLease
 from services.logging_utils import log_message
 from services.production_supervisor import production_supervisor
 from services.secure_settings import build_process_env
@@ -44,6 +45,7 @@ class GuardianSupervisor:
         self._thread: Optional[threading.Thread] = None
         self._console_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._lease: Optional[GuardianLease] = None
         self._process: Optional[subprocess.Popen] = None
         self._status_lock = threading.Lock()
         self._status: Dict[str, Any] = {
@@ -63,6 +65,9 @@ class GuardianSupervisor:
     def start(self) -> None:
         with self._bootstrap_lock:
             if self._thread and self._thread.is_alive():
+                return
+            if not self._acquire_lease():
+                log_message("guardian", "another guardian supervisor already active; skipping bootstrap", severity="warning")
                 return
             self._stop.clear()
             self._ensure_console_running()
@@ -94,6 +99,7 @@ class GuardianSupervisor:
         with self._status_lock:
             self._status["running"] = False
             self._status["pid"] = None
+        self._release_lease()
 
     def set_enabled(self, enabled: bool) -> Dict[str, Any]:
         settings = update_guardian_settings({"enabled": bool(enabled)})
@@ -138,6 +144,23 @@ class GuardianSupervisor:
             self._ensure_console_running()
             production_supervisor.ensure_running()
 
+    def _acquire_lease(self) -> bool:
+        if self._lease:
+            return True
+        lease = GuardianLease("guardian-supervisor", poll_interval=0.5)
+        if not lease.acquire(cancel_event=self._stop):
+            return False
+        self._lease = lease
+        return True
+
+    def _release_lease(self) -> None:
+        if not self._lease:
+            return
+        try:
+            self._lease.release()
+        finally:
+            self._lease = None
+
     # ------------------------------------------------------------------ process helpers
     def _guardian_loop(self) -> None:
         env = build_process_env()
@@ -173,6 +196,8 @@ class GuardianSupervisor:
                 with self._status_lock:
                     self._status["running"] = False
                 self._process = None
+        # Loop exited (stop requested); release lease so another process can take over later.
+        self._release_lease()
 
     def _start_console_monitor(self) -> None:
         if self._console_thread and self._console_thread.is_alive():
