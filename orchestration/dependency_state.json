@@ -281,24 +281,96 @@
       }
     },
     "candidate_training": {
-      "status": "running",
-      "updated_at": 1762791670.9698977
+      "status": "completed",
+      "updated_at": 1762791701.412258
     },
     "ghost_metrics": {
-      "status": "waiting_deps",
-      "updated_at": 1762791670.1769216
+      "status": "completed",
+      "updated_at": 1762791701.4646077
     },
     "scheduler_refresh": {
-      "status": "waiting_deps",
-      "updated_at": 1762791670.1775937
+      "status": "completed",
+      "updated_at": 1762791701.5168998
     },
     "telemetry_flush": {
-      "status": "waiting_deps",
-      "updated_at": 1762791670.1827497
+      "status": "completed",
+      "updated_at": 1762791701.5703688
     },
     "background_refresh": {
       "status": "queued",
       "updated_at": 1762791670.1825852
+    }
+  },
+  "1762791715": {
+    "data_ingest": {
+      "status": "completed",
+      "updated_at": 1762791715.5088837
+    },
+    "news_enrichment": {
+      "status": "completed",
+      "updated_at": 1762791715.8749607,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.49191685912240185,
+          "recall": 1.0,
+          "samples": 433,
+          "threshold": 0.3
+        },
+        "horizon_bias": {
+          "short": 1.125,
+          "mid": 1.0,
+          "long": 1.0
+        }
+      }
+    },
+    "dataset_warmup": {
+      "status": "completed",
+      "updated_at": 1762791715.9481235,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.49191685912240185,
+          "recall": 1.0,
+          "samples": 433,
+          "threshold": 0.3
+        },
+        "horizon_bias": {
+          "short": 1.125,
+          "mid": 1.0,
+          "long": 1.0
+        }
+      }
+    },
+    "candidate_training": {
+      "status": "running",
+      "updated_at": 1762791715.9995565
+    },
+    "ghost_metrics": {
+      "status": "waiting_deps",
+      "updated_at": 1762791715.1975942
+    },
+    "scheduler_refresh": {
+      "status": "waiting_deps",
+      "updated_at": 1762791715.1984828
+    },
+    "telemetry_flush": {
+      "status": "waiting_deps",
+      "updated_at": 1762791715.2011614
+    },
+    "background_refresh": {
+      "status": "queued",
+      "updated_at": 1762791715.201087
     }
   }
 }
