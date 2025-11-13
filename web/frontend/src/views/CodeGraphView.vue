@@ -71,6 +71,7 @@ const warnings = ref<string[]>([]);
 const errors = ref<string[]>([]);
 const nodes = ref<any[]>([]);
 const building = ref(false);
+const buildingCompletionPending = ref(false);
 const fileNames = ref<string[]>([]);
 const currentFileName = ref('');
 const loadingProgress = ref(0);
@@ -127,11 +128,17 @@ async function refreshGraph(force = false) {
       buildScene(data);
     }
     if (!graphReady.value) {
-await resetView();
+      await resetView();
     }
     schedulePoll();
+  } catch (error: any) {
+    loadingLabel.value = 'Network timeout — retrying…';
+    buildingLabel.value = 'Waiting for server response…';
+    schedulePoll();
   } finally {
-    stopLoadingTicker();
+    if (!building.value) {
+      stopLoadingTicker();
+    }
     loading.value = false;
   }
 }
@@ -425,13 +432,16 @@ function startLoadingTicker() {
       fileIndex += 1;
     }
     if (loadingPhase.value === 'loading') {
-      loadingLabel.value = currentFileName.value || 'Scanning project…';
+      loadingLabel.value = currentFileName.value ? `Loading ${currentFileName.value}` : 'Scanning project…';
     }
   }, 25);
   startProgressLoop();
 }
 
 function stopLoadingTicker() {
+  if (building.value) {
+    return;
+  }
   if (loadingTimer) {
     window.clearInterval(loadingTimer);
     loadingTimer = null;
@@ -453,7 +463,10 @@ function setPhase(state: 'idle' | 'loading' | 'building' | 'done') {
   } else if (state === 'done') {
     stopBuildingLabelTicker();
     buildingLabel.value = 'Graph up to date.';
+    loadingLabel.value = 'Idle';
+    currentFileName.value = '';
     loadingProgress.value = 1;
+    stopProgressLoop();
     window.setTimeout(() => {
       loadingPhase.value = 'idle';
       loadingProgress.value = 0;
@@ -519,6 +532,10 @@ function schedulePoll() {
       window.clearTimeout(pollTimer);
       pollTimer = null;
     }
+    if (!loading.value) {
+      setPhase('done');
+      stopLoadingTicker();
+    }
     return;
   }
   if (pollTimer) {
@@ -536,20 +553,30 @@ onMounted(() => {
   refreshGraph();
 });
 
-watch(building, (value) => {
+watch(building, async (value, previous) => {
   if (value) {
+    buildingCompletionPending.value = true;
     if (!loadingTimer) {
       startLoadingTicker();
     }
     setPhase('building');
-  } else if (!loading.value) {
-    setPhase('done');
+  } else {
+    if (buildingCompletionPending.value && previous) {
+      buildingCompletionPending.value = false;
+      setPhase('done');
+      stopLoadingTicker();
+      await refreshGraph(false);
+    } else if (!loading.value) {
+      setPhase('done');
+      stopLoadingTicker();
+    }
   }
 });
 
 watch(loading, (value) => {
   if (!value && !building.value) {
     setPhase('done');
+    stopLoadingTicker();
   }
 });
 

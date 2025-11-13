@@ -158,6 +158,7 @@ class TrainingPipeline:
         self._last_news_top_up: float = 0.0
         self._confusion_windows: Dict[str, int] = {label: seconds for label, seconds in CONFUSION_WINDOW_BUCKETS}
         self._last_confusion_report: Dict[str, Dict[str, Any]] = {}
+        self._last_confusion_refresh: float = 0.0
         self._load_cached_confusion_report()
 
     # ------------------------------------------------------------------
@@ -1780,6 +1781,7 @@ class TrainingPipeline:
             self._last_confusion_report = {}
             return
         self._last_confusion_report = report
+        self._last_confusion_refresh = time.time()
         try:
             best_label, best_payload = max(
                 report.items(),
@@ -1860,6 +1862,34 @@ class TrainingPipeline:
                     self.decision_threshold = float(threshold)
                 except Exception:
                     pass
+            updated_at = payload.get("updated_at")
+            if updated_at is not None:
+                try:
+                    self._last_confusion_refresh = float(updated_at)
+                except Exception:
+                    self._last_confusion_refresh = time.time()
+            else:
+                self._last_confusion_refresh = time.time()
+
+    def ensure_confusion_fresh(self, *, max_age: Optional[float] = None, force: bool = False) -> bool:
+        if max_age is None:
+            try:
+                max_age = float(os.getenv("CONFUSION_REFRESH_MAX_AGE", "900"))
+            except ValueError:
+                max_age = 900.0
+        now = time.time()
+        needs_refresh = force
+        if not needs_refresh:
+            if not self._last_confusion_report:
+                needs_refresh = True
+            elif max_age > 0 and (now - self._last_confusion_refresh) > max_age:
+                needs_refresh = True
+        if not needs_refresh:
+            return True
+        refreshed = self.prime_confusion_windows(force=True)
+        if refreshed:
+            self._last_confusion_refresh = time.time()
+        return refreshed
 
     def _cap_false_positive_rate(self, report: Dict[str, Dict[str, Any]]) -> Optional[float]:
         if not report:

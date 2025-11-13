@@ -99,14 +99,19 @@ export const useDashboardStore = defineStore('dashboard', {
       }
     },
     async refreshConsole() {
-      const [consoleStatus, consoleLogs, guardianLogs] = await Promise.all([
-        fetchConsoleStatus(),
-        fetchConsoleLogs(200),
-        fetchGuardianLogs(200),
-      ]);
-      this.consoleStatus = consoleStatus;
-      this.consoleLogs = consoleLogs.lines || [];
-      this.guardianLogs = guardianLogs.lines || [];
+      try {
+        const [consoleStatus, consoleLogs, guardianLogs] = await Promise.all([
+          fetchConsoleStatus(),
+          fetchConsoleLogs(200),
+          fetchGuardianLogs(200),
+        ]);
+        this.consoleStatus = consoleStatus;
+        this.consoleLogs = consoleLogs.lines || [];
+        this.guardianLogs = guardianLogs.lines || [];
+        this.error = null;
+      } catch (err: any) {
+        this.error = err?.message || 'Failed to refresh console';
+      }
     },
     async startProcess() {
       await startConsoleProcess();

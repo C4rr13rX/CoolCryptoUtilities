@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 import logging
+import multiprocessing
 import os
 import threading
 import time
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.db import OperationalError, ProgrammingError
 
@@ -62,11 +64,11 @@ TARGET_FILES = {
 }
 CACHE_DIR = Path("runtime/code_graph")
 CACHE_PATH = CACHE_DIR / "graph_cache.json"
-CACHE_TTL = int(os.getenv("CODE_GRAPH_CACHE_TTL", "600"))
+CACHE_TTL = int(os.getenv("CODE_GRAPH_CACHE_TTL", "0"))
 CACHE_KEY = "codegraph:default"
 
 _BUILD_LOCK = threading.Lock()
-_BUILDING = False
+_BUILD_PROCESS: Optional[multiprocessing.Process] = None
 
 
 @dataclass
@@ -303,10 +305,11 @@ def get_code_graph(force_refresh: bool = False) -> Dict[str, object]:
     file_paths = _list_source_files()
     snapshot = _collect_file_snapshot(file_paths)
     cached = None if force_refresh else _load_cached_graph()
+    building_flag = _is_building()
     if cached and not _files_changed(cached.get("files") or [], snapshot):
         payload = dict(cached)
         payload["cached"] = True
-        payload["building"] = False
+        payload["building"] = building_flag
         return payload
 
     _kickoff_background_build(file_paths, snapshot)
@@ -393,32 +396,18 @@ def _empty_payload() -> Dict[str, object]:
 
 
 def _kickoff_background_build(file_paths: List[str], snapshot: Optional[List[Dict[str, object]]] = None) -> None:
+    global _BUILD_PROCESS
     with _BUILD_LOCK:
-        if _BUILDING:
+        if _is_building():
             return
-        state = {
-            "file_paths": file_paths,
-            "snapshot": snapshot,
-        }
-        globals()["_BUILDING"] = True
-
-    def _worker(state: Dict[str, object]) -> None:
-        try:
-            paths = state["file_paths"]  # type: ignore[index]
-            meta = state.get("snapshot") or _collect_file_snapshot(paths)  # type: ignore[arg-type]
-            payload = build_code_graph(paths)
-            payload["files"] = meta
-            payload["cached"] = False
-            payload["building"] = False
-            _save_cached_graph(payload)
-        except Exception:
-            logger.exception("Code graph build failed")
-        finally:
-            with _BUILD_LOCK:
-                globals()["_BUILDING"] = False
-
-    thread = threading.Thread(target=_worker, args=(state,), name="code-graph-build", daemon=True)
-    thread.start()
+        process = multiprocessing.Process(
+            target=_worker_process,
+            args=(file_paths, snapshot),
+            name="code-graph-build",
+            daemon=True,
+        )
+        process.start()
+        _BUILD_PROCESS = process
 
 
 def _load_cached_graph() -> Optional[Dict[str, object]]:
@@ -436,7 +425,7 @@ def _save_cached_graph(payload: Dict[str, object]) -> None:
 
 
 def _load_cached_graph_from_db() -> Optional[Dict[str, object]]:
-    if CodeGraphCache is None:
+    if not _db_cache_enabled():
         return None
     try:
         cache_entry = CodeGraphCache.objects.filter(cache_key=CACHE_KEY).first()
@@ -446,13 +435,20 @@ def _load_cached_graph_from_db() -> Optional[Dict[str, object]]:
         return None
     graph = dict(cache_entry.graph or {})
     graph["files"] = cache_entry.files or []
+    if not graph["files"]:
+        graph["files"] = _safe_snapshot()
+        try:
+            cache_entry.files = graph["files"]
+            cache_entry.save(update_fields=["files"])
+        except Exception:
+            pass
     graph["cached"] = True
     graph["building"] = False
     return graph
 
 
 def _save_cached_graph_to_db(payload: Dict[str, object]) -> None:
-    if CodeGraphCache is None:
+    if not _db_cache_enabled():
         return
     try:
         CodeGraphCache.objects.update_or_create(
@@ -480,10 +476,18 @@ def _load_cached_graph_from_disk() -> Optional[Dict[str, object]]:
     ts = payload.get("generated_at")
     if not isinstance(ts, (int, float)):
         return None
-    if (time.time() - ts) > CACHE_TTL:
+    if CACHE_TTL > 0 and (time.time() - ts) > CACHE_TTL:
         return None
     payload["cached"] = True
-    payload.setdefault("files", [])
+    files = payload.get("files")
+    if not files:
+        payload["files"] = _safe_snapshot()
+        try:
+            _save_cached_graph_to_disk(payload)
+        except Exception:
+            pass
+    else:
+        payload["files"] = files
     payload["building"] = False
     return payload
 
@@ -497,3 +501,53 @@ def _save_cached_graph_to_disk(payload: Dict[str, object]) -> None:
         CACHE_PATH.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
     except Exception:
         logger.debug("Unable to persist graph cache to disk", exc_info=True)
+
+
+def _worker_process(file_paths: List[str], snapshot: Optional[List[Dict[str, object]]]) -> None:
+    try:
+        try:
+            import django  # type: ignore
+
+            if hasattr(django, "setup"):
+                django.setup()
+        except Exception:
+            pass
+        paths = file_paths
+        meta = snapshot or _collect_file_snapshot(paths)
+        payload = build_code_graph(paths)
+        payload["files"] = meta
+        payload["cached"] = False
+        payload["building"] = False
+        _save_cached_graph(payload)
+    except Exception:
+        logger.exception("Code graph build failed")
+
+
+def _is_building() -> bool:
+    global _BUILD_PROCESS
+    process = _BUILD_PROCESS
+    if not process:
+        return False
+    if process.is_alive():
+        return True
+    process.join(timeout=0.1)
+    _BUILD_PROCESS = None
+    return False
+
+
+def _db_cache_enabled() -> bool:
+    if CodeGraphCache is None:
+        return False
+    try:
+        engine = settings.DATABASES["default"]["ENGINE"]
+    except Exception:
+        return False
+    return "postgresql" in engine
+
+
+def _safe_snapshot() -> List[Dict[str, object]]:
+    try:
+        return _collect_file_snapshot(_list_source_files())
+    except Exception:
+        logger.debug("Unable to compute file snapshot for cache", exc_info=True)
+        return []

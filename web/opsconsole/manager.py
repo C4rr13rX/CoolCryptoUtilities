@@ -25,6 +25,7 @@ DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py"]
 LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "console.log"
+LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(512 * 1024 * 1024)))
 
 
 class ConsoleProcessManager:
@@ -40,9 +41,10 @@ class ConsoleProcessManager:
         with self._lock:
             if self._process and self._process.poll() is None:
                 return {"status": "running", "pid": str(self._process.pid)}
+            self._rotate_log_if_needed()
             logfile = LOG_PATH.open("a", encoding="utf-8")
             env = build_process_env(user)
-            env.setdefault("WALLET_ALLOW_AUTOMATION", "1")
+            env.setdefault("WALLET_ALLOW_AUTOMATION", "0")
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -61,7 +63,6 @@ class ConsoleProcessManager:
             self._process = proc
             self._started_at = time.time()
             logfile.close()
-            self._schedule_bootstrap()
             return {"status": "started", "pid": str(proc.pid)}
 
     def stop(self, graceful_timeout: float = 5.0) -> Dict[str, str]:
@@ -125,21 +126,23 @@ class ConsoleProcessManager:
                 return {"status": "error", "message": str(exc)}
         return {"status": "sent"}
 
-    def _schedule_bootstrap(self) -> None:
-        if self._bootstrap_thread and self._bootstrap_thread.is_alive():
+    def _rotate_log_if_needed(self) -> None:
+        if not LOG_PATH.exists():
             return
-        sequence = ["3", "2", "7"]
-
-        def _worker():
-            time.sleep(1.0)
-            for cmd in sequence:
-                result = self.send(cmd)
-                if result.get("status") != "sent":
-                    break
-                time.sleep(1.0)
-
-        self._bootstrap_thread = threading.Thread(target=_worker, daemon=True)
-        self._bootstrap_thread.start()
+        if LOG_MAX_BYTES <= 0:
+            return
+        try:
+            size = LOG_PATH.stat().st_size
+        except OSError:
+            return
+        if size < LOG_MAX_BYTES:
+            return
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        rotated = LOG_PATH.with_name(f"console-{timestamp}.log")
+        try:
+            LOG_PATH.rename(rotated)
+        except OSError:
+            return
 
 
 manager = ConsoleProcessManager()
