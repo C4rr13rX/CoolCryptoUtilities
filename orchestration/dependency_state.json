@@ -1520,5 +1520,103 @@
         }
       }
     }
+  },
+  "1764568890": {
+    "ghost_metrics": {
+      "status": "queued",
+      "updated_at": 1764568890.1977568,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.0,
+          "recall": 0.0,
+          "samples": 254,
+          "threshold": 0.3,
+          "false_positive_rate": 0.0,
+          "lift": 0.0,
+          "dominant": "5m",
+          "mini_ready": false,
+          "mini_reason": "insufficient_accuracy",
+          "mini_precision": 0.0,
+          "mini_recall": 0.0,
+          "mini_samples": 254,
+          "mini_false_positive_rate": 0.0
+        },
+        "horizon_bias": {
+          "short": 1.0,
+          "mid": 1.0,
+          "long": 1.0
+        }
+      }
+    },
+    "scheduler_refresh": {
+      "status": "queued",
+      "updated_at": 1764568890.2003896,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.0,
+          "recall": 0.0,
+          "samples": 254,
+          "threshold": 0.3,
+          "false_positive_rate": 0.0,
+          "lift": 0.0,
+          "dominant": "5m",
+          "mini_ready": false,
+          "mini_reason": "insufficient_accuracy",
+          "mini_precision": 0.0,
+          "mini_recall": 0.0,
+          "mini_samples": 254,
+          "mini_false_positive_rate": 0.0
+        },
+        "horizon_bias": {
+          "short": 1.0,
+          "mid": 1.0,
+          "long": 1.0
+        }
+      }
+    },
+    "telemetry_flush": {
+      "status": "queued",
+      "updated_at": 1764568890.2024484,
+      "metadata": {
+        "focus_assets": [
+          "WETH-USDBC"
+        ],
+        "readiness": {
+          "ready": false,
+          "reason": "insufficient_accuracy",
+          "horizon": "5m",
+          "precision": 0.0,
+          "recall": 0.0,
+          "samples": 254,
+          "threshold": 0.3,
+          "false_positive_rate": 0.0,
+          "lift": 0.0,
+          "dominant": "5m",
+          "mini_ready": false,
+          "mini_reason": "insufficient_accuracy",
+          "mini_precision": 0.0,
+          "mini_recall": 0.0,
+          "mini_samples": 254,
+          "mini_false_positive_rate": 0.0
+        },
+        "horizon_bias": {
+          "short": 1.0,
+          "mid": 1.0,
+          "long": 1.0
+        }
+      }
+    }
   }
 }
