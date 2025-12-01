@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+from trading.metrics import MetricsCollector, MetricStage
 
 from db import get_db, TradingDatabase
 from trading.data_stream import _split_symbol
@@ -120,6 +122,124 @@ class RouteState:
     pending_predictions: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=2048))
 
 
+class TridentUSSATSolver:
+    """
+    Lightweight, portfolio-style search inspired by the TRIDENT-US SAT/UNSAT
+    description. The solver treats candidate directives as assignments and
+    runs a small family of scoring functions in a fair, weighted round-robin
+    to pick the best verified directive.
+    """
+
+    def __init__(self, *, explore: float = 0.06, decay: float = 0.9) -> None:
+        self.explore = max(0.01, float(explore))
+        self.decay = max(0.5, min(0.99, float(decay)))
+        self.weights: Dict[str, float] = {
+            "expected_return": 0.34,
+            "confidence_weighted": 0.33,
+            "risk_buffered": 0.33,
+        }
+        self.last_trace: Dict[str, Any] = {}
+
+    # Candidate shape: {"directive": TradeDirective, "score": float, "meta": {...}}
+    def select(self, candidates: Sequence[Dict[str, Any]], context: Dict[str, Any]) -> Optional[TradeDirective]:
+        if not candidates:
+            return None
+        verified = [cand for cand in candidates if self._verify(cand, context)]
+        if not verified:
+            return None
+        strategies = self._strategies()
+        min_weight = self.explore / max(1, len(strategies))
+
+        choice_scores: Dict[int, float] = {}
+        trace: List[Dict[str, Any]] = []
+        updated_weights: Dict[str, float] = {}
+
+        for name, scorer in strategies.items():
+            weight_prior = self.weights.get(name, 1.0 / max(1, len(strategies)))
+            try:
+                best = max(verified, key=lambda cand: scorer(cand, context))
+            except Exception:
+                continue
+            raw_score = scorer(best, context)
+            reward = self._normalise_reward(raw_score)
+            blended_weight = self.decay * weight_prior + (1.0 - self.decay) * reward
+            updated_weights[name] = blended_weight
+            trace.append(
+                {
+                    "strategy": name,
+                    "raw_score": float(raw_score),
+                    "reward": reward,
+                    "selected_action": getattr(best.get("directive"), "action", "unknown"),
+                }
+            )
+            best_id = id(best)
+            choice_scores[best_id] = choice_scores.get(best_id, 0.0) + blended_weight * raw_score
+
+        if not updated_weights:
+            return verified[0]["directive"]
+
+        total_weight = sum(updated_weights.values()) or 1.0
+        normalised_weights = {k: max(min_weight, v / total_weight) for k, v in updated_weights.items()}
+        self.weights = normalised_weights
+
+        # Apply normalised weights to scores for the final selection pass
+        final_scores: Dict[int, float] = {}
+        for name, scorer in strategies.items():
+            weight = normalised_weights.get(name, min_weight)
+            try:
+                best = max(verified, key=lambda cand: scorer(cand, context))
+            except Exception:
+                continue
+            best_id = id(best)
+            final_scores[best_id] = final_scores.get(best_id, 0.0) + weight * scorer(best, context)
+
+        if not final_scores:
+            return verified[0]["directive"]
+
+        selected_id = max(final_scores, key=final_scores.get)
+        selected = next(cand for cand in verified if id(cand) == selected_id)
+        self.last_trace = {"trace": trace, "weights": dict(self.weights)}
+        return selected["directive"]
+
+    def _normalise_reward(self, value: float) -> float:
+        if not math.isfinite(value):
+            return 0.0
+        clipped = max(-3.0, min(3.0, value))
+        return 0.5 + 0.5 * math.tanh(clipped)
+
+    def _verify(self, candidate: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        directive = candidate.get("directive")
+        meta = candidate.get("meta", {}) or {}
+        if not isinstance(directive, TradeDirective):
+            return False
+        if not math.isfinite(directive.size) or directive.size <= 0:
+            return False
+        if not math.isfinite(directive.target_price) or directive.target_price <= 0:
+            return False
+        native_balance = float(context.get("native_balance", 0.0))
+        min_native = float(context.get("min_native", 0.01))
+        if native_balance < min_native:
+            return False
+        risk_budget = float(context.get("risk_budget", 1.0))
+        if risk_budget <= 0:
+            return False
+        confidence = float(meta.get("confidence", 0.0))
+        direction_prob = float(meta.get("direction_prob", 0.5))
+        if confidence <= 0.0 or direction_prob <= 0.0:
+            return False
+        return True
+
+    def _strategies(self) -> Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], float]]:
+        return {
+            "expected_return": lambda cand, _: float(cand.get("score", 0.0)),
+            "confidence_weighted": lambda cand, _: float(cand.get("score", 0.0))
+            * float((cand.get("meta") or {}).get("confidence", 1.0)),
+            "risk_buffered": lambda cand, ctx: float(cand.get("score", 0.0))
+            - float(ctx.get("fee_rate", 0.0))
+            - float((cand.get("meta") or {}).get("risk_penalty", 0.0)),
+        }
+
+
 class BusScheduler:
     """
     Maintains multi-horizon forecasts for each trading pair and produces
@@ -152,6 +272,14 @@ class BusScheduler:
         self._gas_alert_cb: Optional[Callable[[str, float], None]] = None
         self._last_gas_alert_ts: float = 0.0
         self._gas_alert_interval: float = 180.0
+        self._trident = TridentUSSATSolver()
+        self.gas_roundtrip_fee = float(os.getenv("SCHEDULER_GAS_ROUNDTRIP_RATIO", os.getenv("GAS_ROUNDTRIP_FEE_RATIO", "0.0025")))
+        self.slippage_bps = int(os.getenv("SCHEDULER_SLIPPAGE_BPS", "50"))
+        self.spread_floor = float(os.getenv("SCHEDULER_SPREAD_FLOOR", "0.002"))
+        self.depth_floor_usd = float(os.getenv("SCHEDULER_DEPTH_FLOOR_USD", "5000"))
+        self._log_filters = os.getenv("SCHEDULER_LOG_FILTER", "0").lower() in {"1", "true", "yes", "on"}
+        self._filter_metrics: List[Dict[str, Any]] = []
+        self._metrics_collector = MetricsCollector(self.db)
 
     # ------------------------------------------------------------------
     # Public API
@@ -173,6 +301,7 @@ class BusScheduler:
             return None
 
         last_price = state.samples[-1][1]
+        last_volume = state.samples[-1][2]
         direction_prob = float(pred_summary.get("direction_prob", 0.5))
         confidence = float(pred_summary.get("exit_conf", 0.5))
         net_margin = float(pred_summary.get("net_margin", 0.0))
@@ -189,17 +318,60 @@ class BusScheduler:
         best_long = max(signals, key=self._score_signal)
         best_short = min(signals, key=self._score_signal)
 
-        fee_rate = self.fee_buffer + self.tax_buffer
+        fee_rate = self.fee_buffer + self.tax_buffer + self.gas_roundtrip_fee + (self.slippage_bps / 10000.0)
+        candidates: List[Dict[str, Any]] = []
+        context = {
+            "native_balance": native_balance,
+            "min_native": 0.01,
+            "fee_rate": fee_rate,
+            "risk_budget": risk_budget,
+            "direction_prob": direction_prob,
+        }
+        # Pause if recent data is too sparse
+        if len(state.samples) < 12:
+            return None
+        gap_cutoff = state.samples[-1][0] - state.samples[0][0]
+        if gap_cutoff > self.history_limit_sec * 1.5 and len(state.samples) < state.samples.maxlen * 0.5:
+            return None
+        # crude spread/depth checks: skip if implied spread too high or volume too low
+        implied_spread = abs(self._bias(state)) if hasattr(self, "_bias") else 0.0
+        if implied_spread > max(self.spread_floor, 0.01):
+            if self._log_filters:
+                print(f"[bus-scheduler] skip {state.symbol}: spread {implied_spread:.4f} > floor {self.spread_floor:.4f}")
+            self._filter_metrics.append(
+                {
+                    "symbol": state.symbol,
+                    "reason": "spread",
+                    "spread": implied_spread,
+                    "spread_floor": self.spread_floor,
+                    "ts": time.time(),
+                }
+            )
+            return None
+        if last_volume * last_price < self.depth_floor_usd:
+            if self._log_filters:
+                print(f"[bus-scheduler] skip {state.symbol}: depth {last_volume*last_price:.2f} < floor {self.depth_floor_usd:.2f}")
+            self._filter_metrics.append(
+                {
+                    "symbol": state.symbol,
+                    "reason": "depth",
+                    "depth_usd": last_volume * last_price,
+                    "depth_floor": self.depth_floor_usd,
+                    "ts": time.time(),
+                }
+            )
+            return None
         # Enter: use quote asset to buy base
         if available_quote > 0:
             long_quality = self.accuracy.quality(best_long.label)
             weight = self._horizon_weight(best_long.label, best_long.seconds)
             expected = best_long.expected_return * long_quality * weight
+            expected -= fee_rate
             risk_factor = min(1.0, max(expected - self.min_profit, 0.0) * 5.0)
             allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
             max_allocation = max(allocation * risk_budget, 0.0)
             if (
-                expected > (self.min_profit + fee_rate)
+                expected > self.min_profit
                 and direction_prob >= 0.6
                 and confidence >= 0.6
                 and (net_margin >= self.min_profit)
@@ -222,14 +394,26 @@ class BusScheduler:
                         expected_return=float(expected),
                         reason=f"forecast {best_long.label} {expected:.2%} w/ dir={direction_prob:.2f}",
                     )
-                    state.last_directive = directive
-                    return directive
+                    candidates.append(
+                        {
+                            "directive": directive,
+                            "score": float(expected),
+                            "meta": {
+                                "confidence": confidence,
+                                "direction_prob": direction_prob,
+                                "risk_factor": risk_factor,
+                                "horizon_weight": weight,
+                                "quality": long_quality,
+                                "risk_penalty": fee_rate,
+                            },
+                        }
+                    )
 
         # Exit: sell base into quote when projected drawdown
         if available_base > 0:
             short_quality = self.accuracy.quality(best_short.label)
             weight = self._horizon_weight(best_short.label, best_short.seconds)
-            expected = best_short.expected_return * short_quality * weight
+            expected = best_short.expected_return * short_quality * weight - fee_rate
             if expected < -self.min_profit or direction_prob <= 0.4 or net_margin < 0:
                 size_base = available_base * 0.5
                 if size_base > 0:
@@ -246,10 +430,30 @@ class BusScheduler:
                         expected_return=float(expected),
                         reason=f"drawdown {best_short.label} {expected:.2%}",
                     )
-                    state.last_directive = directive
-                    return directive
+                    candidates.append(
+                        {
+                            "directive": directive,
+                            "score": float(expected),
+                            "meta": {
+                                "confidence": confidence,
+                                "direction_prob": direction_prob,
+                                "risk_factor": 0.0,
+                                "horizon_weight": weight,
+                                "quality": short_quality,
+                                "risk_penalty": fee_rate,
+                            },
+                        }
+                    )
 
-        return None
+        if not candidates:
+            return None
+        chosen = self._trident.select(candidates, context)
+        if chosen:
+            state.last_directive = chosen
+            return chosen
+        fallback = max(candidates, key=lambda cand: cand.get("score", 0.0))
+        state.last_directive = fallback["directive"]
+        return fallback["directive"]
 
     def set_bucket_bias(self, bucket_bias: Dict[str, float]) -> None:
         if not bucket_bias:
@@ -502,3 +706,21 @@ class BusScheduler:
             horizon_scale = min(1.0, signal.seconds / (12 * 3600))  # emphasize <= 12h windows
             signal.expected_return += direction * bias_strength * (0.5 + 0.5 * horizon_scale)
         return signals
+
+    def filter_metrics(self) -> List[Dict[str, Any]]:
+        """
+        Expose recent filter decisions (spread/depth) for telemetry.
+        """
+        metrics = list(self._filter_metrics)
+        self._filter_metrics.clear()
+        if metrics:
+            try:
+                self._metrics_collector.record(
+                    MetricStage.LIVE_TRADING,
+                    {"count": float(len(metrics))},
+                    category="scheduler_filters",
+                    meta={"items": metrics[:32]},
+                )
+            except Exception:
+                pass
+        return metrics

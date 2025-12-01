@@ -38,6 +38,10 @@ DEFAULT_SOURCES: Sequence[NewsSource] = (
     NewsSource(name="The Defiant", url="https://thedefiant.io/feed", topics=("DEFI", "STABLECOIN")),
     NewsSource(name="ECB Press", url="https://www.ecb.europa.eu/rss/press.html", topics=("EURO", "MACRO")),
     NewsSource(name="BIS Press", url="https://www.bis.org/rss/press.xml", topics=("CBDC", "CENTRALBANK")),
+    NewsSource(name="Federal Reserve Press", url="https://www.federalreserve.gov/feeds/press_all.xml", topics=("USD", "POLICY")),
+    NewsSource(name="World Bank Blogs", url="https://blogs.worldbank.org/feed", topics=("MACRO", "DEVELOPMENT")),
+    NewsSource(name="Financial Stability Board", url="https://www.fsb.org/feed/press/", topics=("REGULATION", "MACRO")),
+    NewsSource(name="Chainalysis Insights", url="https://blog.chainalysis.com/feed", topics=("RISK", "ONCHAIN")),
 )
 
 

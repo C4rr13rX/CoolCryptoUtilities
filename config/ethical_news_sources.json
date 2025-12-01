@@ -73,5 +73,25 @@
     "name": "Crypto Ninjas",
     "url": "https://www.cryptoninjas.net/feed/",
     "topics": ["INFRA", "DEVS", "DEFI"]
+  },
+  {
+    "name": "Federal Reserve Press",
+    "url": "https://www.federalreserve.gov/feeds/press_all.xml",
+    "topics": ["USD", "POLICY"]
+  },
+  {
+    "name": "World Bank Fintech",
+    "url": "https://blogs.worldbank.org/feed",
+    "topics": ["MACRO", "EMERGING"]
+  },
+  {
+    "name": "Financial Stability Board",
+    "url": "https://www.fsb.org/feed/press/",
+    "topics": ["REGULATION", "CBDC"]
+  },
+  {
+    "name": "Chainalysis Blog",
+    "url": "https://blog.chainalysis.com/feed",
+    "topics": ["ONCHAIN", "RISK", "SECURITY"]
   }
 ]

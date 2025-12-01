@@ -49,6 +49,8 @@ if (mountEl) {
     guardian: '/guardian',
     integrations: '/integrations',
     settings: '/settings',
+    codegraph: '/codegraph',
+    branddozer: '/branddozer',
   };
   const initialPath = targetRoutes[initialRoute] || '/';
 

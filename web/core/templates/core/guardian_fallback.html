@@ -142,8 +142,19 @@
       </section>
     {% endif %}
 
-    <pre class="console">{% for line in console_tail %}{{ line }}
+    <section>
+      <h3>Guardian Console</h3>
+      <pre class="console">{% for line in console_tail %}{{ line }}
 {% endfor %}</pre>
+    </section>
+
+    {% if production_tail %}
+      <section>
+        <h3>Production Manager Console</h3>
+        <pre class="console">{% for line in production_tail %}{{ line }}
+{% endfor %}</pre>
+      </section>
+    {% endif %}
   </main>
   <footer>
     This view auto-reloads every 30 seconds. Close the tab once the main site is responsive again.

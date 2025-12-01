@@ -177,13 +177,35 @@ def build_multimodal_model(
     hidden_1: int = 256,
     hidden_2: int = 128,
     asset_vocab_size: int = 1,
+    model_template: str = "base",
 ) -> tuple[Model, TextVectorization, TextVectorization, Dict[str, Any], Dict[str, float]]:
+    template = str(model_template or "base").lower()
+    if template not in {"tiny", "base", "robust"}:
+        template = "base"
+    # Lightweight template variants to trade capacity for speed/regularisation.
+    if template == "tiny":
+        ts_filters = 48
+        hidden_1, hidden_2 = 160, 96
+        headline_dim = max(32, headline_dim // 2)
+        full_dim = max(64, full_dim // 2)
+        lstm_units = 24
+        dropout_main = 0.35
+    elif template == "robust":
+        ts_filters = 80
+        hidden_1, hidden_2 = max(hidden_1, 288), max(hidden_2, 160)
+        lstm_units = 48
+        dropout_main = 0.25
+    else:  # base
+        ts_filters = 64
+        lstm_units = 32
+        dropout_main = 0.3
+
     ts_in = Input((window_size, 2), name="price_vol_input")
-    d1 = Conv1D(64, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_in)
+    d1 = Conv1D(ts_filters, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_in)
     d1 = Activation("swish")(d1)
-    d2 = Conv1D(64, 3, padding="causal", dilation_rate=2, name="ts_d2")(d1)
+    d2 = Conv1D(ts_filters, 3, padding="causal", dilation_rate=2, name="ts_d2")(d1)
     d2 = Activation("swish")(d2)
-    d3 = Conv1D(64, 3, padding="causal", dilation_rate=4, name="ts_d3")(d2)
+    d3 = Conv1D(ts_filters, 3, padding="causal", dilation_rate=4, name="ts_d3")(d2)
     d3 = Activation("swish")(d3)
 
     x = Concatenate(name="ts_cat")([d1, d2, d3])
@@ -206,8 +228,8 @@ def build_multimodal_model(
 
     sent_in = Input((sent_seq_len, 1), name="sentiment_seq")
     s = ExponentialDecay(sent_seq_len, name="sent_decay")(sent_in)
-    s = LSTM(32, name="sent_lstm")(s)
-    s = Dropout(0.2, name="sent_do")(s)
+    s = LSTM(lstm_units, name="sent_lstm")(s)
+    s = Dropout(0.25 if template == "tiny" else 0.2, name="sent_do")(s)
 
     headline_vec, headline_enc = build_text_encoder(
         name_prefix="headline", vocab_size=headline_vocab, seq_len=headline_len, embed_dim=headline_dim
@@ -244,10 +266,10 @@ def build_multimodal_model(
     reg = l2(1e-5)
     d = Dense(hidden_1, activation="swish", kernel_regularizer=reg, name="h1")(merged)
     d = LayerNormalization(name="h1_norm")(d)
-    d = Dropout(0.3, name="h1_do")(d)
+    d = Dropout(dropout_main, name="h1_do")(d)
     d = Dense(hidden_2, activation="swish", kernel_regularizer=reg, name="h2")(d)
     d = LayerNormalization(name="h2_norm")(d)
-    d = Dropout(0.3, name="h2_do")(d)
+    d = Dropout(dropout_main, name="h2_do")(d)
 
     price_params = Dense(2, name="price_params")(d)
     price_mu = Lambda(_slice_price_mu, name="price_mu")(price_params)

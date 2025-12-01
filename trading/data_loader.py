@@ -159,6 +159,8 @@ class HistoricalDataLoader:
         self._synthetic_data_dir = Path(os.getenv("SYNTHETIC_DATA_DIR", "data/intermediate/synthetic_ohlcv")).expanduser()
         self._synthetic_data_dir.mkdir(parents=True, exist_ok=True)
         self._synthetic_files: Dict[str, Path] = {}
+        self._news_token_cache: OrderedDict[str, set[str]] = OrderedDict()
+        self._news_token_cache_limit = max(256, int(os.getenv("NEWS_TOKEN_CACHE_LIMIT", "2048")))
 
     def _disk_cache_path(self, cache_key: Tuple[Any, ...]) -> Path:
         digest = hashlib.sha1(repr(cache_key).encode("utf-8")).hexdigest()
@@ -309,7 +311,11 @@ class HistoricalDataLoader:
             expanded = self._expand_focus_assets(focus_assets)
             symbols.extend(sorted(expanded))
         if not symbols:
-            symbols = top_pairs(limit=min(8, (self.max_files or 8)))
+            base_pairs = top_pairs(limit=min(8, (self.max_files or 8)))
+            if base_pairs:
+                symbols.extend(base_pairs)
+        if not symbols:
+            symbols = self._fallback_pair_candidates(limit=8)
         bars = 240 if short_deficit > 0 else 120
         created: List[str] = []
         for symbol in symbols[:8]:
@@ -483,6 +489,29 @@ class HistoricalDataLoader:
                 resolved.add(self._normalize_pair_label(reversed_pair))
         cleaned = {item for item in resolved if item}
         return cleaned
+
+    def _fallback_pair_candidates(self, limit: int = 8) -> List[str]:
+        pairs: List[str] = []
+        env_blob = os.getenv("TRAINING_FALLBACK_PAIRS")
+        if env_blob:
+            for chunk in env_blob.split(","):
+                chunk = chunk.strip().upper()
+                if chunk:
+                    pairs.append(chunk.replace("/", "-"))
+        if len(pairs) < limit:
+            snapshots = self._offline_store.snapshots(limit=limit * 2)
+            for snap in snapshots:
+                base = self._normalize_token_symbol(snap.symbol)
+                if base in {"USDC", "USDT", "DAI"}:
+                    continue
+                pair = f"{base}-USDC"
+                if pair not in pairs:
+                    pairs.append(pair)
+                if len(pairs) >= limit:
+                    break
+        if not pairs:
+            pairs = ["ETH-USDC", "BTC-USDC", "SOL-USDC"]
+        return pairs[:limit]
 
     def build_dataset(
         self,
@@ -1184,19 +1213,40 @@ class HistoricalDataLoader:
         return token_str
 
     def _collect_tokens(self, *, text: str, seed_tokens: Optional[List[Any]] = None) -> set[str]:
+        if not hasattr(self, "_news_token_cache"):
+            self._news_token_cache = OrderedDict()
+        if not hasattr(self, "_news_token_cache_limit"):
+            self._news_token_cache_limit = max(256, int(os.getenv("NEWS_TOKEN_CACHE_LIMIT", "2048")))
         tokens: set[str] = set()
+        normalized_seed: List[str] = []
         if seed_tokens:
             for token in seed_tokens:
                 normalized = self._normalize_token(token)
                 if normalized:
+                    normalized_seed.append(normalized)
                     tokens.add(normalized)
+        cache_key: Optional[str] = None
+        digest_source = (text or "")[:1024].lower()
+        if digest_source:
+            seed_part = ",".join(sorted(normalized_seed))
+            payload = f"{digest_source}|{seed_part}".encode("utf-8", "ignore")
+            cache_key = hashlib.sha1(payload).hexdigest()
+            cached = self._news_token_cache.get(cache_key)
+            if cached is not None:
+                self._news_token_cache.move_to_end(cache_key)
+                return set(cached)
         if text:
             words = set(re.findall(r"[a-z0-9$]{2,}", text.lower()))
             for word in words:
                 mapped = self.keyword_to_tokens.get(word)
                 if mapped:
                     tokens.update(mapped)
-        return {t.upper() for t in tokens}
+        tokens = {t.upper() for t in tokens}
+        if cache_key:
+            self._news_token_cache[cache_key] = set(tokens)
+            while len(self._news_token_cache) > self._news_token_cache_limit:
+                self._news_token_cache.popitem(last=False)
+        return tokens
 
     def _load_file_arrays(self, file_path: Path) -> Optional[Dict[str, np.ndarray]]:
         try:
@@ -1350,6 +1400,17 @@ class HistoricalDataLoader:
                 frames.append(window_df)
         except Exception:
             pass
+
+        if not frames:
+            # Attempt to bootstrap minimal news from local CSV/JSON if remote sources are unavailable
+            bootstrap_path = cache_dir / "bootstrap_news.json"
+            if bootstrap_path.exists():
+                try:
+                    payload = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+                    if isinstance(payload, list):
+                        frames.append(pd.DataFrame(payload))
+                except Exception:
+                    pass
 
         if not frames:
             return []

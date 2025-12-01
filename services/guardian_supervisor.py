@@ -43,7 +43,6 @@ def _python_bin() -> str:
 class GuardianSupervisor:
     def __init__(self) -> None:
         self._thread: Optional[threading.Thread] = None
-        self._console_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lease: Optional[GuardianLease] = None
         self._process: Optional[subprocess.Popen] = None
@@ -70,11 +69,9 @@ class GuardianSupervisor:
                 log_message("guardian", "another guardian supervisor already active; skipping bootstrap", severity="warning")
                 return
             self._stop.clear()
-            self._ensure_console_running()
             production_supervisor.ensure_running()
             self._thread = threading.Thread(target=self._guardian_loop, name="guardian-process", daemon=True)
             self._thread.start()
-            self._start_console_monitor()
 
     def stop(self) -> None:
         self._stop.set()
@@ -92,9 +89,6 @@ class GuardianSupervisor:
         if self._thread:
             self._thread.join(timeout=5.0)
         self._thread = None
-        if self._console_thread:
-            self._console_thread.join(timeout=5.0)
-        self._console_thread = None
         production_supervisor.stop()
         with self._status_lock:
             self._status["running"] = False
@@ -118,10 +112,14 @@ class GuardianSupervisor:
         settings = update_guardian_settings({"interval_minutes": minutes})
         return settings
 
-    def run_once(self, prompt: Optional[str] = None) -> None:
+    def run_once(self, prompt: Optional[str] = None) -> bool:
+        if self._guardian_job_active():
+            log_message("guardian", "skipping guardian run (active job present)", severity="info")
+            return False
         if prompt:
             set_one_time_prompt(prompt)
         request_guardian_run()
+        return True
 
     def status(self) -> Dict[str, Any]:
         with self._status_lock:
@@ -141,7 +139,6 @@ class GuardianSupervisor:
         if not self._thread or not self._thread.is_alive():
             self.start()
         else:
-            self._ensure_console_running()
             production_supervisor.ensure_running()
 
     def _acquire_lease(self) -> bool:
@@ -161,6 +158,18 @@ class GuardianSupervisor:
         finally:
             self._lease = None
 
+    def _guardian_job_active(self) -> bool:
+        try:
+            snapshot = guardian_queue_snapshot()
+        except Exception:
+            return False
+        slots = snapshot.get("slots") or {}
+        queue = snapshot.get("queue") or {}
+        slot_entry = slots.get("codex")
+        queue_entries = queue.get("codex") if isinstance(queue, dict) else None
+        queued = queue_entries if isinstance(queue_entries, list) else []
+        return bool(slot_entry) or bool(queued)
+
     # ------------------------------------------------------------------ process helpers
     def _guardian_loop(self) -> None:
         env = build_process_env()
@@ -168,27 +177,27 @@ class GuardianSupervisor:
         GUARDIAN_LOG.parent.mkdir(parents=True, exist_ok=True)
         while not self._stop.is_set():
             try:
-                log_handle = GUARDIAN_LOG.open("a", encoding="utf-8")
-                proc = subprocess.Popen(
-                    cmd,
-                    cwd=str(REPO_ROOT),
-                    stdout=log_handle,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    start_new_session=True,
-                    text=True,
-                )
-                self._process = proc
-                with self._status_lock:
-                    self._status["running"] = True
-                    self._status["pid"] = proc.pid
-                log_message("guardian", f"started guardian PID {proc.pid}", severity="info")
-                while proc.poll() is None and not self._stop.is_set():
-                    time.sleep(1.0)
-                if self._stop.is_set():
-                    break
-                log_message("guardian", f"guardian exited with code {proc.returncode}; restarting in 5s", severity="warning")
-                time.sleep(5.0)
+                with GUARDIAN_LOG.open("a", encoding="utf-8") as log_handle:
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=str(REPO_ROOT),
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        env=env,
+                        start_new_session=True,
+                        text=True,
+                    )
+                    self._process = proc
+                    with self._status_lock:
+                        self._status["running"] = True
+                        self._status["pid"] = proc.pid
+                    log_message("guardian", f"started guardian PID {proc.pid}", severity="info")
+                    while proc.poll() is None and not self._stop.is_set():
+                        time.sleep(1.0)
+                    if self._stop.is_set():
+                        break
+                    log_message("guardian", f"guardian exited with code {proc.returncode}; restarting in 5s", severity="warning")
+                    time.sleep(5.0)
             except Exception as exc:
                 log_message("guardian", f"unable to launch guardian process: {exc}", severity="error")
                 time.sleep(5.0)
@@ -198,33 +207,6 @@ class GuardianSupervisor:
                 self._process = None
         # Loop exited (stop requested); release lease so another process can take over later.
         self._release_lease()
-
-    def _start_console_monitor(self) -> None:
-        if self._console_thread and self._console_thread.is_alive():
-            return
-        self._console_thread = threading.Thread(target=self._console_loop, name="guardian-console", daemon=True)
-        self._console_thread.start()
-
-    def _ensure_console_running(self) -> None:
-        try:
-            status = console_manager.status()
-            if status.get("status") != "running":
-                console_manager.start()
-        except Exception as exc:
-            log_message("guardian", f"console bootstrap error: {exc}", severity="warning")
-
-    def _console_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                status = console_manager.status()
-                if status.get("status") != "running":
-                    console_manager.start()
-            except Exception as exc:
-                log_message("guardian", f"console monitor error: {exc}", severity="warning")
-            for _ in range(30):
-                if self._stop.is_set():
-                    break
-                time.sleep(1.0)
 
 
 guardian_supervisor = GuardianSupervisor()

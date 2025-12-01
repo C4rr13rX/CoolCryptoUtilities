@@ -27,11 +27,13 @@ class CodexSession:
         session_name: str,
         executable: str = "codex",
         transcript_dir: str | Path = "codex_transcripts",
-        read_timeout_s: float = 18.0,
+        read_timeout_s: float = 90.0,
         stream_default: bool = True,
         verbose_default: bool = False,
         term_rows: int = 40,
         term_cols: int = 120,
+        model: str = "gpt-5.1-codex-max",
+        reasoning_effort: str = "xhigh",
         sandbox_mode: Optional[str] = "danger-full-access",
         approval_policy: Optional[str] = None,
         bypass_sandbox_confirm: bool = True,
@@ -48,6 +50,8 @@ class CodexSession:
         self.transcript_dir.mkdir(parents=True, exist_ok=True)
         self.transcript_path = self.transcript_dir / f"{session_name}.log"
 
+        self.model = model
+        self.model_reasoning_effort = reasoning_effort
         self.sandbox_mode = sandbox_mode
         self.approval_policy = approval_policy
         self.bypass_sandbox_confirm = bypass_sandbox_confirm
@@ -113,7 +117,7 @@ class CodexSession:
 
         # 2) Interactive PTY fallback with progressive actions
         final, rc5 = self._run_streaming_pty(self._cli_prefix, prompt, verbose=verbose)
-        if rc5 == 0 and final.strip():
+        if final.strip():
             self._append_transcript(prompt, final)
             return final
 
@@ -218,10 +222,25 @@ class CodexSession:
 
         try:
             end_time = time.time() + self.read_timeout_s
+            max_deadline = time.time() + max(self.read_timeout_s, 5.0)
             last_total = 0
 
             while True:
-                if child.poll() is not None and time.time() > end_time:
+                now = time.time()
+                if now > max_deadline:
+                    try:
+                        child.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        child.wait(timeout=1.0)
+                    except Exception:
+                        try:
+                            child.kill()
+                        except Exception:
+                            pass
+                    return "[codex timeout]", 124
+                if child.poll() is not None and now > end_time:
                     break
 
                 r, _, _ = select.select([master_fd], [], [], 0.05)
@@ -242,6 +261,9 @@ class CodexSession:
                             captured.append(printable)
                             total_bytes += len(printable)
                             self._print(printable.decode("utf-8", errors="replace"))
+
+                if child.poll() is not None and not r and total_bytes == last_total:
+                    break
 
                 # Progressive actions once banner is visible
                 ready_for_actions = banner_seen or (total_bytes > 0) or ((time.time() - start_time) > 1.5)
@@ -328,11 +350,20 @@ class CodexSession:
         _register(stdout_fd, "stdout")
         _register(stderr_fd, "stderr")
 
+        deadline = time.time() + self.read_timeout_s
+        timed_out = False
         while fd_map:
             try:
                 ready, _, _ = select.select(list(fd_map.keys()), [], [], 0.1)
             except (InterruptedError, OSError):
                 ready = []
+            if time.time() > deadline and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                timed_out = True
+                break
             if not ready:
                 if proc.poll() is None:
                     continue
@@ -354,17 +385,21 @@ class CodexSession:
                 if stream:
                     self._print(chunk.decode("utf-8", errors="replace"))
         try:
-            rc = proc.wait()
-        except Exception:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
             try:
                 rc = proc.wait(timeout=1.0)
             except Exception:
-                rc = 1
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    rc = proc.wait(timeout=1.0)
+                except Exception:
+                    rc = 1
 
+            if timed_out:
+                rc = 124
+                stderr_buf.extend(b"[codex timeout]")
         finally:
             if proc.stdout:
                 proc.stdout.close()
@@ -441,6 +476,10 @@ class CodexSession:
 
     def _build_cli_prefix(self) -> list[str]:
         parts = [self.executable]
+        if self.model:
+            parts.extend(["--model", self.model])
+        if self.model_reasoning_effort:
+            parts.extend(["-c", f'model_reasoning_effort="{self.model_reasoning_effort}"'])
         if self.sandbox_mode:
             parts.extend(["--sandbox", self.sandbox_mode])
         if self.bypass_sandbox_confirm:

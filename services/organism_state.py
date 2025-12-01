@@ -102,6 +102,9 @@ def build_snapshot(
             totals_payload,
         ),
     }
+    transition_plan = brain_payload.get("transition_plan")
+    if isinstance(transition_plan, dict) and transition_plan:
+        snapshot["transition_plan"] = transition_plan
     return snapshot
 
 
@@ -386,12 +389,31 @@ def _build_process_clusters(
         clusters.append(
             {
                 "label": "Activity",
-                "energy": 0.5,
-                "nodes": len(activity.get("metrics", [])) + len(activity.get("ghost_trades", [])),
+                "energy": float(min(1.0, len(activity.get("metrics", [])) / 16.0)),
+                "nodes": sum(len(activity.get(key, [])) for key in ("ghost_trades", "live_trades", "feedback_events")),
                 "detail": {
                     "ghost_trades": activity.get("ghost_trades", [])[:3],
                     "live_trades": activity.get("live_trades", [])[:3],
                 },
+            }
+        )
+    transition_plan = brain.get("transition_plan") or {}
+    plan_horizons = transition_plan.get("horizons") if isinstance(transition_plan, dict) else {}
+    if isinstance(plan_horizons, dict) and plan_horizons:
+        coverage = float(transition_plan.get("coverage") or 0.0)
+        clusters.append(
+            {
+                "label": "Horizon Readiness",
+                "energy": float(max(0.0, min(1.0, coverage))),
+                "nodes": len(plan_horizons),
+                "detail": [
+                    {
+                        "horizon": label,
+                        "precision": _safe_float(metrics.get("precision")),
+                        "allowed": bool(metrics.get("allowed")),
+                    }
+                    for label, metrics in list(plan_horizons.items())[:6]
+                ],
             }
         )
     return clusters
@@ -645,6 +667,30 @@ def _build_organism_graph(
     add_edge("brain", "module:metrics", weight=0.5 + len(metrics_events) * 0.04, kind="metric")
     add_edge("brain", "module:portfolio", weight=0.8, kind="operational")
     add_edge("module:scheduler", "module:queue", weight=float(len(queue_preview) + 1), kind="operational")
+
+    transition_plan = brain.get("transition_plan") or {}
+    if isinstance(transition_plan, dict) and transition_plan:
+        plan_node = "module:transition"
+        add_node(
+            plan_node,
+            label="Ghost→Live Plan",
+            group="module",
+            status="strong" if transition_plan.get("live_ready") else "watch",
+            value=_safe_float(transition_plan.get("coverage", 0.0)),
+        )
+        add_edge("brain", plan_node, weight=0.6 + _safe_float(transition_plan.get("coverage", 0.0)), kind="transition")
+        plan_horizons = transition_plan.get("horizons")
+        if isinstance(plan_horizons, dict):
+            for label, metrics in plan_horizons.items():
+                node_id = f"transition:{label}"
+                add_node(
+                    node_id,
+                    label=f"{label} • {_safe_float(metrics.get('precision')):.2f}",
+                    group="transition",
+                    status="engaged" if metrics.get("allowed") else "idle",
+                    value=_safe_float(metrics.get("lift", metrics.get("precision", 0.0))),
+                )
+                add_edge(plan_node, node_id, weight=0.4 + _safe_float(metrics.get("precision", 0.0)), kind="transition")
 
     add_edge("module:portfolio", "module:scheduler", weight=0.6, kind="operational")
 

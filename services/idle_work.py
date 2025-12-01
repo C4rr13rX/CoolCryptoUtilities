@@ -29,7 +29,8 @@ class IdleWorkManager:
     ) -> None:
         self.db = db or get_db()
         self.supervisor = TokenDownloadSupervisor(db=self.db)
-        self.limiter = limiter or AdaptiveLimiter(cpu_soft=45.0, cpu_hard=80.0, mem_soft=0.65, mem_hard=0.9, cool_down=6.0)
+        # Background work should respect global ceilings; defaults can be overridden via ADAPTIVE_* env vars.
+        self.limiter = limiter or AdaptiveLimiter.from_env(cpu_soft=55.0, cpu_hard=75.0, mem_soft=0.65, mem_hard=0.85, cool_down=6.0)
         self._jobs: "queue.Queue[Dict[str, Any]]" = queue.Queue()
         self._job_lock = threading.Lock()
         self._seed_jobs()

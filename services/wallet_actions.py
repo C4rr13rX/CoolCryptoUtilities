@@ -86,6 +86,13 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
         ],
         category="actions",
     ),
+    "start_production": WalletAction(
+        name="start_production",
+        label="Start Production Manager",
+        description="Boot the trading production manager (option 7) without showing the interactive menu.",
+        fields=[],
+        category="production",
+    ),
 }
 
 

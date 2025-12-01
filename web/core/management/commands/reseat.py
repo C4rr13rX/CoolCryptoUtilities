@@ -50,6 +50,8 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.MIGRATE_HEADING("[4/4] Runserver"))
         runserver_args = options.get("runserver_args") or []
+        if all(arg != "--noreload" for arg in runserver_args):
+            runserver_args.append("--noreload")
         if options.get("guardian_off"):
             os.environ["GUARDIAN_AUTO_DISABLED"] = "1"
         call_command("runserver", *runserver_args)

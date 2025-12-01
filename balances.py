@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os, sys, time, json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Iterable, Set
+from typing import Any, Dict, List, Optional, Tuple, Iterable, Set, Mapping
 from decimal import Decimal, getcontext
 import requests
 from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
@@ -487,20 +487,22 @@ class MultiChainTokenPortfolio:
             usd_map: Dict[str, str] = {}
             
             if self.price_mode == "cache_only":
-                # Strictly from cache (balances cache or price cache); never hit the network.
                 for a in token_list:
-                    ent = cached_entries.get(a)
-                    usd = ent.get("usd_amount") if ent else None
-                    if usd is None and self.cp:
+                    ent = cached_entries.get(a) or {}
+                    usd_val = ent.get("usd_amount")
+                    usd_dec: Optional[Decimal] = None
+                    if usd_val is not None:
                         try:
-                            px = self.cp.get_price(ch, a, ttl_sec=self.price_ttl_sec)
-                            if px is not None and qty_map[a] > 0:
-                                usd = str((Decimal(str(px)) * qty_map[a]).quantize(Decimal("0.00000001")))
+                            usd_dec = Decimal(str(usd_val))
                         except Exception:
-                            pass
-                    usd_map[a] = str(Decimal(str(usd))) if (usd is not None) else "0"
-            
-            else: # "hybrid"
+                            usd_dec = None
+                    if usd_dec is None or usd_dec == 0:
+                        meta_info = meta_map.get(a) or ent
+                        px = self._lookup_cached_price(ch, a, meta_info)
+                        if px is not None and qty_map[a] > 0:
+                            usd_dec = (qty_map[a] * px).quantize(Decimal("0.00000001"))
+                    usd_map[a] = str(usd_dec) if usd_dec is not None else "0"
+            else:  # "hybrid"
                 # 1) Reuse cached USD for tokens we kept (no movement).
                 for a in keep:
                     usd_map[a] = str(cached_entries.get(a, {}).get("usd_amount", "0"))
@@ -510,6 +512,10 @@ class MultiChainTokenPortfolio:
                 prices = self._get_prices_usd(ch, refresh_nonzero, price_meta) if refresh_nonzero else {}
                 for a in refresh:
                     px = prices.get(a.lower(), Decimal("0"))
+                    if px <= 0:
+                        fallback_px = self._lookup_cached_price(ch, a, meta_map.get(a) or cached_entries.get(a))
+                        if fallback_px is not None:
+                            px = fallback_px
                     usd_map[a] = str((qty_map[a] * px).quantize(Decimal("0.00000001")) if px > 0 else Decimal("0"))
 
             # -------- Persist pretty fields back to balance cache for next ms-run
@@ -819,6 +825,45 @@ class MultiChainTokenPortfolio:
             except Exception: pass
         # 0x fallback disabled here to keep this fast; you can re-enable if you want.
         return prices
+
+    def _lookup_cached_price(self, chain: str, token: str, meta_info: Optional[Mapping[str, Any]] = None) -> Optional[Decimal]:
+        if not self.cp:
+            return None
+        token_norm = (token or "").strip().lower()
+        attempts: List[Tuple[str, str]] = []
+        if token_norm:
+            attempts.append((chain, token_norm))
+        symbol = ""
+        if meta_info:
+            symbol = (meta_info.get("symbol") or meta_info.get("name") or "").strip().lower()
+        if symbol:
+            attempts.append(("global", symbol))
+            if symbol in {"eth", "weth"}:
+                attempts.append(("global", "eth"))
+                attempts.append(("global", "weth"))
+        if token_norm in {"native", ZERO.lower()}:
+            attempts.append(("global", "eth"))
+            attempts.append(("global", "weth"))
+        seen: Set[Tuple[str, str]] = set()
+        for scope, key in attempts:
+            key_norm = (key or "").strip().lower()
+            if not key_norm:
+                continue
+            lookup = (scope, key_norm)
+            if lookup in seen:
+                continue
+            seen.add(lookup)
+            try:
+                px = self.cp.get_price(scope, key_norm, ttl_sec=self.price_ttl_sec)
+            except Exception:
+                px = None
+            if px is None:
+                continue
+            try:
+                return Decimal(str(px))
+            except Exception:
+                continue
+        return None
 
     # ---------------- Normalization, Transfers, Utils ----------------
     @staticmethod

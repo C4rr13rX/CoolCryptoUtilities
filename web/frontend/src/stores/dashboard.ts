@@ -26,6 +26,8 @@ interface DashboardState {
   latestMetrics: any[];
   loading: boolean;
   error: string | null;
+  serverOnline: boolean;
+  lastConsoleAttempt: number;
 }
 
 export const useDashboardStore = defineStore('dashboard', {
@@ -41,6 +43,8 @@ export const useDashboardStore = defineStore('dashboard', {
     latestMetrics: [],
     loading: false,
     error: null,
+    serverOnline: true,
+    lastConsoleAttempt: 0,
   }),
   actions: {
     hydrateFromSnapshot(snapshot: Record<string, any>) {
@@ -65,7 +69,7 @@ export const useDashboardStore = defineStore('dashboard', {
           streams,
           consoleStatus,
           consoleLogs,
-          guardianLogs,
+          guardianLogsResp,
           advisories,
           trades,
           feedback,
@@ -84,8 +88,11 @@ export const useDashboardStore = defineStore('dashboard', {
         this.dashboard = summary || {};
         this.streams = streams;
         this.consoleStatus = consoleStatus;
-        this.consoleLogs = consoleLogs.lines || [];
-        this.guardianLogs = guardianLogs.lines || [];
+        const guardianLines = guardianLogsResp.guardian_lines || guardianLogsResp.lines || [];
+        const guardianProduction = guardianLogsResp.production_lines || [];
+        const consoleLineList = consoleLogs.lines || [];
+        this.consoleLogs = guardianProduction.length ? guardianProduction : consoleLineList;
+        this.guardianLogs = guardianLines;
         const advisoryList = advisories?.results || advisories || summary?.active_advisories || [];
         this.advisories = advisoryList;
         this.recentTrades = trades?.results || trades || summary?.recent_trades || [];
@@ -98,33 +105,44 @@ export const useDashboardStore = defineStore('dashboard', {
         this.loading = false;
       }
     },
-    async refreshConsole() {
+    async refreshConsole(force = false) {
+      const now = Date.now();
+      if (!force && !this.serverOnline && now - this.lastConsoleAttempt < 15000) {
+        return;
+      }
+      this.lastConsoleAttempt = now;
       try {
-        const [consoleStatus, consoleLogs, guardianLogs] = await Promise.all([
+        const [consoleStatus, consoleLogs, guardianLogsResp] = await Promise.all([
           fetchConsoleStatus(),
           fetchConsoleLogs(200),
           fetchGuardianLogs(200),
         ]);
         this.consoleStatus = consoleStatus;
-        this.consoleLogs = consoleLogs.lines || [];
-        this.guardianLogs = guardianLogs.lines || [];
+        const guardianLines = guardianLogsResp.guardian_lines || guardianLogsResp.lines || [];
+        const guardianProduction = guardianLogsResp.production_lines || [];
+        const consoleLineList = consoleLogs.lines || [];
+        this.consoleLogs = guardianProduction.length ? guardianProduction : consoleLineList;
+        this.guardianLogs = guardianLines;
         this.error = null;
+        this.serverOnline = true;
       } catch (err: any) {
-        this.error = err?.message || 'Failed to refresh console';
+        this.serverOnline = false;
+        this.consoleStatus = { status: 'offline', pid: null, uptime: null };
+        this.error = err?.message || 'Console offline';
       }
     },
     async startProcess() {
       await startConsoleProcess();
-      await this.refreshConsole();
+      await this.refreshConsole(true);
     },
     async stopProcess() {
       await stopConsoleProcess();
-      await this.refreshConsole();
+      await this.refreshConsole(true);
     },
     async sendConsoleInput(command: string) {
       if (!command) return;
       await sendConsoleInput(command);
-      await this.refreshConsole();
+      await this.refreshConsole(true);
     },
   }
 });

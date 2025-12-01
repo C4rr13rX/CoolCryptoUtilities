@@ -17,6 +17,7 @@ import aiohttp
 from services.adaptive_control import APIRateLimiter
 from services.logging_utils import log_message
 from services.offline_market import OfflinePriceStore, OfflineSnapshot
+from pathlib import Path
 
 try:  # pragma: no cover - optional dependency may fail at import time
     from services.onchain_feed import OnChainPairFeed
@@ -139,12 +140,27 @@ class MarketDataStream:
         template = ws_template or os.getenv("MARKET_WS_TEMPLATE") or os.getenv("UNISWAP_WS_TEMPLATE")
         symbol_lower = symbol.lower().replace("/", "-")
         self._template = template
-        self.url = url or (template.format(symbol=symbol_lower, SYMBOL=symbol.upper(), pair=symbol_lower) if template else None)
-        self.subscribe_template = subscribe_template or os.getenv("MARKET_WS_SUBSCRIBE") or os.getenv(
-            "UNISWAP_WS_SUBSCRIBE"
-        )
         self.symbol = symbol
         self.chain = chain
+        self.url = url or (template.format(symbol=symbol_lower, SYMBOL=symbol.upper(), pair=symbol_lower) if template else None)
+        subscribe_env = os.getenv("MARKET_WS_SUBSCRIBE") or os.getenv("UNISWAP_WS_SUBSCRIBE")
+        env_subscribe_provided = bool(subscribe_env)
+        self._subscribe_provided = subscribe_template is not None or env_subscribe_provided
+        self.subscribe_template = subscribe_template if subscribe_template is not None else subscribe_env
+        disable_subscribe = (os.getenv("MARKET_WS_DISABLE_SUBSCRIBE") or "").lower() in {"1", "true", "yes", "on"}
+        allow_template_subscribe = (
+            os.getenv("MARKET_WS_ALLOW_TEMPLATE_SUBSCRIBE")
+            or os.getenv("ALLOW_TEMPLATE_SUBSCRIBE")
+            or ("1" if env_subscribe_provided else "0")
+        ).lower() in {"1", "true", "yes", "on"}
+        self._template_subscribe_disabled = False
+        if disable_subscribe:
+            self.subscribe_template = None
+            self._template_subscribe_disabled = True
+        elif self._template and not self.subscribe_template:
+            # Only disable auto-subscribe when no explicit subscribe payload is available.
+            self._template_subscribe_disabled = True
+        self._ws_disabled = bool(self._template and not self.subscribe_template)
         self.simulation_interval = simulation_interval
         self._callbacks: List[CallbackType] = []
         self._db = get_db()
@@ -241,6 +257,39 @@ class MarketDataStream:
         self._snapshot_refresh_interval = max(1, int(os.getenv("MARKET_SNAPSHOT_REFRESH_FAILS", "6")))
         self._last_snapshot_refresh = 0.0
         self._last_rest_unavailable_log = 0.0
+        self._last_offline_log = 0.0
+        self._debug(
+            "init",
+            extra={
+                "url_set": bool(self.url),
+                "template": bool(template),
+                "subscribe": bool(self.subscribe_template),
+                "ws_disabled": self._ws_disabled,
+                "subscribe_disabled": self._template_subscribe_disabled,
+            },
+        )
+        log_message(
+            "market-stream",
+            "stream configured",
+            details={
+                "symbol": self.symbol,
+                "chain": self.chain,
+                "url_set": bool(self.url),
+                "template": bool(template),
+                "subscribe_template": bool(self.subscribe_template),
+            },
+        )
+        log_message(
+            "market-stream",
+            "stream configured",
+            details={
+                "symbol": self.symbol,
+                "chain": self.chain,
+                "url_set": bool(self.url),
+                "template": bool(template),
+                "subscribe_template": bool(self.subscribe_template),
+            },
+        )
 
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
@@ -249,54 +298,95 @@ class MarketDataStream:
         self._stop_event.clear()
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession()
-        await self._refresh_reference_price()
-        if self._onchain_listener and self._onchain_listener.available and not self._onchain_task:
-            self._onchain_queue = asyncio.Queue()
-            self._onchain_task = asyncio.create_task(self._onchain_listener.run(self._onchain_queue.put))
-            self._onchain_consumer = asyncio.create_task(self._consume_onchain_queue())
-        backoff = 5.0
-        while not self._stop_event.is_set():
-            if not self.url:
-                self._warn_websocket_unavailable()
-                await self._poll_rest_data(max(backoff, self.consensus_timeout))
-                if self._template:
-                    symbol_lower = self.symbol.lower().replace("/", "-")
-                    self.url = self._template.format(symbol=symbol_lower, SYMBOL=self.symbol.upper(), pair=symbol_lower)
+        self._debug("start", extra={"url_set": bool(self.url), "template": bool(self._template), "subscribe": bool(self.subscribe_template)})
+        try:
+            await self._refresh_reference_price()
+            if self._onchain_listener and self._onchain_listener.available and not self._onchain_task:
+                self._onchain_queue = asyncio.Queue()
+                self._onchain_task = asyncio.create_task(self._onchain_listener.run(self._onchain_queue.put))
+                self._onchain_consumer = asyncio.create_task(self._consume_onchain_queue())
+            backoff = 5.0
+            while not self._stop_event.is_set():
+                self._debug(
+                    "loop",
+                    extra={
+                        "url_set": bool(self.url),
+                        "template": bool(self._template),
+                        "subscribe": bool(self.subscribe_template),
+                        "ws_disabled": self._ws_disabled,
+                    },
+                )
+                if self._ws_disabled:
+                    self.url = None
+                    self._warn_websocket_unavailable()
+                    await self._poll_rest_data(max(backoff, self.consensus_timeout))
+                    await self._refresh_reference_price()
+                    backoff = min(backoff * 1.2, 300.0)
+                    continue
+                if self._onchain_listener and self._onchain_listener.available and not self.url:
+                    await asyncio.sleep(1.0)
+                    continue
                 if not self.url:
-                    self._select_next_endpoint()
-                await asyncio.sleep(1.0)
-                continue
-            try:
-                await self._consume_ws()
-                backoff = 5.0
-            except aiohttp.WSServerHandshakeError as exc:
-                if exc.status in (429, 503):
-                    log_message("market-stream", f"rate limited ({exc.status}); sleeping {backoff:.1f}s", severity="warning")
-                elif exc.status == 451:
-                    current = time.time()
-                    self._endpoint_backoff_until[self.current_endpoint] = current + max(60.0, backoff * 2)
+                    self._warn_websocket_unavailable()
+                    await self._poll_rest_data(max(backoff, self.consensus_timeout))
+                    if self._template:
+                        symbol_lower = self.symbol.lower().replace("/", "-")
+                        try:
+                            self.url = self._template.format(symbol=symbol_lower, SYMBOL=self.symbol.upper(), pair=symbol_lower)
+                        except Exception as exc:
+                            self._debug("template_format_error", extra={"error": str(exc), "template": self._template})
+                        # When a template is explicitly provided, avoid sending subscribe payloads by default.
+                        self.subscribe_template = None
+                    if not self.url:
+                        self._debug("no_url_after_template", extra={"template": self._template})
+                        await asyncio.sleep(1.0)
+                        continue
+                    self._debug("post-select", extra={"url_set": bool(self.url), "template": bool(self._template), "subscribe": bool(self.subscribe_template)})
+                    await asyncio.sleep(1.0)
+                    continue
+                try:
+                    await self._consume_ws()
+                    backoff = 5.0
+                except aiohttp.WSServerHandshakeError as exc:
+                    if exc.status in (429, 503):
+                        log_message("market-stream", f"rate limited ({exc.status}); sleeping {backoff:.1f}s", severity="warning")
+                    elif exc.status == 451:
+                        current = time.time()
+                        self._endpoint_backoff_until[self.current_endpoint] = current + max(60.0, backoff * 2)
+                        log_message(
+                            "market-stream",
+                            f"endpoint {self.current_endpoint} denied (451); backing off.",
+                            severity="warning",
+                            details={"resume_at": self._endpoint_backoff_until[self.current_endpoint]},
+                        )
+                    else:
+                        log_message(
+                            "market-stream",
+                            f"websocket handshake failed ({exc.status}); retrying in {backoff:.1f}s",
+                            severity="warning",
+                        )
+                    await self._poll_rest_data(backoff)
+                    backoff = min(backoff * 1.5, 300.0)
+                    await self._refresh_reference_price()
+                    if not self._template:
+                        self._select_next_endpoint()
+                except Exception as exc:  # pragma: no cover - network dependent
+                    self._debug("ws_error", extra={"error": str(exc), "url": self.url})
                     log_message(
                         "market-stream",
-                        f"endpoint {self.current_endpoint} denied (451); backing off.",
+                        f"websocket error {exc}; retrying in {backoff:.1f}s",
                         severity="warning",
-                        details={"resume_at": self._endpoint_backoff_until[self.current_endpoint]},
+                        details={"exc_type": type(exc).__name__},
                     )
-                else:
-                    log_message(
-                        "market-stream",
-                        f"websocket handshake failed ({exc.status}); retrying in {backoff:.1f}s",
-                        severity="warning",
-                    )
-                await self._poll_rest_data(backoff)
-                backoff = min(backoff * 1.5, 300.0)
-                await self._refresh_reference_price()
-                self._select_next_endpoint()
-            except Exception as exc:  # pragma: no cover - network dependent
-                log_message("market-stream", f"websocket error {exc}; retrying in {backoff:.1f}s", severity="warning")
-                await self._poll_rest_data(backoff)
-                backoff = min(backoff * 1.5, 300.0)
-                await self._refresh_reference_price()
-                self._select_next_endpoint()
+                    await self._poll_rest_data(backoff)
+                    backoff = min(backoff * 1.5, 300.0)
+                    await self._refresh_reference_price()
+                    # Do not switch endpoints when template is in use; rely on REST/on-chain to recover.
+                    if not self._template:
+                        self._select_next_endpoint()
+        except Exception as exc:
+            self._debug("fatal_start_error", extra={"error": str(exc)})
+            log_message("market-stream", f"fatal stream error: {exc}", severity="error")
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -328,8 +418,14 @@ class MarketDataStream:
             self._session = session
             async with session.ws_connect(self.url) as ws:
                 subscribe_msg = self._build_subscribe_payload(self.symbol)
-                if subscribe_msg:
-                    await ws.send_str(subscribe_msg)
+                if subscribe_msg is not None:
+                    try:
+                        if isinstance(subscribe_msg, (dict, list)):
+                            await ws.send_json(subscribe_msg)
+                        else:
+                            await ws.send_str(str(subscribe_msg))
+                    except Exception as exc:
+                        log_message("market-stream", f"failed to send subscribe payload: {exc}", severity="warning")
                 while not self._stop_event.is_set():
                     msg = await ws.receive()
                     if msg.type == aiohttp.WSMsgType.TEXT:
@@ -368,6 +464,7 @@ class MarketDataStream:
                         details={"symbol": self.symbol},
                     )
                     self._last_rest_unavailable_log = now
+                await self._dispatch_offline_snapshot()
                 await self._handle_consensus_failure()
                 await asyncio.sleep(min(self.rest_poll_interval, 2.0))
                 continue
@@ -422,6 +519,39 @@ class MarketDataStream:
                 await self._handle_consensus_failure()
             self._last_rest_health = self.rest_health()
             await asyncio.sleep(self.rest_poll_interval)
+
+    async def _dispatch_offline_snapshot(self) -> None:
+        """
+        When all endpoints are cooling down, push an offline snapshot so
+        downstream consumers (ghost trading) keep moving instead of stalling.
+        """
+        if not self._offline_store:
+            return
+        snapshot = self._offline_store.get_price(self.symbol)
+        if not snapshot or snapshot.price <= 0:
+            return
+        now = time.time()
+        sample = {
+            "ts": snapshot.ts or now,
+            "symbol": snapshot.symbol,
+            "chain": self.chain,
+            "price": float(snapshot.price),
+            "volume": float(snapshot.volume or 0.0),
+            "rest": "offline",
+            "source": snapshot.source or "offline",
+        }
+        try:
+            await self._dispatch(sample)
+            if now - self._last_offline_log >= 60.0:
+                log_message(
+                    "market-stream",
+                    "using offline snapshot while endpoints recover",
+                    severity="info",
+                    details={"symbol": snapshot.symbol, "price": snapshot.price, "source": sample["source"]},
+                )
+                self._last_offline_log = now
+        except Exception as exc:  # pragma: no cover - defensive
+            log_message("market-stream", f"offline snapshot dispatch failed: {exc}", severity="warning")
 
     async def _consume_onchain_queue(self) -> None:
         if not self._onchain_queue:
@@ -506,6 +636,44 @@ class MarketDataStream:
                     callback(sample)  # type: ignore[misc]
             except Exception as exc:
                 log_message("market-stream", f"callback error: {exc}", severity="error")
+
+    def _debug(self, label: str, extra: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            path = Path("logs/stream_debug.log")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "ts": time.time(),
+                "label": label,
+                "symbol": getattr(self, "symbol", None),
+                "chain": getattr(self, "chain", None),
+                "url": getattr(self, "url", None),
+                "template": bool(getattr(self, "_template", None)),
+            }
+            if extra:
+                payload.update(extra)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
+
+    def _debug(self, label: str, extra: Optional[Dict[str, Any]] = None) -> None:
+        try:
+            path = Path("logs/stream_debug.log")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "ts": time.time(),
+                "label": label,
+                "symbol": getattr(self, "symbol", None),
+                "chain": getattr(self, "chain", None),
+                "url": getattr(self, "url", None),
+                "template": bool(getattr(self, "_template", None)),
+            }
+            if extra:
+                payload.update(extra)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
 
     def _should_skip_duplicate(self, source: str, price: float, ts_val: float) -> bool:
         last = self._last_emitted_by_source.get(source)
@@ -744,7 +912,7 @@ class MarketDataStream:
                 break
         return ordered
 
-    def _build_subscribe_payload(self, symbol: str) -> Optional[str]:
+    def _build_subscribe_payload(self, symbol: str) -> Optional[Union[str, Dict[str, Any]]]:
         if not self.subscribe_template:
             return None
         if self.subscribe_template == "COINBASE_DYNAMIC":
@@ -761,8 +929,22 @@ class MarketDataStream:
                 }
             )
         symbol_lower = symbol.lower().replace("/", "-")
-        payload = self.subscribe_template.format(symbol=symbol_lower, SYMBOL=symbol.upper(), pair=symbol_lower)
-        return payload
+        rendered: Union[str, Dict[str, Any]] = self.subscribe_template
+        try:
+            rendered = self.subscribe_template.format(symbol=symbol_lower, SYMBOL=symbol.upper(), pair=symbol_lower)
+        except KeyError:
+            rendered = self.subscribe_template
+        except Exception:
+            rendered = self.subscribe_template
+        if isinstance(rendered, str):
+            trimmed = rendered.strip()
+            if trimmed.startswith("{") or trimmed.startswith("["):
+                try:
+                    parsed = json.loads(trimmed)
+                    return parsed
+                except Exception:
+                    return rendered
+        return rendered
 
     def _normalize_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Uniswap-style streaming payloads often have nested "data" nodes
@@ -1334,11 +1516,27 @@ class MarketDataStream:
     def _warn_websocket_unavailable(self) -> None:
         if self._ws_warning_logged:
             return
+        self._debug(
+            "ws_unavailable",
+            extra={
+                "template": bool(self._template),
+                "subscribe": bool(self.subscribe_template),
+                "url_set": bool(self.url),
+                "wss_env": os.getenv("BASE_WSS_URL") or os.getenv("GLOBAL_WSS_URL"),
+            },
+        )
         log_message(
             "market-stream",
             "websocket URL unavailable; using REST consensus fallback",
             severity="warning",
-            details={"symbol": self.symbol},
+            details={
+                "symbol": self.symbol,
+                "chain": self.chain,
+                "template": bool(self._template),
+                "subscribe_template": bool(self.subscribe_template),
+                "url_set": bool(self.url),
+                "wss_env": os.getenv("BASE_WSS_URL") or os.getenv("GLOBAL_WSS_URL"),
+            },
         )
         self._ws_warning_logged = True
 

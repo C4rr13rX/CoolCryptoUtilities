@@ -36,9 +36,12 @@ def main() -> None:
             "Couldn't import Django. Make sure it is installed and available on your PYTHONPATH."
         ) from exc
     if any(arg.startswith("runserver") for arg in sys.argv[1:]):
-        from core.logtail import start_log_tails
-
-        start_log_tails()
+        try:
+            from core.logtail import start_log_tails
+        except ModuleNotFoundError:
+            start_log_tails = None
+        if start_log_tails:
+            start_log_tails()
     execute_from_command_line(sys.argv)
 
 

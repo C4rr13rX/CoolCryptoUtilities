@@ -50,10 +50,11 @@ class MultiResolutionSwarm:
         self.cells: Dict[str, LinearCell] = {}
         self.stats: Dict[str, Dict[str, float]] = {}
         self.energy_alpha = 0.1
+        self.mae_alpha = 0.15
         self._feature_dim = 8
         for label, _ in self.horizon_defs:
             self.cells[label] = LinearCell(input_dim=self._feature_dim)
-            self.stats[label] = {"correct": 1.0, "total": 2.0, "energy": 1.0}
+            self.stats[label] = {"correct": 1.0, "total": 2.0, "energy": 1.0, "mae": 1.0, "realized": 0.0}
 
     def _features(self, price_slice: np.ndarray, sentiment_slice: np.ndarray) -> np.ndarray:
         price = price_slice.astype(np.float64)
@@ -102,7 +103,9 @@ class MultiResolutionSwarm:
             accuracy = stats["correct"] / stats["total"]
             confidence = 0.5 + 0.5 * math.tanh(accuracy * 2.0)
             energy = stats.get("energy", 1.0)
-            confidence = 0.4 + 0.6 * max(0.0, min(1.0, accuracy)) * max(0.2, min(1.2, energy))
+            mae = max(1e-6, stats.get("mae", 1.0))
+            stability = 1.0 / (1.0 + mae)
+            confidence = 0.35 + 0.65 * max(0.0, min(1.0, accuracy)) * max(0.2, min(1.2, energy)) * stability
             votes.append(
                 SwarmVote(
                     horizon=label,
@@ -136,6 +139,10 @@ class MultiResolutionSwarm:
             energy = math.exp(-abs(pred - realized))
             alpha = self.energy_alpha
             stats["energy"] = (1.0 - alpha) * stats.get("energy", 1.0) + alpha * energy
+            error = abs(pred - realized)
+            mae_alpha = self.mae_alpha
+            stats["mae"] = (1.0 - mae_alpha) * stats.get("mae", error) + mae_alpha * error
+            stats["realized"] = (1.0 - mae_alpha) * stats.get("realized", 0.0) + mae_alpha * realized
 
     def diagnostics(self) -> List[Dict[str, float]]:
         diag: List[Dict[str, float]] = []
@@ -148,6 +155,8 @@ class MultiResolutionSwarm:
                     "accuracy": float(max(0.0, min(1.0, accuracy))),
                     "samples": float(total),
                     "energy": float(stats.get("energy", 1.0)),
+                    "mae": float(stats.get("mae", 0.0)),
+                    "realized": float(stats.get("realized", 0.0)),
                 }
             )
         return diag
@@ -158,7 +167,9 @@ class MultiResolutionSwarm:
             total = max(1.0, stats.get("total", 1.0))
             accuracy = max(0.0, min(1.0, stats.get("correct", 0.0) / total))
             energy = max(0.1, stats.get("energy", 1.0))
-            weight = accuracy * energy
+            mae = max(1e-6, stats.get("mae", 1.0))
+            stability = max(0.2, 1.0 / (1.0 + mae))
+            weight = accuracy * energy * stability
             raw.append((label, weight))
         denom = sum(weight for _, weight in raw)
         if denom <= 0:

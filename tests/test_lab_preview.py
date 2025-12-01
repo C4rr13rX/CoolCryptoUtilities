@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import pytest
 
 from trading.data_loader import HistoricalDataLoader
@@ -68,3 +69,10 @@ def test_lab_preview_series(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert "timestamp" in first and "predicted_price" in first
     assert "metrics" in preview
     assert preview["metrics"]["samples"] >= len(preview["series"])
+
+
+def test_pipeline_safe_float_handles_nested() -> None:
+    pipeline = TrainingPipeline.__new__(TrainingPipeline)
+    assert pipeline._safe_float({"value": "3.14"}) == pytest.approx(3.14)
+    assert pipeline._safe_float([{"score": 2.5}]) == pytest.approx(2.5)
+    assert pipeline._safe_float(np.array([1.23])) == pytest.approx(1.23)

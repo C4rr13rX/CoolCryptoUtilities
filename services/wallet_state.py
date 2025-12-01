@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -19,10 +20,13 @@ from services.wallet_watch import (
     merge_watch_maps,
     select_cached_watch_tokens,
 )
-from router_wallet import CHAINS, UltraSwapBridge
+from services.usd_valuation import UsdValuation
+from router_wallet import CHAINS, CHAIN_NATIVE_SYMBOL, UltraSwapBridge
 
 STATE_DIR = Path("storage/wallet_state")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
+NATIVE_TOKEN = "0x0000000000000000000000000000000000000000"
+OVERRIDES_PATH = Path(os.getenv("WALLET_BALANCE_OVERRIDES_PATH", "config/wallet_balance_overrides.json"))
 DEFAULT_STATE = {
     "wallet": None,
     "updated_at": None,
@@ -32,6 +36,192 @@ DEFAULT_STATE = {
     "nfts": [],
     "filtered_tokens": [],
 }
+
+_RPC_SESSION = requests.Session()
+
+
+def _native_symbol(chain: str) -> str:
+    chain_l = (chain or "").strip().lower()
+    if not chain_l:
+        return "NATIVE"
+    return CHAIN_NATIVE_SYMBOL.get(chain_l, chain_l.upper())
+
+
+def _decimal_to_str(value: Decimal) -> str:
+    quant = value.normalize()
+    text = format(quant, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _quantity_from_wei(raw_value: int, decimals: int = 18) -> str:
+    if raw_value <= 0:
+        return "0"
+    scale = Decimal(10) ** Decimal(decimals)
+    quant = Decimal(raw_value) / scale
+    return _decimal_to_str(quant)
+
+
+def _parse_decimal(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal(0)
+
+
+def _scale_usd_value(current_usd: Any, previous_qty: Decimal, new_qty: Decimal) -> float:
+    usd_float = _format_usd(current_usd)
+    if new_qty <= 0:
+        return 0.0
+    if previous_qty > 0 and usd_float:
+        try:
+            ratio = new_qty / previous_qty
+            if ratio <= 0:
+                return 0.0
+            return float((Decimal(str(usd_float)) * ratio).quantize(Decimal("0.0001")))
+        except Exception:
+            pass
+    return float(usd_float)
+
+
+def _rpc_candidates(chain: str) -> List[str]:
+    cfg = CHAINS.get(chain, {})
+    urls = cfg.get("rpcs") or []
+    return [str(url) for url in urls if str(url).strip()]
+
+
+def _fetch_native_balance(wallet_addr: str, chain: str, bridge: UltraSwapBridge | None) -> tuple[int, str]:
+    if bridge:
+        try:
+            w3 = bridge._w3(chain)
+            return int(w3.eth.get_balance(wallet_addr)), "bridge"
+        except Exception:
+            pass
+    errors: List[str] = []
+    for url in _rpc_candidates(chain):
+        payload = {
+            "jsonrpc": "2.0",
+            "id": int(time.time() * 1000),
+            "method": "eth_getBalance",
+            "params": [wallet_addr, "latest"],
+        }
+        try:
+            resp = _RPC_SESSION.post(url, json=payload, timeout=12)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data.get("result"), str):
+                return int(data["result"], 16), url
+            if data.get("error"):
+                errors.append(f"{url}: {data['error']}")
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+    raise RuntimeError("; ".join(errors) if errors else "no rpc available")
+
+
+def _apply_native_balance_row(
+    rows: List[Dict[str, Any]],
+    wallet: str,
+    chain: str,
+    *,
+    balance_wei: int,
+    updated_at: str,
+) -> Optional[Dict[str, Any]]:
+    token_addr = NATIVE_TOKEN
+    chain_l = chain.lower()
+    target: Optional[Dict[str, Any]] = None
+    for row in rows:
+        if str(row.get("chain") or "").strip().lower() != chain_l:
+            continue
+        if str(row.get("token") or "").strip().lower() == token_addr:
+            target = row
+            break
+    quantity_str = _quantity_from_wei(balance_wei)
+    quantity_dec = _parse_decimal(quantity_str)
+    prev_qty = _parse_decimal(target.get("quantity")) if target else Decimal(0)
+    usd_val = _scale_usd_value((target or {}).get("usd"), prev_qty, quantity_dec)
+    symbol = _native_symbol(chain_l)
+    payload = target or {
+        "wallet": wallet,
+        "chain": chain_l,
+        "token": token_addr,
+        "symbol": symbol,
+        "quantity": quantity_str,
+        "usd": usd_val,
+        "updated_at": updated_at,
+    }
+    payload["wallet"] = payload.get("wallet") or wallet
+    payload["chain"] = chain_l
+    payload["token"] = token_addr
+    payload["symbol"] = payload.get("symbol") or symbol
+    payload["quantity"] = quantity_str
+    payload["usd"] = usd_val
+    payload["updated_at"] = updated_at
+    if target is None:
+        rows.append(payload)
+    return {
+        "chain": chain_l,
+        "quantity": quantity_str,
+        "usd": usd_val,
+        "symbol": payload["symbol"],
+        "updated_at": updated_at,
+    }
+
+
+def _ensure_native_balances(
+    wallet: str,
+    chain_list: Iterable[str],
+    balances_payload: Dict[str, Any],
+    *,
+    cache_balances: CacheBalances,
+    bridge: UltraSwapBridge | None,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = balances_payload.get("balances", [])
+    seen: set[str] = set()
+    adjustments: List[Dict[str, Any]] = []
+    for chain in chain_list:
+        chain_l = str(chain or "").strip().lower()
+        if not chain_l or chain_l in seen:
+            continue
+        seen.add(chain_l)
+        if chain_l not in CHAINS:
+            continue
+        try:
+            balance_wei, source = _fetch_native_balance(wallet, chain_l, bridge)
+        except Exception as exc:
+            wallet_log("wallet_state.native_balance_error", wallet=wallet, chain=chain_l, error=str(exc))
+            continue
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        applied = _apply_native_balance_row(
+            rows,
+            wallet,
+            chain_l,
+            balance_wei=balance_wei,
+            updated_at=timestamp,
+        )
+        if not applied:
+            continue
+        applied["source"] = source
+        applied["wei"] = str(balance_wei)
+        adjustments.append(applied)
+        cache_balances.upsert_many(
+            wallet,
+            chain_l,
+            {
+                NATIVE_TOKEN: {
+                    "balance_hex": hex(balance_wei),
+                    "raw": hex(balance_wei),
+                    "decimals": 18,
+                    "quantity": applied["quantity"],
+                    "usd_amount": str(applied["usd"]),
+                    "symbol": applied["symbol"],
+                    "updated_at": applied["updated_at"],
+                }
+            },
+        )
+    if adjustments:
+        wallet_log("wallet_state.native_balances_refreshed", wallet=wallet, adjustments=adjustments)
+    return adjustments
 
 
 def _bool_env(name: str, default: str = "1") -> bool:
@@ -122,6 +312,13 @@ def _build_cached_watch_tokens(
             min_usd=min_usd,
             include_illiquid=include_illiquid,
         )
+        native_meta = tokens.get(NATIVE_TOKEN)
+        if native_meta:
+            picks = list(picks) if picks else []
+            if NATIVE_TOKEN not in picks:
+                picks.insert(0, NATIVE_TOKEN)
+            if limit is not None and len(picks) > limit:
+                picks = picks[:limit]
         if picks:
             result[chain_l] = picks
     return result
@@ -323,6 +520,71 @@ def _format_usd(value: Any) -> float:
         return 0.0
 
 
+def _load_balance_overrides() -> List[Dict[str, Any]]:
+    blob = os.getenv("WALLET_BALANCE_OVERRIDES")
+    data: Any = None
+    if blob:
+        try:
+            data = json.loads(blob)
+        except Exception:
+            data = None
+    if data is None and OVERRIDES_PATH.exists():
+        try:
+            data = json.loads(OVERRIDES_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            data = None
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def _apply_balance_overrides(rows: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    overrides = _load_balance_overrides()
+    if not overrides:
+        return rows, []
+    applied: List[Dict[str, Any]] = []
+    for override in overrides:
+        chain = str((override or {}).get("chain") or "").strip().lower()
+        if not chain:
+            continue
+        token_hint = str(override.get("token") or "").strip().lower()
+        symbol_hint = str(override.get("symbol") or "").strip().lower()
+        for row in rows:
+            if str(row.get("chain") or "").strip().lower() != chain:
+                continue
+            matches = False
+            if token_hint:
+                matches = str(row.get("token") or "").strip().lower() == token_hint
+            elif symbol_hint:
+                matches = str(row.get("symbol") or "").strip().lower() == symbol_hint
+            if not matches:
+                continue
+            changed = False
+            quantity = override.get("quantity")
+            if quantity is not None:
+                try:
+                    row["quantity"] = str(quantity)
+                except Exception:
+                    row["quantity"] = str(quantity)
+                changed = True
+            usd_val = override.get("usd")
+            if usd_val is not None:
+                row["usd"] = _format_usd(usd_val)
+                changed = True
+            if changed:
+                applied.append(
+                    {
+                        "chain": chain,
+                        "token": row.get("token"),
+                        "symbol": row.get("symbol"),
+                        "quantity": row.get("quantity"),
+                        "usd": row.get("usd"),
+                    }
+                )
+                break
+    return rows, applied
+
+
 def _collect_balances(
     wallet: str,
     *,
@@ -339,9 +601,19 @@ def _collect_balances(
         rows=rows,
         filtered=len(filtered_meta),
     )
-    totals_usd = sum(_format_usd(row.get("usd")) for row in rows)
+    usd_resolver = UsdValuation()
+    valuation_updates: List[Dict[str, Any]] = []
     for row in rows:
         row["usd"] = _format_usd(row.get("usd"))
+        updated = usd_resolver.refresh_row(row)
+        if updated:
+            valuation_updates.append(updated)
+    rows, overrides_applied = _apply_balance_overrides(rows)
+    if overrides_applied:
+        wallet_log("wallet_state.balance_overrides", wallet=wallet, overrides=overrides_applied)
+    if valuation_updates:
+        wallet_log("wallet_state.usd_refresh", wallet=wallet, updates=valuation_updates)
+    totals_usd = sum(_format_usd(row.get("usd")) for row in rows)
     rows.sort(key=lambda r: r.get("usd", 0), reverse=True)
     return {
         "totals": {"usd": round(totals_usd, 2)},
@@ -472,6 +744,18 @@ def capture_wallet_state(
     _maybe_fast_balance_refresh(bridge, cb, ct, chain_list, wallet_addr)
     registry = registry or getattr(bridge, "_token_safety", None)
     balances_payload = _collect_balances(wallet_addr, cache_balances=cb, registry=registry)
+    native_adjustments: List[Dict[str, Any]] = []
+    if _bool_env("WALLET_VERIFY_NATIVE_BALANCES", "1"):
+        native_adjustments = _ensure_native_balances(
+            wallet_addr,
+            chain_list,
+            balances_payload,
+            cache_balances=cb,
+            bridge=bridge,
+        )
+        if native_adjustments:
+            totals_usd = sum(_format_usd(row.get("usd")) for row in balances_payload["balances"])
+            balances_payload["totals"]["usd"] = round(totals_usd, 2)
     transfers_payload = _collect_transfers(wallet_addr, chains=chain_list, cache_transfers=ct)
     nfts_payload = _collect_nfts(wallet_addr, chains=chains)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

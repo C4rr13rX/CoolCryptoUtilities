@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import time
-from typing import Any, Dict, Optional, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from trading.pipeline import TrainingPipeline
 from trading.selector import GhostTradingSupervisor
@@ -14,24 +17,84 @@ from services.task_orchestrator import ParallelTaskManager
 from services.logging_utils import log_message
 from services.idle_work import IdleWorkManager
 from services.heartbeat import HeartbeatFile
+from services.env_loader import EnvLoader
+from services.secure_settings import build_process_env
+
+
+@dataclass(frozen=True)
+class ScheduledTask:
+    name: str
+    func: Callable[..., Any]
+    kwargs: Optional[Dict[str, Any]] = None
 
 
 class ProductionManager:
+    _env_loaded = False
+
     def __init__(self) -> None:
+        self._ensure_secure_env()
         self.pipeline = TrainingPipeline()
         self.supervisor = GhostTradingSupervisor(pipeline=self.pipeline)
         self._loop_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = threading.Event()
-        self._download_supervisor: Optional[TokenDownloadSupervisor] = TokenDownloadSupervisor(db=self.pipeline.db)
+        if os.getenv("DISABLE_DATA_INGEST", "0").lower() in {"1", "true", "yes", "on"}:
+            self._download_supervisor = None
+        else:
+            self._download_supervisor = TokenDownloadSupervisor(db=self.pipeline.db)
         self.task_manager = ParallelTaskManager(system_profile=self.pipeline.system_profile)
         self._cycle_thread: Optional[threading.Thread] = None
         self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "45"))
+        forced_pending = os.getenv("PRODUCTION_MAX_PENDING_FORCE")
+        base_pending = int(os.getenv("PRODUCTION_MAX_PENDING", "64"))
+        if forced_pending is not None:
+            self._max_pending = max(1, int(forced_pending))
+        else:
+            self._max_pending = base_pending
+            if self.pipeline.system_profile.memory_pressure:
+                # Allow a slightly higher queue to avoid constant skips, but cap for stability unless force is set.
+                self._max_pending = min(self._max_pending, 14)
+                self._cycle_interval = max(self._cycle_interval, 70.0)
+            elif self.pipeline.system_profile.is_low_power:
+                self._max_pending = min(self._max_pending, 16)
+                self._cycle_interval = max(self._cycle_interval, 55.0)
+            else:
+                self._max_pending = min(self._max_pending, 24)
+        self._ingest_cadence = int(os.getenv("PRODUCTION_INGEST_CADENCE", "3"))
+        self._news_cadence = int(os.getenv("PRODUCTION_NEWS_CADENCE", "2"))
+        self._training_cadence = int(os.getenv("PRODUCTION_TRAINING_CADENCE", "2"))
+        self._background_floor = int(os.getenv("PRODUCTION_BACKGROUND_FLOOR", "4"))
+        self._min_samples_for_live = int(os.getenv("PRODUCTION_MIN_SAMPLES_FOR_LIVE", "64"))
+        if os.getenv("TRAIN_LIGHTWEIGHT", "0").lower() in {"1", "true", "yes", "on"}:
+            # On lightweight profiles, allow live gating sooner to reach ghost mode faster.
+            self._training_cadence = 1
+            self._min_samples_for_live = min(self._min_samples_for_live, 32)
         self._active_flag_key = "production_manager_active"
         self.idle_worker = IdleWorkManager(db=self.pipeline.db)
         self.heartbeat = HeartbeatFile(label="production_manager")
         self._startup_prewarm: Dict[str, Any] = {}
         self._startup_prewarm_reported = False
+        self._task_directives: Dict[str, bool] = {}
+        self._cycle_index = 0
+        self._training_pause_logged = False
+        self._heavy_backlog_threshold = max(2, self._max_pending // 2)
+        log_message(
+            "production",
+            "orchestrator configured",
+            details={
+                "download_enabled": bool(self._download_supervisor),
+                "max_pending": self._max_pending,
+                "cycle_interval": self._cycle_interval,
+                "heavy_backlog_threshold": self._heavy_backlog_threshold,
+                "system_profile": {
+                    "cpu": getattr(self.pipeline.system_profile, "cpu_count", None),
+                    "memory_gb": getattr(self.pipeline.system_profile, "total_memory_gb", None),
+                    "low_power": getattr(self.pipeline.system_profile, "is_low_power", None),
+                    "memory_pressure": getattr(self.pipeline.system_profile, "memory_pressure", None),
+                },
+            },
+        )
+        self._backlog_strikes = 0
 
     def start(self) -> None:
         if self.is_running:
@@ -116,6 +179,11 @@ class ProductionManager:
 
     def _cycle_loop(self) -> None:
         while not self._stop.is_set():
+            if not self._loop_thread or not self._loop_thread.is_alive():
+                self.heartbeat.update("error", metadata={"reason": "ghost_loop_stopped"})
+                log_message("production", "ghost supervisor loop stopped; ending cycle loop", severity="error")
+                self._stop.set()
+                break
             cycle_id = str(int(time.time()))
             focus_assets, _ = self.pipeline.ghost_focus_assets()
             readiness = self.pipeline.live_readiness_report()
@@ -124,76 +192,166 @@ class ProductionManager:
             if not self._startup_prewarm_reported and self._startup_prewarm:
                 metadata["startup_prewarm"] = self._startup_prewarm
                 self._startup_prewarm_reported = True
+            pending = self.task_manager.pending_tasks
+            active = self.task_manager.active_tasks
+            backlog = self.task_manager.workload_depth
+            heavy_backlog = backlog >= self._heavy_backlog_threshold
+            self._task_directives = self._compute_task_directives(readiness, backlog)
             self.heartbeat.update(
                 "running",
                 metadata={
                     "cycle": cycle_id,
                     "focus_assets": focus_assets,
-                    "queue_depth": self.task_manager.pending_tasks,
+                    "queue_depth": pending,
+                    "workload_depth": backlog,
+                    "active_tasks": active,
                     "live_ready": readiness.get("ready") if readiness else False,
                     "live_precision": (readiness or {}).get("precision"),
                     "live_samples": (readiness or {}).get("samples"),
                     "horizon_bias": bias,
+                    "max_concurrent": getattr(self.task_manager, "max_concurrent", None),
+                    "directives": self._task_directives,
+                    "heavy_backlog": heavy_backlog,
+                    "max_pending": self._max_pending,
+                    "heavy_backlog_threshold": self._heavy_backlog_threshold,
                 },
             )
-            self.task_manager.submit("data_ingest", self._task_data_ingest, cycle_id=cycle_id)
-            self.task_manager.submit(
-                "news_enrichment",
-                self._task_news_enrichment,
-                cycle_id=cycle_id,
-                kwargs={"focus_assets": focus_assets},
-                metadata=metadata,
+            log_message(
+                "production",
+                f"cycle {cycle_id} status",
+                details={
+                    "pending": pending,
+                    "active": active,
+                    "backlog": backlog,
+                    "max_pending": self._max_pending,
+                    "heavy_backlog": heavy_backlog,
+                    "heavy_backlog_threshold": self._heavy_backlog_threshold,
+                },
             )
-            self.task_manager.submit(
-                "dataset_warmup",
-                self._task_dataset_warmup,
-                cycle_id=cycle_id,
-                kwargs={"focus_assets": focus_assets},
-                metadata=metadata,
-            )
-            self.task_manager.submit(
-                "candidate_training",
-                self._task_candidate_training,
-                cycle_id=cycle_id,
-            )
-            self.task_manager.submit(
-                "ghost_metrics",
-                self._task_ghost_metrics,
-                cycle_id=cycle_id,
-            )
-            self.task_manager.submit(
-                "scheduler_refresh",
-                self._task_scheduler_refresh,
-                cycle_id=cycle_id,
-            )
-            self.task_manager.submit(
-                "telemetry_flush",
-                self._task_telemetry_flush,
-                cycle_id=cycle_id,
-            )
-            self.task_manager.submit(
-                "background_refresh",
-                self._task_background_refresh,
-                cycle_id=cycle_id,
-            )
+            if backlog >= self._max_pending:
+                self._backlog_strikes += 1
+                log_message(
+                    "production",
+                    f"skipping cycle {cycle_id}: backlog {backlog} >= {self._max_pending}",
+                    severity="warning",
+                )
+                if self._backlog_strikes >= 3 and hasattr(self.task_manager, "reset_queues"):
+                    try:
+                        self.task_manager.reset_queues()  # type: ignore[attr-defined]
+                        log_message("production", "backlog flushed after repeated skips", severity="warning")
+                        self._backlog_strikes = 0
+                    except Exception:
+                        pass
+                if self._stop.wait(self._cycle_interval):
+                    break
+                continue
+            throttled_this_cycle = False
+            if heavy_backlog:
+                # When backlog is heavy, focus on lightweight maintenance only.
+                self._task_directives.update({
+                    "ingest": False,
+                    "news": False,
+                    "dataset": False,
+                    "training": False,
+                    "background": False,
+                })
+                self._backlog_strikes += 1
+            for scheduled in self._plan_cycle_tasks(focus_assets=focus_assets):
+                if heavy_backlog and scheduled.name in {
+                    "data_ingest",
+                    "news_enrichment",
+                    "dataset_warmup",
+                    "candidate_training",
+                    "background_refresh",
+                }:
+                    throttled_this_cycle = True
+                    continue
+                self.task_manager.submit(
+                    scheduled.name,
+                    scheduled.func,
+                    cycle_id=cycle_id,
+                    kwargs=scheduled.kwargs,
+                    metadata=metadata,
+                )
+            if throttled_this_cycle:
+                log_message(
+                    "production",
+                    f"cycle {cycle_id} throttled due to backlog {backlog}",
+                    severity="info",
+                    details={"heavy_backlog_threshold": self._heavy_backlog_threshold},
+                )
             if self._stop.wait(self._cycle_interval):
                 break
+            self._backlog_strikes = max(0, self._backlog_strikes - 1)
+
+    # ------------------------------------------------------------------
+    # Cycle planning
+    # ------------------------------------------------------------------
+
+    def _compute_task_directives(self, readiness: Optional[Dict[str, Any]], backlog: int) -> Dict[str, bool]:
+        self._cycle_index += 1
+        samples = int((readiness or {}).get("samples") or 0)
+        data_starved = not (readiness or {}).get("ready", False) or samples < self._min_samples_for_live
+        high_backlog = backlog >= max(2, self._max_pending // 2)
+        directives = {
+            "ingest": data_starved or (self._cycle_index % self._ingest_cadence == 0),
+            "news": data_starved or (self._cycle_index % self._news_cadence == 0),
+            "dataset": True,
+            "training": (not data_starved and not high_backlog and (self._cycle_index % self._training_cadence == 0)),
+            "background": not data_starved and backlog < max(self._background_floor, self._max_pending // 2),
+        }
+        if data_starved and high_backlog:
+            directives["training"] = False
+            directives["background"] = False
+        return directives
+
+    def _plan_cycle_tasks(self, focus_assets: Optional[Sequence[str]]) -> List[ScheduledTask]:
+        directives = self._task_directives or {}
+        tasks: List[ScheduledTask] = [
+            ScheduledTask("data_ingest", self._task_data_ingest),
+            ScheduledTask("news_enrichment", self._task_news_enrichment, {"focus_assets": focus_assets}),
+            ScheduledTask("dataset_warmup", self._task_dataset_warmup, {"focus_assets": focus_assets}),
+            ScheduledTask("candidate_training", self._task_candidate_training),
+            ScheduledTask("ghost_metrics", self._task_ghost_metrics),
+            ScheduledTask("scheduler_refresh", self._task_scheduler_refresh),
+            ScheduledTask("telemetry_flush", self._task_telemetry_flush),
+        ]
+        if directives.get("background", False):
+            tasks.append(ScheduledTask("background_refresh", self._task_background_refresh))
+        return tasks
 
     # ------------------------------------------------------------------
     # Parallel task implementations
     # ------------------------------------------------------------------
 
     def _task_data_ingest(self) -> None:
+        if not self._task_directives.get("ingest", True):
+            return
         if self._download_supervisor:
             self._download_supervisor.run_cycle()
 
     def _task_news_enrichment(self, focus_assets: Optional[Sequence[str]] = None) -> None:
-        self.pipeline.reinforce_news_cache(focus_assets)
+        if not self._task_directives.get("news", True):
+            return
+        timeout = float(os.getenv("NEWS_ENRICH_TIMEOUT", "120"))
+        self._run_with_timeout(
+            lambda: self.pipeline.reinforce_news_cache(focus_assets),
+            timeout=timeout,
+            label="news_enrichment",
+        )
 
     def _task_dataset_warmup(self, focus_assets: Optional[Sequence[str]] = None) -> None:
+        if not self._task_directives.get("dataset", True):
+            return
         self.pipeline.warm_dataset_cache(focus_assets=focus_assets, oversample=False)
 
     def _task_candidate_training(self) -> None:
+        if not self._task_directives.get("training", True):
+            if not self._training_pause_logged:
+                log_message("production", "candidate training paused for resource budget", severity="info")
+                self._training_pause_logged = True
+            return
+        self._training_pause_logged = False
         result = self.pipeline.train_candidate()
         status = result.get("status") if isinstance(result, dict) else None
         if status and status not in {"trained", "skipped"}:
@@ -216,6 +374,13 @@ class ProductionManager:
             label="cycle_tick",
             details={"ts": time.time()},
         )
+        try:
+            # Persist the latest readiness snapshot so ghost→live gating reflects current market data.
+            readiness = self.pipeline.live_readiness_report()
+            if readiness:
+                self.pipeline._persist_live_readiness_snapshot()  # type: ignore[attr-defined]
+        except Exception as exc:
+            log_message("production", f"readiness snapshot failed: {exc}", severity="warning")
 
     def _task_telemetry_flush(self) -> None:
         summary = {
@@ -231,6 +396,8 @@ class ProductionManager:
         )
 
     def _task_background_refresh(self) -> None:
+        if not self._task_directives.get("background", False):
+            return
         worked = self.idle_worker.run_next_job()
         if not worked:
             log_message("idle-work", "no background job ready this cycle", severity="info")
@@ -239,7 +406,41 @@ class ProductionManager:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _run_with_timeout(self, func: Callable[[], Any], *, timeout: float, label: str) -> bool:
+        """
+        Execute a callable with a soft timeout to avoid blocking the entire
+        orchestrator (e.g. slow news feeds). Returns False on timeout or error.
+        """
+        result = {"ok": False}
+        error: Dict[str, Any] = {}
+
+        def _target() -> None:
+            try:
+                outcome = func()
+                result["ok"] = bool(outcome)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                error["exc"] = exc
+
+        thread = threading.Thread(target=_target, name=f"{label}-runner", daemon=True)
+        thread.start()
+        thread.join(timeout)
+        if thread.is_alive():
+            log_message("production", f"{label} exceeded {timeout:.0f}s; continuing without result", severity="warning")
+            return False
+        if error.get("exc"):
+            log_message("production", f"{label} failed: {error['exc']}", severity="warning")
+            return False
+        return result["ok"]
+
     def _prewarm_pipeline(self) -> Dict[str, Any]:
+        skip_default = "1" if self.pipeline.system_profile.memory_pressure else "0"
+        if (os.getenv("SKIP_PREWARM") or skip_default).lower() in {"1", "true", "yes", "on"}:
+            log_message(
+                "production",
+                "prewarm skipped for resource budget",
+                details={"memory_pressure": self.pipeline.system_profile.memory_pressure},
+            )
+            return {"skipped": True, "reason": "resource_budget"}
         payload: Dict[str, Any] = {}
         try:
             focus_assets, _ = self.pipeline.ghost_focus_assets()
@@ -269,6 +470,104 @@ class ProductionManager:
             except Exception:
                 continue
         return result
+
+    # ------------------------------------------------------------------
+    # Secure settings / env hydration
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _ensure_secure_env(cls) -> None:
+        if cls._env_loaded:
+            return
+        try:
+            EnvLoader.load()
+        except Exception:
+            pass
+        try:
+            if "DJANGO_SETTINGS_MODULE" not in os.environ:
+                os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
+            try:
+                import django
+                if not getattr(django.apps, "apps", None) or not django.apps.apps.ready:  # type: ignore[attr-defined]
+                    django.setup()
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            env = build_process_env()
+            derived = cls._derive_stream_env(env)
+            env.update(derived)
+            os.environ.update(env)
+            cls._debug_env(env)
+            print("[production] env hydrated; wss template", env.get("MARKET_WS_TEMPLATE"), "wss", env.get("GLOBAL_WSS_URL") or env.get("BASE_WSS_URL"))
+            chain_label = (env.get("PRIMARY_CHAIN") or os.getenv("PRIMARY_CHAIN", "base")).upper()
+            log_message(
+                "production",
+                "secure settings loaded",
+                details={
+                    "alchemy": bool(env.get("ALCHEMY_API_KEY")),
+                    "wss": bool(env.get("GLOBAL_WSS_URL") or env.get(f"{chain_label}_WSS_URL")),
+                },
+            )
+        except Exception as exc:
+            log_message("production", f"secure settings not loaded: {exc}", severity="warning")
+        finally:
+            cls._env_loaded = True
+
+    @staticmethod
+    def _derive_stream_env(env: Dict[str, str]) -> Dict[str, str]:
+        """
+        Build chain-specific RPC/WSS defaults from vault-stored Alchemy keys so
+        market streams and on-chain listeners come up without manual env wiring.
+        """
+        updates: Dict[str, str] = {}
+        chain = (env.get("PRIMARY_CHAIN") or os.getenv("PRIMARY_CHAIN", "base")).lower()
+        api_key = (env.get("ALCHEMY_API_KEY") or os.getenv("ALCHEMY_API_KEY") or "").strip()
+        if not api_key:
+            return updates
+        try:
+            from balances import CHAIN_CONFIG
+            cfg = CHAIN_CONFIG.get(chain)
+            if not cfg:
+                return updates
+            slug = cfg.get("alchemy_slug")
+            if slug:
+                rpc = f"https://{slug}.g.alchemy.com/v2/{api_key}"
+                wss = f"wss://{slug}.g.alchemy.com/v2/{api_key}"
+                chain_prefix = chain.upper()
+                updates.setdefault(f"{chain_prefix}_RPC_URL", rpc)
+                updates.setdefault(f"{chain_prefix}_WSS_URL", wss)
+                updates.setdefault("GLOBAL_RPC_URL", rpc)
+                updates.setdefault("GLOBAL_WSS_URL", wss)
+        except Exception:
+            return updates
+        return updates
+
+    @staticmethod
+    def _debug_env(env: Dict[str, Any]) -> None:
+        path = Path("logs/stream_debug.log")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return
+        payload = {
+            "ts": time.time(),
+            "label": "env_load",
+            "BASE_WSS_URL": env.get("BASE_WSS_URL"),
+            "GLOBAL_WSS_URL": env.get("GLOBAL_WSS_URL"),
+            "MARKET_WS_TEMPLATE": env.get("MARKET_WS_TEMPLATE"),
+            "MARKET_WS_SUBSCRIBE": env.get("MARKET_WS_SUBSCRIBE"),
+        }
+        try:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload) + "\n")
+        except Exception:
+            try:
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(str(payload) + "\n")
+            except Exception:
+                return
 
 
 if __name__ == "__main__":

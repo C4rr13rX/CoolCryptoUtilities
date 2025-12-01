@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -73,6 +74,7 @@ class ParallelTaskManager:
         repo_root = Path(__file__).resolve().parents[1]
         default_map = repo_root / "orchestration" / "dependency_map.json"
         target_map = (map_path or default_map).resolve()
+        self.system_profile = system_profile or detect_system_profile()
         self.graph = DependencyGraph(target_map)
         self.queues: Dict[str, queue.Queue[Optional[TaskDescriptor]]] = {
             name: queue.Queue() for name in self.graph.nodes
@@ -84,8 +86,12 @@ class ParallelTaskManager:
         self._state: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._state_lock = threading.Lock()
         self._state_path = target_map.with_name("dependency_state.json")
-        self.limiter = limiter or AdaptiveLimiter()
-        self.system_profile = system_profile or detect_system_profile()
+        # Default limiter keeps CPU below ~75% unless overridden by ADAPTIVE_* env vars.
+        self.limiter = limiter or AdaptiveLimiter.from_env()
+        self.max_concurrent = self._derive_max_concurrent()
+        self._global_slots = threading.Semaphore(self.max_concurrent)
+        self._active = 0
+        self._active_lock = threading.Lock()
 
     def start(self) -> None:
         if self.threads:
@@ -109,6 +115,26 @@ class ParallelTaskManager:
         for thread in self.threads:
             thread.join(timeout=timeout)
         self.threads.clear()
+
+    def reset_queues(self) -> None:
+        """
+        Drop all pending tasks and reset internal state. Useful when a backlog
+        should be flushed before restarting orchestration.
+        """
+        with self._state_lock:
+            self._state.clear()
+            try:
+                self._state_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        with self._events_lock:
+            self._events.clear()
+        for q in self.queues.values():
+            try:
+                while True:
+                    q.get_nowait()
+            except queue.Empty:
+                pass
 
     def submit(
         self,
@@ -141,8 +167,10 @@ class ParallelTaskManager:
 
     def _workers_for_component(self, requested: int) -> int:
         if not self.system_profile:
-            return requested
-        budget = max(1, self.system_profile.max_threads // 2)
+            return max(1, min(requested, self.max_concurrent))
+        if self.system_profile.is_low_power or self.system_profile.memory_pressure:
+            return 1
+        budget = max(1, min(self.system_profile.max_threads // 2, self.max_concurrent))
         return max(1, min(requested, budget))
 
     def _worker(self, component: str) -> None:
@@ -159,6 +187,7 @@ class ParallelTaskManager:
             self._update_state(cycle_id, component, status="waiting_deps")
             for dep in spec.depends_on:
                 self._wait_for_dependency(dep, cycle_id)
+            self._acquire_slot()
             if self.limiter:
                 self.limiter.before_task(component)
             self._update_state(cycle_id, component, status="running")
@@ -172,6 +201,7 @@ class ParallelTaskManager:
                 log_message(component, f"task completed for cycle {cycle_id}")
             finally:
                 self._signal_complete(component, cycle_id)
+                self._release_slot()
                 q.task_done()
 
     def _wait_for_dependency(self, component: str, cycle_id: str) -> None:
@@ -222,3 +252,43 @@ class ParallelTaskManager:
     @property
     def pending_tasks(self) -> int:
         return sum(queue.qsize() for queue in self.queues.values())
+
+    @property
+    def active_tasks(self) -> int:
+        with self._active_lock:
+            return self._active
+
+    @property
+    def workload_depth(self) -> int:
+        return self.pending_tasks + self.active_tasks
+
+    # ------------------------------------------------------------------
+    # Concurrency helpers
+    # ------------------------------------------------------------------
+
+    def _derive_max_concurrent(self) -> int:
+        env_override = os.getenv("TASK_MAX_CONCURRENT")
+        if env_override:
+            try:
+                return max(1, int(env_override))
+            except ValueError:
+                pass
+        profile = self.system_profile or detect_system_profile()
+        slots = 3
+        if profile:
+            if profile.is_low_power or profile.memory_pressure:
+                slots = 2
+            elif profile.cpu_count >= 12 and not profile.memory_pressure:
+                slots = 4
+            slots = max(1, min(slots, profile.max_threads))
+        return max(1, slots)
+
+    def _acquire_slot(self) -> None:
+        self._global_slots.acquire()
+        with self._active_lock:
+            self._active += 1
+
+    def _release_slot(self) -> None:
+        with self._active_lock:
+            self._active = max(0, self._active - 1)
+        self._global_slots.release()

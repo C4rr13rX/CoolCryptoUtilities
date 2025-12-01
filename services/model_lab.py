@@ -6,16 +6,14 @@ import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
-
-from services.tf_runtime import configure_tensorflow
-
-configure_tensorflow()
-import tensorflow as tf
+from typing import Any, Dict, List, Optional, Sequence, TYPE_CHECKING
 
 from db import TradingDatabase, get_db
-from trading.pipeline import TrainingPipeline
 from services.news_lab import collect_news_for_files
+
+if TYPE_CHECKING:  # pragma: no cover - import-heavy modules only for type hints
+    from trading.pipeline import TrainingPipeline
+    import tensorflow as tf
 
 
 @dataclass
@@ -201,7 +199,7 @@ class ModelLabRunner:
             name = f"{prefix}_{stage}" if prefix else stage
             self._record_event(level, name, ctx or None)
 
-    def _should_pause_pipeline(self, pipeline: Optional[TrainingPipeline] = None) -> bool:
+    def _should_pause_pipeline(self, pipeline: Optional["TrainingPipeline"] = None) -> bool:
         flag = None
         try:
             flag = self.db.get_control_flag("production_manager_active")
@@ -243,6 +241,8 @@ class ModelLabRunner:
         eval_files = self._resolve_paths(config.eval_files)
         train_rel = [self._relative_path(path) for path in train_files]
         eval_rel = [self._relative_path(path) for path in eval_files]
+        from trading.pipeline import TrainingPipeline
+
         pipeline = TrainingPipeline(db=self.db)
         managed_pause = False
         original_flag = None
@@ -256,7 +256,7 @@ class ModelLabRunner:
             }
         )
         news_summary: Optional[Dict[str, Any]] = None
-        lab_model: Optional[tf.keras.Model] = None
+        lab_model: Optional[Any] = None
         train_summary: Optional[Dict[str, Any]] = None
         eval_summary: Optional[Dict[str, Any]] = None
         error_trace: Optional[str] = None

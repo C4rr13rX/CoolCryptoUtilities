@@ -54,6 +54,9 @@
         />
         <div class="timeline-meta">
           <span>{{ timelinePoints.length }} snapshots</span>
+          <button class="btn ghost" type="button" @click="togglePlayback" :disabled="timelinePoints.length <= 1">
+            {{ playbackActive ? 'Pause Trail' : 'Play Trail' }}
+          </button>
           <button class="btn" type="button" @click="jumpLatest">
             Jump to Latest
           </button>
@@ -90,6 +93,17 @@
               <span>{{ formatPercent(vote.expected) }}</span>
               <span class="energy">{{ formatPercent(vote.energy) }}</span>
               <span class="confidence">{{ formatPercent(vote.confidence) }}</span>
+            </li>
+          </ul>
+        </div>
+        <div class="swarm-diagnostics" v-if="swarmDiagnostics.length">
+          <h3>Horizon Diagnostics</h3>
+          <ul>
+            <li v-for="diag in swarmDiagnostics" :key="diag.horizon">
+              <span>{{ diag.horizon }}</span>
+              <span>acc {{ formatPercent(diag.accuracy) }}</span>
+              <span>mae {{ diag.mae?.toFixed(3) ?? '—' }}</span>
+              <span>⚡ {{ formatPercent(diag.energy) }}</span>
             </li>
           </ul>
         </div>
@@ -230,6 +244,40 @@
           Targets {{ formatPercent(requiredLiveWinRate) }} precision/recall and {{ requiredLiveTrades }} qualifying trades
           before moving swaps from ghost to live execution.
         </p>
+        <ul class="transition-horizons" v-if="transitionHighlights.length">
+          <li v-for="row in transitionHighlights" :key="row.label" :class="{ allowed: row.allowed }">
+            <span>{{ row.label }}</span>
+            <span>{{ formatPercent(row.precision) }}</span>
+            <span>{{ row.samples.toLocaleString() }} samples</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="info-card horizon-card" v-if="horizonRows.length">
+        <h2>Horizon Accuracy Map</h2>
+        <p class="horizon-dominant" v-if="dominantHorizon">
+          Dominant window: <strong>{{ dominantHorizon }}</strong> · Coverage {{ formatPercent(coverageShare) }}
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Horizon</th>
+              <th>Precision</th>
+              <th>Recall</th>
+              <th>Samples</th>
+              <th>Lift</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in horizonRows" :key="row.label" :class="{ allowed: row.allowed }">
+              <td>{{ row.label }}</td>
+              <td>{{ formatPercent(row.precision) }}</td>
+              <td>{{ formatPercent(row.recall) }}</td>
+              <td>{{ row.samples.toLocaleString() }}</td>
+              <td>{{ row.lift.toFixed(2) }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -244,6 +292,8 @@ const store = useOrganismStore();
 const selectedIndex = ref(0);
 let refreshHandle: number | undefined;
 let labelSaveTimer: number | undefined;
+let playbackTimer: number | undefined;
+const playbackActive = ref(false);
 
 const timelinePoints = computed(() => store.timeline);
 
@@ -267,6 +317,26 @@ const formattedTimestamp = computed(() => {
 });
 
 const brain = computed(() => snapshot.value?.brain || {});
+const transitionPlan = computed<Record<string, any>>(
+  () => (snapshot.value?.transition_plan || brain.value?.transition_plan || {}) as Record<string, any>,
+);
+const horizonRows = computed(() => {
+  const horizons = (transitionPlan.value?.horizons ?? {}) as Record<string, any>;
+  return Object.entries(horizons).map(([label, metrics]) => ({
+    label,
+    precision: Number(metrics?.precision ?? 0),
+    recall: Number(metrics?.recall ?? 0),
+    samples: Number(metrics?.samples ?? 0),
+    allowed: Boolean(metrics?.allowed),
+    lift: Number(metrics?.lift ?? 0),
+  })).sort((a, b) => {
+    if (b.precision !== a.precision) return b.precision - a.precision;
+    return b.samples - a.samples;
+  });
+});
+const transitionHighlights = computed(() => horizonRows.value.slice(0, 3));
+const dominantHorizon = computed(() => (transitionPlan.value?.dominant as string) || null);
+const coverageShare = computed(() => Number(transitionPlan.value?.coverage ?? 0));
 const processClusters = computed(() => snapshot.value?.process_clusters || []);
 const liveTransition = computed(() => snapshot.value?.brain?.live_transition || {});
 const isLiveMode = computed(() => (snapshot.value?.mode || '').toLowerCase() === 'live');
@@ -308,6 +378,7 @@ const hasGraph = computed(() => {
   return nodes.length > 0;
 });
 const labelScaleLocal = ref(1);
+const swarmDiagnostics = computed(() => brain.value?.swarm_diagnostics || []);
 
 function formatPercent(value: any) {
   if (value === null || value === undefined) return '—';
@@ -373,6 +444,31 @@ function jumpLatest() {
   selectedIndex.value = Math.max(timelinePoints.value.length - 1, 0);
 }
 
+function startPlayback() {
+  if (playbackTimer || timelinePoints.value.length <= 1) return;
+  playbackTimer = window.setInterval(() => {
+    if (!timelinePoints.value.length) return;
+    selectedIndex.value = (selectedIndex.value + 1) % timelinePoints.value.length;
+  }, 1800);
+  playbackActive.value = true;
+}
+
+function stopPlayback() {
+  if (playbackTimer) {
+    window.clearInterval(playbackTimer);
+    playbackTimer = undefined;
+  }
+  playbackActive.value = false;
+}
+
+function togglePlayback() {
+  if (playbackActive.value) {
+    stopPlayback();
+  } else {
+    startPlayback();
+  }
+}
+
 async function initialise() {
   await store.loadSettings();
   labelScaleLocal.value = Number(store.labelScale || 1);
@@ -391,6 +487,7 @@ onBeforeUnmount(() => {
     window.clearInterval(refreshHandle);
     refreshHandle = undefined;
   }
+  stopPlayback();
   if (labelSaveTimer) {
     store.saveLabelScale(labelScaleLocal.value);
     window.clearTimeout(labelSaveTimer);
@@ -401,6 +498,9 @@ onBeforeUnmount(() => {
 watch(
   () => timelinePoints.value.length,
   (length, prevLength) => {
+    if (length <= 1 && playbackActive.value) {
+      stopPlayback();
+    }
     if (!length) return;
     if (selectedIndex.value >= length) {
       selectedIndex.value = length - 1;
@@ -592,6 +692,86 @@ watch(
 
 .btn:hover {
   background: rgba(37, 99, 235, 0.3);
+}
+
+.swarm-diagnostics {
+  margin-top: 1rem;
+}
+
+.swarm-diagnostics ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.swarm-diagnostics li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.transition-horizons {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.transition-horizons li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  font-size: 0.8rem;
+  color: #cbd5f5;
+}
+
+.transition-horizons li.allowed {
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.horizon-card table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+}
+
+.horizon-card th,
+.horizon-card td {
+  padding: 0.45rem 0.35rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+.horizon-card tr.allowed {
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.horizon-dominant {
+  color: #94a3b8;
+  font-size: 0.85rem;
+}
+
+.btn.ghost {
+  background: transparent;
+  border-style: dashed;
+  color: #93c5fd;
+}
+
+.btn.ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .grid {

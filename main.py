@@ -226,9 +226,9 @@ def _automation_enabled() -> bool:
 def menu():
     if not sys.stdin.isatty():
         if not _automation_enabled():
-            print("[cli] Non-interactive environment detected; exiting wallet console.")
-            return
-        print("[cli] Automation flag detected; continuing without interactive TTY.")
+            print("[cli] Non-interactive terminal; continuing in pipe-compatible mode.")
+        else:
+            print("[cli] Automation flag detected; continuing without interactive TTY.")
     # Reuse a single signer/connection pool across actions
     try:
         bridge: UltraSwapBridge | None = UltraSwapBridge()
@@ -302,6 +302,18 @@ def run_action(action: str, payload: Dict[str, Any] | None = None) -> None:
     action_def = WALLET_ACTIONS.get(action)
     if not action_def:
         raise ValueError(f"Unsupported wallet action '{action}'.")
+    if action == "start_production":
+        try:
+            from production import ProductionManager
+
+            manager = ProductionManager()
+            manager.start()
+            print("[production] start command sent (non-interactive).")
+        except ImportError as exc:
+            print(f"[production] missing dependency: {exc}")
+        except Exception as exc:
+            print(f"[production] unable to start manager: {exc}")
+        return
     payload = payload or {}
     try:
         bridge: UltraSwapBridge | None = UltraSwapBridge()

@@ -58,7 +58,9 @@
         </div>
       </header>
       <section class="content__body">
-        <RouterView />
+        <div class="content__viewport">
+          <RouterView />
+        </div>
       </section>
     </main>
   </div>
@@ -136,6 +138,7 @@ const feedbackSummary = computed(() => {
 });
 
 const consoleIntent = computed(() => {
+  if (!store.serverOnline) return 'error';
   const status = store.consoleStatus?.status || '';
   if (status.includes('run')) return 'ok';
   if (status.includes('idle')) return 'warn';
@@ -199,6 +202,7 @@ const navItems = computed(() => [
   { route: 'codegraph', label: 'Code Graph', icon: 'activity', path: '/codegraph', intent: pipelineIntent.value },
   { route: 'integrations', label: 'API Integrations', icon: 'link', path: '/integrations', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', path: '/settings', intent: pipelineIntent.value },
+  { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', path: '/branddozer', intent: pipelineIntent.value },
 ]);
 
 const isActive = (name: string) => route.name === name;
@@ -219,7 +223,7 @@ const totalProfitDisplay = computed(() =>
 
 <style scoped>
 .app-layout {
-  min-height: 100vh;
+  min-height: 100%;
   width: 100%;
   display: flex;
   background: radial-gradient(circle at 10% 0%, rgba(11, 28, 60, 0.4), rgba(3, 10, 22, 0.96));
@@ -355,12 +359,13 @@ const totalProfitDisplay = computed(() =>
 }
 
 .content {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  width: 100%;
+  min-height: 100%;
+  width: calc(100vw - 260px);
+  max-width: calc(100vw - 260px);
   align-self: stretch;
   padding: 1.5rem;
   gap: 1.5rem;
@@ -414,14 +419,33 @@ const totalProfitDisplay = computed(() =>
 }
 
 .content__body {
-  flex: 1;
+  flex: 1 1 auto;
   width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: rgba(6, 14, 26, 0.92);
   border: 1px solid rgba(79, 168, 255, 0.18);
   border-radius: 18px;
   padding: 1.5rem;
   box-shadow: 0 28px 56px rgba(3, 12, 25, 0.45);
   overflow: hidden;
+}
+
+.content__viewport {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.content__viewport > * {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
 }
 
 @media (max-width: 959px) {
@@ -465,6 +489,8 @@ const totalProfitDisplay = computed(() =>
     transform: translateY(-6px) rotate(-45deg);
   }
   .content {
+    width: 100%;
+    max-width: 100%;
     padding-top: 1rem;
   }
 }

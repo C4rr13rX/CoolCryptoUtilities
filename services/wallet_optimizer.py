@@ -4,6 +4,7 @@ import math
 import os
 import time
 import json
+import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -179,23 +180,30 @@ class AdaptiveGasOracle:
         if not tips:
             raise RuntimeError("fee_history tips empty")
         tips.sort()
-        if len(tips) > 3:
-            trimmed = tips[len(tips) // 3 : -len(tips) // 5 or None]
+        if len(tips) > 4:
+            trim = max(1, len(tips) // 5)
+            trimmed = tips[trim:-trim] if trim < len(tips) else tips
             if trimmed:
                 tips = trimmed
+        median_tip = int(statistics.median(tips))
         avg_tip = int(sum(tips) / len(tips))
+        blended_tip = int(max(median_tip, avg_tip * 0.85))
         floor_tip_gwei = float(os.getenv("GAS_TIP_FLOOR_GWEI", "1") or "1")
-        tip = max(avg_tip, self._as_wei_from_gwei(str(floor_tip_gwei), w3))
+        tip = max(blended_tip, self._as_wei_from_gwei(str(floor_tip_gwei), w3))
         tip_min = self._as_wei_from_gwei(str(self.min_tip_gwei), w3)
         tip_max = self._as_wei_from_gwei(str(self.max_tip_gwei), w3)
         if tip_max and tip_min and tip_max < tip_min:
             tip_max = tip_min
         tip = max(tip_min, min(tip, tip_max))
         mult = float(os.getenv("GAS_BASE_MULT", "1.35") or "1.35")
+        cap_env = os.getenv("GAS_BASE_MAX_MULT")
+        base_cap = float(cap_env) if cap_env else None
         if urgency == "eco":
             mult = max(mult * 0.85, 1.05)
         elif urgency == "urgent":
             mult = max(mult * 1.15, 1.45)
+        if base_cap:
+            mult = min(mult, base_cap)
         max_fee = int(base * mult) + tip
         if max_fee < base + tip:
             max_fee = base + tip

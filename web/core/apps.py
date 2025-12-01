@@ -15,6 +15,7 @@ class CoreConfig(AppConfig):
     name = "core"
     verbose_name = "Dashboard Core"
     _guardian_started = False
+    _streams_started = False
 
     def ready(self):
         if getattr(settings, "TESTING", False):
@@ -41,3 +42,12 @@ class CoreConfig(AppConfig):
                 CoreConfig._guardian_started = False
 
         threading.Thread(target=_bootstrap, name="guardian-bootstrap", daemon=True).start()
+
+        if not CoreConfig._streams_started:
+            try:
+                from services.console_stream import start_console_streams
+
+                start_console_streams()
+                CoreConfig._streams_started = True
+            except Exception:
+                pass

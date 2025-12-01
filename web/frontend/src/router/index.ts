@@ -13,6 +13,7 @@ import GuardianView from '@/views/GuardianView.vue';
 import CodeGraphView from '@/views/CodeGraphView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
+import BrandDozerView from '@/views/BrandDozerView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -79,6 +80,11 @@ const routes: RouteRecordRaw[] = [
     path: '/settings',
     name: 'settings',
     component: SecureSettingsView,
+  },
+  {
+    path: '/branddozer',
+    name: 'branddozer',
+    component: BrandDozerView,
   },
 ];
 

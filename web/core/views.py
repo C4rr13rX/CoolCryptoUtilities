@@ -24,8 +24,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from db import get_db  # noqa: E402
+from opsconsole.manager import manager as console_manager
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
-from services.code_graph import get_code_graph, list_tracked_files  # noqa: E402
+from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
@@ -90,10 +91,6 @@ class DashboardContextMixin:
         }
 
     def _base_context(self, initial_route: str) -> Dict[str, Any]:
-        try:
-            guardian_supervisor.ensure_running()
-        except Exception:
-            pass
         use_vite = settings.DEBUG and os.getenv("DJANGO_USE_VITE_DEV", "0").lower() in {"1", "true", "yes", "on"}
         return {
             "debug": settings.DEBUG,
@@ -198,6 +195,13 @@ class AdvisoriesPageView(BaseSecureView):
     initial_route = "advisories"
 
 
+def guardian_failure_response(request, *args, **kwargs):
+    view = GuardianFallbackView.as_view()
+    response = view(request, *args, **kwargs)
+    response.status_code = 503
+    return response
+
+
 class IntegrationsPageView(BaseSecureView):
     initial_route = "integrations"
 
@@ -228,6 +232,7 @@ class SpaRouteView(BaseSecureView):
             "advisories",
             "integrations",
             "codegraph",
+            "branddozer",
         }
         if slug not in allowed:
             return redirect("core:dashboard")
@@ -253,6 +258,7 @@ class GuardianFallbackView(TemplateView):
             status = {"running": False}
         transcription_path = GUARDIAN_TRANSCRIPT if GUARDIAN_TRANSCRIPT.exists() else LEGACY_TRANSCRIPT
         console_tail = _tail_lines(transcription_path, limit=400)
+        production_tail = console_manager.tail(400)
         last_report = status.get("last_report")
         if isinstance(last_report, (int, float)):
             last_report = datetime.fromtimestamp(last_report)
@@ -262,6 +268,7 @@ class GuardianFallbackView(TemplateView):
             {
                 "guardian_status": status,
                 "console_tail": console_tail,
+                "production_tail": production_tail,
                 "last_report": last_report,
                 "queue_state": status.get("queue") or {},
                 "production": status.get("production") or {},
@@ -275,7 +282,12 @@ class CodeGraphDataView(LoginRequiredMixin, View):
 
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
         refresh = str(request.GET.get("refresh", "")).lower() in {"1", "true", "yes"}
-        payload = get_code_graph(force_refresh=refresh)
+        if refresh:
+            request_code_graph_refresh()
+            payload = get_code_graph(force_refresh=False)
+            payload["building"] = True
+        else:
+            payload = get_code_graph(force_refresh=False)
         return JsonResponse(payload, status=200)
 
 

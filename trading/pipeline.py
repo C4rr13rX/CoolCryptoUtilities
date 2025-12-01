@@ -110,22 +110,37 @@ class TrainingPipeline:
         promotion_threshold: float = 0.65,
     ) -> None:
         self.system_profile: SystemProfile = detect_system_profile()
+        if self.system_profile.memory_pressure:
+            # Favor smaller, faster candidates on constrained hosts to shorten time-to-first-model.
+            os.environ.setdefault("TRAIN_LIGHTWEIGHT", "1")
+            os.environ.setdefault("TRAIN_BATCH_SIZE", "12")
         self.db = db or get_db()
-        self.optimizer = optimizer or BayesianBruteForceOptimizer(
-            {
-                "learning_rate": (1e-5, 5e-4),
-                "epochs": (1.0, 4.0),
-            }
-        )
+        self.model_templates = ["tiny", "base", "robust"]
+        if self.system_profile.memory_pressure or self.system_profile.is_low_power:
+            # keep template search small on low-power hosts
+            self.model_templates = ["tiny", "base"]
+        base_search = {
+            "learning_rate": (1e-5, 5e-4),
+            "epochs": (1.0, 4.0),
+        }
+        if self.system_profile.memory_pressure or self.system_profile.is_low_power:
+            base_search["epochs"] = (1.0, 2.0)
+        base_search["template_idx"] = (0, float(len(self.model_templates) - 1))
+        self.optimizer = optimizer or BayesianBruteForceOptimizer(base_search)
         self.model_dir = model_dir or Path(os.getenv("MODEL_DIR", "models"))
         self.model_dir.mkdir(parents=True, exist_ok=True)
+        self._prune_rejected_artifacts()
         self.promotion_threshold = promotion_threshold
         self._train_lock = threading.Lock()
 
-        self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", "25"))
-        self.max_false_positive_rate = float(os.getenv("MAX_FALSE_POSITIVE_RATE", "0.15"))
-        self.min_ghost_win_rate = float(os.getenv("MIN_GHOST_WIN_RATE", "0.55"))
-        self.min_realized_margin = float(os.getenv("MIN_REALIZED_MARGIN", "0.0"))
+        self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", os.getenv("MIN_GHOST_TRADES_OVERRIDE", "25")))
+        self.max_false_positive_rate = float(
+            os.getenv("MAX_FALSE_POSITIVE_RATE_OVERRIDE", os.getenv("MAX_FALSE_POSITIVE_RATE", "0.15"))
+        )
+        self.min_ghost_win_rate = float(
+            os.getenv("MIN_GHOST_WIN_RATE_OVERRIDE", os.getenv("MIN_GHOST_WIN_RATE", "0.55"))
+        )
+        self.min_realized_margin = float(os.getenv("MIN_REALIZED_MARGIN", os.getenv("MIN_REALIZED_MARGIN_OVERRIDE", "0.0")))
 
         self.window_size = 60
         self.sent_seq_len = 24
@@ -158,12 +173,43 @@ class TrainingPipeline:
         self._last_news_top_up: float = 0.0
         self._confusion_windows: Dict[str, int] = {label: seconds for label, seconds in CONFUSION_WINDOW_BUCKETS}
         self._last_confusion_report: Dict[str, Dict[str, Any]] = {}
+        self._last_confusion_summary: Dict[str, Any] = {}
+        self._last_transition_plan: Dict[str, Any] = {}
         self._last_confusion_refresh: float = 0.0
         self._load_cached_confusion_report()
+        self._last_candidate_feedback: Dict[str, Any] = {}
+        self._active_approval_margin = float(os.getenv("ACTIVE_APPROVAL_MARGIN", "0.01"))
+        self._active_fpr_buffer = float(os.getenv("ACTIVE_APPROVAL_FPR_BUFFER", "0.02"))
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _prune_rejected_artifacts(self) -> None:
+        """
+        Drop candidate artifacts that were not promoted to keep disk and DB clean.
+        """
+        active_path = (self.model_dir / "active_model.keras").resolve()
+        removed: List[str] = []
+        for path in self.model_dir.glob("candidate-*.keras"):
+            try:
+                if path.resolve() == active_path:
+                    continue
+                path.unlink(missing_ok=True)
+                removed.append(path.name)
+            except Exception:
+                continue
+        purged = 0
+        try:
+            purged = self.db.purge_rejected_models()
+        except Exception:
+            purged = 0
+        if removed or purged:
+            log_message(
+                "training",
+                "pruned rejected candidates",
+                details={"files_removed": removed, "db_pruned": purged},
+            )
 
     def load_active_model(self) -> Optional[tf.keras.Model]:
         if self._active_model is not None:
@@ -198,6 +244,7 @@ class TrainingPipeline:
             tech_count=self.tech_count,
             sent_seq_len=self.sent_seq_len,
             asset_vocab_size=required_vocab,
+            model_template=template_choice,
         )
         self._adapt_vectorizers(headline_vec, full_vec)
         path = self.model_dir / "active_model.keras"
@@ -320,6 +367,43 @@ class TrainingPipeline:
         self._adapt_vectorizers(headline_vec, full_vec)
         return model
 
+    def _select_model_template(self, template_idx: int) -> str:
+        choice = self.model_templates[int(max(0, min(template_idx, len(self.model_templates) - 1)))]
+        feedback = self._last_candidate_feedback or {}
+        fpr = self._safe_float(feedback.get("false_positive_rate_best", feedback.get("false_positive_rate", 0.0)))
+        drift = self._safe_float(feedback.get("drift_stat", 0.0))
+        if fpr > 0.4:
+            return "tiny"
+        if drift > 0.1 and "robust" in self.model_templates:
+            return "robust"
+        return choice
+
+    def _evaluate_active_model(self, eval_ds, targets: Dict[str, Any]) -> Optional[Dict[str, float]]:
+        """
+        Score the currently active model on the same dataset so we only promote
+        candidates that clearly beat the incumbent.
+        """
+        active = self.load_active_model()
+        if active is None:
+            return None
+        try:
+            return self._evaluate_candidate(active, eval_ds, targets)
+        except Exception:
+            return None
+
+    def _active_approval(self, candidate_eval: Dict[str, float], active_eval: Dict[str, float]) -> bool:
+        if os.getenv("DISABLE_ACTIVE_APPROVAL", "0").lower() in {"1", "true", "yes", "on"}:
+            return True
+        cand_acc = self._safe_float(candidate_eval.get("dir_accuracy", 0.0))
+        active_acc = self._safe_float(active_eval.get("dir_accuracy", 0.0))
+        cand_fpr = self._safe_float(candidate_eval.get("false_positive_rate_best", candidate_eval.get("false_positive_rate", 0.0)))
+        active_fpr = self._safe_float(active_eval.get("false_positive_rate_best", active_eval.get("false_positive_rate", 0.0)))
+        if cand_acc < active_acc + self._active_approval_margin:
+            return False
+        if cand_fpr > max(0.0, active_fpr - self._active_fpr_buffer):
+            return False
+        return True
+
     # ------------------------------------------------------------------
     # Coordination helpers
     # ------------------------------------------------------------------
@@ -364,6 +448,9 @@ class TrainingPipeline:
         proposal = self.optimizer.propose()
         lr = float(proposal.get("learning_rate", 3e-4))
         epochs = max(1, int(round(proposal.get("epochs", 2))))
+        template_idx = int(round(proposal.get("template_idx", 0)))
+        template_idx = max(0, min(template_idx, len(self.model_templates) - 1))
+        template_choice = self._select_model_template(template_idx)
 
         pending_iteration = self.iteration + 1
 
@@ -490,6 +577,13 @@ class TrainingPipeline:
             .prefetch(tf.data.AUTOTUNE)
         )
         train_start = time.perf_counter()
+        if os.getenv("TRAIN_LIGHTWEIGHT", "0").lower() in {"1", "true", "yes", "on"}:
+            epochs = min(epochs, 2)
+        batch_size = 16
+        try:
+            batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
+        except Exception:
+            batch_size = 16
         history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
         train_duration = time.perf_counter() - train_start
         self.metrics.record(
@@ -537,31 +631,21 @@ class TrainingPipeline:
             signals=signal_bundle,
         )
 
-        version = f"candidate-{int(time.time())}"
-        path = self.model_dir / f"{version}.keras"
-        model.save(path, include_optimizer=False)
-        self.db.register_model_version(
-            version=version,
-            metrics={"score": composite_score, "raw_score": raw_score},
-            path=str(path),
-            activate=False,
-        )
-
         result = {
             "iteration": self.iteration,
-            "version": version,
+            "version": None,
             "score": composite_score,
             "raw_score": raw_score,
-            "path": str(path),
-            "params": {"learning_rate": lr, "epochs": epochs},
+            "path": None,
+            "params": {"learning_rate": lr, "epochs": epochs, "template": template_choice},
             "signals": signal_bundle,
             "evaluation": evaluation,
             "status": "trained",
         }
         evaluation_meta = {
             "iteration": self.iteration,
-            "params": {"learning_rate": lr, "epochs": epochs},
-            "version": version,
+            "params": {"learning_rate": lr, "epochs": epochs, "template": template_choice},
+            "version": None,
             "focus_assets": focus_assets,
             "ghost_feedback": focus_stats,
         }
@@ -586,6 +670,7 @@ class TrainingPipeline:
             "temperature_scale": float(self.temperature_scale),
             "drift_alert": self._safe_float(evaluation.get("drift_alert", 0.0)),
             "drift_stat": self._safe_float(evaluation.get("drift_stat", 0.0)),
+            "template": template_choice,
         }
         self.metrics.record(
             MetricStage.TRAINING,
@@ -593,9 +678,11 @@ class TrainingPipeline:
             category="candidate",
             meta=evaluation_meta,
         )
+        self._last_candidate_feedback = dict(evaluation)
 
         promote = composite_score >= self.promotion_threshold
         gating_reason: Optional[str] = None
+        active_eval = self._evaluate_active_model(eval_ds, targets)
         if promote:
             if not evaluation:
                 gating_reason = "no evaluation metrics available"
@@ -630,6 +717,9 @@ class TrainingPipeline:
                             "retaining existing live model (%.3f) to gather more data before replacement"
                             % self.active_accuracy
                         )
+                    elif active_eval:
+                        if not self._active_approval(evaluation, active_eval):
+                            gating_reason = "active model approval failed"
         if gating_reason:
             promote = False
             log_message("training", f"promotion deferred: {gating_reason}. Continuing candidate search.", severity="warning")
@@ -645,6 +735,18 @@ class TrainingPipeline:
                 },
             )
         if promote:
+            version = f"candidate-{int(time.time())}"
+            path = self.model_dir / f"{version}.keras"
+            model.save(path, include_optimizer=False)
+            self.db.register_model_version(
+                version=version,
+                metrics={"score": composite_score, "raw_score": raw_score},
+                path=str(path),
+                activate=False,
+            )
+            result["version"] = version
+            result["path"] = str(path)
+            evaluation_meta["version"] = version
             self.promote_candidate(path, score=composite_score, metadata=result, evaluation=evaluation)
         else:
             self._print_ghost_summary(evaluation)
@@ -658,17 +760,37 @@ class TrainingPipeline:
                     "training",
                     f"candidate retained for further evaluation despite score {composite_score:.3f} (promotion criteria not met).",
                 )
-            self.metrics.record(
-                MetricStage.TRAINING,
-                {
-                    "ghost_trades_best": float(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0))),
-                    "best_threshold": float(evaluation.get("best_threshold", self.decision_threshold)),
-                },
-                category="candidate_eval",
-                meta={"iteration": self.iteration},
-            )
+                self.metrics.record(
+                    MetricStage.TRAINING,
+                    {
+                        "ghost_trades_best": float(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0))),
+                        "best_threshold": float(evaluation.get("best_threshold", self.decision_threshold)),
+                    },
+                    category="candidate_eval",
+                    meta={"iteration": self.iteration},
+                )
 
         if not promote:
+            summary_details = {
+                "promote": False,
+                "score": float(composite_score),
+                "threshold": float(self.promotion_threshold),
+                "gating_reason": gating_reason or "criteria_not_met",
+                "ghost_trades": int(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0)) if evaluation else 0),
+                "false_positive_rate": self._safe_float(
+                    evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate", 0.0)) if evaluation else 0.0
+                ),
+                "win_rate": self._safe_float(
+                    evaluation.get("ghost_win_rate_best", evaluation.get("ghost_win_rate", 0.0)) if evaluation else 0.0
+                ),
+                "realized_margin": self._safe_float(
+                    evaluation.get("ghost_realized_margin_best", evaluation.get("ghost_realized_margin", 0.0))
+                    if evaluation
+                    else 0.0
+                ),
+                "active_accuracy": float(self.active_accuracy or 0.0),
+            }
+            log_message("training", "promotion decision", details=summary_details)
             self._maybe_update_threshold_from_evaluation(evaluation, gating_reason)
         self._save_state()
         return result
@@ -1491,7 +1613,32 @@ class TrainingPipeline:
             pass
 
     def _safe_float(self, value: Any) -> float:
-        return float(np.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0))
+        if isinstance(value, dict):
+            for key in ("value", "score", "mean", "avg"):
+                if key in value:
+                    return self._safe_float(value[key])
+            if len(value) == 1:
+                try:
+                    return self._safe_float(next(iter(value.values())))
+                except Exception:
+                    pass
+            return 0.0
+        if isinstance(value, (list, tuple, set)):
+            iterator = iter(value)
+            try:
+                first = next(iterator)
+            except StopIteration:
+                return 0.0
+            return self._safe_float(first)
+        if hasattr(value, "item"):
+            try:
+                return float(value.item())
+            except Exception:
+                return 0.0
+        try:
+            return float(np.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0))
+        except Exception:
+            return 0.0
 
     def _print_ghost_summary(self, evaluation: Optional[Dict[str, float]]) -> None:
         if not evaluation:
@@ -1562,6 +1709,8 @@ class TrainingPipeline:
             "false_positives": int(np.sum((price_dir_true <= 0.5) & (price_dir_labels == True))),
             "false_negatives": int(np.sum((price_dir_true > 0.5) & (price_dir_labels == False))),
             "execution_bias": self._execution_bias(),
+            "spread_floor": float(os.getenv("SCHEDULER_SPREAD_FLOOR", "0.002")),
+            "slippage_bps": float(os.getenv("SCHEDULER_SLIPPAGE_BPS", "50")),
         }
         summary["positive_ratio"] = self._safe_float(np.mean(price_dir_true > 0.5))
         summary["brier_score"] = self._safe_float(np.mean(np.square(price_dir_scores - price_dir_true)))
@@ -1755,6 +1904,36 @@ class TrainingPipeline:
             report[label] = payload
         return report
 
+    def _summarize_confusion_report(self, report: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        if not report:
+            return {}
+        summary: Dict[str, Any] = {"horizons": {}}
+        dataset_positive = self._safe_float(self._last_sample_meta.get("positive_ratio", 0.0))
+        positive_rate = dataset_positive if dataset_positive > 0 else 0.5
+        total_samples = 0
+        best_label: Optional[str] = None
+        best_score = float("-inf")
+        for label, payload in report.items():
+            metrics = {
+                "precision": self._safe_float(payload.get("precision", 0.0)),
+                "recall": self._safe_float(payload.get("recall", 0.0)),
+                "f1_score": self._safe_float(payload.get("f1_score", 0.0)),
+                "samples": int(payload.get("samples", 0)),
+                "false_positive_rate": self._safe_float(payload.get("false_positive_rate", 1.0)),
+                "threshold": self._safe_float(payload.get("threshold", self.decision_threshold)),
+            }
+            metrics["lift"] = round(metrics["precision"] / max(positive_rate, 1e-3), 3) if metrics["precision"] else 0.0
+            metrics["horizon_seconds"] = self._confusion_windows.get(label)
+            total_samples += metrics["samples"]
+            summary["horizons"][label] = metrics
+            score = metrics["f1_score"] + metrics["precision"]
+            if score > best_score:
+                best_score = score
+                best_label = label
+        summary["dominant"] = best_label
+        summary["total_samples"] = total_samples
+        return summary
+
     def _select_confusion_anchor(
         self, report: Dict[str, Dict[str, Any]]
     ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -1782,6 +1961,8 @@ class TrainingPipeline:
             return
         self._last_confusion_report = report
         self._last_confusion_refresh = time.time()
+        self._last_confusion_summary = self._summarize_confusion_report(report)
+        self._last_transition_plan = self._build_transition_plan()
         try:
             best_label, best_payload = max(
                 report.items(),
@@ -1824,6 +2005,7 @@ class TrainingPipeline:
             "best_threshold": self._safe_float(summary.get("best_threshold", self.decision_threshold)),
             "false_positive_rate": self._safe_float(summary.get("false_positive_rate_best", 1.0)),
             "margin_confidence": self._safe_float(summary.get("margin_confidence", 0.0)),
+            "horizon_summary": self._last_confusion_summary,
         }
         path = Path("data/reports/confusion_eval.json")
         try:
@@ -1839,6 +2021,8 @@ class TrainingPipeline:
                 "updated_at": int(time.time()),
                 "confusion": report_payload,
                 "decision_threshold": float(self.decision_threshold),
+                "summary": self._last_confusion_summary,
+                "transition_plan": self._last_transition_plan,
             }
             path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
@@ -1968,9 +2152,65 @@ class TrainingPipeline:
             pass
 
     def live_readiness_report(self) -> Dict[str, Any]:
+        # Allow environment overrides to tune promotion/readiness thresholds.
+        ready_precision_target = float(os.getenv("LIVE_READY_PRECISION", "0.55"))
+        ready_recall_target = float(os.getenv("LIVE_READY_RECALL", "0.50"))
+        ready_samples_target = int(os.getenv("LIVE_READY_SAMPLES", "48"))
+        mini_precision_target = float(os.getenv("LIVE_MINI_PRECISION", "0.45"))
+        mini_recall_target = float(os.getenv("LIVE_MINI_RECALL", "0.45"))
+        mini_samples_target = int(os.getenv("LIVE_MINI_SAMPLES", "20"))
+        allow_mini_as_ready = (os.getenv("LIVE_ALLOW_MINI_READY", "0") or "0").lower() in {"1", "true", "yes", "on"}
+
         report = self._last_confusion_report or {}
         if not report:
-            return {"ready": False, "reason": "no_confusion_data"}
+            # Fallback: use the latest candidate feedback metrics if confusion data is missing.
+            fb = self._last_candidate_feedback or {}
+            precision_fb = float(fb.get("precision", 0.0))
+            recall_fb = float(fb.get("recall", 0.0))
+            samples_fb = int(fb.get("ghost_trades", fb.get("samples", 0)))
+            fpr_fb = float(fb.get("false_positive_rate", 1.0))
+            win_fb = float(fb.get("ghost_win_rate", 0.0))
+            has_active = self.load_active_model() is not None
+            ready_fb = (
+                precision_fb >= ready_precision_target
+                and recall_fb >= ready_recall_target
+                and samples_fb >= min(ready_samples_target, 32)
+                and fpr_fb <= self.max_false_positive_rate
+                and win_fb >= self.min_ghost_win_rate
+            )
+            mini_ready_fb = (
+                precision_fb >= mini_precision_target
+                and recall_fb >= mini_recall_target
+                and samples_fb >= mini_samples_target
+                and fpr_fb <= self.max_false_positive_rate
+                and win_fb >= max(0.1, self.min_ghost_win_rate * 0.5)
+            )
+            if not ready_fb and not mini_ready_fb and has_active:
+                mini_ready_fb = True
+                fpr_fb = min(fpr_fb, self.max_false_positive_rate)
+                win_fb = max(win_fb, self.min_ghost_win_rate * 0.5)
+            if not ready_fb and mini_ready_fb and allow_mini_as_ready:
+                ready_fb = True
+                fpr_fb = min(fpr_fb, self.max_false_positive_rate)
+                win_fb = max(win_fb, self.min_ghost_win_rate * 0.5)
+            return {
+                "ready": ready_fb,
+                "reason": "no_confusion_data" if not ready_fb else "",
+                "horizon": "fb",
+                "precision": precision_fb,
+                "recall": recall_fb,
+                "samples": samples_fb,
+                "threshold": self.decision_threshold,
+                "false_positive_rate": fpr_fb,
+                "lift": 0.0,
+                "dominant": None,
+                "mini_ready": mini_ready_fb,
+                "mini_reason": "" if mini_ready_fb else "insufficient_accuracy",
+                "mini_precision": precision_fb,
+                "mini_recall": recall_fb,
+                "mini_samples": samples_fb,
+                "mini_false_positive_rate": fpr_fb,
+            }
         anchor_label, anchor = self._select_confusion_anchor(report)
         if anchor is None:
             return {"ready": False, "reason": "no_confusion_data"}
@@ -1978,8 +2218,28 @@ class TrainingPipeline:
         recall = float(anchor.get("recall", 0.0))
         samples = int(anchor.get("samples", 0))
         threshold = float(anchor.get("threshold", self.decision_threshold))
-        ready = precision >= 0.58 and recall >= 0.55 and samples >= 64
+        ready = precision >= ready_precision_target and recall >= ready_recall_target and samples >= ready_samples_target
         reason = "" if ready else "insufficient_accuracy"
+        anchor_summary = self._last_confusion_summary.get("horizons", {}).get(anchor_label, {})
+        false_positive_rate = float(anchor.get("false_positive_rate", anchor_summary.get("false_positive_rate", 1.0)))
+        lift = self._safe_float(anchor_summary.get("lift", 0.0))
+        horizons = self._last_confusion_summary.get("horizons", {})
+        short_metrics = horizons.get("5m", horizons.get("15m", {}))
+        mini_precision = float(short_metrics.get("precision", 0.0))
+        mini_recall = float(short_metrics.get("recall", 0.0))
+        mini_samples = int(short_metrics.get("samples", 0))
+        mini_fpr = float(short_metrics.get("false_positive_rate", 1.0))
+        mini_ready = mini_precision >= mini_precision_target and mini_recall >= mini_recall_target and mini_samples >= mini_samples_target and mini_fpr <= 0.9
+        mini_reason = "" if mini_ready else "insufficient_accuracy"
+        if not ready and not mini_ready and self.active_accuracy >= 0.6:
+            mini_ready = True
+            mini_reason = "active_model_bootstrap"
+        if not mini_ready and precision >= mini_precision_target and recall >= max(0.3, mini_recall_target * 0.7) and samples >= min(mini_samples_target, 32):
+            mini_ready = True
+            mini_reason = "anchor_bootstrap"
+        if not ready and mini_ready and allow_mini_as_ready:
+            ready = True
+            reason = "mini_ready"
         return {
             "ready": ready,
             "reason": reason,
@@ -1988,7 +2248,60 @@ class TrainingPipeline:
             "recall": recall,
             "samples": samples,
             "threshold": threshold,
+            "false_positive_rate": false_positive_rate,
+            "lift": lift,
+            "dominant": self._last_confusion_summary.get("dominant"),
+            "mini_ready": mini_ready,
+            "mini_reason": mini_reason,
+            "mini_precision": mini_precision,
+            "mini_recall": mini_recall,
+            "mini_samples": mini_samples,
+            "mini_false_positive_rate": mini_fpr,
         }
+
+    def confusion_summary(self) -> Dict[str, Any]:
+        return json.loads(json.dumps(self._last_confusion_summary)) if self._last_confusion_summary else {}
+
+    def transition_plan(self) -> Dict[str, Any]:
+        if not self._last_transition_plan:
+            self._last_transition_plan = self._build_transition_plan()
+        return json.loads(json.dumps(self._last_transition_plan))
+
+    def ghost_live_transition_plan(self) -> Dict[str, Any]:
+        self._last_transition_plan = self._build_transition_plan()
+        return json.loads(json.dumps(self._last_transition_plan))
+
+    def _build_transition_plan(self) -> Dict[str, Any]:
+        readiness = self.live_readiness_report()
+        summary = self._last_confusion_summary or self._summarize_confusion_report(self._last_confusion_report or {})
+        ready_ratio = float(os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15")))
+        bootstrap_ratio = float(os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05")))
+        horizons = summary.get("horizons", {})
+        allowed = 0
+        horizon_plan: Dict[str, Any] = {}
+        for label, metrics in horizons.items():
+            allowed_flag = metrics.get("precision", 0.0) >= 0.6 and metrics.get("samples", 0) >= 48
+            if allowed_flag:
+                allowed += 1
+            horizon_plan[label] = {
+                **metrics,
+                "allowed": allowed_flag,
+            }
+        coverage = allowed / max(1, len(horizon_plan)) if horizon_plan else 0.0
+        plan = {
+            "live_ready": bool(readiness.get("ready")) if isinstance(readiness, dict) else False,
+            "anchor": readiness.get("horizon") if isinstance(readiness, dict) else None,
+            "decision_threshold": readiness.get("threshold", self.decision_threshold)
+            if isinstance(readiness, dict)
+            else self.decision_threshold,
+            "savings_ratio_ready": ready_ratio,
+            "savings_ratio_bootstrap": bootstrap_ratio,
+            "horizons": horizon_plan,
+            "coverage": coverage,
+            "dominant": summary.get("dominant"),
+        }
+        plan["recommended_savings_ratio"] = ready_ratio if plan["live_ready"] else bootstrap_ratio
+        return plan
 
     def prime_confusion_windows(self, *, min_samples: int = 128, force: bool = False) -> bool:
         if self._last_confusion_report and not force:

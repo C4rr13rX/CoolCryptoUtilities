@@ -26,6 +26,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import psycopg
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANAGE_PY = REPO_ROOT / "web" / "manage.py"
 
@@ -47,8 +49,8 @@ def main() -> None:
     parser.add_argument("--pg-host", default=os.getenv("POSTGRES_HOST", "127.0.0.1"))
     parser.add_argument("--pg-port", default=os.getenv("POSTGRES_PORT", "5432"))
     parser.add_argument("--pg-db", default=os.getenv("POSTGRES_DB", "coolcrypto"))
-    parser.add_argument("--pg-user", default=os.getenv("POSTGRES_USER", "postgres"))
-    parser.add_argument("--pg-password", default=os.getenv("POSTGRES_PASSWORD", "postgres"))
+    parser.add_argument("--pg-user", default=os.getenv("POSTGRES_USER", "coolcrypto"))
+    parser.add_argument("--pg-password", default=os.getenv("POSTGRES_PASSWORD", "coolcrypto"))
     parser.add_argument("--pg-sslmode", default=os.getenv("POSTGRES_SSLMODE", "prefer"))
     args = parser.parse_args()
 
@@ -86,6 +88,7 @@ def main() -> None:
 
         print("🧱 Applying migrations to PostgreSQL…")
         run_manage_command(["migrate", "--noinput"], postgres_env)
+        ensure_unmanaged_tables(postgres_env)
 
         print("📦 Loading data into PostgreSQL…")
         run_manage_command(["loaddata", dump_path], postgres_env)
@@ -96,6 +99,83 @@ def main() -> None:
             Path(dump_path).unlink(missing_ok=True)  # type: ignore[attr-defined]
         except Exception:
             pass
+
+
+def ensure_unmanaged_tables(pg_env: dict[str, str]) -> None:
+    """Create unmanaged tables (metrics, market_stream, etc.) if they are missing."""
+    connection = psycopg.connect(
+        host=pg_env["POSTGRES_HOST"],
+        port=pg_env["POSTGRES_PORT"],
+        dbname=pg_env["POSTGRES_DB"],
+        user=pg_env["POSTGRES_USER"],
+        password=pg_env["POSTGRES_PASSWORD"],
+        sslmode=pg_env.get("POSTGRES_SSLMODE", "prefer"),
+    )
+    connection.autocommit = True
+    stmts = [
+        """
+        CREATE TABLE IF NOT EXISTS market_stream (
+            id BIGSERIAL PRIMARY KEY,
+            ts DOUBLE PRECISION,
+            chain VARCHAR(64),
+            symbol VARCHAR(64),
+            price DOUBLE PRECISION,
+            volume DOUBLE PRECISION,
+            raw JSONB
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS metrics (
+            id BIGSERIAL PRIMARY KEY,
+            ts DOUBLE PRECISION,
+            stage VARCHAR(64),
+            category VARCHAR(128),
+            name VARCHAR(128),
+            value DOUBLE PRECISION,
+            meta JSONB
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS feedback_events (
+            id BIGSERIAL PRIMARY KEY,
+            ts DOUBLE PRECISION,
+            source VARCHAR(128),
+            severity VARCHAR(32),
+            label VARCHAR(128),
+            details JSONB
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS trading_ops (
+            id BIGSERIAL PRIMARY KEY,
+            ts DOUBLE PRECISION,
+            wallet VARCHAR(128),
+            chain VARCHAR(64),
+            symbol VARCHAR(64),
+            action VARCHAR(32),
+            status VARCHAR(64),
+            details JSONB
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS advisories (
+            id BIGSERIAL PRIMARY KEY,
+            ts DOUBLE PRECISION,
+            scope VARCHAR(128),
+            topic VARCHAR(128),
+            severity VARCHAR(32),
+            message TEXT,
+            recommendation TEXT,
+            meta JSONB,
+            resolved BOOLEAN DEFAULT FALSE,
+            resolved_ts DOUBLE PRECISION
+        );
+        """,
+    ]
+    with connection.cursor() as cursor:
+        for stmt in stmts:
+            cursor.execute(stmt)
+    connection.close()
 
 
 if __name__ == "__main__":

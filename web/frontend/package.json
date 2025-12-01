@@ -7,6 +7,9 @@
     "build": "vite build",
     "preview": "vite preview"
   },
+  "overrides": {
+    "glob": "^10.5.0"
+  },
   "dependencies": {
     "axios": "^1.7.9",
     "pinia": "^2.1.7",

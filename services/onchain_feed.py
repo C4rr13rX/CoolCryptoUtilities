@@ -51,6 +51,7 @@ class OnChainPairFeed:
     def __init__(self, *, chain: str, symbol: str) -> None:
         self.chain = chain.lower()
         self.symbol = symbol.upper()
+        self._lookup_symbol = self._normalize_symbol(self.symbol)
         env_prefix = self.chain.upper()
         self.wss_url = os.getenv(f"{env_prefix}_WSS_URL") or os.getenv("GLOBAL_WSS_URL")
         self.rpc_url = os.getenv(f"{env_prefix}_RPC_URL") or os.getenv("GLOBAL_RPC_URL")
@@ -74,24 +75,51 @@ class OnChainPairFeed:
     # Setup helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        sym = symbol.upper()
+        if sym.endswith("USDBC"):
+            sym = sym.replace("USDBC", "USDbC")
+        return sym
+
     def _initialise_metadata(self) -> None:
         if not self.rpc_url:
             raise RuntimeError("RPC URL not configured.")
         web3 = Web3(HTTPProvider(self.rpc_url, request_kwargs={"timeout": 10}))
         index = _load_pair_index(self.chain)
         pair_address = None
+        symbols_available = []
+        target_parts = self._lookup_symbol.split("-") if "-" in self._lookup_symbol else [self._lookup_symbol]
         for addr, info in index.items():
-            if str(info.get("symbol", "")).upper() == self.symbol:
-                pair_address = Web3.toChecksumAddress(addr)
+            sym = str(info.get("symbol", "")).upper()
+            symbols_available.append(sym)
+            if sym == self._lookup_symbol:
+                pair_address = Web3.to_checksum_address(addr)
                 break
+            parts = sym.split("-") if "-" in sym else [sym]
+            if len(parts) == len(target_parts) == 2:
+                base_match = parts[0] == target_parts[0]
+                quote = parts[1]
+                normalized_quote = (
+                    quote.replace("USDBC", "USDbC")
+                    .replace("USDB", "USDbC")
+                    .replace("USDC", "USDbC")
+                )
+                quote_match = normalized_quote == target_parts[1]
+                if base_match and quote_match:
+                    pair_address = Web3.to_checksum_address(addr)
+                    break
         if not pair_address:
-            raise RuntimeError(f"Pair {self.symbol} not found in pair index for {self.chain}.")
+            raise RuntimeError(
+                f"Pair {self._lookup_symbol} not found in pair index for {self.chain}. "
+                f"Available sample: {symbols_available[:5]}"
+            )
         contract = web3.eth.contract(address=pair_address, abi=PAIR_ABI)
         token0_addr = contract.functions.token0().call()
         token1_addr = contract.functions.token1().call()
         token0 = self._load_token_metadata(web3, token0_addr)
         token1 = self._load_token_metadata(web3, token1_addr)
-        base_symbol, quote_symbol = self.symbol.split("-")
+        base_symbol, quote_symbol = self._lookup_symbol.split("-")
         base_match_token0 = token0.symbol.upper() == base_symbol.upper()
         base_match_token1 = token1.symbol.upper() == base_symbol.upper()
         if base_match_token0:
@@ -120,7 +148,7 @@ class OnChainPairFeed:
                 symbol = str(symbol_value)
         except Exception:
             symbol = address[:6]
-        return TokenMetadata(address=Web3.toChecksumAddress(address), decimals=decimals, symbol=symbol)
+        return TokenMetadata(address=Web3.to_checksum_address(address), decimals=decimals, symbol=symbol)
 
     # ------------------------------------------------------------------
     # Public API

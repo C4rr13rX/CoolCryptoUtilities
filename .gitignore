@@ -1,4 +1,7 @@
 **/.env
+.env.postgres
+.env.postgres.*
+*.env.local
 share/
 etc/
 lib/
@@ -35,3 +38,5 @@ data/intermediate/synthetic_ohlcv/
 data/market_snapshots_history/
 orchestration/dependency_state.json
 runtime/
+web/data/
+config/wallet_balance_overrides.json

@@ -4,28 +4,57 @@
       <header>
         <span class="label">Production Manager Console</span>
       </header>
-      <pre class="console-output">{{ managerText }}</pre>
+      <pre class="console-output" ref="managerEl">{{ managerText }}</pre>
     </article>
     <article class="console-card">
       <header>
         <span class="label">Guardian · Codex Console</span>
       </header>
-      <pre class="console-output">{{ guardianText }}</pre>
+      <pre class="console-output" ref="guardianEl">{{ guardianText }}</pre>
     </article>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{
   managerLines?: string[];
   guardianLines?: string[];
 }>();
 
+const managerEl = ref<HTMLElement | null>(null);
+const guardianEl = ref<HTMLElement | null>(null);
+
 const managerText = computed(() => (props.managerLines?.length ? props.managerLines.join('\n') : 'No output yet.'));
 const guardianText = computed(() =>
   props.guardianLines?.length ? props.guardianLines.join('\n') : 'No guardian transcript yet.'
+);
+
+function scrollToBottom(el: HTMLElement | null, force = false) {
+  if (!el) return;
+  const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+  const nearBottom = distanceFromBottom <= 40;
+  if (force || nearBottom) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+onMounted(() => {
+  nextTick(() => {
+    scrollToBottom(managerEl.value, true);
+    scrollToBottom(guardianEl.value, true);
+  });
+});
+
+watch(
+  () => props.managerLines?.length || 0,
+  () => nextTick(() => scrollToBottom(managerEl.value)),
+);
+
+watch(
+  () => props.guardianLines?.length || 0,
+  () => nextTick(() => scrollToBottom(guardianEl.value)),
 );
 </script>
 

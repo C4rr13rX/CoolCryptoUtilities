@@ -21,7 +21,7 @@ if not DEFAULT_PYTHON:
         import sys
 
         DEFAULT_PYTHON = sys.executable
-DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py"]
+DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py", "--action", "start_production"]
 LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "console.log"
@@ -44,7 +44,7 @@ class ConsoleProcessManager:
             self._rotate_log_if_needed()
             logfile = LOG_PATH.open("a", encoding="utf-8")
             env = build_process_env(user)
-            env.setdefault("WALLET_ALLOW_AUTOMATION", "0")
+            env.setdefault("WALLET_ALLOW_AUTOMATION", "1")
             try:
                 proc = subprocess.Popen(
                     cmd,

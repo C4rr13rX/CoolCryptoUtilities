@@ -23,6 +23,8 @@ from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
 from trading.opportunity import OpportunityTracker
 from trading.savings import StableSavingsPlanner, SavingsEvent
+from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
+from services.swarm_strategies import SwarmStrategySelector
 from trading.constants import (
     PRIMARY_CHAIN,
     PRIMARY_SYMBOL,
@@ -77,7 +79,12 @@ class TradingBot:
         self.total_trades: int = 0
         self.wins: int = 0
         self.max_trade_share: float = min(0.5, max(0.05, MAX_QUOTE_SHARE))
-        self.stable_checkpoint_ratio: float = 0.15
+        self._transition_plan: Dict[str, Any] = {}
+        self._savings_ready_ratio = float(os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15")))
+        self._savings_bootstrap_ratio = float(
+            os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05"))
+        )
+        self.stable_checkpoint_ratio: float = max(0.0, min(0.5, self._savings_bootstrap_ratio))
         self.bus_routes: Dict[str, List[str]] = {}
         self.stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD"}
         self.sim_quote_balances: Dict[Tuple[str, str], float] = {}
@@ -133,7 +140,10 @@ class TradingBot:
         self._wallet_sync_lock = asyncio.Lock()
         self._bridge_init_attempted = False
         self.equilibrium = EquilibriumTracker()
+        self.profit_equilibrium = ProfitEquilibriumTracker(window_sec=int(os.getenv("EQUILIBRIUM_WINDOW_SEC", "900")))
+        self.swarm_selector = SwarmStrategySelector(max_strategies=5)
         self._nash_equilibrium_reached: bool = False
+        self._sync_checkpoint_ratio(equilibrium_ready=False)
         self._cache_balances = CacheBalances(db=self.db)
         self._cache_transfers = CacheTransfers(db=self.db)
         self._bridge = self._init_bridge()
@@ -149,8 +159,11 @@ class TradingBot:
         self.primary_symbol: str = PRIMARY_SYMBOL
         self.gas_buffer_multiplier: float = max(1.0, float(os.getenv("GAS_BUFFER_MULTIPLIER", str(GAS_PROFIT_BUFFER))))
         self.gas_profit_guard: float = max(1.0, float(os.getenv("GAS_PROFIT_SAFETY", str(GAS_PROFIT_BUFFER))))
+        self.gas_roundtrip_fee_ratio: float = max(0.0, float(os.getenv("GAS_ROUNDTRIP_FEE_RATIO", "0.0025")))
+        self.gas_bridge_flat_fee: float = max(0.0, float(os.getenv("GAS_BRIDGE_FLAT_FEE_USD", "0.0")))
         self._latency_samples: int = 0
         self._enable_bg_refinement = os.getenv("ENABLE_BG_REFINEMENT", "0").lower() in {"1", "true", "yes", "on"}
+        self._equilibrium_last_adjust = 0.0
         self.live_trading_enabled: bool = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
         self.auto_promote_live: bool = os.getenv("AUTO_PROMOTE_LIVE", "0").lower() in {"1", "true", "yes", "on"}
         self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.9"))
@@ -174,10 +187,74 @@ class TradingBot:
             return
         self._running = True
         self.stream.register(self._handle_sample)
+        self._apply_equilibrium_bias(initial=True)
         tasks = [self.stream.start()]
         if self._enable_bg_refinement:
             tasks.append(self._start_background_refinement())
         await asyncio.gather(*tasks)
+
+    def scheduler_filter_metrics(self) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        try:
+            if hasattr(self.scheduler, "filter_metrics"):
+                out = self.scheduler.filter_metrics()  # type: ignore[attr-defined]
+        except Exception:
+            out = []
+        return out
+
+    def _apply_equilibrium_bias(self, *, initial: bool) -> None:
+        """
+        Light-touch adaptive knobs based on recent profit equilibrium and swarm
+        micro-strategy score. Keeps adjustments small to avoid destabilizing runs.
+        """
+        try:
+            eq = self.profit_equilibrium.snapshot()
+        except Exception:
+            return
+        brightness = float(eq.get("brightness", 0.0))
+        trend = float(eq.get("trend", 0.0))
+        _, swarm_score = self.swarm_selector.best()
+        # Base knobs
+        base_thresh = self.pipeline.decision_threshold
+        new_thresh = base_thresh
+        # If equilibrium is dim or trending down, tighten threshold slightly.
+        if brightness < 0.2 or trend < 0:
+            new_thresh = min(0.9, base_thresh + 0.02)
+        elif brightness > 0.6 and trend >= 0:
+            new_thresh = max(0.45, base_thresh - 0.02)
+        # Adjust risk budgets modestly.
+        risk_scale = 1.0
+        if brightness < 0.2:
+            risk_scale = 0.6
+        elif brightness > 0.6 and trend >= 0:
+            risk_scale = 1.15
+        # Swarm bias: nudge risk and threshold based on best micro strategy score.
+        if swarm_score < 0:
+            new_thresh = min(0.9, new_thresh + 0.01)
+            risk_scale *= 0.9
+        elif swarm_score > 0:
+            new_thresh = max(0.4, new_thresh - 0.01)
+            risk_scale *= 1.05
+
+        # Apply clamps
+        self.pipeline.decision_threshold = float(max(0.35, min(0.9, new_thresh)))
+        max_share = float(os.getenv("MAX_SYMBOL_SHARE", "0.25"))
+        self.max_trade_share = float(max(0.05, min(max_share, self.max_trade_share * risk_scale)))
+        self.global_risk_budget = float(max(0.3, min(2.0, self.global_risk_budget * risk_scale)))
+
+        if not initial:
+            self.metrics.record(
+                MetricStage.GHOST_TRADING,
+                {
+                    "eq_brightness": brightness,
+                    "eq_trend": trend,
+                    "swarm_score": swarm_score,
+                    "decision_threshold": self.pipeline.decision_threshold,
+                    "max_trade_share": self.max_trade_share,
+                    "risk_budget": self.global_risk_budget,
+                },
+                category="equilibrium_adjust",
+            )
 
     def _init_sim_balances(self) -> None:
         """Initialise simulated balances based on the real portfolio snapshot."""
@@ -219,8 +296,25 @@ class TradingBot:
         if not hasattr(self, "savings") or not isinstance(self.savings, StableSavingsPlanner):
             savings_batch = float(os.getenv("SAVINGS_TRANSFER_MIN_USD", "50"))
             self.savings = StableSavingsPlanner(min_batch=savings_batch)
+        if not hasattr(self, "_transition_plan") or not isinstance(self._transition_plan, dict):
+            self._transition_plan = {}
+        if not hasattr(self, "_savings_ready_ratio"):
+            self._savings_ready_ratio = float(
+                os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15"))
+            )
+        if not hasattr(self, "_savings_bootstrap_ratio"):
+            self._savings_bootstrap_ratio = float(
+                os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05"))
+            )
+        if not hasattr(self, "stable_checkpoint_ratio"):
+            self.stable_checkpoint_ratio = max(0.0, min(0.5, self._savings_bootstrap_ratio))
+        self._sync_checkpoint_ratio(equilibrium_ready=getattr(self, "_nash_equilibrium_reached", False))
         if not hasattr(self, "_timeline_path"):
             self._timeline_path = Path(os.getenv("ORGANISM_TIMELINE_PATH", "runtime/organism_timeline.json"))
+        if not hasattr(self, "profit_equilibrium"):
+            self.profit_equilibrium = ProfitEquilibriumTracker(window_sec=int(os.getenv("EQUILIBRIUM_WINDOW_SEC", "900")))
+        if not hasattr(self, "swarm_selector"):
+            self.swarm_selector = SwarmStrategySelector(max_strategies=5)
 
     def __getstate__(self) -> Dict[str, Any]:
         state = dict(self.__dict__)
@@ -545,6 +639,7 @@ class TradingBot:
             "threshold_scale": threshold_scale,
             "fingerprint": fingerprint.tolist(),
             "live_transition": self._live_transition_state,
+            "transition_plan": self._transition_plan,
         }
         try:
             self.metrics.record(
@@ -624,6 +719,33 @@ class TradingBot:
         except Exception:
             pass
 
+    def _sync_checkpoint_ratio(self, *, equilibrium_ready: Optional[bool] = None) -> None:
+        if equilibrium_ready is None:
+            equilibrium_ready = self._nash_equilibrium_reached
+        target = self._savings_ready_ratio if equilibrium_ready else self._savings_bootstrap_ratio
+        try:
+            target = float(target)
+        except Exception:
+            target = 0.0
+        target = max(0.0, min(0.5, target))
+        if abs(self.stable_checkpoint_ratio - target) > 1e-6:
+            self.stable_checkpoint_ratio = target
+
+    def apply_transition_plan(self, plan: Optional[Dict[str, Any]]) -> None:
+        if not isinstance(plan, dict):
+            return
+        self._transition_plan = dict(plan)
+        ready_ratio = plan.get("savings_ratio_ready")
+        bootstrap_ratio = plan.get("savings_ratio_bootstrap")
+        try:
+            if ready_ratio is not None:
+                self._savings_ready_ratio = max(0.0, min(0.5, float(ready_ratio)))
+            if bootstrap_ratio is not None:
+                self._savings_bootstrap_ratio = max(0.0, min(0.5, float(bootstrap_ratio)))
+        except Exception:
+            pass
+        self._sync_checkpoint_ratio()
+
     def _handle_gas_starvation(self, chain: str, native_balance: float) -> None:
         message = f"Scheduler paused directives on {chain} because native balance dropped to {native_balance:.4f}."
         recommendation = "Bridge or swap into native gas on the affected chain to resume trading."
@@ -642,10 +764,33 @@ class TradingBot:
             meta=meta,
         )
 
+    def _replay_gate_allows(self) -> tuple[bool, Optional[str]]:
+        if os.getenv("LIVE_REPLAY_REQUIRED", "0").lower() not in {"1", "true", "yes", "on"}:
+            return True, None
+        path = Path(os.getenv("LIVE_REPLAY_REPORT", "data/reports/replay_gate.json"))
+        ttl = float(os.getenv("LIVE_REPLAY_TTL_SEC", str(7 * 24 * 3600)))
+        if not path.exists():
+            return False, f"replay report missing at {path}"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"replay report unreadable: {exc}"
+        status = str(payload.get("status", "")).lower()
+        updated = float(payload.get("updated_at", 0.0))
+        if status not in {"pass", "ok", "success"}:
+            return False, f"replay status={status}"
+        if ttl > 0 and time.time() - updated > ttl:
+            return False, "replay report expired"
+        return True, None
+
     def _maybe_transition_to_live(self, *, latest_decision: Optional[Dict[str, Any]]) -> None:
         if not self.auto_promote_live:
             self._live_transition_state = {"enabled": self.live_trading_enabled, "reason": "auto_promote_disabled"}
             return
+        try:
+            self.apply_transition_plan(self.pipeline.transition_plan())
+        except Exception:
+            pass
         readiness = self.pipeline.live_readiness_report()
         self._live_transition_state = readiness or {"enabled": self.live_trading_enabled}
         if readiness:
@@ -664,6 +809,41 @@ class TradingBot:
             return
         if samples < self.required_live_trades:
             return
+        replay_ok, replay_reason = self._replay_gate_allows()
+        if not replay_ok:
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "reason": "replay_gate",
+                "detail": replay_reason,
+            }
+            return
+        try:
+            trades = self.pipeline.metrics.ghost_trade_snapshot(
+                limit=max(self.required_live_trades * 2, 500),
+                lookback_sec=self.pipeline.focus_lookback_sec,
+            )
+            ghost_metrics = self.pipeline.metrics.aggregate_trade_metrics(trades)
+        except Exception:
+            trades = []
+            ghost_metrics = {}
+        ghost_count = len(trades)
+        ghost_win_rate = float(ghost_metrics.get("win_rate", 0.0))
+        ghost_profit = float(sum(float(getattr(t, "profit", 0.0)) for t in trades))
+        if (
+            ghost_count < self.required_live_trades
+            or ghost_win_rate < self.required_live_win_rate
+            or ghost_profit < self.required_live_profit
+        ):
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "ghost_trades": ghost_count,
+                "ghost_win_rate": ghost_win_rate,
+                "ghost_profit": ghost_profit,
+                "reason": "ghost_performance_gate",
+            }
+            return
         plan = self.swap_validator.plan_transition(
             positions=self.positions,
             exposure=self.active_exposure,
@@ -680,11 +860,28 @@ class TradingBot:
             )
             return
         self.live_trading_enabled = True
+        self._live_transition_state = {
+            **(readiness or {}),
+            "enabled": True,
+            "ghost_trades": ghost_count,
+            "ghost_win_rate": ghost_win_rate,
+            "ghost_profit": ghost_profit,
+            "plan": plan,
+        }
         self.metrics.feedback(
             "live_transition",
             severity=FeedbackSeverity.INFO,
             label="live_enabled",
-            details={"threshold": threshold, "precision": precision, "recall": recall, "samples": samples, "plan": plan},
+            details={
+                "threshold": threshold,
+                "precision": precision,
+                "recall": recall,
+                "samples": samples,
+                "plan": plan,
+                "ghost_trades": ghost_count,
+                "ghost_win_rate": ghost_win_rate,
+                "ghost_profit": ghost_profit,
+            },
         )
         self._save_state()
 
@@ -1055,18 +1252,22 @@ class TradingBot:
         cycle_start = time.perf_counter()
         self._processing_sample = True
         try:
+            now = float(sample.get("ts") or time.time())
+            if now - self._equilibrium_last_adjust >= 15.0:
+                self._apply_equilibrium_bias(initial=False)
+                self._equilibrium_last_adjust = now
+
             self._buffer.append(sample)
             if len(self._buffer) < self.window_size:
                 return
 
-            sample_ts = float(sample.get("ts") or time.time())
+            sample_ts = now
             signature = (sample.get("symbol", ""), sample_ts)
             if signature == self._last_sample_signature:
                 return
             self._last_sample_signature = signature
 
             model = self.pipeline.ensure_active_model()
-            now = sample_ts
             if now >= self._portfolio_next_refresh:
                 try:
                     self.portfolio.refresh()
@@ -1315,6 +1516,7 @@ class TradingBot:
             "direction_prob": direction_prob,
             "expected_delta": delta,
             "net_margin": margin,
+            "net_margin_after_fees": margin - fees,
             "net_pnl": pnl,
             "status": "ghost",
             "action": "hold",
@@ -1469,10 +1671,13 @@ class TradingBot:
             reason = directive.reason
         elif pos is None:
             enter_threshold = max(0.5, min(0.99, enter_threshold + float(adjustments.get("enter_offset", 0.0))))
+            min_margin_gate = max(min_margin_required, fees)
+            net_margin_after_fees = margin - fees
             if (
                 direction_prob >= enter_threshold
                 and exit_conf_val >= enter_threshold
-                and margin >= min_margin_required
+                and margin >= min_margin_gate
+                and net_margin_after_fees >= SMALL_PROFIT_FLOOR
                 and expected_profit_units >= SMALL_PROFIT_FLOOR
                 and delta >= 0.0
             ):
@@ -1633,6 +1838,7 @@ class TradingBot:
             )
             equilibrium_ready = self.equilibrium.is_equilibrium()
             self._nash_equilibrium_reached = equilibrium_ready
+            self._sync_checkpoint_ratio(equilibrium_ready=equilibrium_ready)
             savings_event = None
             equilibrium_score = self.equilibrium.score()
             trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
@@ -1953,7 +2159,10 @@ class TradingBot:
         )
         estimated_gas_cost_usd = gas_required * native_price
         target_buffer_usd = target_native * native_price
-        profit_guard_passed = expected_profit_usd > (estimated_gas_cost_usd * self.gas_profit_guard)
+        roundtrip_fee_usd = target_buffer_usd * max(self.gas_roundtrip_fee_ratio, 0.0)
+        bridge_fee_usd = self.gas_bridge_flat_fee if remaining_native > 0.0 else 0.0
+        total_replenish_cost_usd = estimated_gas_cost_usd + roundtrip_fee_usd + bridge_fee_usd
+        profit_guard_passed = expected_profit_usd > (total_replenish_cost_usd * self.gas_profit_guard)
 
         chain_l = chain.lower()
         stable_holdings = [
@@ -2033,6 +2242,9 @@ class TradingBot:
             "native_price_usd": native_price,
             "expected_profit_usd": expected_profit_usd,
             "estimated_gas_cost_usd": estimated_gas_cost_usd,
+            "roundtrip_fee_usd": roundtrip_fee_usd,
+            "bridge_fee_usd": bridge_fee_usd,
+            "total_replenish_cost_usd": total_replenish_cost_usd,
             "profit_guard_passed": profit_guard_passed,
             "stable_swap_plan": swap_plan,
             "bridge_candidates": bridge_candidates,

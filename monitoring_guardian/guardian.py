@@ -77,6 +77,12 @@ DEFAULT_CONFIG: Dict[str, object] = {
     "sample_tail_lines": 200,
 }
 
+SEARCH_HELP = (
+    "Web search helper: import WebSearch from services.web_search. "
+    "Use `WebSearch().search(\"topic\", limit=5)` to get title/url/snippet pairs "
+    "and `WebSearch().fetch_text(url)` to pull page text when outside context is needed."
+)
+
 
 class LogFollower:
     def __init__(self, path: Path) -> None:
@@ -348,7 +354,7 @@ class Guardian:
                 instructions = DEFAULT_GUARDIAN_PROMPT
         else:
             instructions = DEFAULT_GUARDIAN_PROMPT
-        return f"{findings_snippet}\n{instructions}"
+        return f"{findings_snippet}\n{instructions}\n{SEARCH_HELP}"
 
     def request_report(self) -> None:
         self._force_report.set()

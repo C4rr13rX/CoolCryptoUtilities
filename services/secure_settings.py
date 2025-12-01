@@ -8,15 +8,28 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from django.conf import settings as django_settings
 from django.contrib.auth import get_user_model
 from kyber_py import kyber
 
-from securevault.models import SecureSetting
+try:
+    import django
+    if django_settings.configured and not django.apps.apps.ready:  # type: ignore[attr-defined]
+        django.setup()
+except Exception:
+    pass
+
+try:
+    from securevault.models import SecureSetting
+except Exception:
+    SecureSetting = None  # type: ignore
 
 PLACEHOLDER_PATTERN = re.compile(r"\${([A-Z0-9_]+)}")
 _KYBER = kyber.Kyber512
 _KEY_LOCK = threading.Lock()
 _LEGACY_ENV_CACHE: Optional[Dict[str, str]] = None
+_LEGACY_ENV_PATH: Optional[Path] = None
+_LEGACY_ENV_MTIME: float = 0.0
 
 
 def _key_dir() -> Path:
@@ -106,37 +119,63 @@ def mask_value(value: Optional[str]) -> str:
 
 
 def _load_legacy_env() -> Dict[str, str]:
-    global _LEGACY_ENV_CACHE
-    if _LEGACY_ENV_CACHE is not None:
-        return _LEGACY_ENV_CACHE
+    global _LEGACY_ENV_CACHE, _LEGACY_ENV_PATH, _LEGACY_ENV_MTIME
     env_data: Dict[str, str] = {}
+    force_refresh = os.getenv("FORCE_ENV_REFRESH") or os.getenv("FORCE_ENV_RELOAD")
     candidates = [
         Path(".env"),
+        Path(".env.postgres"),
+        Path(".env.postgres.user"),
         Path.cwd() / ".env",
+        Path.cwd() / ".env.postgres",
+        Path.cwd() / ".env.postgres.user",
         Path(__file__).resolve().parents[1] / ".env",
+        Path(__file__).resolve().parents[1] / ".env.postgres",
+        Path(__file__).resolve().parents[1] / ".env.postgres.user",
     ]
+    chosen: Optional[Path] = None
     for candidate in candidates:
-        if not candidate.exists():
-            continue
-        try:
-            with candidate.open("r", encoding="utf-8") as handle:
-                for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    name, value = line.split("=", 1)
-                    name = name.strip()
-                    if not name or name in env_data:
-                        continue
-                    env_data[name] = value.strip()
+        if candidate.exists():
+            chosen = candidate
             break
-        except Exception:
-            continue
+    if not chosen:
+        _LEGACY_ENV_CACHE = {}
+        _LEGACY_ENV_PATH = None
+        _LEGACY_ENV_MTIME = 0.0
+        return {}
+    try:
+        mtime = chosen.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    if (
+        _LEGACY_ENV_CACHE is not None
+        and _LEGACY_ENV_PATH == chosen
+        and _LEGACY_ENV_MTIME >= mtime
+        and not force_refresh
+    ):
+        return _LEGACY_ENV_CACHE
+    try:
+        with chosen.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                name = name.strip()
+                if not name or name in env_data:
+                    continue
+                env_data[name] = value.strip()
+    except Exception:
+        env_data = {}
     _LEGACY_ENV_CACHE = env_data
+    _LEGACY_ENV_PATH = chosen
+    _LEGACY_ENV_MTIME = mtime
     return env_data
 
 
 def get_settings_for_user(user) -> Dict[str, str]:
+    if SecureSetting is None:
+        return {}
     if user is None:
         return {}
     settings = SecureSetting.objects.filter(user=user)
@@ -185,7 +224,23 @@ def default_env_user():
 def build_process_env(user=None) -> Dict[str, str]:
     user = user or default_env_user()
     env = dict(os.environ)
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_bin = repo_root / "bin"
+    try:
+        repo_bin = repo_bin.resolve()
+    except Exception:
+        pass
+    path = env.get("PATH", "")
+    path_entries = [str(repo_bin)]
+    if path:
+        path_entries.append(path)
+    env["PATH"] = os.pathsep.join(path_entries)
     for key, value in _load_legacy_env().items():
         env.setdefault(key, value)
     env.update(get_settings_for_user(user))
+    # Prefer Postgres across all services unless explicitly overridden.
+    if "DJANGO_DB_VENDOR" not in env and "TRADING_DB_VENDOR" in env:
+        env.setdefault("DJANGO_DB_VENDOR", env["TRADING_DB_VENDOR"])
+    env.setdefault("TRADING_DB_VENDOR", env.get("DJANGO_DB_VENDOR", "postgres"))
+    env.setdefault("ALLOW_SQLITE_FALLBACK", "0")
     return _resolve_placeholders(env)

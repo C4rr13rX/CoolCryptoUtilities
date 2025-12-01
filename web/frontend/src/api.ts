@@ -336,6 +336,59 @@ export async function uploadCodeGraphSnapshot(payload: { timestamp: string; node
   return data;
 }
 
+// ----------------------------- BrandDozer ------------------------------------
+export async function fetchBrandProjects() {
+  const { data } = await api.get('/branddozer/projects/');
+  return data;
+}
+
+export async function fetchBrandRoots(path?: string) {
+  const params = path ? { path } : undefined;
+  const { data } = await api.get('/branddozer/projects/roots/', { params });
+  return data;
+}
+
+export async function createBrandProject(payload: Record<string, any>) {
+  const { data } = await api.post('/branddozer/projects/', payload);
+  return data;
+}
+
+export async function updateBrandProject(id: string, payload: Record<string, any>) {
+  const { data } = await api.patch(`/branddozer/projects/${id}/`, payload);
+  return data;
+}
+
+export async function deleteBrandProject(id: string) {
+  const { data } = await api.delete(`/branddozer/projects/${id}/`);
+  return data;
+}
+
+export async function startBrandProject(id: string) {
+  const { data } = await api.post(`/branddozer/projects/${id}/start/`);
+  return data;
+}
+
+export async function stopBrandProject(id: string) {
+  const { data } = await api.post(`/branddozer/projects/${id}/stop/`);
+  return data;
+}
+
+export async function fetchBrandLogs(id: string, limit = 200) {
+  const { data } = await api.get(`/branddozer/projects/${id}/logs/`, { params: { limit } });
+  return data;
+}
+
+export async function generateBrandInterjections(id: string, defaultPrompt?: string) {
+  const payload = defaultPrompt ? { default_prompt: defaultPrompt } : undefined;
+  const { data } = await api.post(`/branddozer/projects/${id}/interjections/`, payload);
+  return data;
+}
+
+export async function importBrandProjectFromGitHub(payload: Record<string, any>) {
+  const { data } = await api.post('/branddozer/projects/import/github/', payload);
+  return data;
+}
+
 export interface DataLabSignalParams {
   window?: string;
   direction?: 'bullish' | 'bearish' | 'all';

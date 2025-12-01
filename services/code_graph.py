@@ -111,14 +111,18 @@ class GraphEdge:
 
 
 class FileAnalyzer(ast.NodeVisitor):
-    def __init__(self, rel_path: str, file_node: GraphNode) -> None:
+    def __init__(self, rel_path: str, module_name: str, file_node: GraphNode) -> None:
         self.rel_path = rel_path
+        self.module_name = module_name
+        self.module_parts = module_name.split(".") if module_name else []
         self.file_node = file_node
         self.nodes: List[GraphNode] = []
         self.edges: List[GraphEdge] = []
         self.calls: List[Tuple[str, str]] = []
         self.scope: List[Tuple[str, str, str]] = []
         self.name_index: Dict[str, List[str]] = defaultdict(list)
+        self.imports: List[str] = []
+        self.definitions: List[str] = []
 
     # ------------------------------------------------------------------ helpers
     def _register(self, node: GraphNode, parent_id: Optional[str] = None) -> None:
@@ -126,6 +130,8 @@ class FileAnalyzer(ast.NodeVisitor):
         parent = parent_id or self.file_node.id
         self.edges.append(GraphEdge(parent, node.id, "contains"))
         self.name_index[node.label].append(node.id)
+        if node.kind in {"class", "function", "method"}:
+            self.definitions.append(node.label)
 
     def _current_container(self) -> Optional[str]:
         return self.scope[-1][0] if self.scope else None
@@ -196,6 +202,37 @@ class FileAnalyzer(ast.NodeVisitor):
             self.calls.append((caller, callee))
         self.generic_visit(node)
 
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            name = getattr(alias, "name", "")
+            if name:
+                self.imports.append(name)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = self._resolve_import_from_module(node.module, node.level or 0)
+        if not module and not node.names:
+            return
+        if module:
+            self.imports.append(module)
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            target = f"{module}.{alias.name}" if module else alias.name
+            if target:
+                self.imports.append(target)
+        self.generic_visit(node)
+
+    def _resolve_import_from_module(self, module: Optional[str], level: int) -> str:
+        if not level:
+            return module or ""
+        base = self.module_parts[:-1] if self.module_parts else []
+        if level > 0:
+            base = base[: max(0, len(base) - level)]
+        if module:
+            base += module.split(".")
+        return ".".join(part for part in base if part)
+
 
 class ProjectGraph:
     def __init__(self, root: Path, file_list: Optional[List[str]] = None) -> None:
@@ -208,6 +245,10 @@ class ProjectGraph:
         self.reference_counts: Dict[str, int] = defaultdict(int)
         self.errors: List[str] = []
         self.warnings: List[str] = []
+        self.file_imports: Dict[str, set[str]] = defaultdict(set)
+        self.file_nodes_by_path: Dict[str, str] = {}
+        self.module_index: Dict[str, str] = {}
+        self.file_links: Dict[Tuple[str, str], Dict[str, int]] = defaultdict(lambda: {"imports": 0, "calls": 0})
 
     # ------------------------------------------------------------------ public
     def build(self) -> Dict[str, object]:
@@ -216,6 +257,7 @@ class ProjectGraph:
             self._process_file(file_path)
         self._resolve_references()
         self._mark_unused_nodes()
+        self._build_file_links()
         summary = {
             "files": len([node for node in self.nodes.values() if node.kind == "file"]),
             "classes": len([node for node in self.nodes.values() if node.kind == "class"]),
@@ -228,6 +270,7 @@ class ProjectGraph:
             "errors": self.errors,
             "summary": summary,
             "generated_at": time.time(),
+            "file_links": self._serialize_file_links(),
         }
 
     # ------------------------------------------------------------------ helpers
@@ -251,6 +294,11 @@ class ProjectGraph:
         rel_path = str(path.relative_to(self.root))
         file_node = GraphNode(id=f"file::{rel_path}", label=rel_path, kind="file", file=rel_path)
         self.nodes[file_node.id] = file_node
+        self.file_nodes_by_path[rel_path] = file_node.id
+        module_name = self._module_name_from_path(rel_path)
+        if module_name:
+            file_node.meta["module"] = module_name
+            self.module_index[module_name] = file_node.id
         try:
             source = path.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=rel_path)
@@ -260,7 +308,7 @@ class ProjectGraph:
             self.errors.append(file_node.id)
             return
 
-        analyzer = FileAnalyzer(rel_path, file_node)
+        analyzer = FileAnalyzer(rel_path, module_name, file_node)
         analyzer.visit(tree)
         for node in analyzer.nodes:
             self.nodes[node.id] = node
@@ -271,6 +319,11 @@ class ProjectGraph:
         for name, ids in analyzer.name_index.items():
             self.name_index[name].extend(ids)
         self.call_records.extend(analyzer.calls)
+        if analyzer.imports:
+            file_node.meta["imports"] = sorted(set(analyzer.imports))
+            self.file_imports[file_node.id].update(analyzer.imports)
+        if analyzer.definitions:
+            file_node.meta["definitions"] = sorted(set(analyzer.definitions))
 
     def _resolve_references(self) -> None:
         seen_pairs = set()
@@ -295,6 +348,56 @@ class ProjectGraph:
             node.status = "unused"
             self.warnings.append(node.id)
 
+    def _build_file_links(self) -> None:
+        for file_id, imports in self.file_imports.items():
+            for module in imports:
+                target = self.module_index.get(module)
+                if target:
+                    self._record_file_link(file_id, target, "imports")
+        for edge in self.edges:
+            if edge.kind != "calls":
+                continue
+            source_node = self.nodes.get(edge.source)
+            target_node = self.nodes.get(edge.target)
+            if not source_node or not target_node:
+                continue
+            source_file = self.file_nodes_by_path.get(source_node.file)
+            target_file = self.file_nodes_by_path.get(target_node.file)
+            if not source_file or not target_file:
+                continue
+            self._record_file_link(source_file, target_file, "calls")
+
+    def _record_file_link(self, source_file: str, target_file: str, reason: str) -> None:
+        if source_file == target_file:
+            return
+        bucket = self.file_links[(source_file, target_file)]
+        bucket[reason] = bucket.get(reason, 0) + 1
+
+    def _serialize_file_links(self) -> List[Dict[str, object]]:
+        payload: List[Dict[str, object]] = []
+        for (source, target), counts in self.file_links.items():
+            weight = counts.get("imports", 0) + counts.get("calls", 0)
+            if weight <= 0:
+                continue
+            payload.append(
+                {
+                    "source": source,
+                    "target": target,
+                    "imports": counts.get("imports", 0),
+                    "calls": counts.get("calls", 0),
+                    "weight": weight,
+                }
+            )
+        return payload
+
+    @staticmethod
+    def _module_name_from_path(rel_path: str) -> str:
+        path = Path(rel_path)
+        parts = list(path.with_suffix("").parts)
+        if parts and parts[-1] == "__init__":
+            parts = parts[:-1]
+        return ".".join(parts)
+
 
 def build_code_graph(file_list: Optional[List[str]] = None) -> Dict[str, object]:
     graph = ProjectGraph(PROJECT_ROOT, file_list=file_list)
@@ -303,21 +406,50 @@ def build_code_graph(file_list: Optional[List[str]] = None) -> Dict[str, object]
 
 def get_code_graph(force_refresh: bool = False) -> Dict[str, object]:
     file_paths = _list_source_files()
-    snapshot = _collect_file_snapshot(file_paths)
-    cached = None if force_refresh else _load_cached_graph()
-    building_flag = _is_building()
-    if cached and not _files_changed(cached.get("files") or [], snapshot):
+    cached = _load_cached_graph()
+    snapshot: Optional[List[Dict[str, object]]] = None
+
+    if cached and not force_refresh:
         payload = dict(cached)
         payload["cached"] = True
-        payload["building"] = building_flag
+        payload["building"] = _is_building()
         return payload
 
+    if cached:
+        snapshot = _collect_file_snapshot(file_paths)
+        if not force_refresh and not _files_changed(cached.get("files") or [], snapshot):
+            payload = dict(cached)
+            payload["cached"] = True
+            payload["building"] = _is_building()
+            return payload
+    elif force_refresh:
+        snapshot = _collect_file_snapshot(file_paths)
+
     _kickoff_background_build(file_paths, snapshot)
-    placeholder = cached or _empty_payload()
-    placeholder["files"] = cached.get("files") if cached else snapshot  # type: ignore[union-attr]
+
+    placeholder = dict(cached) if cached else _empty_payload()
+    if not placeholder.get("nodes"):
+        placeholder["nodes"] = []
+        placeholder["edges"] = []
+        placeholder["warnings"] = []
+        placeholder["errors"] = []
+        placeholder["summary"] = placeholder.get("summary") or {"files": 0, "classes": 0, "functions": 0}
+
+    if placeholder.get("files"):
+        pass
+    elif snapshot:
+        placeholder["files"] = snapshot
+    else:
+        placeholder["files"] = [{"path": path} for path in file_paths]
+
     placeholder["cached"] = bool(cached)
     placeholder["building"] = True
     return placeholder
+
+
+def request_code_graph_refresh() -> None:
+    file_paths = _list_source_files()
+    _kickoff_background_build(file_paths)
 
 
 def list_tracked_files() -> List[str]:

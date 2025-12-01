@@ -10,11 +10,18 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:  # pragma: no cover - psycopg optional for SQLite-only setups
+    psycopg = None  # type: ignore
+    dict_row = None  # type: ignore
 
 class TradingDatabase:
     """
-    Lightweight SQLite wrapper used for caching, experiment tracking, and trading logs.
-    Designed to be thread-safe (within CPython) and shared across the application.
+    Backing store for trading data. Supports SQLite (legacy) and PostgreSQL
+    (preferred). When TRADING_DB_VENDOR or DJANGO_DB_VENDOR is set to
+    'postgres', psycopg is used with the POSTGRES_* env vars.
     """
 
     _DEFAULT_PATH = os.getenv(
@@ -23,6 +30,29 @@ class TradingDatabase:
     )
 
     def __init__(self, path: Optional[str] = None) -> None:
+        vendor_env = (os.getenv("TRADING_DB_VENDOR") or os.getenv("DJANGO_DB_VENDOR") or "sqlite").lower()
+        # If an explicit path is provided, prefer a local SQLite db for isolation (used by tests and temp caches).
+        if path is not None:
+            self._vendor = "sqlite"
+        else:
+            self._vendor = "postgres" if vendor_env == "postgres" else "sqlite"
+        self._lock = threading.Lock()
+        if self._vendor == "postgres" and psycopg is not None:
+            try:
+                self._init_postgres()
+                return
+            except Exception as exc:
+                fallback_enabled = (os.getenv("ALLOW_SQLITE_FALLBACK", "0") or "0").lower() not in {"0", "false", "off"}
+                if not fallback_enabled:
+                    raise
+                self._vendor = "sqlite"
+                _log_db_warning(
+                    "postgres-init-failed; using sqlite fallback",
+                    {"error": str(exc), "host": os.getenv("POSTGRES_HOST", "127.0.0.1")},
+                )
+        self._init_sqlite(path)
+
+    def _init_sqlite(self, path: Optional[str]) -> None:
         candidate = Path(path or self._DEFAULT_PATH).expanduser()
         try:
             candidate.parent.mkdir(parents=True, exist_ok=True)
@@ -33,7 +63,6 @@ class TradingDatabase:
             self.path = str(fallback)
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
         self._init_schema()
 
     # ------------------------------------------------------------------
@@ -275,9 +304,218 @@ class TradingDatabase:
                     updated REAL DEFAULT (strftime('%s','now')),
                     details TEXT
                 );
-                """
+        """
             )
 
+    def _init_postgres(self) -> None:
+        if psycopg is None:
+            raise RuntimeError("psycopg is required for postgres backend.")
+        host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+        port = os.getenv("POSTGRES_PORT", "5432")
+        dbname = os.getenv("POSTGRES_DB", "coolcrypto")
+        user = os.getenv("POSTGRES_USER", "coolcrypto")
+        password = os.getenv("POSTGRES_PASSWORD", "coolcrypto_password")
+        sslmode = os.getenv("POSTGRES_SSLMODE", "prefer")
+        conn = psycopg.connect(
+            host=host,
+            port=port,
+            dbname=dbname,
+            user=user,
+            password=password,
+            sslmode=sslmode,
+        )
+        conn.autocommit = True
+        self._conn = _PgConnection(conn)
+        self._init_schema_postgres()
+
+    def _init_schema_postgres(self) -> None:
+        stmts = [
+            """
+            CREATE TABLE IF NOT EXISTS kv_store (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS control_flags (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS balances (
+                wallet TEXT NOT NULL,
+                chain  TEXT NOT NULL,
+                token  TEXT NOT NULL,
+                balance_hex TEXT,
+                asof_block BIGINT,
+                ts DOUBLE PRECISION,
+                decimals INTEGER,
+                quantity TEXT,
+                usd_amount TEXT,
+                symbol TEXT,
+                name TEXT,
+                updated_at TEXT,
+                stale INTEGER DEFAULT 0,
+                PRIMARY KEY (wallet, chain, token)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS transfers (
+                wallet TEXT NOT NULL,
+                chain  TEXT NOT NULL,
+                id     TEXT PRIMARY KEY,
+                hash   TEXT,
+                log_index BIGINT,
+                block BIGINT,
+                ts TEXT,
+                from_addr TEXT,
+                to_addr TEXT,
+                token TEXT,
+                value TEXT,
+                inserted_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW())
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS prices (
+                chain TEXT NOT NULL,
+                token TEXT NOT NULL,
+                usd   TEXT,
+                source TEXT,
+                ts DOUBLE PRECISION,
+                PRIMARY KEY (chain, token)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS trading_ops (
+                id BIGSERIAL PRIMARY KEY,
+                ts DOUBLE PRECISION,
+                wallet TEXT,
+                chain TEXT,
+                symbol TEXT,
+                action TEXT,
+                status TEXT,
+                details JSONB
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS experiments (
+                id BIGSERIAL PRIMARY KEY,
+                name TEXT,
+                status TEXT,
+                params JSONB,
+                results JSONB,
+                created DOUBLE PRECISION,
+                updated DOUBLE PRECISION
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS model_versions (
+                id BIGSERIAL PRIMARY KEY,
+                version TEXT,
+                created DOUBLE PRECISION,
+                metrics JSONB,
+                path TEXT,
+                is_active BOOLEAN DEFAULT FALSE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS market_stream (
+                id BIGSERIAL PRIMARY KEY,
+                ts DOUBLE PRECISION,
+                chain TEXT,
+                symbol TEXT,
+                price DOUBLE PRECISION,
+                volume DOUBLE PRECISION,
+                raw JSONB
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS trade_fills (
+                id BIGSERIAL PRIMARY KEY,
+                ts DOUBLE PRECISION,
+                chain TEXT,
+                symbol TEXT,
+                expected_amount DOUBLE PRECISION,
+                executed_amount DOUBLE PRECISION,
+                expected_price DOUBLE PRECISION,
+                executed_price DOUBLE PRECISION,
+                details JSONB
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS metrics (
+                id BIGSERIAL PRIMARY KEY,
+                ts DOUBLE PRECISION,
+                stage TEXT,
+                category TEXT,
+                name TEXT,
+                value DOUBLE PRECISION,
+                meta JSONB
+            );
+            CREATE INDEX IF NOT EXISTS idx_metrics_stage_ts ON metrics(stage, ts);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS feedback_events (
+                id BIGSERIAL PRIMARY KEY,
+                ts DOUBLE PRECISION,
+                source TEXT,
+                severity TEXT,
+                label TEXT,
+                details JSONB
+            );
+            CREATE INDEX IF NOT EXISTS idx_feedback_source_ts ON feedback_events(source, ts);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS advisories (
+                id BIGSERIAL PRIMARY KEY,
+                ts DOUBLE PRECISION,
+                scope TEXT,
+                topic TEXT,
+                severity TEXT,
+                message TEXT,
+                recommendation TEXT,
+                meta JSONB,
+                resolved BOOLEAN DEFAULT FALSE,
+                resolved_ts DOUBLE PRECISION
+            );
+            CREATE INDEX IF NOT EXISTS idx_advisories_resolved_ts ON advisories(resolved, ts);
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS organism_snapshots (
+                ts DOUBLE PRECISION PRIMARY KEY,
+                payload JSONB
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pair_suppression (
+                symbol TEXT PRIMARY KEY,
+                reason TEXT,
+                strikes INTEGER DEFAULT 1,
+                last_failure DOUBLE PRECISION,
+                release_ts DOUBLE PRECISION,
+                metadata JSONB
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS pair_adjustments (
+                symbol TEXT PRIMARY KEY,
+                priority INTEGER DEFAULT 0,
+                enter_offset DOUBLE PRECISION DEFAULT 0.0,
+                exit_offset DOUBLE PRECISION DEFAULT 0.0,
+                size_multiplier DOUBLE PRECISION DEFAULT 1.0,
+                margin_offset DOUBLE PRECISION DEFAULT 0.0,
+                allocation_multiplier DOUBLE PRECISION DEFAULT 1.0,
+                label_scale DOUBLE PRECISION DEFAULT 1.0,
+                updated DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM NOW()),
+                details JSONB
+            );
+            """,
+        ]
+        with self._conn:
+            for stmt in stmts:
+                self._conn.execute(stmt)
     @contextmanager
     def _cursor(self):
         with self._lock:
@@ -843,19 +1081,33 @@ class TradingDatabase:
                 INSERT INTO model_versions(version, created, metrics, path, is_active)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (version, time.time(), json.dumps(metrics or {}), path, 1 if activate else 0),
+                (version, time.time(), json.dumps(metrics or {}), path, bool(activate)),
             )
             if activate:
                 self._conn.execute(
-                    "UPDATE model_versions SET is_active=0 WHERE id != ?",
-                    (cur.lastrowid,),
+                    "UPDATE model_versions SET is_active=? WHERE id != ?",
+                    (False, cur.lastrowid),
                 )
             return cur.lastrowid
 
     def set_active_model(self, model_id: int) -> None:
         with self._conn:
-            self._conn.execute("UPDATE model_versions SET is_active=0")
-            self._conn.execute("UPDATE model_versions SET is_active=1 WHERE id=?", (model_id,))
+            self._conn.execute("UPDATE model_versions SET is_active=?", (False,))
+            self._conn.execute("UPDATE model_versions SET is_active=? WHERE id=?", (True, model_id))
+
+    def purge_rejected_models(self) -> int:
+        """
+        Remove non-active candidate models from the registry to keep the store lean.
+        """
+        try:
+            with self._conn:
+                cur = self._conn.execute(
+                    "DELETE FROM model_versions WHERE is_active=? AND version LIKE ?",
+                    (False, "candidate-%"),
+                )
+                return int(getattr(cur, "rowcount", 0) or 0)
+        except Exception:
+            return 0
 
     def insert_market_sample(self, chain: str, symbol: str, price: float, volume: float, raw: Dict[str, Any]) -> None:
         with self._conn:
@@ -1167,9 +1419,9 @@ class TradingDatabase:
             cur = self._conn.execute(
                 """
                 INSERT INTO advisories(ts, scope, topic, severity, message, recommendation, meta, resolved)
-                VALUES(?, ?, ?, ?, ?, ?, ?, 0)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (ts, scope or "", topic, severity, message, recommendation or "", payload),
+                (ts, scope or "", topic, severity, message, recommendation or "", payload, False),
             )
             return int(cur.lastrowid)
 
@@ -1183,7 +1435,8 @@ class TradingDatabase:
         where: List[str] = []
         params: List[Any] = []
         if not include_resolved:
-            where.append("resolved=0")
+            where.append("resolved=?")
+            params.append(False)
         if severity:
             placeholders = ",".join("?" for _ in severity)
             where.append(f"severity IN ({placeholders})")
@@ -1227,11 +1480,11 @@ class TradingDatabase:
             self._conn.execute(
                 """
                 UPDATE advisories
-                SET resolved=1,
+                SET resolved=?,
                     resolved_ts=strftime('%s','now')
                 WHERE id=?;
                 """,
-                (int(advisory_id),),
+                (True, int(advisory_id)),
             )
 
     # ------------------------------------------------------------------
@@ -1600,6 +1853,113 @@ def _log_db_warning(message: str, details: Optional[Dict[str, Any]] = None) -> N
 
 def _lower(val: Optional[str]) -> str:
     return (val or "").lower()
+
+
+def _translate_query(query: str) -> str:
+    """
+    Convert SQLite-style placeholders to psycopg-compatible placeholders.
+    """
+    import re
+
+    def repl_named(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return f"%({name})s"
+
+    query = re.sub(r":([a-zA-Z_][a-zA-Z0-9_]*)", repl_named, query)
+    query = query.replace("?", "%s")
+    query = query.replace("strftime('%s','now')", "EXTRACT(EPOCH FROM NOW())")
+    return query
+
+
+class _PgCursor:
+    def __init__(self, cursor) -> None:
+        self._cursor = cursor
+
+    def execute(self, query: str, params: Optional[Any] = None):
+        query_t = _translate_query(query)
+        self._cursor.execute(query_t, params)
+        return self
+
+    def executemany(self, query: str, params_seq: Sequence[Any]):
+        query_t = _translate_query(query)
+        self._cursor.executemany(query_t, params_seq)
+        return self
+
+    def fetchone(self):
+        row = self._cursor.fetchone()
+        return row
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def close(self) -> None:
+        self._cursor.close()
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+    @property
+    def lastrowid(self):
+        """
+        Provide sqlite-compatible insert id support for psycopg.
+        Falls back to SELECT LASTVAL() when the backend does not expose lastrowid.
+        """
+        try:
+            lrid = getattr(self._cursor, "lastrowid", None)
+            if lrid not in (None, 0):
+                try:
+                    return int(lrid)
+                except Exception:
+                    return lrid
+        except Exception:
+            pass
+        try:
+            with self._cursor.connection.cursor() as cur2:
+                cur2.execute("SELECT LASTVAL()")
+                row = cur2.fetchone()
+                return int(row[0]) if row else None
+        except Exception:
+            return None
+
+
+class _PgConnection:
+    """
+    Compatibility wrapper to mimic sqlite3.Connection for existing call sites.
+    """
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+        self._conn.autocommit = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def cursor(self):
+        return _PgCursor(self._conn.cursor(row_factory=dict_row))
+
+    def execute(self, query: str, params: Optional[Any] = None):
+        cur = self.cursor()
+        cur.execute(query, params)
+        return cur
+
+    def executemany(self, query: str, params_seq: Sequence[Any]):
+        cur = self.cursor()
+        cur.executemany(query, params_seq)
+        return cur
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def commit(self) -> None:
+        try:
+            self._conn.commit()
+        except Exception:
+            pass
+
+
 def _hex_to_int(value: Any) -> int:
     if value is None:
         return 0

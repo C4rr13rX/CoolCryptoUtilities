@@ -5,6 +5,8 @@ import time
 from collections import defaultdict
 from typing import Dict, Optional
 
+import os
+
 try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -37,9 +39,9 @@ class AdaptiveLimiter:
         self,
         *,
         cpu_soft: float = 60.0,
-        cpu_hard: float = 85.0,
+        cpu_hard: float = 75.0,
         mem_soft: float = 0.70,
-        mem_hard: float = 0.90,
+        mem_hard: float = 0.85,
         cool_down: float = 3.0,
     ) -> None:
         self.cpu_soft = cpu_soft
@@ -51,18 +53,45 @@ class AdaptiveLimiter:
         self._last_adjust = 0.0
         self._throttle_level = 0.0
 
+    @classmethod
+    def from_env(
+        cls,
+        *,
+        cpu_soft: float = 60.0,
+        cpu_hard: float = 75.0,
+        mem_soft: float = 0.70,
+        mem_hard: float = 0.85,
+        cool_down: float = 3.0,
+    ) -> "AdaptiveLimiter":
+        def _get(name: str, default: float) -> float:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            try:
+                return float(raw)
+            except ValueError:
+                return default
+
+        return cls(
+            cpu_soft=_get("ADAPTIVE_CPU_SOFT", cpu_soft),
+            cpu_hard=_get("ADAPTIVE_CPU_HARD", cpu_hard),
+            mem_soft=_get("ADAPTIVE_MEM_SOFT", mem_soft),
+            mem_hard=_get("ADAPTIVE_MEM_HARD", mem_hard),
+            cool_down=_get("ADAPTIVE_COOLDOWN_SEC", cool_down),
+        )
+
     def before_task(self, component: str) -> None:
         cpu, mem = self.monitor.sample()
         now = time.time()
         if cpu >= self.cpu_hard or mem >= self.mem_hard:
-            self._throttle_level = min(3.0, self._throttle_level + 1.0)
+            self._throttle_level = min(4.0, self._throttle_level + 1.0)
             self._last_adjust = now
         elif cpu <= self.cpu_soft and mem <= self.mem_soft and (now - self._last_adjust) > self.cool_down:
             self._throttle_level = max(0.0, self._throttle_level - 0.5)
             self._last_adjust = now
         delay = 0.0
         if self._throttle_level > 0.0:
-            delay = min(5.0, 0.5 * self._throttle_level)
+            delay = min(6.0, 1.0 * self._throttle_level)
         if delay > 0:
             time.sleep(delay)
 

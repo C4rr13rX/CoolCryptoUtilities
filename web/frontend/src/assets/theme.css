@@ -32,6 +32,16 @@ body {
   overflow-x: hidden;
 }
 
+body {
+  min-height: 100vh;
+  overflow-y: scroll;
+}
+
+#app {
+  min-height: 100%;
+  display: flex;
+}
+
 a {
   color: inherit;
   text-decoration: none;

@@ -14,5 +14,8 @@ urlpatterns = [
     path("api/secure/", include("securevault.urls")),
     path("api/wallet/", include("walletpanel.urls")),
     path("api/integrations/", include("integrations.urls")),
+    path("api/branddozer/", include("branddozer.urls")),
     path("", include("core.urls")),
 ]
+
+handler500 = "core.views.guardian_failure_response"

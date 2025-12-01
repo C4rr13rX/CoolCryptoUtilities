@@ -11,10 +11,45 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DATA_ROOT = REPO_ROOT / "data"
+
 from db import TradingDatabase, get_db
 from services.public_api_clients import aggregate_market_data
 from services.discovery.coordinator import DiscoveryCoordinator
 from services.logging_utils import log_message
+
+_PAIR_INDEX_ATTEMPTED: set[str] = set()
+
+
+def _maybe_generate_pair_index(chain: str) -> bool:
+    chain = chain.lower()
+    index_path = DATA_ROOT / f"pair_index_{chain}.json"
+    if index_path.exists():
+        return True
+    if chain in _PAIR_INDEX_ATTEMPTED:
+        return False
+    _PAIR_INDEX_ATTEMPTED.add(chain)
+    script = REPO_ROOT / "make2000index.py"
+    if not script.exists():
+        log_message("pair-index", f"generator script missing: {script}", severity="warning")
+        return False
+    env = os.environ.copy()
+    env.setdefault("CHAIN_NAME", chain)
+    env.setdefault("PAIR_INDEX_OUTPUT_PATH", str(index_path))
+    try:
+        result = subprocess.run([sys.executable, str(script)], env=env, check=False, capture_output=True, text=True)
+        if result.returncode != 0:
+            log_message(
+                "pair-index",
+                f"generation failed for {chain}: rc={result.returncode} stderr={result.stderr.strip()}",
+                severity="warning",
+            )
+            return False
+    except Exception as exc:
+        log_message("pair-index", f"generation error for {chain}: {exc}", severity="warning")
+        return False
+    return index_path.exists()
 
 
 def _load_assignment(path: Path) -> Optional[Dict[str, Any]]:
@@ -35,9 +70,10 @@ def _ensure_assignment_template(chain: str, assignment_path: Path) -> Dict[str, 
     if data is not None:
         data.setdefault("chain", chain)
         return data
-    index_path = Path("data") / f"pair_index_{chain}.json"
+    index_path = DATA_ROOT / f"pair_index_{chain}.json"
     if not index_path.exists():
-        raise FileNotFoundError(f"pair index not found for {chain}: {index_path}")
+        if not _maybe_generate_pair_index(chain):
+            raise FileNotFoundError(f"pair index not found for {chain}: {index_path}")
     with index_path.open("r", encoding="utf-8") as fh:
         index = json.load(fh)
     pairs = {}
@@ -70,16 +106,22 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     incomplete = [
         addr for addr, meta in assignment.get("pairs", {}).items() if not meta.get("completed")
     ]
+    max_pairs = int(os.getenv("DOWNLOAD_MAX_PAIRS", "256"))
+    if max_pairs > 0:
+        incomplete = incomplete[:max_pairs]
     if not incomplete:
         return
+    max_parallel = max(1, int(os.getenv("DOWNLOAD_MAX_PARALLEL", "1")))
     env = os.environ.copy()
     env["CHAIN_NAME"] = chain
     env["PAIR_ASSIGNMENT_FILE"] = str(assignment_path)
-    env.setdefault("OUTPUT_DIR", str(Path("data") / "historical_ohlcv" / chain))
-    env.setdefault("INTERMEDIATE_DIR", str(Path("data") / "intermediate" / chain))
+    env.setdefault("OUTPUT_DIR", str(DATA_ROOT / "historical_ohlcv" / chain))
+    env.setdefault("INTERMEDIATE_DIR", str(DATA_ROOT / "intermediate" / chain))
     script = Path(__file__).resolve().parents[1] / "download2000.py"
     try:
-        subprocess.run([sys.executable, str(script)], env=env, check=False)
+        for _ in range(max_parallel):
+            proc = subprocess.Popen([sys.executable, str(script)], env=env)
+            proc.wait()
     except Exception as exc:
         log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")
 
@@ -87,7 +129,7 @@ def _run_download(chain: str, assignment_path: Path) -> None:
 class DownloadWorker:
     def __init__(self, chain: str, interval_sec: int = 4 * 3600, assignment_path: Optional[Path] = None) -> None:
         self.chain = chain
-        self.assignment_path = assignment_path or Path("data") / f"{chain}_pair_provider_assignment.json"
+        self.assignment_path = assignment_path or DATA_ROOT / f"{chain}_pair_provider_assignment.json"
         self.interval = interval_sec
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -154,7 +196,7 @@ class DynamicDownloadWorker:
         for row in rows:
             chain = str(row.get("chain") or "").lower()
             symbol = str(row.get("symbol") or "").upper()
-            if not chain or not symbol or chain == "base":
+            if not chain or not symbol:
                 continue
             chains[chain].add(symbol)
         for chain, symbols in chains.items():
@@ -171,9 +213,10 @@ class DynamicDownloadWorker:
     def _ensure_pairs(self, chain: str, symbols: Iterable[str], assignment_path: Path) -> None:
         assignment = _ensure_assignment_template(chain, assignment_path)
         pairs = assignment.setdefault("pairs", {})
-        pair_index_path = Path("data") / f"pair_index_{chain}.json"
+        pair_index_path = DATA_ROOT / f"pair_index_{chain}.json"
         if not pair_index_path.exists():
-            raise FileNotFoundError(pair_index_path)
+            if not _maybe_generate_pair_index(chain):
+                raise FileNotFoundError(pair_index_path)
         with pair_index_path.open("r", encoding="utf-8") as fh:
             index = json.load(fh)
         existing_symbols = {meta.get("symbol", "").upper() for meta in pairs.values()}
@@ -310,7 +353,24 @@ class DiscoveryWorker:
 
 class TokenDownloadSupervisor:
     def __init__(self, db: Optional[TradingDatabase] = None) -> None:
-        self.base_worker = DownloadWorker("base", interval_sec=int(os.getenv("BASE_DOWNLOAD_INTERVAL", "10800")))
+        chains_env = os.getenv("DOWNLOAD_WORKER_CHAINS", "base,ethereum,arbitrum,optimism,polygon")
+        chains = [c.strip().lower() for c in chains_env.split(",") if c.strip()]
+        self.static_workers: list[DownloadWorker] = []
+        for chain in chains:
+            index_path = DATA_ROOT / f"pair_index_{chain}.json"
+            if not index_path.exists():
+                if _maybe_generate_pair_index(chain):
+                    log_message("download-supervisor", f"auto-generated {index_path} for {chain}", severity="info")
+                else:
+                    log_message(
+                        "download-supervisor",
+                        f"skipping download worker for {chain}: missing {index_path}",
+                        severity="warning",
+                    )
+                    continue
+            self.static_workers.append(
+                DownloadWorker(chain, interval_sec=int(os.getenv("BASE_DOWNLOAD_INTERVAL", "10800")))
+            )
         self.dynamic_worker = DynamicDownloadWorker(
             db=db,
             interval_sec=int(os.getenv("DYNAMIC_DOWNLOAD_INTERVAL", "21600")),
@@ -328,22 +388,25 @@ class TokenDownloadSupervisor:
         )
 
     def start(self) -> None:
-        self.base_worker.start()
+        for worker in self.static_workers:
+            worker.start()
         self.dynamic_worker.start()
         self.market_worker.start()
         self.discovery_worker.start()
 
     def stop(self) -> None:
-        self.base_worker.stop()
+        for worker in self.static_workers:
+            worker.stop()
         self.dynamic_worker.stop()
         self.market_worker.stop()
         self.discovery_worker.stop()
 
     def run_cycle(self) -> None:
-        try:
-            self.base_worker.run_once()
-        except Exception as exc:
-            log_message("download-supervisor", f"base cycle error: {exc}", severity="error")
+        for worker in self.static_workers:
+            try:
+                worker.run_once()
+            except Exception as exc:
+                log_message("download-supervisor", f"{worker.chain} cycle error: {exc}", severity="error")
         try:
             self.dynamic_worker.run_once()
         except Exception as exc:

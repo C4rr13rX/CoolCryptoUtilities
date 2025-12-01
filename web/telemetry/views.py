@@ -94,7 +94,7 @@ class AdvisoryListView(generics.ListAPIView):
         qs = Advisory.objects.all()
         include_resolved = self.request.query_params.get("include_resolved")
         if not (include_resolved and include_resolved.lower() in {"1", "true", "yes"}):
-            qs = qs.filter(resolved=0)
+            qs = qs.filter(resolved=False)
         severity = self.request.query_params.getlist("severity")
         if severity:
             qs = qs.filter(severity__in=[lvl.lower() for lvl in severity])
@@ -108,12 +108,12 @@ class DashboardSummaryView(APIView):
         db = get_db()
         metric_counts = MetricEntry.objects.values("stage").annotate(total=Count("id"))
         feedback_counts = FeedbackEvent.objects.values("severity").annotate(total=Count("id"))
-        advisory_counts = Advisory.objects.filter(resolved=0).values("severity").annotate(total=Count("id"))
+        advisory_counts = Advisory.objects.filter(resolved=False).values("severity").annotate(total=Count("id"))
         latest_metrics = MetricEntrySerializer(MetricEntry.objects.order_by("-ts")[:12], many=True).data
         latest_feedback = FeedbackEventSerializer(FeedbackEvent.objects.order_by("-ts")[:10], many=True).data
         recent_trades = TradeLogSerializer(TradeLog.objects.order_by("-ts")[:10], many=True).data
         active_advisories = AdvisorySerializer(
-            Advisory.objects.filter(resolved=0).order_by("-ts")[:10],
+            Advisory.objects.filter(resolved=False).order_by("-ts")[:10],
             many=True,
         ).data
         state = db.load_state() or {}
@@ -145,6 +145,7 @@ class PipelineReadinessView(APIView):
             "confusion": confusion_meta.get("confusion") if confusion_meta else {},
             "decision_threshold": confusion_meta.get("decision_threshold") if confusion_meta else None,
             "horizon_profile": horizon.get("profile") if horizon else {},
+            "transition_plan": confusion_meta.get("transition_plan") if confusion_meta else {},
         }
         timestamps = [
             readiness.get("updated_at") if isinstance(readiness, dict) else None,

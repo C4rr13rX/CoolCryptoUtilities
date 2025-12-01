@@ -125,6 +125,16 @@ def _test_goplus(key: str) -> Dict[str, str]:
     return {"status": "ok", "detail": "Security data returned"}
 
 
+def _test_openai(key: str) -> Dict[str, str]:
+    resp = requests.get(
+        "https://api.openai.com/v1/models",
+        headers={"Authorization": f"Bearer {key}"},
+        timeout=TIMEOUT,
+    )
+    resp.raise_for_status()
+    return {"status": "ok", "detail": "Models listed"}
+
+
 INTEGRATIONS: Dict[str, IntegrationSpec] = {
     "ALCHEMY_API_KEY": IntegrationSpec(
         name="ALCHEMY_API_KEY",
@@ -188,6 +198,13 @@ INTEGRATIONS: Dict[str, IntegrationSpec] = {
         description="Partner secret (stored for reference)",
         url="https://gopluslabs.io/",
         tester=None,
+    ),
+    "OPENAI_API_KEY": IntegrationSpec(
+        name="OPENAI_API_KEY",
+        label="OpenAI",
+        description="Used for Codex + Br∆nD D0z3r AI generation",
+        url="https://platform.openai.com/api-keys",
+        tester=_test_openai,
     ),
 }
 
