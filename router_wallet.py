@@ -930,6 +930,37 @@ class UltraSwapBridge:
             time.sleep(0.15)
         return seen
 
+    def _fallback_balances_via_rpc(self, chain: str, tokens: Iterable[str], min_balance_wei: int = 1) -> List[str]:
+        """
+        When the Alchemy token-balance endpoint is unavailable (DNS or quota),
+        fall back to direct balanceOf() calls over the healthiest RPC for this chain.
+        """
+        try:
+            w3 = self._w3(chain)
+        except Exception as e:
+            print(f"[discover] {chain}: fallback RPC unavailable: {e}")
+            return []
+
+        results: List[str] = []
+        tokens_norm = []
+        for t in tokens:
+            try:
+                tokens_norm.append(Web3.to_checksum_address(t))
+            except Exception:
+                continue
+
+        for addr in tokens_norm:
+            try:
+                c = w3.eth.contract(address=addr, abi=ERC20_ABI)
+                bal = int(c.functions.balanceOf(self.acct.address).call())
+                if bal >= int(min_balance_wei):
+                    results.append(addr)
+            except Exception:
+                continue
+        if results:
+            print(f"[discover] {chain}: fallback RPC balances found {len(results)} tokens")
+        return results
+
     def _discover_via_transfers(self, url: str, chain: str, max_pages_per_dir: int = 5) -> List[str]:
         wallet = self.acct.address
         from_block_hex = "0x0"
@@ -1064,6 +1095,10 @@ class UltraSwapBridge:
                         print(f"[discover] {ch}: found {len(remote)} tokens via transfers (cached)")
                     except Exception as e2:
                         print(f"[discover] {ch}: transfer fallback error {type(e2).__name__}: {e2}")
+                    # Last-resort: use RPC balanceOf on cached/core tokens
+                    if addr_set:
+                        fallback_remote = self._fallback_balances_via_rpc(ch, addr_set, min_balance_wei=min_balance_wei)
+                        addr_set.update(fallback_remote)
             else:
                 print(f"[discover] {ch}: no Alchemy URL")
 

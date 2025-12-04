@@ -6,7 +6,7 @@ import time
 import re
 import random
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timedelta, UTC
 from threading import Thread, Semaphore
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -56,16 +56,13 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 ANKR_API_KEY         = os.getenv("ANKR_API_KEY", "").strip()
-CHAIN_NAME           = os.getenv("CHAIN_NAME", "base").strip().lower() or "base"
+CHAIN_NAME_ENV       = os.getenv("CHAIN_NAME", "").strip().lower()
 PAIR_ASSIGNMENT_FILE = os.getenv(
     "PAIR_ASSIGNMENT_FILE",
-    f"data/{CHAIN_NAME}_pair_provider_assignment.json",
+    "data/pair_provider_assignment.json",
 )
-OUTPUT_DIR           = os.getenv(
-    "OUTPUT_DIR",
-    str(Path("data") / "historical_ohlcv" / CHAIN_NAME)
-)
-INTERMEDIATE_DIR     = os.getenv("INTERMEDIATE_DIR", f"data/intermediate/{CHAIN_NAME}")
+OUTPUT_DIR_ENV       = os.getenv("OUTPUT_DIR", "").strip()
+INTERMEDIATE_DIR_ENV = os.getenv("INTERMEDIATE_DIR", "").strip()
 YEARS_BACK           = _int_env("YEARS_BACK", 3)
 GRANULARITY_SECONDS  = _int_env("GRANULARITY_SECONDS", 60 * 5)   # 5 min
 MAX_WORKERS          = _int_env("MAX_WORKERS", 30)
@@ -73,33 +70,65 @@ ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
 LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
 
 # Optional full RPC URL override (e.g., self-hosted, Alchemy, Infura, Ankr w/ key)
-DEFAULT_RPC = "https://mainnet.base.org"
-if CHAIN_NAME in {"base", "ethereum", "arbitrum", "optimism", "polygon"}:
-    alchemy_env = {
+RPC_URL_OVERRIDE = os.getenv("ANKR_RPC_URL", "").strip()
+
+# Defer Web3 init until after we resolve the chain to avoid cross-chain mismatches
+web3 = None  # type: ignore
+
+PUBLIC_RPC_FALLBACKS = {
+    "ethereum": "https://eth.llamarpc.com",
+    "base": "https://mainnet.base.org",
+    "arbitrum": "https://arb1.arbitrum.io/rpc",
+    "optimism": "https://mainnet.optimism.io",
+    "polygon": "https://polygon-rpc.com",
+}
+
+def _infer_chain_from_path(path: Path) -> Optional[str]:
+    stem = path.stem.lower()
+    for suffix in ("_pair_provider_assignment", "_pairs", "_assignment"):
+        if stem.endswith(suffix):
+            stem = stem.removesuffix(suffix)
+    chunks = stem.split("_")
+    if chunks:
+        candidate = chunks[0].strip()
+        if candidate in {"base", "ethereum", "arbitrum", "optimism", "polygon"}:
+            return candidate
+    return None
+
+def _rpc_for_chain(chain: str) -> str:
+    chain = chain.lower().strip()
+    if RPC_URL_OVERRIDE:
+        return RPC_URL_OVERRIDE
+    alchemy_env_map = {
         "base": "ALCHEMY_BASE_URL",
         "ethereum": "ALCHEMY_ETH_URL",
         "arbitrum": "ALCHEMY_ARB_URL",
         "optimism": "ALCHEMY_OP_URL",
         "polygon": "ALCHEMY_POLY_URL",
-    }[CHAIN_NAME]
-    candidate = os.getenv(alchemy_env)
+    }
+    slugs = {
+        "base": "base-mainnet",
+        "ethereum": "eth-mainnet",
+        "arbitrum": "arb-mainnet",
+        "optimism": "opt-mainnet",
+        "polygon": "polygon-mainnet",
+    }
+    env_var = alchemy_env_map.get(chain, "")
+    candidate = os.getenv(env_var, "").strip()
     if not candidate:
         key = os.getenv("ALCHEMY_API_KEY", "").strip()
-        slugs = {
-            "base": "base-mainnet",
-            "ethereum": "eth-mainnet",
-            "arbitrum": "arb-mainnet",
-            "optimism": "opt-mainnet",
-            "polygon": "polygon-mainnet",
-        }
-        if key:
-            candidate = f"https://{slugs[CHAIN_NAME]}.g.alchemy.com/v2/{key}"
-    if candidate:
-        DEFAULT_RPC = candidate.strip()
-elif ANKR_API_KEY:
-    DEFAULT_RPC = f"https://rpc.ankr.com/{CHAIN_NAME}/{ANKR_API_KEY}".rstrip("/")
-
-RPC_URL = os.getenv("ANKR_RPC_URL", DEFAULT_RPC).strip()
+        if key and chain in slugs:
+            candidate = f"https://{slugs[chain]}.g.alchemy.com/v2/{key}"
+    if not candidate and ANKR_API_KEY:
+        candidate = f"https://rpc.ankr.com/{chain}/{ANKR_API_KEY}".rstrip("/")
+    if not candidate:
+        candidate = PUBLIC_RPC_FALLBACKS.get(chain, "")
+    if not candidate:
+        raise RuntimeError(
+            f"No RPC configured for chain '{chain}'. "
+            "Set ALCHEMY_API_KEY or a chain-specific URL (e.g., ALCHEMY_ETH_URL) or ANKR_RPC_URL."
+        )
+    return candidate
 
 # --- RATE LIMITER ---
 bucket = Semaphore(0)
@@ -113,12 +142,6 @@ Thread(target=_refill_bucket, daemon=True).start()
 def limited(fn, *args, **kwargs):
     bucket.acquire()
     return fn(*args, **kwargs)
-
-# --- WEB3 SETUP ---
-web3 = Web3(Web3.HTTPProvider(RPC_URL))
-assert web3.is_connected(), f"❌ Could not connect to RPC at {RPC_URL}"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(INTERMEDIATE_DIR, exist_ok=True)
 
 # --- ABIs ---
 PAIR_ABI = json.loads("""[
@@ -321,14 +344,42 @@ def update_assignment(assignment, addr, **fields):
         json.dump(assignment, wf, indent=2)
 
 def main():
-    with open(PAIR_ASSIGNMENT_FILE) as f:
-        assignment = json.load(f)
-    previous_chain = assignment.get("chain")
-    if previous_chain and previous_chain != CHAIN_NAME:
+    assignment_path = Path(PAIR_ASSIGNMENT_FILE)
+    if not assignment_path.exists():
         raise RuntimeError(
-            f"Assignment file {PAIR_ASSIGNMENT_FILE} is tagged for '{previous_chain}' but current CHAIN_NAME is '{CHAIN_NAME}'."
+            f"Assignment file {assignment_path} not found. "
+            "Set PAIR_ASSIGNMENT_FILE or place the file in the data/ directory."
         )
-    assignment.setdefault("chain", CHAIN_NAME)
+    with assignment_path.open() as f:
+        assignment = json.load(f)
+
+    inferred_chain = assignment.get("chain") or _infer_chain_from_path(assignment_path)
+    explicit_chain = CHAIN_NAME_ENV or None
+    chain = (explicit_chain or inferred_chain)
+    if not chain:
+        raise RuntimeError(
+            "Chain is not specified. Set CHAIN_NAME in the environment or add a "
+            "'chain' key to the assignment file."
+        )
+    chain = chain.lower().strip()
+    if assignment.get("chain") and assignment.get("chain").lower() != chain:
+        raise RuntimeError(
+            f"Chain mismatch: assignment file tagged '{assignment.get('chain')}', environment wants '{chain}'. "
+            "Align CHAIN_NAME or fix the assignment file."
+        )
+    assignment.setdefault("chain", chain)
+
+    rpc_url = _rpc_for_chain(chain)
+    print(f"ℹ️ Chain: {chain} | RPC: {rpc_url}")
+
+    global web3
+    web3 = Web3(Web3.HTTPProvider(rpc_url))
+    assert web3.is_connected(), f"❌ Could not connect to RPC at {rpc_url}"
+
+    output_dir = Path(OUTPUT_DIR_ENV) if OUTPUT_DIR_ENV else Path("data") / "historical_ohlcv" / chain
+    intermediate_dir = Path(INTERMEDIATE_DIR_ENV) if INTERMEDIATE_DIR_ENV else Path("data") / "intermediate" / chain
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(intermediate_dir, exist_ok=True)
 
     start_ts = int((datetime.now(UTC) - timedelta(days=YEARS_BACK*365)).timestamp())
     start_blk = get_block_by_timestamp(start_ts)
@@ -346,8 +397,8 @@ def main():
     for addr, meta in pairs:
         sym = meta["symbol"]
         idx = meta["index"]
-        out = os.path.join(OUTPUT_DIR, f"{idx:04d}_{sym}.json")
-        pair_dir = os.path.join(INTERMEDIATE_DIR, sym)
+        out = os.path.join(output_dir, f"{idx:04d}_{sym}.json")
+        pair_dir = os.path.join(intermediate_dir, sym)
         print(f"\n=== Processing {sym} ===")
 
         pair_start_blk = meta.get("next_block", None)

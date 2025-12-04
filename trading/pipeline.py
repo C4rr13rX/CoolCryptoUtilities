@@ -180,6 +180,9 @@ class TrainingPipeline:
         self._last_candidate_feedback: Dict[str, Any] = {}
         self._active_approval_margin = float(os.getenv("ACTIVE_APPROVAL_MARGIN", "0.01"))
         self._active_fpr_buffer = float(os.getenv("ACTIVE_APPROVAL_FPR_BUFFER", "0.02"))
+        self._thr_precision_weight = float(os.getenv("THR_PRECISION_WEIGHT", "1.0"))
+        self._thr_recall_weight = float(os.getenv("THR_RECALL_WEIGHT", "1.0"))
+        self._pos_weight_multiplier = float(os.getenv("POS_WEIGHT_MULTIPLIER", "1.0"))
 
     # ------------------------------------------------------------------
     # Public API
@@ -584,6 +587,8 @@ class TrainingPipeline:
             batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
         except Exception:
             batch_size = 16
+        max_extra_epochs = int(os.getenv("TRAIN_MAX_EPOCHS_EXTRA", "1"))
+        epochs = min(epochs + max_extra_epochs, max(epochs, 3))
         history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
         train_duration = time.perf_counter() - train_start
         self.metrics.record(
@@ -1008,6 +1013,7 @@ class TrainingPipeline:
                 sample_weights[name] = np.ones(value.shape[0], dtype=np.float32)
             if 0.0 < pos_ratio < 1.0:
                 weight_pos = max(1.0, (1.0 - pos_ratio) / max(pos_ratio, 1e-4))
+                weight_pos *= max(0.5, self._pos_weight_multiplier)
                 sample_weights["price_dir"][positive_mask] = weight_pos
                 sample_weights["net_margin"][positive_mask] = weight_pos
             margin_intensity = np.clip(np.abs(margin_arr), 0.1, 5.0)
@@ -1829,7 +1835,11 @@ class TrainingPipeline:
             summary[f"thr_{thr:.2f}_recall"] = self._safe_float(metrics_thr.get("recall", 0.0))
             summary[f"thr_{thr:.2f}_profit_factor"] = profit_factor_thr
             summary[f"thr_{thr:.2f}_win_rate"] = win_thr
-            objective_thr = self._safe_float(metrics_thr.get("f1_score", 0.0)) + profit_factor_thr
+            objective_thr = (
+                self._thr_precision_weight * self._safe_float(metrics_thr.get("precision", 0.0))
+                + self._thr_recall_weight * self._safe_float(metrics_thr.get("recall", 0.0))
+                + profit_factor_thr
+            )
             if objective_thr > best_score:
                 best_score = objective_thr
                 best_info = {

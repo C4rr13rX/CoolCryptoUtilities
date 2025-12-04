@@ -80,6 +80,28 @@ BINANCE_MARKETS: Set[Tuple[str, str]] = {
     ("ETH", "BTC"),
 }
 
+# Endpoint controls (env override; defaults exclude noisiest WS providers)
+_DEFAULT_ENDPOINT_EXCLUDE: Set[str] = {"mexc", "dexscreener"}
+_ENV_ENDPOINT_INCLUDE: Set[str] = {
+    name.strip().lower()
+    for name in (os.getenv("MARKET_ENDPOINT_INCLUDE") or "").split(",")
+    if name.strip()
+}
+_ENV_ENDPOINT_EXCLUDE: Set[str] = {
+    name.strip().lower()
+    for name in (os.getenv("MARKET_ENDPOINT_EXCLUDE") or "").split(",")
+    if name.strip()
+}
+
+
+def _endpoint_allowed(name: str) -> bool:
+    lname = name.lower()
+    if _ENV_ENDPOINT_INCLUDE:
+        return lname in _ENV_ENDPOINT_INCLUDE
+    exclude = set(_DEFAULT_ENDPOINT_EXCLUDE)
+    exclude.update(_ENV_ENDPOINT_EXCLUDE)
+    return lname not in exclude
+
 
 def _token_synonyms(token: str) -> set[str]:
     token_u = token.upper()
@@ -1043,7 +1065,7 @@ class MarketDataStream:
         base, quote = _split_symbol(self.symbol)
         endpoints: List[Endpoint] = []
         binance_symbol = _binance_symbol(base, quote)
-        if binance_symbol and (base, quote) in BINANCE_MARKETS:
+        if binance_symbol and (base, quote) in BINANCE_MARKETS and _endpoint_allowed("binance"):
             endpoints.append(
                 Endpoint(
                     name="binance",
@@ -1054,7 +1076,7 @@ class MarketDataStream:
             )
         coinbase_base = _to_coinbase(base)
         coinbase_quote = _to_coinbase_quote(quote)
-        if coinbase_base and coinbase_quote:
+        if coinbase_base and coinbase_quote and _endpoint_allowed("coinbase"):
             endpoints.append(
                 Endpoint(
                     name="coinbase",
@@ -1064,7 +1086,7 @@ class MarketDataStream:
                 )
             )
         coingecko_id = COINGECKO_IDS.get(base)
-        if coingecko_id:
+        if coingecko_id and _endpoint_allowed("coingecko"):
             endpoints.append(
                 Endpoint(
                     name="coingecko",
@@ -1074,7 +1096,7 @@ class MarketDataStream:
                 )
             )
         bitstamp_symbol = f"{base.lower()}{quote.lower()}"
-        if quote in {"USD", "USDT", "EUR"}:
+        if quote in {"USD", "USDT", "EUR"} and _endpoint_allowed("bitstamp"):
             endpoints.append(
                 Endpoint(
                     name="bitstamp",
@@ -1084,7 +1106,7 @@ class MarketDataStream:
                 )
             )
         okx_quote = quote.upper()
-        if okx_quote in {"USDT", "USDC", "USD"}:
+        if okx_quote in {"USDT", "USDC", "USD"} and _endpoint_allowed("okx"):
             endpoints.append(
                 Endpoint(
                     name="okx",
@@ -1094,7 +1116,7 @@ class MarketDataStream:
                 )
             )
         kucoin_quote = quote.upper()
-        if kucoin_quote in {"USDT", "USDC", "BTC", "ETH"}:
+        if kucoin_quote in {"USDT", "USDC", "BTC", "ETH"} and _endpoint_allowed("kucoin"):
             endpoints.append(
                 Endpoint(
                     name="kucoin",
@@ -1103,24 +1125,6 @@ class MarketDataStream:
                     rest_template=f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={base.upper()}-{kucoin_quote}",
                 )
             )
-        mexc_symbol = f"{base.upper()}{quote.upper()}"
-        endpoints.append(
-            Endpoint(
-                name="mexc",
-                ws_template=None,
-                subscribe_template=None,
-                rest_template=f"https://api.mexc.com/api/v3/ticker/price?symbol={mexc_symbol}",
-            )
-        )
-        dex_query = quote_plus(f"{raw_base} {raw_quote}")
-        endpoints.append(
-            Endpoint(
-                name="dexscreener",
-                ws_template=None,
-                subscribe_template=None,
-                rest_template=f"https://api.dexscreener.com/latest/dex/search?q={dex_query}",
-            )
-        )
         return endpoints
 
     def _ranked_endpoints(self) -> List[Endpoint]:

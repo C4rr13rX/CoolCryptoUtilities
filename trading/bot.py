@@ -25,6 +25,7 @@ from trading.opportunity import OpportunityTracker
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
+from services.token_catalog import core_tokens_for_chain
 from trading.constants import (
     PRIMARY_CHAIN,
     PRIMARY_SYMBOL,
@@ -153,6 +154,8 @@ class TradingBot:
         self._processing_sample: bool = False
         self._last_sample_signature: Optional[Tuple[str, float]] = None
         self._last_gas_advisory_signature: Optional[str] = None
+        self._last_quote_topup_signature: Optional[str] = None
+        self._last_quote_topup_ts: float = 0.0
         self._pair_adjustments: Dict[str, Dict[str, Any]] = {}
         self._live_transition_state: Dict[str, Any] = {}
         self.primary_chain: str = PRIMARY_CHAIN
@@ -288,6 +291,10 @@ class TradingBot:
             self._pair_adjustments = {}
         if not hasattr(self, "_live_transition_state") or not isinstance(self._live_transition_state, dict):
             self._live_transition_state = {}
+        if not hasattr(self, "_last_quote_topup_signature"):
+            self._last_quote_topup_signature = None
+        if not hasattr(self, "_last_quote_topup_ts"):
+            self._last_quote_topup_ts = 0.0
         queue_max = int(os.getenv("STREAM_QUEUE_MAX", "8"))
         if not hasattr(self, "_pending_queue") or not isinstance(self._pending_queue, deque):
             self._pending_queue = deque(maxlen=queue_max)
@@ -328,6 +335,22 @@ class TradingBot:
     def _token_key(self, chain: str, symbol: str) -> Tuple[str, str]:
         return (chain.lower(), symbol.upper())
 
+    def _resolve_token_address(self, chain: str, symbol: str) -> Optional[str]:
+        """
+        Best-effort resolver for a token address on a given chain. Prefers the
+        live portfolio snapshot, falling back to the core-token catalog.
+        """
+        chain_l = chain.lower()
+        symbol_u = symbol.upper()
+        holding = self.portfolio.holdings.get((chain_l, symbol_u))
+        if holding and holding.token:
+            return holding.token
+        try:
+            token_map = core_tokens_for_chain(chain_l)
+            return token_map.get(symbol_u)
+        except Exception:
+            return None
+
     def _get_quote_balance(self, chain: str, symbol: str) -> float:
         key = self._token_key(chain, symbol)
         if not self.live_trading_enabled:
@@ -341,6 +364,38 @@ class TradingBot:
         current = self.sim_quote_balances.get(key, 0.0)
         updated = max(0.0, current + delta)
         self.sim_quote_balances[key] = updated
+
+    def _simulate_quote_topup(
+        self, *, chain: str, quote_token: str, shortfall: float
+    ) -> Tuple[float, List[Dict[str, Any]]]:
+        """
+        Rebalance simulated stable balances to cover a quote shortfall. Treat
+        stables as interchangeable at parity; move liquidity from any other
+        stable into the requested quote token.
+        """
+        if shortfall <= 0.0 or self.live_trading_enabled:
+            return 0.0, []
+        chain_l = chain.lower()
+        quote_u = quote_token.upper()
+        obtained = 0.0
+        sources: List[Dict[str, Any]] = []
+        # Drain from largest stables first to minimise churn
+        for (c, sym), bal in sorted(self.sim_quote_balances.items(), key=lambda kv: kv[1], reverse=True):
+            if c != chain_l or sym == quote_u or sym not in self.stable_tokens:
+                continue
+            if bal <= 0.0:
+                continue
+            move = min(bal, shortfall - obtained)
+            if move <= 0.0:
+                continue
+            self.sim_quote_balances[(c, sym)] = max(0.0, bal - move)
+            dest_key = (chain_l, quote_u)
+            self.sim_quote_balances[dest_key] = self.sim_quote_balances.get(dest_key, 0.0) + move
+            obtained += move
+            sources.append({"from": sym, "amount": round(move, 6)})
+            if obtained >= shortfall - 1e-9:
+                break
+        return obtained, sources
 
     def _consume_sim_gas(self, chain: str, gas_native: float) -> None:
         if self.live_trading_enabled:
@@ -1571,6 +1626,16 @@ class TradingBot:
                 }
             )
             return decision
+        if pos is None and trade_size > 0.0 and price > 0.0:
+            quote_needed = trade_size * price
+            liquidity = self._ensure_quote_liquidity(
+                chain=chain_name,
+                quote_token=quote_token,
+                required_quote=quote_needed,
+                price=price,
+                use_sim=use_sim,
+            )
+            available_quote = float(liquidity.get("available_quote", available_quote))
         if native_balance < gas_required:
             if self.live_trading_enabled:
                 strategy = self._plan_gas_replenishment(
@@ -1632,7 +1697,7 @@ class TradingBot:
                 # Simulated trading: replenish virtual gas buffer instead of touching live funds
                 self.sim_native_balances[chain_name] = max(self.sim_native_balances.get(chain_name, 0.5), gas_required * self.gas_buffer_multiplier)
                 native_balance = self.sim_native_balances[chain_name]
-        if trade_size > 0.0 and price > 0.0 and available_quote > 0.0:
+        if trade_size > 0.0 and price > 0.0:
             max_affordable = max(0.0, available_quote / price)
             trade_size = min(trade_size, max_affordable * self.max_trade_share)
         adjustments = self._get_pair_adjustment(symbol)
@@ -2093,6 +2158,216 @@ class TradingBot:
         current = set(self.portfolio.chains)
         if desired_chains != current:
             self.portfolio.chains = tuple(desired_chains)
+
+    def _plan_quote_topup(
+        self,
+        *,
+        chain: str,
+        quote_token: str,
+        shortfall: float,
+        quote_usd_price: float,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Build a swap plan to convert available stablecoins into the required
+        quote asset. Only pulls from stables on the active chain to avoid
+        unexpected cross-chain moves.
+        """
+        if shortfall <= 0.0:
+            return None
+
+        chain_l = chain.lower()
+        quote_u = quote_token.upper()
+        native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
+        target_buy = "native" if quote_u == native_symbol else quote_u
+        target_addr = None if target_buy == "native" else self._resolve_token_address(chain_l, quote_u)
+        if target_buy != "native" and not target_addr:
+            return None
+
+        stable_holdings = [
+            holding
+            for (key_chain, sym), holding in self.portfolio.holdings.items()
+            if key_chain == chain_l and sym in self.stable_tokens and sym != quote_u and holding.quantity > 0.0
+        ]
+        if not stable_holdings:
+            return None
+        stable_holdings.sort(key=lambda entry: entry.usd, reverse=True)
+
+        shortfall_usd = shortfall * max(quote_usd_price, 1e-6)
+        min_swap_usd = float(os.getenv("QUOTE_TOPUP_MIN_USD", "5.0"))
+        remaining_usd = max(shortfall_usd, min_swap_usd)
+
+        sources: List[Dict[str, Any]] = []
+        total_spend_usd = 0.0
+        for holding in stable_holdings:
+            if remaining_usd <= 0.0:
+                break
+            spend_usd_candidate = holding.usd if holding.usd > 0 else holding.quantity
+            spend_usd = min(spend_usd_candidate, remaining_usd)
+            spend_amount = min(holding.quantity, spend_usd if spend_usd > 0 else remaining_usd)  # assume ~1:1 for stables
+            if spend_amount <= 0.0:
+                continue
+            sources.append(
+                {
+                    "symbol": holding.symbol,
+                    "token": holding.token,
+                    "amount": round(spend_amount, 6),
+                    "usd_value": round(spend_usd, 6),
+                }
+            )
+            total_spend_usd += spend_usd
+            remaining_usd -= spend_usd
+
+        if not sources:
+            return None
+
+        signature = f"{chain_l}:{quote_u}:{int(round(total_spend_usd * 100))}"
+        now = time.time()
+        cooldown = float(os.getenv("QUOTE_TOPUP_COOLDOWN", "45"))
+        if (
+            signature == getattr(self, "_last_quote_topup_signature", None)
+            and (now - getattr(self, "_last_quote_topup_ts", 0.0)) < cooldown
+        ):
+            return None
+
+        self._last_quote_topup_signature = signature
+        self._last_quote_topup_ts = now
+
+        expected_quote = total_spend_usd / max(quote_usd_price, 1e-6)
+        plan = {
+            "chain": chain_l,
+            "quote_token": quote_u,
+            "quote_token_addr": target_addr,
+            "target_buy": target_buy if target_buy == "native" else (target_addr or quote_u),
+            "shortfall_quote": shortfall,
+            "shortfall_usd": shortfall_usd,
+            "sources": sources,
+            "expected_quote": expected_quote,
+            "signature": signature,
+        }
+        if remaining_usd > 0.0:
+            plan["remaining_usd_gap"] = remaining_usd
+        return plan
+
+    def _execute_quote_topup(self, *, chain: str, plan: Dict[str, Any]) -> bool:
+        if not plan or not plan.get("sources"):
+            return False
+        if self._bridge is None:
+            self._bridge = self._init_bridge()
+        if self._bridge is None:
+            return False
+        try:
+            from services.swap_service import SwapService  # type: ignore
+        except Exception as exc:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="quote_swap_unavailable",
+                details={"reason": str(exc)},
+            )
+            return False
+
+        swapper = SwapService(self._bridge)
+        buy_token = plan.get("target_buy") or plan.get("quote_token_addr") or plan.get("quote_token")
+        slippage = int(os.getenv("QUOTE_TOPUP_SLIPPAGE_BPS", os.getenv("GAS_REFILL_SLIPPAGE_BPS", "75")))
+        executed = False
+        for source in plan.get("sources", []):
+            amount = float(source.get("amount", 0.0))
+            token = source.get("token")
+            if amount <= 0.0 or not token:
+                continue
+            try:
+                swapper.swap(chain=chain, sell=token, buy=buy_token, amount_human=f"{amount:.6f}", slippage_bps=slippage)
+                executed = True
+            except Exception as exc:
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="quote_swap_failed",
+                    details={"token": token, "amount": amount, "reason": str(exc)},
+                )
+        return executed
+
+    def _ensure_quote_liquidity(
+        self,
+        *,
+        chain: str,
+        quote_token: str,
+        required_quote: float,
+        price: float,
+        use_sim: bool,
+    ) -> Dict[str, Any]:
+        """
+        Ensure we have enough quote balance to size the trade. In ghost mode we
+        virtually rebalance stables; in live mode we trigger a small swap from
+        available stables when safe to do so.
+        """
+        available = self._get_quote_balance(chain, quote_token)
+        result = {"available_quote": available}
+        shortfall = max(0.0, required_quote - available)
+        if shortfall <= 0.0:
+            return result
+
+        if use_sim:
+            gained, sources = self._simulate_quote_topup(chain=chain, quote_token=quote_token, shortfall=shortfall)
+            if gained > 0.0:
+                result["available_quote"] = available + gained
+                result["simulated"] = {"gained": gained, "sources": sources}
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.INFO,
+                    label="quote_topup_simulated",
+                    details={"quote_token": quote_token.upper(), "gained": gained, "sources": sources, "chain": chain},
+                )
+            return result
+
+        native_symbol = NATIVE_SYMBOL.get(chain.lower(), chain.upper())
+        quote_u = quote_token.upper()
+        if quote_u in self.stable_tokens:
+            quote_usd_price = 1.0
+        elif quote_u == native_symbol or quote_u == "WETH":
+            quote_usd_price = self._estimate_native_price(chain, [quote_token, "USDC"], price, quote_token)
+        else:
+            return result  # don't attempt exotic auto-swaps
+
+        plan = self._plan_quote_topup(
+            chain=chain,
+            quote_token=quote_token,
+            shortfall=shortfall,
+            quote_usd_price=quote_usd_price,
+        )
+        if not plan:
+            return result
+        executed = self._execute_quote_topup(chain=plan.get("chain", chain), plan=plan)
+        result["topup_plan"] = plan
+        result["topup_executed"] = executed
+        if executed:
+            try:
+                self.portfolio.refresh(force=True)
+                self._schedule_next_portfolio_refresh(time.time(), success=True)
+            except Exception:
+                pass
+            refreshed = self.portfolio.get_quantity(quote_token, chain=chain)
+            result["available_quote"] = refreshed
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.INFO,
+                label="quote_topup_executed",
+                details={
+                    "quote_token": quote_u,
+                    "expected_quote": plan.get("expected_quote"),
+                    "shortfall": shortfall,
+                    "sources": plan.get("sources", []),
+                    "chain": chain,
+                },
+            )
+        else:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="quote_topup_failed",
+                details={"quote_token": quote_u, "shortfall": shortfall, "plan": plan, "chain": chain},
+            )
+        return result
 
     def _estimate_gas_cost(self, chain: str, route: List[str]) -> float:
         base_cost = float(os.getenv("ESTIMATED_GAS_NATIVE", "0.001"))

@@ -520,19 +520,19 @@ class ProductionManager:
         """
         Build chain-specific RPC/WSS defaults from vault-stored Alchemy keys so
         market streams and on-chain listeners come up without manual env wiring.
+        Falls back to public RPC/WSS when no key is present.
         """
         updates: Dict[str, str] = {}
         chain = (env.get("PRIMARY_CHAIN") or os.getenv("PRIMARY_CHAIN", "base")).lower()
-        api_key = (env.get("ALCHEMY_API_KEY") or os.getenv("ALCHEMY_API_KEY") or "").strip()
-        if not api_key:
-            return updates
         try:
             from balances import CHAIN_CONFIG
             cfg = CHAIN_CONFIG.get(chain)
             if not cfg:
                 return updates
+            env_alc = cfg.get("env_alchemy_url")
+            api_key = (env.get("ALCHEMY_API_KEY") or os.getenv("ALCHEMY_API_KEY") or "").strip()
             slug = cfg.get("alchemy_slug")
-            if slug:
+            if api_key and slug:
                 rpc = f"https://{slug}.g.alchemy.com/v2/{api_key}"
                 wss = f"wss://{slug}.g.alchemy.com/v2/{api_key}"
                 chain_prefix = chain.upper()
@@ -540,6 +540,23 @@ class ProductionManager:
                 updates.setdefault(f"{chain_prefix}_WSS_URL", wss)
                 updates.setdefault("GLOBAL_RPC_URL", rpc)
                 updates.setdefault("GLOBAL_WSS_URL", wss)
+                if env_alc:
+                    updates.setdefault(env_alc, rpc)
+            if not updates:
+                public_rpcs = cfg.get("public_rpcs") or []
+                if public_rpcs:
+                    rpc = str(public_rpcs[0]).strip()
+                    if rpc:
+                        wss = rpc.replace("https://", "wss://").replace("http://", "ws://") if rpc.startswith("http") else ""
+                        chain_prefix = chain.upper()
+                        updates.setdefault(f"{chain_prefix}_RPC_URL", rpc)
+                        if wss:
+                            updates.setdefault(f"{chain_prefix}_WSS_URL", wss)
+                        updates.setdefault("GLOBAL_RPC_URL", rpc)
+                        if wss:
+                            updates.setdefault("GLOBAL_WSS_URL", wss)
+                        if env_alc:
+                            updates.setdefault(env_alc, rpc)
         except Exception:
             return updates
         return updates
