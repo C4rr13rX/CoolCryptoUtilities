@@ -1,0 +1,9 @@
+{
+  "log_files": [
+    "logs/system.log",
+    "logs/services/market-stream.log",
+    "runtime/main_cli.log"
+  ],
+  "report_interval_minutes": 60,
+  "sample_tail_lines": 200
+}

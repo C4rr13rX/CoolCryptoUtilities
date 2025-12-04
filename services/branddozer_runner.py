@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import shutil
 from django.db import close_old_connections
 
 from tools.codex_session import CodexSession
@@ -26,6 +27,7 @@ class BrandDozerManager:
     def __init__(self) -> None:
         self._threads: Dict[str, threading.Thread] = {}
         self._stops: Dict[str, threading.Event] = {}
+        self._locks: Dict[str, threading.Lock] = {}
         self._lock = threading.Lock()
         self._status: Dict[str, Dict[str, str]] = {}
 
@@ -34,7 +36,13 @@ class BrandDozerManager:
         with self._lock:
             if project_id in self._threads and self._threads[project_id].is_alive():
                 return {"status": "running"}
+            if not shutil.which("codex"):
+                msg = "codex CLI not available on PATH; cannot start BrandDozer cycle."
+                log_message("branddozer", msg, severity="error")
+                self._status[project_id] = {"state": "error", "last_message": msg}
+                return {"status": "error", "detail": msg}
             stop_event = threading.Event()
+            self._locks.setdefault(project_id, threading.Lock())
             thread = threading.Thread(target=self._run_loop, args=(project_id, stop_event), name=f"branddozer-{project_id}", daemon=True)
             self._threads[project_id] = thread
             self._stops[project_id] = stop_event
@@ -98,12 +106,20 @@ class BrandDozerManager:
         if not project:
             return
         interval = int(project.get("interval_minutes") or 120) * 60
+        lock = self._locks.get(project_id) or threading.Lock()
         while not stop.is_set():
             project = get_project(project_id)
             if not project:
                 break
             try:
-                self._run_cycle(project, stop)
+                acquired = lock.acquire(timeout=5.0)
+                if not acquired:
+                    log_message("branddozer", f"skip cycle: lock busy for {project_id}", severity="warning")
+                    continue
+                try:
+                    self._run_cycle(project, stop)
+                finally:
+                    lock.release()
                 update_project_fields(project_id, {"last_run": time.time()})
                 with self._lock:
                     self._status[project_id] = {"state": "running", "last_run": time.time(), "last_message": "cycle complete"}
@@ -140,6 +156,8 @@ class BrandDozerManager:
             self._append_log(project, label, prompt, output)
 
     def _run_prompt(self, project: Dict[str, str], prompt: str, label: str) -> str:
+        if not shutil.which("codex"):
+            raise RuntimeError("codex CLI not available on PATH")
         session_name = f"branddozer-{project.get('id')}"
         transcript_dir = LOG_ROOT / "transcripts"
         transcript_dir.mkdir(parents=True, exist_ok=True)
