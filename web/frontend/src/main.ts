@@ -62,6 +62,5 @@ if (mountEl) {
     store.refreshAll();
   });
 } else {
-  // eslint-disable-next-line no-console
-  console.error('Dashboard mount point not found');
+  // No SPA mount point (likely unauthenticated view); skip Vue bootstrap quietly.
 }

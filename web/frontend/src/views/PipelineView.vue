@@ -15,6 +15,21 @@
         <h2>Stage Coverage</h2>
         <span class="caption">{{ stageSummary.length }} phases tracked</span>
       </header>
+      <div class="progress-track">
+        <div
+          v-for="(stage, idx) in stageProgress"
+          :key="stage.key"
+          class="progress-node"
+          :class="[stage.state]"
+        >
+          <div class="dot"></div>
+          <span class="label">{{ stage.label }}</span>
+          <small>{{ stage.detail }}</small>
+          <div v-if="idx < stageProgress.length - 1" class="rail">
+            <span class="fill" :style="{ width: stage.fill + '%' }"></span>
+          </div>
+        </div>
+      </div>
       <div class="stage-cards">
         <article v-for="stage in stageSummary" :key="stage.stage" class="stage-card">
           <h3>{{ stage.stage }}</h3>
@@ -166,6 +181,27 @@ const advisories = computed(() => (store.advisories || []).slice(0, 8));
 const ghostTrades = computed(() => (store.recentTrades || []).filter((entry: any) => entry.wallet === 'ghost').slice(0, 12));
 const liveTrades = computed(() => (store.recentTrades || []).filter((entry: any) => entry.wallet !== 'ghost').slice(0, 12));
 
+const stageProgress = computed(() => {
+  const readiness = store.dashboard?.live_readiness || {};
+  const stages = [
+    { key: 'ingest', label: 'Data Ingest', done: Boolean(stageSummary.value.length || metrics.value.length) },
+    { key: 'training', label: 'Training', done: Boolean(readiness.samples || readiness.precision) },
+    { key: 'ghost', label: 'Ghost Ready', done: Boolean(readiness.mini_ready) },
+    { key: 'live', label: 'Live Ready', done: Boolean(readiness.ready) },
+    { key: 'trading', label: 'Live Trading', done: Boolean(liveTrades.value.length) },
+  ];
+  let current = stages.findIndex((s) => !s.done);
+  if (current === -1) current = stages.length - 1;
+  const withState = stages.map((s, idx) => {
+    const state = s.done && idx < current ? 'done' : idx === current ? 'active' : 'pending';
+    let detail = '';
+    if (idx === 2 && readiness.mini_reason) detail = readiness.mini_reason;
+    if (idx === 3 && readiness.reason) detail = readiness.reason;
+    return { ...s, state, detail, fill: state === 'done' ? 100 : state === 'active' ? 45 : 0 };
+  });
+  return withState;
+});
+
 function formatAge(ts: number | string) {
   const numeric = Number(ts);
   if (!Number.isFinite(numeric)) return '—';
@@ -242,6 +278,64 @@ function summariseMeta(meta: any) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 1rem;
+}
+.progress-track {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+.progress-node {
+  position: relative;
+  padding: 0.6rem 0.8rem;
+  background: rgba(9, 15, 26, 0.85);
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.progress-node .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(126, 168, 255, 0.7);
+  background: rgba(126, 168, 255, 0.2);
+}
+.progress-node .label {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.progress-node .rail {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  width: 12px;
+  height: 3px;
+  background: rgba(126, 168, 255, 0.18);
+}
+.progress-node .fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #5aa8ff, #36d1dc);
+}
+.progress-node small {
+  color: rgba(229, 237, 255, 0.7);
+}
+.progress-node.done {
+  border-color: rgba(52, 211, 153, 0.5);
+}
+.progress-node.done .dot {
+  background: rgba(52, 211, 153, 0.3);
+  border-color: rgba(52, 211, 153, 0.7);
+}
+.progress-node.active {
+  border-color: rgba(250, 204, 21, 0.6);
+}
+.progress-node.active .dot {
+  background: rgba(250, 204, 21, 0.25);
+  border-color: rgba(250, 204, 21, 0.8);
 }
 
 .stage-card {

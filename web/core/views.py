@@ -6,6 +6,8 @@ import os
 import re
 import sys
 import time
+import math
+from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -60,6 +62,38 @@ class DashboardContextMixin:
     information even before the Vue runtime hydrates.
     """
 
+    def _scrub_json(self, value: Any) -> Any:
+        """
+        Replace NaN/Inf and non-serialisable values with None so json_script
+        emits valid JSON (avoids frontend parse errors).
+        """
+        if isinstance(value, str):
+            lower = value.strip().lower()
+            if lower in {"nan", "+nan", "-nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"}:
+                return None
+            return value
+        if isinstance(value, (float, int, Decimal)):
+            try:
+                num = float(value)
+            except Exception:
+                return None
+            if math.isnan(num) or math.isinf(num):
+                return None
+            return num
+        # Catch numpy scalars or any numeric-like objects
+        try:
+            num = float(value)  # type: ignore[arg-type]
+            if math.isnan(num) or math.isinf(num):
+                return None
+            return num
+        except Exception:
+            return value
+        if isinstance(value, dict):
+            return {k: self._scrub_json(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._scrub_json(item) for item in value]
+        return value
+
     def _dashboard_snapshot(self) -> Dict[str, Any]:
         request = getattr(self, "request", None)
         if not request or not request.user.is_authenticated:
@@ -76,7 +110,7 @@ class DashboardContextMixin:
         raw_frames = timeline.get("snapshots") if isinstance(timeline, dict) else []
         if isinstance(raw_frames, list):
             timeline_frames = raw_frames[-8:]
-        return {
+        snapshot = {
             "latest_metrics": db.fetch_metrics(limit=6),
             "latest_feedback": db.fetch_feedback_events(limit=8),
             "ghost_trades": db.fetch_trades(wallets=["ghost"], limit=10),
@@ -89,6 +123,12 @@ class DashboardContextMixin:
             "horizon_profile": horizon.get("summary") if isinstance(horizon, dict) else {},
             "organism_timeline": timeline_frames,
         }
+        snapshot = self._scrub_json(snapshot)
+        try:
+            snapshot = json.loads(json.dumps(snapshot, allow_nan=False))
+        except Exception:
+            snapshot = _empty_payload()
+        return snapshot
 
     def _base_context(self, initial_route: str) -> Dict[str, Any]:
         use_vite = settings.DEBUG and os.getenv("DJANGO_USE_VITE_DEV", "0").lower() in {"1", "true", "yes", "on"}

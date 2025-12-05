@@ -169,7 +169,7 @@
           <button type="button" class="btn ghost" @click="refreshLogs" :disabled="store.logLoading">Refresh</button>
         </div>
       </header>
-      <pre class="console-output">{{ logText }}</pre>
+      <pre class="console-output" ref="logBox">{{ logText }}</pre>
     </section>
 
     <div v-if="confirmOpen" class="modal">
@@ -225,7 +225,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useBrandDozerStore } from '@/stores/branddozer';
 
 const store = useBrandDozerStore();
@@ -257,6 +257,7 @@ const githubForm = ref({
   default_prompt: '',
 });
 const confirmOpen = ref(false);
+const logBox = ref<HTMLElement | null>(null);
 
 let logTimer: number | null = null;
 
@@ -282,6 +283,17 @@ watch(selectedId, () => {
   refreshLogs();
   startLogTimer();
 });
+
+watch(
+  () => store.logs,
+  () => {
+    nextTick(() => {
+      if (logBox.value) {
+        logBox.value.scrollTop = logBox.value.scrollHeight;
+      }
+    });
+  },
+);
 
 const logText = computed(() => (store.logs.length ? store.logs.join('\n') : 'No output yet.'));
 
@@ -417,6 +429,11 @@ async function stop(id: string) {
 async function refreshLogs() {
   if (!selectedId.value) return;
   await store.refreshLogs(selectedId.value, 200);
+  nextTick(() => {
+    if (logBox.value) {
+      logBox.value.scrollTop = logBox.value.scrollHeight;
+    }
+  });
 }
 
 function startLogTimer() {
