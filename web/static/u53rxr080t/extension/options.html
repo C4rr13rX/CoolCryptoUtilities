@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>U53RxR080T Settings</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 16px; background: #0b1524; color: #e9edff; }
+      label { display: block; margin-bottom: 12px; }
+      input { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #3a5578; background: #0f1d33; color: #e9edff; }
+      button { padding: 8px 12px; border: none; border-radius: 8px; background: linear-gradient(135deg, #4f8bff, #21d6e2); color: white; font-weight: 600; cursor: pointer; }
+      .muted { color: #9fb3d8; font-size: 13px; }
+      .inline { display: flex; align-items: center; gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <h2>U53RxR080T Extension</h2>
+    <p class="muted">Configure the dashboard API endpoint and optional bearer token. Session cookies from the dashboard origin will also be sent.</p>
+    <label>
+      Server URL
+      <input id="serverUrl" placeholder="http://127.0.0.1:8000" />
+    </label>
+    <label>
+      Daemon URL (for OS screenshots)
+      <input id="daemonUrl" placeholder="http://127.0.0.1:36279" />
+    </label>
+    <label>
+      Agent name
+      <input id="agentName" placeholder="browser-extension" />
+    </label>
+    <label>
+      Auth token (optional)
+      <input id="authToken" placeholder="Bearer token if needed" />
+    </label>
+    <div class="inline" style="margin: 10px 0 14px;">
+      <input id="enabled" type="checkbox" />
+      <label for="enabled" style="margin: 0;">Enable agent polling (opt-in)</label>
+    </div>
+    <button id="save">Save</button>
+    <p id="status" class="muted"></p>
+    <script src="options.js"></script>
+  </body>
+</html>

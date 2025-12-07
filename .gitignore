@@ -40,3 +40,9 @@ orchestration/dependency_state.json
 runtime/
 web/data/
 config/wallet_balance_overrides.json
+# Rust agent build artifacts
+u53rxr080t/agent-rs/target/
+# Local packaged binaries for UX robot
+web/static/u53rxr080t/rust-agent-*.zip
+# Extension zips can be re-packed locally
+web/static/u53rxr080t/extension-*.zip

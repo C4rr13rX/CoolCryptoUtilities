@@ -1,0 +1,2 @@
+Build the Rust daemon (u53rx-agent) from u53rxr080t/agent-rs and place the compiled binary here.
+See u53rxr080t/agent-rs/README.md for build instructions.

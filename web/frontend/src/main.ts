@@ -51,6 +51,7 @@ if (mountEl) {
     settings: '/settings',
     codegraph: '/codegraph',
     branddozer: '/branddozer',
+    u53rxr080t: '/u53rxr080t',
   };
   const initialPath = targetRoutes[initialRoute] || '/';
 

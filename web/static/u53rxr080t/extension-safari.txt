@@ -1,0 +1,1 @@
+Placeholder for extension-safari build. Replace with packaged artifact.

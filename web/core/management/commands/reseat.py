@@ -28,6 +28,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Disable guardian/production auto-start even if enabled in settings.",
         )
+        parser.add_argument(
+            "--production-off",
+            action="store_true",
+            help="Disable production manager auto-start even if enabled in settings.",
+        )
 
     def handle(self, *args, **options):
         project_root = Path(__file__).resolve().parents[4]
@@ -37,21 +42,28 @@ class Command(BaseCommand):
             self.stdout.write(self.style.HTTP_INFO(f"$ {' '.join(cmd)}"))
             subprocess.run(cmd, cwd=cwd, check=True)
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[1/4] Frontend build"))
+        # Respect disable flags before Django finishes loading apps that auto-start services.
+        if options.get("guardian_off"):
+            os.environ["GUARDIAN_AUTO_DISABLED"] = "1"
+        if options.get("production_off"):
+            os.environ["PRODUCTION_AUTO_DISABLED"] = "1"
+
+        self.stdout.write(self.style.MIGRATE_HEADING("[1/5] Frontend build"))
         if not options["noinstall"]:
             run(["npm", "install"], cwd=str(frontend_dir))
         run(["npm", "run", "build"], cwd=str(frontend_dir))
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[2/4] Database migrations"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[2/5] Make migrations"))
+        call_command("makemigrations")
+
+        self.stdout.write(self.style.MIGRATE_HEADING("[3/5] Apply migrations"))
         call_command("migrate")
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[3/4] Collect static"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[4/5] Collect static"))
         call_command("collectstatic", interactive=False)
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[4/4] Runserver"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[5/5] Runserver"))
         runserver_args = options.get("runserver_args") or []
         if all(arg != "--noreload" for arg in runserver_args):
             runserver_args.append("--noreload")
-        if options.get("guardian_off"):
-            os.environ["GUARDIAN_AUTO_DISABLED"] = "1"
         call_command("runserver", *runserver_args)

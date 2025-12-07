@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/wallet/", include("walletpanel.urls")),
     path("api/integrations/", include("integrations.urls")),
     path("api/branddozer/", include("branddozer.urls")),
+    path("api/u53rxr080t/", include("u53rxr080t.urls")),
     path("", include("core.urls")),
 ]
 

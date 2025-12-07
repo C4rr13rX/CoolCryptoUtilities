@@ -202,6 +202,7 @@ const navItems = computed(() => [
   { route: 'codegraph', label: 'Code Graph', icon: 'activity', path: '/codegraph', intent: pipelineIntent.value },
   { route: 'integrations', label: 'API Integrations', icon: 'link', path: '/integrations', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', path: '/settings', intent: pipelineIntent.value },
+  { route: 'u53rxr080t', label: 'U53R xR080T', icon: 'radar', path: '/u53rxr080t', intent: pipelineIntent.value },
   { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', path: '/branddozer', intent: pipelineIntent.value },
 ]);
 

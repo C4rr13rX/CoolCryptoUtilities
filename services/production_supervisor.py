@@ -39,6 +39,10 @@ class ProductionSupervisor:
         self._last_boot = 0.0
 
     def ensure_running(self) -> None:
+        if os.environ.get("PRODUCTION_AUTO_DISABLED") == "1":
+            # Explicitly requested to keep production manager off.
+            self.stop()
+            return
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return

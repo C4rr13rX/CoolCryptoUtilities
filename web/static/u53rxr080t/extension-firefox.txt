@@ -1,0 +1,1 @@
+Placeholder for extension-firefox build. Replace with packaged artifact.

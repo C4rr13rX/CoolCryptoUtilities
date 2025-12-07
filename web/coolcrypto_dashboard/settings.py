@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     "walletpanel.apps.WalletPanelConfig",
     "integrations.apps.IntegrationsConfig",
     "branddozer.apps.BranddozerConfig",
+    "u53rxr080t.apps.U53rxr080tConfig",
 ]
 
 MIDDLEWARE = [
@@ -154,6 +155,15 @@ else:
             "NAME": str(
                 Path(os.getenv("DJANGO_SQLITE_PATH", REPO_ROOT / "storage" / "trading_cache.db")).resolve()
             ),
+        }
+    }
+
+if TESTING:
+    # Use an in-memory SQLite database for tests to avoid needing Postgres privileges.
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
         }
     }
 

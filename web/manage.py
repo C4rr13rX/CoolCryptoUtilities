@@ -17,18 +17,25 @@ EnvLoader.load()
 
 GUARDIAN_FLAG = "--guardian-off"
 GUARDIAN_ENV_VAR = "GUARDIAN_AUTO_DISABLED"
+PRODUCTION_FLAG = "--production-off"
+PRODUCTION_ENV_VAR = "PRODUCTION_AUTO_DISABLED"
 
 
-def _consume_guardian_flag(argv: list[str]) -> None:
-    if GUARDIAN_FLAG not in argv:
+def _consume_flag(argv: list[str], flag: str, env_var: str) -> None:
+    """
+    Convert CLI flags into environment switches before Django settings/apps load.
+    This lets us short-circuit auto-bootstraps (guardian/production) early.
+    """
+    if flag not in argv:
         return
-    argv.remove(GUARDIAN_FLAG)
-    os.environ[GUARDIAN_ENV_VAR] = "1"
+    argv.remove(flag)
+    os.environ[env_var] = "1"
 
 
 def main() -> None:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
-    _consume_guardian_flag(sys.argv)
+    _consume_flag(sys.argv, GUARDIAN_FLAG, GUARDIAN_ENV_VAR)
+    _consume_flag(sys.argv, PRODUCTION_FLAG, PRODUCTION_ENV_VAR)
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:

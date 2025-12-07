@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "U53RxR080T UX Agent",
+  "version": "0.1.0",
+  "description": "Captures UX flows, clicks scripted actions, and reports to the CoolCrypto dashboard.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "tabs",
+    "activeTab",
+    "tabCapture"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "action": {
+    "default_title": "U53RxR080T"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

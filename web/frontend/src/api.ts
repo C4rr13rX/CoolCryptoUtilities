@@ -389,6 +389,43 @@ export async function importBrandProjectFromGitHub(payload: Record<string, any>)
   return data;
 }
 
+// ----------------------------- U53RxR080T (UX robot) -------------------------
+export async function fetchUxAgents() {
+  const { data } = await api.get('/u53rxr080t/agents/');
+  return data;
+}
+
+export async function fetchUxTasks(status?: string) {
+  const params = status ? { status } : undefined;
+  const { data } = await api.get('/u53rxr080t/tasks/', { params });
+  return data;
+}
+
+export async function fetchUxFindings(limit = 50) {
+  const { data } = await api.get('/u53rxr080t/findings/', { params: { limit } });
+  return data;
+}
+
+export async function createUxTask(payload: Record<string, any>) {
+  const { data } = await api.post('/u53rxr080t/tasks/', payload);
+  return data;
+}
+
+export async function updateUxTask(id: string, payload: Record<string, any>) {
+  const { data } = await api.post(`/u53rxr080t/tasks/${id}/`, payload);
+  return data;
+}
+
+export async function claimNextUxTask(agentId: string) {
+  const { data } = await api.post('/u53rxr080t/tasks/next/', { agent_id: agentId });
+  return data;
+}
+
+export async function sendUxFinding(payload: Record<string, any>) {
+  const { data } = await api.post('/u53rxr080t/findings/', payload);
+  return data;
+}
+
 export interface DataLabSignalParams {
   window?: string;
   direction?: 'bullish' | 'bearish' | 'all';

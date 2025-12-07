@@ -14,6 +14,7 @@ import CodeGraphView from '@/views/CodeGraphView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 import BrandDozerView from '@/views/BrandDozerView.vue';
+import U53RxRobotView from '@/views/U53RxRobotView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -85,6 +86,11 @@ const routes: RouteRecordRaw[] = [
     path: '/branddozer',
     name: 'branddozer',
     component: BrandDozerView,
+  },
+  {
+    path: '/u53rxr080t',
+    name: 'u53rxr080t',
+    component: U53RxRobotView,
   },
 ];
 
