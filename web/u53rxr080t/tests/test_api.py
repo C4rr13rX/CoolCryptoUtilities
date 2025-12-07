@@ -124,6 +124,9 @@ class U53ApiTests(APITestCase):
             guardian_status.RUN_REQUEST_PATH = guardian_status.STATUS_DIR / "request_run"
             reload(guardian_status)
 
+            # fresh state
+            guardian_status._write_state(guardian_status._default_state())  # type: ignore
+
             resp = self.client.post(
                 "/api/u53rxr080t/queue/",
                 {"session": "agent-1", "title": "Fix nav", "summary": "nav broken", "severity": "warn"},

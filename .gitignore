@@ -44,5 +44,7 @@ config/wallet_balance_overrides.json
 u53rxr080t/agent-rs/target/
 # Local packaged binaries for UX robot
 web/static/u53rxr080t/rust-agent-*.zip
+# Extracted binaries (can be recreated)
+web/static/u53rxr080t/rust-agent-linux
 # Extension zips can be re-packed locally
 web/static/u53rxr080t/extension-*.zip

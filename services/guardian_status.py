@@ -148,6 +148,24 @@ def mark_slot_finished(
         return
 
 
+def claim_slot(slot: str) -> Optional[Dict[str, Any]]:
+    """
+    Pop the oldest waiting entry from the queue for a slot and mark it running.
+    """
+    try:
+        with _locked_state() as state:
+            queue = state.setdefault("queue", {}).setdefault(slot, [])
+            if not queue:
+                return None
+            entry = queue.pop(0)
+            entry["state"] = "running"
+            entry["started_at"] = _timestamp()
+            state.setdefault("slots", {})[slot] = entry
+            return entry
+    except Exception:
+        return None
+
+
 def snapshot_status() -> Dict[str, Any]:
     try:
         return _read_state()

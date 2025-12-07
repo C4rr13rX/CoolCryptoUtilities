@@ -19,6 +19,7 @@ thiserror = "1"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 screenshots = { version = "0.8", optional = true }
+anyhow = "1"
 
 [features]
 default = ["capture"]

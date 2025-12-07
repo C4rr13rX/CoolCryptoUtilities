@@ -9,12 +9,13 @@ use axum::{
 };
 use base64::Engine;
 use clap::Parser;
-use image::{ImageBuffer, Rgba};
+use image::{ImageBuffer, Rgba, ImageEncoder};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, task, time};
 use tracing::{error, info};
 use uuid::Uuid;
+use anyhow::{Result, anyhow};
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about = "U53RxR080T Rust agent")]
@@ -40,7 +41,7 @@ struct Args {
 struct AppState {
     cfg: Args,
     client: Client,
-    agent_id: Mutex<Option<Uuid>>,
+    agent_id: std::sync::Arc<Mutex<Option<Uuid>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,14 +71,14 @@ struct TaskPayload {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
     let args = Args::parse();
 
     let state = AppState {
         cfg: args.clone(),
         client: Client::builder().danger_accept_invalid_certs(true).build()?,
-        agent_id: Mutex::new(None),
+        agent_id: std::sync::Arc::new(Mutex::new(None)),
     };
 
     if args.enable_loop {
@@ -94,8 +95,8 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     info!("u53rx-agent listening on http://{}", addr);
-    axum::Server::bind(&addr)
-        .serve(router.into_make_service())
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
@@ -161,25 +162,25 @@ async fn run_task_once(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-async fn grab_png() -> anyhow::Result<Vec<u8>> {
+async fn grab_png() -> Result<Vec<u8>> {
     #[cfg(feature = "capture")]
     {
-        match screenshots::Screen::all().map_err(anyhow::Error::new)?.first() {
+        match screenshots::Screen::all().map_err(|e| anyhow!(e.to_string()))?.first() {
             Some(screen) => {
-                let image = screen.capture().map_err(anyhow::Error::new)?;
+                let image = screen.capture().map_err(|e| anyhow!(e.to_string()))?;
                 let buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(
                     image.width() as u32,
                     image.height() as u32,
                     image.into_raw(),
                 )
-                .ok_or_else(|| anyhow::anyhow!("invalid raw buffer"))?;
+                .ok_or_else(|| anyhow!("invalid raw buffer"))?;
                 let mut out = Vec::new();
                 image::codecs::png::PngEncoder::new(&mut out)
-                    .encode(
+                    .write_image(
                         &buffer,
                         buffer.width(),
                         buffer.height(),
-                        image::ColorType::Rgba8,
+                        image::ExtendedColorType::Rgba8,
                     )
                     .map_err(anyhow::Error::new)?;
                 return Ok(out);
@@ -196,12 +197,17 @@ async fn grab_png() -> anyhow::Result<Vec<u8>> {
     }
     let mut out = Vec::new();
     image::codecs::png::PngEncoder::new(&mut out)
-        .encode(&buffer, buffer.width(), buffer.height(), image::ColorType::Rgba8)
+        .write_image(
+            &buffer,
+            buffer.width(),
+            buffer.height(),
+            image::ExtendedColorType::Rgba8,
+        )
         .map_err(anyhow::Error::new)?;
     Ok(out)
 }
 
-async fn ensure_agent(state: &AppState) -> anyhow::Result<Uuid> {
+async fn ensure_agent(state: &AppState) -> Result<Uuid> {
     if let Some(id) = *state.agent_id.lock().await {
         return Ok(id);
     }
@@ -235,7 +241,7 @@ async fn poll_loop(state: AppState) {
     }
 }
 
-async fn process_one(state: &AppState) -> anyhow::Result<bool> {
+async fn process_one(state: &AppState) -> Result<bool> {
     let agent_id = ensure_agent(state).await?;
     heartbeat(state, &agent_id, "idle").await?;
     let task = claim(state, &agent_id).await?;
@@ -255,10 +261,10 @@ async fn process_one(state: &AppState) -> anyhow::Result<bool> {
     )
     .await?;
     heartbeat(state, &agent_id, "idle").await?;
-    Ok(true);
+    Ok(true)
 }
 
-async fn heartbeat(state: &AppState, id: &Uuid, status: &str) -> anyhow::Result<()> {
+async fn heartbeat(state: &AppState, id: &Uuid, status: &str) -> Result<()> {
     state.client
         .post(format!("{}/api/u53rxr080t/heartbeat/", state.cfg.server.trim_end_matches('/')))
         .bearer_auth(state.cfg.token.clone())
@@ -276,7 +282,7 @@ async fn heartbeat(state: &AppState, id: &Uuid, status: &str) -> anyhow::Result<
     Ok(())
 }
 
-async fn claim(state: &AppState, agent_id: &Uuid) -> anyhow::Result<Option<TaskPayload>> {
+async fn claim(state: &AppState, agent_id: &Uuid) -> Result<Option<TaskPayload>> {
     let resp = state.client
         .post(format!("{}/api/u53rxr080t/tasks/next/", state.cfg.server.trim_end_matches('/')))
         .bearer_auth(state.cfg.token.clone())
@@ -284,14 +290,15 @@ async fn claim(state: &AppState, agent_id: &Uuid) -> anyhow::Result<Option<TaskP
         .send()
         .await?;
     let json: serde_json::Value = resp.json().await?;
-    if json.get("task").is_none() || json.get("task").is_null() {
+    let task_value = json.get("task");
+    if task_value.is_none() || task_value.map(|v| v.is_null()).unwrap_or(true) {
         return Ok(None);
     }
     let task: TaskPayload = serde_json::from_value(json["task"].clone())?;
     Ok(Some(task))
 }
 
-async fn update_task(state: &AppState, task_id: &Uuid, status: &str, meta: serde_json::Value) -> anyhow::Result<()> {
+async fn update_task(state: &AppState, task_id: &Uuid, status: &str, meta: serde_json::Value) -> Result<()> {
     state.client
         .post(format!("{}/api/u53rxr080t/tasks/{}/", state.cfg.server.trim_end_matches('/'), task_id))
         .bearer_auth(state.cfg.token.clone())
@@ -301,7 +308,7 @@ async fn update_task(state: &AppState, task_id: &Uuid, status: &str, meta: serde
     Ok(())
 }
 
-async fn suggest(state: &AppState, task: &TaskPayload, shot: &[u8]) -> anyhow::Result<Vec<String>> {
+async fn suggest(state: &AppState, task: &TaskPayload, shot: &[u8]) -> Result<Vec<String>> {
     let resp = state.client
         .post(format!("{}/api/u53rxr080t/suggest/", state.cfg.server.trim_end_matches('/')))
         .bearer_auth(state.cfg.token.clone())
@@ -327,7 +334,7 @@ async fn send_finding(
     task: &TaskPayload,
     shot: &[u8],
     suggestion: &[String],
-) -> anyhow::Result<()> {
+) -> Result<()> {
     state.client
         .post(format!("{}/api/u53rxr080t/findings/", state.cfg.server.trim_end_matches('/')))
         .bearer_auth(state.cfg.token.clone())

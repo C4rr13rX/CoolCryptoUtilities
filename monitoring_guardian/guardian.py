@@ -43,13 +43,14 @@ try:  # Optional dependency when running inside Django
     from services.guardian_state import consume_one_time_prompt, get_guardian_settings
     from services.guardian_status import (
         enqueue_slot,
+        claim_slot,
         mark_slot_finished,
         mark_slot_running,
     )
 except Exception:  # pragma: no cover - fallback for standalone CLI
     consume_one_time_prompt = None  # type: ignore
     get_guardian_settings = None  # type: ignore
-    enqueue_slot = mark_slot_finished = mark_slot_running = None  # type: ignore
+    enqueue_slot = mark_slot_finished = mark_slot_running = claim_slot = None  # type: ignore
 
 try:  # Optional but preferred for multi-process coordination
     from services.guardian_lock import GuardianLease
@@ -265,6 +266,12 @@ class Guardian:
         self._force_report.set()
 
     def _emit_report(self) -> None:
+        # If there is a guardian queue item, process it first (one per cycle).
+        queue_entry = claim_slot("guardian") if claim_slot else None
+        if queue_entry:
+            self._process_queue_entry(queue_entry)
+            return
+
         unique_findings = self._gather_unique_findings()
 
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -355,6 +362,47 @@ class Guardian:
         else:
             instructions = DEFAULT_GUARDIAN_PROMPT
         return f"{findings_snippet}\n{instructions}\n{SEARCH_HELP}"
+
+    def _process_queue_entry(self, entry: Dict[str, Any]) -> None:
+        ticket_id = entry.get("ticket")
+        owner = entry.get("owner") or "ux_robot"
+        meta = entry.get("metadata") or {}
+        title = meta.get("title") or "Guardian queue item"
+        summary = meta.get("summary") or meta.get("details") or ""
+        severity = meta.get("severity") or "info"
+        body = meta.get("meta") or meta
+        prompt = (
+            f"Guardian queue item from {owner}\n"
+            f"Severity: {severity}\n"
+            f"Title: {title}\n"
+            f"Summary: {summary}\n"
+            f"Metadata: {body}\n"
+            f"{SEARCH_HELP}"
+        )
+        owner_id = f"guardian@{os.getpid()}:{threading.get_ident()}"
+        try:
+            if GuardianLease is not None:
+                lease = GuardianLease("guardian-codex", timeout=900, poll_interval=2.0)
+                if not lease.acquire(cancel_event=self.shutdown):
+                    if mark_slot_finished and ticket_id:
+                        mark_slot_finished("guardian", ticket_id, outcome="skipped", message="lease busy")
+                    print("[guardian] codex session busy; skipping queue item this cycle.")
+                    return
+                try:
+                    if mark_slot_running and ticket_id:
+                        mark_slot_running("guardian", ticket_id)
+                    response = session.send(prompt)
+                finally:
+                    lease.release()
+            else:
+                response = session.send(prompt)
+            print(response)
+            if mark_slot_finished and ticket_id:
+                mark_slot_finished("guardian", ticket_id, outcome="success")
+        except Exception as exc:
+            if mark_slot_finished and ticket_id:
+                mark_slot_finished("guardian", ticket_id, outcome="error", message=str(exc))
+            raise
 
     def request_report(self) -> None:
         self._force_report.set()
