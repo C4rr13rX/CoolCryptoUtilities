@@ -35,6 +35,8 @@
             <p class="label">Rust helper</p>
             <p class="muted">Local daemon for OS-level actions and Playwright control.</p>
             <a class="primary block" :href="recommendedRustLink" download>Download for {{ detected.osLabel }}</a>
+            <p class="tiny muted">Need a build for your OS? Grab the build kit below.</p>
+            <a class="ghost block" href="/static/u53rxr080t/rust-agent-build-kit.zip" download>Build kit (sources + scripts)</a>
             <p class="tiny muted">Select another OS if needed.</p>
             <div class="download-choices">
               <button v-for="o in osOptions" :key="o.id" class="ghost" @click="overrideOs(o.id)">
