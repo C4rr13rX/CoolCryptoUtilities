@@ -60,46 +60,144 @@
         <div class="import-head">
           <div>
             <h3>Import from GitHub</h3>
-            <p class="caption">Clone a repo with a PAT and turn it into a project.</p>
+            <p class="caption">Save your PAT once, then pick from your GitHub projects.</p>
           </div>
-          <button type="button" class="btn ghost" @click="resetGithubForm">Reset</button>
+          <div class="import-actions">
+            <span class="status-chip" :class="githubConnected ? 'ok' : 'warn'">
+              {{ githubConnected ? `Connected${store.githubUsername ? ` · ${store.githubUsername}` : ''}` : 'Not connected' }}
+            </span>
+            <button type="button" class="btn ghost" @click="resetGithubForm">Reset</button>
+          </div>
         </div>
-        <div class="form-grid">
-          <label>
-            <span>Repository URL</span>
-            <input v-model="githubForm.repo_url" type="text" placeholder="https://github.com/org/repo.git" required />
-          </label>
-          <label>
-            <span>GitHub PAT</span>
-            <input v-model="githubForm.token" type="password" placeholder="ghp_xxx" required />
-          </label>
-          <label>
-            <span>Branch (optional)</span>
-            <input v-model="githubForm.branch" type="text" placeholder="main" />
-          </label>
-          <label>
-            <span>Destination folder (optional)</span>
-            <input
-              v-model="githubForm.destination"
-              type="text"
-              :placeholder="`~/BrandDozerProjects/${githubForm.repo_url.split('/').pop() || ''}`"
-            />
-          </label>
-          <label>
-            <span>Project Name (optional)</span>
-            <input v-model="githubForm.name" type="text" placeholder="Use repo name" />
-          </label>
-          <label>
-            <span>Default Prompt (optional)</span>
-            <textarea v-model="githubForm.default_prompt" rows="2" placeholder="Set a default prompt for the repo" />
-          </label>
+
+        <div class="github-grid">
+          <div class="github-block">
+            <div class="block-head">
+              <div>
+                <p class="eyebrow">Step 1</p>
+                <strong>Connect once</strong>
+                <p class="caption">Stored encrypted; used for GitHub APIs.</p>
+              </div>
+              <div class="connection-actions">
+                <button
+                  type="button"
+                  class="btn small"
+                  @click="connectGithub"
+                  :disabled="store.githubAccountLoading || !githubAccountForm.token"
+                >
+                  {{ store.githubAccountLoading ? 'Saving…' : store.githubConnected ? 'Update token' : 'Save & verify' }}
+                </button>
+                <button
+                  type="button"
+                  class="btn ghost small"
+                  @click="refreshGithubRepos"
+                  :disabled="store.githubRepoLoading"
+                >
+                  {{ store.githubRepoLoading ? 'Refreshing…' : 'Refresh repos' }}
+                </button>
+              </div>
+            </div>
+            <div class="form-grid compact">
+              <label>
+                <span>GitHub username</span>
+                <input v-model="githubAccountForm.username" type="text" :placeholder="store.githubUsername || 'octocat'" />
+              </label>
+              <label>
+                <span>Personal Access Token</span>
+                <input v-model="githubAccountForm.token" type="password" placeholder="ghp_xxx" />
+              </label>
+            </div>
+            <p class="caption muted">We keep the token in the encrypted vault and reuse it for imports.</p>
+          </div>
+
+          <div class="github-block">
+            <div class="block-head">
+              <div>
+                <p class="eyebrow">Step 2</p>
+                <strong>Select a repository</strong>
+                <p class="caption">Loaded from GitHub once you're connected.</p>
+              </div>
+            </div>
+            <div class="form-grid compact">
+              <label>
+                <span>Filter repos</span>
+                <input v-model="githubRepoSearch" type="text" placeholder="Search by name" />
+              </label>
+              <label>
+                <span>Repository</span>
+                <select
+                  v-model="githubImportForm.repo_full_name"
+                  :disabled="store.githubRepoLoading || !store.githubRepos.length"
+                >
+                  <option disabled value="">
+                    {{ store.githubRepoLoading ? 'Loading repos…' : 'Select from GitHub' }}
+                  </option>
+                  <option v-for="repo in filteredRepos" :key="repo.full_name" :value="repo.full_name">
+                    {{ repo.full_name }} {{ repo.private ? '• private' : '' }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                <span>Branch</span>
+                <select v-model="githubImportForm.branch" :disabled="store.githubBranchLoading || !githubImportForm.repo_full_name">
+                  <option value="">Use default branch</option>
+                  <option v-for="branch in store.githubBranches" :key="branch.name" :value="branch.name">
+                    {{ branch.name }}{{ branch.protected ? ' (protected)' : '' }}
+                  </option>
+                </select>
+              </label>
+            </div>
+            <div v-if="selectedRepo" class="repo-meta">
+              <p class="caption">{{ selectedRepo.description || 'No description provided' }}</p>
+              <p class="caption muted">
+                Default branch: {{ selectedRepo.default_branch || 'unknown' }} · {{ selectedRepo.private ? 'Private' : 'Public' }}
+              </p>
+            </div>
+            <div v-if="!store.githubRepoLoading && !store.githubRepos.length" class="empty">
+              Connect your GitHub account and click refresh to load repositories.
+            </div>
+          </div>
         </div>
+
+        <div class="github-block wide">
+          <div class="block-head">
+            <div>
+              <p class="eyebrow">Step 3</p>
+              <strong>Import settings</strong>
+              <p class="caption">We auto-fill paths and names so you can just hit import.</p>
+            </div>
+          </div>
+          <div class="form-grid compact">
+            <label>
+              <span>Destination folder</span>
+              <input
+                v-model="githubImportForm.destination"
+                type="text"
+                :placeholder="`~/BrandDozerProjects/${githubImportForm.repo_full_name.split('/').pop() || ''}`"
+              />
+              <small class="caption">We place projects under your home directory by default.</small>
+            </label>
+            <label>
+              <span>Project name</span>
+              <input v-model="githubImportForm.name" type="text" placeholder="Use repo name" />
+            </label>
+            <label class="full">
+              <span>Default Prompt (optional)</span>
+              <textarea
+                v-model="githubImportForm.default_prompt"
+                rows="2"
+                :placeholder="form.default_prompt || 'Set a default prompt for the repo'"
+              />
+            </label>
+          </div>
+        </div>
+        <div v-if="githubError" class="error">{{ githubError }}</div>
         <div class="actions">
           <button
             type="button"
             class="btn"
             @click="runGithubImport"
-            :disabled="store.importing || !githubForm.repo_url || !githubForm.token"
+            :disabled="store.importing || !githubImportForm.repo_full_name || store.githubRepoLoading"
           >
             {{ store.importing ? 'Importing…' : 'Import & Create Project' }}
           </button>
@@ -248,14 +346,20 @@ const folderState = ref<{ current_path: string; parent: string | null; home: str
   home: '',
   directories: [],
 });
-const githubForm = ref({
-  repo_url: '',
+const githubAccountForm = ref({
+  username: '',
   token: '',
+});
+const githubImportForm = ref({
+  repo_full_name: '',
   branch: '',
   destination: '',
   name: '',
   default_prompt: '',
 });
+const githubRepoSearch = ref('');
+const lastAutoDestination = ref('');
+const githubError = ref('');
 const confirmOpen = ref(false);
 const logBox = ref<HTMLElement | null>(null);
 
@@ -264,6 +368,15 @@ let logTimer: number | null = null;
 onMounted(async () => {
   await store.load();
   await loadFolders();
+  try {
+    const account = await store.loadGithubAccount();
+    githubAccountForm.value.username = account?.username || store.githubUsername || '';
+    if (account?.connected || account?.has_token) {
+      await refreshGithubRepos();
+    }
+  } catch (err) {
+    // Ignore account load errors in UI init.
+  }
   if (store.projects.length) {
     selectedId.value = store.projects[0].id;
     if (!form.value.root_path) {
@@ -295,7 +408,40 @@ watch(
   },
 );
 
+watch(
+  () => githubImportForm.value.repo_full_name,
+  async (fullName) => {
+    if (!fullName) {
+      githubImportForm.value.branch = '';
+      store.githubBranches = [];
+      return;
+    }
+    await refreshGithubBranches(fullName);
+    const repoName = fullName.split('/').pop() || '';
+    const selected = store.githubRepos.find((repo: any) => repo.full_name === fullName);
+    if (!githubImportForm.value.branch && selected?.default_branch) {
+      githubImportForm.value.branch = selected.default_branch;
+    }
+    setAutoDestination(repoName);
+    if (!githubImportForm.value.name) {
+      githubImportForm.value.name = repoName || githubImportForm.value.name;
+    }
+  },
+);
+
 const logText = computed(() => (store.logs.length ? store.logs.join('\n') : 'No output yet.'));
+const selectedRepo = computed(() =>
+  store.githubRepos.find((repo: any) => repo.full_name === githubImportForm.value.repo_full_name),
+);
+const filteredRepos = computed(() => {
+  const term = githubRepoSearch.value.trim().toLowerCase();
+  if (!term) return store.githubRepos;
+  return store.githubRepos.filter((repo: any) => {
+    const haystack = `${repo.full_name || ''} ${repo.description || ''}`.toLowerCase();
+    return haystack.includes(term);
+  });
+});
+const githubConnected = computed(() => store.githubConnected || store.githubHasToken);
 
 async function loadFolders(path?: string) {
   folderLoading.value = true;
@@ -338,15 +484,69 @@ function chooseFolder() {
   folderModalOpen.value = false;
 }
 
+function setAutoDestination(repoName: string) {
+  if (!repoName) return;
+  const autoPath = `~/BrandDozerProjects/${repoName}`;
+  if (!githubImportForm.value.destination || githubImportForm.value.destination === lastAutoDestination.value) {
+    githubImportForm.value.destination = autoPath;
+    lastAutoDestination.value = autoPath;
+  }
+}
+
+async function refreshGithubRepos() {
+  githubError.value = '';
+  try {
+    await store.fetchGithubRepos(githubAccountForm.value.username || store.githubUsername || undefined);
+    if (!githubImportForm.value.repo_full_name && store.githubRepos.length) {
+      githubImportForm.value.repo_full_name = store.githubRepos[0].full_name;
+    }
+  } catch (err: any) {
+    githubError.value = err?.message || 'Unable to load repositories';
+  }
+}
+
+async function refreshGithubBranches(fullName: string) {
+  githubError.value = '';
+  try {
+    await store.fetchGithubBranches(fullName);
+  } catch (err: any) {
+    githubError.value = err?.message || 'Unable to load branches';
+  }
+}
+
+async function connectGithub() {
+  githubError.value = '';
+  if (!githubAccountForm.value.token) {
+    githubError.value = 'Add a personal access token first.';
+    return;
+  }
+  try {
+    const payload = {
+      username: githubAccountForm.value.username || undefined,
+      token: githubAccountForm.value.token,
+    };
+    const data = await store.saveGithubAccount(payload);
+    githubAccountForm.value.username = data?.username || payload.username || githubAccountForm.value.username;
+    githubAccountForm.value.token = '';
+    await refreshGithubRepos();
+  } catch (err: any) {
+    githubError.value = err?.message || 'Failed to save GitHub token';
+  }
+}
+
 function resetGithubForm() {
-  githubForm.value = {
-    repo_url: '',
-    token: '',
+  githubAccountForm.value.token = '';
+  githubImportForm.value = {
+    repo_full_name: '',
     branch: '',
     destination: '',
     name: '',
     default_prompt: '',
   };
+  githubRepoSearch.value = '';
+  lastAutoDestination.value = '';
+  githubError.value = '';
+  store.githubBranches = [];
 }
 
 function toggleForm() {
@@ -366,22 +566,28 @@ function resetForm() {
 }
 
 async function runGithubImport() {
-  if (!githubForm.value.repo_url || !githubForm.value.token) {
+  githubError.value = '';
+  if (!githubImportForm.value.repo_full_name) {
+    githubError.value = 'Select a repository to import.';
     return;
   }
-  const payload = {
-    repo_url: githubForm.value.repo_url,
-    token: githubForm.value.token,
-    branch: githubForm.value.branch || undefined,
-    destination: githubForm.value.destination || undefined,
-    name: githubForm.value.name || undefined,
-    default_prompt: githubForm.value.default_prompt || form.value.default_prompt || undefined,
+  const payload: Record<string, any> = {
+    repo_full_name: githubImportForm.value.repo_full_name,
+    branch: githubImportForm.value.branch || undefined,
+    destination: githubImportForm.value.destination || undefined,
+    name: githubImportForm.value.name || undefined,
+    default_prompt: githubImportForm.value.default_prompt || form.value.default_prompt || undefined,
+    remember_token: true,
   };
-  const project = await store.importFromGitHub(payload);
-  resetGithubForm();
-  if (project?.id) {
-    selectedId.value = project.id;
-    await store.refreshLogs(project.id, 200);
+  try {
+    const project = await store.importFromGitHub(payload);
+    resetGithubForm();
+    if (project?.id) {
+      selectedId.value = project.id;
+      await store.refreshLogs(project.id, 200);
+    }
+  } catch (err: any) {
+    githubError.value = err?.message || 'GitHub import failed';
   }
 }
 
@@ -548,7 +754,10 @@ function formatTime(ts?: number | string | null) {
 
 .project-form input,
 .project-form textarea,
-.logs-panel select {
+.logs-panel select,
+.import-card input,
+.import-card textarea,
+.import-card select {
   background: rgba(3, 8, 18, 0.9);
   border: 1px solid rgba(126, 168, 255, 0.3);
   color: #e5edff;
@@ -561,6 +770,15 @@ function formatTime(ts?: number | string | null) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 0.7rem;
+}
+
+.form-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.55rem;
+}
+
+.form-grid .full {
+  grid-column: 1 / -1;
 }
 
 .import-card {
@@ -578,6 +796,86 @@ function formatTime(ts?: number | string | null) {
   justify-content: space-between;
   align-items: center;
   gap: 0.6rem;
+}
+
+.import-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.status-chip {
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(126, 168, 255, 0.4);
+  background: rgba(5, 12, 24, 0.9);
+  color: #e5edff;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+
+.status-chip.ok {
+  border-color: rgba(52, 211, 153, 0.6);
+  color: #34d399;
+}
+
+.status-chip.warn {
+  border-color: rgba(246, 177, 67, 0.6);
+  color: #f6b143;
+}
+
+.github-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.8rem;
+}
+
+.github-block {
+  background: rgba(3, 8, 18, 0.7);
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  border-radius: 12px;
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.github-block.wide {
+  margin-top: 0.4rem;
+}
+
+.block-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.connection-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.repo-meta {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(126, 168, 255, 0.3);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(229, 237, 255, 0.6);
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.muted {
+  color: rgba(229, 237, 255, 0.65);
 }
 
 .interjections {
@@ -608,6 +906,11 @@ function formatTime(ts?: number | string | null) {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+.btn.small {
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
 }
 
 .project-list {
@@ -687,6 +990,14 @@ function formatTime(ts?: number | string | null) {
 .empty {
   color: rgba(229, 237, 255, 0.6);
   font-style: italic;
+}
+
+.error {
+  color: #ff9b9b;
+  background: rgba(255, 90, 95, 0.1);
+  border: 1px solid rgba(255, 90, 95, 0.4);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
 }
 
 .header-actions {

@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -15,8 +15,31 @@ from rest_framework.views import APIView
 
 from services.branddozer_runner import branddozer_manager
 from services.branddozer_ai import generate_interjections
+from services.branddozer_github import (
+    fetch_github_profile,
+    fetch_repo_details,
+    get_saved_github_auth,
+    list_github_repos,
+    list_repo_branches,
+    store_github_auth,
+)
 from services.branddozer_state import delete_project, get_project, list_projects, save_project, update_project_fields
 from services.api_integrations import get_integration_value
+
+
+def _normalize_repo_full_name(raw_path: str) -> str:
+    cleaned = raw_path.strip().rstrip("/")
+    if cleaned.lower().endswith(".git"):
+        cleaned = cleaned[:-4]
+    parts = [segment for segment in cleaned.split("/") if segment]
+    if len(parts) >= 2:
+        return f"{parts[-2]}/{parts[-1]}"
+    return ""
+
+
+def _infer_full_name_from_url(repo_url: str) -> str:
+    parsed_repo = urlparse(repo_url if "://" in repo_url else f"https://{repo_url}")
+    return _normalize_repo_full_name(parsed_repo.path)
 
 
 class ProjectListView(APIView):
@@ -151,20 +174,106 @@ class ProjectRootListView(APIView):
         )
 
 
+class ProjectGitHubAccountView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        auth = get_saved_github_auth(request.user, reveal_token=True)
+        if not auth.has_token or not auth.token:
+            return Response(
+                {"connected": False, "username": auth.username or "", "has_token": auth.has_token},
+                status=status.HTTP_200_OK,
+            )
+        try:
+            profile = fetch_github_profile(auth.token)
+        except ValueError as exc:
+            return Response(
+                {"connected": False, "username": auth.username or "", "has_token": True, "detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payload = {
+            "connected": True,
+            "username": auth.username or profile.get("login") or "",
+            "has_token": True,
+            "profile": profile,
+        }
+        return Response(payload, status=status.HTTP_200_OK)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        data = request.data or {}
+        token = data.get("token") or data.get("pat")
+        username = data.get("username") or data.get("login")
+        if not token:
+            return Response({"detail": "GitHub personal access token is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            profile = fetch_github_profile(token)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        username = username or profile.get("login")
+        auth = store_github_auth(request.user, username=username, token=token)
+        payload = {
+            "connected": True,
+            "username": auth.username or username or "",
+            "has_token": auth.has_token,
+            "profile": profile,
+        }
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class ProjectGitHubRepoListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        username = request.query_params.get("username") or None
+        auth = get_saved_github_auth(request.user, reveal_token=True)
+        if not auth.token:
+            return Response({"detail": "GitHub token is required. Connect your account first."}, status=status.HTTP_400_BAD_REQUEST)
+        username = username or auth.username
+        try:
+            repos = list_github_repos(auth.token, username=username)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"repos": repos, "count": len(repos), "username": username}, status=status.HTTP_200_OK)
+
+
+class ProjectGitHubBranchListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        repo_full_name = request.query_params.get("repo") or request.query_params.get("full_name")
+        if not repo_full_name:
+            return Response({"detail": "Repository full name is required"}, status=status.HTTP_400_BAD_REQUEST)
+        auth = get_saved_github_auth(request.user, reveal_token=True)
+        if not auth.token:
+            return Response({"detail": "GitHub token is required. Connect your account first."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            branches = list_repo_branches(auth.token, repo_full_name)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"branches": branches}, status=status.HTTP_200_OK)
+
+
 class ProjectGitHubImportView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request: Request, *args, **kwargs) -> Response:
         data = request.data or {}
-        token = data.get("token") or data.get("pat")
+        provided_token = data.get("token") or data.get("pat")
         repo_url = data.get("repo_url") or data.get("repository") or ""
+        repo_full_name = data.get("repo_full_name") or data.get("full_name") or ""
         branch = data.get("branch") or ""
         project_name = data.get("name")
         destination = data.get("destination")
         default_prompt = data.get("default_prompt") or ""
+        username = data.get("username") or data.get("github_username")
+        remember_token = data.get("remember_token", True)
 
-        if not repo_url:
-            return Response({"detail": "Repository URL is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if repo_full_name and not repo_url:
+            repo_url = f"https://github.com/{repo_full_name}.git"
+        if not repo_url and not repo_full_name:
+            return Response({"detail": "Repository is required"}, status=status.HTTP_400_BAD_REQUEST)
+        auth = get_saved_github_auth(request.user, reveal_token=True)
+        token = provided_token or auth.token
         if not token:
             return Response({"detail": "GitHub personal access token is required"}, status=status.HTTP_400_BAD_REQUEST)
         if shutil.which("git") is None:
@@ -177,6 +286,14 @@ class ProjectGitHubImportView(APIView):
             parsed_repo = urlparse(f"https://github.com/{repo_url.lstrip('/')}")
         if not parsed_repo.netloc:
             return Response({"detail": "Repository URL is invalid"}, status=status.HTTP_400_BAD_REQUEST)
+
+        repo_full_name = repo_full_name or _normalize_repo_full_name(parsed_repo.path)
+        if not branch and repo_full_name:
+            try:
+                details = fetch_repo_details(token, repo_full_name)
+                branch = details.get("default_branch") or branch
+            except Exception:
+                pass
 
         repo_name = Path(parsed_repo.path).stem or "branddozer-project"
         base_dir = Path(destination or (Path.home() / "BrandDozerProjects" / repo_name)).expanduser().resolve()
@@ -204,7 +321,7 @@ class ProjectGitHubImportView(APIView):
         clone_base = parsed_repo
         clone_url = clone_base.geturl()
         if token:
-            safe_netloc = f"{token}@{clone_base.netloc}"
+            safe_netloc = f"{quote(token, safe='')}@{clone_base.netloc}"
             clone_url = clone_base._replace(netloc=safe_netloc).geturl()
 
         cmd = ["git", "clone", "--depth", "1"]
@@ -227,13 +344,19 @@ class ProjectGitHubImportView(APIView):
             text=True,
         )
 
+        repo_owner = username or (repo_full_name.split("/")[0] if repo_full_name and "/" in repo_full_name else None)
+        if remember_token and provided_token:
+            store_github_auth(request.user, username=repo_owner, token=provided_token)
+        elif repo_owner and auth.has_token and auth.username is None:
+            store_github_auth(request.user, username=repo_owner, token=None)
+
         payload = {
             "name": project_name or final_dir.name,
             "root_path": str(final_dir),
             "default_prompt": default_prompt,
             "interjections": data.get("interjections") or [],
             "interval_minutes": data.get("interval_minutes"),
-            "repo_url": repo_url,
+            "repo_url": repo_url or f"https://github.com/{repo_full_name}",
             "repo_branch": branch,
         }
         try:

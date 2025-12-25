@@ -348,6 +348,27 @@ export async function fetchBrandRoots(path?: string) {
   return data;
 }
 
+export async function fetchBrandGithubAccount() {
+  const { data } = await api.get('/branddozer/projects/github/account/');
+  return data;
+}
+
+export async function saveBrandGithubAccount(payload: { username?: string; token: string }) {
+  const { data } = await api.post('/branddozer/projects/github/account/', payload);
+  return data;
+}
+
+export async function fetchBrandGithubRepos(username?: string) {
+  const params = username ? { username } : undefined;
+  const { data } = await api.get('/branddozer/projects/github/repos/', { params, timeout: 12000 });
+  return data;
+}
+
+export async function fetchBrandGithubBranches(repoFullName: string) {
+  const { data } = await api.get('/branddozer/projects/github/branches/', { params: { repo: repoFullName } });
+  return data;
+}
+
 export async function createBrandProject(payload: Record<string, any>) {
   const { data } = await api.post('/branddozer/projects/', payload);
   return data;

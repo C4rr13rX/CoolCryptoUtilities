@@ -10,6 +10,10 @@ import {
   generateBrandInterjections,
   fetchBrandRoots,
   importBrandProjectFromGitHub,
+  fetchBrandGithubAccount,
+  saveBrandGithubAccount,
+  fetchBrandGithubRepos,
+  fetchBrandGithubBranches,
 } from '@/api';
 
 interface BrandProject {
@@ -38,6 +42,15 @@ interface BrandDozerState {
   saving: boolean;
   logLoading: boolean;
   importing: boolean;
+  githubConnected: boolean;
+  githubHasToken: boolean;
+  githubUsername: string;
+  githubProfile: Record<string, any> | null;
+  githubRepos: any[];
+  githubBranches: any[];
+  githubAccountLoading: boolean;
+  githubRepoLoading: boolean;
+  githubBranchLoading: boolean;
   error: string | null;
 }
 
@@ -49,6 +62,15 @@ export const useBrandDozerStore = defineStore('branddozer', {
     saving: false,
     logLoading: false,
     importing: false,
+    githubConnected: false,
+    githubHasToken: false,
+    githubUsername: '',
+    githubProfile: null,
+    githubRepos: [],
+    githubBranches: [],
+    githubAccountLoading: false,
+    githubRepoLoading: false,
+    githubBranchLoading: false,
     error: null,
   }),
   actions: {
@@ -115,6 +137,65 @@ export const useBrandDozerStore = defineStore('branddozer', {
     async browseRoots(path?: string) {
       const data = await fetchBrandRoots(path);
       return data;
+    },
+    async loadGithubAccount() {
+      this.githubAccountLoading = true;
+      try {
+        const data = await fetchBrandGithubAccount();
+        this.githubConnected = Boolean(data.connected);
+        this.githubHasToken = Boolean(data.has_token ?? data.hasToken ?? data.connected);
+        this.githubUsername = data.username || '';
+        this.githubProfile = data.profile || null;
+        this.error = null;
+        return data;
+      } catch (err: any) {
+        this.error = err?.message || 'Failed to load GitHub account';
+        throw err;
+      } finally {
+        this.githubAccountLoading = false;
+      }
+    },
+    async saveGithubAccount(payload: { username?: string; token: string }) {
+      this.githubAccountLoading = true;
+      try {
+        const data = await saveBrandGithubAccount(payload);
+        this.githubConnected = Boolean(data.connected);
+        this.githubHasToken = Boolean(data.has_token ?? data.hasToken ?? true);
+        this.githubUsername = data.username || payload.username || this.githubUsername;
+        this.githubProfile = data.profile || null;
+        this.error = null;
+        return data;
+      } finally {
+        this.githubAccountLoading = false;
+      }
+    },
+    async fetchGithubRepos(username?: string) {
+      this.githubRepoLoading = true;
+      try {
+        const data = await fetchBrandGithubRepos(username);
+        this.githubRepos = data.repos || [];
+        this.githubConnected = true;
+        if (data.username) {
+          this.githubUsername = data.username;
+        }
+        if (data.count) {
+          this.githubHasToken = true;
+        }
+        return this.githubRepos;
+      } finally {
+        this.githubRepoLoading = false;
+      }
+    },
+    async fetchGithubBranches(repoFullName: string) {
+      this.githubBranchLoading = true;
+      try {
+        const data = await fetchBrandGithubBranches(repoFullName);
+        this.githubBranches = data.branches || [];
+        this.githubConnected = true;
+        return this.githubBranches;
+      } finally {
+        this.githubBranchLoading = false;
+      }
     },
     async importFromGitHub(payload: Record<string, any>) {
       this.importing = true;
