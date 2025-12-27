@@ -18,6 +18,7 @@ urlpatterns = [
     path("projects/import/github/", views.ProjectGitHubImportView.as_view(), name="project-github-import"),
     path("projects/import/github/status/<str:job_id>/", views.ProjectGitHubImportStatusView.as_view(), name="project-github-import-status"),
     path("projects/<str:project_id>/publish/", views.ProjectGitHubPublishView.as_view(), name="project-github-publish"),
+    path("projects/publish/status/<str:job_id>/", views.ProjectGitHubPublishStatusView.as_view(), name="project-github-publish-status"),
     path("projects/interjections/preview/", views.ProjectInterjectionPreviewView.as_view(), name="project-interjections-preview"),
     path("delivery/runs/", delivery_views.DeliveryRunListView.as_view(), name="delivery-runs"),
     path("delivery/runs/<str:run_id>/", delivery_views.DeliveryRunDetailView.as_view(), name="delivery-run"),

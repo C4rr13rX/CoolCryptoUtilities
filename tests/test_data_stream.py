@@ -57,6 +57,20 @@ def test_market_stream_fallback_uses_base_alias(monkeypatch):
     assert price == 1234.5
 
 
+def test_fallback_uses_recent_live_source(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    stream._offline_enabled = False
+    stream._offline_store = None
+    stream._recent_price_by_source.clear()
+    stream.reference_price = None
+    base_time = time.time()
+    stream._last_emitted_by_source = {"onchain": (1234.0, base_time - 10.0)}
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    price = stream._fallback_consensus_price()
+    assert price == 1234.0
+    assert stream._recent_price_by_source.get("onchain") == (1234.0, base_time - 10.0)
+
+
 def test_market_stream_offline_failover_sample_includes_alias():
     stream = MarketDataStream(symbol="WETH-USDBC")
     stream._offline_enabled = True

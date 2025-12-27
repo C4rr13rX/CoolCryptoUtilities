@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+from django.conf import settings
 from django.db import models
 
 
@@ -108,6 +109,52 @@ class DeliveryRun(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display helper
         return f"Run {self.id} ({self.status})"
+
+
+class BackgroundJob(models.Model):
+    """
+    Background jobs for long-running BrandDozer work.
+    """
+
+    KIND_CHOICES = [
+        ("github_import", "GitHub Import"),
+        ("github_publish", "GitHub Publish"),
+        ("delivery_run", "Delivery Run"),
+        ("ui_capture", "UI Capture"),
+    ]
+
+    STATUS_CHOICES = [
+        ("queued", "Queued"),
+        ("running", "Running"),
+        ("completed", "Completed"),
+        ("error", "Error"),
+        ("canceled", "Canceled"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(BrandProject, null=True, blank=True, on_delete=models.SET_NULL, related_name="background_jobs")
+    run = models.ForeignKey(DeliveryRun, null=True, blank=True, on_delete=models.SET_NULL, related_name="background_jobs")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="branddozer_jobs")
+    kind = models.CharField(max_length=64, choices=KIND_CHOICES)
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default="queued")
+    message = models.TextField(blank=True, default="")
+    detail = models.TextField(blank=True, default="")
+    error = models.TextField(blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    result = models.JSONField(default=dict, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    locked_by = models.CharField(max_length=120, blank=True, default="")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["status", "kind", "created_at"], name="branddozer_job_status_kind"),
+        ]
 
 
 class GovernanceArtifact(models.Model):

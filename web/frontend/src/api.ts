@@ -431,7 +431,13 @@ export async function fetchBrandGithubImportStatus(jobId: string) {
 }
 
 export async function publishBrandProject(projectId: string, payload: Record<string, any>) {
-  const { data } = await api.post(`/branddozer/projects/${projectId}/publish/`, payload, { timeout: 120000 });
+  const enriched = { async: true, ...payload };
+  const { data } = await api.post(`/branddozer/projects/${projectId}/publish/`, enriched, { timeout: 20000 });
+  return data;
+}
+
+export async function fetchBrandGithubPublishStatus(jobId: string) {
+  const { data } = await api.get(`/branddozer/projects/publish/status/${jobId}/`, { timeout: 20000 });
   return data;
 }
 
@@ -482,7 +488,7 @@ export async function fetchBrandDeliveryArtifacts(runId: string) {
 }
 
 export async function triggerBrandDeliveryUiCapture(runId: string) {
-  const { data } = await api.post(`/branddozer/delivery/runs/${runId}/ui-capture/`);
+  const { data } = await api.post(`/branddozer/delivery/runs/${runId}/ui-capture/`, {}, { timeout: 20000 });
   return data;
 }
 

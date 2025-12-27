@@ -16,6 +16,7 @@ import {
   fetchBrandGithubBranches,
   fetchBrandGithubImportStatus,
   publishBrandProject,
+  fetchBrandGithubPublishStatus,
   setBrandGithubActiveAccount,
   previewBrandInterjections,
   startBrandDeliveryRun,
@@ -374,6 +375,13 @@ export const useBrandDozerStore = defineStore('branddozer', {
       } finally {
         this.publishing = false;
       }
+    },
+    async fetchGithubPublishStatus(jobId: string) {
+      const data = await fetchBrandGithubPublishStatus(jobId);
+      if (data?.result?.repo_url) {
+        await this.load();
+      }
+      return data;
     },
   },
 });

@@ -289,6 +289,15 @@ class MarketDataStream:
         self._rest_outage_until = 0.0
         self._rest_outage_failures = 0
         self._last_rest_outage_log = 0.0
+        self._network_outage_base = max(10.0, float(os.getenv("NETWORK_OUTAGE_BACKOFF_SEC", "30")))
+        self._network_outage_growth = max(1.1, float(os.getenv("NETWORK_OUTAGE_GROWTH_FACTOR", "1.7")))
+        self._network_outage_max = max(self._network_outage_base, float(os.getenv("NETWORK_OUTAGE_MAX_SEC", "600")))
+        self._network_outage_until = 0.0
+        self._network_outage_failures = 0
+        self._last_network_outage_log = 0.0
+        self._network_outage_reason = "init"
+        self._network_outage_source: Optional[str] = None
+        self._network_outage_endpoint: Optional[str] = None
         self._last_volume: float = 0.0
         self.consensus_sources = int(os.getenv("PRICE_CONSENSUS_SOURCES", "2"))
 
@@ -415,6 +424,27 @@ class MarketDataStream:
                         "ws_disabled": self._ws_disabled,
                     },
                 )
+                now = time.time()
+                if self._network_outage_active(now):
+                    if now - self._last_network_outage_log >= 30.0:
+                        log_message(
+                            "market-stream",
+                            "network outage cooling down; delaying live connections",
+                            severity="warning",
+                            details={
+                                "symbol": self.symbol,
+                                "resume_in": round(max(0.0, self._network_outage_until - now), 2),
+                                "reason": self._network_outage_reason,
+                                "source": self._network_outage_source,
+                                "endpoint": self._network_outage_endpoint,
+                            },
+                        )
+                        self._last_network_outage_log = now
+                    await self._dispatch_offline_snapshot()
+                    await self._handle_consensus_failure(cooldown_only=True)
+                    await asyncio.sleep(self._cooldown_sleep_interval(now))
+                    backoff = min(backoff * 1.2, 300.0)
+                    continue
                 if self._ws_disabled:
                     self.url = None
                     self._warn_websocket_unavailable()
@@ -471,6 +501,23 @@ class MarketDataStream:
                         self._select_next_endpoint()
                 except Exception as exc:  # pragma: no cover - network dependent
                     self._debug("ws_error", extra={"error": str(exc), "url": self.url})
+                    network_error = isinstance(
+                        exc,
+                        (
+                            asyncio.TimeoutError,
+                            TimeoutError,
+                            aiohttp.ClientConnectionError,
+                            aiohttp.ClientOSError,
+                            OSError,
+                        ),
+                    )
+                    if network_error:
+                        reason = "timeout" if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else "network"
+                        self._register_network_outage(
+                            reason=reason,
+                            endpoint=self.current_endpoint,
+                            source="websocket",
+                        )
                     log_message(
                         "market-stream",
                         f"websocket error {exc}; retrying in {backoff:.1f}s",
@@ -516,6 +563,8 @@ class MarketDataStream:
         async with aiohttp.ClientSession() as session:
             self._session = session
             async with session.ws_connect(self.url) as ws:
+                if self._network_outage_failures:
+                    self._clear_network_outage()
                 subscribe_msg = self._build_subscribe_payload(self.symbol)
                 if subscribe_msg is not None:
                     try:
@@ -553,6 +602,25 @@ class MarketDataStream:
         while not self._stop_event.is_set() and time.time() < end_time:
             dispatched = False
             now = time.time()
+            if self._network_outage_active(now):
+                if now - self._last_network_outage_log >= 30.0:
+                    log_message(
+                        "market-stream",
+                        "network outage cooling down; delaying polls",
+                        severity="warning",
+                        details={
+                            "symbol": self.symbol,
+                            "resume_in": round(max(0.0, self._network_outage_until - now), 2),
+                            "reason": self._network_outage_reason,
+                            "source": self._network_outage_source,
+                            "endpoint": self._network_outage_endpoint,
+                        },
+                    )
+                    self._last_network_outage_log = now
+                await self._dispatch_offline_snapshot()
+                await self._handle_consensus_failure(cooldown_only=True)
+                await asyncio.sleep(self._cooldown_sleep_interval(now))
+                continue
             if self._rest_outage_active(now):
                 if now - self._last_rest_outage_log >= 30.0:
                     log_message(
@@ -577,12 +645,20 @@ class MarketDataStream:
                         offline_ready = self._offline_snapshot() is not None
                     except Exception:
                         offline_ready = False
+                live_ready = self._recent_live_sample(max_age=self.consensus_window * 2) is not None
+                reference_ready = bool(self.reference_price)
+                fallback_ready = offline_ready or live_ready or reference_ready
                 if now - self._last_rest_unavailable_log >= 30.0:
                     log_message(
                         "market-stream",
                         "all REST endpoints cooling down.",
-                        severity="info" if offline_ready else "warning",
-                        details={"symbol": self.symbol, "offline_ready": offline_ready},
+                        severity="info" if fallback_ready else "warning",
+                        details={
+                            "symbol": self.symbol,
+                            "offline_ready": offline_ready,
+                            "live_ready": live_ready,
+                            "reference_ready": reference_ready,
+                        },
                     )
                     self._last_rest_unavailable_log = now
                 await self._dispatch_offline_snapshot()
@@ -659,6 +735,13 @@ class MarketDataStream:
             outage_detected = total_attempted > 0 and total_network_errors == total_attempted
             if outage_detected:
                 self._register_rest_outage(reason=outage_reason or "network", endpoint=outage_endpoint)
+                self._register_network_outage(
+                    reason=outage_reason or "network",
+                    endpoint=outage_endpoint,
+                    source="rest",
+                )
+            elif non_network_response and self._network_outage_active(now):
+                self._clear_network_outage()
             if not dispatched:
                 cooldown_only = outage_detected and not non_network_response
                 fallback_used = await self._handle_consensus_failure(cooldown_only=cooldown_only)
@@ -909,6 +992,28 @@ class MarketDataStream:
         rel_vol = math.sqrt(self._global_price_var) / max(self._global_price_ema, 1e-9)
         return max(tolerance, self.vol_multiplier * rel_vol)
 
+    def _recent_live_sample(self, *, max_age: Optional[float] = None) -> Optional[Tuple[str, float, float]]:
+        now = time.time()
+        max_age = max(15.0, max_age if max_age is not None else self.consensus_window * 2)
+        candidates: List[Tuple[float, str, float]] = []
+        for source, (price, ts) in self._last_emitted_by_source.items():
+            label = (source or "").lower()
+            if not label:
+                continue
+            if label in {"fallback", "offline", "bootstrap", "reference"}:
+                continue
+            if label.startswith(("offline", "fallback", "snapshot")):
+                continue
+            if price <= 0:
+                continue
+            if now - ts > max_age:
+                continue
+            candidates.append((ts, source, price))
+        if not candidates:
+            return None
+        ts, source, price = max(candidates, key=lambda item: item[0])
+        return source, price, ts
+
     async def _handle_consensus_failure(self, *, cooldown_only: bool = False) -> bool:
         self._consensus_failures += 1
         if self._consensus_failures in {10, 20}:
@@ -999,6 +1104,13 @@ class MarketDataStream:
         ]
         if valid:
             return float(statistics.median(valid))
+        live_sample = self._recent_live_sample()
+        if live_sample:
+            source, price, ts = live_sample
+            current = self._recent_price_by_source.get(source)
+            if not current or current[1] < ts:
+                self._recent_price_by_source[source] = (price, ts)
+            return float(price)
         if self.reference_price:
             return float(self.reference_price)
         offline_hit = self._offline_snapshot()
@@ -1544,9 +1656,20 @@ class MarketDataStream:
         now = now or time.time()
         return self._rest_outage_until > now
 
+    def _network_outage_active(self, now: Optional[float] = None) -> bool:
+        now = now or time.time()
+        return self._network_outage_until > now
+
     def _clear_rest_outage(self) -> None:
         self._rest_outage_until = 0.0
         self._rest_outage_failures = 0
+
+    def _clear_network_outage(self) -> None:
+        self._network_outage_until = 0.0
+        self._network_outage_failures = 0
+        self._network_outage_reason = "recovered"
+        self._network_outage_source = None
+        self._network_outage_endpoint = None
 
     def _register_rest_outage(self, *, reason: str, endpoint: Optional[str] = None) -> None:
         now = time.time()
@@ -1579,6 +1702,51 @@ class MarketDataStream:
             )
             self._last_rest_outage_log = now
 
+    def _register_network_outage(
+        self,
+        *,
+        reason: str,
+        endpoint: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> None:
+        now = time.time()
+        self._network_outage_failures += 1
+        exponent = min(6, max(0, self._network_outage_failures - 1))
+        backoff = min(
+            self._network_outage_max,
+            self._network_outage_base * (self._network_outage_growth ** exponent),
+        )
+        self._network_outage_until = max(self._network_outage_until, now + backoff)
+        self._network_outage_reason = reason
+        self._network_outage_source = source
+        self._network_outage_endpoint = endpoint
+        self.metrics.feedback(
+            "market_stream",
+            severity=FeedbackSeverity.WARNING,
+            label="network_outage",
+            details={
+                "symbol": self.symbol,
+                "endpoint": endpoint,
+                "source": source,
+                "reason": reason,
+                "backoff_sec": round(max(0.0, self._network_outage_until - now), 2),
+            },
+        )
+        if now - self._last_network_outage_log >= 30.0:
+            log_message(
+                "market-stream",
+                "network outage detected; pausing live connections",
+                severity="warning",
+                details={
+                    "symbol": self.symbol,
+                    "endpoint": endpoint,
+                    "source": source,
+                    "reason": reason,
+                    "backoff_sec": round(max(0.0, self._network_outage_until - now), 2),
+                },
+            )
+            self._last_network_outage_log = now
+
     def _cooldown_sleep_interval(self, now: Optional[float] = None) -> float:
         now = now or time.time()
         next_ready_values: List[float] = []
@@ -1586,6 +1754,8 @@ class MarketDataStream:
             next_ready_values.append(min(self._endpoint_backoff_until.values()))
         if self._rest_outage_until > now:
             next_ready_values.append(self._rest_outage_until)
+        if self._network_outage_until > now:
+            next_ready_values.append(self._network_outage_until)
         if not next_ready_values:
             return max(1.0, self.rest_poll_interval)
         next_ready = min(next_ready_values)
@@ -1682,6 +1852,8 @@ class MarketDataStream:
             self._endpoint_backoff_until.pop(name, None)
         if self._rest_outage_failures:
             self._clear_rest_outage()
+        if self._network_outage_failures:
+            self._clear_network_outage()
         if self.rest_poll_interval > self._base_rest_interval:
             self._relax_rest_interval(reason="endpoint_success")
         if self._consensus_failures > 0:
@@ -1948,7 +2120,7 @@ class MarketDataStream:
     async def _refresh_reference_price(self) -> None:
         if self._http_session is None:
             return
-        if self._rest_outage_active():
+        if self._rest_outage_active() or self._network_outage_active():
             return
         base, quote = self._rest_base, self._rest_quote
         for endpoint in self._ranked_endpoints():
@@ -1957,11 +2129,14 @@ class MarketDataStream:
             result = await self._fetch_rest_price(endpoint, base, quote)
             if result.error in {"network", "timeout"}:
                 self._register_rest_outage(reason=result.error, endpoint=endpoint.name)
+                self._register_network_outage(reason=result.error, endpoint=endpoint.name, source="rest")
                 continue
             if result.error in {"rate_limited_local", "unavailable"}:
                 continue
             if result.error:
                 self._record_endpoint_failure(endpoint.name)
+                if self._network_outage_active():
+                    self._clear_network_outage()
                 continue
             price = result.price
             if not price or price <= 0:

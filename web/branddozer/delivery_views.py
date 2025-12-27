@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from services.branddozer_delivery import delivery_orchestrator
+from services.branddozer_jobs import enqueue_job
 from branddozer.models import (
     AcceptanceRecord,
     BacklogItem,
@@ -92,10 +93,18 @@ class DeliveryRunListView(APIView):
         if not prompt:
             return Response({"detail": "prompt is required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            run = delivery_orchestrator.start_run(project_id, prompt, mode=mode)
+            run = delivery_orchestrator.create_run(project_id, prompt, mode=mode)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"run": _run_payload(run)}, status=status.HTTP_201_CREATED)
+        job = enqueue_job(
+            kind="delivery_run",
+            project=run.project,
+            run=run,
+            user=request.user,
+            payload={"mode": mode},
+            message="Queued",
+        )
+        return Response({"run": _run_payload(run), "job_id": str(job.id)}, status=status.HTTP_201_CREATED)
 
 
 class DeliveryRunDetailView(APIView):
@@ -250,8 +259,15 @@ class DeliveryRunUICaptureView(APIView):
         run = DeliveryRun.objects.filter(id=run_id).first()
         if not run:
             return Response({"detail": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
-        delivery_orchestrator.trigger_ui_review(run.id, manual=True)
-        return Response({"status": "started"}, status=status.HTTP_202_ACCEPTED)
+        job = enqueue_job(
+            kind="ui_capture",
+            project=run.project,
+            run=run,
+            user=request.user,
+            payload={"manual": True},
+            message="Queued",
+        )
+        return Response({"status": "queued", "job_id": str(job.id)}, status=status.HTTP_202_ACCEPTED)
 
 
 class DeliveryRunGovernanceView(APIView):

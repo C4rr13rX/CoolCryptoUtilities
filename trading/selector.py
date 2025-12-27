@@ -22,6 +22,7 @@ from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs, pair_index_entries
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
 from services.logging_utils import log_message
+from trading.ghost_limits import resolve_pair_limit
 from services.watchlists import load_watchlists
 from services.background_workers import _ensure_assignment_template, _update_assignment, _run_download
 
@@ -89,6 +90,8 @@ _LOW_COST_CHAIN_ORDER = [
 
 def _load_top_symbols(limit: int = 100, *, chain: Optional[str] = None) -> List[str]:
     return top_pairs(limit=limit, chain=chain)
+
+
 
 
 def _pair_key(symbol: str, chain: str) -> str:
@@ -555,6 +558,7 @@ class GhostTradingSupervisor:
         self.db = db or get_db()
         self.pipeline = pipeline or TrainingPipeline(db=self.db)
         self.pair_limit = pair_limit
+        self._effective_pair_limit = pair_limit
         self.stable_checkpoint_ratio = stable_checkpoint_ratio
         self.bots: List[TradingBot] = []
         self._tasks: List[asyncio.Task] = []
@@ -566,6 +570,30 @@ class GhostTradingSupervisor:
         focus_assets, _ = self.pipeline.ghost_focus_assets()
         readiness = self.pipeline.live_readiness_report()
         transition_plan = self.pipeline.ghost_live_transition_plan()
+        horizon_bias = {}
+        horizon_deficit = {}
+        try:
+            horizon_bias = self.pipeline.horizon_bias()
+        except Exception:
+            horizon_bias = {}
+        dataset_meta = getattr(self.pipeline, "_last_dataset_meta", {})
+        if isinstance(dataset_meta, dict):
+            horizon_deficit = dataset_meta.get("horizon_deficit") or {}
+            if not isinstance(horizon_deficit, dict):
+                horizon_deficit = {}
+        pair_limit, limit_meta = resolve_pair_limit(
+            self.pair_limit,
+            focus_assets=focus_assets,
+            horizon_bias=horizon_bias,
+            horizon_deficit=horizon_deficit,
+            system_profile=getattr(self.pipeline, "system_profile", None),
+        )
+        self._effective_pair_limit = pair_limit
+        if limit_meta.get("adjusted"):
+            limit_meta["focus_assets"] = focus_assets[:8]
+            if horizon_deficit:
+                limit_meta["horizon_deficit"] = horizon_deficit
+            log_message("ghost-supervisor", "adjusted pair limit", severity="info", details=limit_meta)
         if readiness and readiness.get("reason") == "no_confusion_data":
             if self.pipeline.prime_confusion_windows():
                 readiness = self.pipeline.live_readiness_report()
@@ -577,7 +605,7 @@ class GhostTradingSupervisor:
                 severity="info" if readiness.get("ready") else "warning",
                 details=readiness,
             )
-        pairs = select_pairs(limit=self.pair_limit)
+        pairs = select_pairs(limit=pair_limit)
         prioritized: List[PairCandidate] = []
         for symbol in focus_assets:
             tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
@@ -601,10 +629,10 @@ class GhostTradingSupervisor:
                 continue
             ordered.append(candidate)
             seen.add(symbol_u)
-            if len(ordered) >= self.pair_limit:
+            if len(ordered) >= pair_limit:
                 break
         if not ordered:
-            ordered = pairs[: self.pair_limit]
+            ordered = pairs[: pair_limit]
         for pair in ordered:
             stream = MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN)
             bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)

@@ -53,6 +53,7 @@ const authUser = process.env.BRANDDOZER_AUTH_USER || '';
 const authPass = process.env.BRANDDOZER_AUTH_PASS || '';
 const authPath = process.env.BRANDDOZER_AUTH_LOGIN_PATH || '/';
 const results = [];
+const routeErrors = [];
 const authStatus = { status: 'skipped', detail: '' };
 const browser = await chromium.launch({
   headless: true,
@@ -60,12 +61,8 @@ const browser = await chromium.launch({
 });
 
 async function safeGoto(page, url) {
-  try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 });
-  } catch (err) {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  }
-  await page.waitForTimeout(800);
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(1000);
 }
 
 async function ensureLogin(page) {
@@ -108,15 +105,22 @@ try {
       deviceScaleFactor: viewport.isMobile ? 2 : 1,
     });
     const page = await context.newPage();
+    page.setDefaultTimeout(60000);
+    page.setDefaultNavigationTimeout(60000);
     await page.emulateMedia({ colorScheme: 'dark' });
     await ensureLogin(page);
     for (const route of routes) {
       const url = `${baseUrl}${route.path || ''}`;
-      await safeGoto(page, url);
-      const filename = `${route.name || 'route'}-${viewport.name}.png`;
-      const shotPath = path.join(outputDir, filename);
-      await page.screenshot({ path: shotPath, fullPage: true });
-      results.push({ route: route.name, viewport: viewport.name, path: shotPath });
+      try {
+        await safeGoto(page, url);
+        const filename = `${route.name || 'route'}-${viewport.name}.png`;
+        const shotPath = path.join(outputDir, filename);
+        await page.screenshot({ path: shotPath, fullPage: true });
+        results.push({ route: route.name, viewport: viewport.name, path: shotPath });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        routeErrors.push({ route: route.name, viewport: viewport.name, error: message });
+      }
     }
     await context.close();
   }
@@ -130,5 +134,9 @@ try {
   await browser.close();
 }
 
-process.stdout.write(JSON.stringify({ baseUrl, outputDir, routes, shots: results, auth: authStatus }));
+if (routeErrors.length) {
+  exitCode = 1;
+}
+
+process.stdout.write(JSON.stringify({ baseUrl, outputDir, routes, shots: results, auth: authStatus, errors: routeErrors }));
 process.exit(exitCode);

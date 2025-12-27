@@ -42,3 +42,7 @@ The following upgrades align with the health report requirements (accuracy acros
 10. Training concurrency guard
     - Serialize `train_candidate` via a lock so background refinement no longer throws “bad parameter / API misuse,” keeping fix/test loops deterministic.
     - Validation: add a lightweight test that simulates concurrent `train_candidate` calls via mocking, or run `pytest tests/test_lab_preview.py` to ensure orchestration still passes.
+
+11. Live-source market fallback
+    - When REST endpoints cool down, reuse the most recent on-chain/live sample so ghost trading stays fed and warnings de-escalate.
+    - Validation: run `pytest tests/test_data_stream.py`.

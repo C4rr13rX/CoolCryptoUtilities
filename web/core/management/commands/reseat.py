@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from django.core.management import BaseCommand, call_command
@@ -33,6 +34,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Disable production manager auto-start even if enabled in settings.",
         )
+        parser.add_argument(
+            "--branddozer-worker-off",
+            action="store_true",
+            help="Disable BrandDozer background worker auto-start.",
+        )
 
     def handle(self, *args, **options):
         project_root = Path(__file__).resolve().parents[4]
@@ -48,22 +54,37 @@ class Command(BaseCommand):
         if options.get("production_off"):
             os.environ["PRODUCTION_AUTO_DISABLED"] = "1"
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[1/5] Frontend build"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[1/6] Frontend build"))
         if not options["noinstall"]:
             run(["npm", "install"], cwd=str(frontend_dir))
         run(["npm", "run", "build"], cwd=str(frontend_dir))
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[2/5] Make migrations"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[2/6] Make migrations"))
         call_command("makemigrations")
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[3/5] Apply migrations"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[3/6] Apply migrations"))
         call_command("migrate")
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[4/5] Collect static"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[4/6] Collect static"))
         call_command("collectstatic", interactive=False)
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[5/5] Runserver"))
+        worker_process = None
+        if not options.get("branddozer_worker_off") and os.environ.get("BRANDDOZER_WORKER_DISABLED") != "1":
+            self.stdout.write(self.style.MIGRATE_HEADING("[5/6] Start BrandDozer worker"))
+            worker_env = os.environ.copy()
+            worker_env.setdefault("SECURE_VAULT_KEY_DIR", str(project_root / "storage" / "secure_vault"))
+            worker_process = subprocess.Popen(
+                [sys.executable, "web/manage.py", "branddozer_worker"],
+                cwd=str(project_root),
+                env=worker_env,
+            )
+
+        self.stdout.write(self.style.MIGRATE_HEADING("[6/6] Runserver"))
         runserver_args = options.get("runserver_args") or []
         if all(arg != "--noreload" for arg in runserver_args):
             runserver_args.append("--noreload")
-        call_command("runserver", *runserver_args)
+        try:
+            call_command("runserver", *runserver_args)
+        finally:
+            if worker_process and worker_process.poll() is None:
+                worker_process.terminate()

@@ -120,12 +120,20 @@
             <h3>Delivery System</h3>
             <p class="caption">One prompt → SCRUM + PMP pipeline with gated verification.</p>
           </div>
-          <div class="import-actions">
-            <span class="status-chip" :class="activeDelivery?.status === 'running' ? 'ok' : 'warn'">
-              {{ activeDelivery?.status || 'Idle' }}
-            </span>
-            <button type="button" class="btn ghost small" @click="refreshDelivery">Refresh</button>
-          </div>
+        <div class="import-actions">
+          <span class="status-chip" :class="activeDelivery?.status === 'running' ? 'ok' : 'warn'">
+            {{ activeDelivery?.status || 'Idle' }}
+          </span>
+          <button
+            type="button"
+            class="btn ghost small"
+            @click="openDeliveryDesktop"
+            :disabled="!activeDelivery?.id"
+          >
+            Open Desktop
+          </button>
+          <button type="button" class="btn ghost small" @click="refreshDelivery">Refresh</button>
+        </div>
         </div>
         <div class="form-grid compact">
           <label>
@@ -182,10 +190,10 @@
         <div class="delivery-grid">
           <div class="delivery-block">
             <h4>Gates</h4>
-            <div v-if="!store.deliveryGates.length" class="empty">No gate runs yet.</div>
-            <div v-for="gate in store.deliveryGates" :key="gate.id" class="delivery-row">
+            <div v-if="!deliveryGateSummary.length" class="empty">No gate runs yet.</div>
+            <div v-for="gate in deliveryGateSummary" :key="gate.name" class="delivery-row">
               <span>{{ gate.name }}</span>
-              <span class="status-pill" :class="gate.status === 'passed' ? 'ok' : 'warn'">{{ gate.status }}</span>
+              <span class="status-pill" :class="gate.tone">{{ gate.label }}</span>
             </div>
           </div>
           <div class="delivery-block">
@@ -397,7 +405,7 @@
       <pre class="console-output" ref="logBox">{{ logText }}</pre>
     </section>
 
-    <q-dialog v-model="deliveryDesktopOpen" persistent maximized>
+    <q-dialog v-model="deliveryDesktopOpen" :persistent="deliveryRunning" maximized>
       <div class="delivery-desktop">
         <header class="desktop-header">
           <div class="desktop-title">
@@ -442,13 +450,10 @@
               </q-btn>
             </div>
             <q-btn size="sm" color="primary" outline @click="minimizeDeliveryDesktop">Minimize</q-btn>
-            <q-btn
-              v-if="deliveryComplete"
-              size="sm"
-              color="positive"
-              outline
-              @click="closeDeliveryDesktop"
-            >
+            <q-btn v-if="!deliveryRunning" size="sm" color="secondary" outline @click="closeDeliveryDesktop">
+              Hide
+            </q-btn>
+            <q-btn v-if="deliveryComplete" size="sm" color="positive" outline @click="closeDeliveryDesktop">
               Close
             </q-btn>
           </div>
@@ -477,7 +482,7 @@
               </div>
             </div>
             <div v-if="!store.deliverySessions.length" class="desktop-empty">
-              Waiting for sessions to start...
+              {{ desktopEmptyMessage }}
             </div>
           </div>
 
@@ -685,6 +690,8 @@ const publishForm = ref({
   repo_name: '',
   private: true,
 });
+const publishJobId = ref('');
+let publishTimer: number | null = null;
 const deliveryError = ref('');
 const deliveryStatusNote = ref('');
 const uiCaptureError = ref('');
@@ -697,6 +704,10 @@ let deliveryPollTick = 0;
 const deliveryPollIntervalMs = 5000;
 const deliveryLogIntervalMs = 6000;
 const deliveryLogLimit = 120;
+const sessionLogMaxLines = 80;
+const sessionLogMaxChars = 500;
+const consoleLogMaxLines = 120;
+const consoleLogMaxChars = 500;
 
 let logTimer: number | null = null;
 let importTimer: number | null = null;
@@ -742,6 +753,7 @@ onBeforeUnmount(() => {
   if (logTimer) window.clearInterval(logTimer);
   if (importTimer) window.clearInterval(importTimer);
   if (deliveryTimer) window.clearInterval(deliveryTimer);
+  if (publishTimer) window.clearInterval(publishTimer);
   stopDrag();
 });
 
@@ -769,16 +781,7 @@ watch(
 );
 
 watch(
-  () => deliveryRunning.value,
-  (running) => {
-    if (running) {
-      openDeliveryDesktop();
-    }
-  },
-);
-
-watch(
-  () => store.deliverySessions,
+  () => store.deliverySessions.map((session: any) => session.id).join('|'),
   () => {
     nextTick(() => {
       ensureWindowPositions();
@@ -787,7 +790,6 @@ watch(
       }
     });
   },
-  { deep: true },
 );
 
 watch(
@@ -831,7 +833,16 @@ watch(
   },
 );
 
-const logText = computed(() => (store.logs.length ? store.logs.join('\n') : 'No output yet.'));
+const logText = computed(() => {
+  if (!store.logs.length) return 'No output yet.';
+  const lines = store.logs.slice(-consoleLogMaxLines).map((line) => {
+    if (line.length > consoleLogMaxChars) {
+      return `${line.slice(0, consoleLogMaxChars)}...`;
+    }
+    return line;
+  });
+  return lines.join('\n');
+});
 const selectedRepo = computed(() =>
   store.githubRepos.find((repo: any) => repo.full_name === githubImportForm.value.repo_full_name),
 );
@@ -862,6 +873,31 @@ const deliveryComplete = computed(() => {
 const deliveryProjectName = computed(() => {
   const projectId = activeDelivery.value?.project_id || deliveryForm.value.project_id;
   return store.projects.find((project) => project.id === projectId)?.name || '';
+});
+const deliveryGateSummary = computed(() => {
+  const seen = new Set<string>();
+  const summary: Array<{ name: string; label: string; tone: string }> = [];
+  for (const gate of store.deliveryGates) {
+    if (!gate?.name || seen.has(gate.name)) continue;
+    seen.add(gate.name);
+    const status = String(gate.status || '').toLowerCase();
+    const isOk = status === 'passed' || status === 'skipped';
+    summary.push({
+      name: gate.name,
+      label: status === 'skipped' ? 'not relevant' : (gate.status || 'unknown'),
+      tone: isOk ? 'ok' : 'warn',
+    });
+  }
+  return summary;
+});
+const desktopEmptyMessage = computed(() => {
+  if (!activeDelivery.value?.id) {
+    return 'No delivery run selected. Start one to see sessions.';
+  }
+  if (!deliveryRunning.value) {
+    return `Run is ${activeDelivery.value?.status || 'inactive'}. Start a new run to open sessions.`;
+  }
+  return 'Waiting for sessions to start... You can minimize this window while it spins up. If this stays queued, check that the background worker is running.';
 });
 const uiSnapshots = computed(() => store.deliveryArtifacts.filter((artifact: any) => artifact.kind === 'ui_screenshot'));
 
@@ -1010,7 +1046,7 @@ async function refreshDelivery() {
         lastSessionLogFetch = now;
         await refreshSessionLogs();
       }
-      if (deliveryRunning.value) {
+      if (deliveryRunning.value && !deliveryPollActive) {
         startDeliveryPolling();
       }
     }
@@ -1042,7 +1078,8 @@ async function refreshSessionLogs() {
   );
 }
 
-function openDeliveryDesktop() {
+function openDeliveryDesktop(force = false) {
+  if (!force && !activeDelivery.value?.id) return;
   deliveryDesktopOpen.value = true;
   deliveryDesktopMinimized.value = false;
 }
@@ -1171,7 +1208,16 @@ function setLogRef(sessionId: string) {
 
 function sessionLogText(sessionId: string) {
   const lines = store.deliverySessionLogs[sessionId];
-  return lines && lines.length ? lines.join('\n') : 'No output yet.';
+  if (!lines || !lines.length) {
+    return 'No output yet.';
+  }
+  const trimmed = lines.slice(-sessionLogMaxLines).map((line) => {
+    if (line.length > sessionLogMaxChars) {
+      return `${line.slice(0, sessionLogMaxChars)}...`;
+    }
+    return line;
+  });
+  return trimmed.join('\n');
 }
 
 async function startDeliveryRun() {
@@ -1481,11 +1527,62 @@ function openPublish(project: any) {
   publishForm.value.private = true;
   publishError.value = '';
   publishStatus.value = '';
+  stopPublishPolling();
   publishOpen.value = true;
 }
 
 function closePublishModal() {
   publishOpen.value = false;
+  stopPublishPolling();
+}
+
+function stopPublishPolling() {
+  if (publishTimer) {
+    window.clearInterval(publishTimer);
+    publishTimer = null;
+  }
+  publishJobId.value = '';
+}
+
+function startPublishPolling(jobId: string) {
+  stopPublishPolling();
+  publishJobId.value = jobId;
+  publishTimer = window.setInterval(() => {
+    pollPublishStatus(jobId);
+  }, 1500);
+}
+
+async function pollPublishStatus(jobId: string) {
+  try {
+    const data = await store.fetchGithubPublishStatus(jobId);
+    if (data.status === 'queued') {
+      publishStatus.value = 'Push queued. Waiting for the background worker...';
+    } else if (data.status === 'running') {
+      publishStatus.value = data.message || 'Pushing to GitHub...';
+    } else if (data.message) {
+      publishStatus.value = data.message;
+    }
+    if (data.status === 'completed') {
+      stopPublishPolling();
+      const resultStatus = data?.result?.status;
+      const branch = data?.result?.branch;
+      const repoUrl = data?.result?.repo_url;
+      if (resultStatus === 'no_changes') {
+        const detail = data?.result?.detail || 'No changes to commit or push.';
+        publishStatus.value = `${detail}${branch ? ` (branch ${branch})` : ''}`;
+      } else {
+        const target = repoUrl || 'GitHub';
+        publishStatus.value = `Pushed to ${target}${branch ? ` (branch ${branch})` : ''}.`;
+      }
+    }
+    if (data.status === 'error') {
+      stopPublishPolling();
+      publishError.value = data.error || 'Failed to push to GitHub.';
+    }
+  } catch (err: any) {
+    stopPublishPolling();
+    publishError.value = err?.message || 'Publish status check failed.';
+  }
 }
 
 async function runPublish() {
@@ -1503,7 +1600,18 @@ async function runPublish() {
   }
   try {
     const data = await store.publishProject(publishTarget.value.id, payload);
-    publishStatus.value = data?.status === 'no_changes' ? 'No changes to commit.' : 'Pushed to GitHub.';
+    if (data?.job_id) {
+      publishStatus.value = 'Push queued...';
+      startPublishPolling(data.job_id);
+      return;
+    }
+    if (data?.status === 'no_changes') {
+      const detail = data?.detail || 'No changes to commit or push.';
+      publishStatus.value = `${detail}${data?.branch ? ` (branch ${data.branch})` : ''}`;
+    } else {
+      const target = data?.repo_url || 'GitHub';
+      publishStatus.value = `Pushed to ${target}${data?.branch ? ` (branch ${data.branch})` : ''}.`;
+    }
   } catch (err: any) {
     publishError.value = resolveErrorMessage(err, 'Failed to push to GitHub.');
   }

@@ -36,6 +36,13 @@ def _key_dir() -> Path:
     override = os.getenv("SECURE_VAULT_KEY_DIR")
     if override:
         return Path(override)
+    if django_settings.configured:
+        repo_root = getattr(django_settings, "REPO_ROOT", None)
+        if repo_root:
+            return Path(repo_root) / "storage" / "secure_vault"
+        base_dir = getattr(django_settings, "BASE_DIR", None)
+        if base_dir:
+            return Path(base_dir).parent / "storage" / "secure_vault"
     return Path("storage/secure_vault")
 
 

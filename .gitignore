@@ -9,6 +9,7 @@ lib64/
 include/
 bin/
 __pycache__/
+.pytest_cache/
 pyvenv.cfg
 storage/
 *.db

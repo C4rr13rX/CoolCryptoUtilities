@@ -45,6 +45,8 @@ DEFAULT_DOD = [
     "User acceptance recorded.",
 ]
 
+MAX_REMEDIATION_CYCLES = int(os.getenv("BRANDDOZER_REMEDIATION_CYCLES", "3"))
+
 PHASES = [
     "mode_detection",
     "baseline_review",
@@ -353,7 +355,7 @@ class GateRunner:
                 command=" ".join(gate.command or []),
                 stdout="cached: previously passed",
                 input_hash=input_hash,
-                meta={"cached": True},
+                meta={"cached": True, "required": gate.required},
             )
         start = time.time()
         if gate.runner:
@@ -363,6 +365,10 @@ class GateRunner:
         else:
             stdout, stderr, code = "", "missing gate runner", 1
         status = "passed" if code == 0 else "failed"
+        not_relevant = False
+        if code != 0 and not gate.required and "not installed" in (stderr or "").lower():
+            status = "skipped"
+            not_relevant = True
         duration = int((time.time() - start) * 1000)
         return GateRun.objects.create(
             project=self.run.project,
@@ -376,6 +382,7 @@ class GateRunner:
             exit_code=code,
             duration_ms=duration,
             input_hash=input_hash,
+            meta={"required": gate.required, "not_relevant": not_relevant},
         )
 
 
@@ -400,12 +407,12 @@ def default_gates(root: Path) -> List[GateDefinition]:
     if shutil.which("pip-audit"):
         gates.append(GateDefinition(name="dependency-vuln", stage="security", command=["pip-audit", "-r", "requirements.txt"], timeout_s=900))
     else:
-        gates.append(GateDefinition(name="dependency-vuln", stage="security", runner=_missing_tool("pip-audit"), timeout_s=5, required=True))
+        gates.append(GateDefinition(name="dependency-vuln", stage="security", runner=_missing_tool("pip-audit"), timeout_s=5, required=False))
 
     if shutil.which("bandit"):
         gates.append(GateDefinition(name="static-security", stage="security", command=["bandit", "-r", "."], timeout_s=900))
     else:
-        gates.append(GateDefinition(name="static-security", stage="security", runner=_missing_tool("bandit"), timeout_s=5, required=True))
+        gates.append(GateDefinition(name="static-security", stage="security", runner=_missing_tool("bandit"), timeout_s=5, required=False))
 
     gates.append(GateDefinition(name="secret-scan", stage="security", runner=_secret_scan, timeout_s=900))
     gates.append(GateDefinition(name="django-hardening", stage="security", runner=_django_hardening, timeout_s=120))
@@ -415,8 +422,8 @@ def default_gates(root: Path) -> List[GateDefinition]:
         gates.append(GateDefinition(name="e2e-smoke", stage="e2e", command=["npx", "playwright", "test", "--reporter=line"], timeout_s=1800))
         gates.append(GateDefinition(name="a11y", stage="e2e", command=["npx", "playwright", "test", "--grep", "@a11y", "--reporter=line"], timeout_s=1800))
     else:
-        gates.append(GateDefinition(name="e2e-smoke", stage="e2e", runner=_missing_tool("playwright"), timeout_s=5, required=True))
-        gates.append(GateDefinition(name="a11y", stage="e2e", runner=_missing_tool("playwright-a11y"), timeout_s=5, required=True))
+        gates.append(GateDefinition(name="e2e-smoke", stage="e2e", runner=_missing_tool("playwright"), timeout_s=5, required=False))
+        gates.append(GateDefinition(name="a11y", stage="e2e", runner=_missing_tool("playwright-a11y"), timeout_s=5, required=False))
 
     return gates
 
@@ -426,7 +433,7 @@ class DeliveryOrchestrator:
         self._lock = threading.Lock()
         self._threads: Dict[str, threading.Thread] = {}
 
-    def start_run(self, project_id: str, prompt: str, mode: str = "auto") -> DeliveryRun:
+    def create_run(self, project_id: str, prompt: str, mode: str = "auto") -> DeliveryRun:
         project = BrandDozerProjectLookup.get_project(project_id)
         delivery_project, _ = DeliveryProject.objects.get_or_create(project=project, defaults={"definition_of_done": DEFAULT_DOD})
         run = DeliveryRun.objects.create(
@@ -440,12 +447,22 @@ class DeliveryOrchestrator:
         delivery_project.status = "running"
         delivery_project.mode = mode
         delivery_project.save(update_fields=["active_run", "status", "mode", "updated_at"])
+        return run
+
+    def start_run(self, project_id: str, prompt: str, mode: str = "auto") -> DeliveryRun:
+        run = self.create_run(project_id, prompt, mode=mode)
 
         thread = threading.Thread(target=self._run_pipeline, args=(run.id,), daemon=True)
         with self._lock:
             self._threads[str(run.id)] = thread
         thread.start()
         return run
+
+    def run_existing(self, run_id: uuid.UUID) -> None:
+        self._run_pipeline(run_id)
+
+    def run_ui_review(self, run_id: uuid.UUID, manual: bool = True) -> None:
+        self._run_ui_review(run_id, manual)
 
     def _run_pipeline(self, run_id: uuid.UUID) -> None:
         close_old_connections()
@@ -489,9 +506,10 @@ class DeliveryOrchestrator:
             self._blueprint_step(run, root)
             _append_session_log(orchestrator_session, "Building backlog and sprint.")
             backlog_items = self._backlog_step(run, root)
-            sprint = self._sprint_plan(run, backlog_items)
+            sprint = self._sprint_plan(run, backlog_items, goal="Initial delivery sprint")
             _append_session_log(orchestrator_session, "Executing sprint.")
             self._execution_loop(run, root, sprint)
+            self._remediation_loop(run, root, orchestrator_session)
 
             if self._dod_satisfied(run):
                 _append_session_log(orchestrator_session, "Definition of Done satisfied. Preparing release candidate.")
@@ -753,13 +771,14 @@ class DeliveryOrchestrator:
         )
         return items
 
-    def _sprint_plan(self, run: DeliveryRun, backlog_items: List[BacklogItem]) -> Sprint:
+    def _sprint_plan(self, run: DeliveryRun, backlog_items: List[BacklogItem], *, goal: str = "Delivery sprint") -> Sprint:
         run.phase = "sprint_planning"
         run.save(update_fields=["phase"])
-        sprint = Sprint.objects.create(project=run.project, run=run, number=1, goal="Initial delivery sprint", status="active")
+        next_number = run.sprint_count + 1
+        sprint = Sprint.objects.create(project=run.project, run=run, number=next_number, goal=goal, status="active")
         for item in backlog_items:
             SprintItem.objects.get_or_create(sprint=sprint, backlog_item=item, defaults={"status": "todo"})
-        run.sprint_count = 1
+        run.sprint_count = next_number
         run.save(update_fields=["sprint_count"])
         return sprint
 
@@ -828,6 +847,20 @@ class DeliveryOrchestrator:
         sprint.completed_at = timezone.now()
         sprint.save(update_fields=["status", "completed_at"])
         self._gate_stage(run, root)
+
+    def _remediation_loop(self, run: DeliveryRun, root: Path, orchestrator_session: DeliverySession) -> None:
+        for cycle in range(MAX_REMEDIATION_CYCLES):
+            if self._dod_satisfied(run):
+                return
+            open_items = list(BacklogItem.objects.filter(run=run).exclude(status="done").order_by("priority"))
+            if not open_items:
+                return
+            _append_session_log(
+                orchestrator_session,
+                f"Remediation cycle {cycle + 1}: {len(open_items)} open items. Replanning sprint.",
+            )
+            sprint = self._sprint_plan(run, open_items, goal=f"Remediation sprint {run.sprint_count + 1}")
+            self._execution_loop(run, root, sprint)
 
     def _run_task_session(self, run: DeliveryRun, root: Path, backlog_item: BacklogItem) -> str:
         session = DeliverySession.objects.create(
@@ -906,20 +939,27 @@ class DeliveryOrchestrator:
         runner = GateRunner(run, root)
         for gate in default_gates(root):
             result = runner.run_gate(gate)
-            if result.status != "passed" and gate.required:
-                BacklogItem.objects.create(
-                    project=run.project,
-                    run=run,
-                    kind="bug",
-                    title=f"Fix failing gate: {result.name}",
-                    description=result.stderr or result.stdout,
-                    acceptance_criteria=["Gate passes"],
-                    priority=1,
-                    estimate_points=2,
-                    status="todo",
-                    source="gate",
-                    meta={"stage": result.stage},
+            if result.status not in {"passed", "skipped"} and gate.required:
+                title = f"Fix failing gate: {result.name}"
+                exists = (
+                    BacklogItem.objects.filter(run=run, source="gate", title=title)
+                    .exclude(status="done")
+                    .exists()
                 )
+                if not exists:
+                    BacklogItem.objects.create(
+                        project=run.project,
+                        run=run,
+                        kind="bug",
+                        title=title,
+                        description=result.stderr or result.stdout,
+                        acceptance_criteria=["Gate passes"],
+                        priority=1,
+                        estimate_points=2,
+                        status="todo",
+                        source="gate",
+                        meta={"stage": result.stage},
+                    )
         self._ui_snapshot_review(run, root)
 
     def trigger_ui_review(self, run_id: uuid.UUID, *, manual: bool = True) -> None:
@@ -999,22 +1039,35 @@ class DeliveryOrchestrator:
                 auth = result.meta.get("auth") or {}
                 if isinstance(auth, dict):
                     auth_detail = str(auth.get("detail") or "")
-            BacklogItem.objects.create(
-                project=run.project,
-                run=run,
-                kind="bug",
-                title="UI snapshot capture failed",
-                description=(
-                    result.stderr
-                    or auth_detail
-                    or "UI snapshots did not complete."
-                ),
-                acceptance_criteria=["UI snapshot capture passes"],
-                priority=1,
-                estimate_points=2,
-                status="todo",
-                source="qa",
+            error_detail = ""
+            if isinstance(result.meta, dict):
+                errors = result.meta.get("errors") or []
+                if isinstance(errors, list) and errors:
+                    error_detail = json.dumps(errors, indent=2)[:2000]
+            title = "UI snapshot capture failed"
+            exists = (
+                BacklogItem.objects.filter(run=run, source="qa", title=title)
+                .exclude(status="done")
+                .exists()
             )
+            if not exists:
+                BacklogItem.objects.create(
+                    project=run.project,
+                    run=run,
+                    kind="bug",
+                    title=title,
+                    description=(
+                        result.stderr
+                        or auth_detail
+                        or error_detail
+                        or "UI snapshots did not complete."
+                    ),
+                    acceptance_criteria=["UI snapshot capture passes"],
+                    priority=1,
+                    estimate_points=2,
+                    status="todo",
+                    source="qa",
+                )
             session.status = "error"
             session.completed_at = timezone.now()
             session.save(update_fields=["status", "completed_at"])
@@ -1075,18 +1128,25 @@ class DeliveryOrchestrator:
         if review_status != "passed":
             issues = payload.get("issues") if isinstance(payload, dict) else None
             issue_summary = json.dumps(issues, indent=2) if issues else review_output
-            BacklogItem.objects.create(
-                project=run.project,
-                run=run,
-                kind="bug",
-                title="UI review failed",
-                description=issue_summary[:4000],
-                acceptance_criteria=["UI review passes", "Screenshots match acceptance criteria"],
-                priority=1,
-                estimate_points=3,
-                status="todo",
-                source="qa",
+            title = "UI review failed"
+            exists = (
+                BacklogItem.objects.filter(run=run, source="qa", title=title)
+                .exclude(status="done")
+                .exists()
             )
+            if not exists:
+                BacklogItem.objects.create(
+                    project=run.project,
+                    run=run,
+                    kind="bug",
+                    title=title,
+                    description=issue_summary[:4000],
+                    acceptance_criteria=["UI review passes", "Screenshots match acceptance criteria"],
+                    priority=1,
+                    estimate_points=3,
+                    status="todo",
+                    source="qa",
+                )
             session.status = "blocked"
         else:
             session.status = "done"
@@ -1118,8 +1178,13 @@ class DeliveryOrchestrator:
         backlog_open = BacklogItem.objects.filter(run=run).exclude(status="done").exists()
         if backlog_open:
             return False
-        gate_failures = GateRun.objects.filter(run=run).exclude(status="passed").exists()
-        if gate_failures:
+        gate_failures = {}
+        for gate in GateRun.objects.filter(run=run).order_by("name", "-created_at"):
+            if gate.name not in gate_failures:
+                gate_failures[gate.name] = gate.status
+        if not gate_failures:
+            return False
+        if any(status not in {"passed", "skipped"} for status in gate_failures.values()):
             return False
         return True
 

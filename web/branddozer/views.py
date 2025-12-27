@@ -3,9 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import quote, urlparse
@@ -18,6 +16,7 @@ from rest_framework.views import APIView
 from django.db import close_old_connections
 from django.utils.text import slugify
 
+from branddozer.models import BrandProject
 from services.branddozer_runner import branddozer_manager
 from services.branddozer_ai import generate_interjections
 from services.branddozer_github import (
@@ -34,6 +33,7 @@ from services.branddozer_github import (
     upsert_github_account,
 )
 from services.branddozer_state import delete_project, get_project, list_projects, save_project, update_project_fields
+from services.branddozer_jobs import enqueue_job, get_job, job_payload, update_job
 from services.api_integrations import get_integration_value
 from services.logging_utils import log_message
 
@@ -53,51 +53,47 @@ def _infer_full_name_from_url(repo_url: str) -> str:
     return _normalize_repo_full_name(parsed_repo.path)
 
 
-_IMPORT_JOBS: Dict[str, Dict[str, Any]] = {}
-_IMPORT_LOCK = threading.Lock()
-_IMPORT_TTL_SECONDS = 3600
-
-
-def _create_import_job() -> str:
-    job_id = str(uuid.uuid4())
-    now = int(time.time())
-    with _IMPORT_LOCK:
-        _IMPORT_JOBS[job_id] = {
-            "id": job_id,
-            "status": "queued",
-            "message": "Queued",
-            "detail": "",
-            "error": "",
-            "project": None,
-            "created_at": now,
-            "updated_at": now,
-            "completed_at": None,
-        }
-    return job_id
-
-
 def _update_import_job(job_id: str, **updates: Any) -> None:
-    with _IMPORT_LOCK:
-        job = _IMPORT_JOBS.get(job_id)
-        if not job:
-            return
-        job.update(updates)
-        job["updated_at"] = int(time.time())
+    update_job(job_id, **updates)
 
 
-def _get_import_job(job_id: str) -> Optional[Dict[str, Any]]:
-    with _IMPORT_LOCK:
-        job = _IMPORT_JOBS.get(job_id)
-        return dict(job) if job else None
+def _get_import_job(job_id: str, user: Any) -> Optional[Dict[str, Any]]:
+    job = get_job(job_id, user=user)
+    if not job:
+        return None
+    return job_payload(job)
 
 
-def _prune_import_jobs() -> None:
-    cutoff = int(time.time()) - _IMPORT_TTL_SECONDS
-    with _IMPORT_LOCK:
-        for job_id, job in list(_IMPORT_JOBS.items()):
-            completed_at = job.get("completed_at") or job.get("updated_at") or 0
-            if completed_at and completed_at < cutoff:
-                _IMPORT_JOBS.pop(job_id, None)
+def _update_publish_job(job_id: str, **updates: Any) -> None:
+    update_job(job_id, **updates)
+
+
+def _get_publish_job(job_id: str, user: Any) -> Optional[Dict[str, Any]]:
+    job = get_job(job_id, user=user)
+    if not job:
+        return None
+    return job_payload(job)
+
+
+def _run_publish_job(job_id: str, user: Any, project_id: str, data: Dict[str, Any]) -> None:
+    close_old_connections()
+    try:
+        _update_publish_job(job_id, status="running", message="Pushing to GitHub")
+        result = _publish_github_project(user, project_id, data)
+        _update_publish_job(
+            job_id,
+            status="completed",
+            message="Push complete" if result.get("status") == "pushed" else result.get("detail", "No changes to commit."),
+            result=result,
+        )
+    except Exception as exc:
+        _update_publish_job(
+            job_id,
+            status="error",
+            message="Push failed",
+            error=str(exc),
+        )
+    close_old_connections()
 
 
 _GIT_TIMEOUT = 900
@@ -240,6 +236,110 @@ def _git_commit_all(path: Path, message: str) -> bool:
     return True
 
 
+def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    project = get_project(project_id)
+    if not project:
+        raise ValueError("Not found")
+    commit_message = (data.get("message") or "Update from BrandDozer").strip()
+    account_id = data.get("account_id") or data.get("github_account_id")
+    private = bool(data.get("private", True))
+    repo_name = (data.get("repo_name") or slugify(project.get("name") or "") or "").strip()
+    root = Path(project.get("root_path") or "")
+
+    if not root.exists():
+        raise ValueError("Project path does not exist on the server")
+    if shutil.which("git") is None:
+        raise ValueError("Git is not available on the server")
+
+    try:
+        account = (
+            get_github_account(user, account_id, reveal_token=True)
+            if account_id
+            else get_active_github_account(user, reveal_token=True)
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if not account or not account.token:
+        if account and account.has_token:
+            raise ValueError(
+                "GitHub token could not be unlocked. Re-enter the token under Import from GitHub → Accounts to re-save it."
+            )
+        raise ValueError(
+            "No GitHub account connected. Add a personal access token under Import from GitHub → Accounts, "
+            "then select it and try again."
+        )
+
+    token = account.token
+    username = account.username
+    if not username:
+        try:
+            profile = fetch_github_profile(token)
+            username = profile.get("login") or username
+        except ValueError:
+            username = username or "branddozer"
+
+    if not _is_git_repo(root):
+        init = _run_git(["init"], cwd=root, timeout=30)
+        if init.returncode != 0:
+            raise ValueError(init.stderr.strip() or "Failed to initialize git repository")
+
+    _ensure_git_identity(root, username or "branddozer")
+
+    origin = _git_remote_origin(root)
+    repo_url = project.get("repo_url") or ""
+    if not origin:
+        if repo_url:
+            origin = _https_remote_from_any(repo_url)
+            remote_add = _run_git(["remote", "add", "origin", origin], cwd=root, timeout=10)
+            if remote_add.returncode != 0:
+                raise ValueError(remote_add.stderr.strip() or "Failed to add origin remote")
+        else:
+            if not repo_name:
+                repo_name = slugify(root.name) or "branddozer-project"
+            try:
+                created = create_github_repo(
+                    token,
+                    name=repo_name,
+                    description=project.get("name") or repo_name,
+                    private=private,
+                )
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            origin = created.get("clone_url") or f"https://github.com/{username}/{repo_name}.git"
+            remote_add = _run_git(["remote", "add", "origin", origin], cwd=root, timeout=10)
+            if remote_add.returncode != 0:
+                raise ValueError(remote_add.stderr.strip() or "Failed to add origin remote")
+            repo_url = created.get("html_url") or origin
+
+    branch = (data.get("branch") or project.get("repo_branch") or _git_current_branch(root) or "main").strip()
+    if branch:
+        _run_git(["checkout", "-B", branch], cwd=root, timeout=10)
+
+    try:
+        committed = _git_commit_all(root, commit_message)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    clean_origin = _strip_auth_from_url(_https_remote_from_any(origin))
+    token_url = _with_token_url(clean_origin, token)
+    push = _run_git(["push", "-u", token_url, branch], cwd=root, timeout=300)
+    if push.returncode != 0:
+        message = push.stderr.strip() or "Failed to push to GitHub"
+        lowered = message.lower()
+        if "permission" in lowered or "403" in lowered or "authentication" in lowered:
+            message = f"GitHub rejected the push. {_github_permission_help()}"
+        raise ValueError(_scrub_token(message, token))
+
+    _run_git(["remote", "set-url", "origin", clean_origin], cwd=root, timeout=10)
+    update_project_fields(project_id, {"repo_url": repo_url or clean_origin, "repo_branch": branch})
+    output = f"{push.stdout}\n{push.stderr}".lower()
+    if "everything up-to-date" in output or "everything up to date" in output:
+        return {"status": "no_changes", "detail": "No changes to commit or push.", "repo_url": repo_url or clean_origin, "branch": branch}
+    if not committed:
+        return {"status": "pushed", "detail": "Pushed existing commits.", "repo_url": repo_url or clean_origin, "branch": branch}
+    return {"status": "pushed", "repo_url": repo_url or clean_origin, "branch": branch}
+
+
 def _git_fetch_with_token(path: Path, *, token_url: Optional[str], restore_url: Optional[str]) -> None:
     result = _run_git(["fetch", "origin"], cwd=path)
     if result.returncode == 0:
@@ -328,6 +428,10 @@ def _import_github_project(user, data: Dict[str, Any], job_id: Optional[str] = N
         if account:
             token = token or account.token
             username = username or account.username
+    if account and account.has_token and not token:
+        raise ValueError(
+            "GitHub token could not be unlocked. Re-enter the token under Import from GitHub → Accounts to re-save it."
+        )
     if not token:
         raise ValueError("GitHub personal access token is required")
     if shutil.which("git") is None:
@@ -506,8 +610,7 @@ def _run_import_job(job_id: str, user, data: Dict[str, Any]) -> None:
             job_id,
             status="completed",
             message="Import complete",
-            project=project,
-            completed_at=int(time.time()),
+            result={"project": project},
         )
     except Exception as exc:
         _update_import_job(
@@ -515,7 +618,6 @@ def _run_import_job(job_id: str, user, data: Dict[str, Any]) -> None:
             status="error",
             message="Import failed",
             error=_scrub_token(str(exc), token_for_scrub),
-            completed_at=int(time.time()),
         )
     finally:
         close_old_connections()
@@ -856,16 +958,24 @@ class ProjectGitHubImportView(APIView):
         data = request.data or {}
         async_mode = bool(data.get("async")) or bool(data.get("job"))
         if async_mode:
-            job_id = _create_import_job()
-            _prune_import_jobs()
-            thread = threading.Thread(
-                target=_run_import_job,
-                args=(job_id, request.user, dict(data)),
-                name=f"branddozer-import-{job_id}",
-                daemon=True,
+            payload = dict(data)
+            token_value = payload.get("token") or payload.get("pat")
+            if token_value and payload.get("remember_token", True):
+                username = payload.get("username") or payload.get("github_username")
+                account_id = payload.get("account_id") or payload.get("github_account_id")
+                accounts_payload = upsert_github_account(request.user, username=username, token=token_value, account_id=account_id)
+                payload["account_id"] = accounts_payload.get("active_id") or account_id
+                payload.pop("token", None)
+                payload.pop("pat", None)
+            if payload.get("github_account_id") and not payload.get("account_id"):
+                payload["account_id"] = payload.get("github_account_id")
+            job = enqueue_job(
+                kind="github_import",
+                user=request.user,
+                payload=payload,
+                message="Queued",
             )
-            thread.start()
-            return Response({"job_id": job_id, "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+            return Response({"job_id": str(job.id), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
         try:
             project = _import_github_project(request.user, data)
         except Exception as exc:
@@ -889,8 +999,7 @@ class ProjectGitHubImportStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request, job_id: str, *args, **kwargs) -> Response:
-        _prune_import_jobs()
-        job = _get_import_job(job_id)
+        job = _get_import_job(job_id, request.user)
         if not job:
             return Response({"detail": "Import job not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(job, status=status.HTTP_200_OK)
@@ -900,111 +1009,35 @@ class ProjectGitHubPublishView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request: Request, project_id: str, *args, **kwargs) -> Response:
-        project = get_project(project_id)
-        if not project:
-            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         data = request.data or {}
-        commit_message = (data.get("message") or "Update from BrandDozer").strip()
-        account_id = data.get("account_id") or data.get("github_account_id")
-        private = bool(data.get("private", True))
-        repo_name = (data.get("repo_name") or slugify(project.get("name") or "") or "").strip()
-        root = Path(project.get("root_path") or "")
-
-        if not root.exists():
-            return Response({"detail": "Project path does not exist on the server"}, status=status.HTTP_400_BAD_REQUEST)
-        if shutil.which("git") is None:
-            return Response({"detail": "Git is not available on the server"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            account = (
-                get_github_account(request.user, account_id, reveal_token=True)
-                if account_id
-                else get_active_github_account(request.user, reveal_token=True)
+        use_async = str(data.get("async", "true")).strip().lower() not in {"0", "false", "no", "off"}
+        if use_async:
+            project = BrandProject.objects.filter(id=project_id).first()
+            if not project:
+                return Response({"detail": "Project not found"}, status=status.HTTP_404_NOT_FOUND)
+            payload = dict(data)
+            if payload.get("github_account_id") and not payload.get("account_id"):
+                payload["account_id"] = payload.get("github_account_id")
+            job = enqueue_job(
+                kind="github_publish",
+                project=project,
+                user=request.user,
+                payload=payload,
+                message="Queued",
             )
+            return Response({"job_id": str(job.id), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+        try:
+            result = _publish_github_project(request.user, project_id, data)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        if not account or not account.token:
-            return Response(
-                {
-                    "detail": "No GitHub account connected. Add a personal access token under Import from GitHub → Accounts, "
-                    "then select it and try again."
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        return Response(result, status=status.HTTP_200_OK)
 
-        token = account.token
-        username = account.username
-        if not username:
-            try:
-                profile = fetch_github_profile(token)
-                username = profile.get("login") or username
-            except ValueError:
-                username = username or "branddozer"
 
-        if not _is_git_repo(root):
-            init = _run_git(["init"], cwd=root, timeout=30)
-            if init.returncode != 0:
-                return Response({"detail": init.stderr.strip() or "Failed to initialize git repository"}, status=status.HTTP_400_BAD_REQUEST)
+class ProjectGitHubPublishStatusView(APIView):
+    permission_classes = [IsAuthenticated]
 
-        _ensure_git_identity(root, username or "branddozer")
-
-        origin = _git_remote_origin(root)
-        repo_url = project.get("repo_url") or ""
-        if not origin:
-            if repo_url:
-                origin = _https_remote_from_any(repo_url)
-                remote_add = _run_git(["remote", "add", "origin", origin], cwd=root, timeout=10)
-                if remote_add.returncode != 0:
-                    return Response(
-                        {"detail": remote_add.stderr.strip() or "Failed to add origin remote"},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-            else:
-                if not repo_name:
-                    repo_name = slugify(root.name) or "branddozer-project"
-                try:
-                    created = create_github_repo(
-                        token,
-                        name=repo_name,
-                        description=project.get("name") or repo_name,
-                        private=private,
-                    )
-                except ValueError as exc:
-                    return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-                origin = created.get("clone_url") or f"https://github.com/{username}/{repo_name}.git"
-                remote_add = _run_git(["remote", "add", "origin", origin], cwd=root, timeout=10)
-                if remote_add.returncode != 0:
-                    return Response(
-                        {"detail": remote_add.stderr.strip() or "Failed to add origin remote"},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                repo_url = created.get("html_url") or origin
-
-        branch = (data.get("branch") or project.get("repo_branch") or _git_current_branch(root) or "main").strip()
-        if branch:
-            _run_git(["checkout", "-B", branch], cwd=root, timeout=10)
-
-        try:
-            committed = _git_commit_all(root, commit_message)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not committed:
-            return Response({"status": "no_changes", "detail": "No changes to commit."}, status=status.HTTP_200_OK)
-
-        clean_origin = _strip_auth_from_url(_https_remote_from_any(origin))
-        token_url = _with_token_url(clean_origin, token)
-        push = _run_git(["push", "-u", token_url, branch], cwd=root, timeout=300)
-        if push.returncode != 0:
-            message = push.stderr.strip() or "Failed to push to GitHub"
-            lowered = message.lower()
-            if "permission" in lowered or "403" in lowered or "authentication" in lowered:
-                message = f"GitHub rejected the push. {_github_permission_help()}"
-            return Response({"detail": _scrub_token(message, token)}, status=status.HTTP_400_BAD_REQUEST)
-
-        _run_git(["remote", "set-url", "origin", clean_origin], cwd=root, timeout=10)
-        update_project_fields(project_id, {"repo_url": repo_url or clean_origin, "repo_branch": branch})
-        return Response(
-            {"status": "pushed", "repo_url": repo_url or clean_origin, "branch": branch},
-            status=status.HTTP_200_OK,
-        )
+    def get(self, request: Request, job_id: str, *args, **kwargs) -> Response:
+        job = _get_publish_job(job_id, request.user)
+        if not job:
+            return Response({"detail": "Publish job not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(job, status=status.HTTP_200_OK)
