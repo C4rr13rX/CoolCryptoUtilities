@@ -154,6 +154,7 @@ class TradingBot:
         self._processing_sample: bool = False
         self._last_sample_signature: Optional[Tuple[str, float]] = None
         self._last_gas_advisory_signature: Optional[str] = None
+        self._last_gas_strategy: Optional[Dict[str, Any]] = None
         self._last_quote_topup_signature: Optional[str] = None
         self._last_quote_topup_ts: float = 0.0
         self._pair_adjustments: Dict[str, Dict[str, Any]] = {}
@@ -164,6 +165,7 @@ class TradingBot:
         self.gas_profit_guard: float = max(1.0, float(os.getenv("GAS_PROFIT_SAFETY", str(GAS_PROFIT_BUFFER))))
         self.gas_roundtrip_fee_ratio: float = max(0.0, float(os.getenv("GAS_ROUNDTRIP_FEE_RATIO", "0.0025")))
         self.gas_bridge_flat_fee: float = max(0.0, float(os.getenv("GAS_BRIDGE_FLAT_FEE_USD", "0.0")))
+        self.gas_force_refill: bool = os.getenv("GAS_FORCE_REFILL", "1").lower() in {"1", "true", "yes", "on"}
         self._latency_samples: int = 0
         self._enable_bg_refinement = os.getenv("ENABLE_BG_REFINEMENT", "0").lower() in {"1", "true", "yes", "on"}
         self._equilibrium_last_adjust = 0.0
@@ -313,6 +315,8 @@ class TradingBot:
             self._savings_bootstrap_ratio = float(
                 os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05"))
             )
+        if not hasattr(self, "gas_force_refill"):
+            self.gas_force_refill = os.getenv("GAS_FORCE_REFILL", "1").lower() in {"1", "true", "yes", "on"}
         if not hasattr(self, "stable_checkpoint_ratio"):
             self.stable_checkpoint_ratio = max(0.0, min(0.5, self._savings_bootstrap_ratio))
         self._sync_checkpoint_ratio(equilibrium_ready=getattr(self, "_nash_equilibrium_reached", False))
@@ -404,6 +408,111 @@ class TradingBot:
         current = self.sim_native_balances.get(chain_l, 0.5)
         current = max(0.0, current - gas_native)
         self.sim_native_balances[chain_l] = current
+
+    def _rebalance_sim_gas(
+        self,
+        *,
+        chain: str,
+        route: List[str],
+        quote_token: str,
+        price: float,
+        symbol: str,
+        gas_required: float,
+    ) -> bool:
+        if self.live_trading_enabled:
+            return False
+        chain_l = chain.lower()
+        native_balance = float(self.sim_native_balances.get(chain_l, 0.0))
+        if native_balance >= gas_required:
+            return True
+        native_price = self._estimate_native_price(chain_l, route, price, symbol)
+        target_native = max(gas_required * self.gas_buffer_multiplier, gas_required)
+        needed_usd = max(0.0, (target_native - native_balance) * native_price)
+        if needed_usd <= 0.0:
+            return True
+        remaining_usd = needed_usd
+        spent_bank = 0.0
+        spent_quote = 0.0
+        spent_quote_usd = 0.0
+        spent_stables: List[Dict[str, Any]] = []
+        spent_assets: List[Dict[str, Any]] = []
+        if self.stable_bank > 0.0:
+            spend_bank = min(self.stable_bank, remaining_usd)
+            self.stable_bank -= spend_bank
+            remaining_usd -= spend_bank
+            spent_bank = spend_bank
+        if spent_bank > 0.0:
+            spent_stables.append({"token": "stable_bank", "amount": spent_bank, "usd": spent_bank})
+
+        quote_u = quote_token.upper()
+        stable_sources = [
+            ((c, sym), bal)
+            for (c, sym), bal in self.sim_quote_balances.items()
+            if c == chain_l and sym in self.stable_tokens and bal > 0.0
+        ]
+        stable_sources.sort(key=lambda entry: (0 if entry[0][1] == quote_u else 1, -entry[1]))
+        for (key_chain, sym), balance in stable_sources:
+            if remaining_usd <= 0.0:
+                break
+            spend_usd = min(balance, remaining_usd)
+            if spend_usd <= 0.0:
+                continue
+            self.sim_quote_balances[(key_chain, sym)] = max(0.0, balance - spend_usd)
+            remaining_usd -= spend_usd
+            spent_stables.append({"token": sym, "amount": spend_usd, "usd": spend_usd})
+            if sym == quote_u:
+                spent_quote += spend_usd
+                spent_quote_usd += spend_usd
+
+        asset_sources = [
+            ((c, sym), bal)
+            for (c, sym), bal in self.sim_quote_balances.items()
+            if c == chain_l and sym not in self.stable_tokens and bal > 0.0
+        ]
+        asset_sources.sort(key=lambda entry: entry[1], reverse=True)
+        for (key_chain, sym), balance in asset_sources:
+            if remaining_usd <= 0.0:
+                break
+            price_usd = self._estimate_token_price(chain_l, sym, route=route, price=price)
+            if price_usd <= 0.0:
+                continue
+            usd_value = balance * price_usd
+            spend_usd = min(usd_value, remaining_usd)
+            if spend_usd <= 0.0:
+                continue
+            spend_qty = spend_usd / max(price_usd, 1e-9)
+            self.sim_quote_balances[(key_chain, sym)] = max(0.0, balance - spend_qty)
+            remaining_usd -= spend_usd
+            spent_assets.append(
+                {
+                    "token": sym,
+                    "amount": spend_qty,
+                    "usd": spend_usd,
+                    "price_usd": price_usd,
+                }
+            )
+            if sym == quote_u:
+                spent_quote += spend_qty
+                spent_quote_usd += spend_usd
+        acquired_native = (needed_usd - remaining_usd) / max(native_price, 1e-9)
+        if acquired_native > 0.0:
+            self.sim_native_balances[chain_l] = native_balance + acquired_native
+        self._last_gas_strategy = {
+            "mode": "ghost",
+            "chain": chain_l,
+            "native_balance": native_balance,
+            "gas_required": gas_required,
+            "target_native": target_native,
+            "native_price_usd": native_price,
+            "spent_bank": spent_bank,
+            "spent_quote": spent_quote,
+            "spent_quote_usd": spent_quote_usd,
+            "spent_stables": spent_stables,
+            "spent_assets": spent_assets,
+            "acquired_native": acquired_native,
+            "remaining_usd": remaining_usd,
+        }
+        return float(self.sim_native_balances.get(chain_l, 0.0)) >= gas_required
 
     def _check_sim_restart(self) -> None:
         if self.live_trading_enabled:
@@ -661,9 +770,13 @@ class TradingBot:
         elif memory_bias < 0:
             threshold_scale *= min(1.25, 1.0 + min(0.2, abs(memory_bias) / 5.0))
         swarm_diagnostics = self.swarm.diagnostics()
+        best_strategy, best_score = self.swarm_selector.best()
         brain_summary = {
             "graph_confidence": graph_conf,
             "swarm_bias": swarm_bias,
+            "swarm_strategy": best_strategy,
+            "swarm_score": best_score,
+            "swarm_weights": swarm_weights,
             "swarm_votes": [
                 {
                     "horizon": vote.horizon,
@@ -852,17 +965,42 @@ class TradingBot:
             readiness.setdefault("required_win_rate", self.required_live_win_rate)
             readiness.setdefault("required_trades", self.required_live_trades)
             readiness.setdefault("required_profit", self.required_live_profit)
+        ready_flag = bool(readiness.get("ready")) if isinstance(readiness, dict) else False
+        mini_ready = bool(readiness.get("mini_ready")) if isinstance(readiness, dict) else False
+        allow_mini = os.getenv("LIVE_MINI_AUTO_PROMOTE", "1").lower() in {"1", "true", "yes", "on"}
+        if not ready_flag and mini_ready and allow_mini:
+            ready_flag = True
         if self.live_trading_enabled:
             return
-        if not readiness or not readiness.get("ready"):
+        if not readiness or not ready_flag:
             return
         precision = float(readiness.get("precision", 0.0))
         recall = float(readiness.get("recall", 0.0))
         samples = int(readiness.get("samples", 0))
         threshold = float(readiness.get("threshold", self.decision_threshold))
-        if precision < self.required_live_win_rate or recall < self.required_live_win_rate:
+        promotion_precision = float(os.getenv("LIVE_PROMOTION_PRECISION", str(self.required_live_win_rate)))
+        promotion_recall = float(os.getenv("LIVE_PROMOTION_RECALL", str(self.required_live_win_rate)))
+        fast_track_factor = float(os.getenv("LIVE_FAST_TRACK_FACTOR", "0.65"))
+        fast_track_factor = max(0.4, min(1.0, fast_track_factor))
+        fast_track_min_trades = int(os.getenv("LIVE_FAST_TRACK_MIN_TRADES", str(max(30, self.required_live_trades // 2))))
+        fast_track = bool(
+            precision >= promotion_precision * fast_track_factor
+            and recall >= promotion_recall * fast_track_factor
+            and samples >= max(12, int(self.required_live_trades * 0.25))
+        )
+        effective_required_trades = self.required_live_trades
+        effective_required_win_rate = self.required_live_win_rate
+        effective_required_profit = self.required_live_profit
+        if fast_track:
+            effective_required_trades = max(fast_track_min_trades, int(self.required_live_trades * fast_track_factor))
+            effective_required_win_rate = max(
+                float(getattr(self.pipeline, "min_ghost_win_rate", 0.5)),
+                self.required_live_win_rate * fast_track_factor,
+            )
+            effective_required_profit = self.required_live_profit * fast_track_factor
+        if precision < effective_required_win_rate or recall < effective_required_win_rate:
             return
-        if samples < self.required_live_trades:
+        if samples < effective_required_trades:
             return
         replay_ok, replay_reason = self._replay_gate_allows()
         if not replay_ok:
@@ -886,13 +1024,17 @@ class TradingBot:
         ghost_win_rate = float(ghost_metrics.get("win_rate", 0.0))
         ghost_profit = float(sum(float(getattr(t, "profit", 0.0)) for t in trades))
         if (
-            ghost_count < self.required_live_trades
-            or ghost_win_rate < self.required_live_win_rate
-            or ghost_profit < self.required_live_profit
+            ghost_count < effective_required_trades
+            or ghost_win_rate < effective_required_win_rate
+            or ghost_profit < effective_required_profit
         ):
             self._live_transition_state = {
                 **(readiness or {}),
                 "enabled": False,
+                "fast_track": fast_track,
+                "required_trades": effective_required_trades,
+                "required_win_rate": effective_required_win_rate,
+                "required_profit": effective_required_profit,
                 "ghost_trades": ghost_count,
                 "ghost_win_rate": ghost_win_rate,
                 "ghost_profit": ghost_profit,
@@ -918,6 +1060,10 @@ class TradingBot:
         self._live_transition_state = {
             **(readiness or {}),
             "enabled": True,
+            "fast_track": fast_track,
+            "required_trades": effective_required_trades,
+            "required_win_rate": effective_required_win_rate,
+            "required_profit": effective_required_profit,
             "ghost_trades": ghost_count,
             "ghost_win_rate": ghost_win_rate,
             "ghost_profit": ghost_profit,
@@ -932,6 +1078,10 @@ class TradingBot:
                 "precision": precision,
                 "recall": recall,
                 "samples": samples,
+                "fast_track": fast_track,
+                "required_trades": effective_required_trades,
+                "required_win_rate": effective_required_win_rate,
+                "required_profit": effective_required_profit,
                 "plan": plan,
                 "ghost_trades": ghost_count,
                 "ghost_win_rate": ghost_win_rate,
@@ -1650,13 +1800,21 @@ class TradingBot:
                     available_quote=available_quote,
                     symbol=symbol,
                 )
-                if strategy and strategy.get("profit_guard_passed") and strategy.get("stable_swap_plan"):
+                should_rebalance = (
+                    bool(strategy)
+                    and bool(strategy.get("stable_swap_plan"))
+                    and (strategy.get("profit_guard_passed") or strategy.get("force_rebalance"))
+                )
+                if should_rebalance:
                     executed = self._rebalance_for_gas(chain_name, strategy)
                     if executed:
+                        label = "gas_rebalanced"
+                        if strategy and strategy.get("force_rebalance") and not strategy.get("profit_guard_passed"):
+                            label = "gas_rebalanced_forced"
                         self.metrics.feedback(
                             "trading",
                             severity=FeedbackSeverity.INFO,
-                            label="gas_rebalanced",
+                            label=label,
                             details={"chain": chain_name, "strategy": strategy, "mode": "auto"},
                         )
                         await self._run_wallet_sync(reason="post-gas-rebalance")
@@ -1673,7 +1831,9 @@ class TradingBot:
                     }
                     if strategy:
                         details["strategy"] = strategy
-                        if strategy.get("profit_guard_passed") and strategy.get("stable_swap_plan"):
+                        if (strategy.get("profit_guard_passed") or strategy.get("force_rebalance")) and strategy.get(
+                            "stable_swap_plan"
+                        ):
                             strategy_severity = FeedbackSeverity.WARNING
                         message = (
                             f"Native balance {native_balance:.6f} below required {gas_required:.6f} on {chain_name}."
@@ -1694,9 +1854,28 @@ class TradingBot:
                     )
                     return decision
             else:
-                # Simulated trading: replenish virtual gas buffer instead of touching live funds
-                self.sim_native_balances[chain_name] = max(self.sim_native_balances.get(chain_name, 0.5), gas_required * self.gas_buffer_multiplier)
-                native_balance = self.sim_native_balances[chain_name]
+                sim_rebalanced = self._rebalance_sim_gas(
+                    chain=chain_name,
+                    route=route,
+                    quote_token=quote_token,
+                    price=price,
+                    symbol=symbol,
+                    gas_required=gas_required,
+                )
+                native_balance = self.sim_native_balances.get(chain_name, native_balance)
+                if not sim_rebalanced:
+                    self.metrics.feedback(
+                        "trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="sim_insufficient_gas",
+                        details={
+                            "chain": chain_name,
+                            "required": gas_required,
+                            "native_balance": native_balance,
+                        },
+                    )
+                    decision.update({"status": "hold-gas", "reason": "insufficient_gas"})
+                    return decision
         if trade_size > 0.0 and price > 0.0:
             max_affordable = max(0.0, available_quote / price)
             trade_size = min(trade_size, max_affordable * self.max_trade_share)
@@ -1954,6 +2133,29 @@ class TradingBot:
                 return decision
             self.total_profit += profit
             self.realized_profit += profit
+            brain_snapshot = pos.get("brain_snapshot") if isinstance(pos, dict) else None
+            if isinstance(brain_snapshot, dict):
+                swarm_votes = brain_snapshot.get("swarm_votes") or []
+                if isinstance(swarm_votes, list) and swarm_votes:
+                    best_vote = max(
+                        swarm_votes,
+                        key=lambda vote: float(vote.get("confidence", 0.0)) if isinstance(vote, dict) else 0.0,
+                    )
+                    horizon = best_vote.get("horizon") if isinstance(best_vote, dict) else None
+                    if horizon:
+                        try:
+                            self.swarm_selector.update(str(horizon), profit, sample_ts)
+                            self.metrics.record(
+                                MetricStage.GHOST_TRADING,
+                                {
+                                    "swarm_profit": profit,
+                                    "swarm_score": self.swarm_selector.best()[1],
+                                },
+                                category="swarm_outcome",
+                                meta={"horizon": horizon, "symbol": symbol},
+                            )
+                        except Exception:
+                            pass
             entry_ts = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
             duration_sec = max(0.0, sample_ts - entry_ts)
             pos_fingerprint = pos.get("fingerprint")
@@ -2079,15 +2281,19 @@ class TradingBot:
                     available_quote=available_quote,
                     symbol=symbol,
                 )
-                if strategy:
-                    executed = self._rebalance_for_gas(chain_name, strategy)
-                    if executed:
-                        self.metrics.feedback(
-                            "trading",
-                            severity=FeedbackSeverity.INFO,
-                            label="gas_rebalanced",
-                            details={"chain": chain_name, "strategy": strategy},
-                        )
+                if strategy and strategy.get("stable_swap_plan"):
+                    if strategy.get("profit_guard_passed") or strategy.get("force_rebalance"):
+                        executed = self._rebalance_for_gas(chain_name, strategy)
+                        if executed:
+                            label = "gas_rebalanced"
+                            if strategy.get("force_rebalance") and not strategy.get("profit_guard_passed"):
+                                label = "gas_rebalanced_forced"
+                            self.metrics.feedback(
+                                "trading",
+                                severity=FeedbackSeverity.INFO,
+                                label=label,
+                                details={"chain": chain_name, "strategy": strategy},
+                            )
             return decision
 
         if pos is not None:
@@ -2408,6 +2614,30 @@ class TradingBot:
             return 100.0
         return price_candidate
 
+    def _estimate_token_price(self, chain: str, symbol: str, *, route: List[str], price: float) -> float:
+        symbol_u = symbol.upper()
+        if symbol_u in self.stable_tokens:
+            return 1.0
+        chain_l = chain.lower()
+        native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
+        if symbol_u == native_symbol:
+            return self._estimate_native_price(chain, route, price, symbol)
+        if route:
+            base = route[0].upper()
+            if symbol_u == base:
+                return float(price or 0.0)
+            if len(route) > 1 and symbol_u == route[1].upper():
+                return float(price or 0.0)
+        try:
+            row = self.db.fetch_price(chain, symbol_u)
+            if row:
+                candidate = row.get("usd")
+                if candidate is not None:
+                    return float(candidate)
+        except Exception:
+            pass
+        return 0.0
+
     def _plan_gas_replenishment(
         self,
         *,
@@ -2427,7 +2657,6 @@ class TradingBot:
             return None
         target_native = max(deficit * self.gas_buffer_multiplier, deficit)
         native_price = self._estimate_native_price(chain, route, price, symbol)
-        expected_profit_unit = max(float(margin), float(pnl))
         expected_profit_usd = max(
             float(pnl),
             float(margin) * max(trade_size, 1.0),
@@ -2435,11 +2664,9 @@ class TradingBot:
         estimated_gas_cost_usd = gas_required * native_price
         target_buffer_usd = target_native * native_price
         roundtrip_fee_usd = target_buffer_usd * max(self.gas_roundtrip_fee_ratio, 0.0)
-        bridge_fee_usd = self.gas_bridge_flat_fee if remaining_native > 0.0 else 0.0
-        total_replenish_cost_usd = estimated_gas_cost_usd + roundtrip_fee_usd + bridge_fee_usd
-        profit_guard_passed = expected_profit_usd > (total_replenish_cost_usd * self.gas_profit_guard)
 
         chain_l = chain.lower()
+        native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
         stable_holdings = [
             holding
             for (key_chain, sym), holding in self.portfolio.holdings.items()
@@ -2447,37 +2674,90 @@ class TradingBot:
         ]
         stable_holdings.sort(key=lambda entry: entry.usd, reverse=True)
 
+        asset_holdings = [
+            holding
+            for (key_chain, sym), holding in self.portfolio.holdings.items()
+            if key_chain == chain_l
+            and sym.upper() not in self.stable_tokens
+            and sym.upper() != native_symbol
+            and holding.usd > 0
+            and holding.quantity > 0
+        ]
+        asset_holdings.sort(key=lambda entry: entry.usd, reverse=True)
+
         swap_plan: List[Dict[str, Any]] = []
-        native_from_stables = 0.0
+        native_from_swaps = 0.0
         remaining_native = target_native
-        for holding in stable_holdings:
-            if remaining_native <= 0.0:
-                break
-            max_native_from_holding = holding.usd / max(native_price, 1e-9)
-            convert_native = min(remaining_native, max_native_from_holding)
-            if convert_native <= 0.0:
-                continue
-            spend_stable = convert_native * native_price
-            min_swap_usd = float(os.getenv("GAS_MIN_SWAP_USD", "1.0"))
-            if spend_stable < min_swap_usd:
-                spend_stable = min(min_swap_usd, holding.usd)
-                convert_native = spend_stable / max(native_price, 1e-9)
-            spend_stable = min(spend_stable, holding.usd, holding.quantity)
-            convert_native = spend_stable / max(native_price, 1e-9)
-            if spend_stable <= 0.0 or convert_native <= 0.0:
-                continue
+        min_swap_usd = float(os.getenv("GAS_MIN_SWAP_USD", "1.0"))
+
+        def _append_swap(
+            *,
+            holding,
+            spend_amount: float,
+            spend_usd: float,
+            convert_native: float,
+            kind: str,
+        ) -> None:
             swap_plan.append(
                 {
                     "symbol": holding.symbol,
                     "token": holding.token,
-                    "spend_stable": round(spend_stable, 6),
+                    "spend_amount": round(spend_amount, 6),
+                    "spend_usd": round(spend_usd, 6),
                     "obtain_native": round(convert_native, 8),
                     "available": holding.quantity,
                     "usd_value": holding.usd,
+                    "kind": kind,
+                    "is_stable": kind == "stable",
                 }
             )
-            native_from_stables += convert_native
+
+        def _consume_swap(holding, kind: str) -> None:
+            nonlocal remaining_native, native_from_swaps
+            if remaining_native <= 0.0:
+                return
+            max_native = holding.usd / max(native_price, 1e-9)
+            convert_native = min(remaining_native, max_native)
+            if convert_native <= 0.0:
+                return
+            spend_usd = convert_native * native_price
+            if spend_usd < min_swap_usd:
+                spend_usd = min(min_swap_usd, holding.usd)
+                convert_native = spend_usd / max(native_price, 1e-9)
+            spend_usd = min(spend_usd, holding.usd)
+            if spend_usd <= 0.0 or convert_native <= 0.0:
+                return
+            if kind == "stable":
+                spend_amount = min(spend_usd, holding.quantity)
+                spend_usd = min(spend_usd, holding.usd, holding.quantity)
+                convert_native = spend_usd / max(native_price, 1e-9)
+            else:
+                token_price = holding.usd / max(holding.quantity, 1e-9)
+                spend_amount = min(holding.quantity, spend_usd / max(token_price, 1e-9))
+                spend_usd = spend_amount * token_price
+                convert_native = spend_usd / max(native_price, 1e-9)
+            if spend_amount <= 0.0 or convert_native <= 0.0:
+                return
+            _append_swap(
+                holding=holding,
+                spend_amount=spend_amount,
+                spend_usd=spend_usd,
+                convert_native=convert_native,
+                kind=kind,
+            )
+            native_from_swaps += convert_native
             remaining_native -= convert_native
+
+        for holding in stable_holdings:
+            _consume_swap(holding, "stable")
+            if remaining_native <= 0.0:
+                break
+
+        if remaining_native > 0.0:
+            for holding in asset_holdings:
+                _consume_swap(holding, "asset")
+                if remaining_native <= 0.0:
+                    break
 
         bridge_candidates = [
             {"chain": other_chain, "native_balance": bal}
@@ -2487,25 +2767,35 @@ class TradingBot:
         bridge_candidates.sort(key=lambda entry: entry["native_balance"], reverse=True)
 
         remaining_native_gap = max(0.0, remaining_native)
+        bridge_fee_usd = self.gas_bridge_flat_fee if remaining_native_gap > 0.0 else 0.0
+        total_replenish_cost_usd = estimated_gas_cost_usd + roundtrip_fee_usd + bridge_fee_usd
+        profit_guard_passed = expected_profit_usd > (total_replenish_cost_usd * self.gas_profit_guard)
+        force_rebalance = bool(swap_plan) and bool(getattr(self, "gas_force_refill", True))
         signature = f"{chain_l}:{symbol}:{int(round(deficit * 1e6))}:{int(round(target_native * 1e6))}:{1 if profit_guard_passed else 0}"
 
-        if not profit_guard_passed:
+        if swap_plan and remaining_native_gap <= 1e-6:
+            primary_swap = swap_plan[0]
+            spend_amount = float(primary_swap.get("spend_amount", primary_swap.get("spend_stable", 0.0)))
+            spend_symbol = primary_swap.get("symbol")
+            if force_rebalance and not profit_guard_passed:
+                recommendation = (
+                    f"Auto-swap {spend_amount:.2f} {spend_symbol} to restore gas before resuming."
+                )
+            else:
+                recommendation = (
+                    f"Swap {spend_amount:.2f} {spend_symbol} to native to restore gas buffer."
+                )
+        elif swap_plan:
+            if force_rebalance and not profit_guard_passed:
+                recommendation = "Auto-swap available assets for native gas, then bridge or deposit remaining shortfall."
+            else:
+                recommendation = "Swap available assets for native gas, then bridge or deposit remaining shortfall."
+        elif not profit_guard_passed:
             recommendation = (
                 "Predicted profit does not cover gas costs. Pause trade and replenish native balance before resuming."
             )
-        elif swap_plan and remaining_native_gap <= 1e-6:
-            primary_swap = swap_plan[0]
-            recommendation = (
-                f"Swap {primary_swap['spend_stable']:.2f} {primary_swap['symbol']} to native to restore gas buffer."
-            )
-        elif swap_plan:
-            recommendation = (
-                "Swap available stablecoins for native gas, then bridge or deposit remaining shortfall."
-            )
         else:
-            recommendation = (
-                "Bridge or deposit native tokens to replenish gas; no stables available on the active chain."
-            )
+            recommendation = "Bridge or deposit native tokens to replenish gas; no assets available on the active chain."
 
         plan = {
             "chain": chain_l,
@@ -2521,7 +2811,9 @@ class TradingBot:
             "bridge_fee_usd": bridge_fee_usd,
             "total_replenish_cost_usd": total_replenish_cost_usd,
             "profit_guard_passed": profit_guard_passed,
+            "force_rebalance": force_rebalance,
             "stable_swap_plan": swap_plan,
+            "swap_plan": swap_plan,
             "bridge_candidates": bridge_candidates,
             "remaining_native_gap": remaining_native_gap,
             "available_quote": available_quote,
@@ -2529,7 +2821,9 @@ class TradingBot:
             "signature": signature,
         }
         if swap_plan:
-            plan["stable_coverage_native"] = native_from_stables
+            plan["stable_coverage_native"] = native_from_swaps
+            plan["swap_coverage_native"] = native_from_swaps
+        self._last_gas_strategy = plan
         return plan
 
     def _record_advisory(
@@ -2572,7 +2866,8 @@ class TradingBot:
             self._last_gas_advisory_signature = signature
 
     def _rebalance_for_gas(self, chain: str, strategy: Dict[str, Any]) -> bool:
-        if not strategy or not strategy.get("stable_swap_plan"):
+        swap_plan = strategy.get("stable_swap_plan") or strategy.get("swap_plan") if strategy else None
+        if not swap_plan:
             return False
         if self._bridge is None:
             self._bridge = self._init_bridge()
@@ -2592,8 +2887,8 @@ class TradingBot:
         swapper = SwapService(self._bridge)
         slippage = int(os.getenv("GAS_REFILL_SLIPPAGE_BPS", "75"))
         executed = False
-        for plan in strategy.get("stable_swap_plan", []):
-            spend = float(plan.get("spend_stable", 0.0))
+        for plan in swap_plan:
+            spend = float(plan.get("spend_amount", plan.get("spend_stable", 0.0)))
             token = plan.get("token")
             if spend <= 0.0 or not token:
                 continue

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from typing import Any, Dict
 
 from router_wallet import CHAINS, UltraSwapBridge
@@ -31,6 +32,7 @@ def _update_wallet_snapshot(bridge: UltraSwapBridge | None) -> None:
 
 # Load env before creating any services
 EnvLoader.load()
+os.environ.setdefault("ALLOW_SQLITE_FALLBACK", "1")
 
 
 def _safe_input(prompt: str) -> str:
@@ -297,7 +299,7 @@ def menu():
             print("Invalid selection.")
 
 
-def run_action(action: str, payload: Dict[str, Any] | None = None) -> None:
+def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive: bool = False) -> None:
     action = action.lower()
     action_def = WALLET_ACTIONS.get(action)
     if not action_def:
@@ -305,14 +307,37 @@ def run_action(action: str, payload: Dict[str, Any] | None = None) -> None:
     if action == "start_production":
         try:
             from production import ProductionManager
-
-            manager = ProductionManager()
-            manager.start()
-            print("[production] start command sent (non-interactive).")
         except ImportError as exc:
             print(f"[production] missing dependency: {exc}")
+            return
+
+        manager = None
+        try:
+            manager = ProductionManager()
         except Exception as exc:
-            print(f"[production] unable to start manager: {exc}")
+            fallback_flag = os.getenv("ALLOW_SQLITE_FALLBACK", "0").lower() in {"0", "false", "off"}
+            if fallback_flag:
+                os.environ["ALLOW_SQLITE_FALLBACK"] = "1"
+                try:
+                    manager = ProductionManager()
+                    print("[production] postgres unavailable; using sqlite fallback.")
+                except Exception as retry_exc:
+                    print(f"[production] unable to start manager: {retry_exc}")
+                    return
+            else:
+                print(f"[production] unable to start manager: {exc}")
+                return
+
+        manager.start()
+        print("[production] start command sent (non-interactive).")
+        if stay_alive:
+            try:
+                while manager.is_running:
+                    time.sleep(2.0)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                manager.stop()
         return
     payload = payload or {}
     try:
@@ -360,6 +385,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Wallet console / automation runner")
     parser.add_argument("--action", choices=sorted(WALLET_ACTIONS.keys()), help="Wallet action to execute")
     parser.add_argument("--payload", help="JSON payload for the action")
+    parser.add_argument("--stay-alive", action="store_true", help="Keep process alive after start_production")
     args = parser.parse_args()
     if args.action:
         payload_data: Dict[str, Any] | None = None
@@ -369,6 +395,6 @@ if __name__ == "__main__":
             except json.JSONDecodeError as exc:
                 print(f"[wallet] Invalid payload JSON: {exc}")
                 sys.exit(2)
-        run_action(args.action, payload_data)
+        run_action(args.action, payload_data, stay_alive=args.stay_alive)
     else:
         menu()

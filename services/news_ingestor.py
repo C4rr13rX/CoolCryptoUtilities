@@ -119,7 +119,11 @@ class EthicalNewsIngestor:
         if rows:
             self._write_parquet(rows)
             self._archive_rows(rows, start_ts, end_ts, keyword_set)
-        return rows
+            return rows
+        archived = self._load_archive_rows(start_ts, end_ts, keyword_set)
+        if archived:
+            self._write_parquet(archived)
+        return archived
 
     def harvest_windows(
         self,
@@ -305,6 +309,48 @@ class EthicalNewsIngestor:
             path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
             pass
+
+    def _load_archive_rows(self, start_ts: int, end_ts: int, tokens: Set[str]) -> List[dict]:
+        if not self.archive_root.exists():
+            return []
+        wanted = {token.upper() for token in tokens if token}
+        rows: List[dict] = []
+        seen: Set[Tuple[int, str, str]] = set()
+        for path in self.archive_root.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            try:
+                payload_start = int(payload.get("start_ts", 0))
+                payload_end = int(payload.get("end_ts", 0))
+            except Exception:
+                continue
+            if payload_end < start_ts or payload_start > end_ts:
+                continue
+            payload_tokens = {str(token).upper() for token in payload.get("tokens", []) if token}
+            if wanted and payload_tokens and not (wanted & payload_tokens):
+                continue
+            for article in payload.get("articles", []) or []:
+                if not isinstance(article, dict):
+                    continue
+                try:
+                    ts = int(article.get("timestamp", 0))
+                except Exception:
+                    continue
+                if ts < start_ts or ts > end_ts:
+                    continue
+                article_tokens = {str(token).upper() for token in article.get("tokens", []) if token}
+                if wanted and article_tokens and not (wanted & article_tokens):
+                    continue
+                key = (ts, str(article.get("headline", "")), str(article.get("source", "")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(article)
+        return rows
 
     def _load_custom_sources(self, path: Path) -> List[NewsSource]:
         if not path.exists():

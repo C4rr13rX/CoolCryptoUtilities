@@ -196,6 +196,56 @@
         </div>
       </div>
 
+      <div class="info-card pipeline-card">
+        <h2>Pipeline & News</h2>
+        <div class="metrics-grid">
+          <div class="metric">
+            <span class="label">Samples</span>
+            <span class="value">{{ pipelineDataset.samples?.toLocaleString?.() || '—' }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">News Coverage</span>
+            <span class="value">{{ formatPercent(pipelineDataset.news_coverage_ratio) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">News Sources</span>
+            <span class="value">{{ pipelineNews.sources ?? '—' }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Ghost Win Rate</span>
+            <span class="value">{{ formatPercent(pipelineCandidate.ghost_win_rate) }}</span>
+          </div>
+        </div>
+        <p v-if="pipelineNews.top_sources?.length" class="hint">
+          Sources: {{ pipelineNews.top_sources.slice(0, 5).join(', ') }}
+        </p>
+      </div>
+
+      <div class="info-card gas-card">
+        <h2>Gas Strategy</h2>
+        <div class="metrics-grid">
+          <div class="metric">
+            <span class="label">Chain</span>
+            <span class="value">{{ gasStrategy.chain || '—' }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Gas Required</span>
+            <span class="value">{{ formatNumber(gasStrategy.gas_required) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Target Native</span>
+            <span class="value">{{ formatNumber(gasStrategy.target_native) }}</span>
+          </div>
+          <div class="metric">
+            <span class="label">Mode</span>
+            <span class="value">{{ gasStrategy.mode || (isLiveMode ? 'live' : 'ghost') }}</span>
+          </div>
+        </div>
+        <p v-if="gasStrategy.recommendation" class="hint">
+          {{ gasStrategy.recommendation }}
+        </p>
+      </div>
+
       <div class="info-card cluster-card">
         <h2>Process Clusters</h2>
         <ul class="cluster-list">
@@ -317,6 +367,11 @@ const formattedTimestamp = computed(() => {
 });
 
 const brain = computed(() => snapshot.value?.brain || {});
+const pipelineTelemetry = computed(() => snapshot.value?.pipeline || {});
+const pipelineDataset = computed(() => pipelineTelemetry.value?.dataset || {});
+const pipelineNews = computed(() => pipelineTelemetry.value?.news || {});
+const pipelineCandidate = computed(() => pipelineTelemetry.value?.candidate || {});
+const gasStrategy = computed(() => snapshot.value?.gas_strategy || {});
 const transitionPlan = computed<Record<string, any>>(
   () => (snapshot.value?.transition_plan || brain.value?.transition_plan || {}) as Record<string, any>,
 );

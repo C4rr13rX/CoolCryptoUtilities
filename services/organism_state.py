@@ -34,6 +34,7 @@ def build_snapshot(
     exposure_payload = _prepare_exposure(getattr(bot, "active_exposure", {}))
     queue_preview = _prepare_queue_preview(getattr(bot, "queue", []))
     portfolio_payload = _prepare_portfolio(bot)
+    pipeline_payload = _prepare_pipeline(bot)
     scheduler_payload = _prepare_scheduler(bot)
     latency_stats = _prepare_latency_stats(latency_window)
     windows_payload = _prepare_windows(last_windows)
@@ -51,6 +52,7 @@ def build_snapshot(
     mode = "live" if getattr(bot, "live_trading_enabled", False) else "ghost"
     ghost_session = int(getattr(bot, "ghost_session_id", 0) or 0)
     activity_payload = _prepare_activity(bot)
+    gas_strategy = _sanitize(getattr(bot, "_last_gas_strategy", None) or {})
 
     organism_graph = _build_organism_graph(
         brain_payload,
@@ -88,6 +90,7 @@ def build_snapshot(
         "pending_samples": int(pending_depth),
         "scheduler": scheduler_payload,
         "portfolio": portfolio_payload,
+        "pipeline": pipeline_payload,
         "latency_stats": latency_stats,
         "brain_windows": windows_payload,
         "discovery": discovery_payload,
@@ -100,7 +103,9 @@ def build_snapshot(
             exposure_payload,
             activity_payload,
             totals_payload,
+            pipeline=pipeline_payload,
         ),
+        "gas_strategy": gas_strategy,
     }
     transition_plan = brain_payload.get("transition_plan")
     if isinstance(transition_plan, dict) and transition_plan:
@@ -204,6 +209,65 @@ def _prepare_portfolio(bot: Any) -> Dict[str, Any]:
             for chain, balance in getattr(portfolio, "native_balances", {}).items()
         },
     }
+
+
+def _prepare_pipeline(bot: Any) -> Dict[str, Any]:
+    pipeline = getattr(bot, "pipeline", None)
+    if pipeline is None:
+        return {}
+    payload: Dict[str, Any] = {}
+    payload["iteration"] = int(getattr(pipeline, "iteration", 0) or 0)
+    payload["active_accuracy"] = _safe_float(getattr(pipeline, "active_accuracy", 0.0))
+    payload["decision_threshold"] = _safe_float(getattr(pipeline, "decision_threshold", 0.0))
+    try:
+        payload["horizon_bias"] = _sanitize(pipeline.horizon_bias())
+    except Exception:
+        payload["horizon_bias"] = {}
+    try:
+        payload["confusion_summary"] = _sanitize(pipeline.confusion_summary())
+    except Exception:
+        payload["confusion_summary"] = _sanitize(getattr(pipeline, "_last_confusion_summary", {}))
+    payload["transition_plan"] = _sanitize(getattr(bot, "_transition_plan", {}))
+    dataset_meta = getattr(pipeline, "_last_dataset_meta", {})
+    if isinstance(dataset_meta, dict) and dataset_meta:
+        payload["dataset"] = {
+            "samples": _safe_float(dataset_meta.get("samples", 0.0)),
+            "positive_ratio": _safe_float(dataset_meta.get("positive_ratio", 0.0)),
+            "news_coverage_ratio": _safe_float(dataset_meta.get("news_coverage_ratio", 0.0)),
+            "horizon_weight_mean": _safe_float(dataset_meta.get("horizon_weight_mean", 0.0)),
+            "horizon_weight_min": _safe_float(dataset_meta.get("horizon_weight_min", 0.0)),
+            "horizon_weight_max": _safe_float(dataset_meta.get("horizon_weight_max", 0.0)),
+            "horizon_deficit": _sanitize(dataset_meta.get("horizon_deficit", {})),
+            "horizon_profile": _sanitize(dataset_meta.get("horizon_profile", {})),
+        }
+    news_items = getattr(getattr(pipeline, "data_loader", None), "news_items", None)
+    if isinstance(news_items, list) and news_items:
+        source_counts: Dict[str, int] = {}
+        for item in news_items:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "").strip()
+            if source:
+                source_counts[source] = source_counts.get(source, 0) + 1
+        payload["news"] = {
+            "items": len(news_items),
+            "sources": len(source_counts),
+            "top_sources": [
+                name
+                for name, _ in sorted(source_counts.items(), key=lambda entry: entry[1], reverse=True)[:8]
+            ],
+        }
+    candidate_feedback = getattr(pipeline, "_last_candidate_feedback", {})
+    if isinstance(candidate_feedback, dict) and candidate_feedback:
+        payload["candidate"] = {
+            "ghost_trades": _safe_float(candidate_feedback.get("ghost_trades", 0.0)),
+            "ghost_win_rate": _safe_float(candidate_feedback.get("ghost_win_rate", 0.0)),
+            "ghost_realized_margin": _safe_float(candidate_feedback.get("ghost_realized_margin", 0.0)),
+            "ghost_pred_margin": _safe_float(candidate_feedback.get("ghost_pred_margin", 0.0)),
+            "false_positive_rate": _safe_float(candidate_feedback.get("false_positive_rate", 0.0)),
+            "best_threshold": _safe_float(candidate_feedback.get("best_threshold", 0.0)),
+        }
+    return payload
 
 
 def _prepare_scheduler(bot: Any) -> List[Dict[str, Any]]:
@@ -340,6 +404,7 @@ def _build_process_clusters(
     exposure: Dict[str, float],
     activity: Dict[str, Any],
     totals: Dict[str, Any],
+    pipeline: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     clusters: List[Dict[str, Any]] = []
     diagnostics = brain.get("swarm_diagnostics") or []
@@ -383,6 +448,24 @@ def _build_process_clusters(
                 "energy": float(min(1.0, (equity + stable) / denom)),
                 "nodes": 1,
                 "detail": totals,
+            }
+        )
+    if pipeline:
+        confusion = pipeline.get("confusion_summary") or {}
+        horizon_metrics = confusion.get("horizons") or {}
+        sample_total = _safe_float(confusion.get("total_samples", 0.0))
+        accuracy = _safe_float(pipeline.get("active_accuracy", 0.0))
+        energy = min(1.0, max(accuracy, sample_total / 250.0 if sample_total else 0.0))
+        clusters.append(
+            {
+                "label": "Pipeline",
+                "energy": float(max(0.0, energy)),
+                "nodes": max(1, len(horizon_metrics) if isinstance(horizon_metrics, dict) else 1),
+                "detail": {
+                    "iteration": pipeline.get("iteration"),
+                    "accuracy": accuracy,
+                    "dominant": confusion.get("dominant"),
+                },
             }
         )
     if activity:

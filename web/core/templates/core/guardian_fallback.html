@@ -1,21 +1,28 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Guardian Console Fallback</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{% static 'assets/main.css' %}" />
   <style>
     :root {
       color-scheme: dark;
     }
+    * {
+      box-sizing: border-box;
+      border-radius: 0 !important;
+    }
     body {
       margin: 0;
-      font-family: "Fira Code", "SFMono-Regular", Consolas, Menlo, monospace;
-      background: #030712;
-      color: #e2e8f0;
+      font-family: "Roboto", "Segoe UI", sans-serif;
+      background: radial-gradient(circle at 18% 14%, rgba(15, 25, 40, 0.92), rgba(6, 9, 15, 0.98));
+      color: #e7eefc;
       display: flex;
       flex-direction: column;
       min-height: 100vh;
+      overflow-x: hidden;
     }
     header {
       padding: 1.5rem;
@@ -38,9 +45,8 @@
     pre {
       background: rgba(15, 23, 42, 0.9);
       border: 1px solid rgba(148, 163, 184, 0.2);
-      border-radius: 12px;
       padding: 1rem;
-      color: #cbd5f5;
+      color: #d7e3ff;
       max-height: calc(100vh - 200px);
       overflow-y: auto;
       white-space: pre-wrap;
@@ -57,7 +63,6 @@
     }
     .badge {
       padding: 0.2rem 0.6rem;
-      border-radius: 999px;
       font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.06em;

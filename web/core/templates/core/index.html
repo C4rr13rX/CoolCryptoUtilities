@@ -5,7 +5,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>R3V3N!R Control Tower</title>
+    <title>{% if initial_route == "branddozer_solo" %}BrandDozer{% else %}R3V3N!R Control Tower{% endif %}</title>
     <link rel="icon" href="{% static 'assets/logo.png' %}" />
     {% if serve_vite %}
       <script type="module">
@@ -28,16 +28,20 @@
     <style>
       :root {
         color-scheme: dark;
-        --accent-1: #101011;
-        --accent-2: #1a1a1d;
-        --accent-3: #6fa7ff;
-        --accent-ok: #3dd68c;
-        --accent-warn: #f2a365;
-        --accent-err: #f05b87;
-        --bg: radial-gradient(circle at 15% 20%, rgba(24, 32, 44, 0.93), rgba(7, 8, 14, 0.98));
-        --panel-bg: rgba(12, 14, 20, 0.9);
-        --panel-border: rgba(111, 167, 255, 0.12);
-        font-family: "Segoe UI", "Roboto", "Helvetica", sans-serif;
+        --accent-1: #060a11;
+        --accent-2: #0d1a2b;
+        --accent-3: #7fb0ff;
+        --accent-ok: #34d399;
+        --accent-warn: #f6b143;
+        --accent-err: #ff5a5f;
+        --bg: radial-gradient(circle at 18% 16%, rgba(15, 25, 40, 0.92), rgba(6, 9, 15, 0.98));
+        --panel-bg: rgba(8, 14, 22, 0.92);
+        --panel-border: rgba(127, 176, 255, 0.2);
+        font-family: "Roboto", "Segoe UI", "Helvetica", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+        border-radius: 0 !important;
       }
       body {
         margin: 0;
@@ -46,6 +50,7 @@
         min-height: 100vh;
         display: flex;
         flex-direction: column;
+        overflow-x: hidden;
       }
       header.site-header {
         display: flex;
@@ -94,9 +99,8 @@
         width: min(420px, 100%);
         background: var(--panel-bg);
         border: 1px solid var(--panel-border);
-        border-radius: 18px;
         padding: 2.2rem 2rem;
-        box-shadow: 0 28px 60px rgba(0, 0, 0, 0.55);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
         display: flex;
         flex-direction: column;
         gap: 1.5rem;
@@ -119,7 +123,6 @@
       .login-card input {
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(111, 167, 255, 0.25);
-        border-radius: 8px;
         font-size: 1rem;
         padding: 0.75rem;
         color: #f5f8ff;
@@ -130,7 +133,6 @@
         font-size: 0.95rem;
         text-transform: uppercase;
         letter-spacing: 0.16rem;
-        border-radius: 999px;
         border: none;
         background: linear-gradient(135deg, var(--accent-2), var(--accent-3));
         color: #0b141f;
@@ -156,9 +158,8 @@
       .fallback-panel {
         background: var(--panel-bg);
         border: 1px solid var(--panel-border);
-        border-radius: 18px;
         padding: 1.25rem;
-        box-shadow: 0 22px 50px rgba(0, 0, 0, 0.42);
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.42);
       }
       .fallback-panel h3 {
         margin: 0 0 1rem;
@@ -190,15 +191,17 @@
     </style>
   </head>
   <body>
-    <header class="site-header">
-      <div class="brand">
-        <img src="{% static 'assets/logo.png' %}" alt="C4rr13rX insignia" />
-        <h1>R3V3N!R • Crypto Trading AI Bot</h1>
-      </div>
-      {% if user.is_authenticated %}
-        <span class="user-chip">Logged in as {{ user.get_username }}</span>
-      {% endif %}
-    </header>
+    {% if initial_route != "branddozer_solo" %}
+      <header class="site-header">
+        <div class="brand">
+          <img src="{% static 'assets/logo.png' %}" alt="C4rr13rX insignia" />
+          <h1>R3V3N!R • Crypto Trading AI Bot</h1>
+        </div>
+        {% if user.is_authenticated %}
+          <span class="user-chip">Logged in as {{ user.get_username }}</span>
+        {% endif %}
+      </header>
+    {% endif %}
     {% if user.is_authenticated %}
       <main class="app-shell">
         <noscript>
@@ -258,6 +261,8 @@
         </section>
       </main>
     {% endif %}
-    <footer class="site-footer">© {% now "Y" %} R3V3N!R • Autonomous Trading Control Tower</footer>
+    {% if initial_route != "branddozer_solo" %}
+      <footer class="site-footer">© {% now "Y" %} R3V3N!R • Autonomous Trading Control Tower</footer>
+    {% endif %}
   </body>
 </html>

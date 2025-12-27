@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Callable, Optional, Sequence, Tuple
 
 
 class CodexSession:
@@ -27,7 +27,7 @@ class CodexSession:
         session_name: str,
         executable: str = "codex",
         transcript_dir: str | Path = "codex_transcripts",
-        read_timeout_s: float = 90.0,
+        read_timeout_s: float | None = None,
         stream_default: bool = True,
         verbose_default: bool = False,
         term_rows: int = 40,
@@ -37,10 +37,11 @@ class CodexSession:
         sandbox_mode: Optional[str] = "danger-full-access",
         approval_policy: Optional[str] = None,
         bypass_sandbox_confirm: bool = True,
+        workdir: str | Path | None = None,
     ) -> None:
         self.session_name = session_name
         self.executable = executable
-        self.read_timeout_s = read_timeout_s
+        self.read_timeout_s = None if read_timeout_s is None else float(read_timeout_s)
         self.stream_default = stream_default
         self.verbose_default = verbose_default
         self.term_rows = term_rows
@@ -56,74 +57,107 @@ class CodexSession:
         self.approval_policy = approval_policy
         self.bypass_sandbox_confirm = bypass_sandbox_confirm
         self._cli_prefix = self._build_cli_prefix()
+        self.workdir = Path(workdir).resolve() if workdir else None
+        self._stream_callback = None
 
         self._codex_available = shutil.which(self.executable) is not None
 
     # ===== Public API ==========================================================
 
-    def send(self, prompt: str, *, stream: Optional[bool] = None, verbose: Optional[bool] = None) -> str:
+    def send(
+        self,
+        prompt: str,
+        *,
+        stream: Optional[bool] = None,
+        verbose: Optional[bool] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        images: Optional[Sequence[str]] = None,
+    ) -> str:
         stream = self.stream_default if stream is None else stream
         verbose = self.verbose_default if verbose is None else verbose
+        prev_callback = self._stream_callback
+        if stream_callback is not None:
+            self._stream_callback = stream_callback
+        pty_attempted = False
+        cli_prefix = [*self._cli_prefix, *self._image_args(images)]
 
         if not self._codex_available:
             resp = "[codex missing] Install or place `codex` on PATH."
             self._append_transcript(prompt, resp)
             if stream:
                 self._print(resp + "\n")
+            self._stream_callback = prev_callback
             return resp
 
         # 1) Try non-interactive flags first (some builds support these)
         # Prefer the non-interactive exec subcommand when available (streams stderr/stdout live)
-        exec_out, exec_rc, exec_err = self._run_exec_stream(prompt, stream=stream, verbose=verbose)
+        exec_out, exec_rc, exec_err = self._run_exec_stream(prompt, stream=stream, verbose=verbose, cli_prefix=cli_prefix)
         exec_text = exec_out.strip()
         exec_err_text = exec_err.strip()
         if exec_rc != 127 and (exec_text or exec_err_text):
             combined = exec_text or exec_err_text
-            self._append_transcript(
-                prompt,
-                exec_out if not exec_err_text else f"{exec_out}\n[stderr]\n{exec_err}",
-            )
-            if not stream:
-                self._print(combined + ("\n" if not combined.endswith("\n") else ""))
-            return combined
+            if exec_rc == 0 or not self._looks_like_exec_unsupported(combined):
+                self._append_transcript(
+                    prompt,
+                    exec_out if not exec_err_text else f"{exec_out}\n[stderr]\n{exec_err}",
+                )
+                if not stream:
+                    self._print(combined + ("\n" if not combined.endswith("\n") else ""))
+                self._stream_callback = prev_callback
+                return combined
 
-        out, rc, _ = self._run_simple([*self._cli_prefix, "--input", prompt])
+        if stream:
+            final, rc5 = self._run_streaming_pty(cli_prefix, prompt, verbose=verbose)
+            pty_attempted = True
+            if final.strip():
+                self._append_transcript(prompt, final)
+                self._stream_callback = prev_callback
+                return final
+
+        out, rc, _ = self._run_simple([*cli_prefix, "--input", prompt])
         if rc == 0 and out.strip():
             self._append_transcript(prompt, out)
             if stream:
                 self._print(out)
+            self._stream_callback = prev_callback
             return out
 
-        out2, rc2, _ = self._run_simple([*self._cli_prefix, "--prompt", prompt])
+        out2, rc2, _ = self._run_simple([*cli_prefix, "--prompt", prompt])
         if rc2 == 0 and out2.strip():
             self._append_transcript(prompt, out2)
             if stream:
                 self._print(out2)
+            self._stream_callback = prev_callback
             return out2
 
-        out3, rc3, _ = self._run_simple([*self._cli_prefix, prompt])
+        out3, rc3, _ = self._run_simple([*cli_prefix, prompt])
         if rc3 == 0 and out3.strip():
             self._append_transcript(prompt, out3)
             if stream:
                 self._print(out3)
+            self._stream_callback = prev_callback
             return out3
 
-        out4, rc4, _ = self._run_simple([*self._cli_prefix], input_text=prompt)
+        out4, rc4, _ = self._run_simple([*cli_prefix], input_text=prompt)
         if rc4 == 0 and out4.strip():
             self._append_transcript(prompt, out4)
             if stream:
                 self._print(out4)
+            self._stream_callback = prev_callback
             return out4
 
         # 2) Interactive PTY fallback with progressive actions
-        final, rc5 = self._run_streaming_pty(self._cli_prefix, prompt, verbose=verbose)
-        if final.strip():
-            self._append_transcript(prompt, final)
-            return final
+        if not pty_attempted:
+            final, rc5 = self._run_streaming_pty(cli_prefix, prompt, verbose=verbose)
+            if final.strip():
+                self._append_transcript(prompt, final)
+                self._stream_callback = prev_callback
+                return final
 
         # Last resort: PTY with positional arg
-        final2, rc6 = self._run_streaming_pty([*self._cli_prefix, prompt], None, verbose=verbose)
+        final2, rc6 = self._run_streaming_pty([*cli_prefix, prompt], None, verbose=verbose)
         self._append_transcript(prompt, final2 if final2.strip() else f"[codex error] exit {rc6}")
+        self._stream_callback = prev_callback
         return final2
 
     # ===== Simple runners ======================================================
@@ -136,6 +170,7 @@ class CodexSession:
                 capture_output=True,
                 text=True,
                 check=False,
+                cwd=str(self.workdir) if self.workdir else None,
             )
             return (proc.stdout or ""), proc.returncode, (proc.stderr or "")
         except FileNotFoundError:
@@ -167,6 +202,7 @@ class CodexSession:
                 text=False,
                 close_fds=True,
                 env=env,
+                cwd=str(self.workdir) if self.workdir else None,
             )
         except Exception as e:
             for fd in (master_fd, slave_fd):
@@ -220,14 +256,17 @@ class CodexSession:
             except OSError:
                 pass
 
+        timed_out = False
         try:
-            end_time = time.time() + self.read_timeout_s
-            max_deadline = time.time() + max(self.read_timeout_s, 5.0)
+            timeout_disabled = self.read_timeout_s is None or self.read_timeout_s <= 0
+            end_time = None if timeout_disabled else time.time() + self.read_timeout_s
+            max_deadline = None if timeout_disabled else time.time() + max(self.read_timeout_s, 5.0)
             last_total = 0
 
             while True:
                 now = time.time()
-                if now > max_deadline:
+                if not timeout_disabled and max_deadline is not None and now > max_deadline:
+                    timed_out = True
                     try:
                         child.terminate()
                     except Exception:
@@ -239,8 +278,8 @@ class CodexSession:
                             child.kill()
                         except Exception:
                             pass
-                    return "[codex timeout]", 124
-                if child.poll() is not None and now > end_time:
+                    break
+                if child.poll() is not None and not timeout_disabled and end_time is not None and now > end_time:
                     break
 
                 r, _, _ = select.select([master_fd], [], [], 0.05)
@@ -280,8 +319,10 @@ class CodexSession:
 
                 # Update pacing / timeout
                 if total_bytes > last_total:
-                    end_time = time.time() + 2.0  # keep waiting while output grows
                     last_total = total_bytes
+                    if not timeout_disabled:
+                        end_time = time.time() + 2.0  # keep waiting while output grows
+                        max_deadline = time.time() + max(self.read_timeout_s, 5.0)
 
             # Try a graceful EOF to flush final output
             try:
@@ -307,12 +348,22 @@ class CodexSession:
                     pass
 
         stdout = b"".join(captured).decode("utf-8", errors="replace")
+        if timed_out and not stdout.strip():
+            return "[codex timeout]", 124
         return stdout, rc
 
     # ===== Non-interactive exec runner with live streaming =====================
 
-    def _run_exec_stream(self, prompt: str, *, stream: bool, verbose: bool) -> Tuple[str, int, str]:
-        cmd = [*self._cli_prefix, "exec", "--color", "never", "-"]
+    def _run_exec_stream(
+        self,
+        prompt: str,
+        *,
+        stream: bool,
+        verbose: bool,
+        cli_prefix: Optional[Sequence[str]] = None,
+    ) -> Tuple[str, int, str]:
+        prefix = list(cli_prefix) if cli_prefix is not None else list(self._cli_prefix)
+        cmd = [*prefix, "exec", "--color", "never", "-"]
         if verbose:
             self._print(f"[codex] exec-stream: {' '.join(map(self._q, cmd))}\n")
         try:
@@ -323,6 +374,7 @@ class CodexSession:
                 stderr=subprocess.PIPE,
                 text=False,
                 close_fds=True,
+                cwd=str(self.workdir) if self.workdir else None,
             )
         except FileNotFoundError:
             return "", 127, "codex executable not found"
@@ -350,14 +402,15 @@ class CodexSession:
         _register(stdout_fd, "stdout")
         _register(stderr_fd, "stderr")
 
-        deadline = time.time() + self.read_timeout_s
+        timeout_disabled = self.read_timeout_s is None or self.read_timeout_s <= 0
+        deadline = None if timeout_disabled else time.time() + self.read_timeout_s
         timed_out = False
         while fd_map:
             try:
                 ready, _, _ = select.select(list(fd_map.keys()), [], [], 0.1)
             except (InterruptedError, OSError):
                 ready = []
-            if time.time() > deadline and proc.poll() is None:
+            if not timeout_disabled and deadline is not None and time.time() > deadline and proc.poll() is None:
                 try:
                     proc.terminate()
                 except Exception:
@@ -384,6 +437,8 @@ class CodexSession:
                     stderr_buf.extend(chunk)
                 if stream:
                     self._print(chunk.decode("utf-8", errors="replace"))
+                if not timeout_disabled:
+                    deadline = time.time() + self.read_timeout_s
         try:
             try:
                 rc = proc.wait(timeout=1.0)
@@ -399,7 +454,8 @@ class CodexSession:
 
             if timed_out:
                 rc = 124
-                stderr_buf.extend(b"[codex timeout]")
+                if not stdout_buf and not stderr_buf:
+                    stderr_buf.extend(b"[codex timeout]")
         finally:
             if proc.stdout:
                 proc.stdout.close()
@@ -471,8 +527,26 @@ class CodexSession:
             )
 
     def _print(self, s: str) -> None:
+        if self._stream_callback:
+            try:
+                self._stream_callback(s)
+            except Exception:
+                pass
         sys.stdout.write(s)
         sys.stdout.flush()
+
+    def _looks_like_exec_unsupported(self, text: str) -> bool:
+        lower = text.lower()
+        if "exec" not in lower:
+            return False
+        needles = (
+            "unknown command",
+            "unknown subcommand",
+            "no such command",
+            "unrecognized arguments",
+            "invalid choice",
+        )
+        return any(needle in lower for needle in needles)
 
     def _build_cli_prefix(self) -> list[str]:
         parts = [self.executable]
@@ -487,6 +561,19 @@ class CodexSession:
         elif self.approval_policy:
             parts.extend(["--ask-for-approval", self.approval_policy])
         return parts
+
+    @staticmethod
+    def _image_args(images: Optional[Sequence[str]]) -> list[str]:
+        if not images:
+            return []
+        args: list[str] = []
+        for image in images:
+            if not image:
+                continue
+            path = Path(str(image)).expanduser()
+            if path.exists():
+                args.extend(["--image", str(path)])
+        return args
 
     @staticmethod
     def _q(x: str) -> str:

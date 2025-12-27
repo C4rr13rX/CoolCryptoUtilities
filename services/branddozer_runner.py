@@ -19,6 +19,7 @@ BASE_INSTRUCTIONS = (
     "Act as a full-access Codex agent working on the specified project root. "
     "For each run: stay in a fix/test/fix/test loop until errors are resolved; "
     "generate or update CLI test harnesses for every GUI function; take Chromium screenshots when it helps you assess UI/UX; "
+    "use scripts/branddozer_ui_capture.py to capture UI screenshots when needed; "
     "avoid destructive actions; summarize changes; and stop cleanly when done."
 )
 
@@ -150,14 +151,14 @@ class BrandDozerManager:
         for label, prompt in prompts:
             if stop.is_set():
                 break
-            output = self._run_prompt(project, prompt, label)
+            self._run_prompt(project, prompt, label)
             with self._lock:
                 self._status[project["id"]] = {"state": "running", "last_message": f"{label} done"}
-            self._append_log(project, label, prompt, output)
 
     def _run_prompt(self, project: Dict[str, str], prompt: str, label: str) -> str:
         if not shutil.which("codex"):
             raise RuntimeError("codex CLI not available on PATH")
+        root = project.get("root_path") or "."
         session_name = f"branddozer-{project.get('id')}"
         transcript_dir = LOG_ROOT / "transcripts"
         transcript_dir.mkdir(parents=True, exist_ok=True)
@@ -168,12 +169,28 @@ class BrandDozerManager:
             approval_policy="never",
             model="gpt-5.1-codex-max",
             reasoning_effort="xhigh",
-            read_timeout_s=120.0,
+            read_timeout_s=None,
+            workdir=str(root),
         )
-        root = project.get("root_path") or "."
         header = f"[BrandDozer Project: {project.get('name')}]\nRoot: {root}\nMode: {label}\n{BASE_INSTRUCTIONS}\n"
         full_prompt = f"{header}\n{prompt}"
-        return session.send(full_prompt, stream=True)
+        log_path = Path(project.get("log_path") or LOG_ROOT / f"{project.get('id')}.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        divider = "=" * 60
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{divider}\n{ts} :: {project.get('name')} :: {label}\nPROMPT:\n{prompt}\nOUTPUT:\n")
+            handle.flush()
+
+            def _stream_writer(chunk: str) -> None:
+                handle.write(chunk)
+                handle.flush()
+
+            output = session.send(full_prompt, stream=True, stream_callback=_stream_writer)
+            if output and not output.endswith("\n"):
+                handle.write("\n")
+            handle.write("\n")
+        return output
 
     def _append_log(self, project: Dict[str, str], label: str, prompt: str, output: Optional[str]) -> None:
         log_path = Path(project.get("log_path") or LOG_ROOT / f"{project.get('id')}.log")

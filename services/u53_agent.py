@@ -17,6 +17,6 @@ def send_codex_update(message: str, *, session_name: str = "u53rxr080t") -> str:
         approval_policy="never",
         model="gpt-5.1-codex-max",
         reasoning_effort="xhigh",
-        read_timeout_s=60.0,
+        read_timeout_s=None,
     )
     return session.send(message, stream=True)

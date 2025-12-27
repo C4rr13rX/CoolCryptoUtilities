@@ -368,12 +368,19 @@ class ProductionManager:
 
     def _task_scheduler_refresh(self) -> None:
         # Placeholder hook for bus/passenger scheduling or pair rotation.
-        self.pipeline.metrics.feedback(
-            "scheduler",
-            severity=FeedbackSeverity.INFO,
-            label="cycle_tick",
-            details={"ts": time.time()},
-        )
+        try:
+            self.pipeline.metrics.feedback(
+                "scheduler",
+                severity=FeedbackSeverity.INFO,
+                label="cycle_tick",
+                details={"ts": time.time()},
+            )
+        except Exception as exc:
+            log_message(
+                "production",
+                f"scheduler feedback failed: {exc}",
+                severity="warning",
+            )
         try:
             # Persist the latest readiness snapshot so ghost→live gating reflects current market data.
             readiness = self.pipeline.live_readiness_report()

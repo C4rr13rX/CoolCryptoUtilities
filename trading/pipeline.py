@@ -80,6 +80,7 @@ CONFUSION_WINDOW_BUCKETS: Tuple[Tuple[str, int], ...] = (
     ("1d", 24 * 60 * 60),
     ("7d", 7 * 24 * 60 * 60),
     ("30d", 30 * 24 * 60 * 60),
+    ("3m", 90 * 24 * 60 * 60),
     ("180d", 180 * 24 * 60 * 60),
 )
 
@@ -473,17 +474,22 @@ class TrainingPipeline:
         if news_items:
             sentiment_counts: Dict[str, int] = {}
             token_coverage: set[str] = set()
+            source_counts: Dict[str, int] = {}
             for item in news_items:
                 sentiment = str(item.get("sentiment", "neutral")).lower()
                 sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
                 for token in item.get("tokens") or []:
                     token_coverage.add(str(token).upper())
+                source = str(item.get("source") or "").strip()
+                if source:
+                    source_counts[source] = source_counts.get(source, 0) + 1
             total_news = len(news_items)
             news_metrics = {
                 "news_items_total": total_news,
                 "news_token_coverage": len(token_coverage),
                 "news_positive_ratio": sentiment_counts.get("positive", 0) / total_news,
                 "news_negative_ratio": sentiment_counts.get("negative", 0) / total_news,
+                "news_sources": len(source_counts),
             }
             self.metrics.record(
                 MetricStage.NEWS,
@@ -492,6 +498,10 @@ class TrainingPipeline:
                 meta={
                     "iteration": self.iteration,
                     "unique_tokens": list(sorted(token_coverage))[:32],
+                    "sources": [
+                        name
+                        for name, _ in sorted(source_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+                    ],
                 },
             )
 
@@ -1019,6 +1029,26 @@ class TrainingPipeline:
             margin_intensity = np.clip(np.abs(margin_arr), 0.1, 5.0)
             sample_weights["net_margin"] *= margin_intensity
             sample_weights["net_pnl"] *= margin_intensity
+            horizon_weights = self._horizon_sample_weights(
+                self._last_sample_meta,
+                sample_count=sample_weights["price_dir"].shape[0],
+            )
+            if horizon_weights is not None:
+                sample_weights["price_dir"] *= horizon_weights
+                sample_weights["net_margin"] *= horizon_weights
+                sample_weights["net_pnl"] *= horizon_weights
+                weight_stats = {
+                    "horizon_weight_mean": float(np.mean(horizon_weights)),
+                    "horizon_weight_min": float(np.min(horizon_weights)),
+                    "horizon_weight_max": float(np.max(horizon_weights)),
+                }
+                self._last_dataset_meta.update(weight_stats)
+                self.metrics.record(
+                    MetricStage.TRAINING,
+                    weight_stats,
+                    category=f"dataset_{dataset_label}_weights",
+                    meta={"iteration": self.iteration},
+                )
             for key in sample_weights:
                 sample_weights[key] = sample_weights[key].astype(np.float32)
             return inputs, targets, sample_weights
@@ -1583,6 +1613,109 @@ class TrainingPipeline:
                 details={"deficits": deficits, "adjustments": adjustments},
             )
 
+    def _adjust_horizon_bias_from_confusion(self) -> None:
+        summary = self._last_confusion_summary or {}
+        horizons = summary.get("horizons") if isinstance(summary, dict) else None
+        if not isinstance(horizons, dict) or not horizons:
+            return
+        bucket_scores: Dict[str, float] = {"short": 0.0, "mid": 0.0, "long": 0.0}
+        bucket_samples: Dict[str, int] = {"short": 0, "mid": 0, "long": 0}
+        for label, metrics in horizons.items():
+            if not isinstance(metrics, dict):
+                continue
+            horizon_sec = metrics.get("horizon_seconds") or self._confusion_windows.get(label)
+            if horizon_sec is None:
+                continue
+            samples = int(metrics.get("samples", 0))
+            if samples <= 0:
+                continue
+            try:
+                horizon_val = int(float(horizon_sec))
+            except (TypeError, ValueError):
+                continue
+            if horizon_val <= 30 * 60:
+                bucket = "short"
+            elif horizon_val <= 24 * 3600:
+                bucket = "mid"
+            else:
+                bucket = "long"
+            f1_score = self._safe_float(metrics.get("f1_score", metrics.get("precision", 0.0)))
+            bucket_scores[bucket] += f1_score * samples
+            bucket_samples[bucket] += samples
+        total_samples = sum(bucket_samples.values())
+        if total_samples <= 0:
+            return
+        overall_f1 = sum(bucket_scores.values()) / max(total_samples, 1)
+        if overall_f1 <= 0:
+            return
+        min_samples = int(os.getenv("HORIZON_BIAS_MIN_SAMPLES", "24"))
+        current_bias = self.data_loader.horizon_bias_snapshot()
+        updates: Dict[str, float] = {}
+        bucket_snapshot: Dict[str, float] = {}
+        for bucket, samples in bucket_samples.items():
+            if samples < min_samples:
+                continue
+            bucket_f1 = bucket_scores[bucket] / max(samples, 1)
+            bucket_snapshot[bucket] = bucket_f1
+            delta = overall_f1 - bucket_f1
+            if abs(delta) < 0.05:
+                continue
+            boost = 1.0 + max(-0.2, min(0.2, delta))
+            updates[bucket] = current_bias.get(bucket, 1.0) * boost
+        if not updates:
+            return
+        tuned = self.data_loader.tune_horizon_bias(updates)
+        if tuned:
+            self._horizon_bias = self.data_loader.horizon_bias_snapshot()
+            self.metrics.feedback(
+                "training",
+                severity=FeedbackSeverity.INFO,
+                label="horizon_bias_tuned",
+                details={
+                    "overall_f1": overall_f1,
+                    "bucket_f1": bucket_snapshot,
+                    "updated_bias": tuned,
+                },
+            )
+
+    def _horizon_sample_weights(
+        self,
+        sample_meta: Dict[str, Any],
+        *,
+        sample_count: int,
+    ) -> Optional[np.ndarray]:
+        records = sample_meta.get("records") if isinstance(sample_meta, dict) else None
+        if not isinstance(records, list) or not records:
+            return None
+        weights = np.ones(sample_count, dtype=np.float32)
+        short_cutoff = 30 * 60
+        mid_cutoff = 24 * 3600
+        for idx, record in enumerate(records[:sample_count]):
+            if not isinstance(record, dict):
+                continue
+            horizons = record.get("horizons") or {}
+            if not isinstance(horizons, dict) or not horizons:
+                continue
+            bucket_weights: List[float] = []
+            for key in horizons.keys():
+                try:
+                    horizon_sec = int(float(key))
+                except (TypeError, ValueError):
+                    continue
+                if horizon_sec <= short_cutoff:
+                    bucket = "short"
+                elif horizon_sec <= mid_cutoff:
+                    bucket = "mid"
+                else:
+                    bucket = "long"
+                bucket_weights.append(float(self._horizon_bias.get(bucket, 1.0)))
+            if bucket_weights:
+                weights[idx] = max(0.5, float(np.mean(bucket_weights)))
+        mean_weight = float(np.mean(weights)) if weights.size else 1.0
+        if mean_weight > 0:
+            weights = weights / mean_weight
+        return weights.astype(np.float32)
+
     def _load_state(self) -> None:
         try:
             state = self.db.load_state()
@@ -1972,6 +2105,7 @@ class TrainingPipeline:
         self._last_confusion_report = report
         self._last_confusion_refresh = time.time()
         self._last_confusion_summary = self._summarize_confusion_report(report)
+        self._adjust_horizon_bias_from_confusion()
         self._last_transition_plan = self._build_transition_plan()
         try:
             best_label, best_payload = max(

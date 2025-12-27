@@ -59,3 +59,46 @@ def test_base_allocation_respects_pair_multiplier() -> None:
     bot.active_exposure["ETH-USD"] = 150.0  # type: ignore[index]
     allocation = bot._compute_base_allocation(sample)  # type: ignore[attr-defined]
     assert allocation["ETH-USD"] == pytest.approx(50.0)
+
+
+def test_plan_gas_replenishment_prefers_stable_swaps() -> None:
+    bot = TradingBot.__new__(TradingBot)
+    TradingBot._ensure_runtime_state(bot)  # type: ignore[attr-defined]
+
+    class Holding:
+        def __init__(self, symbol: str, token: str, quantity: float, usd: float) -> None:
+            self.symbol = symbol
+            self.token = token
+            self.quantity = quantity
+            self.usd = usd
+
+    class Portfolio:
+        def __init__(self) -> None:
+            self.holdings = {("base", "USDC"): Holding("USDC", "0xusdc", 120.0, 120.0)}
+            self.native_balances = {"base": 0.0, "ethereum": 0.25}
+
+    bot.portfolio = Portfolio()  # type: ignore[attr-defined]
+    bot.stable_tokens = {"USDC"}  # type: ignore[attr-defined]
+    bot.gas_buffer_multiplier = 1.2  # type: ignore[attr-defined]
+    bot.gas_roundtrip_fee_ratio = 0.0  # type: ignore[attr-defined]
+    bot.gas_bridge_flat_fee = 0.0  # type: ignore[attr-defined]
+    bot.gas_profit_guard = 1.0  # type: ignore[attr-defined]
+    bot.gas_force_refill = True  # type: ignore[attr-defined]
+
+    strategy = bot._plan_gas_replenishment(  # type: ignore[attr-defined]
+        chain="base",
+        route=["ETH", "USDC"],
+        native_balance=0.0,
+        gas_required=0.01,
+        trade_size=1.0,
+        price=2000.0,
+        margin=0.02,
+        pnl=0.5,
+        available_quote=50.0,
+        symbol="ETH-USDC",
+    )
+
+    assert strategy is not None
+    assert strategy["stable_swap_plan"]
+    assert strategy["force_rebalance"] is True
+    assert strategy["remaining_native_gap"] >= 0

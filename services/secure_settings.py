@@ -178,7 +178,10 @@ def get_settings_for_user(user) -> Dict[str, str]:
         return {}
     if user is None:
         return {}
-    settings = SecureSetting.objects.filter(user=user)
+    try:
+        settings = SecureSetting.objects.filter(user=user)
+    except Exception:
+        return {}
     results: Dict[str, str] = {}
     for setting in settings:
         if setting.is_secret:
@@ -217,8 +220,11 @@ def _resolve_placeholders(values: Dict[str, str], max_passes: int = 10) -> Dict[
 
 
 def default_env_user():
-    User = get_user_model()
-    return User.objects.filter(is_superuser=True).order_by("id").first()
+    try:
+        User = get_user_model()
+        return User.objects.filter(is_superuser=True).order_by("id").first()
+    except Exception:
+        return None
 
 
 def build_process_env(user=None) -> Dict[str, str]:

@@ -1,26 +1,37 @@
 :root {
-  font-family: 'Segoe UI', 'Roboto', sans-serif;
-  color: #f4f6fa;
-  background-color: #0b1420;
+  font-family: 'Roboto', 'Segoe UI', sans-serif;
+  color: #eef3ff;
+  background-color: #080d14;
   line-height: 1.5;
   font-weight: 400;
-  --surface: rgba(13, 25, 43, 0.85);
-  --surface-strong: rgba(18, 34, 61, 0.9);
-  --border: rgba(127, 176, 255, 0.25);
+  color-scheme: dark;
+  --surface: rgba(10, 16, 26, 0.9);
+  --surface-strong: rgba(12, 20, 32, 0.95);
+  --border: rgba(127, 176, 255, 0.22);
   --accent: #2d75c4;
-  --accent-soft: rgba(45, 117, 196, 0.35);
+  --accent-soft: rgba(45, 117, 196, 0.25);
   --accent-3: #7fb0ff;
   --accent-ok: #34d399;
   --accent-warn: #f6b143;
   --accent-err: #ff5a5f;
-  --positive: #1fe29a;
+  --positive: #34d399;
   --warning: #f6b143;
   --negative: #ff5a5f;
-  --text-muted: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(231, 238, 255, 0.65);
+  --q-primary: #2d75c4;
+  --q-secondary: #0d1a2b;
+  --q-accent: #7fb0ff;
+  --q-dark: #080d14;
+  --q-dark-page: #060a11;
+  --q-positive: #34d399;
+  --q-warning: #f6b143;
+  --q-negative: #ff5a5f;
+  --q-info: #9db9ff;
 }
 
 * {
   box-sizing: border-box;
+  border-radius: 0 !important;
 }
 
 html,
@@ -35,6 +46,7 @@ body {
 body {
   min-height: 100vh;
   overflow-y: scroll;
+  background: radial-gradient(circle at 20% 10%, rgba(13, 24, 40, 0.7), rgba(6, 9, 15, 0.98));
 }
 
 #app {
@@ -51,8 +63,8 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 10% 20%, rgba(45, 117, 196, 0.28), transparent 55%),
-              radial-gradient(circle at 90% 10%, rgba(127, 176, 255, 0.18), transparent 60%);
+  background: radial-gradient(circle at 12% 18%, rgba(45, 117, 196, 0.18), transparent 55%),
+              radial-gradient(circle at 88% 12%, rgba(127, 176, 255, 0.12), transparent 60%);
   pointer-events: none;
   z-index: -1;
 }
@@ -154,12 +166,13 @@ main.dashboard-content {
 .console-output {
   font-family: 'Fira Code', 'Source Code Pro', monospace;
   background: rgba(8, 15, 27, 0.9);
-  border-radius: 12px;
   padding: 1rem;
   max-height: 18rem;
   overflow-y: auto;
   border: 1px solid var(--border);
   white-space: pre-wrap;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 .grid-two {
@@ -219,7 +232,36 @@ main.dashboard-content {
   max-height: 420px;
   overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+}
+
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+}
+
+pre,
+code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-layout,
+.content,
+.content__body,
+.content__viewport,
+.dashboard-shell {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.content__viewport,
+.panel,
+.card,
+.project-card,
+.console-output {
+  overflow-wrap: anywhere;
 }
 
 .table-scroll table {

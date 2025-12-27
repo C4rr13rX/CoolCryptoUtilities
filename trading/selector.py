@@ -52,13 +52,27 @@ _ALWAYS_LIVE_SYMBOLS = {
     "WETH-DAI",
     "USDC-USDT",
 }
-_db: TradingDatabase = get_db()
+_DB_BOOTSTRAPPED = False
 
-for _core_symbol in list(_ALWAYS_LIVE_SYMBOLS):
-    try:
-        _db.clear_pair_suppression(_core_symbol)
-    except Exception:
-        pass
+
+class _LazyDB:
+    def __getattr__(self, name: str):
+        return getattr(get_db(), name)
+
+
+_db: TradingDatabase = _LazyDB()  # type: ignore[assignment]
+
+
+def _bootstrap_always_live_symbols() -> None:
+    global _DB_BOOTSTRAPPED
+    if _DB_BOOTSTRAPPED:
+        return
+    _DB_BOOTSTRAPPED = True
+    for _core_symbol in list(_ALWAYS_LIVE_SYMBOLS):
+        try:
+            _db.clear_pair_suppression(_core_symbol)
+        except Exception:
+            pass
 
 _PAIR_SCAN_VOLUME_LIMIT = int(os.getenv("PAIR_SCAN_VOLUME_LIMIT", "2000"))
 _PAIR_CHAIN_LOCK_SECONDS = float(os.getenv("PAIR_CHAIN_LOCK_SECONDS", str(10 * 24 * 3600)))
@@ -141,6 +155,7 @@ def _has_historical_price(symbol: str) -> bool:
 
 
 def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
+    _bootstrap_always_live_symbols()
     key = _pair_key(symbol, chain)
     symbol_u = symbol.upper()
     if symbol_u in _ALWAYS_LIVE_SYMBOLS:

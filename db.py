@@ -36,7 +36,7 @@ class TradingDatabase:
             self._vendor = "sqlite"
         else:
             self._vendor = "postgres" if vendor_env == "postgres" else "sqlite"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         if self._vendor == "postgres" and psycopg is not None:
             try:
                 self._init_postgres()
@@ -61,8 +61,9 @@ class TradingDatabase:
             fallback = Path("trading_cache.db").absolute()
             fallback.parent.mkdir(parents=True, exist_ok=True)
             self.path = str(fallback)
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        raw_conn = sqlite3.connect(self.path, check_same_thread=False)
+        raw_conn.row_factory = sqlite3.Row
+        self._conn = _LockedSqliteConnection(raw_conn, self._lock)
         self._init_schema()
 
     # ------------------------------------------------------------------
@@ -1219,16 +1220,25 @@ class TradingDatabase:
                 numeric_value = float(value)
             except Exception:
                 continue
+            if not math.isfinite(numeric_value):
+                continue
             rows.append((ts, stage, category, str(name), numeric_value, payload))
         if not rows:
             return
-        with self._conn:
-            self._conn.executemany(
-                """
-                INSERT INTO metrics(ts, stage, category, name, value, meta)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                rows,
+        try:
+            with self._lock:
+                with self._conn:
+                    self._conn.executemany(
+                        """
+                        INSERT INTO metrics(ts, stage, category, name, value, meta)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        rows,
+                    )
+        except Exception as exc:
+            _log_db_warning(
+                "metrics insert failed",
+                {"error": str(exc), "stage": stage, "category": category, "rows": len(rows)},
             )
 
     def fetch_metrics(
@@ -1286,13 +1296,20 @@ class TradingDatabase:
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
         payload = json.dumps(details or {})
-        with self._conn:
-            self._conn.execute(
-                """
-                INSERT INTO feedback_events(ts, source, severity, label, details)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (time.time(), source, severity, label, payload),
+        try:
+            with self._lock:
+                with self._conn:
+                    self._conn.execute(
+                        """
+                        INSERT INTO feedback_events(ts, source, severity, label, details)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (time.time(), source, severity, label, payload),
+                    )
+        except Exception as exc:
+            _log_db_warning(
+                "feedback insert failed",
+                {"error": str(exc), "source": source, "label": label},
             )
 
     def fetch_feedback_events(
@@ -1869,6 +1886,49 @@ def _translate_query(query: str) -> str:
     query = query.replace("?", "%s")
     query = query.replace("strftime('%s','now')", "EXTRACT(EPOCH FROM NOW())")
     return query
+
+
+class _LockedSqliteConnection:
+    """
+    Wrap sqlite3 connections so concurrent threads serialize access.
+    """
+
+    def __init__(self, conn: sqlite3.Connection, lock: threading.RLock) -> None:
+        self._conn = conn
+        self._lock = lock
+
+    def __enter__(self):
+        self._lock.acquire()
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return self._conn.__exit__(exc_type, exc, tb)
+        finally:
+            self._lock.release()
+
+    def cursor(self, *args, **kwargs):
+        return self._conn.cursor(*args, **kwargs)
+
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.executemany(*args, **kwargs)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._conn.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
 
 
 class _PgCursor:

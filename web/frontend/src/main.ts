@@ -1,6 +1,10 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
+import { Quasar } from 'quasar';
 import App from './App.vue';
+import 'quasar/src/css/index.sass';
+import '@quasar/extras/roboto-font/roboto-font.css';
+import '@quasar/extras/material-icons/material-icons.css';
 import './assets/theme.css';
 import { createDashboardRouter } from './router';
 import { useDashboardStore } from './stores/dashboard';
@@ -30,6 +34,22 @@ if (mountEl) {
 
   app.use(pinia);
   app.use(router);
+  app.use(Quasar, {
+    config: {
+      dark: true,
+      brand: {
+        primary: '#2d75c4',
+        secondary: '#0d1a2b',
+        accent: '#7fb0ff',
+        dark: '#080d14',
+        'dark-page': '#060a11',
+        positive: '#34d399',
+        negative: '#ff5a5f',
+        warning: '#f6b143',
+        info: '#9db9ff'
+      }
+    }
+  });
 
   const store = useDashboardStore(pinia);
   if (fallbackSnapshot) {
@@ -51,9 +71,15 @@ if (mountEl) {
     settings: '/settings',
     codegraph: '/codegraph',
     branddozer: '/branddozer',
+    branddozer_solo: '/branddozer/solo',
     u53rxr080t: '/u53rxr080t',
   };
   const initialPath = targetRoutes[initialRoute] || '/';
+
+  router.afterEach((to) => {
+    const title = (to.meta?.title as string) || 'R3V3N!R Control Tower';
+    document.title = title;
+  });
 
   router.replace(initialPath).finally(() => {
     app.mount(mountEl);

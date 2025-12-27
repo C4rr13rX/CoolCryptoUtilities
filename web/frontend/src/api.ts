@@ -349,23 +349,32 @@ export async function fetchBrandRoots(path?: string) {
 }
 
 export async function fetchBrandGithubAccount() {
-  const { data } = await api.get('/branddozer/projects/github/account/');
+  const { data } = await api.get('/branddozer/projects/github/accounts/');
   return data;
 }
 
-export async function saveBrandGithubAccount(payload: { username?: string; token: string }) {
-  const { data } = await api.post('/branddozer/projects/github/account/', payload);
+export async function saveBrandGithubAccount(payload: { username?: string; token: string; account_id?: string; label?: string }) {
+  const { data } = await api.post('/branddozer/projects/github/accounts/', payload);
   return data;
 }
 
-export async function fetchBrandGithubRepos(username?: string) {
-  const params = username ? { username } : undefined;
+export async function setBrandGithubActiveAccount(accountId: string) {
+  const { data } = await api.post('/branddozer/projects/github/accounts/active/', { account_id: accountId });
+  return data;
+}
+
+export async function fetchBrandGithubRepos(username?: string, accountId?: string) {
+  const params: Record<string, string> = {};
+  if (username) params.username = username;
+  if (accountId) params.account_id = accountId;
   const { data } = await api.get('/branddozer/projects/github/repos/', { params, timeout: 12000 });
   return data;
 }
 
-export async function fetchBrandGithubBranches(repoFullName: string) {
-  const { data } = await api.get('/branddozer/projects/github/branches/', { params: { repo: repoFullName } });
+export async function fetchBrandGithubBranches(repoFullName: string, accountId?: string) {
+  const params: Record<string, string> = { repo: repoFullName };
+  if (accountId) params.account_id = accountId;
+  const { data } = await api.get('/branddozer/projects/github/branches/', { params });
   return data;
 }
 
@@ -405,8 +414,90 @@ export async function generateBrandInterjections(id: string, defaultPrompt?: str
   return data;
 }
 
+export async function previewBrandInterjections(defaultPrompt: string, projectName?: string) {
+  const payload = { default_prompt: defaultPrompt, project_name: projectName };
+  const { data } = await api.post('/branddozer/projects/interjections/preview/', payload);
+  return data;
+}
+
 export async function importBrandProjectFromGitHub(payload: Record<string, any>) {
-  const { data } = await api.post('/branddozer/projects/import/github/', payload);
+  const { data } = await api.post('/branddozer/projects/import/github/', payload, { timeout: 120000 });
+  return data;
+}
+
+export async function fetchBrandGithubImportStatus(jobId: string) {
+  const { data } = await api.get(`/branddozer/projects/import/github/status/${jobId}/`, { timeout: 120000 });
+  return data;
+}
+
+export async function publishBrandProject(projectId: string, payload: Record<string, any>) {
+  const { data } = await api.post(`/branddozer/projects/${projectId}/publish/`, payload, { timeout: 120000 });
+  return data;
+}
+
+export async function startBrandDeliveryRun(payload: { project_id: string; prompt: string; mode?: string }) {
+  const { data } = await api.post('/branddozer/delivery/runs/', payload, { timeout: 120000 });
+  return data;
+}
+
+export async function fetchBrandDeliveryRuns(projectId?: string) {
+  const params = projectId ? { project_id: projectId } : undefined;
+  const { data } = await api.get('/branddozer/delivery/runs/', { params });
+  return data;
+}
+
+export async function fetchBrandDeliveryRun(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/`);
+  return data;
+}
+
+export async function fetchBrandDeliveryBacklog(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/backlog/`);
+  return data;
+}
+
+export async function updateBrandDeliveryBacklogItem(itemId: string, payload: { status?: string; priority?: number }) {
+  const { data } = await api.patch(`/branddozer/delivery/backlog/${itemId}/`, payload);
+  return data;
+}
+
+export async function fetchBrandDeliveryGates(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/gates/`);
+  return data;
+}
+
+export async function fetchBrandDeliverySessions(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/sessions/`);
+  return data;
+}
+
+export async function fetchBrandDeliverySessionLogs(sessionId: string, limit = 200) {
+  const { data } = await api.get(`/branddozer/delivery/sessions/${sessionId}/logs/`, { params: { limit } });
+  return data;
+}
+
+export async function fetchBrandDeliveryArtifacts(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/artifacts/`);
+  return data;
+}
+
+export async function triggerBrandDeliveryUiCapture(runId: string) {
+  const { data } = await api.post(`/branddozer/delivery/runs/${runId}/ui-capture/`);
+  return data;
+}
+
+export async function fetchBrandDeliveryGovernance(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/governance/`);
+  return data;
+}
+
+export async function fetchBrandDeliverySprints(runId: string) {
+  const { data } = await api.get(`/branddozer/delivery/runs/${runId}/sprints/`);
+  return data;
+}
+
+export async function acceptBrandDeliveryRun(runId: string, payload: { notes?: string; checklist?: string[] }) {
+  const { data } = await api.post(`/branddozer/delivery/runs/${runId}/accept/`, payload);
   return data;
 }
 

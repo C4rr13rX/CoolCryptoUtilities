@@ -250,6 +250,14 @@ class CodeGraphPageView(BaseSecureView):
     initial_route = "codegraph"
 
 
+class BrandDozerPageView(BaseSecureView):
+    initial_route = "branddozer"
+
+
+class BrandDozerSoloView(BaseSecureView):
+    initial_route = "branddozer_solo"
+
+
 class SpaRouteView(BaseSecureView):
     """
     Catch-all view so refreshing /<route> stays inside the SPA shell.

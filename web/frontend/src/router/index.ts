@@ -86,6 +86,13 @@ const routes: RouteRecordRaw[] = [
     path: '/branddozer',
     name: 'branddozer',
     component: BrandDozerView,
+    meta: { title: 'BrandDozer' },
+  },
+  {
+    path: '/branddozer/solo',
+    name: 'branddozer_solo',
+    component: BrandDozerView,
+    meta: { layout: 'solo', title: 'BrandDozer' },
   },
   {
     path: '/u53rxr080t',

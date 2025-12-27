@@ -297,6 +297,33 @@ class HistoricalDataLoader:
             adjustments["focus"] = list(focus_assets)
         return adjustments
 
+    def tune_horizon_bias(
+        self,
+        updates: Dict[str, float],
+        *,
+        min_delta: float = 0.02,
+    ) -> Dict[str, float]:
+        """
+        Apply performance-driven horizon bias updates without altering sampling
+        preferences. Returns only the buckets that changed.
+        """
+        changed: Dict[str, float] = {}
+        for bucket, raw in updates.items():
+            if bucket not in self._horizon_bias:
+                continue
+            try:
+                candidate = float(raw)
+            except (TypeError, ValueError):
+                continue
+            candidate = max(0.5, min(2.5, candidate))
+            if abs(candidate - self._horizon_bias[bucket]) < min_delta:
+                continue
+            self._horizon_bias[bucket] = candidate
+            changed[bucket] = candidate
+        if changed:
+            self.invalidate_dataset_cache()
+        return changed
+
     def backfill_shortfall(
         self,
         deficits: Dict[str, float],
@@ -360,16 +387,62 @@ class HistoricalDataLoader:
     def _parse_horizon_windows(self, raw: str) -> Tuple[int, ...]:
         if raw:
             parsed: List[int] = []
+            unit_map = {
+                "s": 1,
+                "sec": 1,
+                "secs": 1,
+                "second": 1,
+                "seconds": 1,
+                "m": 60,
+                "min": 60,
+                "mins": 60,
+                "minute": 60,
+                "minutes": 60,
+                "h": 3600,
+                "hr": 3600,
+                "hrs": 3600,
+                "hour": 3600,
+                "hours": 3600,
+                "d": 86400,
+                "day": 86400,
+                "days": 86400,
+                "w": 7 * 86400,
+                "wk": 7 * 86400,
+                "wks": 7 * 86400,
+                "week": 7 * 86400,
+                "weeks": 7 * 86400,
+                "mo": 30 * 86400,
+                "mon": 30 * 86400,
+                "mons": 30 * 86400,
+                "month": 30 * 86400,
+                "months": 30 * 86400,
+                "mth": 30 * 86400,
+                "mths": 30 * 86400,
+                "y": 365 * 86400,
+                "yr": 365 * 86400,
+                "yrs": 365 * 86400,
+                "year": 365 * 86400,
+                "years": 365 * 86400,
+            }
             for part in raw.split(","):
-                part = part.strip()
+                part = part.strip().lower()
                 if not part:
                     continue
                 try:
-                    value = int(part)
-                except Exception:
-                    continue
-                if value > 0:
-                    parsed.append(int(value))
+                    value = float(part)
+                    multiplier = 1
+                except ValueError:
+                    match = re.fullmatch(r"([0-9]*\.?[0-9]+)\s*([a-zA-Z]+)", part)
+                    if not match:
+                        continue
+                    value = float(match.group(1))
+                    unit = match.group(2).lower()
+                    multiplier = unit_map.get(unit, 0)
+                    if multiplier == 0:
+                        continue
+                seconds = int(round(value * multiplier))
+                if seconds > 0:
+                    parsed.append(seconds)
             if parsed:
                 unique_sorted = tuple(sorted({int(value) for value in parsed}))
                 return unique_sorted
@@ -2178,6 +2251,8 @@ class HistoricalDataLoader:
                 "article": row.get("article"),
                 "sentiment": row.get("sentiment", "neutral"),
                 "tokens": tokens,
+                "source": row.get("source"),
+                "url": row.get("url"),
             }
             digest = f"{ts}:{entry['headline']}"
             if digest in self._news_seen_keys:

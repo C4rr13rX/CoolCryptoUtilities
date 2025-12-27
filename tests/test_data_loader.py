@@ -118,6 +118,13 @@ def test_short_horizon_metrics_recorded(historical_tmp: Path) -> None:
     assert all(stats.get("samples", 0.0) > 0 for stats in short_horizons), "short horizons should accumulate samples"
 
 
+def test_parse_horizon_windows_with_units(monkeypatch: pytest.MonkeyPatch, historical_tmp: Path) -> None:
+    monkeypatch.setenv("TRAINING_HORIZON_WINDOWS_SEC", "5m, 1h, 2d, 1w, 1mo")
+
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=1, max_samples_per_file=8)
+    assert loader._horizon_windows == (300, 3600, 172800, 604800, 2592000)
+
+
 def test_sample_meta_persists_through_caches(monkeypatch: pytest.MonkeyPatch, historical_tmp: Path) -> None:
     cache_dir = historical_tmp / "ds_cache"
     monkeypatch.setenv("DATASET_CACHE_DIR", str(cache_dir))

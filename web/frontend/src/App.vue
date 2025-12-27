@@ -1,6 +1,6 @@
 <template>
-  <div class="app-layout">
-    <aside class="sidebar" :class="{ open: sidebarOpen }">
+  <div class="app-layout" :class="{ solo: isSolo }">
+    <aside v-if="!isSolo" class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar__brand">
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
@@ -37,10 +37,10 @@
       </footer>
     </aside>
 
-    <div class="sidebar-overlay" :class="{ visible: sidebarOpen }" @click="closeSidebar" />
+    <div v-if="!isSolo" class="sidebar-overlay" :class="{ visible: sidebarOpen }" @click="closeSidebar" />
 
-    <main class="content">
-      <header class="content__header">
+    <main class="content" :class="{ solo: isSolo }">
+      <header v-if="!isSolo" class="content__header">
         <button class="hamburger" type="button" aria-label="Toggle navigation" :class="{ open: sidebarOpen }" @click="toggleSidebar">
           <span />
           <span />
@@ -76,6 +76,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 const store = useDashboardStore();
 const route = useRoute();
 const sidebarOpen = ref(false);
+const isSolo = computed(() => route.meta?.layout === 'solo');
 
 let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
@@ -110,6 +111,15 @@ const handleNavClick = () => {
     closeSidebar();
   }
 };
+
+watch(
+  () => isSolo.value,
+  (solo) => {
+    if (solo) {
+      closeSidebar();
+    }
+  }
+);
 
 const streamIntent = computed(() => {
   const keys = Object.keys(store.streams || {});
@@ -228,6 +238,12 @@ const totalProfitDisplay = computed(() =>
   width: 100%;
   display: flex;
   background: radial-gradient(circle at 10% 0%, rgba(11, 28, 60, 0.4), rgba(3, 10, 22, 0.96));
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+.app-layout.solo {
+  background: radial-gradient(circle at 20% 0%, rgba(9, 24, 52, 0.5), rgba(2, 8, 16, 0.98));
 }
 
 .sidebar {
@@ -360,16 +376,24 @@ const totalProfitDisplay = computed(() =>
 }
 
 .content {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  width: calc(100vw - 260px);
-  max-width: calc(100vw - 260px);
   align-self: stretch;
   padding: 1.5rem;
   gap: 1.5rem;
+}
+
+.content.solo {
+  padding: 0;
+  gap: 0;
+}
+
+.content.solo .content__body,
+.content.solo .content__viewport {
+  height: 100%;
 }
 
 .content__header {
