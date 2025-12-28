@@ -2000,8 +2000,8 @@ class MarketDataStream:
         exc: Optional[BaseException] = None,
     ) -> None:
         now = time.time()
-        if exc is not None and reason == "network" and _is_dns_error(exc):
-            reason = "dns"
+        if exc is not None:
+            reason = _classify_network_error(exc)
         self._network_outage_failures += 1
         exponent = min(6, max(0, self._network_outage_failures - 1))
         backoff = min(

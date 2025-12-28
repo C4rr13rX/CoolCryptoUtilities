@@ -99,6 +99,11 @@ def _append_session_log(session: DeliverySession, message: str) -> None:
             handle.write(f"[{stamp}] {message}\n")
     except Exception:
         pass
+    try:
+        session.last_heartbeat = timezone.now()
+        session.save(update_fields=["last_heartbeat"])
+    except Exception:
+        pass
 
 
 def _read_meminfo() -> Dict[str, int]:
@@ -223,6 +228,13 @@ def _extract_json_payload(text: str) -> Dict[str, Any]:
         return json.loads(match.group(0))
     except Exception:
         return {}
+
+
+def _touch_session(session_id: uuid.UUID) -> None:
+    try:
+        DeliverySession.objects.filter(id=session_id).update(last_heartbeat=timezone.now())
+    except Exception:
+        pass
 
 
 def _normalize_acceptance_criteria(value: Any) -> List[str]:
@@ -542,6 +554,7 @@ class DeliveryOrchestrator:
             name="Orchestrator",
             status="running",
             workspace_path=str(root),
+            last_heartbeat=timezone.now(),
             meta={"phase": "start"},
         )
         _append_session_log(orchestrator_session, f"Run {run.id} started for {project.name}.")
@@ -675,6 +688,7 @@ class DeliveryOrchestrator:
             name="Project Manager Session",
             status="running",
             workspace_path=str(root),
+            last_heartbeat=timezone.now(),
         )
         _append_session_log(pm_session, "Generating project charter.")
         charter_content, charter_data = self._codex_or_template(
@@ -990,6 +1004,7 @@ class DeliveryOrchestrator:
             name="Integrator/Release Session",
             status="running",
             workspace_path=str(root),
+            last_heartbeat=timezone.now(),
             meta={"note": "Integration uses canonical workspace"},
         )
         _append_session_log(session, f"Integrator session started. Parallelism: {parallelism}.")
@@ -1194,6 +1209,7 @@ class DeliveryOrchestrator:
             name=f"CodexSession: {backlog_item.title[:80]}",
             status="running",
             workspace_path="",
+            last_heartbeat=timezone.now(),
             meta={
                 "backlog_item_id": str(backlog_item.id),
                 "title": backlog_item.title,
@@ -1225,12 +1241,18 @@ class DeliveryOrchestrator:
         session.log_path = str(log_path)
         session.save(update_fields=["log_path"])
 
+        last_heartbeat = 0.0
         def _stream_writer(chunk: str) -> None:
             try:
                 with log_path.open("a", encoding="utf-8") as handle:
                     handle.write(chunk)
             except Exception:
                 pass
+            nonlocal last_heartbeat
+            now = time.time()
+            if now - last_heartbeat >= 20:
+                _touch_session(session.id)
+                last_heartbeat = now
 
         try:
             output = codex.send(prompt, stream=True, stream_callback=_stream_writer)
@@ -1323,6 +1345,7 @@ class DeliveryOrchestrator:
             name="UX Verification Session",
             status="running",
             workspace_path=str(root),
+            last_heartbeat=timezone.now(),
             meta={"manual": manual},
         )
         session.meta = {
@@ -1432,9 +1455,17 @@ class DeliveryOrchestrator:
             **codex_settings,
         )
         review_start = time.time()
+        last_heartbeat = 0.0
+        def _review_stream(_chunk: str) -> None:
+            nonlocal last_heartbeat
+            now = time.time()
+            if now - last_heartbeat >= 20:
+                _touch_session(session.id)
+                last_heartbeat = now
         review_output = review_codex.send(
             review_prompt,
             stream=True,
+            stream_callback=_review_stream,
             images=[str(path) for path in result.screenshots[:6]],
         )
         DeliveryArtifact.objects.create(
@@ -1547,7 +1578,16 @@ class DeliveryOrchestrator:
                 "If UI verification is needed, use scripts/branddozer_ui_capture.py to capture screenshots "
                 "and review them with codex --image.\n"
             )
-            output = codex.send(full_prompt, stream=False)
+            last_heartbeat = 0.0
+            def _stream_writer(_chunk: str) -> None:
+                nonlocal last_heartbeat
+                if session is None:
+                    return
+                now = time.time()
+                if now - last_heartbeat >= 20:
+                    _touch_session(session.id)
+                    last_heartbeat = now
+            output = codex.send(full_prompt, stream=True, stream_callback=_stream_writer)
             if session:
                 _append_session_log(session, f"{fallback_kind} generated.")
             DeliveryArtifact.objects.create(
