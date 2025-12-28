@@ -50,15 +50,21 @@ def detect_system_profile(
     max_threads: int = 8,
 ) -> SystemProfile:
     cpu_count = max(1, os.cpu_count() or 1)
-    mem_gb = (
-        _sysconf_mem()
-        or _read_meminfo()
-        or float(os.getenv("SYSTEM_MEMORY_GB", "8"))
-    )
-    if mem_gb <= 0:
+    mem_gb: Optional[float] = None
+    mem_override = os.getenv("SYSTEM_MEMORY_GB")
+    if mem_override:
+        try:
+            mem_gb = float(mem_override)
+        except ValueError:
+            mem_gb = None
+    if mem_gb is None:
+        mem_gb = _sysconf_mem() or _read_meminfo()
+    if mem_gb is None or mem_gb <= 0:
         mem_gb = 8.0
     threads = target_threads or max(min_threads, min(cpu_count, max_threads))
-    is_low_power = cpu_count <= 4 or mem_gb < 16
+    low_memory_floor = 16.0
+    high_memory_floor = 32.0
+    is_low_power = cpu_count <= 2 or mem_gb < low_memory_floor or (cpu_count <= 4 and mem_gb < high_memory_floor)
     memory_pressure = mem_gb < 24
     return SystemProfile(
         cpu_count=cpu_count,

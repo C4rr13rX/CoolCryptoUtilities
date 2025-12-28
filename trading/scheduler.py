@@ -310,8 +310,13 @@ class BusScheduler:
         available_quote = portfolio.get_quantity(state.quote_token, chain=chain_name)
         available_base = portfolio.get_quantity(state.base_token, chain=chain_name)
         native_balance = portfolio.get_native_balance(chain_name)
+        try:
+            min_native = float(os.getenv("GAS_ALERT_MIN_NATIVE", "0.01"))
+        except Exception:
+            min_native = 0.01
+        min_native = max(0.0, min_native)
         # crude gas safety
-        if native_balance < 0.01:
+        if native_balance < min_native:
             self._emit_gas_alert(chain_name, native_balance)
             return None
 
@@ -322,7 +327,7 @@ class BusScheduler:
         candidates: List[Dict[str, Any]] = []
         context = {
             "native_balance": native_balance,
-            "min_native": 0.01,
+            "min_native": min_native,
             "fee_rate": fee_rate,
             "risk_budget": risk_budget,
             "direction_prob": direction_prob,

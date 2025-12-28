@@ -188,7 +188,13 @@ class ProductionManager:
             focus_assets, _ = self.pipeline.ghost_focus_assets()
             readiness = self.pipeline.live_readiness_report()
             bias = self._safe_horizon_bias()
-            metadata = {"focus_assets": focus_assets, "readiness": readiness, "horizon_bias": bias}
+            deficit = self._safe_horizon_deficit()
+            metadata = {
+                "focus_assets": focus_assets,
+                "readiness": readiness,
+                "horizon_bias": bias,
+                "horizon_deficit": deficit,
+            }
             if not self._startup_prewarm_reported and self._startup_prewarm:
                 metadata["startup_prewarm"] = self._startup_prewarm
                 self._startup_prewarm_reported = True
@@ -209,6 +215,7 @@ class ProductionManager:
                     "live_precision": (readiness or {}).get("precision"),
                     "live_samples": (readiness or {}).get("samples"),
                     "horizon_bias": bias,
+                    "horizon_deficit": deficit,
                     "max_concurrent": getattr(self.task_manager, "max_concurrent", None),
                     "directives": self._task_directives,
                     "heavy_backlog": heavy_backlog,
@@ -476,6 +483,24 @@ class ProductionManager:
                 result[key] = float(value)
             except Exception:
                 continue
+        return result
+
+    def _safe_horizon_deficit(self) -> Dict[str, float]:
+        dataset_meta = getattr(self.pipeline, "_last_dataset_meta", {})
+        if not isinstance(dataset_meta, dict):
+            return {}
+        deficits = dataset_meta.get("horizon_deficit")
+        if not isinstance(deficits, dict):
+            return {}
+        result: Dict[str, float] = {}
+        for bucket in ("short", "mid", "long"):
+            if bucket not in deficits:
+                continue
+            try:
+                value = float(deficits.get(bucket, 0.0))
+            except (TypeError, ValueError):
+                continue
+            result[bucket] = max(0.0, value)
         return result
 
     # ------------------------------------------------------------------

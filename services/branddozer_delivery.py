@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -16,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from django.db import close_old_connections
 from django.utils import timezone
 
-from tools.codex_session import CodexSession
+from tools.codex_session import CodexSession, codex_default_settings
 from services.branddozer_ui import capture_ui_screenshots
 from branddozer.models import (
     AcceptanceRecord,
@@ -46,6 +47,9 @@ DEFAULT_DOD = [
 ]
 
 MAX_REMEDIATION_CYCLES = int(os.getenv("BRANDDOZER_REMEDIATION_CYCLES", "3"))
+DEFAULT_SPRINT_CAPACITY_POINTS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_POINTS", "8"))
+DEFAULT_SPRINT_CAPACITY_ITEMS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_ITEMS", "6"))
+MAX_PARALLELISM = int(os.getenv("BRANDDOZER_MAX_PARALLELISM", "3"))
 
 PHASES = [
     "mode_detection",
@@ -63,6 +67,7 @@ PHASES = [
 
 SESSION_LOG_ROOT = Path("runtime/branddozer/sessions")
 SESSION_LOG_ROOT.mkdir(parents=True, exist_ok=True)
+WORKTREE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -220,6 +225,59 @@ def _extract_json_payload(text: str) -> Dict[str, Any]:
         return {}
 
 
+def _normalize_acceptance_criteria(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[\n;]+", value)
+        return [part.strip() for part in parts if part.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _normalize_dependencies(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = re.split(r"[,\n;]+", value)
+        return [part.strip() for part in parts if part.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [str(value).strip()] if str(value).strip() else []
+
+
+def _definition_of_ready(item: BacklogItem) -> Tuple[bool, List[str]]:
+    missing: List[str] = []
+    if not item.title:
+        missing.append("title")
+    if not (item.description or "").strip():
+        missing.append("description")
+    if not item.acceptance_criteria:
+        missing.append("acceptance_criteria")
+    if item.estimate_points is None or item.estimate_points <= 0:
+        missing.append("estimate_points")
+    return (len(missing) == 0), missing
+
+
+def _dependencies_met(item: BacklogItem, *, done_ids: set[str], done_titles: set[str]) -> Tuple[bool, List[str]]:
+    missing: List[str] = []
+    for dep in item.dependencies or []:
+        key = str(dep).strip()
+        if not key:
+            continue
+        if key in done_ids or key.lower() in done_titles:
+            continue
+        missing.append(key)
+    return (len(missing) == 0), missing
+
+
+def _sprint_capacity(parallelism: int) -> Tuple[int, int]:
+    points = max(1, DEFAULT_SPRINT_CAPACITY_POINTS) * max(1, parallelism)
+    items = max(1, DEFAULT_SPRINT_CAPACITY_ITEMS) * max(1, parallelism)
+    return points, items
+
+
 def _django_hardening(root: Path) -> Tuple[str, str, int]:
     settings_path = root / "web" / "coolcrypto_dashboard" / "settings.py"
     if not settings_path.exists():
@@ -291,7 +349,8 @@ def _create_workspace(root: Path, run_id: uuid.UUID, session_id: uuid.UUID) -> T
         shutil.rmtree(workspace, ignore_errors=True)
     if _git_available(root):
         branch = f"bdz/{session_id.hex[:8]}"
-        stdout, stderr, code = _safe_run(["git", "worktree", "add", "-b", branch, str(workspace)], root, 60)
+        with WORKTREE_LOCK:
+            stdout, stderr, code = _safe_run(["git", "worktree", "add", "-b", branch, str(workspace)], root, 60)
         if code != 0:
             raise ValueError(stderr or stdout or "Failed to create git worktree")
         return workspace, branch
@@ -301,8 +360,9 @@ def _create_workspace(root: Path, run_id: uuid.UUID, session_id: uuid.UUID) -> T
 
 def _cleanup_workspace(root: Path, workspace: Path, branch: Optional[str]) -> None:
     if _git_available(root) and branch:
-        _safe_run(["git", "worktree", "remove", "--force", str(workspace)], root, 30)
-        _safe_run(["git", "branch", "-D", branch], root, 30)
+        with WORKTREE_LOCK:
+            _safe_run(["git", "worktree", "remove", "--force", str(workspace)], root, 30)
+            _safe_run(["git", "branch", "-D", branch], root, 30)
     else:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -324,7 +384,10 @@ def _apply_diff(root: Path, diff_text: str) -> Tuple[str, str, int]:
     patch_file = Path("runtime/branddozer") / "apply.patch"
     patch_file.write_text(diff_text, encoding="utf-8")
     if _git_available(root):
-        return _safe_run(["git", "apply", "--check", str(patch_file)], root, 30)
+        check = _safe_run(["git", "apply", "--check", str(patch_file)], root, 30)
+        if check[2] != 0:
+            return check
+        return _safe_run(["git", "apply", str(patch_file)], root, 60)
     return _safe_run(["patch", "-p1", "-i", str(patch_file)], root, 60)
 
 
@@ -760,6 +823,7 @@ class DeliveryOrchestrator:
                     continue
         if not items:
             items = list(BacklogItem.objects.filter(run=run))
+        items = self._refine_backlog(run, items)
         GovernanceArtifact.objects.create(
             project=run.project,
             run=run,
@@ -771,21 +835,153 @@ class DeliveryOrchestrator:
         )
         return items
 
+    def _refine_backlog(self, run: DeliveryRun, items: List[BacklogItem]) -> List[BacklogItem]:
+        refined: List[BacklogItem] = []
+        not_ready: List[Dict[str, Any]] = []
+        for item in items:
+            auto_filled: List[str] = []
+            criteria = _normalize_acceptance_criteria(item.acceptance_criteria)
+            if not criteria:
+                auto_filled.append("acceptance_criteria")
+                criteria = [f"Meets intent of {item.title}", "Relevant gates are green"]
+            dependencies = _normalize_dependencies(item.dependencies)
+            description = (item.description or "").strip()
+            if not description:
+                auto_filled.append("description")
+                description = item.title
+            estimate_points = item.estimate_points if item.estimate_points and item.estimate_points > 0 else 1.0
+            if estimate_points != item.estimate_points:
+                auto_filled.append("estimate_points")
+            item.acceptance_criteria = criteria
+            item.dependencies = dependencies
+            item.description = description
+            item.estimate_points = estimate_points
+            dor_passed, missing = _definition_of_ready(item)
+            item.meta = {
+                **(item.meta or {}),
+                "dor_passed": dor_passed,
+                "dor_missing": missing,
+                "dor_auto_filled": auto_filled,
+                "refined_at": timezone.now().isoformat(),
+            }
+            item.save(update_fields=["acceptance_criteria", "dependencies", "description", "estimate_points", "meta", "updated_at"])
+            refined.append(item)
+            if not dor_passed:
+                not_ready.append({"id": str(item.id), "title": item.title, "missing": missing})
+        GovernanceArtifact.objects.create(
+            project=run.project,
+            run=run,
+            kind="backlog_refinement",
+            version=_latest_version(run, "backlog_refinement"),
+            summary="Backlog refinement complete.",
+            content=json.dumps({"not_ready": not_ready}, indent=2),
+            data={"not_ready": not_ready},
+        )
+        return refined
+
     def _sprint_plan(self, run: DeliveryRun, backlog_items: List[BacklogItem], *, goal: str = "Delivery sprint") -> Sprint:
         run.phase = "sprint_planning"
         run.save(update_fields=["phase"])
+        parallelism = int(run.context.get("parallelism") or _dynamic_parallelism())
+        run.context["parallelism"] = parallelism
+        run.save(update_fields=["context"])
+        capacity_points, capacity_items = _sprint_capacity(parallelism)
+        done_items = list(BacklogItem.objects.filter(run=run, status="done"))
+        done_ids = {str(item.id) for item in done_items}
+        done_titles = {item.title.lower() for item in done_items}
+
+        ordered = sorted(backlog_items, key=lambda item: (item.priority, item.created_at))
+        selected: List[BacklogItem] = []
+        skipped: List[Dict[str, Any]] = []
+        total_points = 0.0
+        for item in ordered:
+            if item.status == "done":
+                continue
+            dor_passed = bool(item.meta.get("dor_passed", True)) if isinstance(item.meta, dict) else True
+            if not dor_passed:
+                skipped.append({"id": str(item.id), "title": item.title, "reason": "not_ready"})
+                continue
+            deps_ok, missing = _dependencies_met(item, done_ids=done_ids, done_titles=done_titles)
+            if not deps_ok:
+                meta = item.meta if isinstance(item.meta, dict) else {}
+                meta["dependency_missing"] = missing
+                item.meta = meta
+                item.save(update_fields=["meta", "updated_at"])
+                skipped.append({"id": str(item.id), "title": item.title, "reason": "dependencies", "missing": missing})
+                continue
+            if len(selected) >= capacity_items or (total_points + float(item.estimate_points or 0)) > capacity_points:
+                skipped.append({"id": str(item.id), "title": item.title, "reason": "capacity"})
+                continue
+            selected.append(item)
+            total_points += float(item.estimate_points or 0)
+
+        fallback_used = False
+        if not selected and ordered:
+            fallback_used = True
+            for item in ordered:
+                if item.status == "done":
+                    continue
+                selected.append(item)
+                total_points += float(item.estimate_points or 0)
+                if len(selected) >= min(capacity_items, 2):
+                    break
+
         next_number = run.sprint_count + 1
-        sprint = Sprint.objects.create(project=run.project, run=run, number=next_number, goal=goal, status="active")
-        for item in backlog_items:
-            SprintItem.objects.get_or_create(sprint=sprint, backlog_item=item, defaults={"status": "todo"})
+        sprint = Sprint.objects.create(
+            project=run.project,
+            run=run,
+            number=next_number,
+            goal=goal,
+            status="active",
+            started_at=timezone.now(),
+            meta={
+                "capacity_points": capacity_points,
+                "capacity_items": capacity_items,
+                "selected_points": total_points,
+                "parallelism": parallelism,
+            },
+        )
+        for item in selected:
+            SprintItem.objects.get_or_create(sprint=sprint, backlog_item=item, defaults={"status": "todo", "owner": "dev"})
         run.sprint_count = next_number
         run.save(update_fields=["sprint_count"])
+
+        GovernanceArtifact.objects.create(
+            project=run.project,
+            run=run,
+            kind="sprint_plan",
+            version=_latest_version(run, "sprint_plan"),
+            summary=f"Sprint {next_number} planned.",
+            content=json.dumps(
+                {
+                    "sprint": next_number,
+                    "goal": goal,
+                    "capacity_points": capacity_points,
+                    "capacity_items": capacity_items,
+                    "selected_points": total_points,
+                    "fallback_used": fallback_used,
+                    "selected": [item.title for item in selected],
+                    "skipped": skipped,
+                },
+                indent=2,
+            ),
+            data={
+                "sprint": next_number,
+                "capacity_points": capacity_points,
+                "capacity_items": capacity_items,
+                "selected_points": total_points,
+                "fallback_used": fallback_used,
+                "selected": [item.title for item in selected],
+                "skipped": skipped,
+            },
+        )
         return sprint
 
     def _execution_loop(self, run: DeliveryRun, root: Path, sprint: Sprint) -> None:
         run.phase = "execution"
         run.iteration += 1
-        run.context["parallelism"] = _dynamic_parallelism()
+        parallelism = min(_dynamic_parallelism(), MAX_PARALLELISM)
+        run.context["parallelism"] = parallelism
         run.save(update_fields=["phase", "iteration", "context"])
         session = DeliverySession.objects.create(
             project=run.project,
@@ -796,57 +992,184 @@ class DeliveryOrchestrator:
             workspace_path=str(root),
             meta={"note": "Integration uses canonical workspace"},
         )
-        _append_session_log(session, "Integrator session started.")
-        for sprint_item in sprint.items.select_related("backlog_item"):
-            if sprint_item.status == "done":
-                continue
-            backlog_item = sprint_item.backlog_item
-            _append_session_log(session, f"Applying task: {backlog_item.title}")
-            backlog_item.status = "in_progress"
-            backlog_item.save(update_fields=["status", "updated_at"])
-            sprint_item.status = "in_progress"
-            sprint_item.save(update_fields=["status"])
-            diff_text = self._run_task_session(run, root, backlog_item)
-            stdout, stderr, code = _apply_diff(root, diff_text)
-            if stdout or stderr:
-                _append_session_log(session, (stdout or stderr).strip()[:2000])
-            DeliveryArtifact.objects.create(
-                project=run.project,
-                run=run,
-                session=session,
-                kind="integration",
-                title=f"Integrator apply: {backlog_item.title[:60]}",
-                content=f"{stdout}\n{stderr}",
-                data={"exit_code": code},
-            )
-            if code == 0:
-                backlog_item.status = "done"
-                sprint_item.status = "done"
-            else:
-                backlog_item.status = "blocked"
-                sprint_item.status = "blocked"
-                BacklogItem.objects.create(
-                    project=run.project,
-                    run=run,
-                    kind="bug",
-                    title=f"Integration failed: {backlog_item.title[:60]}",
-                    description=stderr or stdout,
-                    acceptance_criteria=["Patch applies cleanly", "Conflicts resolved"],
-                    priority=1,
-                    estimate_points=2,
-                    status="todo",
-                    source="integrator",
-                )
-            backlog_item.save(update_fields=["status", "updated_at"])
-            sprint_item.save(update_fields=["status"])
-            _append_session_log(session, f"Task {backlog_item.title} status: {backlog_item.status}.")
+        _append_session_log(session, f"Integrator session started. Parallelism: {parallelism}.")
+
+        sprint_items = list(sprint.items.select_related("backlog_item"))
+        sprint_item_map = {item.backlog_item.id: item for item in sprint_items}
+        backlog_queue = [item.backlog_item for item in sprint_items if item.status != "done" and item.backlog_item.status != "done"]
+        if not backlog_queue:
+            _append_session_log(session, "No sprint items ready for execution.")
+        else:
+            for backlog_item in backlog_queue:
+                backlog_item.status = "in_progress"
+                backlog_item.save(update_fields=["status", "updated_at"])
+                sprint_item = sprint_item_map.get(backlog_item.id)
+                if sprint_item:
+                    sprint_item.status = "in_progress"
+                    sprint_item.save(update_fields=["status"])
+
+            def _task_runner(item: BacklogItem) -> Tuple[BacklogItem, str, Optional[str]]:
+                try:
+                    diff_text = self._run_task_session(run, root, item)
+                    return item, diff_text, None
+                except Exception as exc:
+                    return item, "", str(exc)
+
+            with ThreadPoolExecutor(max_workers=max(1, parallelism)) as executor:
+                futures = {executor.submit(_task_runner, item): item for item in backlog_queue}
+                for future in as_completed(futures):
+                    backlog_item, diff_text, error = future.result()
+                    sprint_item = sprint_item_map.get(backlog_item.id)
+                    if error:
+                        backlog_item.status = "blocked"
+                        if sprint_item:
+                            sprint_item.status = "blocked"
+                        BacklogItem.objects.create(
+                            project=run.project,
+                            run=run,
+                            kind="bug",
+                            title=f"Session failed: {backlog_item.title[:60]}",
+                            description=error,
+                            acceptance_criteria=["Codex session completes successfully"],
+                            priority=1,
+                            estimate_points=2,
+                            status="todo",
+                            source="session",
+                        )
+                        backlog_item.save(update_fields=["status", "updated_at"])
+                        if sprint_item:
+                            sprint_item.save(update_fields=["status"])
+                        _append_session_log(session, f"Task {backlog_item.title} failed: {error}.")
+                        continue
+                    if not diff_text.strip():
+                        backlog_item.status = "blocked"
+                        if sprint_item:
+                            sprint_item.status = "blocked"
+                        BacklogItem.objects.create(
+                            project=run.project,
+                            run=run,
+                            kind="bug",
+                            title=f"No changes produced: {backlog_item.title[:60]}",
+                            description="Codex session did not return any code diff.",
+                            acceptance_criteria=["Code changes are produced", "Diff applies cleanly"],
+                            priority=2,
+                            estimate_points=1,
+                            status="todo",
+                            source="session",
+                        )
+                        backlog_item.save(update_fields=["status", "updated_at"])
+                        if sprint_item:
+                            sprint_item.save(update_fields=["status"])
+                        _append_session_log(session, f"Task {backlog_item.title} produced no diff.")
+                        continue
+                    _append_session_log(session, f"Applying task: {backlog_item.title}")
+                    stdout, stderr, code = _apply_diff(root, diff_text)
+                    if stdout or stderr:
+                        _append_session_log(session, (stdout or stderr).strip()[:2000])
+                    DeliveryArtifact.objects.create(
+                        project=run.project,
+                        run=run,
+                        session=session,
+                        kind="integration",
+                        title=f"Integrator apply: {backlog_item.title[:60]}",
+                        content=f"{stdout}\n{stderr}",
+                        data={"exit_code": code},
+                    )
+                    if code == 0:
+                        backlog_item.status = "done"
+                        if sprint_item:
+                            sprint_item.status = "done"
+                    else:
+                        backlog_item.status = "blocked"
+                        if sprint_item:
+                            sprint_item.status = "blocked"
+                        BacklogItem.objects.create(
+                            project=run.project,
+                            run=run,
+                            kind="bug",
+                            title=f"Integration failed: {backlog_item.title[:60]}",
+                            description=stderr or stdout,
+                            acceptance_criteria=["Patch applies cleanly", "Conflicts resolved"],
+                            priority=1,
+                            estimate_points=2,
+                            status="todo",
+                            source="integrator",
+                        )
+                    backlog_item.save(update_fields=["status", "updated_at"])
+                    if sprint_item:
+                        sprint_item.save(update_fields=["status"])
+                    _append_session_log(session, f"Task {backlog_item.title} status: {backlog_item.status}.")
         session.status = "done"
         session.completed_at = timezone.now()
         session.save(update_fields=["status", "completed_at"])
+        self._gate_stage(run, root)
+        sprint.status = "review"
+        sprint.save(update_fields=["status"])
+        self._sprint_review(run, sprint)
+        sprint.status = "retro"
+        sprint.save(update_fields=["status"])
+        self._sprint_retro(run, sprint)
         sprint.status = "complete"
         sprint.completed_at = timezone.now()
         sprint.save(update_fields=["status", "completed_at"])
-        self._gate_stage(run, root)
+
+    def _sprint_review(self, run: DeliveryRun, sprint: Sprint) -> None:
+        sprint_items = list(sprint.items.select_related("backlog_item"))
+        completed = [item.backlog_item.title for item in sprint_items if item.status == "done"]
+        blocked = [item.backlog_item.title for item in sprint_items if item.status == "blocked"]
+        in_progress = [item.backlog_item.title for item in sprint_items if item.status == "in_progress"]
+        gate_summary: Dict[str, str] = {}
+        for gate in GateRun.objects.filter(run=run).order_by("name", "-created_at"):
+            if gate.name not in gate_summary:
+                gate_summary[gate.name] = gate.status
+        data = {
+            "sprint": sprint.number,
+            "goal": sprint.goal,
+            "completed": completed,
+            "blocked": blocked,
+            "in_progress": in_progress,
+            "gate_summary": gate_summary,
+        }
+        GovernanceArtifact.objects.create(
+            project=run.project,
+            run=run,
+            kind="sprint_review",
+            version=_latest_version(run, "sprint_review"),
+            summary=f"Sprint {sprint.number} review complete.",
+            content=json.dumps(data, indent=2),
+            data=data,
+        )
+
+    def _sprint_retro(self, run: DeliveryRun, sprint: Sprint) -> None:
+        sprint_items = list(sprint.items.select_related("backlog_item"))
+        blocked = [item.backlog_item.title for item in sprint_items if item.status == "blocked"]
+        improvements: List[str] = []
+        if blocked:
+            improvements.append("Tighten acceptance criteria and dependencies before sprint entry.")
+        gate_failures = [gate.name for gate in GateRun.objects.filter(run=run, status__in=["failed", "blocked"])]
+        if gate_failures:
+            improvements.append("Prioritize gate fixes early in the sprint to keep the pipeline green.")
+        if not improvements:
+            improvements.append("Maintain current delivery cadence and keep gates green.")
+        data = {
+            "sprint": sprint.number,
+            "observations": {
+                "blocked_items": blocked,
+                "gate_failures": gate_failures,
+            },
+            "improvements": improvements,
+        }
+        sprint.retrospective = json.dumps(data, indent=2)
+        sprint.save(update_fields=["retrospective", "updated_at"])
+        GovernanceArtifact.objects.create(
+            project=run.project,
+            run=run,
+            kind="sprint_retro",
+            version=_latest_version(run, "sprint_retro"),
+            summary=f"Sprint {sprint.number} retrospective logged.",
+            content=sprint.retrospective,
+            data=data,
+        )
 
     def _remediation_loop(self, run: DeliveryRun, root: Path, orchestrator_session: DeliverySession) -> None:
         for cycle in range(MAX_REMEDIATION_CYCLES):
@@ -863,6 +1186,7 @@ class DeliveryOrchestrator:
             self._execution_loop(run, root, sprint)
 
     def _run_task_session(self, run: DeliveryRun, root: Path, backlog_item: BacklogItem) -> str:
+        codex_settings = codex_default_settings()
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -870,6 +1194,11 @@ class DeliveryOrchestrator:
             name=f"CodexSession: {backlog_item.title[:80]}",
             status="running",
             workspace_path="",
+            meta={
+                "backlog_item_id": str(backlog_item.id),
+                "title": backlog_item.title,
+                "codex": {k: v for k, v in codex_settings.items() if k != "bypass_sandbox_confirm"},
+            },
         )
         workspace, branch = _create_workspace(root, run.id, session.id)
         session.workspace_path = str(workspace)
@@ -888,12 +1217,9 @@ class DeliveryOrchestrator:
         codex = CodexSession(
             session_name=f"delivery-{session.id}",
             transcript_dir=transcript_dir,
-            sandbox_mode="danger-full-access",
-            approval_policy="never",
-            model="gpt-5.1-codex-max",
-            reasoning_effort="xhigh",
             read_timeout_s=None,
             workdir=str(workspace),
+            **codex_settings,
         )
         log_path = _session_log_path(session.id)
         session.log_path = str(log_path)
@@ -906,32 +1232,40 @@ class DeliveryOrchestrator:
             except Exception:
                 pass
 
-        output = codex.send(prompt, stream=True, stream_callback=_stream_writer)
-        diff_text = _compute_diff(root, workspace)
-        DeliveryArtifact.objects.create(
-            project=run.project,
-            run=run,
-            session=session,
-            kind="session_log",
-            title=f"Codex output: {backlog_item.title[:60]}",
-            content=output,
-            path=str(codex.transcript_path),
-        )
-        if diff_text.strip():
+        try:
+            output = codex.send(prompt, stream=True, stream_callback=_stream_writer)
+            diff_text = _compute_diff(root, workspace)
             DeliveryArtifact.objects.create(
                 project=run.project,
                 run=run,
                 session=session,
-                kind="diff",
-                title=f"Diff: {backlog_item.title[:60]}",
-                content=diff_text,
+                kind="session_log",
+                title=f"Codex output: {backlog_item.title[:60]}",
+                content=output,
+                path=str(codex.transcript_path),
             )
-        session.status = "done"
-        session.completed_at = timezone.now()
-        session.log_path = str(codex.transcript_path)
-        session.save(update_fields=["status", "completed_at", "log_path"])
-        _cleanup_workspace(root, workspace, branch)
-        return diff_text
+            if diff_text.strip():
+                DeliveryArtifact.objects.create(
+                    project=run.project,
+                    run=run,
+                    session=session,
+                    kind="diff",
+                    title=f"Diff: {backlog_item.title[:60]}",
+                    content=diff_text,
+                )
+            session.status = "done"
+            session.completed_at = timezone.now()
+            session.log_path = str(codex.transcript_path)
+            session.save(update_fields=["status", "completed_at", "log_path"])
+            return diff_text
+        except Exception as exc:
+            _append_session_log(session, f"Error: {exc}")
+            session.status = "error"
+            session.completed_at = timezone.now()
+            session.save(update_fields=["status", "completed_at"])
+            raise
+        finally:
+            _cleanup_workspace(root, workspace, branch)
 
     def _gate_stage(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "gates"
@@ -981,6 +1315,7 @@ class DeliveryOrchestrator:
         flag = (os.getenv("BRANDDOZER_UI_CAPTURE") or "1").strip().lower()
         if flag in {"0", "false", "no", "off"}:
             return
+        codex_settings = codex_default_settings()
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -990,6 +1325,11 @@ class DeliveryOrchestrator:
             workspace_path=str(root),
             meta={"manual": manual},
         )
+        session.meta = {
+            **(session.meta or {}),
+            "codex": {k: v for k, v in codex_settings.items() if k != "bypass_sandbox_confirm"},
+        }
+        session.save(update_fields=["meta", "updated_at"])
         _append_session_log(session, "Capturing UI screenshots.")
         output_dir = Path("runtime/branddozer/ui") / str(run.id) / str(session.id)
         start_ts = time.time()
@@ -1087,12 +1427,9 @@ class DeliveryOrchestrator:
         review_codex = CodexSession(
             session_name=f"ui-review-{session.id}",
             transcript_dir=Path("runtime/branddozer/transcripts") / str(session.id),
-            sandbox_mode="danger-full-access",
-            approval_policy="never",
-            model="gpt-5.1-codex-max",
-            reasoning_effort="xhigh",
             read_timeout_s=None,
             workdir=str(root),
+            **codex_settings,
         )
         review_start = time.time()
         review_output = review_codex.send(
@@ -1201,12 +1538,9 @@ class DeliveryOrchestrator:
             codex = CodexSession(
                 session_name=f"{fallback_kind}-{run.id}",
                 transcript_dir=Path("runtime/branddozer/transcripts"),
-                sandbox_mode="danger-full-access",
-                approval_policy="never",
-                model="gpt-5.1-codex-max",
-                reasoning_effort="xhigh",
                 read_timeout_s=None,
                 workdir=str(root),
+                **codex_default_settings(),
             )
             full_prompt = (
                 f"{prompt}\nUser prompt: {run.prompt}\n"

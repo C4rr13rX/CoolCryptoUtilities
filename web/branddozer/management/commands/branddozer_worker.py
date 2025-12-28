@@ -88,6 +88,19 @@ class Command(BaseCommand):
             if not job.run_id:
                 fail_job(job, error="Delivery run missing", message="Delivery run failed")
                 return
+            run = DeliveryRun.objects.filter(id=job.run_id).first()
+            if not run:
+                fail_job(job, error="Delivery run not found", message="Delivery run failed")
+                return
+            if not (run.prompt or "").strip():
+                run.status = "error"
+                run.error = "Missing prompt. Delivery run aborted."
+                run.save(update_fields=["status", "error", "updated_at"])
+                fail_job(job, error=run.error, message="Delivery run failed")
+                return
+            if run.status in {"complete", "blocked", "awaiting_acceptance", "error"}:
+                complete_job(job, message="Delivery run already finished", result={"run_status": run.status})
+                return
             update_job(str(job.id), message="Running delivery pipeline", detail="")
             delivery_orchestrator.run_existing(job.run_id)
             run = DeliveryRun.objects.filter(id=job.run_id).first()

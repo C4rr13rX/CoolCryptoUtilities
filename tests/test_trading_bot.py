@@ -83,7 +83,7 @@ def test_plan_gas_replenishment_prefers_stable_swaps() -> None:
     bot.gas_roundtrip_fee_ratio = 0.0  # type: ignore[attr-defined]
     bot.gas_bridge_flat_fee = 0.0  # type: ignore[attr-defined]
     bot.gas_profit_guard = 1.0  # type: ignore[attr-defined]
-    bot.gas_force_refill = True  # type: ignore[attr-defined]
+    bot.gas_force_refill = False  # type: ignore[attr-defined]
 
     strategy = bot._plan_gas_replenishment(  # type: ignore[attr-defined]
         chain="base",

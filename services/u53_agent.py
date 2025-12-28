@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from tools.codex_session import CodexSession
+from tools.codex_session import CodexSession, codex_default_settings
 
 
 def send_codex_update(message: str, *, session_name: str = "u53rxr080t") -> str:
@@ -13,10 +13,7 @@ def send_codex_update(message: str, *, session_name: str = "u53rxr080t") -> str:
     session = CodexSession(
         session_name=session_name,
         transcript_dir="runtime/u53rxr080t/transcripts",
-        sandbox_mode="danger-full-access",
-        approval_policy="never",
-        model="gpt-5.1-codex-max",
-        reasoning_effort="xhigh",
         read_timeout_s=None,
+        **codex_default_settings(),
     )
     return session.send(message, stream=True)

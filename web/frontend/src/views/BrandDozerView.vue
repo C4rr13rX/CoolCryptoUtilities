@@ -121,6 +121,7 @@
             <p class="caption">One prompt → SCRUM + PMP pipeline with gated verification.</p>
           </div>
         <div class="import-actions">
+          <q-toggle v-model="performanceMode" dense color="amber" label="Performance mode" />
           <span class="status-chip" :class="activeDelivery?.status === 'running' ? 'ok' : 'warn'">
             {{ activeDelivery?.status || 'Idle' }}
           </span>
@@ -406,7 +407,7 @@
     </section>
 
     <q-dialog v-model="deliveryDesktopOpen" :persistent="deliveryRunning" maximized>
-      <div class="delivery-desktop">
+      <div class="delivery-desktop" :class="{ 'performance-mode': performanceMode }">
         <header class="desktop-header">
           <div class="desktop-title">
             <h2>Delivery Desktop</h2>
@@ -449,6 +450,10 @@
                 Cascade
               </q-btn>
             </div>
+            <q-toggle v-model="performanceMode" dense color="amber" label="Performance mode" />
+            <q-btn size="sm" flat color="secondary" @click="toggleDesktopLogs">
+              {{ desktopLiveLogs ? 'Pause Logs' : 'Resume Logs' }}
+            </q-btn>
             <q-btn size="sm" color="primary" outline @click="minimizeDeliveryDesktop">Minimize</q-btn>
             <q-btn v-if="!deliveryRunning" size="sm" color="secondary" outline @click="closeDeliveryDesktop">
               Hide
@@ -459,10 +464,47 @@
           </div>
         </header>
 
-        <div class="desktop-body">
-          <div class="desktop-windows" ref="desktopRef" :class="`layout-${desktopLayout}`">
+        <div v-if="!desktopReady" class="desktop-loading">
+          Preparing the delivery desktop…
+        </div>
+        <div v-else class="desktop-body">
+          <div v-if="performanceMode" class="desktop-lite">
+            <div class="lite-sessions">
+              <div class="lite-header">
+                <h4>Sessions</h4>
+                <span class="caption">{{ store.deliverySessions.length }} total</span>
+              </div>
+              <div class="lite-list">
+                <button
+                  v-for="session in sortedDeliverySessions"
+                  :key="session.id"
+                  type="button"
+                  class="lite-row"
+                  :class="{ active: session.id === focusedSessionId }"
+                  @click="focusSession(session.id)"
+                >
+                  <span>{{ session.name || session.role }}</span>
+                  <span class="status-pill" :class="session.status === 'done' ? 'ok' : 'warn'">
+                    {{ session.status }}
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div class="lite-console">
+              <div class="lite-header">
+                <h4>{{ focusedSession?.name || focusedSession?.role || 'Session output' }}</h4>
+                <q-badge v-if="focusedSession" :color="focusedSession.status === 'done' ? 'positive' : 'warning'" outline>
+                  {{ focusedSession.status }}
+                </q-badge>
+              </div>
+              <pre class="terminal-output" ref="liteLogRef">
+{{ desktopLiveLogs ? focusedSessionLog : 'Logs paused. Click Resume Logs to continue.' }}
+              </pre>
+            </div>
+          </div>
+          <div v-else class="desktop-windows" ref="desktopRef" :class="`layout-${desktopLayout}`">
             <div
-              v-for="session in store.deliverySessions"
+              v-for="session in desktopWindowSessions"
               :key="session.id"
               class="terminal-window"
               :class="`role-${session.role}`"
@@ -478,8 +520,13 @@
                 </q-badge>
               </div>
               <div class="terminal-body" @pointerdown="bringToFront(session.id)">
-                <pre class="terminal-output" :ref="setLogRef(session.id)">{{ sessionLogText(session.id) }}</pre>
+                <pre class="terminal-output" :ref="setLogRef(session.id)">
+{{ desktopLiveLogs ? sessionLogText(session.id) : 'Logs paused. Click Resume Logs to continue.' }}
+                </pre>
               </div>
+            </div>
+            <div v-if="hiddenDesktopSessionCount" class="desktop-empty">
+              Showing first {{ desktopWindowSessions.length }} sessions for stability. {{ hiddenDesktopSessionCount }} hidden.
             </div>
             <div v-if="!store.deliverySessions.length" class="desktop-empty">
               {{ desktopEmptyMessage }}
@@ -533,7 +580,7 @@
       </div>
     </q-dialog>
 
-    <div v-if="deliveryDesktopMinimized" class="delivery-minibar" @click="restoreDeliveryDesktop">
+    <div v-if="deliveryDesktopMinimized && activeDelivery?.id" class="delivery-minibar" @click="restoreDeliveryDesktop">
       <span>Delivery Desktop · {{ activeDelivery?.status || 'idle' }}</span>
       <span class="caption">Click to restore</span>
     </div>
@@ -701,27 +748,51 @@ let deliveryPollActive = false;
 const deliveryRefreshing = ref(false);
 let lastSessionLogFetch = 0;
 let deliveryPollTick = 0;
-const deliveryPollIntervalMs = 5000;
-const deliveryLogIntervalMs = 6000;
-const deliveryLogLimit = 120;
-const sessionLogMaxLines = 80;
-const sessionLogMaxChars = 500;
-const consoleLogMaxLines = 120;
-const consoleLogMaxChars = 500;
+const performanceMode = ref(true);
+const pageVisible = ref(true);
+const deliveryPollIntervalMs = computed(() => (performanceMode.value ? 12000 : 5000));
+const deliveryLogIntervalMs = computed(() => (performanceMode.value ? 15000 : 6000));
+const deliveryLogLimit = computed(() => (performanceMode.value ? 80 : 120));
+const sessionLogMaxLines = computed(() => (performanceMode.value ? 50 : 80));
+const sessionLogMaxChars = computed(() => (performanceMode.value ? 320 : 500));
+const consoleLogMaxLines = computed(() => (performanceMode.value ? 80 : 120));
+const consoleLogMaxChars = computed(() => (performanceMode.value ? 320 : 500));
 
 let logTimer: number | null = null;
 let importTimer: number | null = null;
 const deliveryDesktopOpen = ref(false);
 const deliveryDesktopMinimized = ref(false);
+const desktopAutoInit = ref(true);
+const desktopReady = ref(false);
+const desktopLiveLogs = ref(false);
+let desktopOpenTimer: number | null = null;
 const desktopLayout = ref<'free' | 'grid' | 'masonry' | 'cascade'>('free');
+const focusedSessionId = ref('');
 const desktopRef = ref<HTMLElement | null>(null);
 const windowPositions = ref<Record<string, { x: number; y: number; z: number }>>({});
 const dragState = ref<{ id: string; offsetX: number; offsetY: number } | null>(null);
 const logRefs = ref<Record<string, HTMLElement | null>>({});
+const liteLogRef = ref<HTMLElement | null>(null);
 const screenshotOpen = ref(false);
 const selectedScreenshot = ref<any | null>(null);
+let visibilityHandler: (() => void) | null = null;
 
 onMounted(async () => {
+  pageVisible.value = typeof document !== 'undefined' ? !document.hidden : true;
+  visibilityHandler = () => {
+    pageVisible.value = !document.hidden;
+    if (!pageVisible.value) {
+      stopLogTimer();
+      stopDeliveryPolling();
+      desktopLiveLogs.value = false;
+      return;
+    }
+    startLogTimer();
+    if (deliveryRunning.value) {
+      startDeliveryPolling();
+    }
+  };
+  document.addEventListener('visibilitychange', visibilityHandler);
   await store.load();
   await loadFolders();
   if (store.projects.length && !deliveryForm.value.project_id) {
@@ -750,10 +821,14 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  if (logTimer) window.clearInterval(logTimer);
+  stopLogTimer();
   if (importTimer) window.clearInterval(importTimer);
   if (deliveryTimer) window.clearInterval(deliveryTimer);
   if (publishTimer) window.clearInterval(publishTimer);
+  if (desktopOpenTimer) window.clearTimeout(desktopOpenTimer);
+  if (visibilityHandler) {
+    document.removeEventListener('visibilitychange', visibilityHandler);
+  }
   stopDrag();
 });
 
@@ -783,6 +858,29 @@ watch(
 watch(
   () => store.deliverySessions.map((session: any) => session.id).join('|'),
   () => {
+    const sessionIds = store.deliverySessions.map((session: any) => session.id);
+    if (focusedSessionId.value && !sessionIds.includes(focusedSessionId.value)) {
+      focusedSessionId.value = sessionIds[0] || '';
+    } else if (!focusedSessionId.value && sessionIds.length) {
+      focusedSessionId.value = sessionIds[0];
+    }
+    const nextPositions: Record<string, { x: number; y: number; z: number }> = {};
+    sessionIds.forEach((id) => {
+      if (windowPositions.value[id]) {
+        nextPositions[id] = windowPositions.value[id];
+      }
+    });
+    windowPositions.value = nextPositions;
+    const nextRefs: Record<string, HTMLElement | null> = {};
+    sessionIds.forEach((id) => {
+      if (logRefs.value[id]) {
+        nextRefs[id] = logRefs.value[id];
+      }
+    });
+    logRefs.value = nextRefs;
+    if (performanceMode.value) {
+      return;
+    }
     nextTick(() => {
       ensureWindowPositions();
       if (desktopLayout.value === 'cascade') {
@@ -795,7 +893,16 @@ watch(
 watch(
   () => store.deliverySessionLogs,
   () => {
+    if (!desktopLiveLogs.value || !deliveryDesktopOpen.value) {
+      return;
+    }
     nextTick(() => {
+      if (performanceMode.value) {
+        if (liteLogRef.value) {
+          liteLogRef.value.scrollTop = liteLogRef.value.scrollHeight;
+        }
+        return;
+      }
       Object.entries(logRefs.value).forEach(([sessionId, el]) => {
         if (el && store.deliverySessionLogs[sessionId]) {
           el.scrollTop = el.scrollHeight;
@@ -833,11 +940,27 @@ watch(
   },
 );
 
+watch(
+  () => performanceMode.value,
+  (enabled) => {
+    if (enabled) {
+      desktopLiveLogs.value = false;
+      return;
+    }
+    nextTick(() => {
+      ensureWindowPositions();
+      if (desktopLayout.value === 'cascade') {
+        cascadeWindows();
+      }
+    });
+  },
+);
+
 const logText = computed(() => {
   if (!store.logs.length) return 'No output yet.';
-  const lines = store.logs.slice(-consoleLogMaxLines).map((line) => {
-    if (line.length > consoleLogMaxChars) {
-      return `${line.slice(0, consoleLogMaxChars)}...`;
+  const lines = store.logs.slice(-consoleLogMaxLines.value).map((line) => {
+    if (line.length > consoleLogMaxChars.value) {
+      return `${line.slice(0, consoleLogMaxChars.value)}...`;
     }
     return line;
   });
@@ -889,6 +1012,36 @@ const deliveryGateSummary = computed(() => {
     });
   }
   return summary;
+});
+const sortedDeliverySessions = computed(() => {
+  const order = ["orchestrator", "pm", "integrator", "qa", "dev"];
+  return [...store.deliverySessions].sort((a: any, b: any) => {
+    const rankA = order.indexOf(a.role);
+    const rankB = order.indexOf(b.role);
+    const safeA = rankA === -1 ? order.length : rankA;
+    const safeB = rankB === -1 ? order.length : rankB;
+    if (safeA !== safeB) return safeA - safeB;
+    return (a.created_at || "").localeCompare(b.created_at || "");
+  });
+});
+const desktopWindowSessions = computed(() => {
+  const sessions = sortedDeliverySessions.value;
+  if (!sessions.length) return sessions;
+  if (performanceMode.value) return [];
+  const maxSessions = 8;
+  return sessions.slice(0, maxSessions);
+});
+const hiddenDesktopSessionCount = computed(() => {
+  if (performanceMode.value) return 0;
+  return Math.max(0, sortedDeliverySessions.value.length - desktopWindowSessions.value.length);
+});
+const focusedSession = computed(() => {
+  if (!focusedSessionId.value) return sortedDeliverySessions.value[0];
+  return sortedDeliverySessions.value.find((session: any) => session.id === focusedSessionId.value) || sortedDeliverySessions.value[0];
+});
+const focusedSessionLog = computed(() => {
+  if (!focusedSession.value?.id) return 'No output yet.';
+  return sessionLogText(focusedSession.value.id);
 });
 const desktopEmptyMessage = computed(() => {
   if (!activeDelivery.value?.id) {
@@ -1042,13 +1195,25 @@ async function refreshDelivery() {
       }
       await Promise.all(tasks);
       const now = Date.now();
-      if (deliveryDesktopOpen.value && now - lastSessionLogFetch >= deliveryLogIntervalMs) {
+      if (deliveryDesktopOpen.value && desktopLiveLogs.value && now - lastSessionLogFetch >= deliveryLogIntervalMs.value) {
         lastSessionLogFetch = now;
         await refreshSessionLogs();
       }
-      if (deliveryRunning.value && !deliveryPollActive) {
+      if (deliveryRunning.value && !deliveryPollActive && pageVisible.value) {
         startDeliveryPolling();
       }
+      if (!deliveryRunning.value && deliveryPollActive) {
+        stopDeliveryPolling();
+      }
+    }
+    if (
+      desktopAutoInit.value &&
+      store.activeDeliveryRun?.id &&
+      deliveryRunning.value &&
+      !deliveryDesktopOpen.value
+    ) {
+      deliveryDesktopMinimized.value = true;
+      desktopAutoInit.value = false;
     }
   } catch (err: any) {
     deliveryError.value = err?.message || 'Failed to load delivery status';
@@ -1059,6 +1224,7 @@ async function refreshDelivery() {
 
 function startDeliveryPolling() {
   stopDeliveryPolling();
+  if (!pageVisible.value) return;
   deliveryPollActive = true;
   const tick = async () => {
     if (!deliveryPollActive) return;
@@ -1066,22 +1232,43 @@ function startDeliveryPolling() {
       await refreshDelivery();
     }
     if (!deliveryPollActive) return;
-    deliveryTimer = window.setTimeout(tick, deliveryPollIntervalMs);
+    deliveryTimer = window.setTimeout(tick, deliveryPollIntervalMs.value);
   };
-  deliveryTimer = window.setTimeout(tick, deliveryPollIntervalMs);
+  deliveryTimer = window.setTimeout(tick, deliveryPollIntervalMs.value);
 }
 
 async function refreshSessionLogs() {
   if (!store.deliverySessions.length) return;
+  if (performanceMode.value) {
+    if (!focusedSession.value?.id) return;
+    await store.fetchDeliverySessionLogs(focusedSession.value.id, deliveryLogLimit.value);
+    return;
+  }
+  const sessionIds = desktopWindowSessions.value.length
+    ? desktopWindowSessions.value.map((session: any) => session.id)
+    : sortedDeliverySessions.value.map((session: any) => session.id);
+  if (!sessionIds.length) return;
   await Promise.all(
-    store.deliverySessions.map((session: any) => store.fetchDeliverySessionLogs(session.id, deliveryLogLimit)),
+    sessionIds.map((sessionId: string) => store.fetchDeliverySessionLogs(sessionId, deliveryLogLimit.value)),
   );
 }
 
-function openDeliveryDesktop(force = false) {
+async function openDeliveryDesktop(force = false) {
   if (!force && !activeDelivery.value?.id) return;
+  desktopAutoInit.value = false;
+  if (desktopOpenTimer) {
+    window.clearTimeout(desktopOpenTimer);
+    desktopOpenTimer = null;
+  }
   deliveryDesktopOpen.value = true;
   deliveryDesktopMinimized.value = false;
+  desktopReady.value = false;
+  desktopLiveLogs.value = false;
+  await nextTick();
+  desktopOpenTimer = window.setTimeout(() => {
+    desktopReady.value = true;
+    desktopLiveLogs.value = !performanceMode.value;
+  }, 200);
 }
 
 function minimizeDeliveryDesktop() {
@@ -1091,16 +1278,33 @@ function minimizeDeliveryDesktop() {
   }
   deliveryDesktopOpen.value = false;
   deliveryDesktopMinimized.value = true;
+  desktopLiveLogs.value = false;
 }
 
 function restoreDeliveryDesktop() {
   deliveryDesktopOpen.value = true;
   deliveryDesktopMinimized.value = false;
+  if (!desktopReady.value) {
+    desktopReady.value = true;
+  }
 }
 
 function closeDeliveryDesktop() {
   deliveryDesktopOpen.value = false;
   deliveryDesktopMinimized.value = false;
+  desktopLiveLogs.value = false;
+  desktopReady.value = false;
+  if (desktopOpenTimer) {
+    window.clearTimeout(desktopOpenTimer);
+    desktopOpenTimer = null;
+  }
+}
+
+function toggleDesktopLogs() {
+  desktopLiveLogs.value = !desktopLiveLogs.value;
+  if (desktopLiveLogs.value) {
+    refreshSessionLogs();
+  }
 }
 
 function applyDesktopLayout(layout: 'free' | 'grid' | 'masonry' | 'cascade') {
@@ -1116,7 +1320,7 @@ function ensureWindowPositions() {
   const maxX = rect ? Math.max(0, rect.width - 280) : 600;
   const maxY = rect ? Math.max(0, rect.height - 220) : 320;
   const updated = { ...windowPositions.value };
-  store.deliverySessions.forEach((session: any, idx: number) => {
+  desktopWindowSessions.value.forEach((session: any, idx: number) => {
     if (!updated[session.id]) {
       updated[session.id] = {
         x: Math.round(Math.random() * maxX),
@@ -1130,7 +1334,7 @@ function ensureWindowPositions() {
 
 function cascadeWindows() {
   const updated = { ...windowPositions.value };
-  store.deliverySessions.forEach((session: any, idx: number) => {
+  desktopWindowSessions.value.forEach((session: any, idx: number) => {
     updated[session.id] = {
       x: 40 + idx * 40,
       y: 40 + idx * 32,
@@ -1211,13 +1415,20 @@ function sessionLogText(sessionId: string) {
   if (!lines || !lines.length) {
     return 'No output yet.';
   }
-  const trimmed = lines.slice(-sessionLogMaxLines).map((line) => {
-    if (line.length > sessionLogMaxChars) {
-      return `${line.slice(0, sessionLogMaxChars)}...`;
+  const trimmed = lines.slice(-sessionLogMaxLines.value).map((line) => {
+    if (line.length > sessionLogMaxChars.value) {
+      return `${line.slice(0, sessionLogMaxChars.value)}...`;
     }
     return line;
   });
   return trimmed.join('\n');
+}
+
+function focusSession(sessionId: string) {
+  focusedSessionId.value = sessionId;
+  if (desktopLiveLogs.value) {
+    refreshSessionLogs();
+  }
 }
 
 async function startDeliveryRun() {
@@ -1493,14 +1704,21 @@ async function refreshLogs() {
 }
 
 function startLogTimer() {
-  if (logTimer) window.clearInterval(logTimer);
-  if (!selectedId.value) return;
+  stopLogTimer();
+  if (!selectedId.value || !pageVisible.value) return;
   logTimer = window.setInterval(() => {
     const project = store.projects.find((p) => p.id === selectedId.value);
-    if (project?.running) {
+    if (project?.running && pageVisible.value) {
       store.refreshLogs(project.id, 200);
     }
   }, 5000);
+}
+
+function stopLogTimer() {
+  if (logTimer) {
+    window.clearInterval(logTimer);
+    logTimer = null;
+  }
 }
 
 function addInterjection() {
@@ -2166,6 +2384,15 @@ function formatTime(ts?: number | string | null) {
   overflow: hidden;
 }
 
+.delivery-desktop.performance-mode {
+  background: #040a16;
+}
+
+.delivery-desktop.performance-mode::before,
+.delivery-desktop.performance-mode::after {
+  display: none;
+}
+
 .delivery-desktop::before {
   content: '';
   position: absolute;
@@ -2230,6 +2457,61 @@ function formatTime(ts?: number | string | null) {
   z-index: 1;
 }
 
+.desktop-lite {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 0.6rem;
+  min-height: 0;
+}
+
+.lite-sessions,
+.lite-console {
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  background: rgba(6, 12, 22, 0.9);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lite-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid rgba(126, 168, 255, 0.2);
+}
+
+.lite-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+
+.lite-row {
+  border: 1px solid rgba(126, 168, 255, 0.2);
+  background: rgba(5, 10, 18, 0.7);
+  color: #e5edff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+}
+
+.lite-row.active {
+  border-color: rgba(126, 168, 255, 0.7);
+  background: rgba(12, 24, 44, 0.85);
+}
+
+.lite-console .terminal-output {
+  padding: 0.6rem;
+  max-height: 100%;
+}
+
 .desktop-windows {
   position: relative;
   border: 1px solid rgba(126, 168, 255, 0.25);
@@ -2267,6 +2549,10 @@ function formatTime(ts?: number | string | null) {
   min-height: 180px;
   max-height: 360px;
   box-shadow: 0 0 16px rgba(0, 0, 0, 0.35);
+}
+
+.delivery-desktop.performance-mode .terminal-window {
+  box-shadow: none;
 }
 
 .terminal-window::after {
@@ -2463,6 +2749,16 @@ function formatTime(ts?: number | string | null) {
   color: rgba(229, 237, 255, 0.65);
 }
 
+.desktop-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(229, 237, 255, 0.8);
+  font-size: 1rem;
+  z-index: 1;
+}
+
 .delivery-minibar {
   position: fixed;
   bottom: 0.8rem;
@@ -2491,6 +2787,9 @@ function formatTime(ts?: number | string | null) {
     grid-template-columns: 1fr;
   }
   .desktop-body {
+    grid-template-columns: 1fr;
+  }
+  .desktop-lite {
     grid-template-columns: 1fr;
   }
   .desktop-windows {

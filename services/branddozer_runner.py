@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 import shutil
 from django.db import close_old_connections
 
-from tools.codex_session import CodexSession
+from tools.codex_session import CodexSession, codex_default_settings
 from services.branddozer_state import get_project, list_projects, update_project_fields
 from services.logging_utils import log_message
 
@@ -165,12 +165,9 @@ class BrandDozerManager:
         session = CodexSession(
             session_name,
             transcript_dir=transcript_dir,
-            sandbox_mode="danger-full-access",
-            approval_policy="never",
-            model="gpt-5.1-codex-max",
-            reasoning_effort="xhigh",
             read_timeout_s=None,
             workdir=str(root),
+            **codex_default_settings(),
         )
         header = f"[BrandDozer Project: {project.get('name')}]\nRoot: {root}\nMode: {label}\n{BASE_INSTRUCTIONS}\n"
         full_prompt = f"{header}\n{prompt}"

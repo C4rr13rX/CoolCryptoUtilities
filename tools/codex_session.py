@@ -9,7 +9,27 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def codex_default_settings() -> dict[str, Any]:
+    """
+    Resolve Codex CLI settings from environment defaults.
+    """
+    return {
+        "model": os.getenv("CODEX_MODEL", "gpt-5.1-codex-max"),
+        "reasoning_effort": os.getenv("CODEX_REASONING_EFFORT", "xhigh"),
+        "sandbox_mode": os.getenv("CODEX_SANDBOX_MODE", "danger-full-access"),
+        "approval_policy": os.getenv("CODEX_APPROVAL_POLICY", "never"),
+        "bypass_sandbox_confirm": _env_bool("CODEX_BYPASS_APPROVALS", True),
+    }
 
 
 class CodexSession:
@@ -32,11 +52,11 @@ class CodexSession:
         verbose_default: bool = False,
         term_rows: int = 40,
         term_cols: int = 120,
-        model: str = "gpt-5.1-codex-max",
-        reasoning_effort: str = "xhigh",
-        sandbox_mode: Optional[str] = "danger-full-access",
+        model: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
+        sandbox_mode: Optional[str] = None,
         approval_policy: Optional[str] = None,
-        bypass_sandbox_confirm: bool = True,
+        bypass_sandbox_confirm: Optional[bool] = None,
         workdir: str | Path | None = None,
     ) -> None:
         self.session_name = session_name
@@ -51,11 +71,14 @@ class CodexSession:
         self.transcript_dir.mkdir(parents=True, exist_ok=True)
         self.transcript_path = self.transcript_dir / f"{session_name}.log"
 
-        self.model = model
-        self.model_reasoning_effort = reasoning_effort
-        self.sandbox_mode = sandbox_mode
-        self.approval_policy = approval_policy
-        self.bypass_sandbox_confirm = bypass_sandbox_confirm
+        defaults = codex_default_settings()
+        self.model = model if model is not None else defaults["model"]
+        self.model_reasoning_effort = reasoning_effort if reasoning_effort is not None else defaults["reasoning_effort"]
+        self.sandbox_mode = sandbox_mode if sandbox_mode is not None else defaults["sandbox_mode"]
+        self.approval_policy = approval_policy if approval_policy is not None else defaults["approval_policy"]
+        self.bypass_sandbox_confirm = (
+            bypass_sandbox_confirm if bypass_sandbox_confirm is not None else defaults["bypass_sandbox_confirm"]
+        )
         self._cli_prefix = self._build_cli_prefix()
         self.workdir = Path(workdir).resolve() if workdir else None
         self._stream_callback = None

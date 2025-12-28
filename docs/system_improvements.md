@@ -46,3 +46,12 @@ The following upgrades align with the health report requirements (accuracy acros
 11. Live-source market fallback
     - When REST endpoints cool down, reuse the most recent on-chain/live sample so ghost trading stays fed and warnings de-escalate.
     - Validation: run `pytest tests/test_data_stream.py`.
+
+12. REST-only websocket toggle
+    - Add `MARKET_WEBSOCKET_DISABLED=1` (alias `MARKET_WS_DISABLED`) to skip websocket sessions when endpoints are blocked, keeping REST consensus flowing without repeated DNS retries.
+    - Auto-switch to REST-only after `REST_ONLY_WS_FAILURES` websocket failures, waiting `REST_ONLY_RETRY_SEC` before retrying live connections.
+    - Validation: run `pytest tests/test_data_stream.py -k ws_disabled`.
+
+13. Early stopping for CPU training
+    - Add `TRAIN_EARLY_STOP` (plus patience/min-delta tuning) so candidate training halts once loss plateaus, keeping the i5 CPU budget under control without sacrificing calibration.
+    - Validation: run `pytest tests/test_lab_preview.py`.

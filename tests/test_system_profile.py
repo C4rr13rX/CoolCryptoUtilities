@@ -19,3 +19,12 @@ def test_detect_system_profile_env_override(monkeypatch):
     assert profile.memory_pressure is True
     assert profile.is_low_power is True
     monkeypatch.delenv("SYSTEM_MEMORY_GB", raising=False)
+
+
+def test_detect_system_profile_high_memory_balanced(monkeypatch):
+    monkeypatch.setenv("SYSTEM_MEMORY_GB", "33")
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+    profile = detect_system_profile()
+    assert profile.total_memory_gb == 33.0
+    assert profile.is_low_power is False
+    assert profile.memory_pressure is False

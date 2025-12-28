@@ -211,10 +211,11 @@ def build_multimodal_model(
     x = Concatenate(name="ts_cat")([d1, d2, d3])
     x = MaxPooling1D(2, name="ts_pool1")(x)
 
+    se_width = ts_filters * 3
     se = GlobalAveragePooling1D(name="ts_se_gap")(d3)
     se = Dense(4, activation="swish", name="ts_se_mid")(se)
-    se = Dense(192, activation="sigmoid", name="ts_se_gate")(se)
-    se = Reshape((1, 192), name="ts_se_reshape")(se)
+    se = Dense(se_width, activation="sigmoid", name="ts_se_gate")(se)
+    se = Reshape((1, se_width), name="ts_se_reshape")(se)
     d3_aligned = Concatenate(name="ts_d3_wide")([d3, d3, d3])
     d3_mod = Multiply(name="ts_se_mul")([d3_aligned, se])
     d3_mod = MaxPooling1D(2, name="ts_d3_pool")(d3_mod)

@@ -19,6 +19,7 @@ from services.system_profile import SystemProfile, detect_system_profile
 
 configure_tensorflow()
 import tensorflow as tf
+from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.losses import BinaryCrossentropy
 
 from db import TradingDatabase, get_db
@@ -153,6 +154,8 @@ class TrainingPipeline:
         self.target_positive_floor = float(os.getenv("TRAIN_POSITIVE_FLOOR", "0.15"))
         self.decision_threshold = float(os.getenv("PRICE_DIR_THRESHOLD", "0.58"))
         self.temperature_scale: float = 1.0
+        self.calibration_scale: float = 1.0
+        self.calibration_offset: float = 0.0
         self._load_state()
         self._active_model: Optional[tf.keras.Model] = None
         self.metrics = MetricsCollector(self.db)
@@ -243,6 +246,12 @@ class TrainingPipeline:
                 severity="info",
                 details={"required": required_vocab, "loader_vocab": loader_vocab},
             )
+        if self.system_profile.memory_pressure or self.system_profile.is_low_power:
+            template_idx = 0
+        else:
+            template_idx = 1
+        template_idx = max(0, min(template_idx, len(self.model_templates) - 1))
+        template_choice = self._select_model_template(template_idx)
         model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
@@ -576,6 +585,24 @@ class TrainingPipeline:
             )
 
         callbacks = [StateSaver()]
+        if os.getenv("TRAIN_EARLY_STOP", "1").lower() in {"1", "true", "yes", "on"}:
+            try:
+                patience = max(0, int(os.getenv("TRAIN_EARLY_STOP_PATIENCE", "1")))
+            except Exception:
+                patience = 1
+            try:
+                min_delta = max(0.0, float(os.getenv("TRAIN_EARLY_STOP_MIN_DELTA", "0.0005")))
+            except Exception:
+                min_delta = 0.0005
+            callbacks.append(
+                EarlyStopping(
+                    monitor="loss",
+                    patience=patience,
+                    min_delta=min_delta,
+                    restore_best_weights=True,
+                    verbose=0,
+                )
+            )
         input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
         output_order = list(MODEL_OUTPUT_ORDER)
         input_tensors = tuple(inputs[name] for name in input_order)
@@ -584,19 +611,18 @@ class TrainingPipeline:
             tf.convert_to_tensor(sample_weights.get(name, np.ones(targets[name].shape[0], dtype=np.float32)), dtype=tf.float32)
             for name in output_order
         )
+        try:
+            batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
+        except Exception:
+            batch_size = 16
         train_ds = (
             tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors, weight_tensors))
-            .batch(16)
+            .batch(batch_size)
             .prefetch(tf.data.AUTOTUNE)
         )
         train_start = time.perf_counter()
         if os.getenv("TRAIN_LIGHTWEIGHT", "0").lower() in {"1", "true", "yes", "on"}:
             epochs = min(epochs, 2)
-        batch_size = 16
-        try:
-            batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
-        except Exception:
-            batch_size = 16
         max_extra_epochs = int(os.getenv("TRAIN_MAX_EPOCHS_EXTRA", "1"))
         epochs = min(epochs + max_extra_epochs, max(epochs, 3))
         history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
@@ -611,7 +637,7 @@ class TrainingPipeline:
         raw_score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
         eval_ds = (
             tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
-            .batch(32)
+            .batch(batch_size)
             .prefetch(tf.data.AUTOTUNE)
         )
         eval_start = time.perf_counter()
@@ -638,6 +664,13 @@ class TrainingPipeline:
         if new_temperature > 0:
             new_temperature = float(np.clip(new_temperature, 0.25, 4.0))
             self.temperature_scale = float(0.8 * self.temperature_scale + 0.2 * new_temperature)
+        if evaluation.get("calibration_scale") is not None and evaluation.get("calibration_offset") is not None:
+            new_scale = self._safe_float(evaluation.get("calibration_scale", self.calibration_scale))
+            new_offset = self._safe_float(evaluation.get("calibration_offset", self.calibration_offset))
+            new_scale = float(np.clip(new_scale, 0.3, 3.0))
+            new_offset = float(np.clip(new_offset, -3.0, 3.0))
+            self.calibration_scale = float(0.8 * self.calibration_scale + 0.2 * new_scale)
+            self.calibration_offset = float(0.8 * self.calibration_offset + 0.2 * new_offset)
 
         signal_bundle = self._build_candidate_signals(evaluation, focus_stats)
         composite_score = self.optimizer.update(
@@ -683,6 +716,9 @@ class TrainingPipeline:
             "best_win_rate": self._safe_float(evaluation.get("ghost_win_rate_best", 0.0)),
             "temperature": self._safe_float(evaluation.get("temperature", 1.0)),
             "temperature_scale": float(self.temperature_scale),
+            "calibration_scale": self._safe_float(evaluation.get("calibration_scale", self.calibration_scale)),
+            "calibration_offset": self._safe_float(evaluation.get("calibration_offset", self.calibration_offset)),
+            "calibration_log_loss": self._safe_float(evaluation.get("calibration_log_loss", 0.0)),
             "drift_alert": self._safe_float(evaluation.get("drift_alert", 0.0)),
             "drift_stat": self._safe_float(evaluation.get("drift_stat", 0.0)),
             "template": template_choice,
@@ -1487,7 +1523,14 @@ class TrainingPipeline:
         return meta_copy
 
     def _adapt_vectorizers(self, headline_vec, full_vec) -> None:
-        texts = [text for text in self.data_loader.sample_texts(limit=512) if text]
+        try:
+            sample_limit = int(os.getenv("VECTORIZE_SAMPLE_LIMIT", "512"))
+        except Exception:
+            sample_limit = 512
+        if self.system_profile.memory_pressure or self.system_profile.is_low_power:
+            sample_limit = min(sample_limit, 256)
+        sample_limit = max(32, sample_limit)
+        texts = [text for text in self.data_loader.sample_texts(limit=sample_limit) if text]
         if not texts:
             return
         digest = hashlib.sha1("|".join(sorted(texts)).encode("utf-8")).hexdigest()
@@ -1600,6 +1643,24 @@ class TrainingPipeline:
             severity="warning",
             details={"deficits": deficits, "focus": list(focus_assets or [])},
         )
+        try:
+            deficit_payload = {}
+            total_deficit = 0.0
+            for bucket in ("short", "mid", "long"):
+                value = float(deficits.get(bucket, 0.0))
+                value = max(0.0, value)
+                deficit_payload[f"{bucket}_deficit"] = value
+                total_deficit += value
+            if deficit_payload:
+                deficit_payload["total_deficit"] = total_deficit
+                self.metrics.record(
+                    MetricStage.TRAINING,
+                    deficit_payload,
+                    category="horizon_deficit",
+                    meta={"focus_assets": list(focus_assets or []), "iteration": self.iteration},
+                )
+        except Exception:
+            pass
         adjustments = self.data_loader.rebalance_horizons(deficits, focus_assets)
         synthetic = self.data_loader.backfill_shortfall(deficits, focus_assets)
         if synthetic:
@@ -1728,6 +1789,8 @@ class TrainingPipeline:
                 self.active_accuracy = float(tp_state.get("active_accuracy", self.active_accuracy))
                 self.decision_threshold = float(tp_state.get("decision_threshold", self.decision_threshold))
                 self.temperature_scale = float(tp_state.get("temperature_scale", self.temperature_scale))
+                self.calibration_scale = float(tp_state.get("calibration_scale", self.calibration_scale))
+                self.calibration_offset = float(tp_state.get("calibration_offset", self.calibration_offset))
                 optimizer_state = tp_state.get("optimizer")
                 if optimizer_state:
                     self.optimizer.set_state(optimizer_state)
@@ -1745,6 +1808,8 @@ class TrainingPipeline:
             "active_accuracy": float(self.active_accuracy),
             "decision_threshold": float(self.decision_threshold),
             "temperature_scale": float(self.temperature_scale),
+            "calibration_scale": float(self.calibration_scale),
+            "calibration_offset": float(self.calibration_offset),
         }
         try:
             self.db.save_state(state)
@@ -1874,6 +1939,11 @@ class TrainingPipeline:
 
         temperature = self._calibrate_temperature(price_dir_scores, price_dir_true)
         summary["temperature"] = self._safe_float(temperature)
+        calibration = self._calibrate_platt(price_dir_scores, price_dir_true)
+        if calibration:
+            summary["calibration_scale"] = self._safe_float(calibration.get("scale", 1.0))
+            summary["calibration_offset"] = self._safe_float(calibration.get("offset", 0.0))
+            summary["calibration_log_loss"] = self._safe_float(calibration.get("log_loss", 0.0))
 
         drift_alert, drift_stat = self._page_hinkley(net_margin_true, net_margin_pred_flat)
         summary["drift_alert"] = float(drift_alert)
@@ -2801,6 +2871,59 @@ class TrainingPipeline:
         losses = [_nll(t) for t in temps]
         return float(temps[int(np.argmin(losses))])
 
+    def _calibrate_platt(self, probs: np.ndarray, labels: np.ndarray) -> Optional[Dict[str, float]]:
+        probs = np.clip(probs.astype(np.float64), 1e-6, 1 - 1e-6)
+        labels = labels.astype(np.float64).reshape(-1)
+        if labels.size < 32:
+            return None
+        positives = float(np.sum(labels > 0.5))
+        negatives = float(labels.size - positives)
+        if positives == 0 or negatives == 0:
+            return None
+        logits = np.log(probs) - np.log1p(-probs)
+
+        def _sigmoid(values: np.ndarray) -> np.ndarray:
+            values = np.clip(values, -30.0, 30.0)
+            return 1.0 / (1.0 + np.exp(-values))
+
+        def _log_loss(pred: np.ndarray) -> float:
+            pred = np.clip(pred, 1e-6, 1 - 1e-6)
+            return float(-np.mean(labels * np.log(pred) + (1.0 - labels) * np.log1p(-pred)))
+
+        base_loss = _log_loss(probs)
+        best_loss = base_loss
+        best_scale = 1.0
+        best_offset = 0.0
+        scales = np.linspace(0.5, 2.5, num=9)
+        offsets = np.linspace(-1.5, 1.5, num=9)
+        for scale in scales:
+            scaled = logits * scale
+            for offset in offsets:
+                pred = _sigmoid(scaled + offset)
+                loss = _log_loss(pred)
+                if loss < best_loss:
+                    best_loss = loss
+                    best_scale = float(scale)
+                    best_offset = float(offset)
+        refine_scales = np.linspace(max(0.3, best_scale - 0.4), best_scale + 0.4, num=7)
+        refine_offsets = np.linspace(best_offset - 0.6, best_offset + 0.6, num=7)
+        for scale in refine_scales:
+            scaled = logits * scale
+            for offset in refine_offsets:
+                pred = _sigmoid(scaled + offset)
+                loss = _log_loss(pred)
+                if loss < best_loss:
+                    best_loss = loss
+                    best_scale = float(scale)
+                    best_offset = float(offset)
+        if best_loss >= base_loss - 1e-4:
+            return None
+        return {
+            "scale": best_scale,
+            "offset": best_offset,
+            "log_loss": best_loss,
+        }
+
     def _page_hinkley(
         self,
         actual: np.ndarray,
@@ -2829,5 +2952,8 @@ class TrainingPipeline:
             "best_score": self.optimizer.best_score,
             "best_params": self.optimizer.best_params,
             "decision_threshold": float(self.decision_threshold),
+            "temperature_scale": float(self.temperature_scale),
+            "calibration_scale": float(self.calibration_scale),
+            "calibration_offset": float(self.calibration_offset),
         }
 from services.news_archive import CryptoNewsArchiver

@@ -4,10 +4,11 @@ import asyncio
 import json
 import math
 import os
+import socket
 import time
 from dataclasses import dataclass
 import statistics
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union, Set, Sequence
 from collections import deque
@@ -43,6 +44,99 @@ def _safe_float(value: Any) -> float:
             return float(str(value))
         except Exception:
             return 0.0
+
+
+_DNS_ERROR_HINTS = (
+    "name resolution",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "no address associated with hostname",
+    "name or service not known",
+)
+_DNS_ERRNOS = {
+    value
+    for value in (
+        getattr(socket, "EAI_AGAIN", None),
+        getattr(socket, "EAI_NONAME", None),
+        getattr(socket, "EAI_NODATA", None),
+        getattr(socket, "EAI_FAIL", None),
+    )
+    if value is not None
+}
+try:
+    BaseExceptionGroup
+except NameError:
+    _BASE_EXCEPTION_GROUP = ()
+else:
+    _BASE_EXCEPTION_GROUP = (BaseExceptionGroup,)
+
+
+def _iter_error_chain(exc: BaseException) -> List[BaseException]:
+    chain: List[BaseException] = []
+    seen: set[int] = set()
+    pending: List[BaseException] = [exc]
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        chain.append(current)
+        if _BASE_EXCEPTION_GROUP and isinstance(current, _BASE_EXCEPTION_GROUP):
+            for grouped in current.exceptions:
+                if isinstance(grouped, BaseException) and id(grouped) not in seen:
+                    pending.append(grouped)
+        for attr in ("__cause__", "__context__", "os_error", "reason"):
+            nested = getattr(current, attr, None)
+            if isinstance(nested, BaseException) and id(nested) not in seen:
+                pending.append(nested)
+        for arg in getattr(current, "args", ()):
+            if isinstance(arg, BaseException) and id(arg) not in seen:
+                pending.append(arg)
+    return chain
+
+
+def _is_dns_error(exc: BaseException) -> bool:
+    for current in _iter_error_chain(exc):
+        if isinstance(current, aiohttp.ClientConnectorDNSError):
+            return True
+        if "dns" in current.__class__.__name__.lower():
+            return True
+        if isinstance(current, socket.gaierror):
+            return True
+        errno = getattr(current, "errno", None)
+        if errno in _DNS_ERRNOS:
+            return True
+        message = str(current).lower()
+        if any(hint in message for hint in _DNS_ERROR_HINTS):
+            return True
+    return False
+
+
+def _classify_network_error(exc: BaseException) -> str:
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "timeout"
+    if _is_dns_error(exc):
+        return "dns"
+    return "network"
+
+
+def _extract_host(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    try:
+        return urlsplit(url).hostname
+    except Exception:
+        return None
+
+
+def _domain_key(host: Optional[str]) -> Optional[str]:
+    if not host:
+        return None
+    host = host.lower()
+    parts = host.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return host
 
 
 TOKEN_NORMALIZATION = {
@@ -254,6 +348,11 @@ class MarketDataStream:
             or os.getenv("ALLOW_TEMPLATE_SUBSCRIBE")
             or ("1" if env_subscribe_provided else "0")
         ).lower() in {"1", "true", "yes", "on"}
+        ws_disabled_env = (
+            os.getenv("MARKET_WEBSOCKET_DISABLED")
+            or os.getenv("MARKET_WS_DISABLED")
+            or ""
+        ).lower() in {"1", "true", "yes", "on"}
         self._template_subscribe_disabled = False
         if disable_subscribe:
             self.subscribe_template = None
@@ -261,7 +360,14 @@ class MarketDataStream:
         elif self._template and not self.subscribe_template:
             # Only disable auto-subscribe when no explicit subscribe payload is available.
             self._template_subscribe_disabled = True
-        self._ws_disabled = bool(self._template and not self.subscribe_template)
+        self._ws_disabled_reason: Optional[str] = None
+        if self._template and not self.subscribe_template:
+            self._ws_disabled_reason = "template"
+        if ws_disabled_env:
+            self._ws_disabled_reason = "config"
+        self._ws_disabled = ws_disabled_env or bool(self._template and not self.subscribe_template)
+        if self._ws_disabled:
+            self.url = None
         self.simulation_interval = simulation_interval
         self._callbacks: List[CallbackType] = []
         self._db = get_db()
@@ -272,6 +378,9 @@ class MarketDataStream:
         self._rest_only_last_check = 0.0
         self._rest_only_reason = "init"
         self._rest_only_retry = max(30.0, float(os.getenv("REST_ONLY_RETRY_SEC", "120")))
+        self._rest_only_failures = 0
+        self._rest_only_threshold = max(1, int(os.getenv("REST_ONLY_WS_FAILURES", "3")))
+        self._last_rest_only_log = 0.0
         self.reference_price: Optional[float] = None
         self.price_tolerance = float(os.getenv("PRICE_FEED_TOLERANCE", "0.05"))
         rest_base, rest_quote = _split_symbol(self.symbol)
@@ -295,9 +404,17 @@ class MarketDataStream:
         self._network_outage_until = 0.0
         self._network_outage_failures = 0
         self._last_network_outage_log = 0.0
+        self._last_ws_backoff_log = 0.0
         self._network_outage_reason = "init"
         self._network_outage_source: Optional[str] = None
         self._network_outage_endpoint: Optional[str] = None
+        self._block_rest_on_dns = os.getenv("NETWORK_OUTAGE_BLOCK_REST_ON_DNS", "1").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._network_outage_block_rest = False
         self._last_volume: float = 0.0
         self.consensus_sources = int(os.getenv("PRICE_CONSENSUS_SOURCES", "2"))
 
@@ -330,7 +447,7 @@ class MarketDataStream:
         vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
         self._window_prices: deque = deque(maxlen=vol_window)
         self._ws_warning_logged = False
-        if not self.url:
+        if not self.url and not self._ws_disabled:
             self._select_next_endpoint()
         self.bias_alpha = float(os.getenv("PRICE_BIAS_ALPHA", "0.2"))
         self.vol_alpha = float(os.getenv("PRICE_VOL_ALPHA", "0.1"))
@@ -426,6 +543,26 @@ class MarketDataStream:
                 )
                 now = time.time()
                 if self._network_outage_active(now):
+                    if self._network_outage_source == "websocket":
+                        if now - self._last_network_outage_log >= 30.0:
+                            log_message(
+                                "market-stream",
+                                "network outage cooling down; delaying live connections",
+                                severity="warning",
+                                details={
+                                    "symbol": self.symbol,
+                                    "resume_in": round(max(0.0, self._network_outage_until - now), 2),
+                                    "reason": self._network_outage_reason,
+                                    "source": self._network_outage_source,
+                                    "endpoint": self._network_outage_endpoint,
+                                },
+                            )
+                            self._last_network_outage_log = now
+                        await self._poll_rest_data(max(backoff, self.consensus_timeout))
+                        await self._refresh_reference_price()
+                        await asyncio.sleep(self._cooldown_sleep_interval(now))
+                        backoff = min(backoff * 1.2, 300.0)
+                        continue
                     if now - self._last_network_outage_log >= 30.0:
                         log_message(
                             "market-stream",
@@ -442,6 +579,27 @@ class MarketDataStream:
                         self._last_network_outage_log = now
                     await self._dispatch_offline_snapshot()
                     await self._handle_consensus_failure(cooldown_only=True)
+                    await asyncio.sleep(self._cooldown_sleep_interval(now))
+                    backoff = min(backoff * 1.2, 300.0)
+                    continue
+                if self._rest_only_active(now):
+                    if now - self._last_rest_only_log >= 30.0:
+                        log_message(
+                            "market-stream",
+                            "REST-only mode active; skipping websocket",
+                            severity="warning",
+                            details={
+                                "symbol": self.symbol,
+                                "resume_in": round(
+                                    max(0.0, self._rest_only_last_check + self._rest_only_retry - now),
+                                    2,
+                                ),
+                                "reason": self._rest_only_reason,
+                            },
+                        )
+                        self._last_rest_only_log = now
+                    await self._poll_rest_data(max(backoff, self.consensus_timeout))
+                    await self._refresh_reference_price()
                     await asyncio.sleep(self._cooldown_sleep_interval(now))
                     backoff = min(backoff * 1.2, 300.0)
                     continue
@@ -512,12 +670,19 @@ class MarketDataStream:
                         ),
                     )
                     if network_error:
-                        reason = "timeout" if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else "network"
+                        reason = _classify_network_error(exc)
+                        self._register_ws_backoff(
+                            reason=reason,
+                            endpoint=self.current_endpoint,
+                            backoff=backoff,
+                        )
                         self._register_network_outage(
                             reason=reason,
                             endpoint=self.current_endpoint,
                             source="websocket",
+                            exc=exc,
                         )
+                        self._register_rest_only(reason=reason)
                     log_message(
                         "market-stream",
                         f"websocket error {exc}; retrying in {backoff:.1f}s",
@@ -565,6 +730,10 @@ class MarketDataStream:
             async with session.ws_connect(self.url) as ws:
                 if self._network_outage_failures:
                     self._clear_network_outage()
+                if self._rest_only_failures or self._rest_only_mode:
+                    self._clear_rest_only()
+                if self.current_endpoint in self._endpoint_backoff_until:
+                    self._endpoint_backoff_until.pop(self.current_endpoint, None)
                 subscribe_msg = self._build_subscribe_payload(self.symbol)
                 if subscribe_msg is not None:
                     try:
@@ -602,7 +771,7 @@ class MarketDataStream:
         while not self._stop_event.is_set() and time.time() < end_time:
             dispatched = False
             now = time.time()
-            if self._network_outage_active(now):
+            if self._network_outage_blocks_rest(now):
                 if now - self._last_network_outage_log >= 30.0:
                     log_message(
                         "market-stream",
@@ -614,6 +783,7 @@ class MarketDataStream:
                             "reason": self._network_outage_reason,
                             "source": self._network_outage_source,
                             "endpoint": self._network_outage_endpoint,
+                            "block_rest": self._network_outage_block_rest,
                         },
                     )
                     self._last_network_outage_log = now
@@ -687,9 +857,9 @@ class MarketDataStream:
                         continue
                     self._record_rest_latency(endpoint.name, latency)
                     total_attempted += 1
-                    if result.error in {"network", "timeout"}:
+                    if result.error in {"dns", "network", "timeout"}:
                         total_network_errors += 1
-                        if outage_reason is None:
+                        if outage_reason is None or result.error == "dns":
                             outage_reason = result.error
                             outage_endpoint = endpoint.name
                         continue
@@ -740,8 +910,8 @@ class MarketDataStream:
                     endpoint=outage_endpoint,
                     source="rest",
                 )
-            elif non_network_response and self._network_outage_active(now):
-                self._clear_network_outage()
+            elif non_network_response:
+                self._clear_network_outage_if_rest()
             if not dispatched:
                 cooldown_only = outage_detected and not non_network_response
                 fallback_used = await self._handle_consensus_failure(cooldown_only=cooldown_only)
@@ -1656,13 +1826,39 @@ class MarketDataStream:
         now = now or time.time()
         return self._rest_outage_until > now
 
+    def _rest_only_active(self, now: Optional[float] = None) -> bool:
+        if not self._rest_only_mode:
+            return False
+        now = now or time.time()
+        if now - self._rest_only_last_check < self._rest_only_retry:
+            return True
+        self._rest_only_mode = False
+        self._rest_only_reason = "retry"
+        return False
+
     def _network_outage_active(self, now: Optional[float] = None) -> bool:
         now = now or time.time()
         return self._network_outage_until > now
 
+    def _network_outage_blocks_rest(self, now: Optional[float] = None) -> bool:
+        if not self._network_outage_active(now):
+            return False
+        if self._network_outage_source == "websocket":
+            if not self._block_rest_on_dns or self._network_outage_reason != "dns":
+                return False
+        if self._network_outage_block_rest:
+            return True
+        return self._network_outage_source != "websocket"
+
     def _clear_rest_outage(self) -> None:
         self._rest_outage_until = 0.0
         self._rest_outage_failures = 0
+
+    def _clear_rest_only(self) -> None:
+        self._rest_only_mode = False
+        self._rest_only_failures = 0
+        self._rest_only_reason = "recovered"
+        self._rest_only_last_check = 0.0
 
     def _clear_network_outage(self) -> None:
         self._network_outage_until = 0.0
@@ -1670,6 +1866,62 @@ class MarketDataStream:
         self._network_outage_reason = "recovered"
         self._network_outage_source = None
         self._network_outage_endpoint = None
+        self._network_outage_block_rest = False
+
+    def _clear_network_outage_if_rest(self) -> None:
+        if not self._network_outage_failures:
+            return
+        if self._network_outage_source == "websocket":
+            return
+        self._clear_network_outage()
+
+    def _endpoint_by_name(self, name: Optional[str]) -> Optional[Endpoint]:
+        if not name:
+            return None
+        for endpoint in self.endpoints:
+            if endpoint.name == name:
+                return endpoint
+        return None
+
+    def _rest_domains(self) -> Set[str]:
+        domains: Set[str] = set()
+        for endpoint in self.endpoints:
+            if not endpoint.rest_template:
+                continue
+            url = _render_rest(endpoint, self._rest_base, self._rest_quote)
+            domain = _domain_key(_extract_host(url))
+            if domain:
+                domains.add(domain)
+        return domains
+
+    def _rest_hosts(self) -> Set[str]:
+        hosts: Set[str] = set()
+        for endpoint in self.endpoints:
+            if not endpoint.rest_template:
+                continue
+            url = _render_rest(endpoint, self._rest_base, self._rest_quote)
+            host = _extract_host(url)
+            if host:
+                hosts.add(host.lower())
+        return hosts
+
+    def _dns_outage_blocks_rest(self, endpoint: Optional[str]) -> bool:
+        ws_endpoint = self._endpoint_by_name(endpoint)
+        ws_url = _render_ws(ws_endpoint, self._rest_base, self._rest_quote) if ws_endpoint else None
+        ws_host = _extract_host(ws_url)
+        ws_host = ws_host.lower() if ws_host else None
+        ws_domain = _domain_key(ws_host)
+        rest_hosts = self._rest_hosts()
+        if not rest_hosts:
+            return False
+        if not ws_domain or not ws_host:
+            return False
+        rest_domains = {domain for host in rest_hosts if (domain := _domain_key(host))}
+        if not rest_domains:
+            return False
+        if any(host != ws_host for host in rest_hosts):
+            return False
+        return all(domain == ws_domain for domain in rest_domains)
 
     def _register_rest_outage(self, *, reason: str, endpoint: Optional[str] = None) -> None:
         now = time.time()
@@ -1702,14 +1954,54 @@ class MarketDataStream:
             )
             self._last_rest_outage_log = now
 
+    def _register_rest_only(self, *, reason: str) -> None:
+        if self._ws_disabled:
+            return
+        self._rest_only_failures += 1
+        if self._rest_only_failures < self._rest_only_threshold:
+            return
+        now = time.time()
+        if self._rest_only_mode and now - self._rest_only_last_check < self._rest_only_retry:
+            return
+        self._rest_only_mode = True
+        self._rest_only_reason = reason
+        self._rest_only_last_check = now
+        self.metrics.feedback(
+            "market_stream",
+            severity=FeedbackSeverity.WARNING,
+            label="rest_only_mode",
+            details={
+                "symbol": self.symbol,
+                "reason": reason,
+                "failures": self._rest_only_failures,
+                "retry_sec": round(self._rest_only_retry, 2),
+            },
+        )
+        if now - self._last_rest_only_log >= 30.0:
+            log_message(
+                "market-stream",
+                "websocket unstable; switching to REST-only mode",
+                severity="warning",
+                details={
+                    "symbol": self.symbol,
+                    "reason": reason,
+                    "failures": self._rest_only_failures,
+                    "retry_in": round(self._rest_only_retry, 2),
+                },
+            )
+            self._last_rest_only_log = now
+
     def _register_network_outage(
         self,
         *,
         reason: str,
         endpoint: Optional[str] = None,
         source: Optional[str] = None,
+        exc: Optional[BaseException] = None,
     ) -> None:
         now = time.time()
+        if exc is not None and reason == "network" and _is_dns_error(exc):
+            reason = "dns"
         self._network_outage_failures += 1
         exponent = min(6, max(0, self._network_outage_failures - 1))
         backoff = min(
@@ -1720,6 +2012,10 @@ class MarketDataStream:
         self._network_outage_reason = reason
         self._network_outage_source = source
         self._network_outage_endpoint = endpoint
+        block_rest = source != "websocket"
+        if source == "websocket" and self._block_rest_on_dns and reason == "dns":
+            block_rest = self._dns_outage_blocks_rest(endpoint)
+        self._network_outage_block_rest = block_rest
         self.metrics.feedback(
             "market_stream",
             severity=FeedbackSeverity.WARNING,
@@ -1729,6 +2025,7 @@ class MarketDataStream:
                 "endpoint": endpoint,
                 "source": source,
                 "reason": reason,
+                "block_rest": self._network_outage_block_rest,
                 "backoff_sec": round(max(0.0, self._network_outage_until - now), 2),
             },
         )
@@ -1742,10 +2039,48 @@ class MarketDataStream:
                     "endpoint": endpoint,
                     "source": source,
                     "reason": reason,
+                    "block_rest": self._network_outage_block_rest,
                     "backoff_sec": round(max(0.0, self._network_outage_until - now), 2),
                 },
             )
             self._last_network_outage_log = now
+
+    def _register_ws_backoff(
+        self,
+        *,
+        reason: str,
+        endpoint: Optional[str] = None,
+        backoff: float = 0.0,
+    ) -> None:
+        now = time.time()
+        cooldown = max(self._network_outage_base, float(backoff))
+        if endpoint:
+            previous = self._endpoint_backoff_until.get(endpoint, 0.0)
+            self._endpoint_backoff_until[endpoint] = max(previous, now + cooldown)
+        self.metrics.feedback(
+            "market_stream",
+            severity=FeedbackSeverity.WARNING,
+            label="ws_backoff",
+            details={
+                "symbol": self.symbol,
+                "endpoint": endpoint,
+                "reason": reason,
+                "backoff_sec": round(cooldown, 2),
+            },
+        )
+        if now - self._last_ws_backoff_log >= 30.0:
+            log_message(
+                "market-stream",
+                "websocket endpoint cooling down; using REST fallback",
+                severity="warning",
+                details={
+                    "symbol": self.symbol,
+                    "endpoint": endpoint,
+                    "reason": reason,
+                    "backoff_sec": round(cooldown, 2),
+                },
+            )
+            self._last_ws_backoff_log = now
 
     def _cooldown_sleep_interval(self, now: Optional[float] = None) -> float:
         now = now or time.time()
@@ -1852,8 +2187,7 @@ class MarketDataStream:
             self._endpoint_backoff_until.pop(name, None)
         if self._rest_outage_failures:
             self._clear_rest_outage()
-        if self._network_outage_failures:
-            self._clear_network_outage()
+        self._clear_network_outage_if_rest()
         if self.rest_poll_interval > self._base_rest_interval:
             self._relax_rest_interval(reason="endpoint_success")
         if self._consensus_failures > 0:
@@ -2120,14 +2454,14 @@ class MarketDataStream:
     async def _refresh_reference_price(self) -> None:
         if self._http_session is None:
             return
-        if self._rest_outage_active() or self._network_outage_active():
+        if self._rest_outage_active() or self._network_outage_blocks_rest():
             return
         base, quote = self._rest_base, self._rest_quote
         for endpoint in self._ranked_endpoints():
             if self._endpoint_backoff_until.get(endpoint.name, 0.0) > time.time():
                 continue
             result = await self._fetch_rest_price(endpoint, base, quote)
-            if result.error in {"network", "timeout"}:
+            if result.error in {"dns", "network", "timeout"}:
                 self._register_rest_outage(reason=result.error, endpoint=endpoint.name)
                 self._register_network_outage(reason=result.error, endpoint=endpoint.name, source="rest")
                 continue
@@ -2135,8 +2469,7 @@ class MarketDataStream:
                 continue
             if result.error:
                 self._record_endpoint_failure(endpoint.name)
-                if self._network_outage_active():
-                    self._clear_network_outage()
+                self._clear_network_outage_if_rest()
                 continue
             price = result.price
             if not price or price <= 0:
@@ -2219,8 +2552,8 @@ class MarketDataStream:
                 data = await resp.json()
         except (asyncio.TimeoutError, TimeoutError):
             return RestFetchResult(None, "timeout")
-        except (aiohttp.ClientConnectorError, aiohttp.ClientConnectionError, aiohttp.ClientOSError, OSError):
-            return RestFetchResult(None, "network")
+        except (aiohttp.ClientConnectorError, aiohttp.ClientConnectionError, aiohttp.ClientOSError, OSError) as exc:
+            return RestFetchResult(None, "dns" if _is_dns_error(exc) else "network")
         except Exception:
             return RestFetchResult(None, "exception")
         price = _extract_rest_price(endpoint.name, data, base, quote)
@@ -2254,6 +2587,12 @@ class MarketDataStream:
     def _warn_websocket_unavailable(self) -> None:
         if self._ws_warning_logged:
             return
+        if self._ws_disabled_reason == "config":
+            message = "websocket disabled by config; using REST consensus fallback"
+        elif self._ws_disabled_reason == "template":
+            message = "websocket disabled (no subscribe template); using REST consensus fallback"
+        else:
+            message = "websocket URL unavailable; using REST consensus fallback"
         self._debug(
             "ws_unavailable",
             extra={
@@ -2261,11 +2600,13 @@ class MarketDataStream:
                 "subscribe": bool(self.subscribe_template),
                 "url_set": bool(self.url),
                 "wss_env": os.getenv("BASE_WSS_URL") or os.getenv("GLOBAL_WSS_URL"),
+                "ws_disabled": self._ws_disabled,
+                "ws_disabled_reason": self._ws_disabled_reason,
             },
         )
         log_message(
             "market-stream",
-            "websocket URL unavailable; using REST consensus fallback",
+            message,
             severity="warning",
             details={
                 "symbol": self.symbol,
@@ -2274,6 +2615,8 @@ class MarketDataStream:
                 "subscribe_template": bool(self.subscribe_template),
                 "url_set": bool(self.url),
                 "wss_env": os.getenv("BASE_WSS_URL") or os.getenv("GLOBAL_WSS_URL"),
+                "ws_disabled": self._ws_disabled,
+                "ws_disabled_reason": self._ws_disabled_reason,
             },
         )
         self._ws_warning_logged = True

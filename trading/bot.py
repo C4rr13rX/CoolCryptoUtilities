@@ -138,6 +138,18 @@ class TradingBot:
         self.opportunity_tracker = OpportunityTracker()
         savings_batch = float(os.getenv("SAVINGS_TRANSFER_MIN_USD", "50"))
         self.savings = StableSavingsPlanner(min_batch=savings_batch)
+        low_fee_chains = os.getenv("SAVINGS_LOW_FEE_CHAINS", "base,arbitrum,optimism,polygon")
+        self._savings_low_fee_chains = {chain.strip().lower() for chain in low_fee_chains.split(",") if chain.strip()}
+        try:
+            self._savings_low_fee_batch_ratio = float(os.getenv("SAVINGS_LOW_FEE_BATCH_RATIO", "0.35"))
+        except Exception:
+            self._savings_low_fee_batch_ratio = 0.35
+        self._savings_low_fee_batch_ratio = max(0.05, min(self._savings_low_fee_batch_ratio, 1.0))
+        try:
+            self._savings_low_fee_min = float(os.getenv("SAVINGS_LOW_FEE_TRANSFER_MIN_USD", "10"))
+        except Exception:
+            self._savings_low_fee_min = 10.0
+        self._savings_low_fee_min = max(1.0, self._savings_low_fee_min)
         self._wallet_sync_lock = asyncio.Lock()
         self._bridge_init_attempted = False
         self.equilibrium = EquilibriumTracker()
@@ -155,6 +167,8 @@ class TradingBot:
         self._last_sample_signature: Optional[Tuple[str, float]] = None
         self._last_gas_advisory_signature: Optional[str] = None
         self._last_gas_strategy: Optional[Dict[str, Any]] = None
+        self._last_gas_refill_signature: Optional[str] = None
+        self._last_gas_refill_ts: float = 0.0
         self._last_quote_topup_signature: Optional[str] = None
         self._last_quote_topup_ts: float = 0.0
         self._pair_adjustments: Dict[str, Dict[str, Any]] = {}
@@ -305,6 +319,23 @@ class TradingBot:
         if not hasattr(self, "savings") or not isinstance(self.savings, StableSavingsPlanner):
             savings_batch = float(os.getenv("SAVINGS_TRANSFER_MIN_USD", "50"))
             self.savings = StableSavingsPlanner(min_batch=savings_batch)
+        if not hasattr(self, "_savings_low_fee_chains"):
+            low_fee_chains = os.getenv("SAVINGS_LOW_FEE_CHAINS", "base,arbitrum,optimism,polygon")
+            self._savings_low_fee_chains = {
+                chain.strip().lower() for chain in low_fee_chains.split(",") if chain.strip()
+            }
+        if not hasattr(self, "_savings_low_fee_batch_ratio"):
+            try:
+                self._savings_low_fee_batch_ratio = float(os.getenv("SAVINGS_LOW_FEE_BATCH_RATIO", "0.35"))
+            except Exception:
+                self._savings_low_fee_batch_ratio = 0.35
+            self._savings_low_fee_batch_ratio = max(0.05, min(self._savings_low_fee_batch_ratio, 1.0))
+        if not hasattr(self, "_savings_low_fee_min"):
+            try:
+                self._savings_low_fee_min = float(os.getenv("SAVINGS_LOW_FEE_TRANSFER_MIN_USD", "10"))
+            except Exception:
+                self._savings_low_fee_min = 10.0
+            self._savings_low_fee_min = max(1.0, self._savings_low_fee_min)
         if not hasattr(self, "_transition_plan") or not isinstance(self._transition_plan, dict):
             self._transition_plan = {}
         if not hasattr(self, "_savings_ready_ratio"):
@@ -319,6 +350,10 @@ class TradingBot:
             self.gas_force_refill = os.getenv("GAS_FORCE_REFILL", "1").lower() in {"1", "true", "yes", "on"}
         if not hasattr(self, "stable_checkpoint_ratio"):
             self.stable_checkpoint_ratio = max(0.0, min(0.5, self._savings_bootstrap_ratio))
+        if not hasattr(self, "_last_gas_refill_signature"):
+            self._last_gas_refill_signature = None
+        if not hasattr(self, "_last_gas_refill_ts"):
+            self._last_gas_refill_ts = 0.0
         self._sync_checkpoint_ratio(equilibrium_ready=getattr(self, "_nash_equilibrium_reached", False))
         if not hasattr(self, "_timeline_path"):
             self._timeline_path = Path(os.getenv("ORGANISM_TIMELINE_PATH", "runtime/organism_timeline.json"))
@@ -839,7 +874,7 @@ class TradingBot:
         try:
             self.db.log_trade(
                 wallet=event.mode,
-                chain=self.primary_chain,
+                chain=event.chain or self.primary_chain,
                 symbol=event.token,
                 action="savings_transfer",
                 status="queued",
@@ -899,6 +934,18 @@ class TradingBot:
         if abs(self.stable_checkpoint_ratio - target) > 1e-6:
             self.stable_checkpoint_ratio = target
 
+    def _savings_min_batch_for_chain(self, chain: str) -> float:
+        base_min = float(getattr(self.savings, "min_batch", 0.0) or 0.0)
+        if base_min <= 0.0:
+            base_min = 1.0
+        chain_l = (chain or "").lower()
+        if not chain_l or chain_l not in self._savings_low_fee_chains:
+            return base_min
+        ratio = max(0.05, min(self._savings_low_fee_batch_ratio, 1.0))
+        candidate = base_min * ratio
+        candidate = max(self._savings_low_fee_min, candidate)
+        return max(1.0, min(base_min, candidate))
+
     def apply_transition_plan(self, plan: Optional[Dict[str, Any]]) -> None:
         if not isinstance(plan, dict):
             return
@@ -915,12 +962,28 @@ class TradingBot:
         self._sync_checkpoint_ratio()
 
     def _handle_gas_starvation(self, chain: str, native_balance: float) -> None:
+        chain_name = str(chain or "").lower()
+        native_symbol = NATIVE_SYMBOL.get(chain_name, str(chain).upper())
+        try:
+            min_required = float(os.getenv("GAS_ALERT_MIN_NATIVE", "0.01"))
+        except Exception:
+            min_required = 0.01
+        gas_required = max(self._estimate_gas_cost(chain_name, [native_symbol]), min_required)
+        auto_refill = bool(getattr(self, "gas_force_refill", True))
         message = f"Scheduler paused directives on {chain} because native balance dropped to {native_balance:.4f}."
-        recommendation = "Bridge or swap into native gas on the affected chain to resume trading."
+        recommendation = (
+            "Auto-swap available assets into native gas, then bridge if still short."
+            if auto_refill
+            else "Bridge or swap into native gas on the affected chain to resume trading."
+        )
         signature = f"gas-starved:{chain}:{round(native_balance, 4)}"
         meta = {
             "chain": chain,
             "native_balance": native_balance,
+            "gas_required": gas_required,
+            "min_required": min_required,
+            "auto_refill": auto_refill,
+            "live_trading_enabled": bool(self.live_trading_enabled),
             "signature": signature,
         }
         self._record_advisory(
@@ -931,6 +994,62 @@ class TradingBot:
             recommendation=recommendation,
             meta=meta,
         )
+        if not auto_refill:
+            return
+        if native_balance >= gas_required:
+            return
+        if not chain_name:
+            return
+        quote_token = "USDC"
+        if quote_token not in self.stable_tokens and self.stable_tokens:
+            quote_token = sorted(self.stable_tokens)[0]
+        available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
+        plan = self._plan_gas_replenishment(
+            chain=chain_name,
+            route=[native_symbol, quote_token],
+            native_balance=native_balance,
+            gas_required=gas_required,
+            trade_size=0.0,
+            price=0.0,
+            margin=0.0,
+            pnl=0.0,
+            available_quote=available_quote,
+            symbol=f"{native_symbol}-GAS",
+        )
+        if not plan or not plan.get("stable_swap_plan"):
+            return
+        refill_signature = str(plan.get("signature") or f"gas-refill:{chain_name}:{round(gas_required, 6)}")
+        cooldown = float(os.getenv("GAS_REFILL_COOLDOWN_SEC", "600"))
+        now = time.time()
+        if (
+            refill_signature
+            and refill_signature == self._last_gas_refill_signature
+            and now - self._last_gas_refill_ts < cooldown
+        ):
+            return
+        self._last_gas_refill_signature = refill_signature
+        self._last_gas_refill_ts = now
+        executed = self._rebalance_for_gas(chain_name, plan)
+        if executed:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.INFO,
+                label="gas_rebalanced_alert",
+                details={"chain": chain_name, "strategy": plan, "mode": "alert"},
+            )
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop:
+                loop.create_task(self._run_wallet_sync(reason="post-gas-alert-rebalance"))
+        else:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="gas_rebalance_failed",
+                details={"chain": chain_name, "strategy": plan, "mode": "alert"},
+            )
 
     def _replay_gate_allows(self) -> tuple[bool, Optional[str]]:
         if os.getenv("LIVE_REPLAY_REQUIRED", "0").lower() not in {"1", "true", "yes", "on"}:
@@ -1424,13 +1543,28 @@ class TradingBot:
             summary["net_pnl"] = float(preds[5][0][0])
         except Exception:
             summary["net_pnl"] = summary.get("net_margin", 0.0)
-        temp_scale = getattr(self.pipeline, "temperature_scale", 1.0)
-        if temp_scale and temp_scale > 0:
+        cal_scale = getattr(self.pipeline, "calibration_scale", None)
+        cal_offset = getattr(self.pipeline, "calibration_offset", None)
+        use_calibration = (
+            cal_scale is not None
+            and cal_offset is not None
+            and (abs(cal_scale - 1.0) > 1e-3 or abs(cal_offset) > 1e-3)
+        )
+        if use_calibration:
             raw_prob = float(np.clip(summary["direction_prob"], 1e-6, 1.0 - 1e-6))
             logit = math.log(raw_prob / (1.0 - raw_prob))
-            calibrated = 1.0 / (1.0 + math.exp(-logit / temp_scale))
+            logit = max(-30.0, min(30.0, logit * float(cal_scale) + float(cal_offset)))
+            calibrated = 1.0 / (1.0 + math.exp(-logit))
             summary["direction_prob_raw"] = summary["direction_prob"]
             summary["direction_prob"] = float(np.clip(calibrated, 1e-6, 1.0 - 1e-6))
+        else:
+            temp_scale = getattr(self.pipeline, "temperature_scale", 1.0)
+            if temp_scale and temp_scale > 0:
+                raw_prob = float(np.clip(summary["direction_prob"], 1e-6, 1.0 - 1e-6))
+                logit = math.log(raw_prob / (1.0 - raw_prob))
+                calibrated = 1.0 / (1.0 + math.exp(-logit / temp_scale))
+                summary["direction_prob_raw"] = summary["direction_prob"]
+                summary["direction_prob"] = float(np.clip(calibrated, 1e-6, 1.0 - 1e-6))
         return summary
 
     async def stop(self) -> None:
@@ -1800,11 +1934,7 @@ class TradingBot:
                     available_quote=available_quote,
                     symbol=symbol,
                 )
-                should_rebalance = (
-                    bool(strategy)
-                    and bool(strategy.get("stable_swap_plan"))
-                    and (strategy.get("profit_guard_passed") or strategy.get("force_rebalance"))
-                )
+                should_rebalance = bool(strategy) and bool(strategy.get("stable_swap_plan"))
                 if should_rebalance:
                     executed = self._rebalance_for_gas(chain_name, strategy)
                     if executed:
@@ -1831,10 +1961,10 @@ class TradingBot:
                     }
                     if strategy:
                         details["strategy"] = strategy
-                        if (strategy.get("profit_guard_passed") or strategy.get("force_rebalance")) and strategy.get(
-                            "stable_swap_plan"
-                        ):
-                            strategy_severity = FeedbackSeverity.WARNING
+                        if strategy.get("stable_swap_plan"):
+                            remaining_gap = float(strategy.get("remaining_native_gap", 0.0) or 0.0)
+                            if remaining_gap <= 1e-6:
+                                strategy_severity = FeedbackSeverity.WARNING
                         message = (
                             f"Native balance {native_balance:.6f} below required {gas_required:.6f} on {chain_name}."
                         )
@@ -2091,6 +2221,7 @@ class TradingBot:
                 estimated_fees = max(exit_size * price * fees, 0.0)
                 fee_guard = estimated_fees * 1.89
                 savings_slot = decision.setdefault("savings", {})
+                min_batch_override = self._savings_min_batch_for_chain(chain_name)
                 if checkpoint >= fee_guard:
                     self.stable_bank += checkpoint
                     profit -= checkpoint
@@ -2100,6 +2231,8 @@ class TradingBot:
                         mode="live" if self.live_trading_enabled else "ghost",
                         equilibrium_score=self.equilibrium.score(),
                         trade_id=trade_id,
+                        chain=chain_name,
+                        min_batch_override=min_batch_override,
                     )
                     checkpoint_payload = savings_event.to_dict()
                     checkpoint_payload.update(
@@ -2123,7 +2256,9 @@ class TradingBot:
                         "mode": "live" if self.live_trading_enabled else "ghost",
                         "trade_id": trade_id,
                         "token": stable_target,
+                        "chain": chain_name,
                         "checkpoint_ratio": self.stable_checkpoint_ratio,
+                        "min_batch": min_batch_override,
                     }
                     savings_slot["skipped"] = skip_payload
                     self._log_savings_skip(skip_payload)
@@ -2282,18 +2417,17 @@ class TradingBot:
                     symbol=symbol,
                 )
                 if strategy and strategy.get("stable_swap_plan"):
-                    if strategy.get("profit_guard_passed") or strategy.get("force_rebalance"):
-                        executed = self._rebalance_for_gas(chain_name, strategy)
-                        if executed:
-                            label = "gas_rebalanced"
-                            if strategy.get("force_rebalance") and not strategy.get("profit_guard_passed"):
-                                label = "gas_rebalanced_forced"
-                            self.metrics.feedback(
-                                "trading",
-                                severity=FeedbackSeverity.INFO,
-                                label=label,
-                                details={"chain": chain_name, "strategy": strategy},
-                            )
+                    executed = self._rebalance_for_gas(chain_name, strategy)
+                    if executed:
+                        label = "gas_rebalanced"
+                        if strategy.get("force_rebalance") and not strategy.get("profit_guard_passed"):
+                            label = "gas_rebalanced_forced"
+                        self.metrics.feedback(
+                            "trading",
+                            severity=FeedbackSeverity.INFO,
+                            label=label,
+                            details={"chain": chain_name, "strategy": strategy},
+                        )
             return decision
 
         if pos is not None:
@@ -2770,7 +2904,7 @@ class TradingBot:
         bridge_fee_usd = self.gas_bridge_flat_fee if remaining_native_gap > 0.0 else 0.0
         total_replenish_cost_usd = estimated_gas_cost_usd + roundtrip_fee_usd + bridge_fee_usd
         profit_guard_passed = expected_profit_usd > (total_replenish_cost_usd * self.gas_profit_guard)
-        force_rebalance = bool(swap_plan) and bool(getattr(self, "gas_force_refill", True))
+        force_rebalance = bool(swap_plan)
         signature = f"{chain_l}:{symbol}:{int(round(deficit * 1e6))}:{int(round(target_native * 1e6))}:{1 if profit_guard_passed else 0}"
 
         if swap_plan and remaining_native_gap <= 1e-6:
