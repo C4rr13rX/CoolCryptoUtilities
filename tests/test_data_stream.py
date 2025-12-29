@@ -10,7 +10,7 @@ import time
 
 from aiohttp.client_reqrep import ConnectionKey
 
-from trading.data_stream import Endpoint, MarketDataStream, _classify_network_error, _split_symbol
+from trading.data_stream import Endpoint, MarketDataStream, RestFetchResult, _classify_network_error, _split_symbol
 
 
 class DummyOfflineStore:
@@ -475,6 +475,40 @@ def test_rest_success_clears_rest_outage(monkeypatch):
     assert stream._network_outage_until == 0.0
     assert stream._network_outage_failures == 0
     assert stream._network_outage_source is None
+
+
+def test_refresh_reference_price_does_not_register_partial_outage(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    _restrict_endpoints(stream, {"binance", "coinbase"})
+    stream._http_session = SimpleNamespace()
+
+    async def fake_fetch(endpoint: Endpoint, base: str, quote: str) -> RestFetchResult:
+        if endpoint.name == "binance":
+            return RestFetchResult(None, "dns")
+        return RestFetchResult(None, "invalid")
+
+    monkeypatch.setattr(stream, "_fetch_rest_price", fake_fetch)
+    asyncio.run(stream._refresh_reference_price())
+    assert stream._rest_outage_failures == 0
+    assert stream._network_outage_failures == 0
+
+
+def test_refresh_reference_price_registers_outage_on_all_network_failures(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    _restrict_endpoints(stream, {"binance", "coinbase"})
+    stream._http_session = SimpleNamespace()
+
+    async def fake_fetch(endpoint: Endpoint, base: str, quote: str) -> RestFetchResult:
+        if endpoint.name == "coinbase":
+            return RestFetchResult(None, "dns")
+        return RestFetchResult(None, "network")
+
+    monkeypatch.setattr(stream, "_fetch_rest_price", fake_fetch)
+    asyncio.run(stream._refresh_reference_price())
+    assert stream._rest_outage_failures == 1
+    assert stream._network_outage_failures == 1
+    assert stream._network_outage_source == "rest"
+    assert stream._network_outage_reason == "dns"
 
 
 def test_ws_disabled_env_uses_rest_fallback(monkeypatch):

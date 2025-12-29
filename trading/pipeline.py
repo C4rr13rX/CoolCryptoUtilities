@@ -1040,13 +1040,17 @@ class TrainingPipeline:
             }
             if horizon_profile:
                 self._last_dataset_meta["horizon_profile"] = horizon_profile
+            self._last_sample_meta = self.data_loader.last_sample_meta()
+            lookahead_median = self._compute_lookahead_median(self._last_sample_meta)
+            if lookahead_median is not None:
+                dataset_meta["lookahead_median_sec"] = int(lookahead_median)
+                self._last_dataset_meta["lookahead_median_sec"] = int(lookahead_median)
             self.metrics.record(
                 MetricStage.TRAINING,
                 dataset_metrics,
                 category=f"dataset_{dataset_label}",
                 meta=dataset_meta,
             )
-            self._last_sample_meta = self.data_loader.last_sample_meta()
             self._maybe_trigger_news_top_up(news_coverage, focus_assets)
             inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
             inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
@@ -1521,6 +1525,90 @@ class TrainingPipeline:
             else:
                 meta_copy[key] = value
         return meta_copy
+
+    def _compute_lookahead_median(self, meta: Optional[Dict[str, Any]] = None) -> Optional[int]:
+        meta = meta or self._last_sample_meta or {}
+        records = meta.get("records") if isinstance(meta, dict) else None
+        if not isinstance(records, list):
+            return None
+        values: List[float] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            try:
+                value = float(record.get("lookahead_sec", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                values.append(value)
+        if not values:
+            return None
+        return int(np.median(np.asarray(values, dtype=np.float64)))
+
+    def horizon_forecast(
+        self,
+        predicted_return: float,
+        *,
+        current_price: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        dataset_meta = self._last_dataset_meta if isinstance(self._last_dataset_meta, dict) else {}
+        profile = dataset_meta.get("horizon_profile") if isinstance(dataset_meta, dict) else None
+        if not isinstance(profile, dict) or not profile:
+            try:
+                profile = self.data_loader.horizon_profile()
+            except Exception:
+                profile = {}
+        if not isinstance(profile, dict) or not profile:
+            return {}
+        base_raw = None
+        if isinstance(dataset_meta, dict):
+            base_raw = dataset_meta.get("lookahead_median_sec")
+        if base_raw is None:
+            base_raw = self._compute_lookahead_median()
+        try:
+            base_sec = int(float(base_raw)) if base_raw is not None else 0
+        except (TypeError, ValueError):
+            base_sec = 0
+        if base_sec <= 0:
+            try:
+                base_sec = int(getattr(self.data_loader, "_min_horizon_sec", 0) or 0)
+            except Exception:
+                base_sec = 0
+        if base_sec <= 0:
+            base_sec = 300
+        base_stats = profile.get(str(int(base_sec)), {}) if isinstance(profile, dict) else {}
+        base_mean = 0.0
+        if isinstance(base_stats, dict):
+            base_mean = float(base_stats.get("mean_return", 0.0))
+        base_scale = abs(base_mean) if abs(base_mean) > 1e-6 else 0.0
+        horizon_entries: List[Tuple[int, Dict[str, Any]]] = []
+        for key, stats in profile.items():
+            try:
+                horizon_sec = int(float(key))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(stats, dict):
+                stats = {}
+            horizon_entries.append((horizon_sec, stats))
+        forecasts: Dict[str, Any] = {}
+        for horizon_sec, stats in sorted(horizon_entries, key=lambda entry: entry[0]):
+            mean_return = float(stats.get("mean_return", 0.0))
+            if base_scale > 0:
+                ratio = abs(mean_return) / base_scale
+            else:
+                ratio = math.sqrt(max(horizon_sec, 1) / max(base_sec, 1))
+            ratio = max(0.25, min(6.0, ratio))
+            horizon_return = float(predicted_return) * ratio
+            entry: Dict[str, Any] = {
+                "return": horizon_return,
+                "mean_return": mean_return,
+                "positive_ratio": float(stats.get("positive_ratio", 0.0)),
+                "samples": float(stats.get("samples", 0.0)),
+            }
+            if current_price is not None and current_price > 0:
+                entry["price"] = float(current_price * math.exp(horizon_return))
+            forecasts[_format_horizon_label(horizon_sec)] = entry
+        return {"base_lookahead_sec": int(base_sec), "forecast": forecasts}
 
     def _adapt_vectorizers(self, headline_vec, full_vec) -> None:
         try:
@@ -2254,6 +2342,9 @@ class TrainingPipeline:
         report = payload.get("confusion")
         if isinstance(report, dict) and report:
             self._last_confusion_report = report
+            self._last_confusion_summary = self._summarize_confusion_report(report)
+            self._adjust_horizon_bias_from_confusion()
+            self._last_transition_plan = self._build_transition_plan()
             threshold = payload.get("decision_threshold")
             if threshold is not None:
                 try:
@@ -2376,6 +2467,8 @@ class TrainingPipeline:
         allow_mini_as_ready = (os.getenv("LIVE_ALLOW_MINI_READY", "0") or "0").lower() in {"1", "true", "yes", "on"}
 
         report = self._last_confusion_report or {}
+        if report and (not isinstance(self._last_confusion_summary, dict) or not self._last_confusion_summary.get("horizons")):
+            self._last_confusion_summary = self._summarize_confusion_report(report)
         if not report:
             # Fallback: use the latest candidate feedback metrics if confusion data is missing.
             fb = self._last_candidate_feedback or {}

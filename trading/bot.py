@@ -1511,8 +1511,8 @@ class TradingBot:
             ] if name in preds]
         return preds
 
-    def _summarise_predictions(self, preds) -> Dict[str, float]:
-        summary = {
+    def _summarise_predictions(self, preds, *, current_price: Optional[float] = None) -> Dict[str, Any]:
+        summary: Dict[str, Any] = {
             "exit_conf": 0.5,
             "direction_prob": 0.5,
             "net_margin": 0.0,
@@ -1565,6 +1565,16 @@ class TradingBot:
                 calibrated = 1.0 / (1.0 + math.exp(-logit / temp_scale))
                 summary["direction_prob_raw"] = summary["direction_prob"]
                 summary["direction_prob"] = float(np.clip(calibrated, 1e-6, 1.0 - 1e-6))
+        try:
+            forecast = self.pipeline.horizon_forecast(
+                float(summary.get("price_mu", 0.0)),
+                current_price=float(current_price) if current_price is not None else None,
+            )
+        except Exception:
+            forecast = {}
+        if forecast:
+            summary["horizon_forecast"] = forecast.get("forecast", {})
+            summary["horizon_base_sec"] = forecast.get("base_lookahead_sec")
         return summary
 
     async def stop(self) -> None:
@@ -1633,7 +1643,7 @@ class TradingBot:
             except Exception as exc:
                 print(f"[trading-bot] prediction failed: {exc}")
                 return
-            pred_summary = self._summarise_predictions(preds)
+            pred_summary = self._summarise_predictions(preds, current_price=sample.get("price"))
             brain_summary = self._update_brain_state(sample, history_snapshot, pred_summary)
             await self._run_wallet_sync(reason="pre-schedule")
             directive = None
@@ -1764,7 +1774,7 @@ class TradingBot:
         pred_summary: Optional[Dict[str, float]] = None,
         brain_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        summary = pred_summary or self._summarise_predictions(preds)
+        summary = pred_summary or self._summarise_predictions(preds, current_price=sample.get("price"))
         brain = brain_summary or {}
         exit_conf_val = float(summary.get("exit_conf", 0.5))
         direction_prob = float(summary.get("direction_prob", 0.5))

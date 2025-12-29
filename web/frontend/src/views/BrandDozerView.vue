@@ -121,7 +121,6 @@
             <p class="caption">One prompt → SCRUM + PMP pipeline with gated verification.</p>
           </div>
         <div class="import-actions">
-          <q-toggle v-model="performanceMode" dense color="amber" label="Performance mode" />
           <span class="status-chip" :class="activeDelivery?.status === 'running' ? 'ok' : 'warn'">
             {{ activeDelivery?.status || 'Idle' }}
           </span>
@@ -163,6 +162,14 @@
           <button type="button" class="btn" @click="startDeliveryRun" :disabled="deliveryRunning">
             {{ deliveryRunning ? 'Running…' : 'Start Delivery Run' }}
           </button>
+          <button
+            type="button"
+            class="btn danger"
+            @click="stopDeliveryRun"
+            :disabled="!deliveryRunning"
+          >
+            Stop Delivery Run
+          </button>
           <button type="button" class="btn ghost" @click="acceptDeliveryRun" :disabled="activeDelivery?.status !== 'awaiting_acceptance'">
             Record Acceptance
           </button>
@@ -186,6 +193,12 @@
           <div>
             <strong>Sprints</strong>
             <p class="caption">{{ activeDelivery?.sprint_count || 0 }} · Iteration {{ activeDelivery?.iteration || 0 }}</p>
+          </div>
+          <div>
+            <strong>Activity</strong>
+            <p class="caption">{{ deliveryActivity || '—' }}</p>
+            <p v-if="deliveryActivityDetail" class="caption muted">{{ deliveryActivityDetail }}</p>
+            <p v-if="deliveryActivityTime" class="caption muted">Last update: {{ deliveryActivityTime }}</p>
           </div>
         </div>
         <div class="delivery-grid">
@@ -231,8 +244,8 @@
           <p class="caption">Save PATs per account, then switch to pick projects.</p>
           </div>
           <div class="import-actions">
-            <span class="status-chip" :class="githubConnected ? 'ok' : 'warn'">
-              {{ githubConnected ? `Connected${activeGithubLabel ? ` · ${activeGithubLabel}` : ''}` : 'Not connected' }}
+            <span class="status-chip" :class="githubConnectionTone">
+              {{ githubConnectionLabel }}
             </span>
             <button type="button" class="btn ghost" @click="resetGithubForm">Reset</button>
           </div>
@@ -285,6 +298,9 @@
               </label>
             </div>
             <p class="caption muted">We keep the token in the encrypted vault and reuse it for imports.</p>
+            <p v-if="githubTokenLocked" class="caption warn">
+              Token saved but cannot be unlocked. Re-enter the PAT to refresh it.
+            </p>
           </div>
 
           <div class="github-block">
@@ -408,14 +424,23 @@
 
     <q-dialog v-model="deliveryDesktopOpen" :persistent="deliveryRunning" maximized>
       <div class="delivery-desktop" :class="{ 'performance-mode': performanceMode }">
-        <header class="desktop-header">
-          <div class="desktop-title">
-            <h2>Delivery Desktop</h2>
-            <span class="caption">
-              Project {{ deliveryProjectName || activeDelivery?.project_id || deliveryForm.project_id || '—' }}
-            </span>
+        <div class="desktop-topbar">
+          <div class="topbar-left">
+            <div class="desktop-brand">
+              <h2>Delivery Command Center</h2>
+              <span class="caption">
+                Project {{ deliveryProjectName || activeDelivery?.project_id || deliveryForm.project_id || '—' }}
+              </span>
+            </div>
+            <div class="topbar-meta">
+              <span class="status-chip" :class="deliveryRunning ? 'ok' : 'warn'">
+                {{ activeDelivery?.status || 'Idle' }}
+              </span>
+              <span v-if="deliveryActivity" class="caption">{{ deliveryActivity }}</span>
+              <span v-if="deliveryActivityDetail" class="caption muted">{{ deliveryActivityDetail }}</span>
+            </div>
           </div>
-          <div class="desktop-actions">
+          <div class="topbar-actions">
             <div class="layout-group">
               <q-btn
                 size="sm"
@@ -450,9 +475,13 @@
                 Cascade
               </q-btn>
             </div>
-            <q-toggle v-model="performanceMode" dense color="amber" label="Performance mode" />
+            <q-btn size="sm" flat color="primary" @click="scatterWindows">Scatter</q-btn>
             <q-btn size="sm" flat color="secondary" @click="toggleDesktopLogs">
               {{ desktopLiveLogs ? 'Pause Logs' : 'Resume Logs' }}
+            </q-btn>
+            <q-toggle v-model="performanceMode" dense color="amber" label="Performance" />
+            <q-btn size="sm" color="negative" outline @click="stopDeliveryRun" :disable="!deliveryRunning">
+              Stop
             </q-btn>
             <q-btn size="sm" color="primary" outline @click="minimizeDeliveryDesktop">Minimize</q-btn>
             <q-btn v-if="!deliveryRunning" size="sm" color="secondary" outline @click="closeDeliveryDesktop">
@@ -462,64 +491,33 @@
               Close
             </q-btn>
           </div>
-        </header>
+        </div>
 
         <div v-if="!desktopReady" class="desktop-loading">
           Preparing the delivery desktop…
         </div>
-        <div v-else class="desktop-body">
-          <div v-if="performanceMode" class="desktop-lite">
-            <div class="lite-sessions">
-              <div class="lite-header">
-                <h4>Sessions</h4>
-                <span class="caption">{{ store.deliverySessions.length }} total</span>
-              </div>
-              <div class="lite-list">
-                <button
-                  v-for="session in sortedDeliverySessions"
-                  :key="session.id"
-                  type="button"
-                  class="lite-row"
-                  :class="{ active: session.id === focusedSessionId }"
-                  @click="focusSession(session.id)"
-                >
-                  <span>{{ session.name || session.role }}</span>
-                  <span class="status-pill" :class="session.status === 'done' ? 'ok' : 'warn'">
-                    {{ session.status }}
-                  </span>
-                </button>
-              </div>
-            </div>
-            <div class="lite-console">
-              <div class="lite-header">
-                <h4>{{ focusedSession?.name || focusedSession?.role || 'Session output' }}</h4>
-                <q-badge v-if="focusedSession" :color="focusedSession.status === 'done' ? 'positive' : 'warning'" outline>
-                  {{ focusedSession.status }}
-                </q-badge>
-              </div>
-              <pre class="terminal-output" ref="liteLogRef">
-{{ desktopLiveLogs ? focusedSessionLog : 'Logs paused. Click Resume Logs to continue.' }}
-              </pre>
-            </div>
-          </div>
-          <div v-else class="desktop-windows" ref="desktopRef" :class="`layout-${desktopLayout}`">
+        <div v-else class="desktop-shell">
+          <div class="desktop-canvas" ref="desktopRef" :class="`layout-${desktopLayout}`">
             <div
               v-for="session in desktopWindowSessions"
               :key="session.id"
-              class="terminal-window"
-              :class="`role-${session.role}`"
+              class="desktop-window"
+              :class="[`role-${session.role}`, { active: session.id === focusedSessionId }]"
               :style="getWindowStyle(session.id)"
             >
-              <div class="terminal-header" @pointerdown="startDrag(session.id, $event)">
-                <div class="terminal-meta">
+              <div class="window-titlebar" @pointerdown="startDrag(session.id, $event)" @dblclick="focusSession(session.id)">
+                <div class="window-title">
                   <span class="role-dot" />
-                  <span class="terminal-title">{{ session.name || session.role }}</span>
+                  <span class="window-name">{{ session.name || session.role }}</span>
                 </div>
-                <q-badge :color="session.status === 'done' ? 'positive' : 'warning'" outline>
-                  {{ session.status }}
-                </q-badge>
+                <div class="window-status">
+                  <span class="caption">{{ session.role }}</span>
+                  <q-badge :color="session.status === 'done' ? 'positive' : 'warning'" outline>
+                    {{ session.status }}
+                  </q-badge>
+                </div>
               </div>
-              <div class="terminal-body" @pointerdown="bringToFront(session.id)">
+              <div class="window-body" @pointerdown="bringToFront(session.id)">
                 <pre class="terminal-output" :ref="setLogRef(session.id)">
 {{ desktopLiveLogs ? sessionLogText(session.id) : 'Logs paused. Click Resume Logs to continue.' }}
                 </pre>
@@ -533,8 +531,56 @@
             </div>
           </div>
 
-          <aside class="desktop-sidebar">
-            <div class="sidebar-card">
+          <aside class="desktop-panels">
+            <div class="desktop-module">
+              <div class="module-head">
+                <h4>Run Control</h4>
+                <q-badge :color="deliveryRunning ? 'warning' : 'positive'" outline>
+                  {{ activeDelivery?.status || 'idle' }}
+                </q-badge>
+              </div>
+              <div class="module-body">
+                <div class="module-row">
+                  <span class="caption">Activity</span>
+                  <span>{{ deliveryActivity || '—' }}</span>
+                </div>
+                <div v-if="deliveryActivityDetail" class="module-row">
+                  <span class="caption">Detail</span>
+                  <span class="muted">{{ deliveryActivityDetail }}</span>
+                </div>
+                <div v-if="deliveryActivityTime" class="module-row">
+                  <span class="caption">Last update</span>
+                  <span class="muted">{{ deliveryActivityTime }}</span>
+                </div>
+                <div v-if="deliveryPromptSnippet" class="module-row stacked">
+                  <span class="caption">Prompt</span>
+                  <span class="muted">{{ deliveryPromptSnippet }}</span>
+                </div>
+              </div>
+              <div class="module-actions">
+                <q-btn size="sm" outline color="primary" @click="refreshDelivery">Refresh</q-btn>
+                <q-btn size="sm" outline color="secondary" @click="toggleDesktopLogs">
+                  {{ desktopLiveLogs ? 'Pause Logs' : 'Resume Logs' }}
+                </q-btn>
+                <q-btn size="sm" outline color="primary" @click="runUiCapture" :disable="!activeDelivery?.id">
+                  Capture UI
+                </q-btn>
+                <q-btn size="sm" outline color="negative" @click="stopDeliveryRun" :disable="!deliveryRunning">
+                  Stop Run
+                </q-btn>
+              </div>
+            </div>
+
+            <div class="desktop-module">
+              <h4>Gate Radar</h4>
+              <div v-if="!deliveryGateSummary.length" class="caption">No gate runs yet.</div>
+              <div v-for="gate in deliveryGateSummary" :key="gate.name" class="module-row">
+                <span>{{ gate.name }}</span>
+                <span class="status-pill" :class="gate.tone">{{ gate.label }}</span>
+              </div>
+            </div>
+
+            <div class="desktop-module">
               <h4>Project Checklist</h4>
               <q-scroll-area class="checklist-scroll">
                 <div v-for="item in store.deliveryBacklog" :key="item.id" class="checklist-row">
@@ -547,8 +593,9 @@
                 <div v-if="!store.deliveryBacklog.length" class="caption">No checklist items yet.</div>
               </q-scroll-area>
             </div>
-            <div class="sidebar-card">
-              <div class="sidebar-head">
+
+            <div class="desktop-module">
+              <div class="module-head">
                 <h4>UI Evidence</h4>
                 <q-btn
                   size="sm"
@@ -618,8 +665,19 @@
         </div>
         <div v-if="publishStatus" class="caption">{{ publishStatus }}</div>
         <div v-if="publishError" class="error">{{ publishError }}</div>
+        <div v-else-if="githubTokenLocked" class="error">
+          GitHub token saved but cannot be unlocked. Re-enter the PAT under Import from GitHub → Accounts.
+        </div>
+        <div v-else-if="!githubConnected" class="error">
+          No GitHub account connected. Add a PAT under Import from GitHub → Accounts, select it, and try again.
+        </div>
         <div class="actions">
-          <q-btn color="primary" @click="runPublish" :loading="store.publishing" :disable="!publishForm.message">
+          <q-btn
+            color="primary"
+            @click="runPublish"
+            :loading="store.publishing"
+            :disable="!publishForm.message || !githubConnected || githubTokenLocked"
+          >
             Push now
           </q-btn>
           <q-btn outline color="secondary" class="publish-cancel" @click="closePublishModal">Cancel</q-btn>
@@ -762,7 +820,6 @@ let logTimer: number | null = null;
 let importTimer: number | null = null;
 const deliveryDesktopOpen = ref(false);
 const deliveryDesktopMinimized = ref(false);
-const desktopAutoInit = ref(true);
 const desktopReady = ref(false);
 const desktopLiveLogs = ref(false);
 let desktopOpenTimer: number | null = null;
@@ -772,10 +829,10 @@ const desktopRef = ref<HTMLElement | null>(null);
 const windowPositions = ref<Record<string, { x: number; y: number; z: number }>>({});
 const dragState = ref<{ id: string; offsetX: number; offsetY: number } | null>(null);
 const logRefs = ref<Record<string, HTMLElement | null>>({});
-const liteLogRef = ref<HTMLElement | null>(null);
 const screenshotOpen = ref(false);
 const selectedScreenshot = ref<any | null>(null);
 let visibilityHandler: (() => void) | null = null;
+const desktopSeededRunId = ref('');
 
 onMounted(async () => {
   pageVisible.value = typeof document !== 'undefined' ? !document.hidden : true;
@@ -878,9 +935,6 @@ watch(
       }
     });
     logRefs.value = nextRefs;
-    if (performanceMode.value) {
-      return;
-    }
     nextTick(() => {
       ensureWindowPositions();
       if (desktopLayout.value === 'cascade') {
@@ -897,12 +951,6 @@ watch(
       return;
     }
     nextTick(() => {
-      if (performanceMode.value) {
-        if (liteLogRef.value) {
-          liteLogRef.value.scrollTop = liteLogRef.value.scrollHeight;
-        }
-        return;
-      }
       Object.entries(logRefs.value).forEach(([sessionId, el]) => {
         if (el && store.deliverySessionLogs[sessionId]) {
           el.scrollTop = el.scrollHeight;
@@ -942,11 +990,7 @@ watch(
 
 watch(
   () => performanceMode.value,
-  (enabled) => {
-    if (enabled) {
-      desktopLiveLogs.value = false;
-      return;
-    }
+  () => {
     nextTick(() => {
       ensureWindowPositions();
       if (desktopLayout.value === 'cascade') {
@@ -980,10 +1024,22 @@ const filteredRepos = computed(() => {
 const activeGithubAccount = computed(() =>
   store.githubAccounts.find((account: any) => account.id === store.githubActiveAccountId) || store.githubActiveAccount,
 );
-const githubConnected = computed(() => Boolean(activeGithubAccount.value?.has_token));
+const githubTokenLocked = computed(() => Boolean(activeGithubAccount.value?.token_locked));
+const githubConnected = computed(() => Boolean(activeGithubAccount.value?.has_token && !githubTokenLocked.value));
 const activeGithubLabel = computed(
   () => activeGithubAccount.value?.label || activeGithubAccount.value?.username || store.githubUsername || '',
 );
+const githubConnectionLabel = computed(() => {
+  const label = activeGithubLabel.value ? ` · ${activeGithubLabel.value}` : '';
+  if (githubTokenLocked.value) {
+    return `Token needs re-save${label}`;
+  }
+  if (githubConnected.value) {
+    return `Connected${label}`;
+  }
+  return 'Not connected';
+});
+const githubConnectionTone = computed(() => (githubConnected.value ? 'ok' : 'warn'));
 const activeDelivery = computed(() => store.activeDeliveryRun);
 const deliveryRunning = computed(() => {
   const status = activeDelivery.value?.status;
@@ -992,6 +1048,34 @@ const deliveryRunning = computed(() => {
 const deliveryComplete = computed(() => {
   const status = activeDelivery.value?.status;
   return status === 'complete' || activeDelivery.value?.acceptance_recorded;
+});
+const deliveryActivity = computed(() => {
+  const run = activeDelivery.value;
+  const context = run?.context || {};
+  const note = context.status_note;
+  const jobMessage = run?.job?.message;
+  return note || jobMessage || '';
+});
+const deliveryActivityDetail = computed(() => {
+  const run = activeDelivery.value;
+  const context = run?.context || {};
+  return context.status_detail || run?.job?.detail || '';
+});
+const deliveryActivityTime = computed(() => {
+  const ts = activeDelivery.value?.context?.status_ts;
+  if (!ts) return '';
+  try {
+    const parsed = Date.parse(ts);
+    if (Number.isNaN(parsed)) return '';
+    return new Date(parsed).toLocaleString();
+  } catch (err) {
+    return '';
+  }
+});
+const deliveryPromptSnippet = computed(() => {
+  const prompt = activeDelivery.value?.prompt || '';
+  if (!prompt) return '';
+  return prompt.length > 160 ? `${prompt.slice(0, 160)}…` : prompt;
 });
 const deliveryProjectName = computed(() => {
   const projectId = activeDelivery.value?.project_id || deliveryForm.value.project_id;
@@ -1027,21 +1111,11 @@ const sortedDeliverySessions = computed(() => {
 const desktopWindowSessions = computed(() => {
   const sessions = sortedDeliverySessions.value;
   if (!sessions.length) return sessions;
-  if (performanceMode.value) return [];
-  const maxSessions = 8;
+  const maxSessions = performanceMode.value ? 5 : 10;
   return sessions.slice(0, maxSessions);
 });
 const hiddenDesktopSessionCount = computed(() => {
-  if (performanceMode.value) return 0;
   return Math.max(0, sortedDeliverySessions.value.length - desktopWindowSessions.value.length);
-});
-const focusedSession = computed(() => {
-  if (!focusedSessionId.value) return sortedDeliverySessions.value[0];
-  return sortedDeliverySessions.value.find((session: any) => session.id === focusedSessionId.value) || sortedDeliverySessions.value[0];
-});
-const focusedSessionLog = computed(() => {
-  if (!focusedSession.value?.id) return 'No output yet.';
-  return sessionLogText(focusedSession.value.id);
 });
 const desktopEmptyMessage = computed(() => {
   if (!activeDelivery.value?.id) {
@@ -1206,15 +1280,6 @@ async function refreshDelivery() {
         stopDeliveryPolling();
       }
     }
-    if (
-      desktopAutoInit.value &&
-      store.activeDeliveryRun?.id &&
-      deliveryRunning.value &&
-      !deliveryDesktopOpen.value
-    ) {
-      deliveryDesktopMinimized.value = true;
-      desktopAutoInit.value = false;
-    }
   } catch (err: any) {
     deliveryError.value = err?.message || 'Failed to load delivery status';
   } finally {
@@ -1239,11 +1304,6 @@ function startDeliveryPolling() {
 
 async function refreshSessionLogs() {
   if (!store.deliverySessions.length) return;
-  if (performanceMode.value) {
-    if (!focusedSession.value?.id) return;
-    await store.fetchDeliverySessionLogs(focusedSession.value.id, deliveryLogLimit.value);
-    return;
-  }
   const sessionIds = desktopWindowSessions.value.length
     ? desktopWindowSessions.value.map((session: any) => session.id)
     : sortedDeliverySessions.value.map((session: any) => session.id);
@@ -1255,7 +1315,6 @@ async function refreshSessionLogs() {
 
 async function openDeliveryDesktop(force = false) {
   if (!force && !activeDelivery.value?.id) return;
-  desktopAutoInit.value = false;
   if (desktopOpenTimer) {
     window.clearTimeout(desktopOpenTimer);
     desktopOpenTimer = null;
@@ -1263,11 +1322,14 @@ async function openDeliveryDesktop(force = false) {
   deliveryDesktopOpen.value = true;
   deliveryDesktopMinimized.value = false;
   desktopReady.value = false;
-  desktopLiveLogs.value = false;
+  desktopLiveLogs.value = true;
   await nextTick();
   desktopOpenTimer = window.setTimeout(() => {
     desktopReady.value = true;
-    desktopLiveLogs.value = !performanceMode.value;
+    if (activeDelivery.value?.id && desktopSeededRunId.value !== activeDelivery.value.id) {
+      scatterWindows();
+      desktopSeededRunId.value = activeDelivery.value.id;
+    }
   }, 200);
 }
 
@@ -1314,11 +1376,29 @@ function applyDesktopLayout(layout: 'free' | 'grid' | 'masonry' | 'cascade') {
   }
 }
 
+function scatterWindows() {
+  if (desktopLayout.value === 'grid' || desktopLayout.value === 'masonry') return;
+  const desktop = desktopRef.value;
+  const rect = desktop?.getBoundingClientRect();
+  const padding = 24;
+  const maxX = rect ? Math.max(padding, rect.width - 320) : 600;
+  const maxY = rect ? Math.max(padding, rect.height - 240) : 320;
+  const updated = { ...windowPositions.value };
+  desktopWindowSessions.value.forEach((session: any, idx: number) => {
+    updated[session.id] = {
+      x: Math.round(padding + Math.random() * Math.max(0, maxX - padding)),
+      y: Math.round(padding + Math.random() * Math.max(0, maxY - padding)),
+      z: 10 + idx,
+    };
+  });
+  windowPositions.value = updated;
+}
+
 function ensureWindowPositions() {
   const desktop = desktopRef.value;
   const rect = desktop?.getBoundingClientRect();
-  const maxX = rect ? Math.max(0, rect.width - 280) : 600;
-  const maxY = rect ? Math.max(0, rect.height - 220) : 320;
+  const maxX = rect ? Math.max(0, rect.width - 340) : 600;
+  const maxY = rect ? Math.max(0, rect.height - 260) : 320;
   const updated = { ...windowPositions.value };
   desktopWindowSessions.value.forEach((session: any, idx: number) => {
     if (!updated[session.id]) {
@@ -1352,6 +1432,7 @@ function bringToFront(sessionId: string) {
     ...windowPositions.value,
     [sessionId]: { ...current, z: maxZ + 1 },
   };
+  focusedSessionId.value = sessionId;
 }
 
 function startDrag(sessionId: string, event: PointerEvent) {
@@ -1449,10 +1530,28 @@ async function startDeliveryRun() {
     });
     store.activeDeliveryRun = run;
     deliveryStatusNote.value = 'Delivery run started.';
+    desktopSeededRunId.value = '';
+    windowPositions.value = {};
+    focusedSessionId.value = '';
     openDeliveryDesktop();
     await refreshDelivery();
   } catch (err: any) {
     deliveryError.value = err?.message || 'Failed to start delivery';
+  }
+}
+
+async function stopDeliveryRun() {
+  deliveryError.value = '';
+  if (!activeDelivery.value?.id) {
+    deliveryError.value = 'No active delivery run to stop.';
+    return;
+  }
+  try {
+    await store.stopDeliveryRun(activeDelivery.value.id);
+    deliveryStatusNote.value = 'Stop requested.';
+    await refreshDelivery();
+  } catch (err: any) {
+    deliveryError.value = err?.message || 'Failed to stop delivery';
   }
 }
 
@@ -1738,7 +1837,7 @@ function openAiConfirm() {
   confirmOpen.value = true;
 }
 
-function openPublish(project: any) {
+async function openPublish(project: any) {
   publishTarget.value = project;
   publishForm.value.message = `Update ${project.name}`;
   publishForm.value.repo_name = project.repo_url ? '' : (project.name || '').toLowerCase().replace(/[^a-z0-9-_]+/g, '-');
@@ -1746,6 +1845,13 @@ function openPublish(project: any) {
   publishError.value = '';
   publishStatus.value = '';
   stopPublishPolling();
+  if (!store.githubAccounts.length && !store.githubAccountLoading) {
+    try {
+      await store.loadGithubAccount();
+    } catch (err) {
+      // Ignore account refresh errors here; they surface on publish.
+    }
+  }
   publishOpen.value = true;
 }
 
@@ -1770,6 +1876,16 @@ function startPublishPolling(jobId: string) {
   }, 1500);
 }
 
+function formatAheadBehind(result: any) {
+  const ahead = Number.isFinite(result?.ahead) ? Number(result.ahead) : 0;
+  const behind = Number.isFinite(result?.behind) ? Number(result.behind) : 0;
+  if (!ahead && !behind) return '';
+  const parts = [];
+  if (ahead) parts.push(`ahead ${ahead}`);
+  if (behind) parts.push(`behind ${behind}`);
+  return ` (local ${parts.join(', ')})`;
+}
+
 async function pollPublishStatus(jobId: string) {
   try {
     const data = await store.fetchGithubPublishStatus(jobId);
@@ -1787,7 +1903,7 @@ async function pollPublishStatus(jobId: string) {
       const repoUrl = data?.result?.repo_url;
       if (resultStatus === 'no_changes') {
         const detail = data?.result?.detail || 'No changes to commit or push.';
-        publishStatus.value = `${detail}${branch ? ` (branch ${branch})` : ''}`;
+        publishStatus.value = `${detail}${formatAheadBehind(data?.result)}${branch ? ` (branch ${branch})` : ''}`;
       } else {
         const target = repoUrl || 'GitHub';
         publishStatus.value = `Pushed to ${target}${branch ? ` (branch ${branch})` : ''}.`;
@@ -1807,6 +1923,23 @@ async function runPublish() {
   if (!publishTarget.value?.id) return;
   publishError.value = '';
   publishStatus.value = 'Preparing push...';
+  if (!store.githubAccounts.length && !store.githubAccountLoading) {
+    try {
+      await store.loadGithubAccount();
+    } catch (err) {
+      // Ignore auto-load errors; we'll handle missing auth below.
+    }
+  }
+  if (githubTokenLocked.value) {
+    publishError.value =
+      'GitHub token is saved but cannot be unlocked. Re-enter the PAT under Import from GitHub → Accounts.';
+    return;
+  }
+  if (!githubConnected.value) {
+    publishError.value =
+      'No GitHub account connected. Add a PAT under Import from GitHub → Accounts, select it, and try again.';
+    return;
+  }
   const payload: Record<string, any> = {
     message: publishForm.value.message,
     repo_name: publishForm.value.repo_name || undefined,
@@ -1825,7 +1958,7 @@ async function runPublish() {
     }
     if (data?.status === 'no_changes') {
       const detail = data?.detail || 'No changes to commit or push.';
-      publishStatus.value = `${detail}${data?.branch ? ` (branch ${data.branch})` : ''}`;
+      publishStatus.value = `${detail}${formatAheadBehind(data)}${data?.branch ? ` (branch ${data.branch})` : ''}`;
     } else {
       const target = data?.repo_url || 'GitHub';
       publishStatus.value = `Pushed to ${target}${data?.branch ? ` (branch ${data.branch})` : ''}.`;
@@ -1904,6 +2037,10 @@ function formatTime(ts?: number | string | null) {
 .caption {
   color: rgba(229, 237, 255, 0.7);
   font-size: 0.85rem;
+}
+
+.caption.warn {
+  color: #f6b143;
 }
 
 .projects-panel {
@@ -2378,8 +2515,8 @@ function formatTime(ts?: number | string | null) {
   color: #e5edff;
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
-  padding: 0.8rem;
+  gap: 0.9rem;
+  padding: 0.9rem;
   position: relative;
   overflow: hidden;
 }
@@ -2416,23 +2553,36 @@ function formatTime(ts?: number | string | null) {
   pointer-events: none;
 }
 
-.desktop-header {
+.desktop-topbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 0.8rem;
   flex-wrap: wrap;
   position: relative;
   z-index: 1;
 }
 
-.desktop-title {
+.desktop-brand {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.desktop-actions {
+.topbar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.topbar-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.topbar-actions {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -2445,117 +2595,70 @@ function formatTime(ts?: number | string | null) {
   border: 1px solid rgba(126, 168, 255, 0.3);
   padding: 0.2rem;
   background: rgba(5, 12, 24, 0.8);
+  border-radius: 0;
 }
 
-.desktop-body {
+.desktop-shell {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr minmax(220px, 320px);
-  gap: 0.8rem;
+  grid-template-columns: 1fr minmax(240px, 360px);
+  gap: 0.9rem;
   min-height: 0;
   position: relative;
   z-index: 1;
 }
 
-.desktop-lite {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) 1fr;
-  gap: 0.6rem;
-  min-height: 0;
-}
-
-.lite-sessions,
-.lite-console {
-  border: 1px solid rgba(126, 168, 255, 0.25);
-  background: rgba(6, 12, 22, 0.9);
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.lite-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.6rem;
-  border-bottom: 1px solid rgba(126, 168, 255, 0.2);
-}
-
-.lite-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.5rem;
-  overflow-y: auto;
-}
-
-.lite-row {
-  border: 1px solid rgba(126, 168, 255, 0.2);
-  background: rgba(5, 10, 18, 0.7);
-  color: #e5edff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.4rem 0.5rem;
-  cursor: pointer;
-}
-
-.lite-row.active {
-  border-color: rgba(126, 168, 255, 0.7);
-  background: rgba(12, 24, 44, 0.85);
-}
-
-.lite-console .terminal-output {
-  padding: 0.6rem;
-  max-height: 100%;
-}
-
-.desktop-windows {
+.desktop-canvas {
   position: relative;
-  border: 1px solid rgba(126, 168, 255, 0.25);
-  background: rgba(5, 12, 24, 0.7);
+  border: 1px solid rgba(126, 168, 255, 0.3);
+  background: rgba(4, 10, 20, 0.85);
   overflow: hidden;
   min-height: 0;
+  border-radius: 0;
 }
 
-.desktop-windows.layout-grid {
+.desktop-canvas.layout-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.6rem;
-  padding: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.7rem;
+  padding: 0.7rem;
 }
 
-.desktop-windows.layout-masonry {
+.desktop-canvas.layout-masonry {
   column-count: 2;
-  column-gap: 0.6rem;
-  padding: 0.6rem;
+  column-gap: 0.7rem;
+  padding: 0.7rem;
 }
 
-.desktop-windows.layout-masonry .terminal-window {
+.desktop-canvas.layout-masonry .desktop-window {
   display: inline-block;
   width: 100%;
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.7rem;
 }
 
-.terminal-window {
-  width: 260px;
-  background: rgba(8, 14, 26, 0.95);
-  border: 1px solid rgba(126, 168, 255, 0.35);
+.desktop-window {
+  width: 320px;
+  background: rgba(6, 12, 22, 0.95);
+  border: 1px solid rgba(126, 168, 255, 0.45);
   position: absolute;
   display: flex;
   flex-direction: column;
-  min-height: 180px;
-  max-height: 360px;
-  box-shadow: 0 0 16px rgba(0, 0, 0, 0.35);
+  min-height: 200px;
+  max-height: 420px;
+  box-shadow: 0 18px 30px rgba(0, 0, 0, 0.45);
+  border-radius: 0;
 }
 
-.delivery-desktop.performance-mode .terminal-window {
+.desktop-window.active {
+  border-color: rgba(140, 196, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(140, 196, 255, 0.4), 0 18px 30px rgba(0, 0, 0, 0.45);
+}
+
+.delivery-desktop.performance-mode .desktop-window {
   box-shadow: none;
 }
 
-.terminal-window::after {
+.desktop-window::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2563,33 +2666,39 @@ function formatTime(ts?: number | string | null) {
   pointer-events: none;
 }
 
-.desktop-windows.layout-grid .terminal-window,
-.desktop-windows.layout-masonry .terminal-window {
+.desktop-canvas.layout-grid .desktop-window,
+.desktop-canvas.layout-masonry .desktop-window {
   position: static;
   width: 100%;
   max-height: none;
 }
 
-.terminal-header {
+.window-titlebar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.4rem 0.6rem;
-  background: rgba(12, 20, 36, 0.95);
+  padding: 0.45rem 0.6rem;
+  background: rgba(10, 18, 32, 0.95);
   border-bottom: 1px solid rgba(126, 168, 255, 0.25);
   cursor: grab;
   user-select: none;
 }
 
-.terminal-meta {
+.window-title {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   font-size: 0.9rem;
 }
 
-.terminal-title {
+.window-name {
   font-weight: 600;
+}
+
+.window-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .role-dot {
@@ -2599,47 +2708,47 @@ function formatTime(ts?: number | string | null) {
   display: inline-block;
 }
 
-.terminal-window.role-orchestrator .role-dot {
+.desktop-window.role-orchestrator .role-dot {
   background: #7fb0ff;
 }
 
-.terminal-window.role-orchestrator {
+.desktop-window.role-orchestrator {
   border-color: rgba(127, 176, 255, 0.6);
 }
 
-.terminal-window.role-pm .role-dot {
+.desktop-window.role-pm .role-dot {
   background: #f6b143;
 }
 
-.terminal-window.role-pm {
+.desktop-window.role-pm {
   border-color: rgba(246, 177, 67, 0.55);
 }
 
-.terminal-window.role-integrator .role-dot {
+.desktop-window.role-integrator .role-dot {
   background: #34d399;
 }
 
-.terminal-window.role-integrator {
+.desktop-window.role-integrator {
   border-color: rgba(52, 211, 153, 0.55);
 }
 
-.terminal-window.role-dev .role-dot {
+.desktop-window.role-dev .role-dot {
   background: #9db9ff;
 }
 
-.terminal-window.role-dev {
+.desktop-window.role-dev {
   border-color: rgba(157, 185, 255, 0.55);
 }
 
-.terminal-window.role-qa .role-dot {
+.desktop-window.role-qa .role-dot {
   background: #ff5a5f;
 }
 
-.terminal-window.role-qa {
+.desktop-window.role-qa {
   border-color: rgba(255, 90, 95, 0.6);
 }
 
-.terminal-body {
+.window-body {
   flex: 1;
   padding: 0.5rem;
   overflow: hidden;
@@ -2654,27 +2763,52 @@ function formatTime(ts?: number | string | null) {
   overflow-y: auto;
 }
 
-.desktop-sidebar {
+.desktop-panels {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
   min-height: 0;
 }
 
-.sidebar-card {
+.desktop-module {
   border: 1px solid rgba(126, 168, 255, 0.3);
   background: rgba(6, 12, 22, 0.85);
   padding: 0.6rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.5rem;
   min-height: 0;
+  border-radius: 0;
 }
 
-.sidebar-head {
+.module-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.module-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.module-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.module-row.stacked {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.module-actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
 }
 
@@ -2771,6 +2905,7 @@ function formatTime(ts?: number | string | null) {
   gap: 0.15rem;
   cursor: pointer;
   z-index: 4000;
+  border-radius: 0;
 }
 
 @keyframes scanline {
@@ -2786,16 +2921,13 @@ function formatTime(ts?: number | string | null) {
   .branddozer {
     grid-template-columns: 1fr;
   }
-  .desktop-body {
+  .desktop-shell {
     grid-template-columns: 1fr;
   }
-  .desktop-lite {
-    grid-template-columns: 1fr;
-  }
-  .desktop-windows {
+  .desktop-canvas {
     min-height: 320px;
   }
-  .desktop-windows.layout-masonry {
+  .desktop-canvas.layout-masonry {
     column-count: 1;
   }
 }

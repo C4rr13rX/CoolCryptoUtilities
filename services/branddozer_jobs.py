@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Dict, Iterable, Optional
 
 from django.db import connection, transaction
 from django.utils import timezone
 
-from branddozer.models import BackgroundJob, BrandProject, DeliveryRun
+from branddozer.models import BackgroundJob, BrandProject, DeliveryProject, DeliveryRun
 
 
 JOB_TERMINAL_STATUSES = {"completed", "error", "canceled"}
@@ -125,3 +126,36 @@ def fail_job(job: BackgroundJob, *, error: str, message: Optional[str] = None, d
         job.detail = detail
     job.completed_at = timezone.now()
     job.save(update_fields=["status", "error", "message", "detail", "completed_at", "updated_at"])
+
+
+def cancel_stale_jobs(*, stale_seconds: int, kinds: Optional[Iterable[str]] = None) -> int:
+    if stale_seconds <= 0:
+        return 0
+    cutoff = timezone.now() - timedelta(seconds=stale_seconds)
+    qs = BackgroundJob.objects.filter(status__in=["queued", "running"], updated_at__lt=cutoff)
+    if kinds:
+        qs = qs.filter(kind__in=list(kinds))
+    count = 0
+    for job in qs:
+        detail = f"Last update: {job.updated_at.isoformat() if job.updated_at else 'unknown'}"
+        update_job(str(job.id), status="canceled", message="Canceled stale job", detail=detail)
+        if job.run and job.run.status in {"queued", "running"}:
+            run = job.run
+            context = dict(run.context or {})
+            context["stop_requested"] = True
+            context["status_note"] = "Canceled stale job"
+            context["status_detail"] = detail
+            context["status_ts"] = timezone.now().isoformat()
+            run.context = context
+            run.status = "blocked"
+            run.phase = "stopped"
+            run.error = "Canceled stale job"
+            run.completed_at = timezone.now()
+            run.save(update_fields=["context", "status", "phase", "error", "completed_at"])
+            delivery_project = DeliveryProject.objects.filter(project=run.project).first()
+            if delivery_project:
+                delivery_project.status = "blocked"
+                delivery_project.active_run = run
+                delivery_project.save(update_fields=["status", "active_run", "updated_at"])
+        count += 1
+    return count

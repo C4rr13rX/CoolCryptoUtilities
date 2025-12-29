@@ -2457,16 +2457,27 @@ class MarketDataStream:
         if self._rest_outage_active() or self._network_outage_blocks_rest():
             return
         base, quote = self._rest_base, self._rest_quote
+        total_attempted = 0
+        total_network_errors = 0
+        non_network_response = False
+        outage_reason: Optional[str] = None
+        outage_endpoint: Optional[str] = None
         for endpoint in self._ranked_endpoints():
             if self._endpoint_backoff_until.get(endpoint.name, 0.0) > time.time():
                 continue
             result = await self._fetch_rest_price(endpoint, base, quote)
+            if result.error == "unavailable":
+                continue
+            total_attempted += 1
             if result.error in {"dns", "network", "timeout"}:
-                self._register_rest_outage(reason=result.error, endpoint=endpoint.name)
-                self._register_network_outage(reason=result.error, endpoint=endpoint.name, source="rest")
+                total_network_errors += 1
+                if outage_reason is None or result.error == "dns":
+                    outage_reason = result.error
+                    outage_endpoint = endpoint.name
                 continue
-            if result.error in {"rate_limited_local", "unavailable"}:
+            if result.error == "rate_limited_local":
                 continue
+            non_network_response = True
             if result.error:
                 self._record_endpoint_failure(endpoint.name)
                 self._clear_network_outage_if_rest()
@@ -2500,6 +2511,16 @@ class MarketDataStream:
                 details={"price": consensus, "symbol": self.symbol},
             )
             return
+        outage_detected = total_attempted > 0 and total_network_errors == total_attempted
+        if outage_detected:
+            self._register_rest_outage(reason=outage_reason or "network", endpoint=outage_endpoint)
+            self._register_network_outage(
+                reason=outage_reason or "network",
+                endpoint=outage_endpoint,
+                source="rest",
+            )
+        elif non_network_response:
+            self._clear_network_outage_if_rest()
         if self.reference_price is None:
             snapshot_price = self._load_snapshot_reference()
             if snapshot_price:

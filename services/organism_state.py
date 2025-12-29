@@ -237,6 +237,7 @@ def _prepare_pipeline(bot: Any) -> Dict[str, Any]:
             "horizon_weight_mean": _safe_float(dataset_meta.get("horizon_weight_mean", 0.0)),
             "horizon_weight_min": _safe_float(dataset_meta.get("horizon_weight_min", 0.0)),
             "horizon_weight_max": _safe_float(dataset_meta.get("horizon_weight_max", 0.0)),
+            "lookahead_median_sec": _safe_float(dataset_meta.get("lookahead_median_sec", 0.0)),
             "horizon_deficit": _sanitize(dataset_meta.get("horizon_deficit", {})),
             "horizon_profile": _sanitize(dataset_meta.get("horizon_profile", {})),
         }

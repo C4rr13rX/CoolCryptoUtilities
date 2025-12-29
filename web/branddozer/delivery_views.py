@@ -14,10 +14,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from services.branddozer_delivery import delivery_orchestrator
-from services.branddozer_jobs import enqueue_job
+from services.branddozer_jobs import enqueue_job, job_payload, update_job
 from branddozer.models import (
     AcceptanceRecord,
     BacklogItem,
+    BackgroundJob,
+    DeliveryProject,
     DeliveryArtifact,
     DeliveryRun,
     DeliverySession,
@@ -66,6 +68,7 @@ def _run_payload(run: DeliveryRun) -> Dict[str, Any]:
         "acceptance_required": run.acceptance_required,
         "acceptance_recorded": run.acceptance_recorded,
         "definition_of_done": run.definition_of_done,
+        "context": run.context,
         "error": run.error,
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
@@ -104,6 +107,8 @@ class DeliveryRunListView(APIView):
             payload={"mode": mode},
             message="Queued",
         )
+        run.context = {**(run.context or {}), "job_id": str(job.id)}
+        run.save(update_fields=["context"])
         return Response({"run": _run_payload(run), "job_id": str(job.id)}, status=status.HTTP_201_CREATED)
 
 
@@ -114,6 +119,37 @@ class DeliveryRunDetailView(APIView):
         run = DeliveryRun.objects.filter(id=run_id).first()
         if not run:
             return Response({"detail": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
+        job = BackgroundJob.objects.filter(run=run).order_by("-created_at").first()
+        payload = _run_payload(run)
+        payload["job"] = job_payload(job) if job else None
+        return Response({"run": payload}, status=status.HTTP_200_OK)
+
+
+class DeliveryRunStopView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, run_id: str, *args, **kwargs) -> Response:
+        run = DeliveryRun.objects.filter(id=run_id).first()
+        if not run:
+            return Response({"detail": "Run not found"}, status=status.HTTP_404_NOT_FOUND)
+        context = dict(run.context or {})
+        context["stop_requested"] = True
+        context["status_note"] = "Stopped"
+        context["status_detail"] = "Stopped by user"
+        run.context = context
+        run.status = "blocked"
+        run.phase = "stopped"
+        run.error = "Stopped by user"
+        run.completed_at = timezone.now()
+        run.save(update_fields=["context", "status", "phase", "error", "completed_at"])
+        delivery_project = DeliveryProject.objects.filter(project=run.project).first()
+        if delivery_project:
+            delivery_project.status = "blocked"
+            delivery_project.active_run = run
+            delivery_project.save(update_fields=["status", "active_run", "updated_at"])
+        job = BackgroundJob.objects.filter(run=run).order_by("-created_at").first()
+        if job and job.status in {"queued", "running"}:
+            update_job(str(job.id), status="canceled", message="Canceled by user", detail="Delivery run stopped")
         return Response({"run": _run_payload(run)}, status=status.HTTP_200_OK)
 
 
@@ -195,6 +231,7 @@ class DeliveryRunSessionView(APIView):
                     "status": session.status,
                     "workspace_path": session.workspace_path,
                     "log_path": session.log_path,
+                    "last_heartbeat": session.last_heartbeat.isoformat() if session.last_heartbeat else None,
                     "created_at": session.created_at.isoformat(),
                     "completed_at": session.completed_at.isoformat() if session.completed_at else None,
                 }

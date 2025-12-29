@@ -22,6 +22,7 @@ urlpatterns = [
     path("projects/interjections/preview/", views.ProjectInterjectionPreviewView.as_view(), name="project-interjections-preview"),
     path("delivery/runs/", delivery_views.DeliveryRunListView.as_view(), name="delivery-runs"),
     path("delivery/runs/<str:run_id>/", delivery_views.DeliveryRunDetailView.as_view(), name="delivery-run"),
+    path("delivery/runs/<str:run_id>/stop/", delivery_views.DeliveryRunStopView.as_view(), name="delivery-run-stop"),
     path("delivery/runs/<str:run_id>/backlog/", delivery_views.DeliveryRunBacklogView.as_view(), name="delivery-backlog"),
     path("delivery/backlog/<str:item_id>/", delivery_views.DeliveryBacklogItemView.as_view(), name="delivery-backlog-item"),
     path("delivery/runs/<str:run_id>/gates/", delivery_views.DeliveryRunGateView.as_view(), name="delivery-gates"),

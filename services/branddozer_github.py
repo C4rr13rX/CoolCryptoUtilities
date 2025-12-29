@@ -209,7 +209,15 @@ def list_github_accounts(user) -> Dict[str, Any]:
         _set_active_account_id(user, active_id)
     annotated = []
     for acc in accounts:
-        annotated.append({**acc, "has_token": _account_has_token(user, acc["id"])})
+        has_token = _account_has_token(user, acc["id"])
+        token_value = _get_account_token(user, acc["id"], reveal_token=True) if has_token else None
+        annotated.append(
+            {
+                **acc,
+                "has_token": has_token,
+                "token_locked": bool(has_token and not token_value),
+            }
+        )
     active = next((acc for acc in annotated if acc["id"] == active_id), None)
     return {"accounts": annotated, "active_id": active_id, "active_account": active}
 

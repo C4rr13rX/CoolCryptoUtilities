@@ -19,6 +19,7 @@ from django.utils import timezone
 
 from tools.codex_session import CodexSession, codex_default_settings
 from services.branddozer_ui import capture_ui_screenshots
+from services.branddozer_jobs import update_job
 from branddozer.models import (
     AcceptanceRecord,
     BacklogItem,
@@ -104,6 +105,29 @@ def _append_session_log(session: DeliverySession, message: str) -> None:
         session.save(update_fields=["last_heartbeat"])
     except Exception:
         pass
+
+
+class StopDelivery(Exception):
+    pass
+
+
+def _set_run_note(run: DeliveryRun, note: str, detail: str = "") -> None:
+    context = dict(run.context or {})
+    context["status_note"] = note
+    context["status_detail"] = detail
+    context["status_ts"] = timezone.now().isoformat()
+    run.context = context
+    run.save(update_fields=["context"])
+    job_id = context.get("job_id")
+    if job_id:
+        update_job(str(job_id), message=note, detail=detail)
+
+
+def _stop_requested(run: DeliveryRun) -> bool:
+    run.refresh_from_db(fields=["status", "context"])
+    if run.status in {"blocked", "error"}:
+        return True
+    return bool((run.context or {}).get("stop_requested"))
 
 
 def _read_meminfo() -> Dict[str, int]:
@@ -508,6 +532,13 @@ class DeliveryOrchestrator:
         self._lock = threading.Lock()
         self._threads: Dict[str, threading.Thread] = {}
 
+    def _check_stop(self, run: DeliveryRun, session: Optional[DeliverySession], note: str = "Stop requested.") -> None:
+        if _stop_requested(run):
+            if session:
+                _append_session_log(session, note)
+            _set_run_note(run, "Stop requested", note)
+            raise StopDelivery(note)
+
     def create_run(self, project_id: str, prompt: str, mode: str = "auto") -> DeliveryRun:
         project = BrandDozerProjectLookup.get_project(project_id)
         delivery_project, _ = DeliveryProject.objects.get_or_create(project=project, defaults={"definition_of_done": DEFAULT_DOD})
@@ -559,48 +590,74 @@ class DeliveryOrchestrator:
         )
         _append_session_log(orchestrator_session, f"Run {run.id} started for {project.name}.")
         try:
+            _set_run_note(run, "Starting delivery run", f"Project: {project.name}")
             run.status = "running"
             run.started_at = timezone.now()
             run.phase = "mode_detection"
             run.save(update_fields=["status", "started_at", "phase"])
             _append_session_log(orchestrator_session, "Detecting start mode.")
+            _set_run_note(run, "Detecting start mode")
+            self._check_stop(run, orchestrator_session)
 
             mode = self._detect_mode(run.mode, root)
             run.mode = mode
             run.save(update_fields=["mode"])
             _append_session_log(orchestrator_session, f"Mode: {mode}.")
+            _set_run_note(run, f"Mode: {mode}")
+            self._check_stop(run, orchestrator_session)
 
             if mode == "existing":
                 _append_session_log(orchestrator_session, "Running baseline review.")
+                _set_run_note(run, "Baseline review", "Running baseline gates and repo scan")
                 self._baseline_review(run, root)
+                self._check_stop(run, orchestrator_session)
 
             _append_session_log(orchestrator_session, "Generating governance artifacts.")
+            _set_run_note(run, "Governance", "Generating PMP artifacts")
             self._governance_step(run, root)
+            self._check_stop(run, orchestrator_session)
             _append_session_log(orchestrator_session, "Generating requirements.")
+            _set_run_note(run, "Requirements", "Formalizing functional and non-functional scope")
             self._requirements_step(run, root)
+            self._check_stop(run, orchestrator_session)
             _append_session_log(orchestrator_session, "Generating blueprint.")
+            _set_run_note(run, "Blueprint", "Preparing architecture and UX flows")
             self._blueprint_step(run, root)
+            self._check_stop(run, orchestrator_session)
             _append_session_log(orchestrator_session, "Building backlog and sprint.")
+            _set_run_note(run, "Backlog", "Preparing sprint plan")
             backlog_items = self._backlog_step(run, root)
             sprint = self._sprint_plan(run, backlog_items, goal="Initial delivery sprint")
             _append_session_log(orchestrator_session, "Executing sprint.")
+            _set_run_note(run, "Execution", "Running sprint tasks")
             self._execution_loop(run, root, sprint)
+            self._check_stop(run, orchestrator_session)
             self._remediation_loop(run, root, orchestrator_session)
 
             if self._dod_satisfied(run):
                 _append_session_log(orchestrator_session, "Definition of Done satisfied. Preparing release candidate.")
+                _set_run_note(run, "Release", "Preparing release candidate")
                 self._release_step(run, root)
                 run.status = "awaiting_acceptance" if run.acceptance_required else "complete"
                 run.phase = "awaiting_acceptance"
+                _set_run_note(run, "Awaiting acceptance", "Ready for user sign-off")
             else:
                 _append_session_log(orchestrator_session, "Definition of Done not satisfied. Blocking run.")
                 run.status = "blocked"
                 run.phase = "gates"
+                _set_run_note(run, "Blocked", "Definition of Done not satisfied")
+        except StopDelivery as exc:
+            run.status = "blocked"
+            run.phase = "stopped"
+            run.error = str(exc)
+            _append_session_log(orchestrator_session, f"Stopped: {exc}")
+            _set_run_note(run, "Stopped", str(exc))
         except Exception as exc:
             run.status = "error"
             run.phase = "gates"
             run.error = str(exc)
             _append_session_log(orchestrator_session, f"Error: {exc}")
+            _set_run_note(run, "Error", str(exc))
         run.completed_at = timezone.now()
         run.save(update_fields=["status", "phase", "completed_at", "error"])
         delivery_project = DeliveryProject.objects.filter(project=project).first()
@@ -630,6 +687,7 @@ class DeliveryOrchestrator:
     def _baseline_review(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "baseline_review"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Baseline review", "Inspecting repo and running gates")
         repo_info = _repo_structure(root)
         deps = _requirements_snapshot(root)
         baseline_data = {
@@ -681,6 +739,7 @@ class DeliveryOrchestrator:
     def _governance_step(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "governance"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Governance", "Preparing PMP artifacts")
         pm_session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -691,6 +750,7 @@ class DeliveryOrchestrator:
             last_heartbeat=timezone.now(),
         )
         _append_session_log(pm_session, "Generating project charter.")
+        _set_run_note(run, "Governance", "Generating project charter")
         charter_content, charter_data = self._codex_or_template(
             run,
             root,
@@ -708,6 +768,7 @@ class DeliveryOrchestrator:
             data=charter_data,
         )
         _append_session_log(pm_session, "Generating WBS.")
+        _set_run_note(run, "Governance", "Generating WBS")
         wbs_content, wbs_data = self._codex_or_template(run, root, "Generate WBS JSON.", "wbs", session=pm_session)
         GovernanceArtifact.objects.create(
             project=run.project,
@@ -719,6 +780,7 @@ class DeliveryOrchestrator:
             data=wbs_data,
         )
         _append_session_log(pm_session, "Generating quality plan.")
+        _set_run_note(run, "Governance", "Generating quality plan")
         quality_content, quality_data = self._codex_or_template(
             run, root, "Generate quality management plan JSON.", "quality_plan", session=pm_session
         )
@@ -732,6 +794,7 @@ class DeliveryOrchestrator:
             data=quality_data,
         )
         _append_session_log(pm_session, "Generating release criteria.")
+        _set_run_note(run, "Governance", "Generating release criteria")
         release_content, release_data = self._codex_or_template(
             run, root, "Generate release criteria JSON.", "release_criteria", session=pm_session
         )
@@ -765,6 +828,7 @@ class DeliveryOrchestrator:
                 status="proposed",
             )
         _append_session_log(pm_session, "Governance artifacts ready.")
+        _set_run_note(run, "Governance", "Artifacts ready")
         pm_session.status = "done"
         pm_session.completed_at = timezone.now()
         pm_session.save(update_fields=["status", "completed_at"])
@@ -772,6 +836,7 @@ class DeliveryOrchestrator:
     def _requirements_step(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "requirements"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Requirements", "Capturing functional and non-functional scope")
         prompt = (
             "Generate JSON requirements with keys: functional, non_functional, constraints, assumptions, out_of_scope. "
             "Use the user prompt and baseline findings if any."
@@ -790,6 +855,7 @@ class DeliveryOrchestrator:
     def _blueprint_step(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "blueprint"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Blueprint", "Generating architecture and UX flows")
         prompt = (
             "Generate JSON blueprint with keys: architecture, data_flows, threat_model, data_model, api_contracts, "
             "ux_flows, accessibility_targets, as_is, to_be."
@@ -808,6 +874,7 @@ class DeliveryOrchestrator:
     def _backlog_step(self, run: DeliveryRun, root: Path) -> List[BacklogItem]:
         run.phase = "backlog"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Backlog", "Generating backlog items and estimates")
         prompt = (
             "Generate JSON backlog with list of items. Each item has: kind, title, description, "
             "acceptance_criteria, priority, estimate_points, dependencies."
@@ -1008,6 +1075,12 @@ class DeliveryOrchestrator:
             meta={"note": "Integration uses canonical workspace"},
         )
         _append_session_log(session, f"Integrator session started. Parallelism: {parallelism}.")
+        if _stop_requested(run):
+            _append_session_log(session, "Stop requested. Halting sprint execution.")
+            session.status = "blocked"
+            session.completed_at = timezone.now()
+            session.save(update_fields=["status", "completed_at"])
+            raise StopDelivery("Stop requested")
 
         sprint_items = list(sprint.items.select_related("backlog_item"))
         sprint_item_map = {item.backlog_item.id: item for item in sprint_items}
@@ -1016,6 +1089,12 @@ class DeliveryOrchestrator:
             _append_session_log(session, "No sprint items ready for execution.")
         else:
             for backlog_item in backlog_queue:
+                if _stop_requested(run):
+                    _append_session_log(session, "Stop requested. Skipping remaining tasks.")
+                    session.status = "blocked"
+                    session.completed_at = timezone.now()
+                    session.save(update_fields=["status", "completed_at"])
+                    raise StopDelivery("Stop requested")
                 backlog_item.status = "in_progress"
                 backlog_item.save(update_fields=["status", "updated_at"])
                 sprint_item = sprint_item_map.get(backlog_item.id)
@@ -1035,6 +1114,12 @@ class DeliveryOrchestrator:
                 for future in as_completed(futures):
                     backlog_item, diff_text, error = future.result()
                     sprint_item = sprint_item_map.get(backlog_item.id)
+                    if _stop_requested(run):
+                        _append_session_log(session, "Stop requested. Deferring remaining task integration.")
+                        session.status = "blocked"
+                        session.completed_at = timezone.now()
+                        session.save(update_fields=["status", "completed_at"])
+                        raise StopDelivery("Stop requested")
                     if error:
                         backlog_item.status = "blocked"
                         if sprint_item:
@@ -1117,6 +1202,8 @@ class DeliveryOrchestrator:
         session.status = "done"
         session.completed_at = timezone.now()
         session.save(update_fields=["status", "completed_at"])
+        if _stop_requested(run):
+            raise StopDelivery("Stop requested")
         self._gate_stage(run, root)
         sprint.status = "review"
         sprint.save(update_fields=["status"])
@@ -1188,6 +1275,9 @@ class DeliveryOrchestrator:
 
     def _remediation_loop(self, run: DeliveryRun, root: Path, orchestrator_session: DeliverySession) -> None:
         for cycle in range(MAX_REMEDIATION_CYCLES):
+            if _stop_requested(run):
+                _append_session_log(orchestrator_session, "Stop requested. Halting remediation.")
+                raise StopDelivery("Stop requested")
             if self._dod_satisfied(run):
                 return
             open_items = list(BacklogItem.objects.filter(run=run).exclude(status="done").order_by("priority"))
@@ -1292,6 +1382,7 @@ class DeliveryOrchestrator:
     def _gate_stage(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "gates"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Gates", "Running quality checks")
         runner = GateRunner(run, root)
         for gate in default_gates(root):
             result = runner.run_gate(gate)
@@ -1337,6 +1428,7 @@ class DeliveryOrchestrator:
         flag = (os.getenv("BRANDDOZER_UI_CAPTURE") or "1").strip().lower()
         if flag in {"0", "false", "no", "off"}:
             return
+        _set_run_note(run, "UI Evidence", "Capturing UI snapshots")
         codex_settings = codex_default_settings()
         session = DeliverySession.objects.create(
             project=run.project,
@@ -1524,6 +1616,7 @@ class DeliveryOrchestrator:
     def _release_step(self, run: DeliveryRun, root: Path) -> None:
         run.phase = "release"
         run.save(update_fields=["phase"])
+        _set_run_note(run, "Release", "Generating release candidate artifacts")
         version = f"rc-{run.id.hex[:8]}"
         ReleaseCandidate.objects.create(
             project=run.project,

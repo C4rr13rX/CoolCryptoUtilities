@@ -12,7 +12,7 @@ from django.utils import timezone
 from branddozer.models import DeliveryRun
 from branddozer import views as branddozer_views
 from services.branddozer_delivery import delivery_orchestrator
-from services.branddozer_jobs import claim_next_job, complete_job, fail_job, update_job
+from services.branddozer_jobs import cancel_stale_jobs, claim_next_job, complete_job, fail_job, update_job
 
 
 class Command(BaseCommand):
@@ -42,8 +42,12 @@ class Command(BaseCommand):
         idle_sleep = float(options["idle_sleep"] or 1.5)
         kinds = options.get("types") or None
         run_once = bool(options.get("once"))
+        stale_seconds = int(os.getenv("BRANDDOZER_STALE_JOB_SEC", "7200"))
 
         self.stdout.write(self.style.HTTP_INFO(f"BrandDozer worker {worker_id} starting..."))
+        canceled = cancel_stale_jobs(stale_seconds=stale_seconds, kinds=kinds)
+        if canceled:
+            self.stdout.write(self.style.WARNING(f"Canceled {canceled} stale BrandDozer job(s)."))
 
         while True:
             close_old_connections()
@@ -92,10 +96,19 @@ class Command(BaseCommand):
             if not run:
                 fail_job(job, error="Delivery run not found", message="Delivery run failed")
                 return
+            run.refresh_from_db(fields=["status", "context"])
+            if (run.context or {}).get("stop_requested"):
+                run.status = "blocked"
+                run.phase = "stopped"
+                run.error = "Stopped by user"
+                run.completed_at = timezone.now()
+                run.save(update_fields=["status", "phase", "error", "completed_at"])
+                complete_job(job, message="Delivery run stopped", result={"run_status": run.status})
+                return
             if not (run.prompt or "").strip():
                 run.status = "error"
                 run.error = "Missing prompt. Delivery run aborted."
-                run.save(update_fields=["status", "error", "updated_at"])
+                run.save(update_fields=["status", "error"])
                 fail_job(job, error=run.error, message="Delivery run failed")
                 return
             if run.status in {"complete", "blocked", "awaiting_acceptance", "error"}:

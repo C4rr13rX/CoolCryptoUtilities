@@ -31,6 +31,7 @@ import {
   fetchBrandDeliveryGovernance,
   fetchBrandDeliverySprints,
   acceptBrandDeliveryRun,
+  stopBrandDeliveryRun,
 } from '@/api';
 
 interface BrandProject {
@@ -128,7 +129,8 @@ export const useBrandDozerStore = defineStore('branddozer', {
         payload?.active_account ||
         this.githubAccounts.find((account: any) => account.id === this.githubActiveAccountId) ||
         null;
-      this.githubConnected = Boolean(this.githubActiveAccount?.has_token);
+      const tokenLocked = Boolean(this.githubActiveAccount?.token_locked);
+      this.githubConnected = Boolean(this.githubActiveAccount?.has_token && !tokenLocked);
       this.githubHasToken = Boolean(this.githubActiveAccount?.has_token);
       this.githubUsername = this.githubActiveAccount?.username || '';
       this.githubProfile = payload?.profile || this.githubProfile;
@@ -349,6 +351,11 @@ export const useBrandDozerStore = defineStore('branddozer', {
     },
     async acceptDeliveryRun(runId: string, payload: { notes?: string; checklist?: string[] }) {
       const data = await acceptBrandDeliveryRun(runId, payload);
+      this.activeDeliveryRun = data.run || null;
+      return this.activeDeliveryRun;
+    },
+    async stopDeliveryRun(runId: string) {
+      const data = await stopBrandDeliveryRun(runId);
       this.activeDeliveryRun = data.run || null;
       return this.activeDeliveryRun;
     },

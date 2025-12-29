@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from urllib.parse import quote, urlparse
 
 from rest_framework import status
@@ -79,7 +79,10 @@ def _run_publish_job(job_id: str, user: Any, project_id: str, data: Dict[str, An
     close_old_connections()
     try:
         _update_publish_job(job_id, status="running", message="Pushing to GitHub")
-        result = _publish_github_project(user, project_id, data)
+        def _progress(message: str, detail: str = "") -> None:
+            _update_publish_job(job_id, status="running", message=message, detail=detail)
+
+        result = _publish_github_project(user, project_id, data, progress=_progress)
         _update_publish_job(
             job_id,
             status="completed",
@@ -236,10 +239,23 @@ def _git_commit_all(path: Path, message: str) -> bool:
     return True
 
 
-def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+def _publish_github_project(
+    user: Any,
+    project_id: str,
+    data: Dict[str, Any],
+    progress: Optional[Callable[[str, str], None]] = None,
+) -> Dict[str, Any]:
     project = get_project(project_id)
     if not project:
         raise ValueError("Not found")
+    def _step(message: str, detail: str = "") -> None:
+        if not progress:
+            return
+        try:
+            progress(message, detail)
+        except Exception:
+            return
+
     commit_message = (data.get("message") or "Update from BrandDozer").strip()
     account_id = data.get("account_id") or data.get("github_account_id")
     private = bool(data.get("private", True))
@@ -251,6 +267,7 @@ def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) ->
     if shutil.which("git") is None:
         raise ValueError("Git is not available on the server")
 
+    _step("Loading GitHub account")
     try:
         account = (
             get_github_account(user, account_id, reveal_token=True)
@@ -259,8 +276,17 @@ def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) ->
         )
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
-    if not account or not account.token:
-        if account and account.has_token:
+    if not account:
+        accounts_payload = list_github_accounts(user)
+        if accounts_payload.get("accounts"):
+            raise ValueError(
+                "No active GitHub account selected. Choose an account under Import from GitHub → Accounts, then try again."
+            )
+        raise ValueError(
+            "No GitHub account connected. Add a personal access token under Import from GitHub → Accounts, then try again."
+        )
+    if not account.token:
+        if account.has_token:
             raise ValueError(
                 "GitHub token could not be unlocked. Re-enter the token under Import from GitHub → Accounts to re-save it."
             )
@@ -278,6 +304,7 @@ def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) ->
         except ValueError:
             username = username or "branddozer"
 
+    _step("Preparing repository")
     if not _is_git_repo(root):
         init = _run_git(["init"], cwd=root, timeout=30)
         if init.returncode != 0:
@@ -294,6 +321,7 @@ def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) ->
             if remote_add.returncode != 0:
                 raise ValueError(remote_add.stderr.strip() or "Failed to add origin remote")
         else:
+            _step("Creating repository on GitHub")
             if not repo_name:
                 repo_name = slugify(root.name) or "branddozer-project"
             try:
@@ -315,14 +343,23 @@ def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) ->
     if branch:
         _run_git(["checkout", "-B", branch], cwd=root, timeout=10)
 
+    clean_origin = _strip_auth_from_url(_https_remote_from_any(origin))
+    token_url = _with_token_url(clean_origin, token)
+    ahead_behind: Optional[Dict[str, int]] = None
+    try:
+        _git_fetch_with_token(root, token_url=token_url, restore_url=clean_origin)
+        ahead_behind = _git_ahead_behind(root, branch)
+    except Exception:
+        ahead_behind = None
+
+    _step("Committing changes")
     try:
         committed = _git_commit_all(root, commit_message)
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
 
-    clean_origin = _strip_auth_from_url(_https_remote_from_any(origin))
-    token_url = _with_token_url(clean_origin, token)
-    push = _run_git(["push", "-u", token_url, branch], cwd=root, timeout=300)
+    _step("Pushing to GitHub")
+    push = _run_git(["push", "-u", token_url, branch], cwd=root, timeout=_GIT_TIMEOUT)
     if push.returncode != 0:
         message = push.stderr.strip() or "Failed to push to GitHub"
         lowered = message.lower()
@@ -334,10 +371,50 @@ def _publish_github_project(user: Any, project_id: str, data: Dict[str, Any]) ->
     update_project_fields(project_id, {"repo_url": repo_url or clean_origin, "repo_branch": branch})
     output = f"{push.stdout}\n{push.stderr}".lower()
     if "everything up-to-date" in output or "everything up to date" in output:
-        return {"status": "no_changes", "detail": "No changes to commit or push.", "repo_url": repo_url or clean_origin, "branch": branch}
+        detail = "No changes to commit or push."
+        if ahead_behind:
+            detail = f"{detail} Local ahead: {ahead_behind['ahead']}, behind: {ahead_behind['behind']}."
+        return {
+            "status": "no_changes",
+            "detail": detail,
+            "repo_url": repo_url or clean_origin,
+            "branch": branch,
+            "ahead": ahead_behind["ahead"] if ahead_behind else None,
+            "behind": ahead_behind["behind"] if ahead_behind else None,
+        }
     if not committed:
-        return {"status": "pushed", "detail": "Pushed existing commits.", "repo_url": repo_url or clean_origin, "branch": branch}
-    return {"status": "pushed", "repo_url": repo_url or clean_origin, "branch": branch}
+        return {
+            "status": "pushed",
+            "detail": "Pushed existing commits.",
+            "repo_url": repo_url or clean_origin,
+            "branch": branch,
+            "ahead": ahead_behind["ahead"] if ahead_behind else None,
+            "behind": ahead_behind["behind"] if ahead_behind else None,
+        }
+    return {
+        "status": "pushed",
+        "repo_url": repo_url or clean_origin,
+        "branch": branch,
+        "ahead": ahead_behind["ahead"] if ahead_behind else None,
+        "behind": ahead_behind["behind"] if ahead_behind else None,
+    }
+
+
+def _git_ahead_behind(path: Path, branch: str) -> Optional[Dict[str, int]]:
+    if not branch:
+        return None
+    result = _run_git(["rev-list", "--left-right", "--count", f"origin/{branch}...{branch}"], cwd=path, timeout=10)
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.strip().split()
+    if len(parts) < 2:
+        return None
+    try:
+        behind = int(parts[0])
+        ahead = int(parts[1])
+    except ValueError:
+        return None
+    return {"ahead": ahead, "behind": behind}
 
 
 def _git_fetch_with_token(path: Path, *, token_url: Optional[str], restore_url: Optional[str]) -> None:

@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from trading.pipeline import TrainingPipeline
+
+
+def test_horizon_forecast_uses_profile() -> None:
+    pipeline = TrainingPipeline.__new__(TrainingPipeline)
+    pipeline._last_dataset_meta = {
+        "horizon_profile": {
+            "300": {"mean_return": 0.01, "positive_ratio": 0.6, "samples": 120},
+            "2592000": {"mean_return": 0.05, "positive_ratio": 0.55, "samples": 80},
+        },
+        "lookahead_median_sec": 300,
+    }
+    pipeline._last_sample_meta = {"records": [{"lookahead_sec": 300}, {"lookahead_sec": 300}]}
+
+    forecast = TrainingPipeline.horizon_forecast(pipeline, predicted_return=0.02, current_price=200.0)
+
+    assert forecast["base_lookahead_sec"] == 300
+    horizon_map = forecast["forecast"]
+    assert "5m" in horizon_map
+    assert "1mth" in horizon_map
+    assert horizon_map["5m"]["price"] > 0
