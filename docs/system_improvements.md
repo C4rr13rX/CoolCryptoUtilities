@@ -53,5 +53,9 @@ The following upgrades align with the health report requirements (accuracy acros
     - Validation: run `pytest tests/test_data_stream.py -k ws_disabled`.
 
 13. Early stopping for CPU training
-    - Add `TRAIN_EARLY_STOP` (plus patience/min-delta tuning) so candidate training halts once loss plateaus, keeping the i5 CPU budget under control without sacrificing calibration.
-    - Validation: run `pytest tests/test_lab_preview.py`.
+   - Add `TRAIN_EARLY_STOP` (plus patience/min-delta tuning) so candidate training halts once loss plateaus, keeping the i5 CPU budget under control without sacrificing calibration.
+   - Validation: run `pytest tests/test_lab_preview.py`.
+
+14. DNS outage domain guard
+   - Add `NETWORK_OUTAGE_BLOCK_REST_SAME_DOMAIN=1` to optionally pause REST polling when a websocket DNS outage affects all REST hosts on the same domain.
+   - Validation: run `pytest tests/test_data_stream.py -k same_domain`.

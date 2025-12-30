@@ -1262,7 +1262,7 @@ class DeliveryOrchestrator:
             "improvements": improvements,
         }
         sprint.retrospective = json.dumps(data, indent=2)
-        sprint.save(update_fields=["retrospective", "updated_at"])
+        sprint.save(update_fields=["retrospective"])
         GovernanceArtifact.objects.create(
             project=run.project,
             run=run,
@@ -1444,7 +1444,7 @@ class DeliveryOrchestrator:
             **(session.meta or {}),
             "codex": {k: v for k, v in codex_settings.items() if k != "bypass_sandbox_confirm"},
         }
-        session.save(update_fields=["meta", "updated_at"])
+        session.save(update_fields=["meta"])
         _append_session_log(session, "Capturing UI screenshots.")
         output_dir = Path("runtime/branddozer/ui") / str(run.id) / str(session.id)
         start_ts = time.time()

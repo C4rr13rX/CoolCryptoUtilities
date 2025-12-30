@@ -518,9 +518,22 @@
                 </div>
               </div>
               <div class="window-body" @pointerdown="bringToFront(session.id)">
-                <pre class="terminal-output" :ref="setLogRef(session.id)">
-{{ desktopLiveLogs ? sessionLogText(session.id) : 'Logs paused. Click Resume Logs to continue.' }}
-                </pre>
+                <q-virtual-scroll
+                  :items="sessionLogLines(session.id)"
+                  :virtual-scroll-item-size="18"
+                  class="terminal-output"
+                  :ref="setLogRef(session.id)"
+                >
+                  <template v-slot="{ item }">
+                    <div class="terminal-line">{{ item }}</div>
+                  </template>
+                </q-virtual-scroll>
+                <div v-if="!sessionLogLines(session.id).length" class="terminal-empty">
+                  No output yet.
+                </div>
+                <div v-if="!desktopLiveLogs" class="terminal-paused">
+                  Live updates paused. Click Resume Logs to continue.
+                </div>
               </div>
             </div>
             <div v-if="hiddenDesktopSessionCount" class="desktop-empty">
@@ -805,16 +818,19 @@ let deliveryTimer: number | null = null;
 let deliveryPollActive = false;
 const deliveryRefreshing = ref(false);
 let lastSessionLogFetch = 0;
+const deliveryLogWorker = ref<Worker | null>(null);
+const workerActive = ref(false);
 let deliveryPollTick = 0;
 const performanceMode = ref(true);
 const pageVisible = ref(true);
 const deliveryPollIntervalMs = computed(() => (performanceMode.value ? 12000 : 5000));
 const deliveryLogIntervalMs = computed(() => (performanceMode.value ? 15000 : 6000));
 const deliveryLogLimit = computed(() => (performanceMode.value ? 80 : 120));
-const sessionLogMaxLines = computed(() => (performanceMode.value ? 50 : 80));
-const sessionLogMaxChars = computed(() => (performanceMode.value ? 320 : 500));
 const consoleLogMaxLines = computed(() => (performanceMode.value ? 80 : 120));
 const consoleLogMaxChars = computed(() => (performanceMode.value ? 320 : 500));
+const logWorkerIntervalMs = computed(() => (performanceMode.value ? 5000 : 2500));
+const logWorkerMaxBytes = computed(() => (performanceMode.value ? 160000 : 320000));
+const logWorkerConcurrency = computed(() => (performanceMode.value ? 2 : 4));
 
 let logTimer: number | null = null;
 let importTimer: number | null = null;
@@ -828,7 +844,7 @@ const focusedSessionId = ref('');
 const desktopRef = ref<HTMLElement | null>(null);
 const windowPositions = ref<Record<string, { x: number; y: number; z: number }>>({});
 const dragState = ref<{ id: string; offsetX: number; offsetY: number } | null>(null);
-const logRefs = ref<Record<string, HTMLElement | null>>({});
+const logRefs = ref<Record<string, any>>({});
 const screenshotOpen = ref(false);
 const selectedScreenshot = ref<any | null>(null);
 let visibilityHandler: (() => void) | null = null;
@@ -842,11 +858,15 @@ onMounted(async () => {
       stopLogTimer();
       stopDeliveryPolling();
       desktopLiveLogs.value = false;
+      stopLogWorker();
       return;
     }
     startLogTimer();
     if (deliveryRunning.value) {
       startDeliveryPolling();
+    }
+    if (deliveryDesktopOpen.value && desktopLiveLogs.value) {
+      startLogWorker();
     }
   };
   document.addEventListener('visibilitychange', visibilityHandler);
@@ -887,6 +907,11 @@ onBeforeUnmount(() => {
     document.removeEventListener('visibilitychange', visibilityHandler);
   }
   stopDrag();
+  stopLogWorker();
+  if (deliveryLogWorker.value) {
+    deliveryLogWorker.value.terminate();
+    deliveryLogWorker.value = null;
+  }
 });
 
 watch(selectedId, () => {
@@ -941,6 +966,9 @@ watch(
         cascadeWindows();
       }
     });
+    if (workerActive.value) {
+      updateLogWorkerSessions();
+    }
   },
 );
 
@@ -951,9 +979,10 @@ watch(
       return;
     }
     nextTick(() => {
-      Object.entries(logRefs.value).forEach(([sessionId, el]) => {
-        if (el && store.deliverySessionLogs[sessionId]) {
-          el.scrollTop = el.scrollHeight;
+      Object.entries(logRefs.value).forEach(([sessionId, list]) => {
+        const lines = store.deliverySessionLogs[sessionId];
+        if (list?.scrollTo && lines?.length) {
+          list.scrollTo(lines.length - 1);
         }
       });
     });
@@ -997,6 +1026,25 @@ watch(
         cascadeWindows();
       }
     });
+    if (workerActive.value) {
+      updateLogWorkerSessions();
+    }
+  },
+);
+
+watch(
+  () => desktopRunId.value,
+  (nextId, prevId) => {
+    if (nextId && nextId !== prevId) {
+      store.resetDeliverySessionLogs();
+      resetLogWorker(nextId);
+      if (desktopLiveLogs.value) {
+        startLogWorker();
+      }
+    }
+    if (!nextId) {
+      stopLogWorker();
+    }
   },
 );
 
@@ -1041,6 +1089,7 @@ const githubConnectionLabel = computed(() => {
 });
 const githubConnectionTone = computed(() => (githubConnected.value ? 'ok' : 'warn'));
 const activeDelivery = computed(() => store.activeDeliveryRun);
+const desktopRunId = computed(() => activeDelivery.value?.id || '');
 const deliveryRunning = computed(() => {
   const status = activeDelivery.value?.status;
   return status === 'running' || status === 'queued';
@@ -1108,15 +1157,8 @@ const sortedDeliverySessions = computed(() => {
     return (a.created_at || "").localeCompare(b.created_at || "");
   });
 });
-const desktopWindowSessions = computed(() => {
-  const sessions = sortedDeliverySessions.value;
-  if (!sessions.length) return sessions;
-  const maxSessions = performanceMode.value ? 5 : 10;
-  return sessions.slice(0, maxSessions);
-});
-const hiddenDesktopSessionCount = computed(() => {
-  return Math.max(0, sortedDeliverySessions.value.length - desktopWindowSessions.value.length);
-});
+const desktopWindowSessions = computed(() => sortedDeliverySessions.value);
+const hiddenDesktopSessionCount = computed(() => 0);
 const desktopEmptyMessage = computed(() => {
   if (!activeDelivery.value?.id) {
     return 'No delivery run selected. Start one to see sessions.';
@@ -1269,9 +1311,9 @@ async function refreshDelivery() {
       }
       await Promise.all(tasks);
       const now = Date.now();
-      if (deliveryDesktopOpen.value && desktopLiveLogs.value && now - lastSessionLogFetch >= deliveryLogIntervalMs.value) {
+      if (desktopLiveLogs.value && desktopRunId.value && now - lastSessionLogFetch >= deliveryLogIntervalMs.value) {
         lastSessionLogFetch = now;
-        await refreshSessionLogs();
+        updateLogWorkerSessions();
       }
       if (deliveryRunning.value && !deliveryPollActive && pageVisible.value) {
         startDeliveryPolling();
@@ -1313,6 +1355,51 @@ async function refreshSessionLogs() {
   );
 }
 
+function ensureLogWorker() {
+  if (deliveryLogWorker.value) return;
+  deliveryLogWorker.value = new Worker(new URL('../workers/deliveryLogs.worker.ts', import.meta.url), { type: 'module' });
+  deliveryLogWorker.value.onmessage = (event: MessageEvent<any>) => {
+    const payload = event.data || {};
+    if (payload.type === 'logs' && payload.sessionId) {
+      store.appendDeliverySessionLogs(payload.sessionId, payload.lines || [], payload.cursor, payload.reset);
+    }
+  };
+}
+
+function logWorkerConfig() {
+  return {
+    intervalMs: logWorkerIntervalMs.value,
+    maxBytes: logWorkerMaxBytes.value,
+    concurrency: logWorkerConcurrency.value,
+    runId: desktopRunId.value,
+  };
+}
+
+function startLogWorker() {
+  if (!desktopRunId.value || !desktopLiveLogs.value) return;
+  ensureLogWorker();
+  const sessions = store.deliverySessions.map((session: any) => ({ id: session.id }));
+  deliveryLogWorker.value?.postMessage({ type: 'start', sessions, config: logWorkerConfig() });
+  workerActive.value = true;
+}
+
+function updateLogWorkerSessions() {
+  if (!workerActive.value || !deliveryLogWorker.value) return;
+  const sessions = store.deliverySessions.map((session: any) => ({ id: session.id }));
+  deliveryLogWorker.value.postMessage({ type: 'update', sessions, config: logWorkerConfig() });
+}
+
+function stopLogWorker() {
+  if (!deliveryLogWorker.value) return;
+  deliveryLogWorker.value.postMessage({ type: 'stop' });
+  workerActive.value = false;
+}
+
+function resetLogWorker(runId: string) {
+  if (!deliveryLogWorker.value) return;
+  deliveryLogWorker.value.postMessage({ type: 'reset', runId });
+}
+
 async function openDeliveryDesktop(force = false) {
   if (!force && !activeDelivery.value?.id) return;
   if (desktopOpenTimer) {
@@ -1324,6 +1411,7 @@ async function openDeliveryDesktop(force = false) {
   desktopReady.value = false;
   desktopLiveLogs.value = true;
   await nextTick();
+  startLogWorker();
   desktopOpenTimer = window.setTimeout(() => {
     desktopReady.value = true;
     if (activeDelivery.value?.id && desktopSeededRunId.value !== activeDelivery.value.id) {
@@ -1341,6 +1429,7 @@ function minimizeDeliveryDesktop() {
   deliveryDesktopOpen.value = false;
   deliveryDesktopMinimized.value = true;
   desktopLiveLogs.value = false;
+  stopLogWorker();
 }
 
 function restoreDeliveryDesktop() {
@@ -1349,6 +1438,9 @@ function restoreDeliveryDesktop() {
   if (!desktopReady.value) {
     desktopReady.value = true;
   }
+  if (desktopLiveLogs.value) {
+    startLogWorker();
+  }
 }
 
 function closeDeliveryDesktop() {
@@ -1356,6 +1448,7 @@ function closeDeliveryDesktop() {
   deliveryDesktopMinimized.value = false;
   desktopLiveLogs.value = false;
   desktopReady.value = false;
+  stopLogWorker();
   if (desktopOpenTimer) {
     window.clearTimeout(desktopOpenTimer);
     desktopOpenTimer = null;
@@ -1365,7 +1458,9 @@ function closeDeliveryDesktop() {
 function toggleDesktopLogs() {
   desktopLiveLogs.value = !desktopLiveLogs.value;
   if (desktopLiveLogs.value) {
-    refreshSessionLogs();
+    startLogWorker();
+  } else {
+    stopLogWorker();
   }
 }
 
@@ -1486,29 +1581,23 @@ function getWindowStyle(sessionId: string) {
 }
 
 function setLogRef(sessionId: string) {
-  return (el: HTMLElement | null) => {
+  return (el: any | null) => {
     logRefs.value = { ...logRefs.value, [sessionId]: el };
   };
 }
 
-function sessionLogText(sessionId: string) {
-  const lines = store.deliverySessionLogs[sessionId];
-  if (!lines || !lines.length) {
-    return 'No output yet.';
-  }
-  const trimmed = lines.slice(-sessionLogMaxLines.value).map((line) => {
-    if (line.length > sessionLogMaxChars.value) {
-      return `${line.slice(0, sessionLogMaxChars.value)}...`;
-    }
-    return line;
-  });
-  return trimmed.join('\n');
+function sessionLogLines(sessionId: string) {
+  return store.deliverySessionLogs[sessionId] || [];
 }
 
 function focusSession(sessionId: string) {
   focusedSessionId.value = sessionId;
   if (desktopLiveLogs.value) {
-    refreshSessionLogs();
+    if (workerActive.value) {
+      updateLogWorkerSessions();
+    } else {
+      refreshSessionLogs();
+    }
   }
 }
 
@@ -1533,6 +1622,8 @@ async function startDeliveryRun() {
     desktopSeededRunId.value = '';
     windowPositions.value = {};
     focusedSessionId.value = '';
+    store.resetDeliverySessionLogs();
+    resetLogWorker(run?.id || '');
     openDeliveryDesktop();
     await refreshDelivery();
   } catch (err: any) {
@@ -2752,15 +2843,33 @@ function formatTime(ts?: number | string | null) {
   flex: 1;
   padding: 0.5rem;
   overflow: hidden;
+  position: relative;
 }
 
 .terminal-output {
-  white-space: pre-wrap;
+  height: 100%;
+  flex: 1;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.78rem;
   color: #dbeafe;
-  max-height: 100%;
-  overflow-y: auto;
+}
+
+.terminal-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-empty,
+.terminal-paused {
+  position: absolute;
+  bottom: 0.6rem;
+  left: 0.6rem;
+  right: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  background: rgba(6, 12, 22, 0.8);
+  border: 1px solid rgba(126, 168, 255, 0.2);
+  font-size: 0.75rem;
+  color: rgba(229, 237, 255, 0.6);
 }
 
 .desktop-panels {

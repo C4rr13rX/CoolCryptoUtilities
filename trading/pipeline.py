@@ -1590,6 +1590,12 @@ class TrainingPipeline:
             if not isinstance(stats, dict):
                 stats = {}
             horizon_entries.append((horizon_sec, stats))
+        try:
+            bias_map = dict(getattr(self, "_horizon_bias", {}) or {})
+        except Exception:
+            bias_map = {}
+        short_cutoff = 30 * 60
+        mid_cutoff = 24 * 3600
         forecasts: Dict[str, Any] = {}
         for horizon_sec, stats in sorted(horizon_entries, key=lambda entry: entry[0]):
             mean_return = float(stats.get("mean_return", 0.0))
@@ -1598,6 +1604,19 @@ class TrainingPipeline:
             else:
                 ratio = math.sqrt(max(horizon_sec, 1) / max(base_sec, 1))
             ratio = max(0.25, min(6.0, ratio))
+            if horizon_sec <= short_cutoff:
+                bucket = "short"
+            elif horizon_sec <= mid_cutoff:
+                bucket = "mid"
+            else:
+                bucket = "long"
+            try:
+                bias = float(bias_map.get(bucket, 1.0))
+            except (TypeError, ValueError):
+                bias = 1.0
+            if not math.isfinite(bias) or bias <= 0:
+                bias = 1.0
+            ratio *= max(0.5, min(2.0, bias))
             horizon_return = float(predicted_return) * ratio
             entry: Dict[str, Any] = {
                 "return": horizon_return,

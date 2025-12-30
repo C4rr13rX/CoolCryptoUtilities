@@ -249,6 +249,28 @@ def test_endpoint_failure_applies_backoff(monkeypatch):
     assert stream._endpoint_backoff_until[target_endpoint] > base_time
 
 
+def test_endpoint_network_failure_applies_backoff(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    target_endpoint = next(iter(stream._endpoint_scores))
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._record_endpoint_network_failure(target_endpoint, reason="dns")
+    assert stream._endpoint_network_backoff_until[target_endpoint] > base_time
+    eligible = {endpoint.name for endpoint in stream._eligible_rest_endpoints()}
+    assert target_endpoint not in eligible
+
+
+def test_endpoint_network_backoff_clears_on_success(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    target_endpoint = next(iter(stream._endpoint_scores))
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._record_endpoint_network_failure(target_endpoint, reason="network")
+    stream._record_endpoint_success(target_endpoint, price=123.0, consensus=123.0)
+    assert target_endpoint not in stream._endpoint_network_backoff_until
+    assert stream._endpoint_network_failures.get(target_endpoint, 0) == 0
+
+
 def test_websocket_backoff_sets_cooldown(monkeypatch):
     stream = MarketDataStream(symbol="WETH-USDC")
     stream._endpoint_backoff_until.clear()
@@ -281,6 +303,57 @@ def test_rest_only_mode_expires(monkeypatch):
     stream._rest_only_last_check = base_time - stream._rest_only_retry - 1.0
     assert stream._rest_only_active(base_time) is False
     assert stream._rest_only_mode is False
+
+
+def test_dns_ws_error_skips_rest_only_mode(monkeypatch):
+    monkeypatch.setenv("REST_ONLY_WS_FAILURES", "1")
+    stream = MarketDataStream(symbol="WETH-USDC")
+    stream.url = "wss://example.com/ws"
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    key = ConnectionKey(
+        host="stream.binance.com",
+        port=9443,
+        is_ssl=True,
+        ssl=None,
+        proxy=None,
+        proxy_auth=None,
+        proxy_headers_hash=None,
+    )
+    dns_error = aiohttp.ClientConnectorDNSError(
+        key,
+        socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution"),
+    )
+    called = {"rest": 0, "refresh": 0}
+
+    async def fake_poll(_: float) -> None:
+        called["rest"] += 1
+        stream._stop_event.set()
+
+    async def fake_refresh() -> None:
+        called["refresh"] += 1
+
+    async def fake_ws() -> None:
+        raise dns_error
+
+    async def fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(stream, "_poll_rest_data", fake_poll)
+    monkeypatch.setattr(stream, "_refresh_reference_price", fake_refresh)
+    monkeypatch.setattr(stream, "_consume_ws", fake_ws)
+    monkeypatch.setattr("trading.data_stream.asyncio.sleep", fast_sleep)
+
+    async def runner() -> None:
+        try:
+            await stream.start()
+        finally:
+            await stream.stop()
+
+    asyncio.run(runner())
+    assert stream._rest_only_mode is False
+    assert stream._rest_only_failures == 0
+    assert called["rest"] >= 1
 
 
 def test_classify_network_error_handles_dns_errno():
@@ -401,6 +474,18 @@ def test_network_outage_allows_rest_same_domain_subdomain(monkeypatch):
     assert stream._network_outage_blocks_rest(base_time) is False
 
 
+def test_network_outage_blocks_rest_same_domain_when_env_enabled(monkeypatch):
+    monkeypatch.setenv("NETWORK_OUTAGE_BLOCK_REST_ON_DNS", "1")
+    monkeypatch.setenv("NETWORK_OUTAGE_BLOCK_REST_SAME_DOMAIN", "1")
+    stream = MarketDataStream(symbol="WETH-USDC")
+    _restrict_endpoints(stream, {"binance"})
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._register_network_outage(reason="dns", endpoint="binance", source="websocket")
+    assert stream._network_outage_block_rest is True
+    assert stream._network_outage_blocks_rest(base_time) is True
+
+
 def test_network_outage_allows_rest_with_alternate_domains(monkeypatch):
     monkeypatch.setenv("NETWORK_OUTAGE_BLOCK_REST_ON_DNS", "1")
     stream = MarketDataStream(symbol="WETH-USDC")
@@ -410,6 +495,16 @@ def test_network_outage_allows_rest_with_alternate_domains(monkeypatch):
     stream._register_network_outage(reason="dns", endpoint="binance", source="websocket")
     assert stream._network_outage_block_rest is False
     assert stream._network_outage_blocks_rest(base_time) is False
+
+
+def test_dns_outage_skips_rest_endpoints_on_ws_domain(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    _restrict_endpoints(stream, {"binance"})
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._register_network_outage(reason="dns", endpoint="binance", source="websocket")
+    eligible = {endpoint.name for endpoint in stream._eligible_rest_endpoints()}
+    assert "binance" not in eligible
 
 
 def test_websocket_outage_keeps_rest_fallback(monkeypatch):
@@ -445,6 +540,67 @@ def test_websocket_outage_keeps_rest_fallback(monkeypatch):
     asyncio.run(runner())
     assert called["rest"] >= 1
     assert called["refresh"] >= 1
+
+
+def test_rest_outage_allows_websocket_attempt(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._network_outage_until = base_time + 60.0
+    stream._network_outage_source = "rest"
+    stream._network_outage_reason = "dns"
+    stream._network_outage_endpoint = "kucoin"
+    stream.url = "wss://example.com/ws"
+    called = {"rest": 0, "refresh": 0, "ws": 0}
+
+    async def fake_poll(duration: float) -> None:
+        called["rest"] += 1
+        stream._stop_event.set()
+
+    async def fake_refresh() -> None:
+        called["refresh"] += 1
+
+    async def fake_ws() -> None:
+        called["ws"] += 1
+        stream._stop_event.set()
+
+    async def fast_sleep(_: float) -> None:
+        return None
+
+    monkeypatch.setattr(stream, "_poll_rest_data", fake_poll)
+    monkeypatch.setattr(stream, "_refresh_reference_price", fake_refresh)
+    monkeypatch.setattr(stream, "_consume_ws", fake_ws)
+    monkeypatch.setattr("trading.data_stream.asyncio.sleep", fast_sleep)
+
+    async def runner() -> None:
+        try:
+            await stream.start()
+        finally:
+            await stream.stop()
+
+    asyncio.run(runner())
+    assert called["ws"] >= 1
+    assert called["rest"] == 0
+
+
+def test_rest_outage_does_not_override_websocket_outage(monkeypatch):
+    stream = MarketDataStream(symbol="WETH-USDC")
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._register_network_outage(reason="dns", endpoint="binance", source="websocket")
+    expected_source = stream._network_outage_source
+    expected_reason = stream._network_outage_reason
+    expected_endpoint = stream._network_outage_endpoint
+    expected_block_rest = stream._network_outage_block_rest
+    expected_until = stream._network_outage_until
+
+    stream._register_network_outage(reason="dns", endpoint="kucoin", source="rest")
+
+    assert stream._network_outage_source == expected_source
+    assert stream._network_outage_reason == expected_reason
+    assert stream._network_outage_endpoint == expected_endpoint
+    assert stream._network_outage_block_rest == expected_block_rest
+    assert stream._network_outage_until >= expected_until
 
 
 def test_rest_success_does_not_clear_websocket_outage(monkeypatch):
@@ -509,6 +665,27 @@ def test_refresh_reference_price_registers_outage_on_all_network_failures(monkey
     assert stream._network_outage_failures == 1
     assert stream._network_outage_source == "rest"
     assert stream._network_outage_reason == "dns"
+
+
+def test_refresh_reference_price_uses_snapshot_during_outage(monkeypatch, tmp_path):
+    snapshot_path = tmp_path / "market_snapshots.json"
+    snapshot_path.write_text(
+        json.dumps({"data": [{"symbol": "WETH-USDC", "price_usd": 2500.0}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LOCAL_MARKET_CACHE", str(snapshot_path))
+    stream = MarketDataStream(symbol="WETH-USDC")
+    stream._http_session = SimpleNamespace()
+    base_time = time.time()
+    monkeypatch.setattr("trading.data_stream.time.time", lambda: base_time)
+    stream._network_outage_until = base_time + 60.0
+    stream._network_outage_source = "rest"
+    stream._network_outage_reason = "dns"
+    stream._network_outage_block_rest = True
+
+    asyncio.run(stream._refresh_reference_price())
+
+    assert stream.reference_price == 2500.0
 
 
 def test_ws_disabled_env_uses_rest_fallback(monkeypatch):

@@ -78,6 +78,7 @@ interface BrandDozerState {
   deliveryGates: any[];
   deliverySessions: any[];
   deliverySessionLogs: Record<string, string[]>;
+  deliverySessionCursors: Record<string, number>;
   deliveryArtifacts: any[];
   uiCaptureLoading: boolean;
   deliveryGovernance: any[];
@@ -113,6 +114,7 @@ export const useBrandDozerStore = defineStore('branddozer', {
     deliveryGates: [],
     deliverySessions: [],
     deliverySessionLogs: {},
+    deliverySessionCursors: {},
     deliveryArtifacts: [],
     uiCaptureLoading: false,
     deliveryGovernance: [],
@@ -324,6 +326,28 @@ export const useBrandDozerStore = defineStore('branddozer', {
         [sessionId]: nextLines,
       };
       return nextLines;
+    },
+    resetDeliverySessionLogs() {
+      this.deliverySessionLogs = {};
+      this.deliverySessionCursors = {};
+    },
+    appendDeliverySessionLogs(sessionId: string, lines: string[], cursor?: number, reset = false) {
+      const safeLines = Array.isArray(lines) ? lines : [];
+      if (!safeLines.length && !reset) {
+        if (typeof cursor === 'number') {
+          this.deliverySessionCursors = { ...this.deliverySessionCursors, [sessionId]: cursor };
+        }
+        return;
+      }
+      const existing = reset ? [] : this.deliverySessionLogs[sessionId] || [];
+      const merged = existing.concat(safeLines);
+      this.deliverySessionLogs = {
+        ...this.deliverySessionLogs,
+        [sessionId]: merged,
+      };
+      if (typeof cursor === 'number') {
+        this.deliverySessionCursors = { ...this.deliverySessionCursors, [sessionId]: cursor };
+      }
     },
     async fetchDeliveryArtifacts(runId: string) {
       const data = await fetchBrandDeliveryArtifacts(runId);

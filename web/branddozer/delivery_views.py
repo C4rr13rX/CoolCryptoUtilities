@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from pathlib import Path
 import mimetypes
@@ -40,6 +40,29 @@ def _tail_log(path: Path, limit: int = 200) -> List[str]:
     except Exception:
         return []
     return [line.rstrip("\n") for line in lines[-limit:]]
+
+
+def _read_log_from(path: Path, cursor: int, max_bytes: int = 200000) -> Tuple[List[str], int, bool]:
+    if not path.exists():
+        return [], cursor, False
+    try:
+        with path.open("rb") as handle:
+            handle.seek(max(cursor, 0))
+            data = handle.read(max_bytes)
+    except Exception:
+        return [], cursor, False
+    if not data:
+        return [], cursor, False
+    last_newline = data.rfind(b"\n")
+    if last_newline == -1:
+        text = data.decode("utf-8", errors="ignore")
+        return [text.rstrip("\n")], cursor + len(data), False
+    chunk = data[: last_newline + 1]
+    new_cursor = cursor + last_newline + 1
+    text = chunk.decode("utf-8", errors="ignore")
+    lines = [line.rstrip("\n") for line in text.splitlines()]
+    has_more = len(data) > last_newline + 1
+    return lines, new_cursor, has_more
 
 
 def _safe_runtime_file(path: str) -> Path | None:
@@ -249,6 +272,22 @@ class DeliverySessionLogView(APIView):
         if not session:
             return Response({"detail": "Session not found"}, status=status.HTTP_404_NOT_FOUND)
         path = Path(session.log_path or "")
+        cursor_param = request.query_params.get("cursor")
+        max_bytes = request.query_params.get("max_bytes")
+        if cursor_param is not None:
+            try:
+                cursor = int(cursor_param)
+            except (TypeError, ValueError):
+                cursor = 0
+            try:
+                max_bytes_value = int(max_bytes) if max_bytes else 200000
+            except (TypeError, ValueError):
+                max_bytes_value = 200000
+            lines, next_cursor, has_more = _read_log_from(path, cursor, max_bytes=max_bytes_value) if session.log_path else ([], cursor, False)
+            return Response(
+                {"lines": lines, "status": session.status, "cursor": next_cursor, "has_more": has_more},
+                status=status.HTTP_200_OK,
+            )
         lines = _tail_log(path, limit=limit) if session.log_path else []
         return Response({"lines": lines, "status": session.status}, status=status.HTTP_200_OK)
 
