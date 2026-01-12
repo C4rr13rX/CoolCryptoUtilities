@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-import re
+import os
 import json
+import re
+import shutil
+import subprocess
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 import requests
 from django.db import transaction
+from django.utils.text import slugify
 
+from services.branddozer_state import get_project, update_project_fields
 from securevault.models import SecureSetting
 from services.secure_settings import decrypt_secret, encrypt_secret
 
@@ -473,3 +480,363 @@ def create_github_repo(
         "html_url": data.get("html_url"),
         "private": data.get("private"),
     }
+
+
+_GIT_TIMEOUT = 900
+
+
+def _normalize_repo_full_name(raw_path: str) -> str:
+    cleaned = raw_path.strip().rstrip("/")
+    if cleaned.lower().endswith(".git"):
+        cleaned = cleaned[:-4]
+    segments = [segment for segment in cleaned.split("/") if segment]
+    if len(segments) >= 2:
+        return f"{segments[-2]}/{segments[-1]}"
+    return ""
+
+
+def _infer_full_name_from_url(repo_url: str) -> str:
+    parsed_repo = urlparse(repo_url if "://" in repo_url else f"https://{repo_url}")
+    return _normalize_repo_full_name(parsed_repo.path)
+
+
+def _github_permission_help() -> str:
+    return (
+        "Ensure the selected GitHub account has access to the repository and the token includes `repo` "
+        "(or `public_repo`) scope. If the account uses SSO or org permissions, approve the token under "
+        "GitHub → Settings → Developer settings → Personal access tokens."
+    )
+
+
+def _git_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no"
+    return env
+
+
+def _run_git(args: List[str], cwd: Optional[Path] = None, timeout: int = _GIT_TIMEOUT) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd) if cwd else None,
+        capture_output=True,
+        text=True,
+        env=_git_env(),
+        timeout=timeout,
+    )
+
+
+def _is_git_repo(path: Path) -> bool:
+    result = _run_git(["rev-parse", "--is-inside-work-tree"], cwd=path, timeout=10)
+    return result.returncode == 0
+
+
+def _git_is_repo(path: Path) -> bool:
+    return _is_git_repo(path)
+
+
+def _strip_auth_from_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    if "@" not in parsed.netloc:
+        return parsed.geturl()
+    netloc = parsed.netloc.split("@", 1)[1]
+    return parsed._replace(netloc=netloc).geturl()
+
+
+def _repo_full_name_from_remote(raw_url: str) -> str:
+    if raw_url.startswith("git@") and ":" in raw_url:
+        path = raw_url.split(":", 1)[1]
+        return _normalize_repo_full_name(path)
+    parsed = urlparse(raw_url if "://" in raw_url else f"https://{raw_url}")
+    return _normalize_repo_full_name(parsed.path)
+
+
+def _https_remote_from_any(raw_url: str) -> str:
+    if not raw_url:
+        return ""
+    if raw_url.startswith("git@") and ":" in raw_url:
+        path = raw_url.split(":", 1)[1]
+        return f"https://github.com/{_normalize_repo_full_name(path)}.git"
+    parsed = urlparse(raw_url if "://" in raw_url else f"https://{raw_url}")
+    if parsed.scheme and parsed.netloc:
+        return parsed.geturl()
+    return f"https://github.com/{_normalize_repo_full_name(parsed.path)}.git"
+
+
+def _git_current_branch(path: Path) -> str:
+    result = _run_git(["symbolic-ref", "--short", "HEAD"], cwd=path, timeout=10)
+    if result.returncode == 0:
+        branch = result.stdout.strip()
+        if branch:
+            return branch
+    result = _run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd=path, timeout=10)
+    if result.returncode == 0:
+        origin_head = result.stdout.strip()
+        if origin_head.startswith("origin/"):
+            return origin_head.split("/", 1)[1]
+    return ""
+
+
+def _git_remote_origin(path: Path) -> Optional[str]:
+    result = _run_git(["remote", "get-url", "origin"], cwd=path, timeout=10)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _git_has_identity(path: Path) -> bool:
+    name = _run_git(["config", "--get", "user.name"], cwd=path, timeout=5)
+    email = _run_git(["config", "--get", "user.email"], cwd=path, timeout=5)
+    return bool(name.stdout.strip() and email.stdout.strip())
+
+
+def _ensure_git_identity(path: Path, username: str) -> None:
+    if _git_has_identity(path):
+        return
+    safe_user = username or "branddozer"
+    email = f"{safe_user}@users.noreply.github.com"
+    _run_git(["config", "user.name", safe_user], cwd=path, timeout=5)
+    _run_git(["config", "user.email", email], cwd=path, timeout=5)
+
+
+def _with_token_url(remote_url: str, token: str) -> str:
+    parsed = urlparse(remote_url)
+    if not parsed.scheme:
+        parsed = urlparse(f"https://{remote_url}")
+    if parsed.scheme in {"http", "https"}:
+        safe_netloc = f"{quote(token, safe='')}@{parsed.netloc}"
+        return parsed._replace(netloc=safe_netloc).geturl()
+    return remote_url
+
+
+def _git_commit_all(path: Path, message: str) -> bool:
+    status = _run_git(["status", "--porcelain"], cwd=path, timeout=10)
+    if status.returncode != 0:
+        raise ValueError(status.stderr.strip() or "Failed to check git status")
+    if not status.stdout.strip():
+        return False
+    add = _run_git(["add", "-A"], cwd=path, timeout=60)
+    if add.returncode != 0:
+        raise ValueError(add.stderr.strip() or "Failed to stage changes")
+    commit = _run_git(["commit", "-m", message], cwd=path, timeout=120)
+    if commit.returncode != 0:
+        raise ValueError(commit.stderr.strip() or "Failed to commit changes")
+    return True
+
+
+def publish_project(
+    user: Any,
+    project_id: str,
+    data: Dict[str, Any],
+    progress: Optional[Callable[[str, str], None]] = None,
+) -> Dict[str, Any]:
+    project = get_project(project_id)
+    if not project:
+        raise ValueError("Not found")
+
+    def _step(message: str, detail: str = "") -> None:
+        if not progress:
+            return
+        try:
+            progress(message, detail)
+        except Exception:
+            return
+
+    commit_message = (data.get("message") or "Update from BrandDozer").strip()
+    account_id = data.get("account_id") or data.get("github_account_id")
+    private = bool(data.get("private", True))
+    repo_name = (data.get("repo_name") or slugify(project.get("name") or "") or "").strip()
+    root = Path(project.get("root_path") or "")
+
+    if not root.exists():
+        raise ValueError("Project path does not exist on the server")
+    if shutil.which("git") is None:
+        raise ValueError("Git is not available on the server")
+
+    _step("Loading GitHub account")
+    try:
+        account = (
+            get_github_account(user, account_id, reveal_token=True)
+            if account_id
+            else get_active_github_account(user, reveal_token=True)
+        )
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+    if not account:
+        accounts_payload = list_github_accounts(user)
+        if accounts_payload.get("accounts"):
+            raise ValueError(
+                "No active GitHub account selected. Choose an account under Import from GitHub → Accounts, then try again."
+            )
+        raise ValueError(
+            "No GitHub account connected. Add a personal access token under Import from GitHub → Accounts, then try again."
+        )
+    if not account.token:
+        if account.has_token:
+            raise ValueError(
+                "GitHub token could not be unlocked. Re-enter the token under Import from GitHub → Accounts to re-save it."
+            )
+        raise ValueError(
+            "No GitHub account connected. Add a personal access token under Import from GitHub → Accounts, "
+            "then select it and try again."
+        )
+
+    token = account.token
+    username = account.username
+    if not username:
+        try:
+            profile = fetch_github_profile(token)
+            username = profile.get("login") or username
+        except ValueError:
+            username = username or "branddozer"
+
+    _step("Preparing repository")
+    if not _is_git_repo(root):
+        init = _run_git(["init"], cwd=root, timeout=30)
+        if init.returncode != 0:
+            raise ValueError(init.stderr.strip() or "Failed to initialize git repository")
+
+    _ensure_git_identity(root, username or "branddozer")
+
+    origin = _git_remote_origin(root)
+    repo_url = project.get("repo_url") or ""
+    if not origin:
+        if repo_url:
+            origin = _https_remote_from_any(repo_url)
+            remote_add = _run_git(["remote", "add", "origin", origin], cwd=root, timeout=10)
+            if remote_add.returncode != 0:
+                raise ValueError(remote_add.stderr.strip() or "Failed to add origin remote")
+        else:
+            _step("Creating repository on GitHub")
+            if not repo_name:
+                repo_name = slugify(root.name) or "branddozer-project"
+            try:
+                created = create_github_repo(
+                    token,
+                    name=repo_name,
+                    description=project.get("name") or repo_name,
+                    private=private,
+                )
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            origin = created.get("clone_url") or f"https://github.com/{username}/{repo_name}.git"
+            remote_add = _run_git(["remote", "add", "origin", origin], cwd=root, timeout=10)
+            if remote_add.returncode != 0:
+                raise ValueError(remote_add.stderr.strip() or "Failed to add origin remote")
+            repo_url = created.get("html_url") or origin
+
+    branch = (data.get("branch") or project.get("repo_branch") or _git_current_branch(root) or "main").strip()
+    if branch:
+        _run_git(["checkout", "-B", branch], cwd=root, timeout=10)
+
+    clean_origin = _strip_auth_from_url(_https_remote_from_any(origin))
+    token_url = _with_token_url(clean_origin, token)
+    ahead_behind: Optional[Dict[str, int]] = None
+    try:
+        _git_fetch_with_token(root, token_url=token_url, restore_url=clean_origin)
+        ahead_behind = _git_ahead_behind(root, branch)
+    except Exception:
+        ahead_behind = None
+
+    _step("Committing changes")
+    try:
+        committed = _git_commit_all(root, commit_message)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
+
+    _step("Pushing to GitHub")
+    push = _run_git(["push", "-u", token_url, branch], cwd=root, timeout=_GIT_TIMEOUT)
+    if push.returncode != 0:
+        message = push.stderr.strip() or "Failed to push to GitHub"
+        lowered = message.lower()
+        if "permission" in lowered or "403" in lowered or "authentication" in lowered:
+            message = f"GitHub rejected the push. {_github_permission_help()}"
+        raise ValueError(_scrub_token(message, token))
+
+    _run_git(["remote", "set-url", "origin", clean_origin], cwd=root, timeout=10)
+    update_project_fields(project_id, {"repo_url": repo_url or clean_origin, "repo_branch": branch})
+    output = f"{push.stdout}\n{push.stderr}".lower()
+    if "everything up-to-date" in output or "everything up to date" in output:
+        detail = "No changes to commit or push."
+        if ahead_behind:
+            detail = f"{detail} Local ahead: {ahead_behind['ahead']}, behind: {ahead_behind['behind']}."
+        return {
+            "status": "no_changes",
+            "detail": detail,
+            "repo_url": repo_url or clean_origin,
+            "branch": branch,
+            "ahead": ahead_behind["ahead"] if ahead_behind else None,
+            "behind": ahead_behind["behind"] if ahead_behind else None,
+        }
+    if not committed:
+        return {
+            "status": "pushed",
+            "detail": "Pushed existing commits.",
+            "repo_url": repo_url or clean_origin,
+            "branch": branch,
+            "ahead": ahead_behind["ahead"] if ahead_behind else None,
+            "behind": ahead_behind["behind"] if ahead_behind else None,
+        }
+    return {
+        "status": "pushed",
+        "repo_url": repo_url or clean_origin,
+        "branch": branch,
+        "ahead": ahead_behind["ahead"] if ahead_behind else None,
+        "behind": ahead_behind["behind"] if ahead_behind else None,
+    }
+
+
+def _git_ahead_behind(path: Path, branch: str) -> Optional[Dict[str, int]]:
+    if not branch:
+        return None
+    result = _run_git(["rev-list", "--left-right", "--count", f"origin/{branch}...{branch}"], cwd=path, timeout=10)
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.strip().split()
+    if len(parts) < 2:
+        return None
+    try:
+        behind = int(parts[0])
+        ahead = int(parts[1])
+    except ValueError:
+        return None
+    return {"ahead": ahead, "behind": behind}
+
+
+def _git_fetch_with_token(path: Path, *, token_url: Optional[str], restore_url: Optional[str]) -> None:
+    result = _run_git(["fetch", "origin"], cwd=path)
+    if result.returncode == 0:
+        return
+    if not token_url:
+        raise ValueError(result.stderr.strip() or "Failed to fetch repository")
+    original_url = _git_remote_origin(path)
+    if not original_url and restore_url:
+        _run_git(["remote", "add", "origin", restore_url], cwd=path, timeout=10)
+        original_url = restore_url
+    try:
+        _run_git(["remote", "set-url", "origin", token_url], cwd=path, timeout=10)
+        retry = _run_git(["fetch", "origin"], cwd=path)
+        if retry.returncode != 0:
+            raise ValueError(retry.stderr.strip() or "Failed to fetch repository with token")
+    finally:
+        if original_url:
+            _run_git(["remote", "set-url", "origin", original_url], cwd=path, timeout=10)
+
+
+def _git_checkout_branch(path: Path, branch: str) -> None:
+    if not branch:
+        return
+    exists = _run_git(["show-ref", "--verify", f"refs/heads/{branch}"], cwd=path, timeout=10)
+    if exists.returncode == 0:
+        result = _run_git(["checkout", branch], cwd=path)
+        if result.returncode != 0:
+            raise ValueError(result.stderr.strip() or f"Failed to checkout branch {branch}")
+        return
+    result = _run_git(["checkout", "-B", branch, f"origin/{branch}"], cwd=path)
+    if result.returncode != 0:
+        raise ValueError(result.stderr.strip() or f"Branch {branch} not found on origin")
+
+
+def _git_is_clean(path: Path) -> bool:
+    result = _run_git(["status", "--porcelain"], cwd=path, timeout=10)
+    return result.returncode == 0 and not result.stdout.strip()

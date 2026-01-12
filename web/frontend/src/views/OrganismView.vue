@@ -344,6 +344,7 @@ let refreshHandle: number | undefined;
 let labelSaveTimer: number | undefined;
 let playbackTimer: number | undefined;
 const playbackActive = ref(false);
+const manualPlaybackPause = ref(false);
 
 const timelinePoints = computed(() => store.timeline);
 
@@ -500,7 +501,7 @@ function jumpLatest() {
 }
 
 function startPlayback() {
-  if (playbackTimer || timelinePoints.value.length <= 1) return;
+  if (manualPlaybackPause.value || playbackTimer || timelinePoints.value.length <= 1) return;
   playbackTimer = window.setInterval(() => {
     if (!timelinePoints.value.length) return;
     selectedIndex.value = (selectedIndex.value + 1) % timelinePoints.value.length;
@@ -508,18 +509,22 @@ function startPlayback() {
   playbackActive.value = true;
 }
 
-function stopPlayback() {
+function stopPlayback(userRequested = false) {
   if (playbackTimer) {
     window.clearInterval(playbackTimer);
     playbackTimer = undefined;
   }
   playbackActive.value = false;
+  if (userRequested) {
+    manualPlaybackPause.value = true;
+  }
 }
 
 function togglePlayback() {
   if (playbackActive.value) {
-    stopPlayback();
+    stopPlayback(true);
   } else {
+    manualPlaybackPause.value = false;
     startPlayback();
   }
 }
@@ -553,17 +558,20 @@ onBeforeUnmount(() => {
 watch(
   () => timelinePoints.value.length,
   (length, prevLength) => {
-    if (length <= 1 && playbackActive.value) {
-      stopPlayback();
-    }
-    if (!length) return;
-    if (selectedIndex.value >= length) {
-      selectedIndex.value = length - 1;
-    } else if (prevLength && selectedIndex.value === prevLength - 1 && length > prevLength) {
-      selectedIndex.value = length - 1;
-    }
-  },
-);
+      if (length <= 1 && playbackActive.value) {
+        stopPlayback();
+      }
+      if (!length) return;
+      if (selectedIndex.value >= length) {
+        selectedIndex.value = length - 1;
+      } else if (prevLength && selectedIndex.value === prevLength - 1 && length > prevLength) {
+        selectedIndex.value = length - 1;
+      }
+      if (length > 1 && !playbackActive.value && !manualPlaybackPause.value) {
+        startPlayback();
+      }
+    },
+  );
 
 watch(
   () => store.lastUpdated,

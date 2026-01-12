@@ -242,3 +242,23 @@ def test_rebalance_horizons_adjusts_stride(monkeypatch: pytest.MonkeyPatch, hist
     assert adjustments.get("sampling_stride") == 1
     loader.rebalance_horizons({"short": 0.0, "mid": 0.0, "long": 0.0}, focus_assets=None)
     assert loader.sampling_stride() == 3
+
+
+def test_long_horizon_backfill_creates_synthetic_series(
+    monkeypatch: pytest.MonkeyPatch, historical_tmp: Path
+) -> None:
+    synthetic_dir = historical_tmp / "synthetic"
+    monkeypatch.setenv("SYNTHETIC_DATA_DIR", str(synthetic_dir))
+    (historical_tmp / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(120)), encoding="utf-8")
+
+    loader = HistoricalDataLoader(data_dir=historical_tmp, max_files=2, max_samples_per_file=32)
+    result = loader.backfill_shortfall({"short": 0.0, "mid": 0.0, "long": 12.0}, focus_assets=["ETH-USDC"])
+
+    long_files = result.get("synthetic_long_files")
+    assert long_files, "long-horizon backfill should generate synthetic files when deficit exists"
+    path = Path(long_files[0])
+    assert path.exists()
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    assert len(rows) > 300
+    timestamps = [row["timestamp"] for row in rows]
+    assert max(timestamps) - min(timestamps) >= 120 * 86400

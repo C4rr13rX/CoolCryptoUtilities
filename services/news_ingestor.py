@@ -16,6 +16,7 @@ try:  # feedparser 6.x exposes util.parse_date, older builds do not
 except Exception:  # pragma: no cover - fallback path
     _fp_parse_date = None
 import pandas as pd
+import requests
 from bs4 import BeautifulSoup
 
 
@@ -73,6 +74,10 @@ class EthicalNewsIngestor:
         self.archive_root.mkdir(parents=True, exist_ok=True)
         self._fetcher = fetcher or self._fetch_source
         self.max_tokens = max_tokens
+        self._request_timeout = max(1.0, float(os.getenv("ETHICAL_NEWS_REQUEST_TIMEOUT_SEC", "5")))
+        self._http_headers = {
+            "User-Agent": os.getenv("ETHICAL_NEWS_USER_AGENT", "CoolCryptoUtilities/ethical-news-ingestor")
+        }
 
     # ------------------------------------------------------------------
     # Public API
@@ -196,13 +201,18 @@ class EthicalNewsIngestor:
         return cached or []
 
     def _fetch_source(self, source: NewsSource) -> List[dict]:
-        parsed = feedparser.parse(source.url)
+        try:
+            resp = requests.get(source.url, timeout=self._request_timeout, headers=self._http_headers)
+            resp.raise_for_status()
+            parsed = feedparser.parse(resp.content)
+        except Exception:
+            return []
         if getattr(parsed, "bozo", False):
-            raise RuntimeError(getattr(parsed, "bozo_exception", "invalid feed"))
-        entries: List[dict] = []
-        for entry in parsed.entries:
-            entries.append(self._normalize_entry(entry))
-        return entries
+            return []
+        raw_entries = getattr(parsed, "entries", None) or getattr(parsed, "items", None) or []
+        if not isinstance(raw_entries, list):
+            return []
+        return [self._normalize_entry(entry) for entry in raw_entries]
 
     def _normalize_entry(self, entry: Any) -> dict:
         summary = entry.get("summary") if isinstance(entry, dict) else getattr(entry, "summary", "")

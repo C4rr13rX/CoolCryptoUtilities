@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import time
+import sys
 from collections import deque
 from dataclasses import dataclass, field, asdict
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -32,6 +33,13 @@ HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("3m", 90 * 24 * 60 * 60),
     ("6m", 180 * 24 * 60 * 60),
 ]
+
+
+def _is_test_env() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("PYTEST_RUNNING"):
+        return True
+    argv = " ".join(sys.argv).lower()
+    return "pytest" in argv or "py.test" in argv
 
 
 class HorizonAccuracyTracker:
@@ -255,6 +263,7 @@ class BusScheduler:
         tax_buffer: float = 0.003,
         history_limit_sec: int = 3 * 24 * 60 * 60,
         db: Optional[TradingDatabase] = None,
+        prefill: bool = True,
     ) -> None:
         self.db = db or get_db()
         self.horizons = list(horizons) if horizons is not None else HORIZON_DEFAULTS
@@ -280,6 +289,7 @@ class BusScheduler:
         self._log_filters = os.getenv("SCHEDULER_LOG_FILTER", "0").lower() in {"1", "true", "yes", "on"}
         self._filter_metrics: List[Dict[str, Any]] = []
         self._metrics_collector = MetricsCollector(self.db)
+        self._prefill_enabled = bool(prefill and not _is_test_env())
 
     # ------------------------------------------------------------------
     # Public API
@@ -501,7 +511,8 @@ class BusScheduler:
         if state is None:
             base, quote = _split_symbol(symbol)
             state = RouteState(symbol=symbol, base_token=base, quote_token=quote)
-            self._prefill_history(state)
+            if self._prefill_enabled:
+                self._prefill_history(state)
             self.routes[symbol] = state
 
         ts = float(sample.get("ts") or time.time())

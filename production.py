@@ -95,6 +95,8 @@ class ProductionManager:
             },
         )
         self._backlog_strikes = 0
+        self._task_backoff_until: Dict[str, float] = {}
+        self._task_threads: Dict[str, threading.Thread] = {}
 
     def start(self) -> None:
         if self.is_running:
@@ -272,6 +274,12 @@ class ProductionManager:
                     "background_refresh",
                 }:
                     throttled_this_cycle = True
+                    self.task_manager.mark_skipped(
+                        scheduled.name,
+                        cycle_id=cycle_id,
+                        reason="skipped_backlog",
+                        metadata=metadata,
+                    )
                     continue
                 self.task_manager.submit(
                     scheduled.name,
@@ -341,10 +349,21 @@ class ProductionManager:
         if not self._task_directives.get("news", True):
             return
         timeout = float(os.getenv("NEWS_ENRICH_TIMEOUT", "120"))
+        backoff = float(os.getenv("NEWS_ENRICH_BACKOFF_SEC", "300"))
+        if self._backoff_active("news_enrichment"):
+            resume_in = max(0.0, self._task_backoff_until.get("news_enrichment", 0.0) - time.time())
+            log_message(
+                "production",
+                "news_enrichment in backoff; skipping this cycle",
+                severity="info",
+                details={"resume_in": round(resume_in, 2)},
+            )
+            return
         self._run_with_timeout(
             lambda: self.pipeline.reinforce_news_cache(focus_assets),
             timeout=timeout,
             label="news_enrichment",
+            backoff_on_timeout=backoff,
         )
 
     def _task_dataset_warmup(self, focus_assets: Optional[Sequence[str]] = None) -> None:
@@ -420,11 +439,37 @@ class ProductionManager:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _run_with_timeout(self, func: Callable[[], Any], *, timeout: float, label: str) -> bool:
+    def _backoff_active(self, label: str, now: Optional[float] = None) -> bool:
+        now = now or time.time()
+        until = self._task_backoff_until.get(label, 0.0)
+        if until and now < until:
+            return True
+        if until and now >= until:
+            self._task_backoff_until.pop(label, None)
+        return False
+
+    def _run_with_timeout(
+        self,
+        func: Callable[[], Any],
+        *,
+        timeout: float,
+        label: str,
+        backoff_on_timeout: Optional[float] = None,
+    ) -> bool:
         """
         Execute a callable with a soft timeout to avoid blocking the entire
         orchestrator (e.g. slow news feeds). Returns False on timeout or error.
         """
+        if self._backoff_active(label):
+            return False
+        existing = self._task_threads.get(label)
+        if existing and existing.is_alive():
+            log_message(
+                "production",
+                f"{label} still running; skipping re-entry",
+                severity="warning",
+            )
+            return False
         result = {"ok": False}
         error: Dict[str, Any] = {}
 
@@ -436,11 +481,21 @@ class ProductionManager:
                 error["exc"] = exc
 
         thread = threading.Thread(target=_target, name=f"{label}-runner", daemon=True)
+        self._task_threads[label] = thread
         thread.start()
         thread.join(timeout)
         if thread.is_alive():
             log_message("production", f"{label} exceeded {timeout:.0f}s; continuing without result", severity="warning")
+            if backoff_on_timeout and backoff_on_timeout > 0:
+                self._task_backoff_until[label] = time.time() + backoff_on_timeout
+                log_message(
+                    "production",
+                    f"{label} entering backoff after timeout",
+                    severity="info",
+                    details={"resume_in": round(backoff_on_timeout, 2)},
+                )
             return False
+        self._task_threads.pop(label, None)
         if error.get("exc"):
             log_message("production", f"{label} failed: {error['exc']}", severity="warning")
             return False

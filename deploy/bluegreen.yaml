@@ -1,0 +1,14 @@
+# Blue/Green plan (reference for scripts/canary_bluegreen_check.py)
+service: "branddozer-web"
+active_environment: "blue"
+staging_environment: "green"
+promotion_checks:
+  - "golden_signals_ok"
+  - "run_smoke_tests"
+  - "error_budget_not_burning"
+switch:
+  method: "traffic_shift"
+  verification_minutes: 30
+rollback:
+  trigger: "alerts firing or budget burn"
+  action: "switch traffic back to active and disable related feature flags"

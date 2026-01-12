@@ -7,6 +7,7 @@ import os
 import re
 import time
 from collections import deque, OrderedDict
+import random
 import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
@@ -331,7 +332,8 @@ class HistoricalDataLoader:
     ) -> Dict[str, Any]:
         short_deficit = max(0.0, float(deficits.get("short", 0.0)))
         mid_deficit = max(0.0, float(deficits.get("mid", 0.0)))
-        if short_deficit <= 0 and mid_deficit <= 0:
+        long_deficit = max(0.0, float(deficits.get("long", 0.0)))
+        if short_deficit <= 0 and mid_deficit <= 0 and long_deficit <= 0:
             return {}
         symbols: List[str] = []
         if focus_assets:
@@ -353,9 +355,32 @@ class HistoricalDataLoader:
             path = self._write_synthetic_series(normalized, tail)
             if path:
                 created.append(str(path))
-        if created:
+        long_created: List[str] = []
+        if long_deficit > 0:
+            # Coarse-grained synthetic series to unlock 3–6 month horizons without network calls.
+            span_days = max(90, int(os.getenv("SYNTH_LONG_SPAN_DAYS", "180")))
+            step_sec = max(3600, int(os.getenv("SYNTH_LONG_STEP_SEC", str(4 * 3600))))
+            long_targets = max(1, min(len(symbols), int(math.ceil(long_deficit / 6.0))))
+            for symbol in symbols[:long_targets]:
+                normalized = self._normalize_pair_label(symbol)
+                rows = self._generate_long_horizon_series(normalized, days=span_days, step_sec=step_sec)
+                path = self._write_synthetic_series(normalized, rows)
+                if path:
+                    long_created.append(str(path))
+        if created or long_created:
             self.invalidate_dataset_cache()
-            return {"synthetic_files": created, "bars": bars}
+            payload: Dict[str, Any] = {}
+            if created:
+                payload.update({"synthetic_files": created, "bars": bars})
+            if long_created:
+                payload.update(
+                    {
+                        "synthetic_long_files": long_created,
+                        "long_span_days": span_days,
+                        "long_step_sec": step_sec,
+                    }
+                )
+            return payload
         return {}
 
     def apply_system_profile(self, profile: SystemProfile) -> None:
@@ -538,6 +563,46 @@ class HistoricalDataLoader:
             return None
         self._synthetic_files[symbol] = path
         return path
+
+    def _generate_long_horizon_series(
+        self,
+        symbol: str,
+        *,
+        days: int = 180,
+        step_sec: int = 4 * 3600,
+    ) -> List[Dict[str, float]]:
+        """
+        Build a synthetic, coarse-grained OHLC series long enough to provide
+        multi-month horizon targets on hosts without deep historical caches.
+        """
+        total_steps = int(math.ceil((days * 86400) / step_sec)) + 96
+        seed = int(hashlib.sha1(f"{symbol}:{days}:{step_sec}".encode("utf-8")).hexdigest(), 16) % (2**31)
+        rng = random.Random(seed)
+
+        base_snapshot = self._offline_store.get_price(symbol.split("-")[0]) if "-" in symbol else None
+        start_price = float(base_snapshot.price) if base_snapshot and base_snapshot.price > 0 else 100.0
+        price = max(1.0, start_price)
+        ts_start = int(time.time()) - days * 86400
+
+        drift = 0.00025
+        volatility = 0.01
+        rows: List[Dict[str, float]] = []
+        for step in range(total_steps):
+            noise = rng.uniform(-volatility, volatility)
+            seasonal = math.sin(step / 24.0) * volatility * 0.5
+            price = max(0.5, price * (1.0 + drift + noise + seasonal))
+            ts = ts_start + step * step_sec
+            rows.append(
+                {
+                    "timestamp": ts,
+                    "open": price * (1.0 - noise * 0.25),
+                    "high": price * (1.0 + abs(noise)),
+                    "low": price * (1.0 - abs(noise) * 1.1),
+                    "close": price,
+                    "net_volume": rng.uniform(500.0, 1500.0),
+                }
+            )
+        return rows
 
     def _normalize_token_symbol(self, token: str) -> str:
         token_u = re.sub(r"[^A-Z0-9]", "", token.upper())

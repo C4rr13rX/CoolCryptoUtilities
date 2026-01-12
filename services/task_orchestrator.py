@@ -161,6 +161,25 @@ class ParallelTaskManager:
         self.queues[component].put(task)
         return cycle
 
+    def mark_skipped(
+        self,
+        component: str,
+        *,
+        cycle_id: Optional[str] = None,
+        reason: str = "skipped",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Mark a component as satisfied for a given cycle without enqueueing work.
+        Useful when an orchestrator intentionally throttles tasks but still
+        needs dependency events to release downstream components.
+        """
+        if component not in self.queues:
+            return
+        cycle = cycle_id or str(int(time.time()))
+        self._update_state(cycle, component, status=reason, metadata=metadata)
+        self._signal_complete(component, cycle)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -206,6 +225,12 @@ class ParallelTaskManager:
 
     def _wait_for_dependency(self, component: str, cycle_id: str) -> None:
         event = self._get_event(component, cycle_id)
+        with self._state_lock:
+            state = (self._state.get(cycle_id) or {}).get(component, {})
+        status = str(state.get("status") or "")
+        done_states = {"completed", "skipped", "failed"}
+        if status in done_states or status.startswith("skip"):
+            event.set()
         event.wait()
 
     def _signal_complete(self, component: str, cycle_id: str) -> None:

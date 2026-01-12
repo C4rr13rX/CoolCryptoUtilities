@@ -1,0 +1,32 @@
+# Feature flag plan (progressive delivery)
+# Adjust per service; used by scripts/progressive_delivery_check.py
+flags:
+  organism_visualization:
+    description: "New brain-like node grouping and USD-weighted glow."
+    default: false
+    environments:
+      dev: true
+      staging: true
+      prod: false
+    rollout:
+      strategy: canary
+      steps:
+        - percent: 5
+          pause_minutes: 15
+        - percent: 25
+          pause_minutes: 30
+        - percent: 50
+          pause_minutes: 60
+        - percent: 100
+  trading_pipeline_safety:
+    description: "Safety interlocks for ghost/live trading and bus scheduler."
+    default: true
+    environments:
+      dev: true
+      staging: true
+      prod: true
+    rollout:
+      strategy: bluegreen
+      gates:
+        - metric: golden_signals
+          condition: "error_rate < 1% and p95_latency_ms < 400"

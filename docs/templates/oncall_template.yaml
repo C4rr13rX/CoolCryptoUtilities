@@ -1,0 +1,19 @@
+# On-call Rotation Template
+service: "<service-name>"
+team: "<team-name>"
+rotation:
+  schedule: "<pager/opsgenie rotation id or calendar link>"
+  primary: "<role>"
+  secondary: "<role>"
+  manager_escalation: "<contact>"
+runbooks:
+  - "docs/runbooks/<service>.md"
+alert_policies:
+  paging_hours_utc: "00:00-23:59"
+  quiet_hours: []
+  suppression_windows:
+    - reason: "maintenance"
+      window: "<cron or timestamp>"
+incident_workflow:
+  comms_channel: "<slack/teams channel>"
+  postmortem_required_for: ["sev1", "sev2"]

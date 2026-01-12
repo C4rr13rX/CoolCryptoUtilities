@@ -73,6 +73,7 @@ class TradingBot:
         self.queue: List[Dict[str, Any]] = []
         self._bg_task: Optional[asyncio.Task] = None
         self._running = False
+        self._scheduler_halted: bool = False
         self.positions: Dict[str, Dict[str, Any]] = {}
         self.stable_bank: float = 0.0
         self.total_profit: float = 0.0
@@ -81,6 +82,8 @@ class TradingBot:
         self.wins: int = 0
         self.max_trade_share: float = min(0.5, max(0.05, MAX_QUOTE_SHARE))
         self._transition_plan: Dict[str, Any] = {}
+        self._bus_actions: List[Dict[str, Any]] = []
+        self._last_bus_signature: Optional[str] = None
         self._savings_ready_ratio = float(os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15")))
         self._savings_bootstrap_ratio = float(
             os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05"))
@@ -338,6 +341,12 @@ class TradingBot:
             self._savings_low_fee_min = max(1.0, self._savings_low_fee_min)
         if not hasattr(self, "_transition_plan") or not isinstance(self._transition_plan, dict):
             self._transition_plan = {}
+        if not hasattr(self, "_bus_actions"):
+            self._bus_actions = []
+        if not hasattr(self, "_last_bus_signature"):
+            self._last_bus_signature = None
+        if not hasattr(self, "_scheduler_halted"):
+            self._scheduler_halted = False
         if not hasattr(self, "_savings_ready_ratio"):
             self._savings_ready_ratio = float(
                 os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15"))
@@ -950,6 +959,22 @@ class TradingBot:
         if not isinstance(plan, dict):
             return
         self._transition_plan = dict(plan)
+        self._bus_actions = list(plan.get("bus_swap_actions") or [])
+        if self._bus_actions:
+            signature = json.dumps(self._bus_actions, sort_keys=True)
+            if signature != self._last_bus_signature:
+                self._last_bus_signature = signature
+                try:
+                    self.metrics.feedback(
+                        "bus_scheduler",
+                        severity=FeedbackSeverity.INFO,
+                        label="bus_actions_pending",
+                        details={"actions": self._bus_actions[:10]},
+                    )
+                except Exception:
+                    pass
+        else:
+            self._last_bus_signature = None
         ready_ratio = plan.get("savings_ratio_ready")
         bootstrap_ratio = plan.get("savings_ratio_bootstrap")
         try:
@@ -1078,12 +1103,40 @@ class TradingBot:
             self.apply_transition_plan(self.pipeline.transition_plan())
         except Exception:
             pass
+        plan_snapshot = getattr(self, "_transition_plan", {}) or {}
+        plan_flags = plan_snapshot.get("risk_flags", {}) if isinstance(plan_snapshot, dict) else {}
+        capital_plan = plan_snapshot.get("capital_plan", {}) if isinstance(plan_snapshot, dict) else {}
+        recommended_ratio = capital_plan.get("recommended_live_ratio")
+        if self.live_trading_enabled and recommended_ratio is not None:
+            try:
+                cap = max(0.05, float(recommended_ratio))
+                self.global_risk_budget = min(self.global_risk_budget, cap)
+                self.max_trade_share = min(self.max_trade_share, cap)
+            except Exception:
+                pass
         readiness = self.pipeline.live_readiness_report()
         self._live_transition_state = readiness or {"enabled": self.live_trading_enabled}
         if readiness:
             readiness.setdefault("required_win_rate", self.required_live_win_rate)
             readiness.setdefault("required_trades", self.required_live_trades)
             readiness.setdefault("required_profit", self.required_live_profit)
+        if plan_flags.get("halt_live") or plan_flags.get("live_mode") == "blocked":
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "reason": plan_flags.get("halt_reason") or plan_flags.get("live_blocked_reason") or "risk_halt",
+                "plan": plan_snapshot,
+            }
+            return
+        if plan_flags.get("bus_actions_pending"):
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "reason": "bus_actions_pending",
+                "actions": self._bus_actions,
+                "plan": plan_snapshot,
+            }
+            return
         ready_flag = bool(readiness.get("ready")) if isinstance(readiness, dict) else False
         mini_ready = bool(readiness.get("mini_ready")) if isinstance(readiness, dict) else False
         allow_mini = os.getenv("LIVE_MINI_AUTO_PROMOTE", "1").lower() in {"1", "true", "yes", "on"}
@@ -1160,12 +1213,24 @@ class TradingBot:
                 "reason": "ghost_performance_gate",
             }
             return
+        wallet_state = None
+        try:
+            wallet_state = plan_snapshot.get("wallet_state") or (readiness.get("wallet_state") if readiness else None)
+        except Exception:
+            wallet_state = None
+        risk_budget_cap = self.global_risk_budget
+        if recommended_ratio is not None:
+            try:
+                risk_budget_cap = min(self.global_risk_budget, max(0.05, float(recommended_ratio)))
+            except Exception:
+                risk_budget_cap = self.global_risk_budget
         plan = self.swap_validator.plan_transition(
             positions=self.positions,
             exposure=self.active_exposure,
             readiness=readiness,
-            risk_budget=self.global_risk_budget,
+            risk_budget=risk_budget_cap,
             pending_decision=latest_decision,
+            wallet_state=wallet_state,
         )
         if not plan.get("allowed", True):
             self.metrics.feedback(
@@ -1647,16 +1712,57 @@ class TradingBot:
             brain_summary = self._update_brain_state(sample, history_snapshot, pred_summary)
             await self._run_wallet_sync(reason="pre-schedule")
             directive = None
+            plan_flags: Dict[str, Any] = {}
+            plan_capital: Dict[str, Any] = {}
+            if isinstance(self._transition_plan, dict):
+                plan_flags = self._transition_plan.get("risk_flags", {}) or {}
+                plan_capital = self._transition_plan.get("capital_plan", {}) or {}
+            risk_budget = self.global_risk_budget
+            ghost_multiplier = 1.0
+            try:
+                ghost_multiplier = float(plan_flags.get("ghost_risk_multiplier", 1.0))
+                ghost_multiplier = max(0.0, min(1.0, ghost_multiplier))
+            except Exception:
+                ghost_multiplier = 1.0
+            if self.live_trading_enabled:
+                if plan_capital.get("recommended_live_ratio") is not None:
+                    try:
+                        cap = max(0.05, float(plan_capital.get("recommended_live_ratio")))
+                        risk_budget = min(risk_budget, cap)
+                    except Exception:
+                        risk_budget = self.global_risk_budget
+                if plan_flags.get("halt_live"):
+                    risk_budget = 0.0
+            risk_budget *= ghost_multiplier
+            if plan_flags.get("bus_actions_pending"):
+                risk_budget = min(risk_budget, 0.25)
+            if plan_flags.get("halt_ghost"):
+                risk_budget = 0.0
             try:
                 allocation_map = self._compute_base_allocation(sample)
                 self._propagate_horizon_bias()
-                directive = self.scheduler.evaluate(
-                    sample,
-                    pred_summary,
-                    self.portfolio,
-                    base_allocation=allocation_map,
-                    risk_budget=self.global_risk_budget,
-                )
+                if risk_budget <= 0:
+                    if not self._scheduler_halted:
+                        self.metrics.feedback(
+                            "scheduler",
+                            severity=FeedbackSeverity.WARNING,
+                            label="halted",
+                            details={
+                                "reason": plan_flags.get("halt_reason") or plan_flags.get("ghost_halt_reason") or "risk_budget_zero",
+                                "ghost_multiplier": ghost_multiplier,
+                                "bus_actions_pending": bool(plan_flags.get("bus_actions_pending")),
+                            },
+                        )
+                    self._scheduler_halted = True
+                else:
+                    self._scheduler_halted = False
+                    directive = self.scheduler.evaluate(
+                        sample,
+                        pred_summary,
+                        self.portfolio,
+                        base_allocation=allocation_map,
+                        risk_budget=risk_budget,
+                    )
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
             self._maybe_record_horizon_summary(sample_ts)

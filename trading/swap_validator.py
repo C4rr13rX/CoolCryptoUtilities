@@ -164,7 +164,39 @@ class SwapValidator:
         readiness: Dict[str, Any],
         risk_budget: float,
         pending_decision: Optional[Dict[str, Any]] = None,
+        wallet_state: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        readiness = readiness or {}
+        wallet_state = wallet_state or readiness.get("wallet_state") or {}
+        ghost_meta = readiness.get("ghost_validation") or {}
+        ghost_ready = bool(
+            readiness.get(
+                "ghost_ready",
+                ghost_meta.get("ready", True) if isinstance(readiness, dict) else True,
+            )
+        )
+        ghost_reason = str(readiness.get("ghost_reason") or ghost_meta.get("reason") or "")
+        tail_risk = float(ghost_meta.get("tail_risk", readiness.get("ghost_tail_risk", 0.0)))
+        tail_guard = float(
+            ghost_meta.get(
+                "tail_guardrail",
+                ghost_meta.get("tail_guard", float(os.getenv("GHOST_TAIL_GUARDRAIL", os.getenv("GHOST_TAIL_GUARD", "0.0")))),
+            )
+        )
+        ghost_samples = int(readiness.get("ghost_samples", ghost_meta.get("samples", 0)))
+        ghost_min_trades = int(
+            ghost_meta.get(
+                "min_trades",
+                int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", os.getenv("MIN_GHOST_TRADES_OVERRIDE", "0"))),
+            )
+        )
+        if ghost_samples < ghost_min_trades and ghost_min_trades > 0:
+            ghost_ready = False
+            ghost_reason = ghost_reason or "ghost_sample_gap"
+        tail_limit_hit = tail_guard > 0 and tail_risk > tail_guard
+        if tail_limit_hit:
+            ghost_ready = False
+            ghost_reason = ghost_reason or "tail_risk"
         gross_exposure = float(sum(abs(val) for val in exposure.values()))
         max_pending = max(1, int(os.getenv("LIVE_MAX_PENDING_POSITIONS", "4")))
         precision = float(readiness.get("precision", 0.0))
@@ -172,8 +204,49 @@ class SwapValidator:
         confidence_floor = float(os.getenv("LIVE_CONFIDENCE_FLOOR", "0.65"))
         confidence_margin = min(precision, recall) - confidence_floor
         budget_scale = max(0.2, min(1.0, 0.6 + confidence_margin))
-        adjusted_budget = max(0.05, risk_budget * budget_scale)
-        allowed = gross_exposure <= adjusted_budget and len(positions) <= max_pending
+        tail_headroom = 1.0
+        if tail_guard > 0:
+            tail_headroom = max(0.25, min(1.0, (tail_guard - tail_risk) / max(tail_guard, 1e-9)))
+        adjusted_budget = max(0.05, risk_budget * budget_scale * tail_headroom)
+        capital_deficit = max(
+            0.0,
+            float(wallet_state.get("min_capital_usd", 0.0)) - float(wallet_state.get("stable_usd", 0.0)),
+        )
+        sparse_wallet = bool(wallet_state.get("sparse"))
+        fragmented_wallet = bool(wallet_state.get("fragmented"))
+        fragment_ratio = float(wallet_state.get("fragment_ratio", 0.0))
+        native_starved = bool(wallet_state.get("native_starved", False))
+        native_gap = float(wallet_state.get("native_buffer_gap_usd", 0.0))
+        reasons: List[str] = []
+        if not ghost_ready:
+            reasons.append("ghost_not_ready")
+        if ghost_samples < ghost_min_trades and ghost_min_trades > 0:
+            reasons.append("ghost_sample_gap")
+        if tail_limit_hit and "tail_risk" not in reasons:
+            reasons.append("tail_risk")
+        if sparse_wallet:
+            reasons.append("sparse_wallet")
+        if fragmented_wallet:
+            reasons.append("fragmented_wallet")
+        if capital_deficit > 0:
+            reasons.append("capital_deficit")
+        if native_starved:
+            reasons.append("native_starved")
+        if gross_exposure > adjusted_budget:
+            reasons.append("exposure_limit")
+        if len(positions) > max_pending:
+            reasons.append("pending_limit")
+        if not ghost_ready:
+            adjusted_budget = 0.0
+        allowed = (
+            ghost_ready
+            and not sparse_wallet
+            and not fragmented_wallet
+            and not native_starved
+            and capital_deficit <= 0
+            and gross_exposure <= adjusted_budget
+            and len(positions) <= max_pending
+        )
         snapshot = {
             "allowed": allowed,
             "gross_exposure": gross_exposure,
@@ -182,11 +255,79 @@ class SwapValidator:
             "confidence_margin": confidence_margin,
             "pending_positions": len(positions),
             "readiness": readiness,
+            "wallet_state": {
+                "sparse": sparse_wallet,
+                "capital_deficit": capital_deficit,
+                "stable_usd": float(wallet_state.get("stable_usd", 0.0)),
+                "fragmented": fragmented_wallet,
+                "fragment_ratio": fragment_ratio,
+                "native_starved": native_starved,
+                "native_buffer_gap_usd": native_gap,
+            },
+            "block_reasons": reasons,
         }
+        bus_swap_plan = None
+        if sparse_wallet and capital_deficit > 0:
+            bus_swap_plan = {
+                "action": "swap_to_stable",
+                "reduce_position": float(capital_deficit),
+                "reason": "sparse_wallet",
+            }
+        if native_starved and bus_swap_plan is None:
+            target_usd = native_gap if native_gap > 0 else float(os.getenv("GAS_MIN_REFILL_USD", "5"))
+            if float(wallet_state.get("stable_usd", 0.0)) > 0:
+                bus_swap_plan = {
+                    "action": "swap_stable_to_native",
+                    "reason": "native_starved",
+                    "target_usd": target_usd,
+                }
+            else:
+                bus_swap_plan = {"action": "freeze_live", "reason": "native_starved", "target_usd": target_usd}
+        if fragmented_wallet and bus_swap_plan is None:
+            bus_swap_plan = {
+                "action": "consolidate_fragments",
+                "reason": "fragmented_wallet",
+                "dust_tokens": list(wallet_state.get("dust_tokens", []))[:8],
+            }
+        if not ghost_ready and bus_swap_plan is None:
+            bus_swap_plan = {"action": "freeze_live", "reason": ghost_reason or "ghost_not_ready"}
+        if bus_swap_plan is None and tail_guard > 0 and tail_risk >= tail_guard * 0.9:
+            bus_swap_plan = {
+                "action": "freeze_live",
+                "reason": "tail_risk_headroom" if tail_risk < tail_guard else "tail_risk",
+                "tail_risk": tail_risk,
+                "tail_guardrail": tail_guard,
+            }
+        if not allowed and exposure and bus_swap_plan is None:
+            try:
+                symbol, value = max(exposure.items(), key=lambda kv: abs(kv[1]))
+                bus_swap_plan = {
+                    "symbol": symbol,
+                    "action": "rebalance_to_stable",
+                    "reduce_position": float(abs(value) * 0.5),
+                    "reason": "exposure_above_budget",
+                }
+            except Exception:
+                bus_swap_plan = {"reason": "exposure_above_budget"}
+        snapshot["bus_swap_plan"] = bus_swap_plan
         if pending_decision:
             snapshot["pending_decision"] = {
                 "action": pending_decision.get("action"),
                 "symbol": pending_decision.get("symbol"),
                 "size": pending_decision.get("size"),
             }
+        snapshot["risk_flags"] = {
+            "ghost_ready": ghost_ready,
+            "ghost_reason": ghost_reason,
+            "capital_deficit": capital_deficit,
+            "sparse_wallet": sparse_wallet,
+            "ghost_samples": ghost_samples,
+            "ghost_min_trades": ghost_min_trades,
+            "tail_risk": tail_risk,
+            "tail_guardrail": tail_guard,
+            "fragmented_wallet": fragmented_wallet,
+            "fragment_ratio": fragment_ratio,
+            "native_starved": native_starved,
+            "native_buffer_gap_usd": native_gap,
+        }
         return snapshot

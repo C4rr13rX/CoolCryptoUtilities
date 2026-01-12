@@ -6,8 +6,17 @@ from pathlib import Path
 
 from corsheaders.defaults import default_headers
 
-from services.env_loader import EnvLoader
+from services.env_loader import EnvLoader, is_test_env
 from dotenv import load_dotenv
+
+
+TESTING = is_test_env()
+
+if TESTING:
+    os.environ.setdefault("DJANGO_DB_VENDOR", "sqlite")
+    os.environ.setdefault("TRADING_DB_VENDOR", "sqlite")
+    os.environ.setdefault("ALLOW_SQLITE_FALLBACK", "1")
+    os.environ.setdefault("SECURE_ENV_HYDRATED", "1")
 
 EnvLoader.load()
 
@@ -27,8 +36,6 @@ def _unique(seq: list[str]) -> list[str]:
     return deduped
 
 
-TESTING = "test" in sys.argv
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BASE_DIR.parent
 
@@ -37,7 +44,11 @@ if postgres_env.exists():
     load_dotenv(postgres_env, override=False)
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
-DEBUG = os.getenv("DJANGO_DEBUG", "1").lower() in {"1", "true", "yes"}
+DEBUG = False
+debug_env = os.getenv("DJANGO_DEBUG")
+if debug_env is None:
+    debug_env = "0"
+DEBUG = str(debug_env).lower() in {"1", "true", "yes", "on"}
 
 allowed_hosts_env = _split_env_list(os.getenv("DJANGO_ALLOWED_HOSTS"))
 default_allowed_host = os.getenv("DJANGO_ALLOWED_HOST", "localhost")
@@ -73,6 +84,19 @@ for host in ALLOWED_HOSTS:
     _csrf_from_hosts.append(f"https://{host}")
 
 CSRF_TRUSTED_ORIGINS = _unique(_base_csrf_trusted + csrf_trusted_env + _csrf_from_hosts)
+SECURE_SSL_REDIRECT = True
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+if TESTING:
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+else:
+    SECURE_SSL_REDIRECT = os.getenv("DJANGO_SECURE_SSL_REDIRECT", "1").lower() in {"1", "true", "yes", "on"}
+    if DEBUG:
+        SECURE_SSL_REDIRECT = os.getenv("DJANGO_SECURE_SSL_REDIRECT", "0").lower() in {"1", "true", "yes", "on"}
+    SESSION_COOKIE_SECURE = os.getenv("DJANGO_SESSION_COOKIE_SECURE", "1").lower() in {"1", "true", "yes", "on"}
+    CSRF_COOKIE_SECURE = os.getenv("DJANGO_CSRF_COOKIE_SECURE", "1").lower() in {"1", "true", "yes", "on"}
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -133,7 +157,15 @@ TEMPLATES = [
 WSGI_APPLICATION = "coolcrypto_dashboard.wsgi.application"
 ASGI_APPLICATION = "coolcrypto_dashboard.asgi.application"
 
-DB_VENDOR = os.getenv("DJANGO_DB_VENDOR", "postgres").lower()
+prefer_sqlite = (os.getenv("DJANGO_PREFER_SQLITE_FALLBACK") or "0").lower() in {"1", "true", "yes", "on"}
+db_vendor_env = os.getenv("DJANGO_DB_VENDOR")
+if prefer_sqlite and not db_vendor_env:
+    db_vendor_env = "sqlite"
+    os.environ.setdefault("DJANGO_DB_VENDOR", "sqlite")
+
+DB_VENDOR = (db_vendor_env or "postgres").lower()
+if TESTING:
+    DB_VENDOR = "sqlite"
 if DB_VENDOR == "postgres":
     DATABASES = {
         "default": {

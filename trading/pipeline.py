@@ -23,7 +23,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.losses import BinaryCrossentropy
 
 from db import TradingDatabase, get_db
-from trading.constants import PRIMARY_SYMBOL, top_pairs
+from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs
 from model_definition import (
     ExponentialDecay,
     StateSaver,
@@ -697,6 +697,21 @@ class TrainingPipeline:
             "focus_assets": focus_assets,
             "ghost_feedback": focus_stats,
         }
+        ghost_gate = self._ghost_validation()
+        ghost_ready = bool(ghost_gate.get("ready", True))
+        ghost_tail_guard = float(
+            ghost_gate.get(
+                "tail_guardrail",
+                ghost_gate.get("tail_guard", float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.0"))),
+            )
+        )
+        ghost_tail_risk = float(ghost_gate.get("tail_risk", 0.0))
+        ghost_drawdown_guard = float(ghost_gate.get("drawdown_guardrail", 0.0))
+        ghost_drawdown = float(ghost_gate.get("max_drawdown", 0.0))
+        ghost_tail_block = ghost_tail_guard > 0 and ghost_tail_risk > ghost_tail_guard
+        ghost_drawdown_breach = ghost_drawdown_guard > 0 and ghost_drawdown > ghost_drawdown_guard
+        ghost_reason = str(ghost_gate.get("reason") or "")
+        evaluation_meta["ghost_validation"] = ghost_gate
         training_metrics = {
             "candidate_score": composite_score,
             "dir_accuracy": self._safe_float(evaluation.get("dir_accuracy", 0.0)),
@@ -708,6 +723,10 @@ class TrainingPipeline:
             "ghost_win_rate": self._safe_float(evaluation.get("ghost_win_rate", 0.0)),
             "ghost_pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
             "ghost_realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
+            "ghost_tail_risk": ghost_tail_risk,
+            "ghost_tail_guard": ghost_tail_guard,
+            "ghost_drawdown": ghost_drawdown,
+            "ghost_drawdown_guard": ghost_drawdown_guard,
             "false_positive_rate": self._safe_float(evaluation.get("false_positive_rate", 0.0)),
             "brier_score": self._safe_float(evaluation.get("brier_score", 0.0)),
             "best_threshold": self._safe_float(evaluation.get("best_threshold", self.decision_threshold)),
@@ -771,6 +790,13 @@ class TrainingPipeline:
                     elif active_eval:
                         if not self._active_approval(evaluation, active_eval):
                             gating_reason = "active model approval failed"
+                if not gating_reason:
+                    if not ghost_ready:
+                        gating_reason = f"ghost_validation:{ghost_reason or 'not_ready'}"
+                    elif ghost_tail_block:
+                        gating_reason = "ghost_tail_risk"
+                    elif ghost_drawdown_breach:
+                        gating_reason = "ghost_drawdown_guardrail"
         if gating_reason:
             promote = False
             log_message("training", f"promotion deferred: {gating_reason}. Continuing candidate search.", severity="warning")
@@ -783,6 +809,11 @@ class TrainingPipeline:
                     "reason": gating_reason,
                     "ghost_trades_best": evaluation.get("ghost_trades_best"),
                     "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
+                    "ghost_ready": ghost_ready,
+                    "ghost_tail_risk": ghost_tail_risk,
+                    "ghost_tail_guard": ghost_tail_guard,
+                    "ghost_drawdown": ghost_drawdown,
+                    "ghost_drawdown_guard": ghost_drawdown_guard,
                 },
             )
         if promote:
@@ -801,7 +832,28 @@ class TrainingPipeline:
             self.promote_candidate(path, score=composite_score, metadata=result, evaluation=evaluation)
         else:
             self._print_ghost_summary(evaluation)
-            if composite_score < self.promotion_threshold:
+            evaluation_data = evaluation or {}
+            if gating_reason:
+                log_message(
+                    "training",
+                    "candidate gated despite passing score threshold",
+                    details={
+                        "score": float(composite_score),
+                        "threshold": float(self.promotion_threshold),
+                        "gating_reason": gating_reason,
+                        "ghost_trades": int(evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))),
+                    },
+                )
+                self.metrics.record(
+                    MetricStage.TRAINING,
+                    {
+                        "ghost_trades_best": float(evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))),
+                        "best_threshold": float(evaluation_data.get("best_threshold", self.decision_threshold)),
+                    },
+                    category="candidate_eval",
+                    meta={"iteration": self.iteration, "gating_reason": gating_reason},
+                )
+            elif composite_score < self.promotion_threshold:
                 log_message(
                     "training",
                     f"candidate score {composite_score:.3f} below promotion threshold {self.promotion_threshold:.3f}.",
@@ -809,13 +861,18 @@ class TrainingPipeline:
             else:
                 log_message(
                     "training",
-                    f"candidate retained for further evaluation despite score {composite_score:.3f} (promotion criteria not met).",
+                    "candidate retained despite meeting score threshold",
+                    details={
+                        "score": float(composite_score),
+                        "threshold": float(self.promotion_threshold),
+                        "gating_reason": gating_reason or "criteria_not_met",
+                    },
                 )
                 self.metrics.record(
                     MetricStage.TRAINING,
                     {
-                        "ghost_trades_best": float(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0))),
-                        "best_threshold": float(evaluation.get("best_threshold", self.decision_threshold)),
+                        "ghost_trades_best": float(evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))),
+                        "best_threshold": float(evaluation_data.get("best_threshold", self.decision_threshold)),
                     },
                     category="candidate_eval",
                     meta={"iteration": self.iteration},
@@ -840,6 +897,11 @@ class TrainingPipeline:
                     else 0.0
                 ),
                 "active_accuracy": float(self.active_accuracy or 0.0),
+                "ghost_ready": ghost_ready,
+                "ghost_tail_risk": ghost_tail_risk,
+                "ghost_tail_guard": ghost_tail_guard,
+                "ghost_drawdown": ghost_drawdown,
+                "ghost_drawdown_guard": ghost_drawdown_guard,
             }
             log_message("training", "promotion decision", details=summary_details)
             self._maybe_update_threshold_from_evaluation(evaluation, gating_reason)
@@ -1017,9 +1079,11 @@ class TrainingPipeline:
                 if coverage:
                     for bucket in ("short", "mid", "long"):
                         dataset_metrics[f"horizon_{bucket}_samples"] = float(coverage.get(bucket, 0.0))
+                    horizon_targets = self._effective_horizon_targets()
+                    dataset_meta["horizon_targets"] = horizon_targets
                     deficits = {
-                        bucket: max(0.0, self._horizon_targets.get(bucket, 0.0) - coverage.get(bucket, 0.0))
-                        for bucket in self._horizon_targets
+                        bucket: max(0.0, horizon_targets.get(bucket, 0.0) - coverage.get(bucket, 0.0))
+                        for bucket in horizon_targets
                     }
                     if any(value > 0 for value in deficits.values()):
                         dataset_meta["horizon_deficit"] = deficits
@@ -1742,6 +1806,27 @@ class TrainingPipeline:
                 "reason": gating_reason or "candidate_eval",
             },
         )
+
+    def _effective_horizon_targets(self) -> Dict[str, float]:
+        targets = dict(self._horizon_targets)
+        try:
+            windows = tuple(getattr(self.data_loader, "_horizon_windows", ()) or ())
+        except Exception:
+            windows = ()
+        if not windows:
+            return {bucket: 0.0 for bucket in targets}
+        short_cutoff = 30 * 60
+        mid_cutoff = 24 * 3600
+        has_short = any(float(horizon) <= short_cutoff for horizon in windows)
+        has_mid = any(short_cutoff < float(horizon) <= mid_cutoff for horizon in windows)
+        has_long = any(float(horizon) > mid_cutoff for horizon in windows)
+        if not has_short:
+            targets["short"] = 0.0
+        if not has_mid:
+            targets["mid"] = 0.0
+        if not has_long:
+            targets["long"] = 0.0
+        return targets
 
     def _handle_horizon_deficit(self, deficits: Dict[str, float], focus_assets: Optional[Sequence[str]]) -> None:
         log_message(
@@ -2475,6 +2560,214 @@ class TrainingPipeline:
         except Exception:
             pass
 
+    def _ghost_validation(self) -> Dict[str, Any]:
+        metrics = getattr(self, "metrics", None)
+        if metrics is None:
+            db = getattr(self, "db", None)
+            if db is None:
+                return {
+                    "ready": False,
+                    "reason": "no_metrics",
+                    "samples": 0,
+                    "win_rate": 0.0,
+                    "avg_profit": 0.0,
+                    "tail_risk": 0.0,
+                    "tail_guardrail": float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.08")),
+                }
+            metrics = MetricsCollector(db)
+        self.metrics = metrics
+        lookback = int(os.getenv("GHOST_VALIDATION_LOOKBACK_SEC", str(getattr(self, "focus_lookback_sec", 172800))))
+        try:
+            trades = metrics.ghost_trade_snapshot(limit=500, lookback_sec=lookback)
+        except Exception:
+            trades = []
+        summary = metrics.aggregate_trade_metrics(trades)
+        profit_dist = distribution_report([t.profit for t in trades])
+        tail_guard = float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.08"))
+        drawdown_guard = float(os.getenv("GHOST_MAX_DRAWDOWN", "0"))
+        loss_rate_guard = float(os.getenv("GHOST_MAX_LOSS_RATE", "0.6"))
+        loss_streak_guard = int(os.getenv("GHOST_MAX_LOSS_STREAK", "5"))
+        dominance_guard = float(os.getenv("GHOST_MAX_SYMBOL_DOMINANCE", "0.82"))
+        stale_guard = float(os.getenv("GHOST_MAX_STALE_SEC", str(min(lookback, 86400))))
+        min_trades = max(5, int(getattr(self, "min_ghost_trades", 0)))
+        min_win_rate = float(getattr(self, "min_ghost_win_rate", 0.0))
+        min_margin = float(getattr(self, "min_realized_margin", 0.0))
+        min_profit_factor = float(os.getenv("MIN_GHOST_PROFIT_FACTOR", "0.95"))
+        win_rate = float(summary.get("win_rate", 0.0))
+        avg_profit = float(summary.get("avg_profit", 0.0))
+        profit_factor = float(summary.get("profit_factor", 1.0))
+        tail_risk = abs(profit_dist.get("expected_shortfall_95", 0.0))
+        symbol_counts = Counter([str(t.symbol or "UNKNOWN").upper() for t in trades])
+        dominant_share = float(max(symbol_counts.values()) / max(1, len(trades))) if symbol_counts else 0.0
+        now_ts = time.time()
+        last_trade_ts = max((float(getattr(t, "exit_ts", 0.0)) for t in trades), default=0.0)
+        last_trade_age = max(0.0, now_ts - last_trade_ts) if last_trade_ts > 0 else float("inf")
+        stale_samples = stale_guard > 0 and (not trades or last_trade_age > stale_guard)
+        losses = 0
+        max_loss_streak = 0
+        current_loss_streak = 0
+        for trade in trades:
+            profit_val = float(getattr(trade, "profit", 0.0))
+            if profit_val <= 0:
+                losses += 1
+                current_loss_streak += 1
+                max_loss_streak = max(max_loss_streak, current_loss_streak)
+            else:
+                current_loss_streak = 0
+        wins = len(trades) - losses
+        loss_rate = float(losses / max(1, len(trades)))
+        cumulative = 0.0
+        trough = 0.0
+        for profit in (t.profit for t in trades):
+            cumulative += float(profit)
+            trough = min(trough, cumulative)
+        max_drawdown = abs(trough)
+        concentration_block = len(trades) >= max(5, min_trades) and dominant_share > dominance_guard
+        win_headroom = 1.0 if min_win_rate <= 0 else max(0.0, min(1.0, win_rate / max(min_win_rate, 1e-9)))
+        profit_headroom = 1.0 if min_profit_factor <= 0 else max(0.0, min(1.0, profit_factor / max(min_profit_factor, 1e-9)))
+        tail_headroom = 1.0 if tail_guard <= 0 else max(0.0, 1.0 - min(1.0, tail_risk / max(tail_guard, 1e-9)))
+        loss_headroom = 1.0 if loss_rate_guard <= 0 else max(0.0, 1.0 - min(1.0, loss_rate / max(loss_rate_guard, 1e-9)))
+        drawdown_headroom = 1.0 if drawdown_guard <= 0 else max(0.0, 1.0 - min(1.0, max_drawdown / max(drawdown_guard, 1e-9)))
+        health_components = [win_headroom, profit_headroom, tail_headroom, loss_headroom, drawdown_headroom]
+        health_score = max(0.0, min(1.0, sum(health_components) / max(1, len(health_components))))
+        if stale_samples:
+            health_score = 0.0
+        if concentration_block:
+            health_score = min(health_score, 0.35)
+        ready = (
+            len(trades) >= min_trades
+            and win_rate >= min_win_rate
+            and avg_profit >= min_margin
+            and profit_factor >= min_profit_factor
+            and tail_risk <= tail_guard
+            and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
+            and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
+            and (loss_streak_guard <= 0 or max_loss_streak <= loss_streak_guard)
+            and not stale_samples
+            and not concentration_block
+        )
+        reason = ""
+        if not ready:
+            if stale_samples:
+                reason = "stale_ghost_book"
+            elif len(trades) < min_trades:
+                reason = "insufficient_samples"
+            elif wins <= 0:
+                reason = "no_wins"
+            elif win_rate < min_win_rate:
+                reason = "low_win_rate"
+            elif avg_profit < min_margin:
+                reason = "negative_margin"
+            elif profit_factor < min_profit_factor:
+                reason = "weak_profit_factor"
+            elif tail_risk > tail_guard:
+                reason = "tail_risk"
+            elif drawdown_guard > 0 and max_drawdown > drawdown_guard:
+                reason = "drawdown"
+            elif loss_rate_guard > 0 and loss_rate > loss_rate_guard:
+                reason = "loss_rate"
+            elif loss_streak_guard > 0 and max_loss_streak > loss_streak_guard:
+                reason = "loss_streak"
+            elif concentration_block:
+                reason = "symbol_concentration"
+        return {
+            "ready": ready,
+            "reason": reason,
+            "samples": len(trades),
+            "win_rate": win_rate,
+            "avg_profit": avg_profit,
+            "tail_risk": tail_risk,
+            "tail_guardrail": tail_guard,
+            "max_drawdown": max_drawdown,
+            "drawdown_guardrail": drawdown_guard,
+            "min_trades": min_trades,
+            "min_win_rate": min_win_rate,
+            "min_margin": min_margin,
+            "profit_factor": profit_factor,
+            "min_profit_factor": min_profit_factor,
+            "loss_rate": loss_rate,
+            "loss_rate_guardrail": loss_rate_guard,
+            "max_loss_streak": max_loss_streak,
+            "loss_streak_guardrail": loss_streak_guard,
+            "last_trade_ts": last_trade_ts,
+            "last_trade_age_sec": last_trade_age if math.isfinite(last_trade_age) else None,
+            "stale_guardrail_sec": stale_guard,
+            "stale": stale_samples,
+            "symbol_dominance": dominant_share,
+            "max_symbol_dominance": dominance_guard,
+            "unique_symbols": len(symbol_counts),
+            "health_score": health_score,
+            "wins": wins,
+            "losses": losses,
+        }
+
+    def _wallet_state(self) -> Dict[str, Any]:
+        wallet = (os.getenv("TRADING_WALLET") or os.getenv("WALLET_NAME") or "guardian").strip().lower()
+        min_capital_usd = float(os.getenv("LIVE_MIN_CAPITAL_USD", "50"))
+        dust_threshold = float(os.getenv("WALLET_DUST_USD", "5"))
+        stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "USDBC", "USDC.E", "TUSD", "USDP"}
+        native_tokens = {"ETH", "WETH", "MATIC", "BNB", "AVAX", "SOL"}
+        stable_usd = 0.0
+        native_usd = 0.0
+        native_buffer_target = float(os.getenv("LIVE_NATIVE_BUFFER_USD", "5"))
+        holdings = 0
+        dust_tokens: List[str] = []
+        try:
+            db = getattr(self, "db", None)
+            balances = db.fetch_balances_flat(wallet=wallet, chains=[PRIMARY_CHAIN], include_zero=False) if db else []
+        except Exception as exc:
+            return {
+                "wallet": wallet,
+                "stable_usd": 0.0,
+                "native_usd": 0.0,
+                "sparse": True,
+                "fragmented": True,
+                "min_capital_usd": min_capital_usd,
+                "dust_threshold_usd": dust_threshold,
+                "error": str(exc),
+            }
+        for row in balances:
+            symbol = str(row["symbol"] or row["token"] or "").upper()
+            usd_val = float(row["usd_amount"] or 0.0)
+            holdings += 1
+            if symbol in stable_tokens:
+                stable_usd += usd_val
+            if symbol in native_tokens:
+                native_usd += usd_val
+            if usd_val < dust_threshold and symbol:
+                dust_tokens.append(symbol)
+        fragment_ratio = (len(dust_tokens) / holdings) if holdings else 0.0
+        fragmented = len(dust_tokens) >= 3 or fragment_ratio >= 0.5
+        native_buffer_gap = max(0.0, native_buffer_target - native_usd)
+        native_starved = native_buffer_gap > 0.0
+        stable_deficit = max(0.0, min_capital_usd - stable_usd)
+        sparse_reasons: List[str] = []
+        if holdings == 0:
+            sparse_reasons.append("empty_wallet")
+        if stable_deficit > 0:
+            sparse_reasons.append("stable_below_min")
+        if native_starved:
+            sparse_reasons.append("native_gas_low")
+        if fragmented:
+            sparse_reasons.append("fragmented")
+        sparse = bool(stable_deficit > 0 or fragmented or native_starved or holdings == 0)
+        return {
+            "wallet": wallet,
+            "stable_usd": stable_usd,
+            "native_usd": native_usd,
+            "sparse": sparse,
+            "fragmented": fragmented,
+            "fragment_ratio": fragment_ratio,
+            "dust_tokens": dust_tokens[:8],
+            "dust_threshold_usd": dust_threshold,
+            "min_capital_usd": min_capital_usd,
+            "stable_deficit_usd": stable_deficit,
+            "native_buffer_gap_usd": native_buffer_gap,
+            "native_buffer_target_usd": native_buffer_target,
+            "native_starved": native_starved,
+            "sparse_reasons": sparse_reasons,
+        }
+
     def live_readiness_report(self) -> Dict[str, Any]:
         # Allow environment overrides to tune promotion/readiness thresholds.
         ready_precision_target = float(os.getenv("LIVE_READY_PRECISION", "0.55"))
@@ -2484,6 +2777,8 @@ class TrainingPipeline:
         mini_recall_target = float(os.getenv("LIVE_MINI_RECALL", "0.45"))
         mini_samples_target = int(os.getenv("LIVE_MINI_SAMPLES", "20"))
         allow_mini_as_ready = (os.getenv("LIVE_ALLOW_MINI_READY", "0") or "0").lower() in {"1", "true", "yes", "on"}
+        ghost_check = self._ghost_validation()
+        wallet_state = self._wallet_state()
 
         report = self._last_confusion_report or {}
         if report and (not isinstance(self._last_confusion_summary, dict) or not self._last_confusion_summary.get("horizons")):
@@ -2519,7 +2814,7 @@ class TrainingPipeline:
                 ready_fb = True
                 fpr_fb = min(fpr_fb, self.max_false_positive_rate)
                 win_fb = max(win_fb, self.min_ghost_win_rate * 0.5)
-            return {
+            report_fb = {
                 "ready": ready_fb,
                 "reason": "no_confusion_data" if not ready_fb else "",
                 "horizon": "fb",
@@ -2537,6 +2832,26 @@ class TrainingPipeline:
                 "mini_samples": samples_fb,
                 "mini_false_positive_rate": fpr_fb,
             }
+            ghost_ready = bool(ghost_check.get("ready"))
+            if report_fb["ready"] and not ghost_ready:
+                report_fb["ready"] = False
+                report_fb["reason"] = f"ghost_{ghost_check.get('reason') or 'not_ready'}"
+            if report_fb["ready"] and wallet_state.get("sparse"):
+                report_fb["ready"] = False
+                sparse_reasons = wallet_state.get("sparse_reasons") or []
+                detail = f":{','.join(sparse_reasons)}" if sparse_reasons else ""
+                report_fb["reason"] = f"sparse_wallet{detail}"
+            report_fb.update(
+                {
+                    "ghost_ready": ghost_ready,
+                    "ghost_reason": ghost_check.get("reason", ""),
+                    "ghost_samples": ghost_check.get("samples", 0),
+                    "ghost_win_rate": ghost_check.get("win_rate", 0.0),
+                    "ghost_tail_risk": ghost_check.get("tail_risk", 0.0),
+                    "wallet_state": wallet_state,
+                }
+            )
+            return report_fb
         anchor_label, anchor = self._select_confusion_anchor(report)
         if anchor is None:
             return {"ready": False, "reason": "no_confusion_data"}
@@ -2566,7 +2881,7 @@ class TrainingPipeline:
         if not ready and mini_ready and allow_mini_as_ready:
             ready = True
             reason = "mini_ready"
-        return {
+        report_ready = {
             "ready": ready,
             "reason": reason,
             "horizon": anchor_label,
@@ -2584,6 +2899,27 @@ class TrainingPipeline:
             "mini_samples": mini_samples,
             "mini_false_positive_rate": mini_fpr,
         }
+        ghost_ready = bool(ghost_check.get("ready"))
+        if report_ready["ready"] and not ghost_ready:
+            report_ready["ready"] = False
+            report_ready["reason"] = f"ghost_{ghost_check.get('reason') or 'not_ready'}"
+        if report_ready["ready"] and wallet_state.get("sparse"):
+            report_ready["ready"] = False
+            sparse_reasons = wallet_state.get("sparse_reasons") or []
+            detail = f":{','.join(sparse_reasons)}" if sparse_reasons else ""
+            report_ready["reason"] = f"sparse_wallet{detail}"
+        report_ready.update(
+            {
+                "ghost_ready": ghost_ready,
+                "ghost_reason": ghost_check.get("reason", ""),
+                "ghost_samples": ghost_check.get("samples", 0),
+                "ghost_win_rate": ghost_check.get("win_rate", 0.0),
+                "ghost_tail_risk": ghost_check.get("tail_risk", 0.0),
+                "wallet_state": wallet_state,
+                "sparse_reasons": wallet_state.get("sparse_reasons"),
+            }
+        )
+        return report_ready
 
     def confusion_summary(self) -> Dict[str, Any]:
         return json.loads(json.dumps(self._last_confusion_summary)) if self._last_confusion_summary else {}
@@ -2602,6 +2938,43 @@ class TrainingPipeline:
         summary = self._last_confusion_summary or self._summarize_confusion_report(self._last_confusion_report or {})
         ready_ratio = float(os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15")))
         bootstrap_ratio = float(os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05")))
+        ghost_check = self._ghost_validation()
+        wallet_state = self._wallet_state()
+        min_live_capital = float(os.getenv("LIVE_MIN_CAPITAL_USD", "50"))
+        min_clip_usd = float(os.getenv("LIVE_MIN_CLIP_USD", "10"))
+        stable_usd = float(wallet_state.get("stable_usd", 0.0))
+        native_usd = float(wallet_state.get("native_usd", 0.0))
+        native_buffer_target = float(wallet_state.get("native_buffer_target_usd", os.getenv("LIVE_NATIVE_BUFFER_USD", "5")))
+        native_buffer_gap = float(wallet_state.get("native_buffer_gap_usd", max(0.0, native_buffer_target - native_usd)))
+        stable_deficit = float(wallet_state.get("stable_deficit_usd", max(0.0, min_live_capital - stable_usd)))
+        wallet_sparse_reasons = wallet_state.get("sparse_reasons") or []
+        ghost_samples = int(ghost_check.get("samples", 0))
+        ghost_min_trades = int(ghost_check.get("min_trades", getattr(self, "min_ghost_trades", 0)))
+        ghost_win_rate = float(ghost_check.get("win_rate", 0.0))
+        min_ghost_win_rate = float(ghost_check.get("min_win_rate", getattr(self, "min_ghost_win_rate", 0.0)))
+        profit_factor = float(ghost_check.get("profit_factor", 1.0))
+        min_profit_factor = float(ghost_check.get("min_profit_factor", 1.0))
+        loss_rate = float(ghost_check.get("loss_rate", 0.0))
+        loss_rate_guard = float(ghost_check.get("loss_rate_guardrail", os.getenv("GHOST_MAX_LOSS_RATE", "0.6")))
+        loss_streak = int(ghost_check.get("max_loss_streak", 0))
+        loss_streak_guard = int(ghost_check.get("loss_streak_guardrail", os.getenv("GHOST_MAX_LOSS_STREAK", "5")))
+        capital_deficit = max(
+            0.0,
+            float(wallet_state.get("min_capital_usd", min_live_capital)) - float(wallet_state.get("stable_usd", 0.0)),
+            stable_deficit,
+        )
+        tail_risk = float(ghost_check.get("tail_risk", 0.0))
+        tail_guard = float(ghost_check.get("tail_guardrail", 0.0))
+        drawdown = float(ghost_check.get("max_drawdown", 0.0))
+        drawdown_guard = float(ghost_check.get("drawdown_guardrail", 0.0))
+        drawdown_breach = drawdown_guard > 0 and drawdown > drawdown_guard
+        tail_block = tail_guard > 0 and tail_risk > tail_guard
+        loss_rate_block = loss_rate_guard > 0 and loss_rate > loss_rate_guard
+        loss_streak_block = loss_streak_guard > 0 and loss_streak > loss_streak_guard
+        ghost_ready = bool(ghost_check.get("ready"))
+        fragmented_wallet = bool(wallet_state.get("fragmented"))
+        wallet_sparse = bool(wallet_state.get("sparse") or fragmented_wallet)
+        native_starved = bool(wallet_state.get("native_starved", native_buffer_gap > 0))
         horizons = summary.get("horizons", {})
         allowed = 0
         horizon_plan: Dict[str, Any] = {}
@@ -2622,11 +2995,366 @@ class TrainingPipeline:
             else self.decision_threshold,
             "savings_ratio_ready": ready_ratio,
             "savings_ratio_bootstrap": bootstrap_ratio,
+            "ready_reason": readiness.get("reason", "") if isinstance(readiness, dict) else "",
             "horizons": horizon_plan,
             "coverage": coverage,
             "dominant": summary.get("dominant"),
         }
-        plan["recommended_savings_ratio"] = ready_ratio if plan["live_ready"] else bootstrap_ratio
+        safe_to_live = (
+            plan["live_ready"]
+            and ghost_ready
+            and not wallet_sparse
+            and not tail_block
+            and capital_deficit <= 0
+            and not loss_rate_block
+            and not loss_streak_block
+        )
+        recommended_ratio = 0.0
+        ghost_sample_buffer = max(0.25, min(1.0, ghost_samples / max(1, ghost_min_trades)))
+        tail_headroom = 1.0
+        if tail_guard > 0:
+            tail_headroom = max(0.2, min(1.0, (tail_guard - tail_risk) / max(tail_guard, 1e-9)))
+        drawdown_headroom = 1.0
+        if drawdown_guard > 0:
+            drawdown_headroom = max(0.2, min(1.0, (drawdown_guard - drawdown) / max(drawdown_guard, 1e-9)))
+        loss_health = max(0.25, min(1.0, 1.0 - loss_rate))
+        health_score = float(ghost_check.get("health_score", 1.0))
+        ghost_risk_multiplier = ghost_sample_buffer * tail_headroom * loss_health * drawdown_headroom
+        ghost_risk_multiplier *= max(0.2, min(1.0, health_score))
+        if not ghost_ready or tail_block or drawdown_breach or loss_rate_block or loss_streak_block:
+            ghost_risk_multiplier = 0.0
+        if wallet_sparse:
+            ghost_risk_multiplier = min(ghost_risk_multiplier, 0.25)
+        if capital_deficit > 0:
+            ghost_risk_multiplier = 0.0
+        ghost_risk_multiplier = float(max(0.0, min(1.0, ghost_risk_multiplier)))
+        validation_margin = min(
+            ghost_win_rate - min_ghost_win_rate if min_ghost_win_rate else ghost_win_rate,
+            profit_factor - min_profit_factor if min_profit_factor else profit_factor,
+        )
+        if safe_to_live:
+            recommended_ratio = ready_ratio * ghost_sample_buffer * tail_headroom
+        elif ghost_ready and not wallet_sparse and not tail_block and capital_deficit <= 0:
+            recommended_ratio = bootstrap_ratio * ghost_sample_buffer * tail_headroom
+        if recommended_ratio > 0:
+            win_rate_headroom = 1.0
+            if min_ghost_win_rate > 0:
+                win_rate_headroom = max(0.25, min(1.0, ghost_win_rate / max(min_ghost_win_rate, 1e-6)))
+            profit_factor_headroom = max(0.25, min(1.0, profit_factor / max(min_profit_factor, 1e-6)))
+            recommended_ratio *= win_rate_headroom * profit_factor_headroom * loss_health * drawdown_headroom
+        if recommended_ratio > 0 and (ghost_samples < max(1, ghost_min_trades) * 1.5 or validation_margin < 0):
+            recommended_ratio *= 0.5
+            ghost_risk_multiplier = min(ghost_risk_multiplier, 0.5)
+        if drawdown_breach:
+            recommended_ratio = 0.0
+            safe_to_live = False
+        if loss_rate_block or loss_streak_block:
+            recommended_ratio = 0.0
+            safe_to_live = False
+        if recommended_ratio > 0:
+            recommended_ratio *= ghost_risk_multiplier
+        deployable_stable = max(0.0, stable_usd - capital_deficit - native_buffer_gap)
+        capital_ratio_cap = 0.0
+        if stable_usd > 0:
+            capital_ratio_cap = max(0.0, min(1.0, deployable_stable / stable_usd))
+        max_live_usd = float(os.getenv("LIVE_MAX_BOOTSTRAP_USD", "150"))
+        first_tranche_cap = float(os.getenv("LIVE_FIRST_TRANCHE_USD", "50"))
+        live_ratio_cap = 0.0
+        if deployable_stable > 0:
+            live_ratio_cap = min(1.0, max_live_usd / max(deployable_stable, 1e-9))
+        # Keep the live allocation proportional to available capital and bounded by a minimal ramp cap.
+        recommended_ratio = min(recommended_ratio, capital_ratio_cap or recommended_ratio, live_ratio_cap or 1.0)
+        recommended_live_usd = recommended_ratio * deployable_stable
+        min_clip_block = False
+        if recommended_live_usd > 0 and recommended_live_usd < min_clip_usd:
+            min_clip_block = True
+            recommended_ratio = 0.0
+            recommended_live_usd = 0.0
+            ghost_risk_multiplier = min(ghost_risk_multiplier, 0.25)
+        live_mode = "blocked"
+        if recommended_ratio > 0 and safe_to_live:
+            live_mode = "ready"
+        elif recommended_ratio > 0:
+            live_mode = "bootstrap"
+        block_reason = ""
+        if recommended_ratio == 0.0:
+            if not ghost_ready:
+                block_reason = "ghost_validation_block"
+            elif drawdown_breach:
+                block_reason = "ghost_drawdown_block"
+            elif loss_rate_block:
+                block_reason = "ghost_loss_rate"
+            elif loss_streak_block:
+                block_reason = "ghost_loss_streak"
+            elif wallet_sparse or capital_deficit > 0:
+                if capital_deficit > 0:
+                    block_reason = "capital_deficit"
+                elif native_starved:
+                    block_reason = "native_gas_starved"
+                else:
+                    block_reason = "wallet_sparse"
+            elif tail_block:
+                block_reason = "tail_risk_block"
+            elif min_clip_block:
+                block_reason = "min_clip"
+            elif not plan["live_ready"]:
+                block_reason = "readiness_gate_block"
+        plan["ghost_validation"] = ghost_check
+        plan["wallet_state"] = wallet_state
+        plan["risk_flags"] = {
+            "ghost_ready": ghost_ready,
+            "ghost_reason": ghost_check.get("reason", ""),
+            "ghost_win_rate": ghost_win_rate,
+            "tail_risk": tail_risk,
+            "tail_guardrail": tail_guard,
+            "tail_block": tail_block,
+            "loss_rate": loss_rate,
+            "loss_rate_guardrail": loss_rate_guard,
+            "loss_rate_block": loss_rate_block,
+            "max_loss_streak": loss_streak,
+            "loss_streak_guardrail": loss_streak_guard,
+            "loss_streak_block": loss_streak_block,
+            "wallet_sparse": wallet_sparse,
+            "capital_deficit": capital_deficit,
+            "native_starved": native_starved,
+            "live_safe": safe_to_live,
+            "live_blocked_reason": block_reason,
+            "ghost_samples": ghost_samples,
+            "ghost_min_trades": ghost_min_trades,
+            "live_mode": live_mode,
+            "native_buffer_gap": native_buffer_gap,
+            "native_buffer_target": native_buffer_target,
+            "fragmented_wallet": fragmented_wallet,
+            "fragment_ratio": wallet_state.get("fragment_ratio", 0.0),
+            "max_live_start_usd": max_live_usd,
+            "deployable_stable_usd": deployable_stable,
+            "health_score": health_score,
+            "sparse_reasons": wallet_sparse_reasons,
+            "min_clip_usd": min_clip_usd,
+            "min_clip_block": min_clip_block,
+            "recommended_live_usd": recommended_live_usd,
+            "stable_deficit_usd": stable_deficit,
+        }
+        bus_actions: List[Dict[str, Any]] = []
+
+        def add_bus_action(action: str, reason: str, priority: int = 2, window_sec: Optional[int] = None, **kwargs: Any) -> None:
+            for existing in bus_actions:
+                if existing.get("action") == action and existing.get("reason") == reason:
+                    return
+            payload: Dict[str, Any] = {"action": action, "reason": reason, "priority": priority}
+            if window_sec is not None:
+                try:
+                    payload["window_sec"] = int(window_sec)
+                except Exception:
+                    payload["window_sec"] = window_sec
+            payload.update({k: v for k, v in kwargs.items() if v is not None})
+            bus_actions.append(payload)
+
+        swap_window_sec = int(os.getenv("BUS_SWAP_WINDOW_SEC", "900"))
+
+        if tail_block or drawdown_breach:
+            add_bus_action(
+                "pause_live",
+                "ghost_tail_risk" if not drawdown_breach else "ghost_drawdown",
+                priority=0,
+                tail_risk=tail_risk,
+                guardrail=tail_guard,
+                drawdown=drawdown,
+                drawdown_guardrail=drawdown_guard,
+            )
+        if loss_rate_block or loss_streak_block:
+            add_bus_action(
+                "freeze_live",
+                "ghost_loss_rate" if loss_rate_block else "ghost_loss_streak",
+                priority=0,
+                loss_rate=loss_rate,
+                loss_rate_guardrail=loss_rate_guard,
+                loss_streak=loss_streak,
+                loss_streak_guardrail=loss_streak_guard,
+            )
+        if not ghost_ready:
+            add_bus_action(
+                "freeze_live",
+                ghost_check.get("reason", "ghost_not_ready"),
+                priority=0,
+                samples=ghost_check.get("samples", 0),
+            )
+        if wallet_sparse:
+            add_bus_action(
+                "freeze_live",
+                "sparse_wallet",
+                priority=0,
+                min_capital_usd=float(wallet_state.get("min_capital_usd", min_live_capital)),
+                wallet=wallet_state.get("wallet"),
+                reasons=wallet_sparse_reasons,
+            )
+        if capital_deficit > 0:
+            add_bus_action(
+                "swap_to_stable",
+                "min_live_capital",
+                priority=1,
+                target_usd=capital_deficit,
+                wallet=wallet_state.get("wallet"),
+                window_sec=swap_window_sec,
+            )
+            if native_usd > 0:
+                add_bus_action(
+                    "swap_native_to_stable",
+                    "cover_min_capital",
+                    priority=1,
+                    native_usd=native_usd,
+                    target_usd=min(native_usd, capital_deficit),
+                    wallet=wallet_state.get("wallet"),
+                    window_sec=swap_window_sec,
+                )
+        if (
+            native_buffer_gap > 0
+            and capital_deficit <= 0
+            and deployable_stable > 0
+            and deployable_stable >= native_buffer_gap * 0.25
+        ):
+            add_bus_action(
+                "swap_stable_to_native",
+                "gas_buffer" if recommended_ratio > 0 else "preload_gas_buffer",
+                priority=2,
+                target_usd=min(native_buffer_gap, deployable_stable),
+                wallet=wallet_state.get("wallet"),
+                window_sec=swap_window_sec,
+            )
+        if native_starved and stable_usd <= 0 and not tail_block and not loss_rate_block and not loss_streak_block:
+            add_bus_action(
+                "freeze_live",
+                "native_gas_starved",
+                priority=0,
+                native_buffer_gap_usd=native_buffer_gap,
+            )
+        if fragmented_wallet:
+            add_bus_action(
+                "consolidate_fragments",
+                "wallet_fragmentation",
+                priority=3,
+                dust_tokens=(wallet_state.get("dust_tokens") or [])[:8],
+                wallet=wallet_state.get("wallet"),
+                dust_threshold_usd=wallet_state.get("dust_threshold_usd"),
+            )
+        bus_actions.sort(key=lambda act: (act.get("priority", 99), act.get("action") or ""))
+        bus_actions_pending = bool(bus_actions)
+        bus_freeze_actions = {act.get("action") for act in bus_actions}
+        if bus_actions_pending and (
+            wallet_sparse
+            or capital_deficit > 0
+            or native_starved
+            or "freeze_live" in bus_freeze_actions
+            or "pause_live" in bus_freeze_actions
+        ):
+            ghost_risk_multiplier = 0.0
+            recommended_ratio = 0.0
+            if not block_reason:
+                block_reason = "bus_actions_pending"
+        if bus_actions:
+            ghost_risk_multiplier = min(ghost_risk_multiplier, 0.35)
+            if recommended_ratio > 0:
+                recommended_ratio = min(recommended_ratio, recommended_ratio * ghost_risk_multiplier)
+        if recommended_ratio <= 0:
+            live_mode = "blocked"
+            recommended_live_usd = 0.0
+        else:
+            recommended_live_usd = recommended_ratio * deployable_stable
+            if recommended_live_usd < min_clip_usd:
+                min_clip_block = True
+                recommended_ratio = 0.0
+                recommended_live_usd = 0.0
+                live_mode = "blocked"
+                ghost_risk_multiplier = min(ghost_risk_multiplier, 0.25)
+                if not block_reason:
+                    block_reason = "min_clip"
+        plan["bus_swap_actions"] = bus_actions
+        plan["capital_plan"] = {
+            "bootstrap_ratio": bootstrap_ratio,
+            "ready_ratio": ready_ratio,
+            "recommended_live_ratio": recommended_ratio,
+            "min_live_capital_usd": min_live_capital,
+            "sparse_wallet": bool(wallet_state.get("sparse")),
+            "wallet_stable_usd": stable_usd,
+            "wallet_native_usd": native_usd,
+            "capital_deficit_usd": capital_deficit,
+            "safe_live_bankroll_usd": max(0.0, deployable_stable),
+            "ghost_win_rate": ghost_win_rate,
+            "ghost_loss_rate": loss_rate,
+            "ghost_loss_streak": loss_streak,
+            "profit_factor": profit_factor,
+            "native_buffer_target_usd": native_buffer_target,
+            "native_buffer_gap_usd": native_buffer_gap,
+            "native_starved": native_starved,
+            "fragmented_wallet": fragmented_wallet,
+            "fragment_ratio": wallet_state.get("fragment_ratio", 0.0),
+            "max_live_start_usd": max_live_usd,
+            "live_capital_cap_usd": min(max_live_usd, deployable_stable) if deployable_stable else 0.0,
+            "bus_actions_pending": bool(bus_actions),
+            "ghost_risk_multiplier": ghost_risk_multiplier,
+            "deployable_stable_usd": deployable_stable,
+            "stable_deficit_usd": stable_deficit,
+            "min_clip_usd": min_clip_usd,
+            "min_clip_block": min_clip_block,
+        }
+        plan["guardrails"] = {
+            "min_ghost_trades": ghost_min_trades,
+            "min_live_capital_usd": min_live_capital,
+            "tail_guardrail": tail_guard,
+            "live_mode": live_mode,
+            "ghost_drawdown_guardrail": drawdown_guard,
+            "max_live_start_usd": max_live_usd,
+            "loss_rate_guardrail": loss_rate_guard,
+            "loss_streak_guardrail": loss_streak_guard,
+            "min_clip_usd": min_clip_usd,
+        }
+        plan["capital_plan"]["recommended_live_usd"] = recommended_live_usd
+        plan["capital_plan"]["live_ramp_schedule"] = {
+            "first_tranche_usd": round(min(first_tranche_cap, recommended_live_usd), 2) if recommended_live_usd > 0 else 0.0,
+            "max_live_usd": max_live_usd,
+            "deployable_stable_usd": deployable_stable,
+            "first_tranche_cap_usd": first_tranche_cap,
+        }
+        plan["capital_plan"]["ghost_risk_multiplier"] = ghost_risk_multiplier
+        plan["recommended_savings_ratio"] = max(0.0, recommended_ratio)
+        ghost_halt_reason = ""
+        if ghost_risk_multiplier <= 0.0:
+            ghost_halt_reason = block_reason or ghost_check.get("reason", "") or ("capital_deficit" if capital_deficit > 0 else "")
+        if bus_actions_pending and not ghost_halt_reason:
+            ghost_halt_reason = "bus_actions_pending"
+        plan["risk_flags"].update(
+            {
+                "ghost_drawdown": drawdown,
+                "ghost_drawdown_guardrail": drawdown_guard,
+                "ghost_drawdown_breach": drawdown_breach,
+                "ghost_sample_buffer": ghost_sample_buffer,
+                "ghost_validation_margin": validation_margin,
+                "halt_live": tail_block
+                or drawdown_breach
+                or not ghost_ready
+                or loss_rate_block
+                or loss_streak_block
+                or wallet_sparse
+                or capital_deficit > 0
+                or native_starved
+                or bus_actions_pending
+                or recommended_ratio <= 0,
+                "halt_reason": block_reason
+                or (ghost_check.get("reason", "") if not ghost_ready else "")
+                or ("wallet_sparse" if wallet_sparse else "")
+                or ("capital_deficit" if capital_deficit > 0 else "")
+                or ("native_starved" if native_starved else "")
+                or ("bus_actions_pending" if bus_actions_pending else ""),
+                "bus_actions_pending": bus_actions_pending,
+                "risk_budget_cap": recommended_ratio,
+                "ghost_risk_multiplier": ghost_risk_multiplier,
+                "recommended_live_usd": recommended_live_usd,
+                "min_clip_block": min_clip_block,
+                "min_clip_usd": min_clip_usd,
+                "halt_ghost": ghost_risk_multiplier <= 0.0 or bus_actions_pending,
+                "ghost_halt_reason": ghost_halt_reason,
+            }
+        )
         return plan
 
     def prime_confusion_windows(self, *, min_samples: int = 128, force: bool = False) -> bool:

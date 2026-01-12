@@ -87,14 +87,62 @@ const theme = {
   ]),
 };
 
-function resolveNodeColor(node: GraphNode): number {
-  const status = node.status || 'ok';
-  return theme.nodeColors.get(status) ?? 0x60a5fa;
+const groupPalette = new Map<string, number>([
+  ['system', 0x38bdf8],
+  ['module', 0x7c3aed],
+  ['asset', 0x22c55e],
+  ['event', 0xf472b6],
+  ['session', 0x2dd4bf],
+  ['holding', 0xf97316],
+  ['native', 0x0ea5e9],
+  ['finance', 0xfacc15],
+  ['ghost', 0xdb2777],
+  ['queue', 0x2563eb],
+  ['feedback', 0xf59e0b],
+  ['metric', 0x8b5cf6],
+  ['discovery', 0x22d3ee],
+  ['vote', 0xfbbf24],
+  ['transition', 0xa855f7],
+  ['brain', 0x38bdf8],
+]);
+
+const crossGroupColor = 0xfcd34d;
+
+function blendColors(a: number, b: number, ratio = 0.5) {
+  const colorA = new THREE.Color(a);
+  colorA.lerp(new THREE.Color(b), ratio);
+  return colorA.getHex();
 }
 
-function resolveEdgeColor(edge: GraphEdge): number {
+function getGroupColor(group?: string) {
+  if (!group) return groupPalette.get('system') ?? 0x38bdf8;
+  return groupPalette.get(group) ?? groupPalette.get('asset') ?? 0x22c55e;
+}
+
+function resolveNodeColor(node: GraphNode): number {
+  const base = new THREE.Color(getGroupColor(node.group));
+  const status = (node.status || 'ok').toLowerCase();
+  if (['halted', 'cautious', 'warn', 'error'].includes(status)) {
+    base.lerp(new THREE.Color(0xef4444), 0.35);
+  } else if (['strong', 'engaged'].includes(status)) {
+    base.lerp(new THREE.Color(0x4ade80), 0.2);
+  } else if (status === 'soft') {
+    base.lerp(new THREE.Color(0x60a5fa), 0.15);
+  }
+  return base.getHex();
+}
+
+function resolveEdgeColor(edge: GraphEdge, groups: Map<string, string>): number {
+  const sourceGroup = groups.get(edge.source);
+  const targetGroup = groups.get(edge.target);
+  if (sourceGroup && targetGroup) {
+    if (sourceGroup === targetGroup) {
+      return getGroupColor(sourceGroup);
+    }
+    return blendColors(getGroupColor(sourceGroup), getGroupColor(targetGroup), 0.45);
+  }
   const kind = edge.kind || 'signal';
-  return theme.edgeColors.get(kind) ?? 0x374151;
+  return theme.edgeColors.get(kind) ?? crossGroupColor;
 }
 
 function cleanupScene() {
@@ -164,6 +212,8 @@ function buildGraph(graph?: { nodes?: GraphNode[]; edges?: GraphEdge[] }) {
   const nodes = graph?.nodes ?? [];
   const edges = graph?.edges ?? [];
   const positions = layoutNodes(nodes);
+  const nodeGroups = new Map<string, string>();
+  nodes.forEach((node) => nodeGroups.set(node.id, node.group || 'asset'));
 
   const labelScale = Number(props.labelScale ?? 1);
 
@@ -171,16 +221,30 @@ function buildGraph(graph?: { nodes?: GraphNode[]; edges?: GraphEdge[] }) {
     const position = positions.get(node.id) ?? new THREE.Vector3(0, 0, 0);
     const radius = Math.max(0.18, Math.min(0.7, Math.abs(node.value || node.exposure || 0.35)));
     const geometry = new THREE.SphereGeometry(radius, 18, 18);
+    const nodeColor = resolveNodeColor(node);
+    const energy = Math.min(1.2, Math.max(0.28, Math.log1p(Math.abs(Number(node.exposure || node.value || 0.35))) * 0.18 + 0.25));
     const material = new THREE.MeshStandardMaterial({
-      color: resolveNodeColor(node),
-      emissive: resolveNodeColor(node) * 0.35,
-      emissiveIntensity: 0.12,
-      metalness: 0.2,
-      roughness: 0.45,
+      color: nodeColor,
+      emissive: nodeColor,
+      emissiveIntensity: 0.25 + energy * 0.55,
+      metalness: 0.25,
+      roughness: 0.35,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(position);
     graphGroup!.add(mesh);
+
+    const glowGeometry = new THREE.SphereGeometry(radius * (1.6 + energy * 0.4), 16, 16);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: nodeColor,
+      transparent: true,
+      opacity: 0.08 + energy * 0.1,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+    glow.position.copy(position);
+    graphGroup!.add(glow);
 
     if (node.label) {
       const label = createTextSprite(node.label, labelScale);
@@ -195,9 +259,9 @@ function buildGraph(graph?: { nodes?: GraphNode[]; edges?: GraphEdge[] }) {
     if (!from || !to) return;
     const geometry = new THREE.BufferGeometry().setFromPoints([from, to]);
     const material = new THREE.LineBasicMaterial({
-      color: resolveEdgeColor(edge),
+      color: resolveEdgeColor(edge, nodeGroups),
       transparent: true,
-      opacity: Math.min(0.85, Math.max(0.12, (edge.weight || 0.28) * 1.15)),
+      opacity: Math.min(0.8, Math.max(0.18, (edge.weight || 0.28) * 1.25)),
     });
     const line = new THREE.Line(geometry, material);
     graphGroup!.add(line);

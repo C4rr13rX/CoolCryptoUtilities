@@ -1,0 +1,125 @@
+{
+  "release_name": "Multi-Tier Trading Pipeline Release Criteria",
+  "version": "0.3",
+  "release_intent": "Ghost-first proof of accuracy and capital preservation for the tiered strategy stack, with bus-scheduled routing and sparse-wallet optimization, before minimal-capital live deployment.",
+  "scope": "Tiered strategies (fast good-enough, higher-accuracy confirmations, long-horizon), ghost-first promotion, minimal-capital live start, wallet/routing optimization for sparse balances, bus-scheduling swaps across on/off-ramps, loss-prevention rails, CPU-only efficiency (i5/32GB), and auditable UX/log/screen captures.",
+  "definition_of_done": [
+    "Backtests and ghost runs show positive expectation after fees/slippage for each tier with defined hit-rate and drawdown targets.",
+    "Promotion rules keep tiers in ghost until gates are green; live starts with minimum capital and enforces per-trade/session/daily caps.",
+    "Sparse-wallet optimizer and bus-scheduling swap planner validated on target venues/assets with fee-aware, settlement-aware paths and non-negative expected value.",
+    "Risk rails, circuit-breakers, kill-switch, and rollback drills succeed with MTTR targets and no uncontrolled-loss scenarios.",
+    "CPU/memory usage stays within i5/32GB budget under peak routing + model workloads; decision latency meets per-tier SLAs.",
+    "Observability covers 100 percent of evaluated trades with structured logs, metrics, trade blotter entries, and screenshots via scripts/branddozer_ui_capture.py for UI-touched flows.",
+    "Runbooks, approvals, and deployment configs for ghost vs live are documented, versioned, and signed off by risk/ops."
+  ],
+  "environments": {
+    "ghost": {
+      "data": "Live market data with paper/ghost execution, full fee/slippage modeling, and bus-scheduling simulations.",
+      "artifacts": "Decision traces, order intents, routing paths, wallet moves, and screenshots via scripts/branddozer_ui_capture.py when UI is used."
+    },
+    "limited_live": {
+      "capital": "Single-asset single-venue minimal capital per tier; per-trade/per-session/per-day and per-asset caps enforced in config with hard stops.",
+      "oversight": "Heightened alerting, mandatory post-trade review, and screenshot/log capture for sampled trades."
+    }
+  },
+  "gates": {
+    "ghost_to_limited_live": {
+      "minimum_sample": ">= 2 weeks AND >= 500 ghost trades per active tier across representative venues/assets AND >= 50 bus-scheduled swap sequences.",
+      "metrics": {
+        "hit_rate": ">= target per tier (T0 52%+, T1 55%+, T2 57%+) with positive expectation after fees.",
+        "slippage_plus_fees_bp": "<= budget per venue/tier; 95th percentile under threshold; bus-scheduled swaps complete >=99% within SLA with non-negative expected value.",
+        "drawdown": "Max daily and rolling drawdown within risk budget; zero uncontrolled-loss events.",
+        "latency": "Median/95th decision-to-ack within SLA for CPU-only run; bus route planning p95 < 5s.",
+        "resource": "CPU < 85 percent and RSS < 28GB during peak ghost runs."
+      },
+      "controls": [
+        "Kill-switch and circuit-breaker drills executed; automated hedging/flattening proven with MTTR < 2 minutes.",
+        "Config flags prevent live unless gate recorded as green; promotion package includes approvals plus model/config hashes."
+      ]
+    },
+    "limited_live_ramp": {
+      "ramp_conditions": [
+        "Rolling 7-day KPIs stay green (hit rate, drawdown, slippage/fees, latency) with no policy violations.",
+        "Capital increases follow predefined ladder; per-tier/per-asset/per-venue caps enforced; session/daily loss caps not breached.",
+        "Wallet/bus planner shows non-negative realized spread after fees with settlement SLA adherence."
+      ],
+      "rollback": [
+        "Auto-cut to ghost on breach of drawdown, slippage, latency, settlement, or health thresholds; freeze bus scheduling on SLA breach.",
+        "Manual kill-switch validated with MTTR target achieved; positions flattened and transfers halted safely."
+      ]
+    }
+  },
+  "functional_validation": {
+    "strategy_tiers": [
+      "T0/T1/T2 entry, exit, and promotion/demotion rules validated in backtest and ghost replay with seeded determinism.",
+      "Ensemble uses proven quant factors with modern but reproducible optimizations; CPU-only viable on i5/32GB.",
+      "Long-horizon tier respects turnover, laddered sizing, and hedging requirements for in-flight exposure."
+    ],
+    "wallet_and_routing": [
+      "Sparse wallet optimizer consolidates into priority assets/venues respecting fees, withdrawal limits, dust rules, and minimum tradable sizes.",
+      "Venue-aware sizing honors free balance, fee tiers, and risk budgets; partial fills and thin liquidity handled gracefully.",
+      "Settlement timing accounted for; no double-counting funds across venues during transfers."
+    ],
+    "bus_scheduling_swaps": [
+      "On/off-ramp legs batched and sequenced to minimize fees and time-in-market with defined fallback rails.",
+      "Expected PnL includes fees/gas/slippage and settlement latency; misalignment alarms verified.",
+      "Failure/SLA-breach scenarios simulate auto-freeze, reroute, or rollback with non-negative expected value constraint."
+    ],
+    "risk_and_fail_safes": [
+      "Per-tier stops, session/daily loss caps, and correlation-aware de-risking enforced in sim and ghost; no leverage or unbounded downside.",
+      "Circuit-breakers on slippage, latency, liquidity thinning, data gaps, or venue errors trigger hedging/flattening.",
+      "Kill-switch drills flatten within target; default config demotes to ghost on first red window."
+    ],
+    "observability_and_oversight": [
+      "Structured logs, metrics, trade blotter, and replayable decision traces generated per trade.",
+      "Screenshots/UX captures produced via scripts/branddozer_ui_capture.py for UI-touched flows and stored immutably for codex --image review when needed.",
+      "Alerts for policy violations, missed hedges, delayed settlements, config drift, and missed heartbeats routed to on-call."
+    ]
+  },
+  "performance_targets": {
+    "hardware_budget": "Intel i5 CPU, 32GB RAM; no GPU dependence.",
+    "model_latency": "Feature + inference per decision within SLA per tier (T0 <= 200ms p95, T1 <= 400ms, T2 <= 800ms).",
+    "routing_latency": "Bus route planning p95 < 5s with no backlog; venue order ack p95 within tier SLAs.",
+    "resource_usage": "Peak RSS under 28GB; no swap; CPU < 85 percent with routing threads respecting guardrails.",
+    "throughput": "Sustain expected order rate during volatility spikes without breaching latency or slippage budgets."
+  },
+  "security_and_compliance": {
+    "keys_and_secrets": "Wallet/exchange keys stored in approved key manager; no secrets in logs or configs.",
+    "data_governance": "Market data/licensing terms respected; PII handling (if any) reviewed.",
+    "change_control": "Release artifacts versioned; promotions require recorded approval and checksum of configs/models."
+  },
+  "operational_readiness": {
+    "runbooks": [
+      "Kill-switch, rollback to ghost, venue failover, bus-swap freeze/retry, and data-gap handling documented with MTTR targets.",
+      "Escalation paths defined for risk and engineering; paging tested."
+    ],
+    "monitoring": [
+      "Heartbeats for data feeds, venues, models, routers, wallet services, and bus scheduler with auto-fail-safe mode on miss.",
+      "SLOs defined for latency, slippage, settlement timeliness, and availability per tier with dashboards."
+    ],
+    "training": "Operators trained on controls, approvals, and interpreting alerts/blotter/screenshots."
+  },
+  "artifacts_required": {
+    "reports": [
+      "Ghost trading performance report per tier with KPIs, variance vs backtest, and edge attribution.",
+      "Routing/wallet optimization and bus-scheduling report with fee and slippage impact.",
+      "Risk drill results (kill-switch, circuit-breaker, rollback) with timestamps and outcomes."
+    ],
+    "configs": [
+      "Versioned deployment profiles for ghost and live with diffable changes.",
+      "Model hashes, feature definitions, and data windows recorded."
+    ],
+    "evidence": [
+      "Logs, screenshots, and trade blotter entries stored and linked to release candidate; screenshots captured with scripts/branddozer_ui_capture.py when UI is exercised.",
+      "Approval records for gate passages, capital ramps, and config/model promotions."
+    ]
+  },
+  "rollback_and_exit": {
+    "rollback_plan": "Documented steps to revert to ghost-only mode, freeze bus scheduling, and flatten positions within target MTTR.",
+    "blockers": [
+      "Any breach of drawdown, slippage, latency, settlement, or security controls without remediation proof.",
+      "Missing artifacts, screenshots, or audit trails for evaluated trades.",
+      "Unresolved data quality issues, venue instability, or failed kill-switch drills."
+    ]
+  }
+}

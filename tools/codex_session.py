@@ -19,17 +19,54 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+ROLE_MODEL_MAP = {
+    "planner": os.getenv("CODEX_MODEL_PLANNER"),
+    "manager": os.getenv("CODEX_MODEL_MANAGER"),
+    "auditor": os.getenv("CODEX_MODEL_AUDITOR"),
+    "qa": os.getenv("CODEX_MODEL_QA"),
+    "worker": os.getenv("CODEX_MODEL_WORKER"),
+}
+
+ROLE_FALLBACK_MODEL = {
+    "planner": "gpt-5.1-codex",
+    "manager": "gpt-5.1-codex",
+    "auditor": "gpt-5.1-codex",
+    "qa": "gpt-5.1-codex",
+    "worker": "gpt-5.1-codex-mini",
+}
+
+
 def codex_default_settings() -> dict[str, Any]:
     """
     Resolve Codex CLI settings from environment defaults.
     """
     return {
-        "model": os.getenv("CODEX_MODEL", "gpt-5.1-codex-max"),
+        "model": os.getenv("CODEX_MODEL", "gpt-5.1-codex-mini"),
         "reasoning_effort": os.getenv("CODEX_REASONING_EFFORT", "xhigh"),
         "sandbox_mode": os.getenv("CODEX_SANDBOX_MODE", "danger-full-access"),
         "approval_policy": os.getenv("CODEX_APPROVAL_POLICY", "never"),
         "bypass_sandbox_confirm": _env_bool("CODEX_BYPASS_APPROVALS", True),
     }
+
+
+def codex_settings_for_role(role: str | None = None) -> dict[str, Any]:
+    """
+    Return Codex settings tuned by role:
+      - planner/manager/auditor/qa -> larger model by default
+      - worker/dev -> mini model by default
+    Environment overrides (CODEX_MODEL_<ROLE>) take precedence.
+    """
+    base = codex_default_settings()
+    if not role:
+        return base
+    role_key = role.lower().strip()
+    if not role_key:
+        return base
+    model_override = ROLE_MODEL_MAP.get(role_key)
+    fallback_model = ROLE_FALLBACK_MODEL.get(role_key, base["model"])
+    base["model"] = (model_override or fallback_model).strip()
+    base["meta_role"] = role_key
+    return base
 
 
 class CodexSession:

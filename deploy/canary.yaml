@@ -1,0 +1,27 @@
+# Canary rollout plan (reference for scripts/canary_bluegreen_check.py)
+service: "branddozer-web"
+strategy: "canary"
+steps:
+  - step: 1
+    traffic_percent: 5
+    pause_minutes: 15
+    checks:
+      - golden_signals_ok
+      - error_budget_not_burning
+  - step: 2
+    traffic_percent: 25
+    pause_minutes: 30
+    checks:
+      - golden_signals_ok
+      - error_budget_not_burning
+  - step: 3
+    traffic_percent: 50
+    pause_minutes: 60
+    checks:
+      - golden_signals_ok
+      - error_budget_not_burning
+  - step: 4
+    traffic_percent: 100
+rollback:
+  trigger: "alerts firing or error_budget_burn"
+  action: "shift traffic to previous stable and disable related feature flags"

@@ -631,8 +631,74 @@
                   @click="openScreenshot(shot)"
                 >
                   <img :src="artifactUrl(shot)" :alt="shot.title || 'UI screenshot'" loading="lazy" />
-                  <span class="caption">{{ shot.title || shot.id.slice(0, 8) }}</span>
+                  <span class="caption">
+                    {{ shot.title || shot.id.slice(0, 8) }}
+                    <template v-if="shot.kind && shot.kind !== 'ui_screenshot'">
+                      · {{ shot.kind.replace('ui_screenshot_', '') }}
+                    </template>
+                  </span>
                 </button>
+              </div>
+            </div>
+
+            <div class="desktop-module">
+              <div class="module-head">
+                <h4>UX Audit & Funnel</h4>
+                <q-btn
+                  v-if="uxReport"
+                  size="sm"
+                  flat
+                  color="primary"
+                  :href="artifactUrl(uxReport)"
+                  target="_blank"
+                  rel="noopener"
+                >
+                  Open report
+                </q-btn>
+              </div>
+              <div v-if="!uxReport && !conversionArtifacts.length && !uxGateStatuses.length" class="caption">
+                No UX audit or conversion checks yet.
+              </div>
+              <div v-else>
+                <div v-if="uxReport" class="module-row">
+                  <div>
+                    <div>{{ uxReport.title || 'UX audit report' }}</div>
+                    <div class="caption">Gate summary and screenshots bundled for review.</div>
+                  </div>
+                  <a :href="artifactUrl(uxReport)" target="_blank" rel="noopener" class="caption">View</a>
+                </div>
+                <div v-for="gate in uxGateStatuses" :key="gate.name" class="module-row">
+                  <span>{{ gate.name }}</span>
+                  <span class="status-pill" :class="gate.tone">{{ gate.label }}</span>
+                </div>
+                <div v-for="artifact in conversionArtifacts.slice(0, 4)" :key="artifact.id" class="module-row">
+                  <div>
+                    <div>{{ artifact.title || 'Conversion check' }}</div>
+                    <div class="caption">
+                      {{ artifact.data?.detail || artifact.data?.status || 'Recorded conversion smoke test.' }}
+                    </div>
+                  </div>
+                  <a :href="artifactUrl(artifact)" target="_blank" rel="noopener" class="caption">Open</a>
+                </div>
+              </div>
+            </div>
+
+            <div class="desktop-module">
+              <div class="module-head">
+                <h4>Worker Intents</h4>
+              </div>
+              <div v-if="!taskIntents.length" class="caption">No worker intents captured yet.</div>
+              <div v-else>
+                <div v-for="intent in taskIntents.slice(0, 6)" :key="intent.id" class="module-row">
+                  <div>
+                    <div>{{ intent.title || intent.meta?.title || 'Task intent' }}</div>
+                    <div class="caption">
+                      {{ intent.meta?.codex_role || intent.meta?.role || 'worker' }} ·
+                      {{ intent.meta?.codex_model || intent.meta?.model || 'model?' }}
+                      <span v-if="intent.meta?.priority !== undefined"> · priority {{ intent.meta?.priority }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </aside>
@@ -1168,7 +1234,39 @@ const desktopEmptyMessage = computed(() => {
   }
   return 'Waiting for sessions to start... You can minimize this window while it spins up. If this stays queued, check that the background worker is running.';
 });
-const uiSnapshots = computed(() => store.deliveryArtifacts.filter((artifact: any) => artifact.kind === 'ui_screenshot'));
+const uiSnapshotKinds = ['ui_screenshot', 'ui_screenshot_mobile', 'ui_screenshot_desktop'];
+const uiSnapshots = computed(() =>
+  store.deliveryArtifacts.filter((artifact: any) => uiSnapshotKinds.includes(artifact.kind))
+);
+const uxReport = computed(() => store.deliveryArtifacts.find((artifact: any) => artifact.kind === 'ux_audit_report'));
+const taskIntents = computed(() =>
+  store.deliveryArtifacts
+    .filter((artifact: any) => artifact.kind === 'task_intent')
+    .map((artifact: any) => {
+      let meta: any = {};
+      try {
+        meta = artifact.content ? JSON.parse(artifact.content) : artifact.data || {};
+      } catch (err) {
+        meta = artifact.data || {};
+      }
+      return { ...artifact, meta };
+    })
+);
+const conversionArtifacts = computed(() => store.deliveryArtifacts.filter((artifact: any) => artifact.kind === 'conversion_check'));
+const uxGateStatuses = computed(() => {
+  const interesting = ['ui-snapshot', 'ui-review', 'ux-audit', 'conversion', 'conversion-path', 'ux-check'];
+  const seen = new Set<string>();
+  const rows: Array<{ name: string; label: string; tone: string }> = [];
+  for (const gate of store.deliveryGates) {
+    const name = gate?.name;
+    if (!name || !interesting.includes(name) || seen.has(name)) continue;
+    seen.add(name);
+    const status = String(gate.status || '').toLowerCase();
+    const isOk = status === 'passed' || status === 'skipped';
+    rows.push({ name, label: gate.status || 'unknown', tone: isOk ? 'ok' : 'warn' });
+  }
+  return rows;
+});
 
 async function loadFolders(path?: string) {
   folderLoading.value = true;

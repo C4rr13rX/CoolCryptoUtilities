@@ -1,0 +1,257 @@
+{
+  "project_name": "Multi-Tier Crypto Trading Pipeline Upgrade",
+  "status": "draft",
+  "purpose": "Upgrade the trading pipeline with a tiered strategy stack, ghost-first validation, capital-preserving controls, and wallet/routing efficiencies that buy low and sell high without uncontrolled losses.",
+  "current_state_summary": [
+    "Strategies run as a single tier; no enforced promotion from fast signals to higher-accuracy or long-horizon layers.",
+    "Ghost/paper trading is not mandated before live; minimal capital ramp rules are not codified.",
+    "Sparse balances across assets/venues reduce sizing efficiency and spread capture.",
+    "Swap routing does not yet use bus-style scheduling across on/off-ramp legs with fee/time modeling.",
+    "Fail-safes and loss-prevention are manual; circuit-breakers and kill-switches are ad hoc.",
+    "Observability is partial; UX/log/screen artifacts are not captured consistently.",
+    "Models and feature pipelines are not budgeted for CPU-only (i5, 32GB) constraints."
+  ],
+  "objectives": [
+    "Design and enforce a multi-tier strategy stack: fast good-enough PnL, higher-accuracy confirmation tiers, and a long-horizon swing tier.",
+    "Require ghost-trade proof with accuracy and slippage gates before enabling live capital; ramp live capital gradually.",
+    "Implement wallet balance optimization for sparse holdings and venue-aware sizing.",
+    "Deliver bus-scheduled swap planner for on/off-ramp legs to capture spread while minimizing fees and time-in-market.",
+    "Establish layered fail-safes, loss-prevention, and automated kill-switches to avoid uncontrolled loss.",
+    "Use proven quant models with modern optimizations that run efficiently on CPU-only hardware.",
+    "Capture UX/log/screen artifacts for oversight and auditability."
+  ],
+  "scope": {
+    "in_scope": [
+      "Tiered strategy architecture with promotion/demotion and gating rules.",
+      "Ghost trading, backtesting, and paper trading harnesses with accuracy and slippage targets.",
+      "Capital ramp policy with minimal starting capital, per-tier caps, and drawdown guards.",
+      "Wallet balance optimizer for fragmented holdings; venue-aware sizing and fees.",
+      "Bus-scheduling swaps across on/off-ramps, including transfer and settlement timing.",
+      "Risk rails: stops, circuit-breakers, kill-switch, and rollback automation.",
+      "Observability and oversight artifacts: structured logs, blotter, UX/screen captures."
+    ],
+    "out_of_scope": [
+      "Unhedged leverage or derivatives beyond defined risk budgets.",
+      "GPU-dependent research workflows; solutions must remain CPU-viable.",
+      "Building a public-facing consumer app; focus is on trading and oversight tooling."
+    ]
+  ],
+  "strategy_tiers": [
+    {
+      "tier": "T0 Fast Profit",
+      "goal": "Capture short-lived edges with minimal latency and small positions.",
+      "models": "Lightweight signals, shallow learners, and rule-based filters optimized for CPU.",
+      "risk_limits": "Hard per-trade stops, session loss cap, venue/asset max sizing, slippage budget.",
+      "exit": "Time-based expiry plus spread/fee-aware take-profit and trailing stop options."
+    },
+    {
+      "tier": "T1 Accuracy",
+      "goal": "Confirm T0 signals with slower, higher-accuracy signals before scaling size.",
+      "models": "Proven quant factors and ensembles with cross-sectional validation; CPU-friendly feature sets.",
+      "risk_limits": "Higher confidence thresholds, volatility-aware sizing, hedged or market-neutral stances.",
+      "exit": "Signal decay, adverse move thresholds, and correlation-based de-risking."
+    },
+    {
+      "tier": "T2 Long Horizon",
+      "goal": "Swing/position trades with regime-aware signals and constrained turnover.",
+      "models": "Regime classifiers, momentum/mean-reversion blends, and carry signals with modern optimizations.",
+      "risk_limits": "Portfolio-level VAR/drawdown caps, laddered entries, and rebalancing bands.",
+      "exit": "Regime flip, target bands, or scheduled rebalance with slippage controls."
+    }
+  ],
+  "operating_principles": [
+    "Ghost-first: live path locked until ghost and paper metrics meet gates.",
+    "Capital ramps start with minimal capital; increases only after consecutive green windows.",
+    "Never lose money posture: default to hedged or flat when rails break or data quality degrades.",
+    "Venue- and fee-aware routing that minimizes slippage, fees, and time-in-market.",
+    "CPU efficiency: feature pipelines and models must stay within i5/32GB budget.",
+    "Observability by default: every decision, route, and swap logged with human-reviewable context and captures."
+  ],
+  "guardrails": {
+    "capital_protection": [
+      "Per-tier stops and session loss caps; per-asset and per-venue position ceilings.",
+      "Kill-switch triggers on data gaps, venue errors, KPI breaches, or config drift.",
+      "Circuit-breakers on abnormal slippage, latency spikes, or liquidity thinning with auto-flatten."
+    ],
+    "operational_controls": [
+      "Ghost/live toggles enforced in config with approvals for promotion.",
+      "Dual approvals for widening limits; automatic demotion on KPI breach.",
+      "Heartbeats for data, venues, models, and routing; fail-safe to safest rail on miss."
+    ],
+    "oversight": [
+      "Structured logs, trade blotter, PnL curves, and decision traces stored immutably.",
+      "Alerting on policy violations, missed hedges, delayed settlements, or swap failure.",
+      "UX/log/screen captures via scripts/branddozer_ui_capture.py for oversight and audit."
+    ]
+  ],
+  "execution_and_routing": {
+    "wallet_management": [
+      "Optimizer consolidates sparse balances into priority assets/venues considering fees, withdrawal limits, and dust thresholds.",
+      "Dynamic sizing respects free balance, fee tiers, and per-venue risk caps."
+    ],
+    "bus_scheduling_swaps": [
+      "Batch and sequence on/off-ramp legs to minimize fees and time-in-market while capturing spreads.",
+      "Spread- and liquidity-aware pathfinding with fallback rails when preferred venues degrade.",
+      "Track transfer/settlement times and include in PnL and risk windows."
+    ]
+  },
+  "workstreams": [
+    {
+      "name": "Strategy Architecture",
+      "deliverables": [
+        "Tier definitions with promotion/demotion gates and capital ladders.",
+        "Signal library using proven quant factors with CPU-friendly features.",
+        "Risk model and sizing rules per tier."
+      ]
+    },
+    {
+      "name": "Simulation and Ghost Trading",
+      "deliverables": [
+        "Backtest/paper/ghost harness with latency, slippage, and fee modeling.",
+        "Ghost-to-live gating automation and rollback paths.",
+        "Performance dashboards for hit rate, PnL, drawdown, and slippage per tier."
+      ]
+    },
+    {
+      "name": "Execution and Routing",
+      "deliverables": [
+        "Wallet balance optimizer for sparse holdings and venue-aware sizing.",
+        "Bus-scheduled swap planner with fee/time modeling and fallback rails.",
+        "Smart order routing adapters with retry, partial-fill handling, and settlement tracking."
+      ]
+    },
+    {
+      "name": "Risk and Fail-Safes",
+      "deliverables": [
+        "Hierarchical stops, circuit-breakers, and kill-switch automation.",
+        "Drawdown/latency/slippage monitors with hedging/flattening actions.",
+        "Config-driven policy enforcement and audit trails."
+      ]
+    },
+    {
+      "name": "Observability and Oversight",
+      "deliverables": [
+        "Structured logging, trade blotter, and replayable decision traces.",
+        "UX/log/screen capture workflow using scripts/branddozer_ui_capture.py.",
+        "Alerting routes and runbooks for anomalies and policy breaches."
+      ]
+    },
+    {
+      "name": "Performance and Ops",
+      "deliverables": [
+        "CPU-only performance budgets (i5, 32GB) for pipelines and models.",
+        "Resource profiling and optimizations for routing and inference.",
+        "Deployment profiles for ghost vs live with config drift detection."
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "name": "M1 Architecture and Controls",
+      "exit_criteria": [
+        "Tier definitions and gating rules approved.",
+        "Risk rails, kill-switch, and rollback policies codified.",
+        "CPU budget and performance targets baselined."
+      ]
+    },
+    {
+      "name": "M2 Ghost Trading Proof",
+      "exit_criteria": [
+        "Backtest/paper results meet accuracy and slippage targets per tier.",
+        "Wallet optimizer and bus scheduler validated in simulation with fee/time modeling.",
+        "Observability stack produces reviewable logs, blotter, and screen captures."
+      ]
+    },
+    {
+      "name": "M3 Limited Live Ramp",
+      "exit_criteria": [
+        "Minimal capital live trades with enforced caps and successful drills.",
+        "Circuit-breakers and auto-rollback proven in production-like drills.",
+        "Capital ramp ladder executed only after consecutive green windows."
+      ]
+    },
+    {
+      "name": "M4 Productionization",
+      "exit_criteria": [
+        "Full alerting and runbooks in place; on-call trained.",
+        "Stable PnL with controlled drawdowns across tiers.",
+        "Audit-ready artifacts with logs/screens for sampled trades."
+      ]
+    }
+  ],
+  "dependencies": [
+    "Reliable exchange and on/off-ramp APIs with paper modes and latency SLAs.",
+    "Market data with depth, trades, fees, and funding; integrity checks in place.",
+    "Quant factor libraries and statistical tooling that run efficiently on CPU.",
+    "Secure key management for wallets and exchange credentials.",
+    "Logging/metrics stack with storage for replayable artifacts and captures."
+  ],
+  "assumptions": [
+    "Target hardware remains CPU-only (i5, 32GB) without GPU acceleration.",
+    "Access to at least two liquid exchanges plus a fiat on/off-ramp.",
+    "Regulatory constraints permit automated trading on the selected venues.",
+    "Network connectivity is stable enough for timely market data and order routing."
+  ],
+  "risks": [
+    {
+      "risk": "Market gaps or venue downtime during swap legs",
+      "impact": "Unhedged exposure or stranded balances",
+      "mitigation": "Hedged interim positions, alternate rails, and time/value decay guards"
+    },
+    {
+      "risk": "Slippage and fee drag erase edge",
+      "impact": "Strategy tiers fail to meet PnL targets",
+      "mitigation": "Spread-aware routing, fee-tier optimization, and dynamic size throttling"
+    },
+    {
+      "risk": "Data quality or latency issues",
+      "impact": "Stale signals and execution errors",
+      "mitigation": "Heartbeat monitors, source cross-checks, and fail-safe flatting on gaps"
+    },
+    {
+      "risk": "Model overfitting or regime shifts",
+      "impact": "Live underperformance versus ghost results",
+      "mitigation": "Out-of-sample validation, rolling retrains, and conservative promotion gates"
+    },
+    {
+      "risk": "Capital fragmentation across wallets",
+      "impact": "Inability to size trades or capture spreads",
+      "mitigation": "Periodic consolidation, dust-handling rules, and fee-aware rebalancing"
+    },
+    {
+      "risk": "Resource constraints on CPU-only hardware",
+      "impact": "Latency spikes or degraded routing",
+      "mitigation": "Performance budgets, profiling, and fallbacks to lighter models"
+    }
+  ],
+  "success_metrics": [
+    "Ghost-to-live performance delta within agreed thresholds for hit rate, PnL, and slippage.",
+    "No uncontrolled loss events; max daily drawdown within per-tier budgets.",
+    "Slippage plus fees within venue/tier budgets; bus swaps complete within SLA and positive expected value.",
+    "Kill-switch and circuit-breaker drills meet MTTR targets; auto-flatten verified.",
+    "CPU/RAM usage within i5/32GB budget under peak routing and inference.",
+    "100 percent of evaluated trades produce structured logs/blotter entries; screenshots captured for required flows."
+  ],
+  "stakeholders": {
+    "sponsor": "TBD",
+    "product_owner": "TBD",
+    "quant_research": [
+      "Signal research, factor validation, and tier promotion rules"
+    ],
+    "engineering": [
+      "Strategy implementation and routing",
+      "Wallet and settlement operations",
+      "Observability and deployment profiles"
+    ],
+    "risk_compliance": [
+      "Policy enforcement and approvals",
+      "Kill-switch authority",
+      "Audit readiness and artifact retention"
+    ],
+    "operations": [
+      "On-call runbooks",
+      "Venue and data provider management",
+      "Bus-swap and settlement monitoring"
+    ]
+  }
+}

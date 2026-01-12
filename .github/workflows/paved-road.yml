@@ -1,0 +1,125 @@
+name: Paved Road CI
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+  CI: "1"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install CI toolchain
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install ruff bandit pip-audit build
+
+      - name: Fast unit & contract tests
+        run: |
+          pytest -q --maxfail=1 --disable-warnings
+
+      - name: Lint (style/format)
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Security scans (SAST/SCA/secrets)
+        run: |
+          bandit -q -r services web || true  # tolerate missing configs but surface findings
+          pip-audit -r requirements.txt || true
+          python - <<'PY'
+          import os, re, sys
+          banned = [r"ghp_[A-Za-z0-9]{36,}", r"sk-[A-Za-z0-9]{32,}"]
+          root = "."
+          hit = False
+          for dirpath, _, files in os.walk(root):
+              if ".git" in dirpath or "node_modules" in dirpath:
+                  continue
+              for f in files:
+                  path = os.path.join(dirpath, f)
+                  try:
+                      data = open(path, encoding="utf-8", errors="ignore").read()
+                  except Exception:
+                      continue
+                  for pattern in banned:
+                      if re.search(pattern, data):
+                          print(f"Secret-like pattern in {path}")
+                          hit = True
+          sys.exit(1 if hit else 0)
+          PY
+
+      - name: Reproducible build (package)
+        run: |
+          python -m build
+
+      - name: DORA snapshot (evidence)
+        run: |
+          python web/manage.py dora_report --output-dir runtime/branddozer/reports
+
+      - name: Reliability gate
+        env:
+          RELIABILITY_MAX_CHANGE_FAILURE_RATE: 0.25
+          RELIABILITY_MAX_MTTR_HOURS: 6
+          RELIABILITY_MIN_DEPLOY_FREQ: 0.1
+          RELIABILITY_STRICT: ${{ vars.RELIABILITY_STRICT || '1' }}
+        run: |
+          python scripts/reliability_gate.py
+
+      - name: Progressive delivery check (feature flags)
+        env:
+          PROGRESSIVE_REQUIRED: ${{ vars.PROGRESSIVE_REQUIRED || '1' }}
+        run: |
+          python scripts/progressive_delivery_check.py
+
+      - name: Canary/Blue-Green readiness
+        env:
+          CANARY_REQUIRED: ${{ vars.CANARY_REQUIRED || '1' }}
+        run: |
+          python scripts/canary_bluegreen_check.py
+
+      - name: OPA policy check
+        env:
+          OPA_REQUIRED: ${{ vars.OPA_REQUIRED || '1' }}
+        run: |
+          python scripts/opa_policy_check.py
+
+      - name: UX audit report (artifacts)
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python scripts/ux_audit_report.py
+        continue-on-error: true
+
+      - name: Conversion path check (Playwright)
+        env:
+          BASE_URL: ${{ vars.CONVERSION_BASE_URL || 'http://localhost:8000' }}
+          HEADLESS: "1"
+          CONVERSION_WARN_ONLY: ${{ vars.CONVERSION_WARN_ONLY || '1' }}
+        run: |
+          python scripts/conversion_path_check.py
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dora-reports
+          path: runtime/branddozer/reports
+          if-no-files-found: ignore

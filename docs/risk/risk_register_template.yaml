@@ -1,0 +1,18 @@
+# Risk register template (Spiral / Incremental Commitment)
+# For each initiative, copy this file and fill the entries.
+initiative: "<name>"
+owner: "<product/tech lead>"
+last_reviewed: "<YYYY-MM-DD>"
+risk_items:
+  - id: R1
+    title: "<short description>"
+    probability: "<low|medium|high or 0-1>"
+    impact: "<low|medium|high or $/story-points/time>"
+    status: "<open|mitigating|retired>"
+    mitigation: "<planned mitigation steps>"
+    trigger: "<observable condition that escalates>"
+    owner: "<name>"
+    due_date: "<YYYY-MM-DD>"
+    evidence: "<link to experiment/test/data supporting assessment>"
+  - id: R2
+    title: "<...>"

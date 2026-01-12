@@ -42,7 +42,18 @@ class TradingDatabase:
                 self._init_postgres()
                 return
             except Exception as exc:
-                fallback_enabled = (os.getenv("ALLOW_SQLITE_FALLBACK", "0") or "0").lower() not in {"0", "false", "off"}
+                fallback_env = (os.getenv("ALLOW_SQLITE_FALLBACK", "0") or "0").lower()
+                fast_baseline = (os.getenv("BRANDDOZER_FAST_BASELINE") or "").lower() in {"1", "true", "yes", "on"}
+                test_mode = bool(os.getenv("PYTEST_CURRENT_TEST"))
+                strict_postgres = (os.getenv("REQUIRE_POSTGRES") or os.getenv("STRICT_POSTGRES") or "0").lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                fallback_enabled = fallback_env not in {"0", "false", "off"} or fast_baseline or test_mode
+                if strict_postgres:
+                    fallback_enabled = False
                 if not fallback_enabled:
                     raise
                 self._vendor = "sqlite"
@@ -317,6 +328,7 @@ class TradingDatabase:
         user = os.getenv("POSTGRES_USER", "coolcrypto")
         password = os.getenv("POSTGRES_PASSWORD", "coolcrypto_password")
         sslmode = os.getenv("POSTGRES_SSLMODE", "prefer")
+        connect_timeout = int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "5"))
         conn = psycopg.connect(
             host=host,
             port=port,
@@ -324,6 +336,7 @@ class TradingDatabase:
             user=user,
             password=password,
             sslmode=sslmode,
+            connect_timeout=connect_timeout,
         )
         conn.autocommit = True
         self._conn = _PgConnection(conn)

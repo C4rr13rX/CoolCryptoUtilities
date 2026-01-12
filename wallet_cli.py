@@ -488,6 +488,16 @@ def _parse_amount(amount_str: str, decimals: int) -> int:
     return int(amount_str) * (10**decimals)
 
 def _confirm(prompt: str) -> bool:
+    """
+    Basic Y/N confirmation helper. Defaults to False on empty/unknown input.
+    """
+    while True:
+        resp = input(f"{prompt} [y/N]: ").strip().lower()
+        if resp in ("y", "yes"):
+            return True
+        if resp in ("n", "no", ""):
+            return False
+        print("Please answer 'y' or 'n'.")
 
 def _wei_to_eth(n: int) -> str:
     """
@@ -1075,8 +1085,7 @@ def _swap_flow():
                 return
         sell_label = "ETH" if sell_is_native else _erc20_symbol(bridge, ch, sell, default="ERC20")
         buy_label  = "ETH" if buy_is_native  else _erc20_symbol(bridge, ch, buy,  default="ERC20")
-        print(f"
-Chosen route: TWO-STEP via ETH (lower gas). Auto-proceeding.")
+        print("\nChosen route: TWO-STEP via ETH (lower gas). Auto-proceeding.")
         # Step 1
         txh1, ok1 = _execute(two_1)
         if not ok1:

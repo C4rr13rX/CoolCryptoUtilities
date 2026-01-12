@@ -12,6 +12,9 @@ def configure_tensorflow(profile: Optional[SystemProfile] = None) -> None:
     global _TF_CONFIGURED
     if _TF_CONFIGURED:
         return
+    if (os.getenv("SKIP_TF_CONFIGURE") or os.getenv("LIGHTWEIGHT_TESTS")) in {"1", "true", "yes", "on"}:
+        _TF_CONFIGURED = True
+        return
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
     os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")

@@ -18,7 +18,7 @@ class UISnapshotResult:
     stdout: str
     stderr: str
     exit_code: int
-    screenshots: List[Path]
+    screenshots: List[Any]
     base_url: str
     server_started: bool
     server_log: Optional[Path]
@@ -146,13 +146,21 @@ def _ensure_admin_user(root: Path, username: str, password: str, email: str, res
 
 def _playwright_browsers_ready() -> bool:
     path_override = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
-    base = Path(path_override).expanduser() if path_override else Path.home() / ".cache" / "ms-playwright"
-    if not base.exists():
-        return False
-    try:
-        return any(child.name.startswith("chromium") for child in base.iterdir())
-    except Exception:
-        return False
+    candidates = []
+    if path_override:
+        candidates.append(Path(path_override).expanduser())
+    candidates.append(Path.home() / ".cache" / "ms-playwright")
+    candidates.append(Path.cwd() / ".cache" / "ms-playwright")
+    candidates.append(Path.cwd() / "web" / "frontend" / ".cache" / "ms-playwright")
+    for base in candidates:
+        if not base.exists():
+            continue
+        try:
+            if any(child.name.startswith("chromium") for child in base.iterdir()):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _start_django_server(root: Path, host: str, port: int, log_path: Path) -> subprocess.Popen:
@@ -183,15 +191,22 @@ def _parse_capture_payload(stdout: str) -> Tuple[List[Path], Dict[str, Any]]:
     except Exception:
         return [], {}
     shots = payload.get("shots") if isinstance(payload, dict) else None
-    paths: List[Path] = []
+    normalized: List[Dict[str, Any]] = []
     if isinstance(shots, list):
         for entry in shots:
-            if not isinstance(entry, dict):
-                continue
-            path = entry.get("path")
-            if path:
-                paths.append(Path(path))
-    return paths, payload if isinstance(payload, dict) else {}
+            if isinstance(entry, dict):
+                path = entry.get("path")
+                if not path:
+                    continue
+                kind = entry.get("kind") or entry.get("tag")
+                viewport = entry.get("viewport") or entry.get("name")
+                meta = {k: v for k, v in entry.items() if k not in {"path", "kind", "tag"}}
+                if viewport and "viewport" not in meta:
+                    meta["viewport"] = viewport
+                normalized.append({"path": str(path), "kind": kind, "meta": meta})
+            elif isinstance(entry, str):
+                normalized.append({"path": entry, "kind": None, "meta": {}})
+    return normalized, payload if isinstance(payload, dict) else {}
 
 
 def capture_ui_screenshots(
@@ -204,6 +219,7 @@ def capture_ui_screenshots(
 ) -> UISnapshotResult:
     base_url = (base_url or os.getenv("BRANDDOZER_UI_BASE_URL") or "http://127.0.0.1:8000").strip()
     routes = routes or DEFAULT_ROUTES
+    offline_mode = (os.getenv("BRANDDOZER_UI_OFFLINE") or "").strip().lower() in {"1", "true", "yes", "on"}
     output_dir.mkdir(parents=True, exist_ok=True)
     frontend_dir = root / "web" / "frontend"
     script_path = frontend_dir / "scripts" / "branddozer_capture.mjs"
@@ -216,7 +232,7 @@ def capture_ui_screenshots(
             base_url=base_url,
             server_started=False,
             server_log=None,
-            meta={},
+            meta={"dependency_missing": True, "reason": "capture_script_missing"},
         )
     build_ok, build_err = _ensure_frontend_build(root)
     if not build_ok:
@@ -228,7 +244,7 @@ def capture_ui_screenshots(
             base_url=base_url,
             server_started=False,
             server_log=None,
-            meta={},
+            meta={"dependency_missing": True, "reason": "frontend_build_missing", "error": build_err},
         )
     playwright_dir = frontend_dir / "node_modules" / "playwright"
     if not playwright_dir.exists():
@@ -240,7 +256,7 @@ def capture_ui_screenshots(
             base_url=base_url,
             server_started=False,
             server_log=None,
-            meta={},
+            meta={"dependency_missing": True, "reason": "playwright_missing"},
         )
     if not _playwright_browsers_ready():
         return UISnapshotResult(
@@ -251,13 +267,13 @@ def capture_ui_screenshots(
             base_url=base_url,
             server_started=False,
             server_log=None,
-            meta={},
+            meta={"dependency_missing": True, "reason": "playwright_browsers_missing"},
         )
     server_proc = None
     server_log = None
     server_started = False
     host, port = _parse_host_port(base_url)
-    if not _url_ready(base_url):
+    if not offline_mode and not _url_ready(base_url):
         start_mode = (os.getenv("BRANDDOZER_UI_START_SERVER") or "auto").strip().lower()
         if start_mode in {"0", "false", "no", "off"} or not auto_start_server:
             return UISnapshotResult(
@@ -288,6 +304,8 @@ def capture_ui_screenshots(
                 meta={},
             )
     seed_flag = (os.getenv("BRANDDOZER_UI_SEED_ADMIN") or "1").strip().lower()
+    if offline_mode:
+        seed_flag = "0"
     auth_user = (os.getenv("BRANDDOZER_UI_ADMIN_USER") or "branddozer_qa").strip()
     auth_pass = (os.getenv("BRANDDOZER_UI_ADMIN_PASS") or "").strip()
     auth_email = (os.getenv("BRANDDOZER_UI_ADMIN_EMAIL") or f"{auth_user}@local.test").strip()
@@ -324,15 +342,48 @@ def capture_ui_screenshots(
         env=env,
     )
     screenshots, meta = _parse_capture_payload(stdout)
+    tagged = []
+    for entry in screenshots:
+        if isinstance(entry, dict):
+            raw_path = entry.get("path") or ""
+            meta_entry = entry.get("meta") or {}
+            kind = entry.get("kind")
+            viewport = meta_entry.get("viewport") or entry.get("viewport")
+        else:
+            raw_path = str(entry)
+            meta_entry = {}
+            kind = None
+            viewport = None
+        if not raw_path:
+            continue
+        path_obj = Path(raw_path)
+        name = path_obj.name.lower()
+        if not kind:
+            if viewport:
+                if "mobile" in str(viewport).lower():
+                    kind = "ui_screenshot_mobile"
+                elif "desktop" in str(viewport).lower():
+                    kind = "ui_screenshot_desktop"
+            if not kind:
+                if "mobile" in name:
+                    kind = "ui_screenshot_mobile"
+                elif "desktop" in name:
+                    kind = "ui_screenshot_desktop"
+                else:
+                    kind = "ui_screenshot"
+        tagged.append({"path": str(path_obj), "kind": kind, "meta": meta_entry})
+    meta_payload = meta if isinstance(meta, dict) else {}
+    if offline_mode:
+        meta_payload = {"offline_mode": True, **meta_payload}
     if server_proc:
         server_proc.terminate()
     return UISnapshotResult(
         stdout=stdout,
         stderr=stderr,
         exit_code=code,
-        screenshots=screenshots,
+        screenshots=tagged,
         base_url=base_url,
         server_started=server_started,
         server_log=server_log,
-        meta=meta,
+        meta=meta_payload,
     )

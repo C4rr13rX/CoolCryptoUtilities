@@ -1,15 +1,58 @@
 from __future__ import annotations
 
 import uuid
+import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from django.core.management import call_command
+from django.db import DatabaseError, OperationalError, connection
 from django.utils import timezone
 
 from branddozer.models import BrandProject
 
 STATE_KEY = "branddozer_projects"
 _LEGACY_IMPORTED = False
+_SCHEMA_READY = False
+_SCHEMA_LOCK = threading.Lock()
+
+
+def _ensure_schema(reason: str = "") -> None:
+    """
+    Best-effort SQLite schema setup so branddozer tables exist during local runs.
+    Skips when using non-SQLite engines to avoid unintended production changes.
+    """
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    if (os.getenv("BRANDDOZER_SKIP_AUTOMIGRATE") or "0").lower() in {"1", "true", "yes", "on"}:
+        return
+    try:
+        engine = connection.settings_dict.get("ENGINE", "")
+    except Exception:
+        return
+    if "sqlite" not in engine:
+        return
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY:
+            return
+        try:
+            tables = set(connection.introspection.table_names())
+        except Exception:
+            tables = set()
+        if "branddozer_brandproject" in tables:
+            _SCHEMA_READY = True
+            return
+        try:
+            call_command("migrate", interactive=False, verbosity=0)
+        except Exception:
+            return
+        try:
+            tables = set(connection.introspection.table_names())
+        except Exception:
+            tables = set()
+        _SCHEMA_READY = "branddozer_brandproject" in tables
 
 
 def _normalize_root_path(path_value: str) -> str:
@@ -103,11 +146,13 @@ def _maybe_import_legacy_state() -> None:
 
 
 def list_projects(db: Optional[Any] = None) -> List[Dict[str, Any]]:  # db retained for backward compatibility
+    _ensure_schema("list_projects")
     _maybe_import_legacy_state()
     return [_serialize_project(p) for p in BrandProject.objects.all()]
 
 
 def get_project(project_id: str, db: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    _ensure_schema("get_project")
     _maybe_import_legacy_state()
     try:
         obj = BrandProject.objects.filter(id=project_id).first()
@@ -117,6 +162,7 @@ def get_project(project_id: str, db: Optional[Any] = None) -> Optional[Dict[str,
 
 
 def save_project(payload: Dict[str, Any], db: Optional[Any] = None) -> Dict[str, Any]:
+    _ensure_schema("save_project")
     _maybe_import_legacy_state()
     project_id = payload.get("id")
     try:
@@ -159,11 +205,13 @@ def save_project(payload: Dict[str, Any], db: Optional[Any] = None) -> Dict[str,
 
 
 def delete_project(project_id: str, db: Optional[Any] = None) -> None:
+    _ensure_schema("delete_project")
     _maybe_import_legacy_state()
     BrandProject.objects.filter(id=project_id).delete()
 
 
 def update_project_fields(project_id: str, updates: Dict[str, Any], db: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    _ensure_schema("update_project")
     _maybe_import_legacy_state()
     obj = BrandProject.objects.filter(id=project_id).first()
     if not obj:

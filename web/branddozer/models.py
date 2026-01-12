@@ -275,6 +275,7 @@ class DeliverySession(models.Model):
         ("integrator", "Integrator/Release Session"),
         ("dev", "CodexSession"),
         ("qa", "QA"),
+        ("ux_audit", "UX Audit"),
     ]
 
     STATUS_CHOICES = [

@@ -1,0 +1,33 @@
+# Service SLI/SLO Template
+service: "<service-name>"
+owner: "<team-name>"
+contact: "<oncall rotation or email>"
+description: "<brief summary>"
+sli:
+  availability:
+    metric: "<promql or OTEL view>"
+    target: "99.9"
+    window: "28d"
+  latency_p99_ms:
+    metric: "<promql>"
+    target: 300
+    window: "28d"
+  error_rate:
+    metric: "<promql>"
+    target: 0.5
+    window: "28d"
+slo:
+  error_budget_policy:
+    burn_alerts:
+      - name: "fast burn"
+        threshold: "10% budget in 1h"
+      - name: "slow burn"
+        threshold: "20% budget in 6h"
+    release_controls:
+      freeze_on_budget_exhaustion: true
+      require_reliability_tasks: true
+observability:
+  dashboards:
+    - "<grafana dashboard link>"
+  alerts:
+    - "<alert name/link>"

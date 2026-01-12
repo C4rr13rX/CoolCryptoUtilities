@@ -4,6 +4,15 @@ from pathlib import Path
 from typing import List, Optional
 from dotenv_fallback import load_dotenv, dotenv_values, find_dotenv
 
+
+def is_test_env() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("PYTEST_RUNNING"):
+        return True
+    argv = " ".join(sys.argv).lower()
+    if "pytest" in argv or "py.test" in argv:
+        return True
+    return "test" in sys.argv
+
 _ALLOW_FLAG = "ALLOW_DOTENV_LOADING"
 _SECURE_ENV_FLAG = "SECURE_ENV_HYDRATED"
 
@@ -11,8 +20,14 @@ class EnvLoader:
     """Robust .env loader you can import anywhere."""
     @staticmethod
     def load() -> None:
+        testing = is_test_env()
         # ensure the fallback shim is allowed to touch .env files
         os.environ.setdefault(_ALLOW_FLAG, "1")
+        if testing:
+            os.environ.setdefault("DJANGO_DB_VENDOR", "sqlite")
+            os.environ.setdefault("TRADING_DB_VENDOR", "sqlite")
+            os.environ.setdefault("ALLOW_SQLITE_FALLBACK", "1")
+            os.environ.setdefault(_SECURE_ENV_FLAG, "1")
         repo_root = Path(__file__).resolve().parents[1]
         web_dir = repo_root / "web"
         for path in (repo_root, web_dir):
@@ -65,6 +80,8 @@ class EnvLoader:
 
         # 3) hydrate from secure settings (Postgres-backed secrets) if available.
         #    Do this once per process to avoid repeated DB hits.
+        if testing:
+            return
         if os.environ.get(_SECURE_ENV_FLAG) != "1":
             try:
                 from services.secure_settings import build_process_env
