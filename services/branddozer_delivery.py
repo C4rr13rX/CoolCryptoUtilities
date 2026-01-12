@@ -346,6 +346,33 @@ def _codex_quota_exhausted(text: str) -> Optional[str]:
             return f"Codex unavailable: {marker}"
     return None
 
+def _codex_refusal(text: str) -> Optional[str]:
+    if not text:
+        return None
+    lowered = text.lower()
+    markers = [
+        "i cannot comply",
+        "i'm unable to comply",
+        "i can't comply",
+        "i cannot help with that request",
+        "cannot assist with that request",
+        "as an ai language model, i cannot",
+        "cannot generate that",
+        "i'm not able to help with that",
+        "refuse",
+        "not permitted to",
+        "against policy",
+        "violates policy",
+        "can't do that",
+        "cannot do that",
+        "not allowed to",
+        "restricted content",
+    ]
+    for marker in markers:
+        if marker in lowered:
+            return f"Codex refusal detected: {marker}"
+    return None
+
 
 def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], reason: str) -> None:
     note = reason[:400]
@@ -381,6 +408,46 @@ def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], r
             priority=1,
             estimate_points=1,
             status="blocked",
+            source="system",
+        )
+
+
+def _handle_codex_refusal(run: DeliveryRun, session: Optional[DeliverySession], reason: str, *, block: bool = True) -> None:
+    note = reason[:400]
+    _set_run_note(run, "Codex refusal", note)
+    context = dict(run.context or {})
+    context.setdefault("codex_refusals", []).append(
+        {"reason": note, "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "session": str(session.id) if session else None}
+    )
+    run.context = context
+    if block:
+        run.status = "blocked"
+        run.error = note
+        run.save(update_fields=["status", "error", "context"])
+    else:
+        run.save(update_fields=["context"])
+    if session:
+        _append_session_log(session, note)
+        if block:
+            session.status = "blocked"
+            session.save(update_fields=["status"])
+    title = "Codex refused prompt"
+    exists = (
+        BacklogItem.objects.filter(run=run, source="system", title=title)
+        .exclude(status="done")
+        .exists()
+    )
+    if not exists:
+        BacklogItem.objects.create(
+            project=run.project,
+            run=run,
+            kind="risk",
+            title=title,
+            description="Codex declined to act on a prompt. Adjust prompt/scope and retry.",
+            acceptance_criteria=["Prompt adjusted and Codex completes task", "Run resumed"],
+            priority=2,
+            estimate_points=1,
+            status="blocked" if block else "todo",
             source="system",
         )
 
@@ -2180,11 +2247,19 @@ class DeliveryOrchestrator:
             if exhausted:
                 _pause_run_for_codex(run, session, exhausted)
                 raise StopDelivery(exhausted)
+            refusal = _codex_refusal(output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                raise StopDelivery(refusal)
         except Exception as exc:
             exhausted = _codex_quota_exhausted(str(exc))
             if exhausted:
                 _pause_run_for_codex(run, session, exhausted)
                 raise StopDelivery(exhausted)
+            refusal = _codex_refusal(str(exc))
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                raise StopDelivery(refusal)
             _append_session_log(session, f"UX audit failed: {exc}")
             exists = BacklogItem.objects.filter(run=run, source="ux_audit", title="UX audit failed").exclude(status="done").exists()
             if not exists:
@@ -2407,6 +2482,10 @@ class DeliveryOrchestrator:
             if exhausted:
                 _pause_run_for_codex(run, session, exhausted)
                 raise StopDelivery(exhausted)
+            refusal = _codex_refusal(output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                raise StopDelivery(refusal)
             diff_text = _compute_diff(root, workspace)
             DeliveryArtifact.objects.create(
                 project=run.project,
@@ -2435,6 +2514,9 @@ class DeliveryOrchestrator:
             exhausted = _codex_quota_exhausted(str(exc))
             if exhausted:
                 _pause_run_for_codex(run, session, exhausted)
+            refusal = _codex_refusal(str(exc))
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
             _append_session_log(session, f"Error: {exc}")
             session.status = "error"
             session.completed_at = timezone.now()
@@ -2958,6 +3040,10 @@ class DeliveryOrchestrator:
         if exhausted:
             _pause_run_for_codex(run, session, exhausted)
             raise StopDelivery(exhausted)
+        refusal = _codex_refusal(review_output)
+        if refusal:
+            _handle_codex_refusal(run, session, refusal)
+            raise StopDelivery(refusal)
         try:
             DeliveryArtifact.objects.create(
                 project=run.project,
@@ -3108,6 +3194,13 @@ class DeliveryOrchestrator:
                 if exhausted:
                     _pause_run_for_codex(run, session, exhausted)
                     raise StopDelivery(exhausted)
+                refusal = _codex_refusal(output)
+                if refusal:
+                    # Fallback to template but still record refusal
+                    _handle_codex_refusal(run, session, refusal, block=False)
+                    codex_error = refusal
+                    fallback_output = output
+                    raise Exception(refusal)
                 if session:
                     _append_session_log(session, f"{fallback_kind} generated.")
                     _log_codex_choice(session, codex_settings_for_role("planner"), "planner")
