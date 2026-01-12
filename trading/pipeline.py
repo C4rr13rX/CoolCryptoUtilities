@@ -190,9 +190,9 @@ class TrainingPipeline:
         except Exception:
             self._news_enrich_budget = 85.0
         try:
-            self._news_enrich_min_budget = max(0.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "6")))
+            self._news_enrich_min_budget = max(0.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "10")))
         except Exception:
-            self._news_enrich_min_budget = 6.0
+            self._news_enrich_min_budget = 10.0
         self._news_focus_offset = 0
         self._confusion_windows: Dict[str, int] = {label: seconds for label, seconds in CONFUSION_WINDOW_BUCKETS}
         self._last_confusion_report: Dict[str, Dict[str, Any]] = {}
@@ -1755,6 +1755,8 @@ class TrainingPipeline:
                 return False
             lookback_sec = int(os.getenv("CRYPTOPANIC_LOOKBACK_SEC", str(2 * 24 * 3600)))
             max_symbols = max(1, min(self._news_enrich_max_symbols, len(symbols_all)))
+            if not getattr(self.data_loader, "_cryptopanic_token", ""):
+                max_symbols = min(max_symbols, 1)
             if len(symbols_all) > max_symbols:
                 offset = self._news_focus_offset % len(symbols_all)
                 rotated = symbols_all[offset:] + symbols_all[:offset]

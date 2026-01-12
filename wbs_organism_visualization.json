@@ -1,0 +1,420 @@
+{
+  "wbs_metadata": {
+    "name": "Work Breakdown Structure - Organism 3D Visualization Refinement",
+    "version": "0.1",
+    "status": "draft",
+    "owner": "Delivery Lead (TBD)",
+    "sponsor": "Product/Design (TBD)",
+    "related_artifacts": [
+      "charter_organism_visualization.json"
+    ]
+  },
+  "deliverable_summary": [
+    "Domain-clustered 3D organism with shared domain palettes, distinct inter-domain link styling, and accessible legends/filters.",
+    "USD-weighted particle system with fiery trails and bounce/elastic motion tuned to valuation and activity, with performance budgets.",
+    "Ghost vs live trading cluster separation with clear palettes, halos/badges, toggles, and safe defaults.",
+    "Automated snapshot capture and timeline playback for bus-scheduling ghost/live states with scrubbing, loop, export, and retention.",
+    "Brain-like layout, camera easing, responsive controls, and UX polish with verification via scripts/branddozer_ui_capture.py."
+  ],
+  "work_breakdown": [
+    {
+      "id": "1.0",
+      "name": "Program Setup and Controls",
+      "tasks": [
+        {
+          "id": "1.1",
+          "name": "Visual contract and palette guardrails",
+          "deliverables": [
+            "Approved domain palette (shared color family per domain), inter-domain link accent style, and ghost/live palettes with halos/badges.",
+            "Accessibility notes including colorblind-safe alternates and contrast thresholds."
+          ],
+          "acceptance": [
+            "Design sign-off on palettes and legend structure; contrast checks logged."
+          ]
+        },
+        {
+          "id": "1.2",
+          "name": "Data handshake and budgets",
+          "deliverables": [
+            "USD valuation feed contract (freshness, fallbacks) and bus-scheduling event schema (ghost/live + phase).",
+            "Performance/motion budgets for particle counts, shader cost, frame rate targets, and capture cadence."
+          ],
+          "acceptance": [
+            "Documented contracts stored with ownership; budgets recorded and referenced by implementation tasks."
+          ]
+        },
+        {
+          "id": "1.3",
+          "name": "Instrumentation and QA plan",
+          "deliverables": [
+            "Telemetry plan for particle counts, FPS, memory/GPU, and snapshot health.",
+            "UI verification plan using scripts/branddozer_ui_capture.py for desktop/mobile states."
+          ],
+          "acceptance": [
+            "Dashboards/log hooks wired; capture plan reviewed with QA/ops."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "2.0",
+      "name": "Domain Clustering and Palette System",
+      "tasks": [
+        {
+          "id": "2.1",
+          "name": "Domain taxonomy mapping",
+          "deliverables": [
+            "Mapping from node domain metadata to palette assignments with fallbacks for unknown/stale domains.",
+            "API to retrieve per-domain styles (node fill/halo, label, glow)."
+          ],
+          "acceptance": [
+            "All nodes resolve to a domain style or explicit fallback; stale/missing data flagged in UI/logs."
+          ],
+          "dependencies": [
+            "1.2"
+          ]
+        },
+        {
+          "id": "2.2",
+          "name": "Cluster layout and bundling",
+          "deliverables": [
+            "Force/bundle parameters tuned to cluster nodes by domain with depth cues and minimal overlap.",
+            "Camera focus helpers to center domains and maintain brain-like structure."
+          ],
+          "acceptance": [
+            "Usability spot check: domain identification <=3s; clusters remain legible across zoom levels."
+          ],
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "id": "2.3",
+          "name": "Edge styling and legends",
+          "deliverables": [
+            "Inter-domain edge styling distinct from intra-domain (color, thickness, glow/arrow) with legend and filter toggles.",
+            "Legend and domain filter UI wired to palette system and layout."
+          ],
+          "acceptance": [
+            "Inter-domain links pass contrast checks and are visually distinct in capture review.",
+            "Filters isolate single/multiple domains without layout collapse."
+          ],
+          "dependencies": [
+            "2.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3.0",
+      "name": "USD-Weighted Particle Physics and Motion",
+      "tasks": [
+        {
+          "id": "3.1",
+          "name": "Data binding for valuations",
+          "deliverables": [
+            "Normalization functions to convert USD value and freshness into particle inputs (size, emission rate, density caps).",
+            "Fallback rules for stale/missing USD values with visual indicators."
+          ],
+          "acceptance": [
+            "Unit tests for conversion functions; stale data renders with muted styling and log entry."
+          ],
+          "dependencies": [
+            "1.2"
+          ]
+        },
+        {
+          "id": "3.2",
+          "name": "Fiery trails and bounce",
+          "deliverables": [
+            "Shader/material for fiery trails with intensity tied to USD weight and recent activity.",
+            "Bounce/elastic motion with damping and caps to avoid visual overload; controls for intensity."
+          ],
+          "acceptance": [
+            "Performance test meets frame rate budget at target particle counts; motion controls adjustable in UI."
+          ],
+          "dependencies": [
+            "3.1"
+          ]
+        },
+        {
+          "id": "3.3",
+          "name": "Performance safeguards",
+          "deliverables": [
+            "Level-of-detail (LOD) and throttling for particle density and trail effects under load.",
+            "Telemetry for particle count, shader time, FPS; alerts on budget breach."
+          ],
+          "acceptance": [
+            "Load test shows graceful degradation without UI lock; alerts fire when budgets exceeded."
+          ],
+          "dependencies": [
+            "3.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "4.0",
+      "name": "Ghost/Live Separation and Bus Timeline",
+      "tasks": [
+        {
+          "id": "4.1",
+          "name": "State visual language",
+          "deliverables": [
+            "Ghost vs live palettes, halos, labels/badges, and cluster separation with safe defaults favoring ghost-only.",
+            "Toggle controls to isolate/mute states with persistent state in URL/hash."
+          ],
+          "acceptance": [
+            "Ghost vs live identifiable within 3s in usability check; toggles persist across reload."
+          ],
+          "dependencies": [
+            "1.1"
+          ]
+        },
+        {
+          "id": "4.2",
+          "name": "Snapshot capture pipeline",
+          "deliverables": [
+            "Auto/event-driven snapshots for bus-scheduling phases (pending, scheduled, executing, settled) across ghost/live.",
+            "Retention policy, metadata (timestamp, state counts), and health checks for snapshot cadence."
+          ],
+          "acceptance": [
+            "Coverage: 100 percent of bus state changes recorded over 24h in test dataset; health alerts on missed intervals."
+          ],
+          "dependencies": [
+            "1.2"
+          ]
+        },
+        {
+          "id": "4.3",
+          "name": "Timeline playback and export",
+          "deliverables": [
+            "Playback UI with scrubbing, start/stop, loop, speed control; sync camera focus to selected frame.",
+            "Export/share path for snapshots (image/video/gif) and deep link to timestamp."
+          ],
+          "acceptance": [
+            "Playback scrubs smoothly at target FPS; exports succeed for representative frames."
+          ],
+          "dependencies": [
+            "4.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5.0",
+      "name": "Brain-like Layout and UX Polish",
+      "tasks": [
+        {
+          "id": "5.1",
+          "name": "Layout and camera tuning",
+          "deliverables": [
+            "Brain-inspired layout heuristics (curvature, depth cues, bundling) and camera easing paths for transitions.",
+            "Responsive bounds and collision/overlap avoidance tuned for desktop and mobile."
+          ],
+          "acceptance": [
+            "No major overlap at target node counts; camera transitions stay within budgeted durations."
+          ],
+          "dependencies": [
+            "2.2",
+            "3.3"
+          ]
+        },
+        {
+          "id": "5.2",
+          "name": "Interaction polish",
+          "deliverables": [
+            "Hover/select tooltips showing domain, USD value, ghost/live, and bus phase with latency-friendly fetch.",
+            "Gestures/controls for zoom/pan/orbit, quick domain/state toggles, and reset views."
+          ],
+          "acceptance": [
+            "Tooltip latency within target (<150ms) in test; gesture conflicts resolved for touch/trackpad."
+          ],
+          "dependencies": [
+            "5.1"
+          ]
+        },
+        {
+          "id": "5.3",
+          "name": "Legend and onboarding",
+          "deliverables": [
+            "Legend overlays for domains, inter-domain links, ghost/live states, and particle intensity.",
+            "Onboarding hints for timeline controls, filters, and motion intensity settings."
+          ],
+          "acceptance": [
+            "Legends/overlays pass contrast checks; onboarding dismissed/persisted per user choice."
+          ],
+          "dependencies": [
+            "2.3",
+            "4.3"
+          ]
+        },
+        {
+          "id": "5.4",
+          "name": "Accessibility and compliance",
+          "deliverables": [
+            "Color contrast verification for palettes/halos/labels; colorblind-safe mode toggle.",
+            "Keyboard/ARIA coverage for playback, filters, and camera reset."
+          ],
+          "acceptance": [
+            "Accessibility audit (WCAG AA) passes for interactive controls and labels."
+          ],
+          "dependencies": [
+            "5.2",
+            "5.3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "6.0",
+      "name": "QA, Observability, and Verification",
+      "tasks": [
+        {
+          "id": "6.1",
+          "name": "Test harness and coverage",
+          "deliverables": [
+            "Unit tests for palette mapping, USD normalization, timeline state handling, and LOD logic.",
+            "Integration tests for timeline playback, filters, and snapshot retention."
+          ],
+          "acceptance": [
+            "Coverage meets team target; deterministic seeds for animation-related tests."
+          ],
+          "dependencies": [
+            "2.3",
+            "3.3",
+            "4.3",
+            "5.4"
+          ]
+        },
+        {
+          "id": "6.2",
+          "name": "Performance and motion validation",
+          "deliverables": [
+            "Load tests for particle/trail effects under peak node/edge counts with FPS and GPU metrics logged.",
+            "Motion comfort checks with intensity controls and damping defaults recorded."
+          ],
+          "acceptance": [
+            "Frame rate meets budget across test datasets; motion comfort checklist signed off."
+          ],
+          "dependencies": [
+            "3.3",
+            "5.1"
+          ]
+        },
+        {
+          "id": "6.3",
+          "name": "UI verification captures",
+          "deliverables": [
+            "Desktop and mobile screenshots for key states (domain legend, ghost vs live, timeline playback, peak load) using scripts/branddozer_ui_capture.py.",
+            "Capture review with codex --image when verification is needed; artifacts linked to release."
+          ],
+          "acceptance": [
+            "All required captures stored and reviewed; no outstanding UX issues."
+          ],
+          "dependencies": [
+            "5.3",
+            "6.2"
+          ]
+        },
+        {
+          "id": "6.4",
+          "name": "Docs and handoff",
+          "deliverables": [
+            "Runbook for palette changes, snapshot replay, LOD tuning, and capture steps.",
+            "Changelog and onboarding notes for operators and reviewers."
+          ],
+          "acceptance": [
+            "Docs published and referenced in release checklist; handoff session completed."
+          ],
+          "dependencies": [
+            "6.3"
+          ]
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "name": "M1 Visual Contract and Budgets",
+      "criteria": [
+        "Domain and ghost/live palettes with legends approved; inter-domain edge styling locked.",
+        "Performance/motion budgets recorded; data contracts for USD valuations and bus states agreed."
+      ],
+      "related_work": [
+        "1.1",
+        "1.2",
+        "2.1",
+        "4.1"
+      ]
+    },
+    {
+      "name": "M2 Data Wiring and Particle Physics",
+      "criteria": [
+        "USD valuation bindings live with fallbacks; particle sizing/density mapped to value.",
+        "Fiery trail and bounce behaviors tuned with performance safeguards enabled."
+      ],
+      "related_work": [
+        "3.1",
+        "3.2",
+        "3.3"
+      ]
+    },
+    {
+      "name": "M3 Timeline and State Clarity",
+      "criteria": [
+        "Ghost vs live visual language implemented with toggles; snapshot capture covering bus phases.",
+        "Timeline playback with scrubbing, loop, speed control, and export operating on captured frames."
+      ],
+      "related_work": [
+        "4.1",
+        "4.2",
+        "4.3"
+      ]
+    },
+    {
+      "name": "M4 UX Polish and Verification",
+      "criteria": [
+        "Brain-like layout and camera tuning stable on desktop/mobile; legends and onboarding complete.",
+        "Performance tests within budget; UI verification captures completed via scripts/branddozer_ui_capture.py."
+      ],
+      "related_work": [
+        "5.1",
+        "5.3",
+        "6.2",
+        "6.3"
+      ]
+    }
+  ],
+  "assumptions": [
+    "USD valuations and bus-scheduling events are available with freshness indicators suitable for animation.",
+    "Target hardware supports WebGL particle/trail effects within defined budgets.",
+    "Domain taxonomy remains stable enough to keep palette assignments consistent during delivery.",
+    "Ghost/live state flags are authoritative and include timing needed for snapshotting."
+  ],
+  "risks": [
+    {
+      "risk": "Particle/trail effects overload GPU or reduce clarity at scale.",
+      "mitigation": "Enforce LOD, caps, and telemetry-driven throttling; provide user controls to reduce intensity."
+    },
+    {
+      "risk": "Palette overlaps or accessibility failures cause misreads between domains and ghost/live states.",
+      "mitigation": "Contrast checks, colorblind-safe palette, halos/badges, and legend clarity validations."
+    },
+    {
+      "risk": "Snapshot pipeline misses bus state changes or desynchronizes timeline playback.",
+      "mitigation": "Event-driven capture with health checks, retention metrics, and reconciliation tests."
+    },
+    {
+      "risk": "Motion tuning induces visual noise or discomfort.",
+      "mitigation": "Default damping, intensity limits, and quick toggles to simplify motion during reviews."
+    }
+  ],
+  "acceptance_criteria": [
+    "Reviewers can identify a node's domain and ghost/live state within three seconds in usability checks.",
+    "Inter-domain edges remain visually distinct from intra-domain links across all palettes and backgrounds.",
+    "Timeline playback covers 100 percent of bus-scheduling state changes over a 24h test window without gaps.",
+    "Visualization sustains target frame rate under representative load with particle/trail effects enabled.",
+    "UI verification suite (desktop and mobile) via scripts/branddozer_ui_capture.py completes with accepted screenshots."
+  ]
+}

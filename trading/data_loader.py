@@ -124,7 +124,7 @@ class HistoricalDataLoader:
         self._news_backfill_cooldown = max(60, int(os.getenv("NEWS_BACKFILL_COOLDOWN_SEC", "900")))
         self._news_backfill_bucket = max(300, int(os.getenv("NEWS_BACKFILL_BUCKET_SEC", "3600")))
         self._news_backfill_log: Dict[str, float] = {}
-        self._news_backfill_min_budget = max(2.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "6")))
+        self._news_backfill_min_budget = max(2.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "10")))
         self.news_items = self._load_news()
         self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
