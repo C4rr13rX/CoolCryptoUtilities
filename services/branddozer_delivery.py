@@ -3162,6 +3162,11 @@ class DeliveryOrchestrator:
             "on",
         }
         codex_available = shutil.which("codex") is not None and not offline_mode
+        read_timeout_s = None
+        try:
+            read_timeout_s = float(os.getenv("CODEX_READ_TIMEOUT", "600"))
+        except Exception:
+            read_timeout_s = 600.0
         fallback_output = ""
         codex_error = ""
         if codex_available:
@@ -3169,7 +3174,7 @@ class DeliveryOrchestrator:
                 codex = CodexSession(
                     session_name=f"{fallback_kind}-{run.id}",
                     transcript_dir=Path("runtime/branddozer/transcripts"),
-                    read_timeout_s=None,
+                    read_timeout_s=read_timeout_s,
                     workdir=str(root),
                     **codex_settings_for_role("planner"),
                 )
