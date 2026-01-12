@@ -95,6 +95,7 @@ class CodexSession:
         approval_policy: Optional[str] = None,
         bypass_sandbox_confirm: Optional[bool] = None,
         workdir: str | Path | None = None,
+        meta_role: Optional[str] = None,
     ) -> None:
         self.session_name = session_name
         self.executable = executable
@@ -103,6 +104,7 @@ class CodexSession:
         self.verbose_default = verbose_default
         self.term_rows = term_rows
         self.term_cols = term_cols
+        self.meta_role = meta_role
 
         self.transcript_dir = Path(transcript_dir)
         self.transcript_dir.mkdir(parents=True, exist_ok=True)

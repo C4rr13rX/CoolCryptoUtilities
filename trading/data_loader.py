@@ -116,6 +116,7 @@ class HistoricalDataLoader:
         self._cryptopanic_min_interval = max(0.2, float(os.getenv("CRYPTOPANIC_REQUEST_INTERVAL", "1.2")))
         self._cryptopanic_max_pages = max(1, int(os.getenv("CRYPTOPANIC_MAX_PAGES", "8")))
         self._cryptopanic_default_limit = max(5, min(100, int(os.getenv("CRYPTOPANIC_PAGE_SIZE", "50"))))
+        self._cryptopanic_http_timeout = max(5.0, float(os.getenv("CRYPTOPANIC_HTTP_TIMEOUT", "12")))
         self._cryptopanic_cooldown = max(60, int(os.getenv("CRYPTOPANIC_SYMBOL_COOLDOWN_SEC", "900")))
         self._cryptopanic_last_fetch: Dict[str, float] = {}
         self._news_seen_keys: Set[str] = set()
@@ -123,6 +124,7 @@ class HistoricalDataLoader:
         self._news_backfill_cooldown = max(60, int(os.getenv("NEWS_BACKFILL_COOLDOWN_SEC", "900")))
         self._news_backfill_bucket = max(300, int(os.getenv("NEWS_BACKFILL_BUCKET_SEC", "3600")))
         self._news_backfill_log: Dict[str, float] = {}
+        self._news_backfill_min_budget = max(2.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "6")))
         self.news_items = self._load_news()
         self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
@@ -2114,6 +2116,7 @@ class HistoricalDataLoader:
         until_ts: Optional[int],
         max_pages: int,
         limit: int,
+        deadline: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         if not api_token:
             return []
@@ -2134,13 +2137,18 @@ class HistoricalDataLoader:
         next_url: Optional[str] = endpoint
         pages = 0
         while next_url and pages < max_pages:
+            if deadline and (deadline - time.time()) <= 0:
+                break
             resp = None
             try:
-                self._throttle_cryptopanic()
+                self._throttle_cryptopanic(deadline=deadline)
+                timeout = self._cryptopanic_http_timeout
+                if deadline:
+                    timeout = max(1.0, min(timeout, deadline - time.time()))
                 if next_url == endpoint:
-                    resp = self._cryptopanic_session.get(next_url, params=params, timeout=20)
+                    resp = self._cryptopanic_session.get(next_url, params=params, timeout=timeout)
                 else:
-                    resp = self._cryptopanic_session.get(next_url, timeout=20)
+                    resp = self._cryptopanic_session.get(next_url, timeout=timeout)
                 resp.raise_for_status()
                 payload = resp.json()
             except Exception:
@@ -2218,22 +2226,40 @@ class HistoricalDataLoader:
                 break
         return posts
 
-    def _throttle_cryptopanic(self) -> None:
+    def _throttle_cryptopanic(self, deadline: Optional[float] = None) -> None:
         now = time.time()
         while self._cryptopanic_request_log and now - self._cryptopanic_request_log[0] > 60.0:
             self._cryptopanic_request_log.popleft()
         if self._cryptopanic_request_log:
             elapsed = now - self._cryptopanic_request_log[-1]
             if elapsed < self._cryptopanic_min_interval:
-                time.sleep(self._cryptopanic_min_interval - elapsed)
+                sleep_dur = self._cryptopanic_min_interval - elapsed
+                if deadline:
+                    sleep_dur = max(0.0, min(sleep_dur, deadline - time.time()))
+                if sleep_dur > 0:
+                    time.sleep(sleep_dur)
         if len(self._cryptopanic_request_log) >= self._cryptopanic_rate_limit:
             wait = 60.0 - (now - self._cryptopanic_request_log[0])
             if wait > 0:
-                time.sleep(wait)
+                sleep_dur = wait
+                if deadline:
+                    sleep_dur = max(0.0, min(wait, deadline - time.time()))
+                if sleep_dur > 0:
+                    time.sleep(sleep_dur)
         self._cryptopanic_request_log.append(time.time())
 
-    def _augment_news_from_cryptopanic(self, tokens_upper: Set[str], start_ts: int, end_ts: int) -> None:
+    def _augment_news_from_cryptopanic(
+        self,
+        tokens_upper: Set[str],
+        start_ts: int,
+        end_ts: int,
+        *,
+        max_pages: Optional[int] = None,
+        deadline: Optional[float] = None,
+    ) -> None:
         if not self._cryptopanic_token or not tokens_upper:
+            return
+        if deadline and (deadline - time.time()) <= 0:
             return
         key = "|".join(sorted(tokens_upper))
         window_bucket = f"{key}:{int(start_ts // 3600)}:{int(end_ts // 3600)}"
@@ -2242,13 +2268,16 @@ class HistoricalDataLoader:
         last_fetch = self._cryptopanic_last_fetch.get(key, 0.0)
         if time.time() - last_fetch < self._cryptopanic_cooldown:
             return
+        page_limit = max_pages or self._cryptopanic_max_pages
+        page_limit = max(1, min(page_limit, self._cryptopanic_max_pages))
         posts = self._fetch_cryptopanic_posts(
             api_token=self._cryptopanic_token,
             since_ts=max(0, start_ts),
             currencies=tokens_upper,
             until_ts=end_ts,
-            max_pages=max(1, min(3, self._cryptopanic_max_pages)),
+            max_pages=max(1, min(3, page_limit)),
             limit=max(5, min(40, self._cryptopanic_default_limit)),
+            deadline=deadline,
         )
         if not posts:
             self._cryptopanic_failed_windows.add(window_bucket)
@@ -2276,8 +2305,17 @@ class HistoricalDataLoader:
             self.news_index[token] = sorted(set(indices))
         self._cryptopanic_last_fetch[key] = time.time()
 
-    def _augment_news_from_ethics(self, tokens_upper: Set[str], start_ts: int, end_ts: int) -> bool:
+    def _augment_news_from_ethics(
+        self,
+        tokens_upper: Set[str],
+        start_ts: int,
+        end_ts: int,
+        *,
+        deadline: Optional[float] = None,
+    ) -> bool:
         if not tokens_upper:
+            return False
+        if deadline and (deadline - time.time()) < self._news_backfill_min_budget:
             return False
         try:
             from services.news_ingestor import EthicalNewsIngestor
@@ -2343,6 +2381,8 @@ class HistoricalDataLoader:
         symbols: Sequence[str],
         lookback_sec: int = 2 * 24 * 3600,
         center_ts: Optional[int] = None,
+        deadline: Optional[float] = None,
+        max_pages: Optional[int] = None,
     ) -> bool:
         """Fetch additional news for the supplied symbols.
 
@@ -2351,11 +2391,17 @@ class HistoricalDataLoader:
 
         if not symbols:
             return False
+        if deadline and (deadline - time.time()) <= 0:
+            return False
         ts_center = center_ts or int(time.time())
         start_ts = ts_center - abs(int(lookback_sec))
         end_ts = ts_center + max(3600, abs(int(lookback_sec)) // 2)
+        page_cap = max_pages or self._cryptopanic_max_pages
+        page_cap = max(1, min(page_cap, self._cryptopanic_max_pages))
         added = False
         for symbol in symbols:
+            if deadline and (deadline - time.time()) <= 0:
+                break
             tokens = [part.strip().upper() for part in re.split(r"[-/ ]", str(symbol)) if part.strip()]
             token_set = {tok for tok in tokens if tok}
             if not token_set:
@@ -2364,11 +2410,28 @@ class HistoricalDataLoader:
             if self._is_news_backfill_recent(window_key):
                 continue
             before = len(self.news_items)
-            self._augment_news_from_cryptopanic(token_set, start_ts, end_ts)
+            # Estimate pages based on remaining budget so we return before the guardian timeout.
+            effective_pages = page_cap
+            if deadline:
+                remaining = max(0.0, deadline - time.time())
+                # Roughly cap to how many requests fit inside the remaining window.
+                per_request_budget = max(1.0, self._cryptopanic_http_timeout)
+                est_pages = int(max(1.0, remaining // per_request_budget))
+                effective_pages = max(1, min(page_cap, est_pages))
+            self._augment_news_from_cryptopanic(
+                token_set,
+                start_ts,
+                end_ts,
+                max_pages=effective_pages,
+                deadline=deadline,
+            )
             if len(self.news_items) > before:
                 added = True
             else:
-                if self._augment_news_from_ethics(token_set, start_ts, end_ts):
+                if deadline and (deadline - time.time()) < self._news_backfill_min_budget:
+                    self._mark_news_backfill(window_key)
+                    continue
+                if self._augment_news_from_ethics(token_set, start_ts, end_ts, deadline=deadline):
                     added = True
             self._mark_news_backfill(window_key)
         return added

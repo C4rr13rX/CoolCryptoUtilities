@@ -175,6 +175,25 @@ class TrainingPipeline:
         self.primary_symbol = PRIMARY_SYMBOL
         self._pause_flag_key = "pipeline_pause"
         self._last_news_top_up: float = 0.0
+        try:
+            default_news_cap = min(self.focus_max_assets, 4)
+            news_cap_env = int(os.getenv("NEWS_ENRICH_MAX_SYMBOLS", str(default_news_cap)))
+        except Exception:
+            news_cap_env = 0
+        self._news_enrich_max_symbols = max(1, min(self.focus_max_assets, news_cap_env or default_news_cap))
+        try:
+            self._news_enrich_page_cap = max(1, int(os.getenv("NEWS_ENRICH_MAX_PAGES", "2")))
+        except Exception:
+            self._news_enrich_page_cap = 2
+        try:
+            self._news_enrich_budget = max(0.0, float(os.getenv("NEWS_ENRICH_BUDGET_SEC", "85")))
+        except Exception:
+            self._news_enrich_budget = 85.0
+        try:
+            self._news_enrich_min_budget = max(0.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "6")))
+        except Exception:
+            self._news_enrich_min_budget = 6.0
+        self._news_focus_offset = 0
         self._confusion_windows: Dict[str, int] = {label: seconds for label, seconds in CONFUSION_WINDOW_BUCKETS}
         self._last_confusion_report: Dict[str, Dict[str, Any]] = {}
         self._last_confusion_summary: Dict[str, Any] = {}
@@ -287,7 +306,8 @@ class TrainingPipeline:
         Ensure recent news is available for the focus assets used in ghost trading.
         """
         try:
-            return self._auto_backfill_news(focus_assets or [])
+            deadline = time.time() + self._news_enrich_budget if self._news_enrich_budget > 0 else None
+            return self._auto_backfill_news(focus_assets or [], deadline=deadline)
         except Exception as exc:
             print(f"[training] news enrichment failed: {exc}")
             return False
@@ -1728,14 +1748,33 @@ class TrainingPipeline:
         self._vectorizer_cache.update(candidate_texts)
         self._vectorizer_signature = digest
 
-    def _auto_backfill_news(self, focus_assets: Optional[Sequence[str]]) -> bool:
+    def _auto_backfill_news(self, focus_assets: Optional[Sequence[str]], *, deadline: Optional[float] = None) -> bool:
         try:
-            symbols = list(focus_assets or top_pairs(limit=min(self.focus_max_assets, 10)))
-            if not symbols:
+            symbols_all = list(focus_assets or top_pairs(limit=min(self.focus_max_assets, 10)))
+            if not symbols_all:
                 return False
             lookback_sec = int(os.getenv("CRYPTOPANIC_LOOKBACK_SEC", str(2 * 24 * 3600)))
-            backfilled = self.data_loader.request_news_backfill(symbols=symbols, lookback_sec=lookback_sec)
+            max_symbols = max(1, min(self._news_enrich_max_symbols, len(symbols_all)))
+            if len(symbols_all) > max_symbols:
+                offset = self._news_focus_offset % len(symbols_all)
+                rotated = symbols_all[offset:] + symbols_all[:offset]
+                symbols = rotated[:max_symbols]
+                self._news_focus_offset = (offset + max_symbols) % len(symbols_all)
+            else:
+                symbols = symbols_all
+                self._news_focus_offset = (self._news_focus_offset + len(symbols_all)) % len(symbols_all)
+            if deadline and (deadline - time.time()) < self._news_enrich_min_budget:
+                return False
+            page_cap = max(1, min(self._news_enrich_page_cap, getattr(self.data_loader, "_cryptopanic_max_pages", self._news_enrich_page_cap)))
+            backfilled = self.data_loader.request_news_backfill(
+                symbols=symbols,
+                lookback_sec=lookback_sec,
+                deadline=deadline,
+                max_pages=page_cap,
+            )
             if not backfilled and os.getenv("CRYPTOPANIC_API_KEY"):
+                if deadline and (deadline - time.time()) < self._news_enrich_min_budget:
+                    return False
                 try:
                     center = datetime.now(timezone.utc)
                     start = center - timedelta(seconds=lookback_sec)
