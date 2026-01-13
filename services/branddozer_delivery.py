@@ -69,6 +69,7 @@ MAX_REMEDIATION_CYCLES = int(os.getenv("BRANDDOZER_REMEDIATION_CYCLES", "3"))
 DEFAULT_SPRINT_CAPACITY_POINTS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_POINTS", "8"))
 DEFAULT_SPRINT_CAPACITY_ITEMS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_ITEMS", "6"))
 MAX_PARALLELISM = int(os.getenv("BRANDDOZER_MAX_PARALLELISM", "3"))
+GATE_FAILURE_BLOCK_LIMIT = int(os.getenv("BRANDDOZER_GATE_FAILURE_LIMIT", "2"))
 
 PHASES = [
     "mode_detection",
@@ -450,6 +451,24 @@ def _handle_codex_refusal(run: DeliveryRun, session: Optional[DeliverySession], 
             status="blocked" if block else "todo",
             source="system",
         )
+
+
+def _cleanup_run_sessions(run: DeliveryRun, reason: str = "stale session cleanup") -> None:
+    """
+    Force-complete any stale sessions for this run to avoid hung codex processes.
+    """
+    stale = list(DeliverySession.objects.filter(run=run, status="running"))
+    if not stale:
+        return
+    now = timezone.now()
+    for sess in stale:
+        try:
+            _append_session_log(sess, f"Session closed: {reason}")
+        except Exception:
+            pass
+        sess.status = "error"
+        sess.completed_at = now
+        sess.save(update_fields=["status", "completed_at"])
 
 
 def _emit_ui_snapshot_placeholder(run_id: uuid.UUID, reason: str, manual: bool = False) -> None:
@@ -1197,6 +1216,7 @@ class DeliveryOrchestrator:
         run = DeliveryRun.objects.filter(id=run_uuid).first()
         if run:
             # Reset stale runs so they can be restarted without manual DB edits.
+            _cleanup_run_sessions(run, reason="reset run")
             run.prompt = prompt.strip() or run.prompt
             run.mode = mode
             run.status = "queued"
@@ -1883,6 +1903,7 @@ class DeliveryOrchestrator:
         parallelism = min(_dynamic_parallelism(), MAX_PARALLELISM)
         run.context["parallelism"] = parallelism
         run.save(update_fields=["phase", "iteration", "context"])
+        _cleanup_run_sessions(run, reason="new sprint execution")
         offline_mode = (os.getenv("BRANDDOZER_OFFLINE_MODE") or "0").lower() in {"1", "true", "yes", "on"}
         session = DeliverySession.objects.create(
             project=run.project,
@@ -2553,6 +2574,7 @@ class DeliveryOrchestrator:
         run.save(update_fields=["phase"])
         _set_run_note(run, "Gates", "Running quality checks")
         runner = GateRunner(run, root)
+        gate_failure_counts = dict((run.context or {}).get("gate_failure_counts") or {})
         for gate in default_gates(root):
             result = runner.run_gate(gate)
             if result.status not in {"passed", "skipped"} and gate.required:
@@ -2561,7 +2583,7 @@ class DeliveryOrchestrator:
                     BacklogItem.objects.filter(run=run, source="gate", title=title)
                     .exclude(status="done")
                     .exists()
-                )
+                    )
                 if not exists:
                     BacklogItem.objects.create(
                         project=run.project,
@@ -2576,6 +2598,18 @@ class DeliveryOrchestrator:
                         source="gate",
                         meta={"stage": result.stage},
                     )
+                # Track repeated gate failures to avoid infinite remediation loops
+                gate_failure_counts[result.name] = int(gate_failure_counts.get(result.name, 0)) + 1
+                if gate_failure_counts[result.name] >= GATE_FAILURE_BLOCK_LIMIT:
+                    run.context = {**(run.context or {}), "gate_failure_counts": gate_failure_counts}
+                    run.status = "blocked"
+                    run.error = f"Gate {result.name} failed {gate_failure_counts[result.name]} times; manual fix required."
+                    run.save(update_fields=["status", "error", "context"])
+                    _set_run_note(run, "Gates", run.error)
+                    raise StopDelivery(run.error)
+        if gate_failure_counts:
+            run.context = {**(run.context or {}), "gate_failure_counts": gate_failure_counts}
+            run.save(update_fields=["context"])
         self._ui_snapshot_review(run, root)
 
     def trigger_ui_review(self, run_id: uuid.UUID, *, manual: bool = True) -> None:
