@@ -1905,6 +1905,26 @@ class DeliveryOrchestrator:
         sprint_items = list(sprint.items.select_related("backlog_item"))
         sprint_item_map = {item.backlog_item.id: item for item in sprint_items}
         backlog_queue = [item.backlog_item for item in sprint_items if item.status != "done" and item.backlog_item.status != "done"]
+        # Skip items that already produced no changes to avoid Codex loops that burn credits without output
+        filtered_queue: List[BacklogItem] = []
+        for item in backlog_queue:
+            retries = 0
+            try:
+                retries = int((item.meta or {}).get("no_changes_retries", 0))
+            except Exception:
+                retries = 0
+            if retries >= 1:
+                _append_session_log(session, f"Skipping {item.title}: prior attempt produced no changes.")
+                item.status = "blocked"
+                item.meta = {**(item.meta or {}), "skipped_no_changes": True}
+                item.save(update_fields=["status", "meta", "updated_at"])
+                sprint_item = sprint_item_map.get(item.id)
+                if sprint_item:
+                    sprint_item.status = "blocked"
+                    sprint_item.save(update_fields=["status"])
+                continue
+            filtered_queue.append(item)
+        backlog_queue = filtered_queue
         if not backlog_queue:
             _append_session_log(session, "No sprint items ready for execution.")
         else:
@@ -1983,6 +2003,9 @@ class DeliveryOrchestrator:
                         backlog_item.status = "blocked"
                         if sprint_item:
                             sprint_item.status = "blocked"
+                        meta = backlog_item.meta or {}
+                        meta["no_changes_retries"] = int(meta.get("no_changes_retries", 0) or 0) + 1
+                        backlog_item.meta = meta
                         BacklogItem.objects.create(
                             project=run.project,
                             run=run,
