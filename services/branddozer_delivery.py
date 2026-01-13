@@ -70,6 +70,7 @@ DEFAULT_SPRINT_CAPACITY_POINTS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_POINT
 DEFAULT_SPRINT_CAPACITY_ITEMS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_ITEMS", "6"))
 MAX_PARALLELISM = int(os.getenv("BRANDDOZER_MAX_PARALLELISM", "3"))
 GATE_FAILURE_BLOCK_LIMIT = int(os.getenv("BRANDDOZER_GATE_FAILURE_LIMIT", "2"))
+LONGRUN_COOLDOWN_MINUTES = int(os.getenv("BRANDDOZER_LONGRUN_COOLDOWN_MINUTES", "60"))
 
 PHASES = [
     "mode_detection",
@@ -2008,6 +2009,26 @@ class DeliveryOrchestrator:
                 retries = int((item.meta or {}).get("no_changes_retries", 0))
             except Exception:
                 retries = 0
+            meta = item.meta or {}
+            long_running = bool(meta.get("long_running"))
+            last_run_ts = meta.get("last_run_ts")
+            if long_running and last_run_ts:
+                try:
+                    last_ts = float(last_run_ts)
+                    import time
+
+                    cooldown = LONGRUN_COOLDOWN_MINUTES * 60
+                    if time.time() - last_ts < cooldown:
+                        _append_session_log(session, f"Skipping long-running task {item.title} until cooldown elapses.")
+                        item.status = "blocked"
+                        item.save(update_fields=["status", "updated_at"])
+                        sprint_item = sprint_item_map.get(item.id)
+                        if sprint_item:
+                            sprint_item.status = "blocked"
+                            sprint_item.save(update_fields=["status"])
+                        continue
+                except Exception:
+                    pass
             if retries >= 1:
                 _append_session_log(session, f"Skipping {item.title}: prior attempt produced no changes.")
                 item.status = "blocked"
@@ -2150,11 +2171,16 @@ class DeliveryOrchestrator:
                             estimate_points=2,
                             status="todo",
                             source="integrator",
-                        )
+                    )
                     backlog_item.save(update_fields=["status", "updated_at"])
                     if sprint_item:
                         sprint_item.save(update_fields=["status"])
                     _append_session_log(session, f"Task {backlog_item.title} status: {backlog_item.status}.")
+                    # Track last run timestamp for long-running items so we can respect cooldowns
+                    meta = backlog_item.meta or {}
+                    meta["last_run_ts"] = _now_ts()
+                    backlog_item.meta = meta
+                    backlog_item.save(update_fields=["status", "updated_at", "meta"])
         session.status = "done"
         session.completed_at = timezone.now()
         session.save(update_fields=["status", "completed_at"])
