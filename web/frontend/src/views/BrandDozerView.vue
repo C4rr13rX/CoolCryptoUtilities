@@ -199,6 +199,7 @@
             <p class="caption">{{ deliveryActivity || '—' }}</p>
             <p v-if="deliveryActivityDetail" class="caption muted">{{ deliveryActivityDetail }}</p>
             <p v-if="deliveryActivityTime" class="caption muted">Last update: {{ deliveryActivityTime }}</p>
+            <p v-if="deliveryEta" class="caption muted">ETA: {{ deliveryEta }}</p>
           </div>
         </div>
         <div class="delivery-grid">
@@ -1175,6 +1176,14 @@ const deliveryActivityDetail = computed(() => {
   const run = activeDelivery.value;
   const context = run?.context || {};
   return context.status_detail || run?.job?.detail || '';
+});
+const deliveryEta = computed(() => {
+  const eta = activeDelivery.value?.context?.eta;
+  if (!eta || typeof eta !== 'object') return '';
+  const minutes = eta.minutes;
+  if (minutes === undefined || minutes === null) return '';
+  const asOf = eta.as_of ? `as of ${eta.as_of}` : 'current';
+  return `ETA ~ ${minutes} min (${asOf})`;
 });
 const deliveryActivityTime = computed(() => {
   const ts = activeDelivery.value?.context?.status_ts;
