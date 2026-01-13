@@ -71,6 +71,7 @@ DEFAULT_SPRINT_CAPACITY_ITEMS = int(os.getenv("BRANDDOZER_SPRINT_CAPACITY_ITEMS"
 MAX_PARALLELISM = int(os.getenv("BRANDDOZER_MAX_PARALLELISM", "3"))
 GATE_FAILURE_BLOCK_LIMIT = int(os.getenv("BRANDDOZER_GATE_FAILURE_LIMIT", "2"))
 LONGRUN_COOLDOWN_MINUTES = int(os.getenv("BRANDDOZER_LONGRUN_COOLDOWN_MINUTES", "60"))
+DEFAULT_ETA_BASE_MINUTES = int(os.getenv("BRANDDOZER_ETA_BASE_MINUTES", "20"))
 
 PHASES = [
     "mode_detection",
@@ -470,6 +471,43 @@ def _cleanup_run_sessions(run: DeliveryRun, reason: str = "stale session cleanup
         sess.status = "error"
         sess.completed_at = now
         sess.save(update_fields=["status", "completed_at"])
+
+def _estimate_eta_minutes(run: DeliveryRun, backlog: Optional[List[BacklogItem]] = None) -> int:
+    """
+    Lightweight ETA heuristic (CPU-only, no ML) using backlog size, gate failures,
+    long-running flags, and remediation cycles. Aims to avoid human-scale estimates.
+    """
+    backlog = backlog if backlog is not None else list(BacklogItem.objects.filter(run=run).exclude(status="done"))
+    open_count = len(backlog)
+    long_running = sum(1 for item in backlog if (item.meta or {}).get("long_running"))
+    gate_failures = 0
+    try:
+        gate_failures = sum(1 for g in GateRun.objects.filter(run=run) if g.status not in {"passed", "skipped"})
+    except Exception:
+        gate_failures = 0
+    remediation = getattr(run, "iteration", 0) or 0
+    base = DEFAULT_ETA_BASE_MINUTES
+    per_item = 8
+    eta = base + per_item * open_count + 5 * gate_failures + 15 * remediation + 30 * long_running
+    # If homeostasis throttled, add cushion
+    ctx = run.context or {}
+    if ctx.get("throttle_new_work"):
+        eta += 20
+    return max(5, eta)
+
+def _update_eta(run: DeliveryRun, *, backlog: Optional[List[BacklogItem]] = None, reason: str = "updated") -> None:
+    try:
+        eta_min = _estimate_eta_minutes(run, backlog=backlog)
+        ctx = dict(run.context or {})
+        ctx["eta"] = {
+            "minutes": int(eta_min),
+            "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "reason": reason,
+        }
+        run.context = ctx
+        run.save(update_fields=["context"])
+    except Exception:
+        return
 
 
 def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
@@ -1445,6 +1483,7 @@ class DeliveryOrchestrator:
             _set_run_note(run, "Backlog", "Preparing sprint plan")
             backlog_items = self._backlog_step(run, root)
             sprint = self._sprint_plan(run, backlog_items, goal="Initial delivery sprint")
+            _update_eta(run, backlog=backlog_items, reason="backlog planned")
             _append_session_log(orchestrator_session, "Executing sprint.")
             _set_run_note(run, "Execution", "Running sprint tasks")
             self._execution_loop(run, root, sprint)
@@ -2184,6 +2223,7 @@ class DeliveryOrchestrator:
         session.status = "done"
         session.completed_at = timezone.now()
         session.save(update_fields=["status", "completed_at"])
+        _update_eta(run, backlog=list(BacklogItem.objects.filter(run=run).exclude(status="done")), reason="sprint complete")
         if _stop_requested(run):
             raise StopDelivery("Stop requested")
         self._gate_stage(run, root)
