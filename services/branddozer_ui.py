@@ -114,6 +114,30 @@ def _ensure_frontend_build(root: Path) -> Tuple[bool, str]:
         return False, stderr or stdout or "npm run build failed"
     return True, ""
 
+def _install_playwright(frontend_dir: Path) -> Tuple[bool, str]:
+    auto_flag = (os.getenv("BRANDDOZER_UI_AUTO_INSTALL_PLAYWRIGHT") or "1").strip().lower()
+    if auto_flag in {"0", "false", "no", "off"}:
+        return False, "playwright auto-install disabled"
+    if not shutil.which("npm"):
+        return False, "npm not found; cannot auto-install playwright"
+    marker = frontend_dir / ".playwright_installed"
+    try:
+        if marker.exists():
+            return False, "playwright already marked installed"
+    except Exception:
+        pass
+    stdout, stderr, code = _safe_run(["npm", "install", "--save-dev", "playwright"], cwd=frontend_dir, timeout=1200)
+    if code != 0:
+        return False, stderr or stdout or "npm install playwright failed"
+    stdout, stderr, code = _safe_run(["npx", "playwright", "install", "chromium"], cwd=frontend_dir, timeout=1200)
+    if code != 0:
+        return False, stderr or stdout or "npx playwright install chromium failed"
+    try:
+        marker.write_text("ok", encoding="utf-8")
+    except Exception:
+        pass
+    return True, ""
+
 
 def _generate_password() -> str:
     import secrets
@@ -248,27 +272,31 @@ def capture_ui_screenshots(
         )
     playwright_dir = frontend_dir / "node_modules" / "playwright"
     if not playwright_dir.exists():
-        return UISnapshotResult(
-            stdout="",
-            stderr="playwright not installed; run `npm install --save-dev playwright` and `npx playwright install` in web/frontend",
-            exit_code=1,
-            screenshots=[],
-            base_url=base_url,
-            server_started=False,
-            server_log=None,
-            meta={"dependency_missing": True, "reason": "playwright_missing"},
-        )
+        ok, err = _install_playwright(frontend_dir)
+        if not ok:
+            return UISnapshotResult(
+                stdout="",
+                stderr=err,
+                exit_code=1,
+                screenshots=[],
+                base_url=base_url,
+                server_started=False,
+                server_log=None,
+                meta={"dependency_missing": True, "reason": "playwright_missing", "error": err},
+            )
     if not _playwright_browsers_ready():
-        return UISnapshotResult(
-            stdout="",
-            stderr="playwright browsers missing; run `npx playwright install chromium` in web/frontend",
-            exit_code=1,
-            screenshots=[],
-            base_url=base_url,
-            server_started=False,
-            server_log=None,
-            meta={"dependency_missing": True, "reason": "playwright_browsers_missing"},
-        )
+        ok, err = _install_playwright(frontend_dir)
+        if not ok:
+            return UISnapshotResult(
+                stdout="",
+                stderr=err,
+                exit_code=1,
+                screenshots=[],
+                base_url=base_url,
+                server_started=False,
+                server_log=None,
+                meta={"dependency_missing": True, "reason": "playwright_browsers_missing", "error": err},
+            )
     server_proc = None
     server_log = None
     server_started = False
