@@ -471,6 +471,79 @@ def _cleanup_run_sessions(run: DeliveryRun, reason: str = "stale session cleanup
         sess.save(update_fields=["status", "completed_at"])
 
 
+def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
+    """
+    Fire a short, bounded Codex session to suggest how to unblock a stuck run.
+    Guarded to run once per run to avoid loops/credit burn.
+    """
+    flag = (os.getenv("BRANDDOZER_UNSTICK") or "1").strip().lower()
+    if flag in {"0", "false", "no", "off"}:
+        return
+    ctx = dict(run.context or {})
+    if ctx.get("unstick_attempted"):
+        return
+    ctx["unstick_attempted"] = True
+    run.context = ctx
+    run.save(update_fields=["context"])
+    try:
+        session = DeliverySession.objects.create(
+            project=run.project,
+            run=run,
+            role="pm",
+            name="Unstick Session",
+            status="running",
+            workspace_path=str(root),
+            last_heartbeat=timezone.now(),
+            meta={"reason": reason[:200]},
+        )
+    except Exception:
+        return
+    _append_session_log(session, f"Analyzing stuck state: {reason}")
+    codex_settings = codex_settings_for_role("manager")
+    try:
+        codex_timeout = int(os.getenv("UNSTICK_TIMEOUT", "180"))
+    except Exception:
+        codex_timeout = 180
+    prompt = (
+        "You are the unblocker for a stalled delivery run. "
+        "Provide a concise plan to get unstuck without looping or wasting credits. "
+        "Return JSON with keys: plan (list of steps), stop (true/false), notes. "
+        f"Stuck reason: {reason}\n"
+        f"Run status: {run.status} phase={run.phase}\n"
+        f"Backlog counts: open={BacklogItem.objects.filter(run=run).exclude(status='done').count()}\n"
+        f"Gates: {list(GateRun.objects.filter(run=run).values('name','status'))}"
+    )
+    try:
+        codex = CodexSession(
+            session_name=f"unstick-{run.id}",
+            transcript_dir=Path("runtime/branddozer/transcripts"),
+            read_timeout_s=codex_timeout,
+            workdir=str(root),
+            **codex_settings,
+        )
+        output = codex.send(prompt, stream=True)
+        exhausted = _codex_quota_exhausted(output)
+        refusal = _codex_refusal(output)
+        if exhausted:
+            _pause_run_for_codex(run, session, exhausted)
+        elif refusal:
+            _handle_codex_refusal(run, session, refusal, block=False)
+        DeliveryArtifact.objects.create(
+            project=run.project,
+            run=run,
+            session=session,
+            kind="unstick_plan",
+            title="Unstick plan",
+            content=output,
+            path=str(getattr(codex, "transcript_path", "") or ""),
+        )
+    except Exception as exc:
+        _append_session_log(session, f"Unstick attempt failed: {exc}")
+    session.status = "done"
+    session.completed_at = timezone.now()
+    session.save(update_fields=["status", "completed_at"])
+
+
 def _emit_ui_snapshot_placeholder(run_id: uuid.UUID, reason: str, manual: bool = False) -> None:
     """
     Emit a filesystem-only UX snapshot README when the database is unreachable so
@@ -1396,6 +1469,7 @@ class DeliveryOrchestrator:
                 _set_run_note(run, "Awaiting acceptance", "Ready for user sign-off")
             else:
                 _append_session_log(orchestrator_session, "Definition of Done not satisfied. Blocking run.")
+                _trigger_unstick_session(run, root, "Definition of Done not satisfied after remediation")
                 run.status = "blocked"
                 run.phase = "gates"
                 _set_run_note(run, "Blocked", "Definition of Done not satisfied")
@@ -2601,6 +2675,7 @@ class DeliveryOrchestrator:
                 # Track repeated gate failures to avoid infinite remediation loops
                 gate_failure_counts[result.name] = int(gate_failure_counts.get(result.name, 0)) + 1
                 if gate_failure_counts[result.name] >= GATE_FAILURE_BLOCK_LIMIT:
+                    _trigger_unstick_session(run, root, f"Gate {result.name} failed repeatedly")
                     run.context = {**(run.context or {}), "gate_failure_counts": gate_failure_counts}
                     run.status = "blocked"
                     run.error = f"Gate {result.name} failed {gate_failure_counts[result.name]} times; manual fix required."
