@@ -37,6 +37,7 @@ from services.homeostasis import (
     should_throttle,
     save_control_state,
 )
+from services.codex_usage import get_codex_usage
 from branddozer.models import (
     AcceptanceRecord,
     BacklogItem,
@@ -72,6 +73,9 @@ MAX_PARALLELISM = int(os.getenv("BRANDDOZER_MAX_PARALLELISM", "3"))
 GATE_FAILURE_BLOCK_LIMIT = int(os.getenv("BRANDDOZER_GATE_FAILURE_LIMIT", "2"))
 LONGRUN_COOLDOWN_MINUTES = int(os.getenv("BRANDDOZER_LONGRUN_COOLDOWN_MINUTES", "60"))
 DEFAULT_ETA_BASE_MINUTES = int(os.getenv("BRANDDOZER_ETA_BASE_MINUTES", "20"))
+CODEX_MIN_5H_REMAIN = float(os.getenv("CODEX_MIN_5H_REMAIN", "5") or 5)
+CODEX_MIN_WEEK_REMAIN = float(os.getenv("CODEX_MIN_WEEK_REMAIN", "10") or 10)
+CODEX_MIN_CREDITS = float(os.getenv("CODEX_MIN_CREDITS", "0") or 0)
 
 PHASES = [
     "mode_detection",
@@ -471,6 +475,24 @@ def _cleanup_run_sessions(run: DeliveryRun, reason: str = "stale session cleanup
         sess.status = "error"
         sess.completed_at = now
         sess.save(update_fields=["status", "completed_at"])
+
+def _codex_budget_ok(run: DeliveryRun) -> Tuple[bool, Optional[str]]:
+    usage = get_codex_usage()
+    ctx = dict(run.context or {})
+    ctx["codex_usage"] = usage
+    run.context = ctx
+    run.save(update_fields=["context"])
+    reason = None
+    five_remain = usage.get("five_hour_remaining_pct")
+    if five_remain is not None and five_remain < CODEX_MIN_5H_REMAIN:
+        reason = f"Codex 5h window low ({five_remain}%)"
+    week_remain = usage.get("week_remaining_pct")
+    if reason is None and week_remain is not None and week_remain < CODEX_MIN_WEEK_REMAIN:
+        reason = f"Codex weekly low ({week_remain}%)"
+    credits = usage.get("credits_remaining")
+    if reason is None and credits is not None and credits < CODEX_MIN_CREDITS:
+        reason = f"Codex credits low ({credits})"
+    return reason is None, reason
 
 def _estimate_eta_minutes(run: DeliveryRun, backlog: Optional[List[BacklogItem]] = None) -> int:
     """
@@ -1499,6 +1521,9 @@ class DeliveryOrchestrator:
                 save_control_state(run, throttle)
                 if throttle:
                     _append_session_log(orchestrator_session, "Throttling new work (homeostasis signal)")
+            ok_budget, budget_reason = _codex_budget_ok(run)
+            if not ok_budget:
+                raise StopDelivery(budget_reason or "Codex budget low")
 
             if self._dod_satisfied(run):
                 _append_session_log(orchestrator_session, "Definition of Done satisfied. Preparing release candidate.")
@@ -2018,6 +2043,10 @@ class DeliveryOrchestrator:
         run.context["parallelism"] = parallelism
         run.save(update_fields=["phase", "iteration", "context"])
         _cleanup_run_sessions(run, reason="new sprint execution")
+        ok_budget, budget_reason = _codex_budget_ok(run)
+        if not ok_budget:
+            _set_run_note(run, "Paused", budget_reason or "Codex budget low")
+            raise StopDelivery(budget_reason or "Codex budget low")
         offline_mode = (os.getenv("BRANDDOZER_OFFLINE_MODE") or "0").lower() in {"1", "true", "yes", "on"}
         session = DeliverySession.objects.create(
             project=run.project,
