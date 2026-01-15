@@ -1,0 +1,457 @@
+{
+  "wbs_metadata": {
+    "name": "Work Breakdown Structure - Production-Grade Ghost-to-Live Trading Pipeline",
+    "version": "0.1",
+    "status": "draft",
+    "owner": "Delivery Lead (TBD)",
+    "sponsor": "Product/Risk (TBD)",
+    "related_artifacts": [
+      "charter_trading_pipeline_v3.json",
+      "quality_management_plan_trading_pipeline.json",
+      "release_criteria_trading_pipeline.json"
+    ]
+  },
+  "deliverable_summary": [
+    "Deterministic-first, multi-tier strategy stack (ghost -> paper -> limited live) with strict promotion/demotion gates and capital ladders.",
+    "Bus-scheduled routing across venues and on/off-ramps with SLA-, fee-, and spread-aware pathfinding plus fallback rails.",
+    "Wallet-aware capital allocator that consolidates balances, respects fee tiers/venue limits, adapts to balance increases, and automates ramps.",
+    "End-to-end P&L ledgering (realized/unrealized, fees/gas/borrow) with per-strategy/venue/wallet attribution and anomaly alerts.",
+    "Operational controls, kill-switch/circuit-breakers, and oversight artifacts (logs/blotter/captures) to push ghost profitability before live trading."
+  ],
+  "work_breakdown": [
+    {
+      "id": "1.0",
+      "name": "Program Setup, Controls, and Budgets",
+      "tasks": [
+        {
+          "id": "1.1",
+          "name": "Requirements and risk budget handshake",
+          "deliverables": [
+            "Requirements doc covering multi-tier ghost-to-live pipeline, bus scheduling, wallet-aware allocation, deterministic-first logic, and bounded AI usage.",
+            "Risk budgets for drawdown, slippage, latency, and fee drag per tier with ghost-first promotion rules.",
+            "Policy for kill-switch, rollback, and approval workflow for caps and venue/asset lists."
+          ],
+          "acceptance": [
+            "Stakeholder sign-off recorded; budgets referenced by downstream tasks and release gates."
+          ]
+        },
+        {
+          "id": "1.2",
+          "name": "Config/toggle map and determinism boundaries",
+          "deliverables": [
+            "Config map for ghost/paper/live toggles, capital ladders, circuit-breakers, and kill-switch wiring.",
+            "Deterministic defaults with explicit AI modules, seeds, and bypass switches documented.",
+            "Config versioning and drift detection plan with alert routes."
+          ],
+          "acceptance": [
+            "Toggle table dry-run completed; deterministic fallback path operates without AI modules.",
+            "Config drift alert tested on sample change."
+          ],
+          "dependencies": [
+            "1.1"
+          ]
+        },
+        {
+          "id": "1.3",
+          "name": "Performance and infrastructure budgets",
+          "deliverables": [
+            "CPU-only latency/throughput budgets for tier decisions and bus scheduling on i5/32GB profile.",
+            "SLA definitions for bus legs, settlement times, and wallet operations including fee/latency thresholds.",
+            "Profiling and monitoring plan for routing, inference, and simulation runs."
+          ],
+          "acceptance": [
+            "Budgets approved and published; profiling hooks and metrics owners assigned."
+          ],
+          "dependencies": [
+            "1.1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "2.0",
+      "name": "Strategy Architecture and Capital Ladders",
+      "tasks": [
+        {
+          "id": "2.1",
+          "name": "Tier definitions and promotion/demotion gates",
+          "deliverables": [
+            "T0/T1/T2 definitions with entry/exit logic, KPI targets, and capital ladders tied to risk budgets.",
+            "Ghost-first gating rules with slippage, latency, and P&L thresholds; demotion triggers and cooldowns.",
+            "Test scenarios covering promotion, demotion, and freeze conditions."
+          ],
+          "acceptance": [
+            "Peer review completed; promotion/demotion scenarios enumerated for test harness."
+          ],
+          "dependencies": [
+            "1.1"
+          ]
+        },
+        {
+          "id": "2.2",
+          "name": "Signal library and bounded AI",
+          "deliverables": [
+            "Deterministic factor/rule library for each tier with parameter ranges and guardrails.",
+            "Optional AI modules with explicit scopes, seeds, and explainability/bypass paths.",
+            "Evaluation harness comparing deterministic vs AI-augmented outcomes with reproducible seeds."
+          ],
+          "acceptance": [
+            "Unit tests with fixed seeds pass; deterministic bypass produces valid trades without AI.",
+            "Documentation of AI boundaries and fallback behavior published."
+          ],
+          "dependencies": [
+            "2.1"
+          ]
+        },
+        {
+          "id": "2.3",
+          "name": "Capital ramp automation",
+          "deliverables": [
+            "Automation to enforce capital ladder increments, cooldowns, and demotion rules using wallet-aware sizing.",
+            "Configurable per-tier caps and per-session loss limits wired to promotion gates.",
+            "Simulation hooks to validate ramp paths across ghost/paper/live transitions."
+          ],
+          "acceptance": [
+            "Simulation shows ramps occur only after consecutive green windows and demote on first red or policy breach.",
+            "Caps and cooldowns enforced in harness with logs."
+          ],
+          "dependencies": [
+            "2.1",
+            "2.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3.0",
+      "name": "Simulation, Backtest, and Ghost Proof",
+      "tasks": [
+        {
+          "id": "3.1",
+          "name": "Backtest and paper harness",
+          "deliverables": [
+            "Backtest/paper harness with fee, slippage, and latency modeling plus bus leg timing and venue constraints.",
+            "Data fixtures with integrity checks for depth/trades/gas/bridge fees; deterministic seeds for replay.",
+            "Route scoring and P&L accounting functions aligned to tier KPIs."
+          ],
+          "acceptance": [
+            "Unit tests validate route scoring and P&L after fees; runs reproducible across seeds.",
+            "Data QA checklist completed for selected windows."
+          ],
+          "dependencies": [
+            "2.1",
+            "1.3"
+          ]
+        },
+        {
+          "id": "3.2",
+          "name": "Ghost trading environment instrumentation",
+          "deliverables": [
+            "Ghost-mode pipeline from signal -> route -> execution stub -> P&L ledger with structured logs and decision traces.",
+            "KPI tracking for hit rate, expectancy, drawdown, slippage, and latency with gate enforcement to block live.",
+            "Demotion and rollback routines triggered on KPI breach or health failures."
+          ],
+          "acceptance": [
+            "Ghost runs emit required logs/blotter entries; gate enforcement prevents live when KPIs fail.",
+            "Rollback routine tested and returns system to ghost within target MTTR."
+          ],
+          "dependencies": [
+            "3.1"
+          ]
+        },
+        {
+          "id": "3.3",
+          "name": "Ghost performance reporting and promotion checks",
+          "deliverables": [
+            "Dashboards/reports for rolling P&L, expectancy, drawdown, slippage/latency per tier and ghost-to-live deltas.",
+            "Automated promotion checklists with evidence capture and approval routing.",
+            "Rollback drill scripts for ghost/paper to validate resiliency before live."
+          ],
+          "acceptance": [
+            "Reports auto-generated on schedule; promotion remains blocked until KPI thresholds met.",
+            "Rollback drill outputs stored with timestamps and pass criteria."
+          ],
+          "dependencies": [
+            "3.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "4.0",
+      "name": "Execution, Routing, and Wallet Automation",
+      "tasks": [
+        {
+          "id": "4.1",
+          "name": "Bus-scheduled routing and fallback rails",
+          "deliverables": [
+            "Bus scheduler modeling on/off-ramp legs with SLA-, fee-, spread-, and liquidity-aware pathfinding.",
+            "Fallback rails and hedged interim positions for stalled legs; partial-fill and retry handling.",
+            "Timing models for settlement/transfer with variance tracking."
+          ],
+          "acceptance": [
+            "Simulation shows non-negative expected value after fees for representative routes.",
+            "Timeouts and fallback rails validated in test harness with logs."
+          ],
+          "dependencies": [
+            "3.1",
+            "1.3"
+          ]
+        },
+        {
+          "id": "4.2",
+          "name": "Wallet-aware capital allocator",
+          "deliverables": [
+            "Wallet consolidation and dust-handling rules with fee tier and withdrawal limit awareness.",
+            "Adaptive sizing that recalculates after balance increases, settlements, or P&L changes; per-venue/asset caps enforced.",
+            "Allocator API consumed by capital ramps and routing."
+          ],
+          "acceptance": [
+            "Tests prove size recompute after balance growth and fee tier change; dust consolidation executed per policy.",
+            "Allocator rejects trades that breach venue/asset caps."
+          ],
+          "dependencies": [
+            "4.1",
+            "2.3"
+          ]
+        },
+        {
+          "id": "4.3",
+          "name": "Execution safety and settlement controls",
+          "deliverables": [
+            "Circuit-breakers on slippage, latency, liquidity gaps, and data/health heartbeats; auto-demotion to ghost.",
+            "Kill-switch and auto-flatten routines with checkpointing and audit logs.",
+            "Settlement watchdogs for bus legs with retries, fallbacks, and alerting."
+          ],
+          "acceptance": [
+            "Drills demonstrate kill-switch MTTR within target and demotion to ghost on breach.",
+            "Settlement watchdog catches injected delays and routes to fallback or retries."
+          ],
+          "dependencies": [
+            "4.1",
+            "4.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5.0",
+      "name": "P&L Ledgering, Reporting, and Auditability",
+      "tasks": [
+        {
+          "id": "5.1",
+          "name": "Unified P&L ledger and attribution",
+          "deliverables": [
+            "Ledger capturing realized/unrealized P&L with fee/slippage/gas/borrow decomposition.",
+            "Attribution by strategy tier, venue, wallet, asset, and route with blotter linkage.",
+            "Reconciliation checks between execution logs, ledger entries, and wallet balances."
+          ],
+          "acceptance": [
+            "Sample trades reconcile within tolerance across ledger and wallet balances.",
+            "Ledger covers 100 percent of ghost trades exercised in tests."
+          ],
+          "dependencies": [
+            "3.2",
+            "4.2"
+          ]
+        },
+        {
+          "id": "5.2",
+          "name": "Reporting, alerting, and anomaly detection",
+          "deliverables": [
+            "Dashboards for hit rate, expectancy, drawdown, slippage/fees, and ghost-to-live deltas.",
+            "Alerts for P&L anomalies, missed hedges, delayed settlements, config drift, and risk rail breaches.",
+            "Alert routing and on-call rotations documented."
+          ],
+          "acceptance": [
+            "Synthetic anomaly tests fire alerts to intended channels; dashboards refresh from live/ghost data feeds.",
+            "Alert fatigue check shows SNR within policy."
+          ],
+          "dependencies": [
+            "5.1"
+          ]
+        },
+        {
+          "id": "5.3",
+          "name": "Audit artifacts and retention",
+          "deliverables": [
+            "Storage/retention for logs, configs, model hashes, blotter exports, and screen captures.",
+            "UI/log/screen capture workflow using scripts/branddozer_ui_capture.py when UI is touched and reviewed with codex --image as needed.",
+            "Exportable audit pack templates including sample trades, configs, and promotion approvals."
+          ],
+          "acceptance": [
+            "Audit pack generated for sample day with ledger, blotter, configs, and captures; retention policy enforced.",
+            "Capture workflow exercised for UI-touched flow and artifacts stored."
+          ],
+          "dependencies": [
+            "5.2"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "6.0",
+      "name": "Deployment, Operations, and Verification",
+      "tasks": [
+        {
+          "id": "6.1",
+          "name": "Deployment profiles and ramp controls",
+          "deliverables": [
+            "Environment profiles for ghost, limited live, and ramped live with caps, toggles, and approval checkpoints.",
+            "Ramp checklist for enabling live with minimal capital; config drift detection hooked to deployments.",
+            "Rollback bundles with pre-flight checks and health gates."
+          ],
+          "acceptance": [
+            "Dry-run deployment toggles ghost -> limited live without capital movement; drift alerts tested.",
+            "Rollback bundle restores prior state in test."
+          ],
+          "dependencies": [
+            "1.2",
+            "3.3",
+            "4.3"
+          ]
+        },
+        {
+          "id": "6.2",
+          "name": "Runbooks and operational drills",
+          "deliverables": [
+            "Runbooks for kill-switch, bus leg failure, venue outage, wallet stuck settlement, and config rollback.",
+            "Scheduled drills with MTTR targets and logging requirements.",
+            "On-call/approval rota documented for capital changes."
+          ],
+          "acceptance": [
+            "Drill logs show MTTR targets met; demotion/rollback executed cleanly.",
+            "Runbooks referenced in incident simulations and signed off."
+          ],
+          "dependencies": [
+            "6.1"
+          ]
+        },
+        {
+          "id": "6.3",
+          "name": "Verification, testing, and capture",
+          "deliverables": [
+            "Automated test suites (unit/component/integration) covering ghost-to-live flow, allocator math, and bus routing with deterministic seeds.",
+            "CI wiring for tests and profiling budgets; coverage mapping to promotion/demotion and risk controls.",
+            "UI verification captures for UI-touched flows using scripts/branddozer_ui_capture.py with artifacts reviewed via codex --image when needed."
+          ],
+          "acceptance": [
+            "CI passes for targeted suites; deterministic seeds produce repeatable results.",
+            "Capture artifacts stored and linked in release checklist; missing captures alert reviewers."
+          ],
+          "dependencies": [
+            "5.3",
+            "6.2"
+          ]
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "name": "M1 Architecture and Controls",
+      "criteria": [
+        "Risk budgets, promotion/demotion rules, and deterministic/AI boundaries signed off.",
+        "Config/toggle map published with drift detection and kill-switch wiring documented.",
+        "Performance budgets approved for strategy decisions and bus scheduling."
+      ],
+      "related_work": [
+        "1.1",
+        "1.2",
+        "1.3",
+        "2.1",
+        "2.2"
+      ]
+    },
+    {
+      "name": "M2 Simulation and Routing Proof",
+      "criteria": [
+        "Backtest/paper harness produces reproducible results with fee/slippage/latency modeling.",
+        "Bus-scheduled routing meets SLA/fee targets in simulation with fallback rails validated.",
+        "Wallet allocator adapts sizing after balance increases and enforces caps/limits."
+      ],
+      "related_work": [
+        "3.1",
+        "4.1",
+        "4.2"
+      ]
+    },
+    {
+      "name": "M3 Ghost Trading Proof",
+      "criteria": [
+        "Ghost runs show positive P&L after fees and hit-rate/drawdown within tier budgets.",
+        "Gate enforcement blocks live when KPIs or health checks fail; rollback drills pass.",
+        "Dashboards/reports live with ghost-to-live deltas and linked blotter/ledger artifacts."
+      ],
+      "related_work": [
+        "3.2",
+        "3.3",
+        "5.1"
+      ]
+    },
+    {
+      "name": "M4 Limited Live Ramp",
+      "criteria": [
+        "Limited live enabled with minimal capital, session loss caps, and circuit-breakers proven.",
+        "Kill-switch and auto-flatten drills meet MTTR targets; demotion on breach verified.",
+        "Deployment checklist executed with drift detection and rollback bundles tested."
+      ],
+      "related_work": [
+        "4.3",
+        "6.1",
+        "6.2"
+      ]
+    },
+    {
+      "name": "M5 Productionization and Auditability",
+      "criteria": [
+        "Alerts/anomaly detection stable with acceptable SNR; runbooks in use.",
+        "Audit pack generated with ledger, blotter, configs, approvals, and captures.",
+        "UI verification captures complete for UI-touched flows using scripts/branddozer_ui_capture.py and reviewed as needed."
+      ],
+      "related_work": [
+        "5.2",
+        "5.3",
+        "6.3"
+      ]
+    }
+  ],
+  "assumptions": [
+    "CPU-only environment (i5/32GB) is maintained; no GPU dependency allowed.",
+    "Access to paper/ghost modes and production venues with fee tables, latency data, and settlement APIs.",
+    "Reliable market data (order books, trades, gas/bridge fees) with freshness indicators is available.",
+    "Wallet keys and credentials are managed via secure vault with rotation policies.",
+    "At least one fallback rail exists for bus-scheduled routes when primary venues degrade."
+  ],
+  "risks": [
+    {
+      "risk": "Bus-scheduled legs stall or fail, stranding balances or creating unhedged exposure.",
+      "mitigation": "Hedged interim positions, timeout/fallback rails, settlement watchdogs, and rollback drills."
+    },
+    {
+      "risk": "Slippage and fee drag erode edge despite ghost success.",
+      "mitigation": "Spread- and fee-aware routing, dynamic size throttling, fee tier optimization, and anomaly alerts."
+    },
+    {
+      "risk": "AI modules drift or behave unpredictably versus deterministic baselines.",
+      "mitigation": "Bounded scopes, seeded determinism, bypass switches, and performance monitoring against deterministic benchmarks."
+    },
+    {
+      "risk": "Capital fragmentation or delayed settlements block trades or ramps.",
+      "mitigation": "Wallet consolidation, dust-handling rules, settlement SLAs with retries/fallbacks, and allocator caps."
+    },
+    {
+      "risk": "Observability gaps hide policy breaches or KPI regressions.",
+      "mitigation": "Structured logging, blotter/ledger coverage, alerting on gaps, and capture workflow for UI-touched flows."
+    }
+  ],
+  "acceptance_criteria": [
+    "Ghost-first enforcement: live path remains disabled until ghost KPIs (P&L after fees, hit rate, slippage/latency) meet gates with evidence.",
+    "Tiered promotion/demotion and capital ladders operate deterministically with documented AI bypass and cooldown rules.",
+    "Wallet-aware allocator recomputes sizes after balance increases, fee tier changes, or settlements and respects venue/asset caps.",
+    "Bus-scheduled routing achieves non-negative expected value after fees with SLA adherence and validated fallbacks.",
+    "P&L ledger covers 100 percent of exercised trades with fee/slippage/gas decomposition and reconciles to balances within tolerance.",
+    "Kill-switch and circuit-breaker drills meet MTTR targets and auto-demote to ghost/flatten positions on breach.",
+    "UI verification captures produced for UI-touched flows via scripts/branddozer_ui_capture.py and reviewed with codex --image when required."
+  ]
+}

@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=5.0,
         help="Seconds to wait for a background worker before running the delivery inline (-1 to disable).",
     )
+    start.add_argument(
+        "--research",
+        action="store_true",
+        help="Enable research mode (prioritize research/scraping backlog and tooling).",
+    )
 
     runs = sub.add_parser("runs", help="List recent delivery runs.")
     runs.add_argument("--project-id", help="Filter runs by project id.")
@@ -176,6 +181,8 @@ def main(argv: List[str] | None = None) -> int:
             context["job_user_id"] = str(job_user.pk)
         if github_account_id:
             context["github_account_id"] = github_account_id
+        if cmd_args.research:
+            context["research_mode"] = True
         run.context = context
         run.save(update_fields=["context"])
 

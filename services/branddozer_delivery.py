@@ -1342,7 +1342,14 @@ class DeliveryOrchestrator:
             _set_run_note(run, "Stop requested", note)
             raise StopDelivery(note)
 
-    def create_run(self, project_id: str, prompt: str, mode: str = "auto", run_id: Optional[str] = None) -> DeliveryRun:
+    def create_run(
+        self,
+        project_id: str,
+        prompt: str,
+        mode: str = "auto",
+        run_id: Optional[str] = None,
+        research_mode: bool = False,
+    ) -> DeliveryRun:
         _ensure_branddozer_schema("create_run")
         project = BrandDozerProjectLookup.get_project(project_id)
         delivery_project, _ = DeliveryProject.objects.get_or_create(project=project, defaults={"definition_of_done": DEFAULT_DOD})
@@ -1365,6 +1372,8 @@ class DeliveryOrchestrator:
             ctx = dict(run.context or {})
             ctx.pop("status_note", None)
             ctx.pop("status_detail", None)
+            if research_mode:
+                ctx["research_mode"] = True
             run.context = ctx
             run.save(
                 update_fields=[
@@ -1383,6 +1392,7 @@ class DeliveryOrchestrator:
                 ]
             )
         else:
+            context = {"research_mode": True} if research_mode else {}
             run = DeliveryRun.objects.create(
                 id=run_uuid,
                 project=project,
@@ -1390,6 +1400,7 @@ class DeliveryOrchestrator:
                 mode=mode,
                 status="queued",
                 definition_of_done=delivery_project.definition_of_done or DEFAULT_DOD,
+                context=context,
             )
         delivery_project.active_run = run
         delivery_project.status = "running"
@@ -1405,8 +1416,9 @@ class DeliveryOrchestrator:
         run_id: Optional[str] = None,
         job_user_id: Optional[str] = None,
         github_account_id: Optional[str] = None,
+        research_mode: bool = False,
     ) -> DeliveryRun:
-        run = self.create_run(project_id, prompt, mode=mode, run_id=run_id)
+        run = self.create_run(project_id, prompt, mode=mode, run_id=run_id, research_mode=research_mode)
         if job_user_id or github_account_id:
             context = dict(run.context or {})
             if job_user_id:
@@ -1504,6 +1516,7 @@ class DeliveryOrchestrator:
             _append_session_log(orchestrator_session, "Building backlog and sprint.")
             _set_run_note(run, "Backlog", "Preparing sprint plan")
             backlog_items = self._backlog_step(run, root)
+            backlog_items = self._seed_research_backlog(run, backlog_items, orchestrator_session)
             sprint = self._sprint_plan(run, backlog_items, goal="Initial delivery sprint")
             _update_eta(run, backlog=backlog_items, reason="backlog planned")
             _append_session_log(orchestrator_session, "Executing sprint.")
@@ -1511,6 +1524,7 @@ class DeliveryOrchestrator:
             self._execution_loop(run, root, sprint)
             self._check_stop(run, orchestrator_session)
             self._remediation_loop(run, root, orchestrator_session)
+            self._run_final_ux_audit(run, root, orchestrator_session)
             # Heartbeat/update
             now = time.time()
             last_hb = self._last_heartbeat.get(str(run.id))
@@ -2262,8 +2276,6 @@ class DeliveryOrchestrator:
         sprint.status = "retro"
         sprint.save(update_fields=["status"])
         self._sprint_retro(run, sprint)
-        _append_session_log(session, "Running UX audit for sprint feedback.")
-        self._ux_audit(run, root, sprint)
         sprint.status = "complete"
         sprint.completed_at = timezone.now()
         sprint.save(update_fields=["status", "completed_at"])
@@ -2330,6 +2342,115 @@ class DeliveryOrchestrator:
             content=sprint.retrospective,
             data=data,
         )
+
+    def _run_final_ux_audit(self, run: DeliveryRun, root: Path, orchestrator_session: DeliverySession) -> None:
+        """
+        Run the UX audit only once, after the team believes the work is done
+        and the backlog is clear, to avoid mid-sprint credit burn.
+        """
+        try:
+            context = run.context or {}
+            if (context.get("ux_audit") or {}).get("final_run"):
+                return
+        except Exception:
+            context = {}
+        backlog_open = BacklogItem.objects.filter(run=run).exclude(status="done").exists()
+        if backlog_open:
+            _append_session_log(orchestrator_session, "Skipping final UX audit until backlog is empty.")
+            return
+        sprint = Sprint.objects.filter(run=run).order_by("-number").first()
+        if not sprint:
+            _append_session_log(orchestrator_session, "Skipping final UX audit (no sprint available).")
+            return
+        _append_session_log(orchestrator_session, "Running final UX audit before release.")
+        self._ux_audit(run, root, sprint)
+        context.setdefault("ux_audit", {})
+        context["ux_audit"]["final_run"] = True
+        run.context = context
+        run.save(update_fields=["context"])
+        if BacklogItem.objects.filter(run=run).exclude(status="done").exists():
+            _append_session_log(orchestrator_session, "UX audit produced follow-up backlog; starting remediation.")
+            self._remediation_loop(run, root, orchestrator_session)
+
+    def _seed_research_backlog(
+        self, run: DeliveryRun, backlog_items: List[BacklogItem], session: DeliverySession
+    ) -> List[BacklogItem]:
+        """
+        If research mode is enabled, inject high-priority backlog to build research tooling.
+        """
+        context = run.context or {}
+        if not context.get("research_mode"):
+            return backlog_items
+        created_items: List[BacklogItem] = []
+
+        def _ensure(title: str, description: str, acceptance: List[str], kind: str = "task") -> None:
+            exists = BacklogItem.objects.filter(run=run, source="research", title=title).exclude(status="done").exists()
+            if exists:
+                return
+            item = BacklogItem.objects.create(
+                project=run.project,
+                run=run,
+                kind=kind,
+                title=title[:240],
+                description=description,
+                acceptance_criteria=acceptance,
+                priority=1,
+                estimate_points=3,
+                status="todo",
+                source="research",
+                dependencies=[],
+            )
+            created_items.append(item)
+
+        _ensure(
+            "Assemble open research source registry",
+            "Document allowed open-access research/engineering sources with domain, license, and notes. "
+            "Persist to services/research_sources.py for reuse by scrapers and prompts.",
+            [
+                "Sources include biomedical (NLM/NCBI), engineering standards, physics, and open electronics catalogs.",
+                "License/usage notes captured; only open/publicly scrapable sources included.",
+                "Registry exposed via helper functions for downstream tasks.",
+            ],
+        )
+        _ensure(
+            "Build DuckDuckGo research scraper",
+            "Implement a DuckDuckGo-backed search + fetch helper in services/research_scraper.py "
+            "with domain allow-listing and deterministic parsing to feed research tasks.",
+            [
+                "Search returns URLs/titles constrained to allowed domains.",
+                "Fetcher retrieves page content with timeout/backoff and safe headers.",
+                "Unit tests cover parsing and fetch logic with mocked responses.",
+            ],
+        )
+        _ensure(
+            "Research data auditor",
+            "Add a research auditor routine that validates scraped payloads, retries alternative domains, "
+            "and emits backlog items when coverage gaps are detected.",
+            [
+                "Auditor logs missing/blocked domains and retries with alternates.",
+                "Backlog items created when required documents are not retrieved.",
+                "Reports saved under runtime/branddozer/research for traceability.",
+            ],
+            kind="bug",
+        )
+        _ensure(
+            "Complex systems and bio-rich corpus ingestion",
+            "Expand research corpus with high-density complexity/chaos and biology sources (Santa Fe, ChaosBook, bioRxiv, PLOS). "
+            "Ensure domain allow-list is updated and scraping paths exercised.",
+            [
+                "Allowed source registry includes complex-systems and bio-rich domains.",
+                "Scraper unit tests cover complex-system and biology domains.",
+                "Sample fetches saved under runtime/branddozer/research/samples with metadata.",
+            ],
+        )
+
+        if created_items:
+            _append_session_log(
+                session,
+                f"Research mode enabled: seeded {len(created_items)} backlog item(s) for research tooling.",
+            )
+            backlog_items = list(backlog_items) + created_items
+        return backlog_items
 
     def _ux_audit(self, run: DeliveryRun, root: Path, sprint: Sprint) -> None:
         if _stop_requested(run):

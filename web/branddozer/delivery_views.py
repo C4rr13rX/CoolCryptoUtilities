@@ -114,12 +114,13 @@ class DeliveryRunListView(APIView):
         project_id = data.get("project_id")
         prompt = (data.get("prompt") or "").strip()
         mode = data.get("mode") or "auto"
+        research_mode = bool(data.get("research") or data.get("research_mode"))
         if not project_id:
             return Response({"detail": "project_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         if not prompt:
             return Response({"detail": "prompt is required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            run = delivery_orchestrator.create_run(project_id, prompt, mode=mode)
+            run = delivery_orchestrator.create_run(project_id, prompt, mode=mode, research_mode=research_mode)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         job = enqueue_job(
@@ -130,7 +131,10 @@ class DeliveryRunListView(APIView):
             payload={"mode": mode},
             message="Queued",
         )
-        run.context = {**(run.context or {}), "job_id": str(job.id)}
+        context = {**(run.context or {}), "job_id": str(job.id)}
+        if research_mode:
+            context["research_mode"] = True
+        run.context = context
         run.save(update_fields=["context"])
         return Response({"run": _run_payload(run), "job_id": str(job.id)}, status=status.HTTP_201_CREATED)
 

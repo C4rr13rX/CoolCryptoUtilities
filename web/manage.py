@@ -32,8 +32,18 @@ def _consume_flag(argv: list[str], flag: str, env_var: str) -> None:
     os.environ[env_var] = "1"
 
 
+def _set_dev_defaults(argv: list[str]) -> None:
+    if not any(arg in {"runserver", "reseat"} for arg in argv[1:]):
+        return
+    os.environ.setdefault("DJANGO_DEBUG", "1")
+    os.environ.setdefault("DJANGO_SECURE_SSL_REDIRECT", "0")
+    os.environ.setdefault("DJANGO_SESSION_COOKIE_SECURE", "0")
+    os.environ.setdefault("DJANGO_CSRF_COOKIE_SECURE", "0")
+
+
 def main() -> None:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
+    _set_dev_defaults(sys.argv)
     _consume_flag(sys.argv, GUARDIAN_FLAG, GUARDIAN_ENV_VAR)
     _consume_flag(sys.argv, PRODUCTION_FLAG, PRODUCTION_ENV_VAR)
     try:
