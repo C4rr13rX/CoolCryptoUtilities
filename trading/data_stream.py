@@ -322,6 +322,9 @@ class MarketDataStream:
     Each sample is persisted to the shared TradingDatabase for later training.
     """
 
+    # Throttle DNS outage logs per symbol to avoid duplicate warnings when multiple streams are active.
+    _dns_log_by_symbol: Dict[str, float] = {}
+
     def __init__(
         self,
         *,
@@ -392,6 +395,10 @@ class MarketDataStream:
         self._rest_metric_last = 0.0
         self._rest_metric_interval = max(5.0, float(os.getenv("REST_METRIC_LOG_INTERVAL", "30")))
         self._init_rest_intervals()
+        self._offline_sample_interval = max(
+            self.rest_poll_interval,
+            float(os.getenv("OFFLINE_SAMPLE_INTERVAL", "8.0")),
+        )
         self._rest_outage_base = max(5.0, float(os.getenv("REST_OUTAGE_BACKOFF_SEC", "15")))
         self._rest_outage_growth = max(1.1, float(os.getenv("REST_OUTAGE_GROWTH_FACTOR", "1.6")))
         self._rest_outage_max = max(self._rest_outage_base, float(os.getenv("REST_OUTAGE_MAX_SEC", "120")))
@@ -421,13 +428,22 @@ class MarketDataStream:
             "on",
         }
         self._network_outage_block_rest = False
+        offline_flag = (
+            os.getenv("MARKET_FORCE_OFFLINE")
+            or os.getenv("MARKET_OFFLINE_ONLY")
+            or os.getenv("NETWORK_FORCE_OFFLINE")
+        )
+        self._offline_only = str(offline_flag or "").strip().lower() in {"1", "true", "yes", "on"}
+        self._last_offline_only_log = 0.0
         self._dns_failure_threshold = max(2, int(os.getenv("DNS_OUTAGE_THRESHOLD", "3")))
         self._dns_offline_base = max(15.0, float(os.getenv("DNS_OFFLINE_BACKOFF_SEC", "90")))
         self._dns_offline_growth = max(1.1, float(os.getenv("DNS_OFFLINE_GROWTH", "1.4")))
         self._dns_offline_max = max(self._dns_offline_base, float(os.getenv("DNS_OFFLINE_MAX_SEC", "360")))
+        self._dns_log_interval = max(30.0, float(os.getenv("DNS_OFFLINE_LOG_INTERVAL", "60.0")))
         self._dns_failures = 0
         self._dns_offline_until = 0.0
         self._last_dns_offline_log = 0.0
+        self._dns_log_symbol = self.symbol.upper()
         self._dns_probe_interval = max(0.0, float(os.getenv("DNS_PROBE_INTERVAL", "20.0")))
         self._dns_probe_timeout = max(0.05, float(os.getenv("DNS_PROBE_TIMEOUT", "1.0")))
         self._last_dns_probe = 0.0
@@ -516,7 +532,12 @@ class MarketDataStream:
         self._onchain_queue: Optional[asyncio.Queue] = None
         self._onchain_task: Optional[asyncio.Task] = None
         self._onchain_consumer: Optional[asyncio.Task] = None
-        self._offline_enabled = os.getenv("MARKET_OFFLINE_FALLBACK", "1").lower() in {"1", "true", "yes", "on"}
+        if self._offline_only:
+            self._ws_disabled = True
+            if not self._ws_disabled_reason:
+                self._ws_disabled_reason = "offline"
+            self.url = None
+        self._offline_enabled = self._offline_only or os.getenv("MARKET_OFFLINE_FALLBACK", "1").lower() in {"1", "true", "yes", "on"}
         self._offline_store: Optional[OfflinePriceStore] = None
         if self._offline_enabled:
             try:
@@ -558,6 +579,17 @@ class MarketDataStream:
     def register(self, callback: CallbackType) -> None:
         self._callbacks.append(callback)
 
+    def _should_log_dns_offline(self, now: float) -> bool:
+        """Throttle DNS outage warnings across streams for the same symbol."""
+        last_local = self._last_dns_offline_log
+        last_symbol = self._dns_log_by_symbol.get(self._dns_log_symbol, 0.0)
+        interval = self._dns_log_interval
+        if now - last_local < interval or now - last_symbol < interval:
+            return False
+        self._last_dns_offline_log = now
+        self._dns_log_by_symbol[self._dns_log_symbol] = now
+        return True
+
     async def start(self) -> None:
         self._stop_event.clear()
         if self._http_session is None:
@@ -581,6 +613,21 @@ class MarketDataStream:
                     },
                 )
                 now = time.time()
+                if self._offline_only:
+                    if now - self._last_offline_only_log >= 60.0:
+                        log_message(
+                            "market-stream",
+                            "offline-only mode active; serving cached snapshots",
+                            severity="warning",
+                            details={"symbol": self.symbol},
+                        )
+                        self._last_offline_only_log = now
+                    await self._dispatch_offline_snapshot()
+                    self._seed_reference_from_cache(allow_network=False)
+                    sleep_for = max(self._offline_sample_interval, self._cooldown_sleep_interval(now))
+                    await asyncio.sleep(sleep_for)
+                    backoff = min(backoff * 1.1, 300.0)
+                    continue
                 ws_failover_ready = self._ws_failover_ready(now)
                 if self._network_outage_active(now) and self._network_outage_source == "websocket":
                     if ws_failover_ready:
@@ -793,6 +840,11 @@ class MarketDataStream:
     async def _poll_rest_data(self, duration: float) -> None:
         if self._http_session is None:
             return
+        if self._offline_only:
+            await self._dispatch_offline_snapshot()
+            sleep_for = max(self._offline_sample_interval, self._cooldown_sleep_interval(time.time()))
+            await asyncio.sleep(sleep_for)
+            return
         base, quote = self._rest_base, self._rest_quote
         end_time = time.time() + max(duration, self.rest_poll_interval)
         while not self._stop_event.is_set() and time.time() < end_time:
@@ -801,14 +853,15 @@ class MarketDataStream:
             remaining = end_time - now
             if remaining <= 0:
                 break
-            if self._network_outage_reason == "dns":
+            dns_offline = self._dns_offline_active(now)
+            if self._network_outage_reason == "dns" and not dns_offline:
                 try:
                     await self._probe_dns_recovery(now=now)
                 except Exception:
                     # Probing is best-effort; continue with existing backoff if it fails.
                     pass
-            if self._dns_offline_active(now):
-                if now - self._last_dns_offline_log >= 30.0:
+            if dns_offline:
+                if self._should_log_dns_offline(now):
                     log_message(
                         "market-stream",
                         "DNS outage window active; serving offline snapshots",
@@ -818,13 +871,14 @@ class MarketDataStream:
                             "resume_in": round(max(0.0, self._dns_offline_until - now), 2),
                         },
                     )
-                    self._last_dns_offline_log = now
                 await self._dispatch_offline_snapshot()
                 await self._handle_consensus_failure(cooldown_only=True)
                 remaining = end_time - time.time()
                 if remaining <= 0:
                     break
-                await asyncio.sleep(min(self._cooldown_sleep_interval(time.time()), remaining))
+                cooldown = self._cooldown_sleep_interval(time.time())
+                sleep_for = min(max(self._offline_sample_interval, cooldown), remaining)
+                await asyncio.sleep(sleep_for)
                 continue
             if self._network_outage_blocks_rest(now):
                 if now - self._last_network_outage_log >= 30.0:
@@ -847,7 +901,9 @@ class MarketDataStream:
                 remaining = end_time - time.time()
                 if remaining <= 0:
                     break
-                await asyncio.sleep(min(self._cooldown_sleep_interval(time.time()), remaining))
+                cooldown = self._cooldown_sleep_interval(time.time())
+                sleep_for = min(max(self._offline_sample_interval, cooldown), remaining)
+                await asyncio.sleep(sleep_for)
                 continue
             if self._rest_outage_active(now):
                 if now - self._last_rest_outage_log >= 30.0:
@@ -866,7 +922,9 @@ class MarketDataStream:
                 remaining = end_time - time.time()
                 if remaining <= 0:
                     break
-                await asyncio.sleep(min(self._cooldown_sleep_interval(time.time()), remaining))
+                cooldown = self._cooldown_sleep_interval(time.time())
+                sleep_for = min(max(self._offline_sample_interval, cooldown), remaining)
+                await asyncio.sleep(sleep_for)
                 continue
             endpoints = self._eligible_rest_endpoints()
             if not endpoints:
@@ -2247,8 +2305,12 @@ class MarketDataStream:
                 self._dns_offline_base * (self._dns_offline_growth ** exponent),
             )
             if self._dns_failures >= self._dns_failure_threshold:
+                # Enter offline window and defer DNS probes so we do not clear the
+                # cooldown immediately after detecting an outage.
                 self._dns_offline_until = max(self._dns_offline_until, now + offline_backoff)
-                if emit_log and now - self._last_dns_offline_log >= 30.0:
+                if self._last_dns_probe < now:
+                    self._last_dns_probe = now
+                if emit_log and self._should_log_dns_offline(now):
                     log_message(
                         "market-stream",
                         "DNS outage; serving cached snapshots until resolver recovers",
@@ -2260,7 +2322,6 @@ class MarketDataStream:
                             "resume_in": round(max(0.0, self._dns_offline_until - now), 2),
                         },
                     )
-                    self._last_dns_offline_log = now
         else:
             self._dns_failures = 0
             self._dns_offline_until = 0.0
@@ -2772,6 +2833,9 @@ class MarketDataStream:
     async def _refresh_reference_price(self) -> None:
         if self._http_session is None:
             return
+        if self._offline_only:
+            self._seed_reference_from_cache(allow_network=False)
+            return
         if self._rest_outage_active() or self._network_outage_blocks_rest():
             self._seed_reference_from_cache(allow_network=False)
             return
@@ -3103,6 +3167,8 @@ class MarketDataStream:
         return None
 
     async def _refresh_market_snapshots(self) -> None:
+        if self._offline_only:
+            return
         if time.time() - self._last_snapshot_refresh < 60.0:
             return
         self._last_snapshot_refresh = time.time()

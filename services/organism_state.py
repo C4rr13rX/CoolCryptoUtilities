@@ -586,8 +586,39 @@ def _build_organism_graph(
     nodes: Dict[str, Dict[str, Any]] = {}
     edges: List[Dict[str, Any]] = []
 
+    domain_lookup = {
+        "brain": "core",
+        "system": "core",
+        "module": "core",
+        "vote": "core",
+        "transition": "core",
+        "asset": "market",
+        "holding": "treasury",
+        "native": "treasury",
+        "finance": "treasury",
+        "session": "session",
+        "queue": "execution",
+        "event": "execution",
+        "ghost": "ghost",
+        "ghost_trade": "ghost",
+        "live_trade": "live",
+        "discovery": "scout",
+        "feedback": "feedback",
+        "metric": "memory",
+        "window": "memory",
+        "window_series": "memory",
+        "graph": "neural",
+    }
+
+    def resolve_domain(group: Optional[str]) -> str:
+        base = str(group or "market").split(":")[0]
+        return domain_lookup.get(base, "market")
+
     def add_node(node_id: str, **attrs: Any) -> None:
         node = nodes.setdefault(node_id, {"id": node_id})
+        group = attrs.get("group") or node.get("group")
+        if group and "domain" not in attrs:
+            attrs["domain"] = resolve_domain(group)
         node.update(attrs)
 
     def add_edge(source: str, target: str, *, weight: float, kind: str) -> None:

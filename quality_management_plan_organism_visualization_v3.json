@@ -1,0 +1,359 @@
+{
+  "plan_metadata": {
+    "name": "Quality Management Plan - Organism 3D Visualization Refinement v3",
+    "version": "0.2",
+    "status": "draft",
+    "owner": "QA/Design Lead (TBD)",
+    "sponsor": "Product/Visualization (TBD)",
+    "related_artifacts": [
+      "charter_organism_visualization_v3.json",
+      "wbs_organism_visualization.json",
+      "release_criteria_organism_visualization_v3.json"
+    ]
+  },
+  "quality_scope": {
+    "objectives": [
+      "Cluster nodes by domain with shared palettes and legends; keep inter-domain links visually distinct and readable.",
+      "Bind USD valuations to particle density/size/emission with fiery trails and bounce/elastic motion tuned to value and activity.",
+      "Separate ghost vs live trading clusters with differentiated palettes, halos/badges, labels, and safe toggles favoring ghost-first.",
+      "Automate snapshot capture and timeline playback of bus-scheduling ghost/live states with scrubbing, loop, speed control, and export.",
+      "Deliver a brain-like layout with responsive camera easing, onboarding cues, and polished UX on desktop and mobile.",
+      "When UI verification is needed, run scripts/branddozer_ui_capture.py for captures and review them with codex --image."
+    ],
+    "in_scope": [
+      "Domain palette system, inter-domain edge styling, legends, filters, and colorblind-safe alternates.",
+      "USD-weighted particle physics (density/size/emission), fiery trail shaders, bounce/elastic tuning, and motion clamps.",
+      "Ghost vs live palette/halo/badge system with toggles, state persistence, and ghost-first defaults.",
+      "Snapshot pipeline for bus-scheduling ghost/live phases plus timeline playback with scrubbing, loop, speed, and export.",
+      "Brain-like layout tuning, camera paths, onboarding cues, and responsive controls for desktop/mobile.",
+      "UI verification workflow using scripts/branddozer_ui_capture.py and codex --image review when required."
+    ],
+    "out_of_scope": [
+      "Changes to core trading logic or bus-scheduling algorithms beyond visualization needs.",
+      "New market data ingestion beyond USD valuations and ghost/live flags required for visuals.",
+      "VR/AR modes or hardware-specific optimizations outside mainstream WebGL targets."
+    ]
+  },
+  "quality_principles": [
+    "Clarity first: palettes, edges, and motion must preserve immediate domain/state readability at all zoom levels.",
+    "Ghost-first safety: ghost view is the default; live overlays are explicit, reversible, and documented.",
+    "Data-driven visuals: USD valuations and timestamped states drive intensity with graceful fallbacks and freshness cues.",
+    "Performance budgets enforced: FPS, particle/trail caps, and shader costs are bounded with LOD/telemetry.",
+    "Accessible and reviewable: contrast checked, colorblind modes available, and visual states captured for oversight."
+  ],
+  "roles_and_responsibilities": {
+    "qa_design_lead": "Owns quality gates, visual contract, accessibility checks, and capture acceptance.",
+    "frontend_webgl": "Implements palettes, particles, trails, motion, layout, timeline playback, and performance safeguards.",
+    "data_backend": "Supplies USD valuations, ghost/live flags, and bus-scheduling events with freshness indicators and schemas.",
+    "design_ux": "Defines palettes, brain-like layout direction, legends/onboarding, and motion comfort guidelines.",
+    "ops_release": "Runs capture suite, monitors telemetry, enforces toggles/flags, and manages rollout checklists."
+  },
+  "environments": [
+    {
+      "name": "local-dev",
+      "purpose": "Component/unit development, lint/type checks, and deterministic animation logic tests.",
+      "data_policy": "Fixtures and sampled/sanitized data; no production credentials.",
+      "exit_criteria": [
+        "Lint/type/security checks clean",
+        "Unit/component suites pass with deterministic seeds for animations",
+        "Palette and data binding fixtures render without errors"
+      ]
+    },
+    {
+      "name": "visual-review",
+      "purpose": "Desktop/mobile UI review, palette/accessibility checks, and performance profiling on sample datasets.",
+      "data_policy": "Sanitized datasets with representative USD valuations and state timelines.",
+      "exit_criteria": [
+        "Contrast checks pass for palettes, halos, labels, and legends",
+        "p95 FPS within budget on target hardware with particle/trail effects enabled",
+        "Inter-domain edges and ghost/live halos remain legible in captures"
+      ]
+    },
+    {
+      "name": "ghost-staging",
+      "purpose": "Timeline playback against ghost/paper bus-scheduling events and snapshot health validation.",
+      "data_policy": "Ghost/paper feeds only; no live trading secrets.",
+      "exit_criteria": [
+        "100 percent of bus state changes captured over a 24h test window",
+        "Timeline scrubbing/loop/export operate on captured frames without desync",
+        "Telemetry and alerts firing for missed snapshots or stale valuations"
+      ]
+    },
+    {
+      "name": "release-capture",
+      "purpose": "Final screenshot/video capture for acceptance using scripts/branddozer_ui_capture.py.",
+      "data_policy": "Approved datasets; captures stored with timestamps and metadata.",
+      "exit_criteria": [
+        "Required desktop/mobile captures collected and reviewed with codex --image when needed",
+        "Release checklist signed with no critical UX/accessibility issues",
+        "Feature flags/toggles set to intended defaults (ghost-on)"
+      ]
+    }
+  ],
+  "quality_gates": [
+    {
+      "gate": "G1 Visual Contract and Budgets",
+      "entry_criteria": [
+        "Charter and work breakdown endorsed",
+        "Domain taxonomy and state flags available"
+      ],
+      "exit_criteria": [
+        "Palettes approved for domains and ghost/live with legends and accessibility notes",
+        "Inter-domain edge accent style locked",
+        "Performance and motion budgets recorded (FPS, particle/trail caps, camera timing)"
+      ],
+      "artifacts": [
+        "Visual contract doc",
+        "Budget sheet and acceptance thresholds",
+        "Palette and legend spec"
+      ]
+    },
+    {
+      "gate": "G2 Data Wiring and Static Quality",
+      "entry_criteria": [
+        "Visual contract signed",
+        "Data schemas for USD valuations and bus states defined"
+      ],
+      "exit_criteria": [
+        "Lint/type/security scans clean; secrets absent",
+        "USD-to-particle normalization implemented with stale fallbacks",
+        "Ghost/live flags and bus phases mapped to visuals with tests",
+        "Config toggles for ghost/live and motion intensity wired"
+      ],
+      "artifacts": [
+        "Static analysis reports",
+        "Data binding unit tests",
+        "Config/toggle map"
+      ]
+    },
+    {
+      "gate": "G3 Interaction and Playback Validation",
+      "entry_criteria": [
+        "Core visuals and data bindings implemented",
+        "Snapshot capture path functional"
+      ],
+      "exit_criteria": [
+        "Timeline playback with scrubbing, loop, speed control, and camera sync validated",
+        "Fiery trails and bounce behaviors tuned with damping and caps; controls exposed",
+        "Domain and state filters/toggles usable on desktop and mobile"
+      ],
+      "artifacts": [
+        "Integration test results",
+        "Motion tuning notes",
+        "Playback demos/captures"
+      ]
+    },
+    {
+      "gate": "G4 Performance, Accessibility, and Observability",
+      "entry_criteria": [
+        "Interaction flows stable",
+        "Telemetry hooks in place"
+      ],
+      "exit_criteria": [
+        "p95 FPS meets budget on target datasets; LOD kicks in under load",
+        "Contrast and colorblind checks pass; keyboard/ARIA for playback and filters verified",
+        "Snapshot health alerts exercised and bus coverage at 100 percent in staging",
+        "UI captures taken for key states via scripts/branddozer_ui_capture.py"
+      ],
+      "artifacts": [
+        "Performance profiles",
+        "Accessibility report",
+        "Snapshot coverage report",
+        "UI capture set with metadata"
+      ]
+    },
+    {
+      "gate": "G5 Release Readiness and Handoff",
+      "entry_criteria": [
+        "Performance and accessibility green",
+        "Capture set ready"
+      ],
+      "exit_criteria": [
+        "Release checklist signed with toggles at intended defaults",
+        "Docs/runbooks published (palette changes, snapshot replay, LOD tuning, capture steps)",
+        "Final captures reviewed (desktop/mobile) with any variances waived"
+      ],
+      "artifacts": [
+        "Release checklist",
+        "Runbook and changelog",
+        "Capture review sign-off"
+      ]
+    }
+  ],
+  "verification_strategy": {
+    "static_and_code_quality": [
+      "Linting, type-checking, and security scans on visualization modules, shaders/materials, and timeline logic.",
+      "Config and flag review to ensure ghost-first defaults and motion intensity bounds.",
+      "Secret scanning and logging review to avoid leaking tokens or datasets."
+    ],
+    "unit_and_component_tests": [
+      "Palette mapping for domains and ghost/live states with fallbacks for missing data.",
+      "USD normalization to particle density/size/emission with stale-data indicators.",
+      "Snapshot schema and timeline state handling (pending/scheduled/executing/settled) including ordering and deduping.",
+      "LOD/throttling triggers and motion caps for bounce/trails."
+    ],
+    "integration_and_system_tests": [
+      "End-to-end timeline playback from captured snapshots with scrubbing, loop, speed control, and export.",
+      "Domain/state filters, legends, and toggles working together on desktop and mobile inputs.",
+      "Camera easing and brain-like layout stability across zoom/pan/orbit interactions.",
+      "Resilience checks for missing valuations or delayed bus events with visual fallbacks."
+    ],
+    "visual_and_interaction_validation": [
+      "UI verification via scripts/branddozer_ui_capture.py for key states (domain legend, inter-domain edges, ghost vs live, heavy USD cluster, timeline playback) and review with codex --image when needed.",
+      "Manual comfort checks for motion intensity and readability under high density.",
+      "Colorblind-safe mode and contrast validation for labels, halos, and trails."
+    ],
+    "performance_and_resilience": [
+      "GPU/CPU/FPS profiling under target node/edge counts and particle/trail settings; confirm budgets hold.",
+      "LOD and throttling behavior under stress to avoid frame drops and visual overload.",
+      "Snapshot cadence and retention health checks with alerts on misses or lag."
+    ],
+    "accessibility_and_usability": [
+      "WCAG AA color contrast checks for palettes, halos, labels, legends, and badges.",
+      "Keyboard navigation and focus management for timeline controls, filters, and resets.",
+      "Usability spot checks: identify domain and ghost/live state within 3 seconds."
+    ],
+    "data_quality_and_snapshot_health": [
+      "Freshness checks on USD valuations with logged fallback usage when stale.",
+      "Coverage validation that 100 percent of bus state changes appear in snapshots for test windows.",
+      "Schema validation for bus events and valuation feeds with alerts on drift."
+    ]
+  },
+  "metrics_and_targets": {
+    "visual_clarity": [
+      {
+        "metric": "Domain/state recognition speed",
+        "target": "Users identify a node's domain and ghost/live state within 3s in usability checks"
+      },
+      {
+        "metric": "Inter-domain edge distinctness",
+        "target": ">=95 percent of reviewed captures show inter-domain links visually distinct from intra-domain"
+      }
+    ],
+    "performance": [
+      {
+        "metric": "Frame rate",
+        "target": "p95 FPS >=50 on target hardware/dataset with particles/trails enabled; no sustained drops >2s"
+      },
+      {
+        "metric": "Timeline responsiveness",
+        "target": "Scrub latency <200ms to update view; playback stays in sync across 5-minute loops"
+      }
+    ],
+    "data_freshness_and_coverage": [
+      {
+        "metric": "USD valuation freshness",
+        "target": ">=99 percent valuations fresher than 60s; stale data visibly marked and throttled"
+      },
+      {
+        "metric": "Bus snapshot coverage",
+        "target": "100 percent of bus state changes captured in staging over rolling 24h with no gaps"
+      }
+    ],
+    "accessibility_and_usability": [
+      {
+        "metric": "Color contrast",
+        "target": "WCAG AA contrast for labels/legends/halos; colorblind-safe mode available"
+      },
+      {
+        "metric": "Input accessibility",
+        "target": "Keyboard access for playback and filters; focus states visible across themes"
+      }
+    ],
+    "observability_and_artifacts": [
+      {
+        "metric": "Capture coverage",
+        "target": "95 percent of required desktop/mobile states captured per release via scripts/branddozer_ui_capture.py"
+      },
+      {
+        "metric": "Telemetry health",
+        "target": "Zero critical telemetry gaps; alerts fire on snapshot misses or FPS budget breaches"
+      }
+    ]
+  },
+  "risk_controls": [
+    "LOD, throttling, and particle/trail caps enforce performance budgets; alerts trigger on FPS or GPU overages.",
+    "Palette guardrails with contrast checks, colorblind alternates, and halos/badges to separate domains and ghost/live states.",
+    "Ghost-first toggles and clear labels prevent accidental live overlays; safe defaults reset on reload.",
+    "Snapshot cadence health checks with retries and backfill to avoid timeline gaps; export includes metadata hashes.",
+    "Stale/missing valuation handling with muted visuals, labels, and logs to avoid misleading emphasis.",
+    "Motion comfort controls (intensity sliders, damping defaults) and quick off switch for trails/bounce during reviews."
+  ],
+  "data_and_model_governance": {
+    "data_quality": [
+      "Freshness, completeness, and schema validation for USD valuations and bus-scheduling events.",
+      "Versioned domain taxonomy, palette definitions, and bus phase mappings with owners.",
+      "Validation hooks that flag unknown domains or states and render them with explicit fallbacks."
+    ],
+    "reproducibility": [
+      "Deterministic seeds for animation tests and story fixtures; snapshot metadata stored with timestamps and hashes.",
+      "Environment manifests recorded (browser/GL versions, hardware) for performance comparisons."
+    ],
+    "visual_contract_management": [
+      "Palette files and shader parameters versioned with change notes and accessibility results.",
+      "Legend and onboarding copy reviewed for clarity and translated when required."
+    ]
+  },
+  "defect_and_change_management": {
+    "triage": [
+      "Severity 0: Visual defect that hides or misrepresents ghost/live or domain state; or performance collapse (FPS <20 sustained). Immediate block and rollback.",
+      "Severity 1: Timeline gaps, stale data without indicators, or accessibility failures. Fix before release.",
+      "Severity 2: Cosmetic polish issues or minor layout overlaps. Schedule into next cycle."
+    ],
+    "change_control": [
+      "Palette, motion, and budget changes require design + QA sign-off with capture diffs.",
+      "Feature flags control ghost/live overlays, motion intensity, and LOD thresholds; defaults documented.",
+      "Waivers are time-bound with owner and expiry, logged in release notes."
+    ],
+    "rollback_and_recovery": [
+      "Revert to last known-good visual bundle; verify via smoke capture and FPS check.",
+      "Disable motion/trails via flag if performance degrades; lock to ghost-only mode on severe issues.",
+      "Post-incident review captures root cause, fix, and prevention steps."
+    ]
+  },
+  "release_and_ramp_plan": {
+    "sequence": [
+      "Design sign-off -> Data wiring -> Interaction and playback validation -> Performance/accessibility -> Capture and release",
+      "Default to ghost-only with motion at medium intensity; enable higher intensity/live overlays behind flags",
+      "Ramp visuals by widening particle/trail caps only after FPS and clarity targets hold on staging datasets"
+    ],
+    "pre_release_checks": [
+      "All quality gates G1-G4 passed with artifacts attached",
+      "UI captures (desktop/mobile) reviewed; no Severity 0/1 open issues",
+      "Feature flags set to intended defaults; rollback plan rehearsed"
+    ],
+    "post_release_monitoring": [
+      "Telemetry watch: FPS, particle counts, snapshot cadence, stale valuation rate",
+      "User feedback/usability spot checks for domain/state clarity and motion comfort within first release window",
+      "Fast rollback path documented and tested for motion/clarity regressions"
+    ]
+  },
+  "artifacts_and_tooling": {
+    "mandatory_artifacts": [
+      "Test reports (unit, integration, performance, accessibility)",
+      "Palette specs with contrast results and colorblind modes",
+      "Motion tuning notes and performance profiles",
+      "Snapshot coverage reports and export samples",
+      "UI capture sets generated via scripts/branddozer_ui_capture.py with metadata"
+    ],
+    "tooling": [
+      "Lint/type/security tooling (e.g., ruff/mypy/eslint) on visualization code and shaders",
+      "Test runners (pytest/jest) with deterministic seeds for animation logic",
+      "Performance profiling (FPS/GPU/CPU) and LOD telemetry dashboards",
+      "Accessibility checkers for contrast/ARIA and keyboard navigation",
+      "scripts/branddozer_ui_capture.py for capture automation; review via codex --image when needed"
+    ]
+  },
+  "reporting_and_oversight": {
+    "cadence": [
+      "Weekly quality/status update covering gate progress, FPS and snapshot health trends, and open defects",
+      "Per-release checklist with gate outcomes, artifacts, and flag defaults",
+      "Post-release review summarizing captures, telemetry, and any waivers"
+    ],
+    "oversight_artifacts": [
+      "Telemetry dashboards (FPS, particle/trail counts, snapshot cadence, stale valuation rate)",
+      "UI/log/screen captures for key states using scripts/branddozer_ui_capture.py and reviewed with codex --image when verification is required",
+      "Runbooks for palette changes, motion tuning, LOD adjustments, and capture steps"
+    ]
+  }
+}

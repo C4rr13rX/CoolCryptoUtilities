@@ -1,0 +1,205 @@
+{
+  "release_name": "Organism 3D Visualization Refinement Release Criteria",
+  "version": "0.1",
+  "release_intent": "Ship a brain-like 3D visualization where domains cluster with shared palettes, inter-domain links remain distinct, USD value drives particle density and fiery motion, ghost vs live trading states stay unmistakable, and bus-scheduling states auto-snapshot with timeline playback and polished UX.",
+  "scope": "Domain clustering and palettes, inter-domain link styling, USD-weighted particles with fiery trail/bounce motion, ghost vs live separation, auto snapshot + timeline playback of bus-scheduling ghost/live states, brain-inspired layout/camera polish, accessibility, performance, and capture workflow via scripts/branddozer_ui_capture.py.",
+  "definition_of_done": [
+    "Domains share cohesive palettes with legends; inter-domain links use distinct color/weight and stay legible across zoom and themes.",
+    "USD valuations drive particle density/size/emission and fiery trail/bounce intensity with clamps, comfort controls, and performance budgets met.",
+    "Ghost vs live trading clusters are palette-separated with halos/badges/labels; ghost-first defaults and toggles verified.",
+    "Bus-scheduling ghost/live phases auto-snapshot with coverage tracked; timeline playback supports scrub/loop/speed/export and stays in sync with camera.",
+    "Brain-like layout holds depth and low overlap; responsive camera easing, hover/select tooltips, filters, and onboarding/legend polish work on desktop/mobile.",
+    "UI verification captures for key states (domain legend, inter-domain edges, ghost/live separation, high-USD density with trails/bounce, timeline playback) are produced via scripts/branddozer_ui_capture.py with metadata for review (codex --image as needed)."
+  ],
+  "environments": {
+    "local_dev": {
+      "purpose": "Component/unit development with deterministic animation seeds and fixtures for domains, USD valuations, and bus states.",
+      "exit": [
+        "Lint/type/security scans clean",
+        "Unit/component tests pass for palette mapping, USD normalization, and snapshot schema handling",
+        "Feature flags default to ghost-on and medium motion"
+      ]
+    },
+    "visual_review": {
+      "purpose": "Desktop/mobile UI checks, palette/accessibility review, and performance profiling on representative datasets.",
+      "exit": [
+        "Contrast/legibility checks pass for palettes, halos, labels, legends, and inter-domain edges",
+        "p95 FPS meets target with particles/trails enabled; LOD/throttling engages under load",
+        "Ghost/live toggles, filters, and camera easing verified on touch + mouse inputs"
+      ]
+    },
+    "ghost_staging": {
+      "purpose": "Bus-scheduling ghost/paper states driving snapshots and timeline playback with telemetry.",
+      "exit": [
+        "100 percent of bus state changes captured over a 24h window with alerts on misses",
+        "Timeline scrub/loop/speed/export stay in sync with camera and labels",
+        "Telemetry for FPS, particle counts, stale valuations, and snapshot cadence live"
+      ]
+    },
+    "release_capture": {
+      "purpose": "Final acceptance captures on approved datasets using scripts/branddozer_ui_capture.py.",
+      "exit": [
+        "Required desktop/mobile captures stored with timestamps, data hashes, and settings",
+        "No Severity 0/1 UX/accessibility defects open; waivers recorded if any",
+        "Flags/toggles locked to intended defaults (ghost-on, motion medium) for release profile"
+      ]
+    }
+  },
+  "gates": {
+    "g1_visual_contract_and_budgets": {
+      "entry": [
+        "Charter and WBS approved; domain taxonomy available"
+      ],
+      "exit": [
+        "Palettes for domains and ghost/live approved with legends and accessibility notes",
+        "Inter-domain edge styling locked and distinct from intra-domain links",
+        "Performance/motion budgets recorded (particle/trail caps, FPS target, camera timing, damping/clamps)"
+      ],
+      "evidence": [
+        "Palette/legend spec",
+        "Budget sheet with thresholds",
+        "Signed visual contract"
+      ]
+    },
+    "g2_data_binding_and_static_quality": {
+      "entry": [
+        "Visual contract signed; schemas for valuations and bus states defined"
+      ],
+      "exit": [
+        "USD-to-particle normalization implemented with stale-data fallbacks and tests",
+        "Ghost/live flags and bus phases mapped to visuals; toggles default to ghost and persist safely",
+        "Static analysis (lint/type/security) clean; no secrets in configs/logs"
+      ],
+      "evidence": [
+        "Static analysis reports",
+        "Unit tests for palette/state mapping and snapshot schema",
+        "Config/toggle map with defaults"
+      ]
+    },
+    "g3_interaction_timeline_and_motion": {
+      "entry": [
+        "Core visuals and data bindings in place",
+        "Snapshot path functional"
+      ],
+      "exit": [
+        "Timeline scrub/loop/speed/export works with camera sync and no desync across 5-minute loops",
+        "Fiery trails and bounce/elastic motion tuned with caps, damping, and user controls; overload cases throttled",
+        "Filters/legends/tooltips usable on desktop/mobile; ghost/live and domain toggles interoperable"
+      ],
+      "evidence": [
+        "Integration test results and motion tuning notes",
+        "Playback demos/captures",
+        "Manual QA checklist for interactions"
+      ]
+    },
+    "g4_performance_accessibility_and_observability": {
+      "entry": [
+        "Interaction flows stable; telemetry hooks in place"
+      ],
+      "exit": [
+        "p95 FPS >=50 on target dataset with trails/bounce on; LOD/throttling proven under stress",
+        "WCAG AA contrast for labels/legends/halos; colorblind-safe alternate verified; keyboard/focus for timeline and filters",
+        "Snapshot coverage at 100 percent in ghost staging with alerts firing on induced misses",
+        "UI captures taken for key states via scripts/branddozer_ui_capture.py"
+      ],
+      "evidence": [
+        "Performance profiles and telemetry snapshots",
+        "Accessibility report",
+        "Snapshot coverage report",
+        "Capture set with metadata"
+      ]
+    },
+    "g5_release_capture_and_rollout": {
+      "entry": [
+        "Performance/accessibility green; capture set drafted"
+      ],
+      "exit": [
+        "Release checklist signed; toggles locked to intended defaults",
+        "Desktop/mobile captures reviewed (codex --image as needed); no Severity 0/1 open",
+        "Rollback path rehearsed (ghost-only fallback, motion disable) with MTTR target met"
+      ],
+      "evidence": [
+        "Signed checklist and runbook",
+        "Capture review notes",
+        "Rollback drill log"
+      ]
+    }
+  },
+  "functional_validation": {
+    "domain_and_links": [
+      "Domain palette mapping with legend/filter coverage; inter-domain edges visually distinct and accessible across themes.",
+      "Brain-like layout maintains cluster separation and depth cues across zoom/pan/orbit; overlaps minimized."
+    ],
+    "usd_weighted_particles_and_motion": [
+      "USD valuations normalized to particle density/size/emission and fiery trail intensity with stale-data indicators.",
+      "Bounce/elastic motion scales with activity/value, obeys damping/clamps, and respects comfort controls."
+    ],
+    "ghost_vs_live_and_safety": [
+      "Palettes/halos/badges clearly separate ghost vs live; ghost default enforced on load/reset.",
+      "Toggles and filters persist safely; warnings shown before enabling live overlays."
+    ],
+    "snapshot_and_timeline": [
+      "Auto snapshot cadence captures bus phases (pending/scheduled/executing/settled) with retention and health checks.",
+      "Timeline playback supports scrub, loop, speed control, export, and camera sync without desync."
+    ],
+    "observability_and_captures": [
+      "Telemetry for FPS, particle counts, trail intensity, stale valuations, and snapshot coverage recorded.",
+      "UI captures for defined states produced via scripts/branddozer_ui_capture.py with metadata (dataset, timestamp, flags)."
+    ],
+    "accessibility_and_usability": [
+      "WCAG AA for labels/legends/halos/trails on backgrounds; colorblind-safe alternate available.",
+      "Keyboard navigation and focus cues for timeline, filters, and toggles; tooltips readable within 3s."
+    ]
+  },
+  "performance_targets": {
+    "hardware_budget": "Modern laptop/desktop GPU (integrated or entry discrete), 32GB RAM, WebGL-capable browser.",
+    "frame_rate": "p95 FPS >=50 with particles/trails enabled on target dataset; no sustained drops >2s.",
+    "timeline_responsiveness": "Scrub/update latency <200ms; playback stays in sync across 5-minute loops.",
+    "resource_usage": "GPU/CPU within telemetry budgets; particle/trail caps and LOD prevent overload.",
+    "snapshot_cadence": "100 percent bus state changes captured in ghost staging over rolling 24h; alerts on misses."
+  },
+  "security_and_compliance": {
+    "data_governance": "USD valuations and bus state data sourced from approved feeds; no secrets in captures or logs.",
+    "access_control": "Feature flags gate live overlays; configs versioned with intended defaults.",
+    "privacy_and_capture": "Captures exclude sensitive identifiers; metadata limited to required fields."
+  },
+  "operational_readiness": {
+    "runbooks": [
+      "Palette/theme changes with accessibility checks and capture steps.",
+      "Snapshot pipeline troubleshooting, replay/export instructions, and data backfill steps.",
+      "Performance/motion toggles, LOD adjustments, and rollback to ghost-only mode."
+    ],
+    "monitoring": [
+      "Dashboards/alerts for FPS, particle counts, stale valuations, snapshot cadence, and capture success.",
+      "Health checks for bus event ingestion and timeline sync."
+    ],
+    "training": "Operators briefed on toggles, capture workflow (scripts/branddozer_ui_capture.py), and rollback triggers."
+  },
+  "artifacts_required": {
+    "reports": [
+      "Performance profiles with FPS/particle/trail telemetry and LOD activation evidence.",
+      "Accessibility and usability results (contrast, colorblind mode, keyboard/focus checks, recognition speed).",
+      "Snapshot coverage report and timeline playback verification log."
+    ],
+    "captures": [
+      "Desktop and mobile UI captures for key states via scripts/branddozer_ui_capture.py with metadata and storage location.",
+      "Playback demo (video or capture sequence) showing scrub/loop/speed/export and camera sync."
+    ],
+    "configs": [
+      "Palette definitions, trail/motion parameters, and LOD thresholds versioned with change notes.",
+      "Feature flag defaults for ghost/live overlays and motion intensity."
+    ],
+    "evidence": [
+      "Test results (unit/component/integration/performance/accessibility).",
+      "Approval records for visual contract, accessibility, and capture review."
+    ]
+  },
+  "rollback_and_exit": {
+    "rollback_plan": "Revert to last known-good visual bundle; lock to ghost-only and disable trails/bounce via flags; validate via smoke capture and FPS check.",
+    "blockers": [
+      "Failure to meet FPS/LOD targets or coverage gaps in snapshots without mitigation.",
+      "Unclear ghost vs live separation or inter-domain link indistinguishability.",
+      "Open Severity 0/1 accessibility/usability issues or missing required captures/artifacts."
+    ]
+  }
+}

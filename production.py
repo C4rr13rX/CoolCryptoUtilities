@@ -7,10 +7,8 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING
 
-from trading.pipeline import TrainingPipeline
-from trading.selector import GhostTradingSupervisor
 from trading.metrics import MetricStage, FeedbackSeverity
 from services.background_workers import TokenDownloadSupervisor
 from services.task_orchestrator import ParallelTaskManager
@@ -19,6 +17,10 @@ from services.idle_work import IdleWorkManager
 from services.heartbeat import HeartbeatFile
 from services.env_loader import EnvLoader
 from services.secure_settings import build_process_env
+
+if TYPE_CHECKING:
+    from trading.pipeline import TrainingPipeline
+    from trading.selector import GhostTradingSupervisor
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,11 @@ class ProductionManager:
     _env_loaded = False
 
     def __init__(self) -> None:
+        # Delay heavy ML imports until absolutely necessary so lightweight CI
+        # (without TensorFlow) can still import this module for unit tests.
+        from trading.pipeline import TrainingPipeline
+        from trading.selector import GhostTradingSupervisor
+
         self._ensure_secure_env()
         self.pipeline = TrainingPipeline()
         self.supervisor = GhostTradingSupervisor(pipeline=self.pipeline)
@@ -97,6 +104,7 @@ class ProductionManager:
         self._backlog_strikes = 0
         self._task_backoff_until: Dict[str, float] = {}
         self._task_threads: Dict[str, threading.Thread] = {}
+        self._task_thread_start: Dict[str, float] = {}
 
     def start(self) -> None:
         if self.is_running:
@@ -350,6 +358,12 @@ class ProductionManager:
             return
         timeout = float(os.getenv("NEWS_ENRICH_TIMEOUT", "120"))
         backoff = float(os.getenv("NEWS_ENRICH_BACKOFF_SEC", "300"))
+        # Keep the news task under the orchestrator timeout so we do not strand threads.
+        pipeline_budget = getattr(self.pipeline, "_news_enrich_budget", timeout)
+        max_budget = min(timeout * 0.8, timeout - 5.0) if timeout > 10 else timeout * 0.7
+        max_budget = max(5.0, max_budget)
+        budget_cap = max(5.0, min(pipeline_budget, max_budget))
+        deadline = time.time() + budget_cap
         if self._backoff_active("news_enrichment"):
             resume_in = max(0.0, self._task_backoff_until.get("news_enrichment", 0.0) - time.time())
             log_message(
@@ -360,7 +374,7 @@ class ProductionManager:
             )
             return
         self._run_with_timeout(
-            lambda: self.pipeline.reinforce_news_cache(focus_assets),
+            lambda: self.pipeline.reinforce_news_cache(focus_assets, deadline=deadline),
             timeout=timeout,
             label="news_enrichment",
             backoff_on_timeout=backoff,
@@ -464,12 +478,34 @@ class ProductionManager:
             return False
         existing = self._task_threads.get(label)
         if existing and existing.is_alive():
-            log_message(
-                "production",
-                f"{label} still running; skipping re-entry",
-                severity="warning",
-            )
-            return False
+            start_ts = self._task_thread_start.get(label, 0.0)
+            age = time.time() - start_ts if start_ts else None
+            stale_after = max(timeout * 2.0, timeout + (backoff_on_timeout or 0.0))
+            if age and age > stale_after:
+                log_message(
+                    "production",
+                    f"{label} thread stale after {age:.1f}s; detaching and retrying",
+                    severity="warning",
+                    details={"age_sec": round(age, 2), "stale_after": round(stale_after, 2)},
+                )
+                self._task_threads.pop(label, None)
+                self._task_thread_start.pop(label, None)
+            else:
+                resume_in = None
+                if backoff_on_timeout and backoff_on_timeout > 0:
+                    resume_in = backoff_on_timeout
+                    self._task_backoff_until[label] = time.time() + backoff_on_timeout
+                log_message(
+                    "production",
+                    f"{label} still running; skipping re-entry",
+                    severity="warning",
+                    details={
+                        "age_sec": round(age or 0.0, 2),
+                        "stale_after": round(stale_after, 2),
+                        "resume_in": round(resume_in or 0.0, 2) if resume_in else None,
+                    },
+                )
+                return False
         result = {"ok": False}
         error: Dict[str, Any] = {}
 
@@ -482,6 +518,7 @@ class ProductionManager:
 
         thread = threading.Thread(target=_target, name=f"{label}-runner", daemon=True)
         self._task_threads[label] = thread
+        self._task_thread_start[label] = time.time()
         thread.start()
         thread.join(timeout)
         if thread.is_alive():
@@ -494,8 +531,12 @@ class ProductionManager:
                     severity="info",
                     details={"resume_in": round(backoff_on_timeout, 2)},
                 )
+            # Detach stale thread so future cycles are not blocked on the same handle.
+            self._task_threads.pop(label, None)
+            self._task_thread_start.pop(label, None)
             return False
         self._task_threads.pop(label, None)
+        self._task_thread_start.pop(label, None)
         if error.get("exc"):
             log_message("production", f"{label} failed: {error['exc']}", severity="warning")
             return False

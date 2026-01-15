@@ -9,12 +9,14 @@ import time
 from collections import deque, OrderedDict
 import random
 import math
+import socket
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
 
 import numpy as np
 import pandas as pd
 import requests
+from requests import exceptions as req_exc
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
@@ -40,6 +42,14 @@ HORIZON_WINDOWS_SEC: Tuple[int, ...] = (
     30 * 24 * 60 * 60,
     90 * 24 * 60 * 60,
     180 * 24 * 60 * 60,
+)
+
+_NEWS_DNS_ERROR_HINTS = (
+    "name resolution",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "no address associated with hostname",
+    "name or service not known",
 )
 
 TOKEN_SYNONYMS = {
@@ -125,6 +135,15 @@ class HistoricalDataLoader:
         self._news_backfill_bucket = max(300, int(os.getenv("NEWS_BACKFILL_BUCKET_SEC", "3600")))
         self._news_backfill_log: Dict[str, float] = {}
         self._news_backfill_min_budget = max(2.0, float(os.getenv("NEWS_ENRICH_MIN_BUDGET_SEC", "10")))
+        self._news_network_failures = 0
+        self._news_network_backoff_until = 0.0
+        self._news_network_backoff_base = max(5.0, float(os.getenv("NEWS_NETWORK_BACKOFF_SEC", "45")))
+        self._news_network_backoff_growth = max(1.1, float(os.getenv("NEWS_NETWORK_BACKOFF_GROWTH", "1.8")))
+        self._news_network_backoff_max = max(
+            self._news_network_backoff_base,
+            float(os.getenv("NEWS_NETWORK_BACKOFF_MAX_SEC", "900")),
+        )
+        self._news_network_last_log = 0.0
         self.news_items = self._load_news()
         self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
@@ -2136,6 +2155,7 @@ class HistoricalDataLoader:
         posts: List[Dict[str, Any]] = []
         next_url: Optional[str] = endpoint
         pages = 0
+        had_error = False
         while next_url and pages < max_pages:
             if deadline and (deadline - time.time()) <= 0:
                 break
@@ -2151,7 +2171,9 @@ class HistoricalDataLoader:
                     resp = self._cryptopanic_session.get(next_url, timeout=timeout)
                 resp.raise_for_status()
                 payload = resp.json()
-            except Exception:
+            except Exception as exc:
+                had_error = True
+                self._register_news_network_failure(self._classify_news_error(exc))
                 if resp is not None and 500 <= resp.status_code < 600:
                     time.sleep(self._cryptopanic_min_interval * 2)
                 break
@@ -2224,6 +2246,8 @@ class HistoricalDataLoader:
             pages += 1
             if not results:
                 break
+        if not had_error:
+            self._clear_news_network_outage()
         return posts
 
     def _throttle_cryptopanic(self, deadline: Optional[float] = None) -> None:
@@ -2247,6 +2271,52 @@ class HistoricalDataLoader:
                 if sleep_dur > 0:
                     time.sleep(sleep_dur)
         self._cryptopanic_request_log.append(time.time())
+
+    def _news_network_outage_active(self, now: Optional[float] = None) -> bool:
+        now = now or time.time()
+        if self._news_network_backoff_until > now:
+            return True
+        if self._news_network_backoff_until:
+            self._news_network_backoff_until = 0.0
+            self._news_network_failures = 0
+        return False
+
+    def _clear_news_network_outage(self) -> None:
+        self._news_network_failures = 0
+        self._news_network_backoff_until = 0.0
+
+    def _classify_news_error(self, exc: BaseException) -> str:
+        if isinstance(exc, (req_exc.Timeout, req_exc.ConnectTimeout, req_exc.ReadTimeout, TimeoutError)):
+            return "timeout"
+        if isinstance(exc, socket.gaierror):
+            return "dns"
+        message = str(exc).lower()
+        if any(hint in message for hint in _NEWS_DNS_ERROR_HINTS):
+            return "dns"
+        if isinstance(exc, req_exc.ConnectionError):
+            return "network"
+        return "other"
+
+    def _register_news_network_failure(self, reason: str) -> None:
+        now = time.time()
+        self._news_network_failures += 1
+        exponent = min(6, max(0, self._news_network_failures - 1))
+        backoff = min(
+            self._news_network_backoff_max,
+            self._news_network_backoff_base * (self._news_network_backoff_growth ** exponent),
+        )
+        self._news_network_backoff_until = max(self._news_network_backoff_until, now + backoff)
+        if now - self._news_network_last_log >= 30.0:
+            log_message(
+                "training",
+                "news network outage detected; pausing enrichment",
+                severity="warning",
+                details={
+                    "reason": reason,
+                    "backoff_sec": round(max(0.0, self._news_network_backoff_until - now), 2),
+                },
+            )
+            self._news_network_last_log = now
 
     def _augment_news_from_cryptopanic(
         self,
@@ -2336,7 +2406,7 @@ class HistoricalDataLoader:
             for token in tokens_upper:
                 for win in self._news_window_schedule.get(token, []):
                     windows.append(win)
-            rows = ingestor.harvest_windows(tokens=tokens_upper, ranges=windows)
+            rows = ingestor.harvest_windows(tokens=tokens_upper, ranges=windows, deadline=deadline)
         except Exception as exc:
             log_message("training", f"ethical news ingest failed: {exc}", severity="warning")
             return False
@@ -2393,6 +2463,17 @@ class HistoricalDataLoader:
             return False
         if deadline and (deadline - time.time()) <= 0:
             return False
+        now = time.time()
+        if self._news_network_outage_active(now):
+            if now - self._news_network_last_log >= 30.0:
+                log_message(
+                    "training",
+                    "news enrichment cooling down after network failures",
+                    severity="warning",
+                    details={"resume_in": round(max(0.0, self._news_network_backoff_until - now), 2)},
+                )
+                self._news_network_last_log = now
+            return False
         ts_center = center_ts or int(time.time())
         start_ts = ts_center - abs(int(lookback_sec))
         end_ts = ts_center + max(3600, abs(int(lookback_sec)) // 2)
@@ -2425,6 +2506,9 @@ class HistoricalDataLoader:
                 max_pages=effective_pages,
                 deadline=deadline,
             )
+            if self._news_network_outage_active(time.time()):
+                self._mark_news_backfill(window_key)
+                break
             if len(self.news_items) > before:
                 added = True
             else:
@@ -2434,6 +2518,8 @@ class HistoricalDataLoader:
                 if self._augment_news_from_ethics(token_set, start_ts, end_ts, deadline=deadline):
                     added = True
             self._mark_news_backfill(window_key)
+        if added:
+            self._clear_news_network_outage()
         return added
 
     def _news_backfill_window_key(self, tokens: Set[str], start_ts: int, lookback_sec: int) -> str:

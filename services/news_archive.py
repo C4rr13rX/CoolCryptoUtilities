@@ -79,6 +79,7 @@ class CryptoNewsArchiver:
         start: datetime,
         end: datetime,
         persist: bool = False,
+        deadline: Optional[float] = None,
     ) -> pd.DataFrame:
         start = start.astimezone(timezone.utc)
         end = end.astimezone(timezone.utc)
@@ -92,11 +93,14 @@ class CryptoNewsArchiver:
         cursor = start
         collected_frames: List[pd.DataFrame] = []
         while cursor < end:
+            if deadline and (deadline - time.time()) <= 0:
+                break
             window_end = min(end, cursor + window)
             posts = self._fetch_posts(
                 tokens=tokens,
                 since_ts=int(cursor.timestamp()),
                 until_ts=int(window_end.timestamp()),
+                deadline=deadline,
             )
             if posts is not None and not posts.empty:
                 collected_frames.append(posts)
@@ -133,8 +137,9 @@ class CryptoNewsArchiver:
         symbols: Sequence[str],
         start: datetime,
         end: datetime,
+        deadline: Optional[float] = None,
     ) -> pd.DataFrame:
-        return self.collect_window(symbols=symbols, start=start, end=end, persist=True)
+        return self.collect_window(symbols=symbols, start=start, end=end, persist=True, deadline=deadline)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -158,6 +163,7 @@ class CryptoNewsArchiver:
         tokens: Sequence[str],
         since_ts: int,
         until_ts: int,
+        deadline: Optional[float] = None,
     ) -> Optional[pd.DataFrame]:
         params = {
             "auth_token": self.config.api_token,
@@ -176,18 +182,29 @@ class CryptoNewsArchiver:
         rows: List[Dict[str, object]] = []
 
         while next_url and pages < self.config.max_pages:
+            if deadline and (deadline - time.time()) <= 0:
+                break
             resp = None
             try:
-                self._throttle()
+                self._throttle(deadline=deadline)
+                timeout = 20.0
+                if deadline:
+                    timeout = max(1.0, min(timeout, deadline - time.time()))
+                    if timeout <= 0:
+                        break
                 if next_url == endpoint:
-                    resp = self.session.get(next_url, params=params, timeout=20)
+                    resp = self.session.get(next_url, params=params, timeout=timeout)
                 else:
-                    resp = self.session.get(next_url, timeout=20)
+                    resp = self.session.get(next_url, timeout=timeout)
                 resp.raise_for_status()
                 payload = resp.json()
             except Exception:
                 if resp is not None and 500 <= resp.status_code < 600:
-                    time.sleep(self.config.min_interval * 2)
+                    sleep_for = self.config.min_interval * 2
+                    if deadline:
+                        sleep_for = max(0.0, min(sleep_for, deadline - time.time()))
+                    if sleep_for > 0:
+                        time.sleep(sleep_for)
                 break
 
             results = payload.get("results") or []
@@ -273,18 +290,25 @@ class CryptoNewsArchiver:
             article_text = item.get("title") or ""
         return article_text, str(sentiment or "neutral"), list(normalized_tokens)
 
-    def _throttle(self) -> None:
+    def _throttle(self, *, deadline: Optional[float] = None) -> None:
         now = time.time()
         while self._request_log and now - self._request_log[0] > 60.0:
             self._request_log.popleft()
         if self._request_log:
             elapsed = now - self._request_log[-1]
             if elapsed < self.config.min_interval:
-                time.sleep(self.config.min_interval - elapsed)
+                sleep_for = self.config.min_interval - elapsed
+                if deadline:
+                    sleep_for = max(0.0, min(sleep_for, deadline - time.time()))
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
         if len(self._request_log) >= self.config.rate_limit:
             sleep_for = 60.0 - (now - self._request_log[0])
             if sleep_for > 0:
-                time.sleep(sleep_for)
+                if deadline:
+                    sleep_for = max(0.0, min(sleep_for, deadline - time.time()))
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
         self._request_log.append(time.time())
 
 

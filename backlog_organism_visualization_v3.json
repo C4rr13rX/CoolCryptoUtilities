@@ -1,0 +1,151 @@
+{
+  "items": [
+    {
+      "kind": "story",
+      "title": "Domain palette and inter-domain edge accents",
+      "description": "Define and enforce a shared hue family per domain, with clear legend and colorblind-safe alternates, and style inter-domain links with distinct accents.",
+      "acceptance_criteria": [
+        "A committed palette contract maps each domain to a shared hue family with saturation/value variance under control and documented colorblind-safe alternates.",
+        "All nodes display the domain palette consistently across zoom levels; intra-domain edges inherit the domain palette while inter-domain edges use distinct accent color/weight patterns called out in the legend.",
+        "Legend/filters expose domain palettes and inter-domain edge styling, and contrasts meet WCAG AA for on-dark/on-light backgrounds.",
+        "Unit/regression visual check asserts palette application for at least three domains and highlights inter-domain edges separately."
+      ],
+      "priority": 1,
+      "estimate_points": 3,
+      "dependencies": []
+    },
+    {
+      "kind": "task",
+      "title": "USD valuation feed handshake and clamps",
+      "description": "Wire USD valuation data and ghost/live flags into the visualization layer with freshness checks, fallbacks, and clamping to sane ranges.",
+      "acceptance_criteria": [
+        "Data contract for USD valuations and ghost/live state is defined (fields, freshness SLA, fallback defaults) and versioned in config.",
+        "Stale or missing valuations fall back to defaults with logging, and values are clamped to prevent extreme particle counts or sizes.",
+        "Automated tests cover nominal, stale, and missing valuation cases and verify ghost/live state propagation.",
+        "Telemetry emits valuation freshness and rejection/clamp counts."
+      ],
+      "priority": 1,
+      "estimate_points": 3,
+      "dependencies": []
+    },
+    {
+      "kind": "story",
+      "title": "USD-weighted particle emission with fiery bounce motion",
+      "description": "Map USD valuations to particle density/size/emission rate and fiery trail intensity, with bounce/elastic motion tuned by weight and activity.",
+      "acceptance_criteria": [
+        "Particle emission rate, size, and fiery trail intensity scale with USD valuation using documented curves and clamps; low-value flows remain visible but unobtrusive.",
+        "Bounce/elastic parameters (amplitude, damping, restitution) respond to valuation and activity levels with safe defaults for missing data.",
+        "Performance budget validated at target particle counts (e.g., 60 FPS desktop, 45+ FPS mobile) with metrics recorded.",
+        "Visual regression or capture demonstrates perceptible differences between low-, mid-, and high-value flows."
+      ],
+      "priority": 1,
+      "estimate_points": 5,
+      "dependencies": [
+        "USD valuation feed handshake and clamps"
+      ]
+    },
+    {
+      "kind": "story",
+      "title": "Ghost vs live trading palette separation and toggles",
+      "description": "Create distinct palettes/halos/badges for ghost vs live trading clusters with safe defaults and quick toggles.",
+      "acceptance_criteria": [
+        "Ghost and live trading clusters use clearly differentiated palettes with halos/badges and labels; defaults favor live clarity.",
+        "Legend and filters expose ghost/live states with one-click toggles and a combined view that preserves palette separation.",
+        "Color contrast for ghost/live badges meets accessibility thresholds and does not conflict with domain palettes.",
+        "UI state persists across navigation and reloads with documented defaults."
+      ],
+      "priority": 1,
+      "estimate_points": 3,
+      "dependencies": [
+        "Domain palette and inter-domain edge accents",
+        "USD valuation feed handshake and clamps"
+      ]
+    },
+    {
+      "kind": "story",
+      "title": "Auto snapshot pipeline for bus-scheduling ghost/live states",
+      "description": "Capture time-stamped snapshots of bus-scheduling ghost/live trading states with retention, metadata, and failure handling.",
+      "acceptance_criteria": [
+        "Snapshots automatically capture state on schedule or trigger events and include domain clustering, ghost/live flags, valuations, and camera context.",
+        "Retention policy, storage path, and cleanup are configurable and enforced; missing snapshots raise alerts.",
+        "Manual snapshot trigger is available for operators with audit logging.",
+        "Integration test demonstrates successful snapshot creation, storage, and retrieval in a non-prod environment."
+      ],
+      "priority": 1,
+      "estimate_points": 5,
+      "dependencies": [
+        "USD valuation feed handshake and clamps",
+        "Ghost vs live trading palette separation and toggles"
+      ]
+    },
+    {
+      "kind": "story",
+      "title": "Timeline playback with scrubbing, loop, and export",
+      "description": "Provide a timeline UI to scrub through snapshots, play/pause/loop, and export frames for reviews.",
+      "acceptance_criteria": [
+        "Timeline UI supports play/pause, scrub, step, and loop with smooth interpolation between snapshots.",
+        "Ghost/live and domain palette states remain accurate during playback, including during scrubbing jumps.",
+        "Export flow saves selected frames or short loops to disk with file naming and retention options.",
+        "Error handling covers missing or corrupted snapshots with user-facing messaging and logging."
+      ],
+      "priority": 2,
+      "estimate_points": 5,
+      "dependencies": [
+        "Auto snapshot pipeline for bus-scheduling ghost/live states"
+      ]
+    },
+    {
+      "kind": "story",
+      "title": "Brain-like layout, clustering, and camera easing",
+      "description": "Implement brain-inspired layout heuristics that cluster domains organically, minimize overlap, and add camera easing and onboarding cues.",
+      "acceptance_criteria": [
+        "Layout produces recognizable hemispheric/organic clustering with domain-level grouping and low overlap/occlusion across zoom levels.",
+        "Camera transitions (auto-center, follow cluster, reset) use eased motion and maintain context for ghost/live and domain colors.",
+        "User controls (hover/select tooltips, filter toggles) remain responsive under layout changes and respect accessibility targets.",
+        "Smoke test captures before/after layout and camera behaviors for at least two domain sets."
+      ],
+      "priority": 2,
+      "estimate_points": 5,
+      "dependencies": [
+        "Domain palette and inter-domain edge accents"
+      ]
+    },
+    {
+      "kind": "task",
+      "title": "Performance telemetry and guardrails",
+      "description": "Add instrumentation for FPS, particle counts, capture cadence, and memory/GPU budgets with graceful degradation toggles.",
+      "acceptance_criteria": [
+        "Runtime telemetry records FPS, particle count, shader time, and capture pipeline latency with thresholds documented.",
+        "Guardrails reduce particle density/trail intensity and disable optional effects when budgets are exceeded, with user-visible indicators.",
+        "Alerts/logs fire when budgets are breached or snapshots fail to keep up with schedule.",
+        "Load test run proves guardrails engage and recover without crashes or UI dead states."
+      ],
+      "priority": 2,
+      "estimate_points": 3,
+      "dependencies": [
+        "USD-weighted particle emission with fiery bounce motion",
+        "Brain-like layout, clustering, and camera easing"
+      ]
+    },
+    {
+      "kind": "task",
+      "title": "UI verification and capture runs",
+      "description": "Run scripted UI verification (desktop and mobile) to capture palette, ghost/live, particle weighting, and timeline behaviors for review.",
+      "acceptance_criteria": [
+        "scripts/branddozer_ui_capture.py executed for key states (domain palette, ghost/live toggles, high/low valuation particles, timeline playback) with artifacts saved to the agreed capture folder.",
+        "Captured assets reviewed with codex --image or equivalent and annotated with any defects or deltas.",
+        "Verification checklist recorded, including device/viewport, data set used, and pass/fail per scenario.",
+        "Follow-up backlog items filed for any defects or UX gaps discovered."
+      ],
+      "priority": 3,
+      "estimate_points": 2,
+      "dependencies": [
+        "Domain palette and inter-domain edge accents",
+        "USD-weighted particle emission with fiery bounce motion",
+        "Ghost vs live trading palette separation and toggles",
+        "Timeline playback with scrubbing, loop, and export",
+        "Brain-like layout, clustering, and camera easing"
+      ]
+    }
+  ]
+}

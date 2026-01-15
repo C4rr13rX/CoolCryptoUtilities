@@ -535,6 +535,7 @@ async function initialise() {
   await store.loadHistory({ limit: 200 });
   await store.refreshLatest();
   jumpLatest();
+  startPlayback();
 }
 
 onMounted(() => {

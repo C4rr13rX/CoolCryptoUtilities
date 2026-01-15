@@ -8,6 +8,7 @@ from typing import Dict, List, Set
 import numpy as np
 import pytest
 import time
+import requests
 
 from trading.data_loader import HistoricalDataLoader
 from services.system_profile import SystemProfile
@@ -217,6 +218,35 @@ def test_request_news_backfill(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     added_second = loader.request_news_backfill(symbols=["ETH-USDC"], lookback_sec=3600, center_ts=int(time.time()))
     assert added_second is False
     assert len(loader.news_items) == count_after_first
+
+
+def test_news_network_backoff_skips_enrichment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CRYPTOPANIC_API_KEY", "test-token")
+    (tmp_path / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(10)), encoding="utf-8")
+    monkeypatch.setattr(HistoricalDataLoader, "_load_news", lambda self: [], raising=True)
+
+    loader = HistoricalDataLoader(data_dir=tmp_path, max_files=1, max_samples_per_file=8)
+    loader._news_network_backoff_until = time.time() + 30.0
+
+    added = loader.request_news_backfill(symbols=["ETH-USDC"], lookback_sec=3600, center_ts=int(time.time()))
+    assert added is False
+
+
+def test_news_network_failure_triggers_backoff(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("CRYPTOPANIC_API_KEY", "test-token")
+    (tmp_path / "history_ETH-USDC.json").write_text(json.dumps(_synthetic_rows(12)), encoding="utf-8")
+    monkeypatch.setattr(HistoricalDataLoader, "_load_news", lambda self: [], raising=True)
+
+    loader = HistoricalDataLoader(data_dir=tmp_path, max_files=1, max_samples_per_file=8)
+
+    def failing_get(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("Temporary failure in name resolution")
+
+    monkeypatch.setattr(loader._cryptopanic_session, "get", failing_get, raising=True)
+    before = time.time()
+    added = loader.request_news_backfill(symbols=["ETH-USDC"], lookback_sec=3600, center_ts=int(time.time()))
+    assert added is False
+    assert loader._news_network_backoff_until > before
 
 
 def test_focus_alias_handles_usdbc(historical_tmp: Path) -> None:

@@ -1,0 +1,191 @@
+{
+  "project_name": "Organism 3D Visualization: Domain Clusters & Bus Timeline",
+  "status": "draft",
+  "purpose": "Deliver a brain-like 3D Organism view that clusters nodes by domain with shared palettes, uses USD-weighted particles with fiery bounce motion, separates ghost vs live trading clusters, and auto-plays snapshots of bus-scheduling ghost/live states inside a polished UX.",
+  "current_state_summary": [
+    "Domain clustering is inconsistent; nodes do not share a common color family and inter-domain links are visually indistinct from intra-domain edges.",
+    "Particle density, size, and trails are not bound to USD valuations; bounce/elastic motion feels generic and unweighted.",
+    "Ghost and live trading clusters use overlapping colors and halos, leading to ambiguity in execution state.",
+    "Bus-scheduling ghost/live states are not automatically snapshotted or replayable on a timeline with scrubbing.",
+    "Layout lacks the intended brain-like structure, onboarding cues, and polished controls; UI verification artifacts are ad hoc."
+  ],
+  "objectives": [
+    "Cluster nodes by domain with shared colors and legends; style inter-domain links with distinct accent colors and weights.",
+    "Bind USD value to particle density, size, emission rate, and fiery trail intensity; tune bounce/elastic motion to weight and activity.",
+    "Separate ghost vs live trading clusters with differentiated palettes, halos/badges, labels, and quick toggles.",
+    "Automate snapshot capture of bus-scheduling ghost/live states and provide timeline playback with scrubbing, loop, and export.",
+    "Achieve a brain-like layout with camera easing, responsive controls, and UX polish suitable for stakeholder review.",
+    "Execute UI verification via scripts/branddozer_ui_capture.py (desktop/mobile) when visual review is needed."
+  ],
+  "scope": {
+    "in_scope": [
+      "Domain taxonomy mapping to palettes, inter-domain edge styling, legends, and filters.",
+      "USD-weighted particle system (density, size, emission) with fiery trails and bounce/elastic motion tuned to value and activity.",
+      "Ghost vs live palette system, halos/badges, labels, and toggles with safe defaults.",
+      "Snapshot pipeline for bus-scheduling ghost/live states plus timeline playback with scrubbing, loop, and export.",
+      "Brain-inspired layout heuristics, camera paths, hover/select tooltips, onboarding cues, and responsive UX polish.",
+      "UI verification workflow using scripts/branddozer_ui_capture.py and review with codex --image when required."
+    ],
+    "out_of_scope": [
+      "Changes to core trading logic, bus-scheduling algorithms, or production risk policy.",
+      "New market data ingestion beyond what is needed for USD valuations and state flags.",
+      "VR/AR rendering modes or hardware-specific optimizations beyond standard WebGL targets."
+    ]
+  },
+  "visual_contract": [
+    "Each domain shares a cohesive hue family with controlled variance; inter-domain edges use distinct accent colors/weights and are legend-backed.",
+    "USD-driven particles express weight through density/size/emission and fiery trails; bounce/elastic motion is perceptibly stronger for higher-value flows.",
+    "Ghost vs live clusters are palette-separated with halos/labels; brain-like organic layout maintains depth cues and low overlap across zoom levels."
+  ],
+  "data_and_states": [
+    "USD valuations (with freshness) drive particle density, size, emission rate, and trail intensity with graceful fallbacks for stale data.",
+    "Ghost/live trading flags and bus-scheduling phases (pending, scheduled, executing, settled) map to palettes, halos, and timeline frames.",
+    "Snapshot metadata (timestamp, state counts, domain composition) is captured for playback, export, and audit."
+  ],
+  "interaction_and_motion": [
+    "Fiery trails and bounce/elastic motion scale with USD weight and recent activity; clamps, damping, and caps prevent overload.",
+    "Timeline playback supports start/stop, loop, speed control, and scrubbing synchronized with camera focus and filters.",
+    "Hover/select tooltips, domain/state filters, quick ghost/live toggles, and deep links to nodes or timestamps aid navigation."
+  ],
+  "oversight_and_quality": [
+    "Color contrast and accessibility checks for palettes, halos, labels, and legends; provide colorblind-safe alternatives.",
+    "Performance budgets for particle count, shader cost, memory/GPU, and trail intensity with telemetry and degradation paths.",
+    "UI verification captures via scripts/branddozer_ui_capture.py (desktop/mobile) when review is required, inspected with codex --image."
+  ],
+  "workstreams": [
+    {
+      "name": "Domain Clustering and Palette System",
+      "deliverables": [
+        "Domain taxonomy and palette mapping with intra- vs inter-domain edge styling and legends.",
+        "Filters and isolation controls per domain with responsive layout, depth cues, and labeling.",
+        "Documentation on palette usage, accessibility, and brand alignment."
+      ]
+    },
+    {
+      "name": "USD-Weighted Particle Physics",
+      "deliverables": [
+        "Normalization from USD value to particle density/size/emission with stale-data fallbacks.",
+        "Fiery trail and bounce/elastic motion tuned to value and activity with clamps and user controls.",
+        "Performance profiling and budgets for particle counts, shaders, and frame rate."
+      ]
+    },
+    {
+      "name": "Ghost/Live Separation and Bus Timeline",
+      "deliverables": [
+        "Ghost vs live palettes, halos/badges, labels, and toggles with safe defaults favoring clarity.",
+        "Snapshot capture for bus-scheduling ghost/live phases with retention, health checks, and metadata.",
+        "Timeline playback with scrubbing, loop, speed control, export, and camera sync."
+      ]
+    },
+    {
+      "name": "Layout, UX, and Verification",
+      "deliverables": [
+        "Brain-like layout tuning, camera easing, tooltips, and responsive controls.",
+        "Legends, badges, and onboarding cues for colors, trails, and timeline behaviors.",
+        "Accessibility checks plus UI screenshot suite executed via scripts/branddozer_ui_capture.py."
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "name": "M1 Visual Contract",
+      "exit_criteria": [
+        "Approved domain palette and inter-domain edge styling with legends and accessibility notes.",
+        "Ghost vs live visual language (palette, halos, labels) accepted by design.",
+        "Performance and motion budgets defined for particle counts, trails, and frame rate targets."
+      ]
+    },
+    {
+      "name": "M2 Data Wiring",
+      "exit_criteria": [
+        "USD valuation feed bound to particle sizing/density/emission with stale fallbacks logged.",
+        "Bus-scheduling ghost/live states mapped to visuals and snapshot schema finalized.",
+        "Snapshot capture producing timestamped frames with metadata persisted for playback and export."
+      ]
+    },
+    {
+      "name": "M3 Interaction and Playback",
+      "exit_criteria": [
+        "Timeline playback with scrubbing, loop, speed control, and camera sync across captured frames.",
+        "Fiery trail and bounce behaviors tuned and clamped for readability across domains and states.",
+        "Domain and ghost/live filters/toggles validated on desktop and mobile."
+      ]
+    },
+    {
+      "name": "M4 QA and Release",
+      "exit_criteria": [
+        "Accessibility and color contrast checks passed; colorblind-safe palette available.",
+        "UI verification screenshots captured (desktop/mobile) via scripts/branddozer_ui_capture.py and reviewed.",
+        "Frame rate and load targets met under representative dataset; acceptance from sponsor/product."
+      ]
+    }
+  ],
+  "dependencies": [
+    "Domain metadata per node to drive clustering and palette assignment.",
+    "USD valuation feed per node or edge with freshness indicators.",
+    "Ghost/live trading flags and bus-scheduling events with timestamps for snapshots.",
+    "WebGL/Three.js (or equivalent) stack with particle, trail, and post-processing support.",
+    "Access to scripts/branddozer_ui_capture.py and environments that can run the visualization for capture.",
+    "Design guidance for brain-like layout and brand-safe palette choices."
+  ],
+  "assumptions": [
+    "USD valuations and state events arrive with sufficient cadence to animate without large gaps.",
+    "Target hardware is a modern laptop/desktop GPU where WebGL particle effects are viable.",
+    "Domain taxonomy remains stable enough to keep palettes consistent during delivery.",
+    "Brand constraints allow differentiated color sets for domains and ghost/live states."
+  ],
+  "risks": [
+    {
+      "risk": "Particle and trail effects degrade performance or clarity at scale.",
+      "impact": "Choppy rendering or unreadable clusters; reduced usability.",
+      "mitigation": "Set budgets, level-of-detail fallbacks, trail throttling, and motion caps; profile early."
+    },
+    {
+      "risk": "Color systems for domain and ghost/live states create confusion or fail accessibility checks.",
+      "impact": "Misinterpretation of state or domain relationships; compliance issues.",
+      "mitigation": "Use distinct palettes, halos/shape cues, contrast checks, and colorblind-safe alternatives with legends."
+    },
+    {
+      "risk": "Missing or stale USD valuations distort particle sizing and timelines.",
+      "impact": "False emphasis on nodes; misleading playback.",
+      "mitigation": "Fallback sizing rules, stale indicators, and logging/alerts for data gaps."
+    },
+    {
+      "risk": "Snapshot pipeline misses bus-scheduling events or desynchronizes from timeline playback.",
+      "impact": "Inaccurate playback and oversight gaps.",
+      "mitigation": "Event-driven capture with health checks, retention metrics, and reconciliation tests."
+    },
+    {
+      "risk": "Motion tuning (bounce/trails) causes visual noise or discomfort.",
+      "impact": "User fatigue and reduced adoption.",
+      "mitigation": "Provide animation intensity controls, damping defaults, and quick toggles to simplify motion."
+    }
+  ],
+  "success_metrics": [
+    "Reviewers can identify a node's domain and ghost/live state within three seconds in usability checks.",
+    "Inter-domain edges remain visually distinct from intra-domain links across all palettes and backgrounds.",
+    "Timeline playback covers 100 percent of bus-scheduling state changes over a 24h test window without gaps.",
+    "Visualization sustains target frame rate under representative load with particle/trail effects enabled.",
+    "UI verification suite (desktop and mobile) via scripts/branddozer_ui_capture.py completes with accepted screenshots."
+  ],
+  "stakeholders": {
+    "sponsor": "TBD",
+    "product_owner": "TBD",
+    "design": [
+      "Visualization/UX lead",
+      "Brand and accessibility reviewer"
+    ],
+    "engineering": [
+      "Frontend/WebGL engineer",
+      "Backend/telemetry engineer for USD valuations and state feeds"
+    ],
+    "operations": [
+      "Release manager",
+      "QA owner for UI verification and snapshot review"
+    ],
+    "data": [
+      "Market data owner for USD valuations",
+      "Bus-scheduling state owner"
+    ]
+  }
+}

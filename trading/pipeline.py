@@ -301,13 +301,16 @@ class TrainingPipeline:
             print(f"[training] dataset warmup failed: {exc}")
             return False
 
-    def reinforce_news_cache(self, focus_assets: Optional[Sequence[str]] = None) -> bool:
+    def reinforce_news_cache(self, focus_assets: Optional[Sequence[str]] = None, *, deadline: Optional[float] = None) -> bool:
         """
         Ensure recent news is available for the focus assets used in ghost trading.
         """
         try:
-            deadline = time.time() + self._news_enrich_budget if self._news_enrich_budget > 0 else None
-            return self._auto_backfill_news(focus_assets or [], deadline=deadline)
+            effective_deadline = deadline
+            if self._news_enrich_budget > 0:
+                budget_deadline = time.time() + self._news_enrich_budget
+                effective_deadline = min(effective_deadline, budget_deadline) if effective_deadline else budget_deadline
+            return self._auto_backfill_news(focus_assets or [], deadline=effective_deadline)
         except Exception as exc:
             print(f"[training] news enrichment failed: {exc}")
             return False
@@ -1784,7 +1787,7 @@ class TrainingPipeline:
                     archiver = CryptoNewsArchiver(
                         output_path=Path(os.getenv("CRYPTOPANIC_ARCHIVE_PATH", "data/news/cryptopanic_archive.parquet"))
                     )
-                    archive = archiver.backfill(symbols=symbols, start=start, end=end)
+                    archive = archiver.backfill(symbols=symbols, start=start, end=end, deadline=deadline)
                     if not archive.empty:
                         # reload combined news cache so synthetic fallback is avoided
                         self.data_loader.invalidate_dataset_cache()

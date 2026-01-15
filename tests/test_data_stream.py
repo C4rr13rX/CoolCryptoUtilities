@@ -156,6 +156,27 @@ def test_market_stream_fallback_pair_ratio():
     assert abs(price - 0.0005) < 1e-9
 
 
+def test_force_offline_skips_network(monkeypatch):
+    monkeypatch.setenv("MARKET_FORCE_OFFLINE", "1")
+    stream = MarketDataStream(symbol="WETH-USDC")
+    stream._http_session = object()
+    stream.reference_price = None
+    stream._load_snapshot_reference = lambda allow_network: 101.0  # type: ignore[assignment]
+    stream._seed_recent_reference = lambda price: None  # type: ignore[assignment]
+    network_called = {"rest": False}
+
+    async def fake_fetch(*_: object, **__: object) -> RestFetchResult:
+        network_called["rest"] = True
+        return RestFetchResult(1.0)
+
+    stream._fetch_rest_price = fake_fetch  # type: ignore[assignment]
+    asyncio.run(stream._refresh_reference_price())
+
+    assert stream._offline_only is True
+    assert network_called["rest"] is False
+    assert stream.reference_price == 101.0
+
+
 def test_fallback_uses_local_snapshot_when_offline_disabled(tmp_path, monkeypatch):
     snapshot_path = tmp_path / "market_snapshots.json"
     snapshot_path.write_text(
@@ -388,6 +409,18 @@ def test_dns_outage_enters_offline_window(monkeypatch):
     assert offline_samples
     assert stream._dns_offline_until > 0.0
     assert stream._dns_failures >= 1
+
+
+def test_dns_offline_logging_throttled_across_streams(monkeypatch):
+    MarketDataStream._dns_log_by_symbol.clear()
+    stream_a = MarketDataStream(symbol="WETH-USDC")
+    stream_b = MarketDataStream(symbol="WETH-USDC")
+    base_time = time.time()
+    assert stream_a._should_log_dns_offline(base_time) is True
+    # Second stream with same symbol should be throttled until interval elapses
+    assert stream_b._should_log_dns_offline(base_time + 5.0) is False
+    assert stream_b._should_log_dns_offline(base_time + stream_b._dns_log_interval + 1.0) is True
+    MarketDataStream._dns_log_by_symbol.clear()
 
 
 def test_classify_network_error_handles_dns_errno():

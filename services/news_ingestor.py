@@ -89,12 +89,23 @@ class EthicalNewsIngestor:
         tokens: Iterable[str],
         start_ts: int,
         end_ts: int,
+        deadline: Optional[float] = None,
     ) -> List[dict]:
         keyword_set = {token.lower() for token in tokens if token}
         rows: List[dict] = []
         for source in self.sources:
+            if deadline and (deadline - time.time()) <= 0:
+                break
+            remaining = None
+            if deadline:
+                remaining = max(0.0, deadline - time.time())
+                if remaining < 0.25:
+                    break
             source_keywords = keyword_set | {topic.lower() for topic in getattr(source, "topics", []) if topic}
-            entries = self._pull_entries(source)
+            timeout = None
+            if remaining is not None:
+                timeout = max(0.5, min(self._request_timeout, remaining))
+            entries = self._pull_entries(source, timeout=timeout)
             for entry in entries:
                 ts = self._entry_timestamp(entry)
                 if ts is None or ts < start_ts or ts > end_ts:
@@ -135,12 +146,13 @@ class EthicalNewsIngestor:
         *,
         tokens: Iterable[str],
         ranges: Sequence[Tuple[int, int]],
+        deadline: Optional[float] = None,
     ) -> List[dict]:
         rows: List[dict] = []
         for start_ts, end_ts in ranges:
             start_int = int(min(start_ts, end_ts))
             end_int = int(max(start_ts, end_ts))
-            rows.extend(self.harvest(tokens=tokens, start_ts=start_int, end_ts=end_int))
+            rows.extend(self.harvest(tokens=tokens, start_ts=start_int, end_ts=end_int, deadline=deadline))
         return rows
 
     def harvest_window(
@@ -149,10 +161,11 @@ class EthicalNewsIngestor:
         tokens: Iterable[str],
         start: datetime,
         end: datetime,
+        deadline: Optional[float] = None,
     ) -> List[dict]:
         start_ts = int(start.timestamp())
         end_ts = int(end.timestamp())
-        return self.harvest(tokens=tokens, start_ts=start_ts, end_ts=end_ts)
+        return self.harvest(tokens=tokens, start_ts=start_ts, end_ts=end_ts, deadline=deadline)
 
     def harvest_schedule_file(
         self,
@@ -189,9 +202,15 @@ class EthicalNewsIngestor:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _pull_entries(self, source: NewsSource) -> List[dict]:
+    def _pull_entries(self, source: NewsSource, *, timeout: Optional[float] = None) -> List[dict]:
         try:
-            entries = self._fetcher(source)
+            if timeout is not None:
+                try:
+                    entries = self._fetcher(source, timeout=timeout)  # type: ignore[misc]
+                except TypeError:
+                    entries = self._fetcher(source)
+            else:
+                entries = self._fetcher(source)
             if entries:
                 self._persist_cache(source, entries)
                 return entries
@@ -200,9 +219,10 @@ class EthicalNewsIngestor:
         cached = self._load_cache(source)
         return cached or []
 
-    def _fetch_source(self, source: NewsSource) -> List[dict]:
+    def _fetch_source(self, source: NewsSource, timeout: Optional[float] = None) -> List[dict]:
         try:
-            resp = requests.get(source.url, timeout=self._request_timeout, headers=self._http_headers)
+            effective_timeout = self._request_timeout if timeout is None else max(0.5, min(timeout, self._request_timeout))
+            resp = requests.get(source.url, timeout=effective_timeout, headers=self._http_headers)
             resp.raise_for_status()
             parsed = feedparser.parse(resp.content)
         except Exception:

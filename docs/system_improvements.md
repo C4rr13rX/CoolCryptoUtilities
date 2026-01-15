@@ -59,3 +59,7 @@ The following upgrades align with the health report requirements (accuracy acros
 14. DNS outage domain guard
    - Add `NETWORK_OUTAGE_BLOCK_REST_SAME_DOMAIN=1` to optionally pause REST polling when a websocket DNS outage affects all REST hosts on the same domain.
    - Validation: run `pytest tests/test_data_stream.py -k same_domain`.
+
+15. Offline-only market mode
+   - Set `MARKET_FORCE_OFFLINE=1` (aliases `MARKET_OFFLINE_ONLY`/`NETWORK_FORCE_OFFLINE`) to skip live websocket/REST calls and stream cached snapshots when running in restricted or DNS-impaired environments.
+   - Validation: run `pytest tests/test_data_stream.py -k force_offline_skips_network`.
