@@ -16,6 +16,64 @@ def is_test_env() -> bool:
 _ALLOW_FLAG = "ALLOW_DOTENV_LOADING"
 _SECURE_ENV_FLAG = "SECURE_ENV_HYDRATED"
 
+
+def _bool_env(value: str | None) -> bool:
+    return (value or "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _postgres_connectable() -> tuple[bool, str]:
+    try:
+        import psycopg
+    except Exception as exc:
+        return False, f"psycopg unavailable: {exc}"
+    try:
+        timeout = int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "3") or "3")
+    except Exception:
+        timeout = 3
+    try:
+        conn = psycopg.connect(
+            dbname=os.getenv("POSTGRES_DB", "coolcrypto"),
+            user=os.getenv("POSTGRES_USER", "postgres"),
+            password=os.getenv("POSTGRES_PASSWORD", "postgres"),
+            host=os.getenv("POSTGRES_HOST", "127.0.0.1"),
+            port=os.getenv("POSTGRES_PORT", "5432"),
+            sslmode=os.getenv("POSTGRES_SSLMODE", "prefer"),
+            connect_timeout=timeout,
+        )
+        conn.close()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _maybe_enable_sqlite_fallback() -> None:
+    prefer_sqlite = _bool_env(os.getenv("DJANGO_PREFER_SQLITE_FALLBACK"))
+    db_vendor_env = os.getenv("DJANGO_DB_VENDOR")
+    if prefer_sqlite and not db_vendor_env:
+        os.environ["DJANGO_DB_VENDOR"] = "sqlite"
+        return
+
+    db_vendor = (db_vendor_env or "postgres").lower()
+    if db_vendor != "postgres":
+        return
+
+    if _bool_env(os.getenv("REQUIRE_POSTGRES") or os.getenv("STRICT_POSTGRES")):
+        return
+
+    allow_fallback = _bool_env(os.getenv("ALLOW_SQLITE_FALLBACK")) or prefer_sqlite
+    host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+    local_host = host in {"127.0.0.1", "localhost"}
+    if not (allow_fallback or local_host):
+        return
+
+    ok, error = _postgres_connectable()
+    if ok:
+        return
+    os.environ["DJANGO_DB_VENDOR"] = "sqlite"
+    os.environ["ALLOW_SQLITE_FALLBACK"] = "1"
+    sys.stderr.write(f"Postgres unavailable ({error}); using SQLite fallback for Django.\n")
+
+
 class EnvLoader:
     """Robust .env loader you can import anywhere."""
     @staticmethod
@@ -77,6 +135,9 @@ class EnvLoader:
                     break
             except Exception:
                 pass
+
+        if not testing:
+            _maybe_enable_sqlite_fallback()
 
         # 3) hydrate from secure settings (Postgres-backed secrets) if available.
         #    Do this once per process to avoid repeated DB hits.
