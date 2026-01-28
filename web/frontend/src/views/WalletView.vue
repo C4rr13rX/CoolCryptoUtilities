@@ -182,6 +182,34 @@
       </form>
     </section>
   </div>
+  <TradingStartupWizard
+    v-if="wizardSteps.length"
+    v-model:open="wizardOpen"
+    :steps="wizardSteps"
+    title="Trading Launch Checklist"
+    subtitle="Finish the missing wallet steps to unlock ghost + live trading."
+    eyebrow="Wallet Wizard"
+  >
+    <template #step-mnemonic>
+      <div class="wizard-field">
+        <label for="wizard-mnemonic">Recovery phrase</label>
+        <textarea
+          id="wizard-mnemonic"
+          v-model="wizardMnemonicInput"
+          rows="3"
+          placeholder="problem tube idea ..."
+        ></textarea>
+        <div class="wizard-actions">
+          <button class="btn" type="button" @click="saveWizardMnemonic" :disabled="!wizardMnemonicInput.trim()">
+            Save Phrase
+          </button>
+          <button class="btn ghost" type="button" @click="clearWizardMnemonic">
+            Clear
+          </button>
+        </div>
+      </div>
+    </template>
+  </TradingStartupWizard>
 </template>
 
 <script setup lang="ts">
@@ -189,6 +217,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useDashboardStore } from '@/stores/dashboard';
 import { useWalletStore } from '@/stores/wallet';
 import AutomationConsoleStack from '@/components/AutomationConsoleStack.vue';
+import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
 
 const dashboard = useDashboardStore();
 const wallet = useWalletStore();
@@ -198,6 +227,8 @@ const activeAction = ref('');
 const statusTimer = ref<number>();
 const consoleTimer = ref<number>();
 const consoleBusy = ref(false);
+const wizardOpen = ref(true);
+const wizardMnemonicInput = ref('');
 
 const walletBalances = computed(() => wallet.balances);
 const transferEntries = computed(() => Object.entries(wallet.transfers || {}));
@@ -214,6 +245,47 @@ const workerSummary = computed(() => {
 });
 
 const currentAction = computed(() => wallet.actions.find((action: any) => action.name === activeAction.value));
+
+type WizardStep = {
+  id: string;
+  title: string;
+  description: string;
+  detail?: string;
+  ctaLabel?: string;
+  ctaAction?: () => void;
+  tone?: 'info' | 'warning' | 'critical' | 'success';
+};
+
+const wizardSteps = computed<WizardStep[]>(() => {
+  const steps: WizardStep[] = [];
+  const hasMnemonic = Boolean(wallet.mnemonicPreview);
+  const productionKnown = wallet.status !== null;
+  const productionRunning = Boolean(wallet.status?.production?.running);
+
+  if (!hasMnemonic) {
+    steps.push({
+      id: 'mnemonic',
+      title: 'Add wallet recovery phrase',
+      description: 'Live trading needs your wallet seed stored in the secure vault.',
+      detail: 'This populates the MNEMONIC secret for automated signing.',
+      tone: 'critical',
+    });
+  }
+
+  if (productionKnown && !productionRunning) {
+    steps.push({
+      id: 'production',
+      title: 'Start live trading engine',
+      description: 'The production manager is offline, so trades cannot execute yet.',
+      detail: 'Kick off the production supervisor once the wallet + readiness gates are clear.',
+      ctaLabel: 'Start Production',
+      ctaAction: () => startProduction(),
+      tone: 'warning',
+    });
+  }
+
+  return steps;
+});
 
 function ensureForm(action: any) {
   if (!formState[action.name]) {
@@ -252,6 +324,28 @@ async function saveMnemonic() {
 async function clearMnemonic() {
   mnemonicInput.value = '';
   await wallet.saveMnemonic(null);
+}
+
+async function saveWizardMnemonic() {
+  const value = wizardMnemonicInput.value.trim();
+  if (!value) return;
+  await wallet.saveMnemonic(value);
+  wizardMnemonicInput.value = '';
+}
+
+async function clearWizardMnemonic() {
+  wizardMnemonicInput.value = '';
+  await wallet.saveMnemonic(null);
+}
+
+async function startProduction() {
+  if (wallet.running) return;
+  try {
+    await wallet.run('start_production');
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('Failed to start production manager', error);
+  }
 }
 
 async function refreshConsoleLogs() {
@@ -540,5 +634,32 @@ function truncateHash(hash: string | undefined) {
 .actions {
   display: flex;
   gap: 0.8rem;
+}
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.wizard-field label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.wizard-field textarea {
+  border-radius: 12px;
+  border: 1px solid rgba(127, 176, 255, 0.3);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f4f6fa;
+  padding: 0.6rem 0.7rem;
+}
+
+.wizard-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 </style>

@@ -5,8 +5,8 @@
         <h1>Pipeline Status</h1>
         <p>Live telemetry from the training loop, ghost trading supervisor, and feedback audits.</p>
       </div>
-      <button type="button" class="btn" @click="store.refreshAll" :disabled="store.loading">
-        {{ store.loading ? 'Refreshing…' : 'Refresh Now' }}
+      <button type="button" class="btn" @click="refreshAll" :disabled="store.loading || readinessLoading">
+        {{ store.loading || readinessLoading ? 'Refreshing…' : 'Refresh Now' }}
       </button>
     </header>
 
@@ -165,13 +165,28 @@
       </article>
     </section>
   </div>
+  <TradingStartupWizard
+    v-if="wizardSteps.length"
+    v-model:open="wizardOpen"
+    :steps="wizardSteps"
+    title="Trading Launch Checklist"
+    subtitle="Unlock ghost + live trading by clearing the missing signals."
+    eyebrow="Pipeline Wizard"
+  />
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { fetchPipelineReadiness } from '@/api';
 import { useDashboardStore } from '@/stores/dashboard';
+import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
 
 const store = useDashboardStore();
+const router = useRouter();
+const readinessPayload = ref<Record<string, any>>({});
+const readinessLoading = ref(false);
+const wizardOpen = ref(true);
 
 const stageSummary = computed(() => store.dashboard?.metrics_by_stage || []);
 const metrics = computed(() => (store.latestMetrics || []).slice(0, 20));
@@ -181,8 +196,9 @@ const advisories = computed(() => (store.advisories || []).slice(0, 8));
 const ghostTrades = computed(() => (store.recentTrades || []).filter((entry: any) => entry.wallet === 'ghost').slice(0, 12));
 const liveTrades = computed(() => (store.recentTrades || []).filter((entry: any) => entry.wallet !== 'ghost').slice(0, 12));
 
+const readinessReport = computed(() => readinessPayload.value?.live_readiness || store.dashboard?.live_readiness || {});
 const stageProgress = computed(() => {
-  const readiness = store.dashboard?.live_readiness || {};
+  const readiness = readinessReport.value || {};
   const stages = [
     { key: 'ingest', label: 'Data Ingest', done: Boolean(stageSummary.value.length || metrics.value.length) },
     { key: 'training', label: 'Training', done: Boolean(readiness.samples || readiness.precision) },
@@ -217,6 +233,145 @@ function summariseMeta(meta: any) {
   const entries = Object.entries(meta).slice(0, 2).map(([key, value]) => `${key}:${value}`);
   return entries.join(' · ');
 }
+
+type WizardStep = {
+  id: string;
+  title: string;
+  description: string;
+  detail?: string;
+  ctaLabel?: string;
+  ctaAction?: () => void;
+  tone?: 'info' | 'warning' | 'critical' | 'success';
+};
+
+const wizardSteps = computed<WizardStep[]>(() => {
+  const steps: WizardStep[] = [];
+  const readiness = readinessReport.value || {};
+  const hasReadiness = Object.keys(readiness || {}).length > 0;
+  const samples = Number(readiness.samples || readiness.mini_samples || 0);
+  const precision = Number(readiness.precision || readiness.mini_precision || 0);
+  const recall = Number(readiness.recall || readiness.mini_recall || 0);
+  const hasSignals = samples > 0 || precision > 0 || recall > 0;
+  const reason = String(readiness.reason || '');
+  const reasonLower = reason.toLowerCase();
+  const ghostReason = String(readiness.ghost_reason || '').trim();
+
+  if (!hasReadiness) {
+    steps.push({
+      id: 'readiness',
+      title: 'Generate readiness snapshot',
+      description: 'Run the training loop once so the pipeline can calculate ghost + live readiness.',
+      detail: 'No live_readiness report detected yet.',
+      ctaLabel: 'Open Model Lab',
+      ctaAction: () => router.push('/lab'),
+      tone: 'warning',
+    });
+    return steps;
+  }
+
+  if (!hasSignals) {
+    steps.push({
+      id: 'signals',
+      title: 'Collect training signals',
+      description: 'We need live samples before the ghost gate can unlock.',
+      detail: 'Train or ingest fresh data so samples + precision can populate.',
+      ctaLabel: 'Open Data Lab',
+      ctaAction: () => router.push('/datalab'),
+      tone: 'warning',
+    });
+  }
+
+  if (readiness.mini_ready === false) {
+    steps.push({
+      id: 'ghost',
+      title: 'Ghost trading gate',
+      description: 'Ghost trading readiness is still below target.',
+      detail: readiness.mini_reason ? `Reason: ${formatReason(readiness.mini_reason)}` : undefined,
+      ctaLabel: 'Review Metrics',
+      ctaAction: () => router.push('/telemetry'),
+      tone: 'warning',
+    });
+  }
+
+  if (readiness.ghost_ready === false || reasonLower.startsWith('ghost_')) {
+    steps.push({
+      id: 'ghost-health',
+      title: 'Ghost performance health',
+      description: 'Ghost trading performance needs to stabilize before live promotion.',
+      detail: ghostReason ? `Reason: ${formatReason(ghostReason)}` : undefined,
+      ctaLabel: 'Open Ghost Logs',
+      ctaAction: () => router.push('/guardian'),
+      tone: 'warning',
+    });
+  }
+
+  const walletState = readiness.wallet_state || {};
+  if (walletState.sparse) {
+    const detailParts: string[] = [];
+    if (walletState.stable_deficit_usd) {
+      detailParts.push(`Stable deficit: ${formatUsd(walletState.stable_deficit_usd)}`);
+    }
+    if (walletState.native_buffer_gap_usd) {
+      detailParts.push(`Gas buffer gap: ${formatUsd(walletState.native_buffer_gap_usd)}`);
+    }
+    if (Array.isArray(walletState.sparse_reasons) && walletState.sparse_reasons.length) {
+      detailParts.push(`Signals: ${walletState.sparse_reasons.join(', ')}`);
+    }
+    steps.push({
+      id: 'funding',
+      title: 'Fund trading wallet',
+      description: 'Live trading needs stablecoin + gas buffers.',
+      detail: detailParts.join(' | '),
+      ctaLabel: 'Go to Wallet',
+      ctaAction: () => router.push('/wallet'),
+      tone: 'critical',
+    });
+  }
+
+  if (readiness.ready === false && !reasonLower.startsWith('ghost_') && !reasonLower.startsWith('sparse_wallet')) {
+    steps.push({
+      id: 'live-ready',
+      title: 'Live readiness gate',
+      description: 'Live trading is still locked by the readiness gate.',
+      detail: reason ? `Reason: ${formatReason(reason)}` : undefined,
+      ctaLabel: 'Refresh Readiness',
+      ctaAction: () => refreshAll(),
+      tone: 'info',
+    });
+  }
+
+  return steps;
+});
+
+async function loadReadiness() {
+  readinessLoading.value = true;
+  try {
+    const payload = await fetchPipelineReadiness();
+    readinessPayload.value = payload || {};
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn('Failed to load pipeline readiness', error);
+  } finally {
+    readinessLoading.value = false;
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([store.refreshAll(), loadReadiness()]);
+}
+
+function formatReason(value: string) {
+  return value.replace(/_/g, ' ').trim();
+}
+
+function formatUsd(value: number) {
+  const num = Number(value || 0);
+  return Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(num);
+}
+
+onMounted(() => {
+  loadReadiness();
+});
 </script>
 
 <style scoped>

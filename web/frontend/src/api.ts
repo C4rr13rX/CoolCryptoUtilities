@@ -34,6 +34,11 @@ export async function fetchDashboardSummary() {
   return data;
 }
 
+export async function fetchPipelineReadiness() {
+  const { data } = await api.get('/telemetry/pipeline/readiness/');
+  return data;
+}
+
 export async function fetchLatestStreams(symbols?: string[]) {
   const params = new URLSearchParams();
   symbols?.forEach((symbol) => params.append('symbol', symbol));
