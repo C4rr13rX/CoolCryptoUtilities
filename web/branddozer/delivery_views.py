@@ -115,12 +115,25 @@ class DeliveryRunListView(APIView):
         prompt = (data.get("prompt") or "").strip()
         mode = data.get("mode") or "auto"
         research_mode = bool(data.get("research") or data.get("research_mode"))
+        team_mode = data.get("team_mode")
+        codex_model = data.get("codex_model")
+        codex_reasoning = data.get("codex_reasoning") or data.get("reasoning_effort")
+        smoke_test_cmd = data.get("smoke_test_cmd")
         if not project_id:
             return Response({"detail": "project_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         if not prompt:
             return Response({"detail": "prompt is required"}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            run = delivery_orchestrator.create_run(project_id, prompt, mode=mode, research_mode=research_mode)
+            run = delivery_orchestrator.create_run(
+                project_id,
+                prompt,
+                mode=mode,
+                research_mode=research_mode,
+                team_mode=team_mode,
+                codex_model=codex_model,
+                codex_reasoning=codex_reasoning,
+                smoke_test_cmd=smoke_test_cmd,
+            )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         job = enqueue_job(

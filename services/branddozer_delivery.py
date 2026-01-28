@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import shlex
+import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -94,6 +95,8 @@ PHASES = [
 
 SESSION_LOG_ROOT = Path("runtime/branddozer/sessions")
 SESSION_LOG_ROOT.mkdir(parents=True, exist_ok=True)
+SOLO_PLAN_ROOT = Path("runtime/branddozer/solo_plans")
+SOLO_PLAN_ROOT.mkdir(parents=True, exist_ok=True)
 WORKTREE_LOCK = threading.Lock()
 PLACEHOLDER_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")
 _SCHEMA_READY = False
@@ -136,6 +139,153 @@ def _record_intent(run: DeliveryRun, backlog_item: BacklogItem, codex_settings: 
     except Exception:
         return
 
+
+_REASONING_MAP = {
+    "extra_high": "xhigh",
+    "xhigh": "xhigh",
+    "xh": "xhigh",
+    "high": "high",
+    "h": "high",
+    "medium": "medium",
+    "med": "medium",
+    "m": "medium",
+    "low": "low",
+    "l": "low",
+}
+
+
+def _normalize_reasoning(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    key = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    return _REASONING_MAP.get(key, str(value).strip())
+
+
+def _codex_settings_for_run(run: DeliveryRun, role: str) -> Dict[str, Any]:
+    """
+    Merge role defaults with run overrides while forcing full agent access.
+    """
+    settings = codex_settings_for_role(role)
+    ctx = run.context or {}
+    model = (ctx.get("codex_model") or ctx.get("model") or "").strip()
+    if model:
+        settings["model"] = model
+    reasoning = _normalize_reasoning(ctx.get("codex_reasoning") or ctx.get("reasoning_effort"))
+    if reasoning:
+        settings["reasoning_effort"] = reasoning
+    # Enforce full agent access regardless of overrides.
+    settings["sandbox_mode"] = "danger-full-access"
+    settings["approval_policy"] = "never"
+    settings["bypass_sandbox_confirm"] = True
+    return settings
+
+
+def _solo_plan_dir(run_id: uuid.UUID) -> Path:
+    return SOLO_PLAN_ROOT / str(run_id)
+
+
+def _solo_plan_path(run_id: uuid.UUID) -> Path:
+    return _solo_plan_dir(run_id) / "plan.json"
+
+
+def _solo_history_path(run_id: uuid.UUID) -> Path:
+    return _solo_plan_dir(run_id) / "history.jsonl"
+
+
+def _load_solo_plan(run_id: uuid.UUID) -> Dict[str, Any]:
+    path = _solo_plan_path(run_id)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_solo_plan(run_id: uuid.UUID, data: Dict[str, Any]) -> None:
+    plan_dir = _solo_plan_dir(run_id)
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    path = _solo_plan_path(run_id)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _append_solo_history(run_id: uuid.UUID, event: Dict[str, Any]) -> None:
+    history_path = _solo_history_path(run_id)
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(event)
+    payload.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    with history_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+
+
+def _normalize_plan_steps(raw: Any) -> List[Dict[str, Any]]:
+    steps: List[Dict[str, Any]] = []
+    if isinstance(raw, list):
+        for idx, item in enumerate(raw, start=1):
+            if isinstance(item, str):
+                steps.append({"id": idx, "title": item.strip(), "status": "todo"})
+            elif isinstance(item, dict):
+                title = (item.get("title") or item.get("step") or item.get("name") or f"Step {idx}").strip()
+                status = (item.get("status") or "todo").strip().lower()
+                steps.append({"id": item.get("id") or idx, "title": title, "status": status, "detail": item.get("detail")})
+    elif isinstance(raw, dict):
+        for idx, (key, val) in enumerate(raw.items(), start=1):
+            title = str(key).strip()
+            detail = val if isinstance(val, str) else json.dumps(val)
+            steps.append({"id": idx, "title": title, "status": "todo", "detail": detail})
+    return steps
+
+
+def _resolve_smoke_command(run: DeliveryRun, root: Path) -> Optional[List[str]]:
+    ctx = run.context or {}
+    raw = (ctx.get("smoke_test_cmd") or os.getenv("BRANDDOZER_SOLO_SMOKE_CMD") or "").strip()
+    if raw.lower() in {"off", "false", "no", "0", "skip", "none"}:
+        return None
+    if raw:
+        return shlex.split(raw)
+    # Default smoke test if a tests directory exists.
+    if (root / "tests").exists():
+        return [sys.executable, "-m", "pytest", "-q", "--maxfail=1", "--disable-warnings"]
+    return None
+
+
+def _run_smoke_test(run: DeliveryRun, root: Path, session: Optional[DeliverySession] = None) -> Dict[str, Any]:
+    cmd = _resolve_smoke_command(run, root)
+    if not cmd:
+        return {"status": "skipped", "command": None}
+    start = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as exc:
+        return {"status": "error", "command": cmd, "error": str(exc)}
+    duration_ms = int((time.time() - start) * 1000)
+    result = {
+        "status": "passed" if proc.returncode == 0 else "failed",
+        "command": cmd,
+        "exit_code": proc.returncode,
+        "duration_ms": duration_ms,
+        "stdout": (proc.stdout or "")[-8000:],
+        "stderr": (proc.stderr or "")[-8000:],
+    }
+    try:
+        DeliveryArtifact.objects.create(
+            project=run.project,
+            run=run,
+            session=session,
+            kind="solo_smoke",
+            title="Solo smoke test",
+            content=json.dumps(result, indent=2),
+            path="",
+        )
+    except Exception:
+        pass
+    return result
 
 @dataclass(frozen=True)
 class GateDefinition:
@@ -560,7 +710,7 @@ def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
     except Exception:
         return
     _append_session_log(session, f"Analyzing stuck state: {reason}")
-    codex_settings = codex_settings_for_role("manager")
+    codex_settings = _codex_settings_for_run(run, "manager")
     try:
         codex_timeout = int(os.getenv("UNSTICK_TIMEOUT", "180"))
     except Exception:
@@ -1349,6 +1499,10 @@ class DeliveryOrchestrator:
         mode: str = "auto",
         run_id: Optional[str] = None,
         research_mode: bool = False,
+        team_mode: Optional[str] = None,
+        codex_model: Optional[str] = None,
+        codex_reasoning: Optional[str] = None,
+        smoke_test_cmd: Optional[str] = None,
     ) -> DeliveryRun:
         _ensure_branddozer_schema("create_run")
         project = BrandDozerProjectLookup.get_project(project_id)
@@ -1374,6 +1528,14 @@ class DeliveryOrchestrator:
             ctx.pop("status_detail", None)
             if research_mode:
                 ctx["research_mode"] = True
+            if team_mode:
+                ctx["team_mode"] = team_mode
+            if codex_model:
+                ctx["codex_model"] = codex_model
+            if codex_reasoning:
+                ctx["codex_reasoning"] = codex_reasoning
+            if smoke_test_cmd:
+                ctx["smoke_test_cmd"] = smoke_test_cmd
             run.context = ctx
             run.save(
                 update_fields=[
@@ -1393,6 +1555,14 @@ class DeliveryOrchestrator:
             )
         else:
             context = {"research_mode": True} if research_mode else {}
+            if team_mode:
+                context["team_mode"] = team_mode
+            if codex_model:
+                context["codex_model"] = codex_model
+            if codex_reasoning:
+                context["codex_reasoning"] = codex_reasoning
+            if smoke_test_cmd:
+                context["smoke_test_cmd"] = smoke_test_cmd
             run = DeliveryRun.objects.create(
                 id=run_uuid,
                 project=project,
@@ -1417,8 +1587,22 @@ class DeliveryOrchestrator:
         job_user_id: Optional[str] = None,
         github_account_id: Optional[str] = None,
         research_mode: bool = False,
+        team_mode: Optional[str] = None,
+        codex_model: Optional[str] = None,
+        codex_reasoning: Optional[str] = None,
+        smoke_test_cmd: Optional[str] = None,
     ) -> DeliveryRun:
-        run = self.create_run(project_id, prompt, mode=mode, run_id=run_id, research_mode=research_mode)
+        run = self.create_run(
+            project_id,
+            prompt,
+            mode=mode,
+            run_id=run_id,
+            research_mode=research_mode,
+            team_mode=team_mode,
+            codex_model=codex_model,
+            codex_reasoning=codex_reasoning,
+            smoke_test_cmd=smoke_test_cmd,
+        )
         if job_user_id or github_account_id:
             context = dict(run.context or {})
             if job_user_id:
@@ -1439,6 +1623,201 @@ class DeliveryOrchestrator:
 
     def run_ui_review(self, run_id: uuid.UUID, manual: bool = True) -> None:
         self._run_ui_review(run_id, manual)
+
+    def _run_solo_pipeline(self, run: DeliveryRun, root: Path) -> None:
+        run.status = "running"
+        run.phase = "execution"
+        if not run.started_at:
+            run.started_at = timezone.now()
+        run.save(update_fields=["status", "phase", "started_at"])
+
+        session = DeliverySession.objects.create(
+            project=run.project,
+            run=run,
+            role="dev",
+            name="Solo Codex Session",
+            status="running",
+            workspace_path=str(root),
+            last_heartbeat=timezone.now(),
+            meta={"mode": "solo"},
+        )
+        context = dict(run.context or {})
+        context["solo_plan_path"] = str(_solo_plan_path(run.id))
+        context["solo_history_path"] = str(_solo_history_path(run.id))
+        run.context = context
+        run.save(update_fields=["context"])
+
+        codex_settings = _codex_settings_for_run(run, "worker")
+        codex = CodexSession(
+            session_name=f"solo-{run.id}",
+            transcript_dir=Path("runtime/branddozer/transcripts") / str(run.id),
+            read_timeout_s=None,
+            workdir=str(root),
+            **codex_settings,
+        )
+        _log_codex_choice(session, codex_settings, "worker")
+
+        max_iters = int(os.getenv("BRANDDOZER_SOLO_MAX_ITERS", "12"))
+        plan = _load_solo_plan(run.id)
+        if not plan:
+            _append_session_log(session, "Generating solo plan.")
+            plan_prompt = (
+                "You are the solo delivery agent. Create a step-by-step plan to complete the project in this repo. "
+                "Return ONLY JSON with keys: plan (list of steps), next_step, done (bool), summary, suggestions. "
+                "Each step should be short and testable. Include a smoke-test step when feasible.\n"
+                f"User prompt:\n{run.prompt}\n"
+            )
+            output = codex.send(plan_prompt, stream=True)
+            exhausted = _codex_quota_exhausted(output)
+            if exhausted:
+                _pause_run_for_codex(run, session, exhausted)
+                session.status = "blocked"
+                session.completed_at = timezone.now()
+                session.save(update_fields=["status", "completed_at"])
+                raise StopDelivery(exhausted)
+            refusal = _codex_refusal(output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                session.status = "blocked"
+                session.completed_at = timezone.now()
+                session.save(update_fields=["status", "completed_at"])
+                raise StopDelivery(refusal)
+            payload = _extract_json_payload(output)
+            steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps"))
+            plan = {
+                "version": 1,
+                "status": "planning",
+                "summary": payload.get("summary") or "",
+                "steps": steps,
+                "next_step": payload.get("next_step") or "",
+                "done": bool(payload.get("done")),
+                "suggestions": payload.get("suggestions") or "",
+            }
+            _write_solo_plan(run.id, plan)
+            _append_solo_history(run.id, {"event": "plan_generated", "output": output})
+            try:
+                DeliveryArtifact.objects.create(
+                    project=run.project,
+                    run=run,
+                    session=session,
+                    kind="solo_plan",
+                    title="Solo plan",
+                    content=json.dumps(plan, indent=2),
+                    path=str(_solo_plan_path(run.id)),
+                )
+            except Exception:
+                pass
+
+        for _ in range(max_iters):
+            self._check_stop(run, session)
+            plan = _load_solo_plan(run.id) or plan
+            if plan.get("done"):
+                break
+            steps = plan.get("steps") or []
+            next_step = plan.get("next_step") or ""
+            if not next_step and steps:
+                for step in steps:
+                    if str(step.get("status") or "").lower() not in {"done", "complete"}:
+                        next_step = step.get("title") or ""
+                        break
+            if not next_step:
+                plan["done"] = True
+                plan["suggestions"] = plan.get("suggestions") or "No remaining steps. Consider closing the run."
+                _write_solo_plan(run.id, plan)
+                _append_solo_history(run.id, {"event": "plan_completed", "note": "no next step"})
+                break
+
+            _append_session_log(session, f"Executing step: {next_step}")
+            _set_run_note(run, "Solo", f"Executing: {next_step}")
+            exec_prompt = (
+                "You are the solo delivery agent. Execute the next step in the repo. "
+                "Follow the existing project conventions, run a quick smoke test when done, "
+                "and summarize what changed. If blocked, explain why.\n"
+                f"Current plan summary: {plan.get('summary')}\n"
+                f"Next step: {next_step}\n"
+            )
+            output = codex.send(exec_prompt, stream=True)
+            exhausted = _codex_quota_exhausted(output)
+            if exhausted:
+                _pause_run_for_codex(run, session, exhausted)
+                raise StopDelivery(exhausted)
+            refusal = _codex_refusal(output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                raise StopDelivery(refusal)
+            try:
+                DeliveryArtifact.objects.create(
+                    project=run.project,
+                    run=run,
+                    session=session,
+                    kind="solo_step",
+                    title=f"Solo step: {next_step[:80]}",
+                    content=output,
+                    path=str(codex.transcript_path),
+                )
+            except Exception:
+                pass
+
+            smoke_result = _run_smoke_test(run, root, session=session)
+            _append_session_log(session, f"Smoke test: {smoke_result.get('status')}")
+
+            reflect_prompt = (
+                "You are the solo delivery agent maintaining the plan. "
+                "Update the plan status and select the next step. "
+                "Return ONLY JSON with keys: plan, next_step, done, summary, suggestions.\n"
+                f"Previous plan: {json.dumps(plan, indent=2)}\n"
+                f"Last step output summary:\n{output[-1500:]}\n"
+                f"Smoke test result: {smoke_result.get('status')}\n"
+            )
+            reflect_output = codex.send(reflect_prompt, stream=True)
+            exhausted = _codex_quota_exhausted(reflect_output)
+            if exhausted:
+                _pause_run_for_codex(run, session, exhausted)
+                raise StopDelivery(exhausted)
+            refusal = _codex_refusal(reflect_output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                raise StopDelivery(refusal)
+            payload = _extract_json_payload(reflect_output)
+            steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps") or plan.get("steps"))
+            plan = {
+                "version": plan.get("version", 1),
+                "status": "execution",
+                "summary": payload.get("summary") or plan.get("summary") or "",
+                "steps": steps,
+                "next_step": payload.get("next_step") or "",
+                "done": bool(payload.get("done")),
+                "suggestions": payload.get("suggestions") or "",
+            }
+            _write_solo_plan(run.id, plan)
+            _append_solo_history(
+                run.id,
+                {
+                    "event": "plan_updated",
+                    "next_step": plan.get("next_step"),
+                    "done": plan.get("done"),
+                    "summary": plan.get("summary"),
+                },
+            )
+            run.iteration += 1
+            run.save(update_fields=["iteration"])
+
+        plan = _load_solo_plan(run.id) or plan
+        if plan.get("done"):
+            suggestion = plan.get("suggestions") or "Solo plan completed."
+            _set_run_note(run, "Solo", suggestion)
+            ctx = dict(run.context or {})
+            ctx["solo_next_suggestion"] = suggestion
+            run.context = ctx
+            run.status = "complete" if not run.acceptance_required else "awaiting_acceptance"
+            run.phase = "awaiting_acceptance" if run.acceptance_required else "release"
+            run.completed_at = timezone.now() if not run.acceptance_required else None
+            run.save(update_fields=["status", "phase", "completed_at", "context"])
+            session.status = "done"
+        else:
+            session.status = "blocked"
+        session.completed_at = timezone.now()
+        session.save(update_fields=["status", "completed_at"])
 
     def _run_pipeline(self, run_id: uuid.UUID) -> None:
         close_old_connections()
@@ -1464,6 +1843,37 @@ class DeliveryOrchestrator:
         project = run.project
         setpoints = load_setpoints()
         root = Path(project.root_path)
+        team_mode = str((run.context or {}).get("team_mode") or "full").strip().lower()
+        if team_mode in {"solo", "single", "one"}:
+            try:
+                self._run_solo_pipeline(run, root)
+            except StopDelivery as exc:
+                run.status = "blocked"
+                run.phase = "stopped"
+                run.error = str(exc)
+                _set_run_note(run, "Stopped", str(exc))
+            except Exception as exc:
+                run.status = "error"
+                run.phase = "gates"
+                run.error = str(exc)
+                _set_run_note(run, "Error", str(exc))
+            if run.status in {"blocked", "error"} and not run.completed_at:
+                run.completed_at = timezone.now()
+            run.save(update_fields=["status", "phase", "completed_at", "error"])
+            delivery_project = DeliveryProject.objects.filter(project=project).first()
+            if delivery_project:
+                if run.status in {"complete", "awaiting_acceptance"}:
+                    delivery_project.status = "complete"
+                elif run.status == "blocked":
+                    delivery_project.status = "blocked"
+                elif run.status == "error":
+                    delivery_project.status = "error"
+                else:
+                    delivery_project.status = "running"
+                delivery_project.active_run = run
+                delivery_project.save(update_fields=["status", "active_run", "updated_at"])
+            close_old_connections()
+            return
         orchestrator_session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -2458,7 +2868,7 @@ class DeliveryOrchestrator:
         run.phase = "ux_audit"
         run.save(update_fields=["phase"])
         _set_run_note(run, "UX Audit", "Running UX auditor feedback loop")
-        codex_settings = codex_settings_for_role("auditor")
+        codex_settings = _codex_settings_for_run(run, "auditor")
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -2738,7 +3148,7 @@ class DeliveryOrchestrator:
             self._execution_loop(run, root, sprint)
 
     def _run_task_session(self, run: DeliveryRun, root: Path, backlog_item: BacklogItem) -> str:
-        codex_settings = codex_settings_for_role("worker")
+        codex_settings = _codex_settings_for_run(run, "worker")
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -3001,7 +3411,7 @@ class DeliveryOrchestrator:
                 )
             return
         _set_run_note(run, "UI Evidence", "Capturing UI snapshots")
-        codex_settings = codex_settings_for_role("auditor")
+        codex_settings = _codex_settings_for_run(run, "auditor")
         try:
             session = DeliverySession.objects.create(
                 project=run.project,
@@ -3524,7 +3934,7 @@ class DeliveryOrchestrator:
                     transcript_dir=Path("runtime/branddozer/transcripts"),
                     read_timeout_s=read_timeout_s,
                     workdir=str(root),
-                    **codex_settings_for_role("planner"),
+                    **_codex_settings_for_run(run, "planner"),
                 )
                 full_prompt = (
                     f"{prompt}\nUser prompt: {run.prompt}\n"
@@ -3556,7 +3966,7 @@ class DeliveryOrchestrator:
                     raise Exception(refusal)
                 if session:
                     _append_session_log(session, f"{fallback_kind} generated.")
-                    _log_codex_choice(session, codex_settings_for_role("planner"), "planner")
+                    _log_codex_choice(session, _codex_settings_for_run(run, "planner"), "planner")
                 DeliveryArtifact.objects.create(
                     project=run.project,
                     run=run,

@@ -446,7 +446,15 @@ export async function fetchBrandGithubPublishStatus(jobId: string) {
   return data;
 }
 
-export async function startBrandDeliveryRun(payload: { project_id: string; prompt: string; mode?: string }) {
+export async function startBrandDeliveryRun(payload: {
+  project_id: string;
+  prompt: string;
+  mode?: string;
+  team_mode?: string;
+  codex_model?: string;
+  codex_reasoning?: string;
+  smoke_test_cmd?: string;
+}) {
   const { data } = await api.post('/branddozer/delivery/runs/', payload, { timeout: 120000 });
   return data;
 }

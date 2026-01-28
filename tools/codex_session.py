@@ -28,24 +28,44 @@ ROLE_MODEL_MAP = {
 }
 
 ROLE_FALLBACK_MODEL = {
-    "planner": "gpt-5.1-codex",
-    "manager": "gpt-5.1-codex",
-    "auditor": "gpt-5.1-codex",
-    "qa": "gpt-5.1-codex",
-    "worker": "gpt-5.1-codex-mini",
+    "planner": "gpt-5.2-codex",
+    "manager": "gpt-5.2-codex",
+    "auditor": "gpt-5.2-codex",
+    "qa": "gpt-5.2-codex",
+    "worker": "gpt-5.2-codex",
 }
+
+_REASONING_MAP = {
+    "extra_high": "xhigh",
+    "xhigh": "xhigh",
+    "xh": "xhigh",
+    "high": "high",
+    "h": "high",
+    "medium": "medium",
+    "med": "medium",
+    "m": "medium",
+    "low": "low",
+    "l": "low",
+}
+
+
+def _normalize_reasoning(value: str) -> str:
+    key = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return _REASONING_MAP.get(key, value.strip())
 
 
 def codex_default_settings() -> dict[str, Any]:
     """
     Resolve Codex CLI settings from environment defaults.
     """
+    reasoning = _normalize_reasoning(os.getenv("CODEX_REASONING_EFFORT", "medium"))
     return {
-        "model": os.getenv("CODEX_MODEL", "gpt-5.1-codex-mini"),
-        "reasoning_effort": os.getenv("CODEX_REASONING_EFFORT", "xhigh"),
-        "sandbox_mode": os.getenv("CODEX_SANDBOX_MODE", "danger-full-access"),
-        "approval_policy": os.getenv("CODEX_APPROVAL_POLICY", "never"),
-        "bypass_sandbox_confirm": _env_bool("CODEX_BYPASS_APPROVALS", True),
+        "model": os.getenv("CODEX_MODEL", "gpt-5.2-codex"),
+        "reasoning_effort": reasoning,
+        # Always full agent access for BrandDozer sessions.
+        "sandbox_mode": "danger-full-access",
+        "approval_policy": "never",
+        "bypass_sandbox_confirm": True,
     }
 
 

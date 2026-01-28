@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+import time
+from typing import Any, List
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _tail_file(path: Path, lines: int = 200) -> List[str]:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            data = handle.readlines()
+    except Exception:
+        return []
+    return data[-lines:]
+
+
+def _fmt_ts(dt_val: Any) -> str:
+    try:
+        return dt_val.isoformat(timespec="seconds")
+    except Exception:
+        return "-"
+
+
+def setup_django(settings_module: str) -> None:
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", settings_module)
+    from services.env_loader import EnvLoader
+
+    EnvLoader.load()
+
+    import django
+
+    django.setup()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="brandozer",
+        description="BrandDozer delivery CLI. Defaults to the current working directory as the project root.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--settings", default="coolcrypto_dashboard.settings", help="Django settings module to load.")
+    parser.add_argument("--root", help="Project root path (defaults to the current working directory).")
+
+    sub = parser.add_subparsers(dest="command")
+
+    start = sub.add_parser("start", help="Kick off a delivery run with the given prompt.")
+    start.add_argument("prompt", help="User prompt for the delivery run.")
+    start.add_argument("--project-id", help="Existing BrandProject id to reuse.")
+    start.add_argument("--name", help="Project name (defaults to the directory name).")
+    start.add_argument("--mode", choices=["auto", "new", "existing"], default="auto", help="Delivery mode.")
+    start.add_argument("--default-prompt", help="Persisted default prompt for the BrandDozer project.")
+    start.add_argument("--run-id", help="Explicit delivery run id to reuse/reset.")
+    start.add_argument(
+        "--no-acceptance",
+        dest="acceptance_required",
+        action="store_false",
+        help="Mark the run complete without waiting for acceptance.",
+    )
+    start.set_defaults(acceptance_required=True)
+    start.add_argument("--github-account-id", help="GitHub account id (from BrandDozer settings) to use for repo sync.")
+    start.add_argument(
+        "--github-username",
+        help="GitHub login for an account whose stored PAT should be used for repo sync.",
+    )
+    start.add_argument(
+        "--inline-timeout",
+        type=float,
+        default=5.0,
+        help="Seconds to wait for a background worker before running the delivery inline (-1 to disable).",
+    )
+    start.add_argument(
+        "--research",
+        action="store_true",
+        help="Enable research mode (prioritize research/scraping backlog and tooling).",
+    )
+    start.add_argument(
+        "--team-mode",
+        choices=["full", "solo"],
+        default="full",
+        help="Delivery mode: full team or solo (single Codex session).",
+    )
+    start.add_argument("--codex-model", help="Override Codex model for this run (e.g. gpt-5.2-codex).")
+    start.add_argument(
+        "--codex-reasoning",
+        help="Reasoning effort (extra_high, high, medium, low). Defaults to environment settings.",
+    )
+    start.add_argument(
+        "--smoke-test-cmd",
+        help="Optional smoke test command to run after each solo step.",
+    )
+
+    runs = sub.add_parser("runs", help="List recent delivery runs.")
+    runs.add_argument("--project-id", help="Filter runs by project id.")
+    runs.add_argument("--limit", type=int, default=10, help="Number of runs to show.")
+
+    accounts = sub.add_parser("accounts", help="List configured GitHub accounts that have a stored PAT.")
+    accounts.add_argument("--username", help="Only show accounts for this Django username.")
+    accounts.add_argument("--limit", type=int, default=20, help="Maximum number of accounts to show.")
+
+    users = sub.add_parser("users", help="List Django users that have stored GitHub personal access tokens.")
+    users.add_argument("--limit", type=int, default=20, help="Maximum number of users to show.")
+
+    status = sub.add_parser("status", help="Show a single delivery run.")
+    status.add_argument("run_id", help="Delivery run id (UUID).")
+
+    workflow = sub.add_parser("workflow", help="Inspect workflow timeline for a delivery run.")
+    workflow.add_argument("--run-id", help="Delivery run id (UUID). Defaults to the latest run.")
+    workflow.add_argument("--show-gates", action="store_true", help="Summarize recent gate outcomes.")
+    workflow.add_argument("--history-limit", type=int, default=20, help="Maximum history entries to display.")
+
+    tail = sub.add_parser("tail", help="Tail the latest log for a run (orchestrator first).")
+    tail.add_argument("run_id", help="Delivery run id (UUID).")
+    tail.add_argument("--lines", type=int, default=80, help="Number of log lines to show.")
+
+    projects = sub.add_parser("projects", help="List known BrandDozer projects.")
+    projects.add_argument("--limit", type=int, default=20, help="Number of projects to show.")
+
+    stop = sub.add_parser("stop", help="Request a delivery run to stop and cancel its job if queued.")
+    stop.add_argument("run_id", help="Delivery run id (UUID).")
+
+    prompt = sub.add_parser("prompt", help="Send a live prompt to the project manager for an active run.")
+    prompt.add_argument("run_id", help="Delivery run id (UUID).")
+    prompt.add_argument("prompt", help="Request to be queued for the run (will be converted into backlog work).")
+
+    return parser
+
+
+def main(argv: List[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    setup_django(args.settings)
+
+    from django.utils import timezone
+    from django.contrib.auth import get_user_model
+
+    from branddozer.models import BackgroundJob, DeliveryRun, DeliverySession, GateRun
+    from services.branddozer_delivery import delivery_orchestrator, PHASES as DELIVERY_PHASES
+    from services.branddozer_github import list_github_accounts
+    from services.branddozer_jobs import enqueue_job, update_job
+    from services.branddozer_state import list_projects, save_project
+
+    def _resolve_project(payload: dict[str, Any]) -> dict[str, Any]:
+        project = save_project(payload)
+        return project
+
+    UserModel = get_user_model()
+    username_field = getattr(UserModel, "USERNAME_FIELD", "username")
+
+    def handle_start(cmd_args: argparse.Namespace) -> int:
+        root = Path(cmd_args.root or os.getcwd()).expanduser().resolve()
+        name = cmd_args.name or root.name
+        project_payload: dict[str, Any] = {"root_path": str(root), "name": name}
+        if cmd_args.project_id:
+            project_payload["id"] = cmd_args.project_id
+        if cmd_args.default_prompt:
+            project_payload["default_prompt"] = cmd_args.default_prompt
+        project = _resolve_project(project_payload)
+        github_account_id = cmd_args.github_account_id
+        job_user = None
+        resolved_account = None
+        if github_account_id or cmd_args.github_username:
+            try:
+                job_user, resolved_account = _find_user_for_github_account(
+                    github_account_id, cmd_args.github_username
+                )
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            github_account_id = resolved_account["id"]
+            github_username = (resolved_account.get("username") or "<unknown>")
+            print(
+                f"Using GitHub account {github_account_id} (github={github_username}) "
+                f"(owned by {job_user.get_username()}) for delivery artifacts."
+            )
+        run = delivery_orchestrator.create_run(
+            project["id"],
+            cmd_args.prompt,
+            mode=cmd_args.mode,
+            run_id=cmd_args.run_id,
+            team_mode=cmd_args.team_mode,
+            codex_model=cmd_args.codex_model,
+            codex_reasoning=cmd_args.codex_reasoning,
+            smoke_test_cmd=cmd_args.smoke_test_cmd,
+        )
+        context = dict(run.context or {})
+        if job_user:
+            context["job_user_id"] = str(job_user.pk)
+        if github_account_id:
+            context["github_account_id"] = github_account_id
+        if cmd_args.research:
+            context["research_mode"] = True
+        if cmd_args.team_mode:
+            context["team_mode"] = cmd_args.team_mode
+        if cmd_args.codex_model:
+            context["codex_model"] = cmd_args.codex_model
+        if cmd_args.codex_reasoning:
+            context["codex_reasoning"] = cmd_args.codex_reasoning
+        if cmd_args.smoke_test_cmd:
+            context["smoke_test_cmd"] = cmd_args.smoke_test_cmd
+        run.context = context
+        run.save(update_fields=["context"])
+
+        job = enqueue_job(
+            kind="delivery_run",
+            project=run.project,
+            run=run,
+            user=job_user,
+            payload={"mode": run.mode},
+            message="Queued from CLI",
+        )
+        context["job_id"] = str(job.id)
+        run.context = context
+        run.save(update_fields=["context"])
+
+        if cmd_args.acceptance_required is False:
+            run.acceptance_required = False
+            run.save(update_fields=["acceptance_required"])
+        print(f"Queued run {run.id} for project {project['name']} ({project['id']})")
+        print(f"Job id: {job.id} | status={run.status} | phase={run.phase or 'mode_detection'} | mode={run.mode}")
+        print("Ensure a `branddozer_worker` (e.g. `python web/manage.py branddozer_worker --types delivery_run`) is running to process the queue.")
+        inline_timeout = float(cmd_args.inline_timeout if cmd_args.inline_timeout is not None else -1.0)
+        _maybe_run_inline(job, run, timeout=inline_timeout)
+        return 0
+
+    def _find_user_for_github_account(
+        account_id: str | None, github_username: str | None
+    ) -> tuple[Any, dict[str, Any]]:
+        normalized_id = (account_id or "").strip()
+        normalized_username = (github_username or "").strip().lower()
+        if not normalized_id and not normalized_username:
+            raise ValueError("GitHub account id or username is required.")
+        for user in UserModel.objects.order_by(username_field):
+            payload = list_github_accounts(user)
+            for account in payload.get("accounts") or []:
+                if not account.get("has_token"):
+                    continue
+                account_username = (account.get("username") or "").strip()
+                match_id = normalized_id and account.get("id") == normalized_id
+                match_username = normalized_username and account_username.lower() == normalized_username
+                if match_id or (match_username and not match_id):
+                    return user, account
+        target_label = normalized_id or github_username or "<unknown>"
+        raise ValueError(f"GitHub account {target_label} not found or has no stored PAT.")
+
+    def handle_accounts(cmd_args: argparse.Namespace) -> int:
+        qs = UserModel.objects.order_by(username_field)
+        if cmd_args.username:
+            qs = qs.filter(**{username_field: cmd_args.username})
+        max_accounts = max(1, cmd_args.limit or 20)
+        found = 0
+        for user in qs:
+            payload = list_github_accounts(user)
+            accounts = payload.get("accounts") or []
+            if not accounts:
+                continue
+            email = getattr(user, "email", None)
+            user_label = f"{user.get_username()} (id={user.pk}"
+            if email:
+                user_label += f", email={email}"
+            user_label += ")"
+            for account in accounts:
+                if not account.get("has_token"):
+                    continue
+                found += 1
+                active = account.get("id") == payload.get("active_id")
+                label = account.get("label") or "-"
+                github_username = account.get("username") or "<unknown>"
+                print(
+                    f"{found:>2}. {user_label} -> account {account['id']} | github={github_username} | label={label} "
+                    f"| token_locked={account.get('token_locked')} | active={active}"
+                )
+                if found >= max_accounts:
+                    break
+            if found >= max_accounts:
+                break
+        if not found:
+            print("No GitHub accounts with stored personal access tokens were found.")
+        return 0
+
+    def handle_users(cmd_args: argparse.Namespace) -> int:
+        qs = UserModel.objects.order_by(username_field)
+        max_users = max(1, cmd_args.limit or 20)
+        shown = 0
+        for user in qs:
+            payload = list_github_accounts(user)
+            accounts = payload.get("accounts") or []
+            token_accounts = [acc for acc in accounts if acc.get("has_token")]
+            if not token_accounts:
+                continue
+            shown += 1
+            email = getattr(user, "email", None)
+            user_label = f"{user.get_username()} (id={user.pk}"
+            if email:
+                user_label += f", email={email}"
+            user_label += ")"
+            account_lines: List[str] = []
+            for account in token_accounts:
+                github_username = account.get("username") or "<unknown>"
+                label = account.get("label") or "-"
+                account_lines.append(
+                    f"{account['id']} ({github_username}; label={label}; token_locked={account.get('token_locked')})"
+                )
+            print(f"{shown:>2}. {user_label} -> {', '.join(account_lines)}")
+            if shown >= max_users:
+                break
+        if not shown:
+            print("No Django users with stored GitHub personal access tokens were found.")
+        return 0
+
+    def _maybe_run_inline(job, run, *, timeout: float) -> None:
+        if timeout is None or timeout < 0:
+            return
+        timeout = float(timeout)
+        poll_interval = 0.5
+        waited = 0.0
+        print(f"Waiting up to {timeout:.1f}s for a worker to claim job {job.id}...")
+        while waited < timeout:
+            job.refresh_from_db()
+            if job.status != "queued":
+                print(f"Worker claimed job {job.id} (status={job.status}); inline fallback skipped.")
+                return
+            time.sleep(poll_interval)
+            waited += poll_interval
+        print(f"No worker claimed job {job.id} after {timeout:.1f}s. Running delivery inline via CLI to avoid idle Codex usage.")
+        _run_inline_delivery(job, run)
+
+    def _run_inline_delivery(job, run) -> None:
+        update_job(str(job.id), status="running", message="Running inline via brandozer CLI")
+        start_ts = time.time()
+        try:
+            delivery_orchestrator.run_existing(run.id)
+        except Exception as exc:
+            update_job(str(job.id), status="error", message="Inline delivery failed", error=str(exc))
+            print(f"Inline delivery failed: {exc}", file=sys.stderr)
+            return
+        run.refresh_from_db()
+        elapsed = time.time() - start_ts
+        update_job(
+            str(job.id),
+            status="completed",
+            message="Inline delivery complete",
+            detail=f"Run status: {run.status}",
+            result={"run_status": run.status, "completed_at": run.completed_at.isoformat() if run.completed_at else None},
+        )
+        print(f"Inline delivery finished in {elapsed:.1f}s with run status {run.status}.")
+
+    def handle_runs(cmd_args: argparse.Namespace) -> int:
+        qs = DeliveryRun.objects.all()
+        if cmd_args.project_id:
+            qs = qs.filter(project_id=cmd_args.project_id)
+        runs = qs.order_by("-created_at")[: cmd_args.limit]
+        if not runs:
+            print("No runs found.")
+            return 0
+        for run in runs:
+            note = ""
+            try:
+                note = (run.context or {}).get("status_note", "")
+            except Exception:
+                note = ""
+            print(
+                f"{run.id} | project={run.project_id} | status={run.status} | phase={run.phase or '-'} "
+                f"| started={_fmt_ts(run.started_at)} | completed={_fmt_ts(run.completed_at)} {note}"
+            )
+        return 0
+
+    def handle_status(cmd_args: argparse.Namespace) -> int:
+        run = DeliveryRun.objects.filter(id=cmd_args.run_id).first()
+        if not run:
+            print("Run not found.", file=sys.stderr)
+            return 1
+        note = ""
+        detail = ""
+        ctx = run.context or {}
+        if isinstance(ctx, dict):
+            note = ctx.get("status_note", "")
+            detail = ctx.get("status_detail", "")
+        print(f"Run: {run.id}")
+        print(f"Project: {run.project_id}")
+        print(f"Prompt: {run.prompt}")
+        print(f"Status: {run.status} | Phase: {run.phase or '-'} | Mode: {run.mode}")
+        print(f"Iteration: {run.iteration} | Sprints: {run.sprint_count}")
+        print(f"Started: {_fmt_ts(run.started_at)} | Completed: {_fmt_ts(run.completed_at)}")
+        if note or detail:
+            print(f"Note: {note} {detail}".strip())
+        eta = None
+        try:
+            eta = (run.context or {}).get("eta")
+        except Exception:
+            eta = None
+        if isinstance(eta, dict) and eta.get("minutes") is not None:
+            as_of = eta.get("as_of") or "current"
+            print(f"ETA: ~{eta.get('minutes')} min ({as_of})")
+        return 0
+
+    def handle_workflow(cmd_args: argparse.Namespace) -> int:
+        if cmd_args.run_id:
+            run = DeliveryRun.objects.filter(id=cmd_args.run_id).first()
+        else:
+            run = DeliveryRun.objects.order_by("-created_at").first()
+        if not run:
+            print("Run not found.", file=sys.stderr)
+            return 1
+        context = run.context or {}
+        history = context.get("workflow_history") or []
+        if not history:
+            print(f"No workflow history recorded yet for run {run.id}.")
+            return 0
+        limit = max(1, cmd_args.history_limit or 20)
+        trimmed = history[-limit:]
+        print(f"Workflow timeline for {run.id} (showing {len(trimmed)} of {len(history)} entries):")
+        last_idx = -1
+        out_of_order = []
+        phases_seen = []
+        for entry in trimmed:
+            phase = entry.get("phase")
+            note = entry.get("note") or "<note>"
+            detail = entry.get("detail") or ""
+            ts = entry.get("ts") or "-"
+            if phase:
+                phases_seen.append(phase)
+                if phase in DELIVERY_PHASES:
+                    idx = DELIVERY_PHASES.index(phase)
+                    if idx < last_idx:
+                        out_of_order.append((phase, idx, last_idx))
+                    last_idx = idx
+            print(f" - {ts} | phase={phase or '-'} | note={note} | detail={detail}")
+        if out_of_order:
+            print("Phase order warnings detected:")
+            for phase, idx, prev in out_of_order:
+                print(f"  * phase {phase} (idx {idx}) occurred after idx {prev}")
+        else:
+            print("Phase order looks sequential across the recorded history entries.")
+        if cmd_args.show_gates:
+            gate_runs = GateRun.objects.filter(run=run).order_by("name", "-created_at")
+            latest = {}
+            for gate in gate_runs:
+                if gate.name not in latest:
+                    latest[gate.name] = gate
+            if not latest:
+                print("No gate run records available yet.")
+            else:
+                print("Gate summary (latest per gate name):")
+                for name, gate in sorted(latest.items()):
+                    print(f"  {name}: status={gate.status} exit_code={gate.exit_code} meta={gate.meta or {}}")
+        return 0
+
+    def handle_tail(cmd_args: argparse.Namespace) -> int:
+        run = DeliveryRun.objects.filter(id=cmd_args.run_id).first()
+        if not run:
+            print("Run not found.", file=sys.stderr)
+            return 1
+        session = (
+            DeliverySession.objects.filter(run=run, role="orchestrator").order_by("-created_at").first()
+            or DeliverySession.objects.filter(run=run).order_by("-created_at").first()
+        )
+        log_path = Path(session.log_path) if session and session.log_path else None
+        if not log_path or not log_path.exists():
+            print("No log file available for this run.", file=sys.stderr)
+            return 1
+        for line in _tail_file(log_path, lines=cmd_args.lines):
+            print(line.rstrip("\n"))
+        return 0
+
+    def handle_projects(cmd_args: argparse.Namespace) -> int:
+        projects = list_projects()
+        for project in projects[: cmd_args.limit]:
+            print(f"{project['id']} | {project['name']} | root={project['root_path']} | prompt={project['default_prompt']}")
+        if not projects:
+            print("No BrandDozer projects found. Use `brandozer start \"...\"` to create one.")
+        return 0
+
+    def handle_stop(cmd_args: argparse.Namespace) -> int:
+        run = DeliveryRun.objects.filter(id=cmd_args.run_id).first()
+        if not run:
+            print("Run not found.", file=sys.stderr)
+            return 1
+        context = dict(run.context or {})
+        context["stop_requested"] = True
+        context["status_note"] = "Stopped"
+        context["status_detail"] = "Stopped via brandozer CLI"
+        run.context = context
+        run.status = "blocked"
+        run.phase = "stopped"
+        run.error = "Stopped by user"
+        run.completed_at = timezone.now()
+        run.save(update_fields=["context", "status", "phase", "error", "completed_at"])
+        job = BackgroundJob.objects.filter(run=run).order_by("-created_at").first()
+        if job and job.status in {"queued", "running"}:
+            update_job(str(job.id), status="canceled", message="Canceled via CLI", detail="Stop requested from brandozer")
+        print(f"Stop requested for run {run.id}")
+        return 0
+
+    handlers = {
+        "start": handle_start,
+        "accounts": handle_accounts,
+        "users": handle_users,
+        "workflow": handle_workflow,
+        "runs": handle_runs,
+        "status": handle_status,
+        "tail": handle_tail,
+        "projects": handle_projects,
+        "stop": handle_stop,
+        "prompt": lambda cmd_args: _handle_prompt(cmd_args, DeliveryRun),
+    }
+
+    handler = handlers.get(args.command)
+    if not handler:
+        parser.print_help()
+        return 1
+    return handler(args)
+
+
+def _handle_prompt(cmd_args: argparse.Namespace, DeliveryRun) -> int:
+    run = DeliveryRun.objects.filter(id=cmd_args.run_id).first()
+    if not run:
+        print("Run not found.", file=sys.stderr)
+        return 1
+    ctx = dict(run.context or {})
+    queue = ctx.get("live_prompts_queue") or []
+    if not isinstance(queue, list):
+        queue = []
+    entry = {"text": cmd_args.prompt, "ts": time.time(), "source": "cli"}
+    queue.append(entry)
+    ctx["live_prompts_queue"] = queue
+    run.context = ctx
+    run.save(update_fields=["context"])
+    print(f"Queued prompt for run {run.id}: {cmd_args.prompt}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

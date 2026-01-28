@@ -276,7 +276,15 @@ export const useBrandDozerStore = defineStore('branddozer', {
       const data = await fetchBrandGithubImportStatus(jobId);
       return data;
     },
-    async startDeliveryRun(payload: { project_id: string; prompt: string; mode?: string }) {
+    async startDeliveryRun(payload: {
+      project_id: string;
+      prompt: string;
+      mode?: string;
+      team_mode?: string;
+      codex_model?: string;
+      codex_reasoning?: string;
+      smoke_test_cmd?: string;
+    }) {
       this.deliveryLoading = true;
       try {
         const data = await startBrandDeliveryRun(payload);

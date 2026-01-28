@@ -153,9 +153,33 @@
               <option value="existing">Existing Project Mode</option>
             </select>
           </label>
+          <label>
+            <span>Team Mode</span>
+            <select v-model="deliveryForm.team_mode">
+              <option value="full">Full Team</option>
+              <option value="solo">Solo (single session)</option>
+            </select>
+          </label>
+          <label>
+            <span>Codex Model</span>
+            <input v-model="deliveryForm.codex_model" placeholder="gpt-5.2-codex" />
+          </label>
+          <label>
+            <span>Reasoning</span>
+            <select v-model="deliveryForm.codex_reasoning">
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="extra_high">Extra High</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
           <label class="full">
             <span>Prompt (single source of truth)</span>
             <textarea v-model="deliveryForm.prompt" rows="3" placeholder="Describe the feature or project outcome." />
+          </label>
+          <label class="full">
+            <span>Solo smoke test command (optional)</span>
+            <input v-model="deliveryForm.smoke_test_cmd" placeholder="python -m pytest -q --maxfail=1" />
           </label>
         </div>
         <div class="actions">
@@ -864,7 +888,11 @@ const logBox = ref<HTMLElement | null>(null);
 const deliveryForm = ref({
   project_id: '',
   mode: 'auto',
+  team_mode: 'full',
+  codex_model: '',
+  codex_reasoning: 'medium',
   prompt: '',
+  smoke_test_cmd: '',
 });
 const publishOpen = ref(false);
 const publishError = ref('');
@@ -1723,6 +1751,10 @@ async function startDeliveryRun() {
       project_id: deliveryForm.value.project_id,
       prompt: deliveryForm.value.prompt,
       mode: deliveryForm.value.mode,
+      team_mode: deliveryForm.value.team_mode,
+      codex_model: deliveryForm.value.codex_model,
+      codex_reasoning: deliveryForm.value.codex_reasoning,
+      smoke_test_cmd: deliveryForm.value.smoke_test_cmd,
     });
     store.activeDeliveryRun = run;
     deliveryStatusNote.value = 'Delivery run started.';
