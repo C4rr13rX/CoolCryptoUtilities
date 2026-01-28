@@ -282,7 +282,7 @@ class BrandozerGUI(App):
     # ------------------------------------------------------------------ Form elements
     def _form_layout(
         self,
-        inputs: List[tuple[str, str, bool, Optional[str] | None]],
+        inputs: List[tuple[str, str, bool] | tuple[str, str, bool, Optional[str] | None]],
         toggles: Optional[List[tuple[str, str, bool]]] = None,
         spinners: Optional[List[tuple[str, str, List[str], str]]] = None,
     ) -> tuple[BoxLayout, FieldRefs]:
@@ -294,7 +294,12 @@ class BrandozerGUI(App):
         toggle_refs: Dict[str, CheckBox] = {}
         spinner_refs: Dict[str, Spinner] = {}
 
-        for name, label, multiline, default in inputs:
+        for item in inputs:
+            if len(item) == 4:
+                name, label, multiline, default = item
+            else:
+                name, label, multiline = item
+                default = None
             grid.add_widget(Label(text=label))
             text = TextInput(text=default or "", multiline=multiline)
             input_refs[name] = text

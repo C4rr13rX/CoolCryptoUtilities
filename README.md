@@ -1,5 +1,7 @@
 I am currently working on a lot of updates in the main branch. When I am done, I'll fix this ReadMe file cleaned up and with info for the updates, and then won't work in here any longer. Only merge when something is done in another branch.
 
+Solo delivery mode: when running as a solo agent, the execution plan is written to `runtime/branddozer/solo_plans/<run-id>/plan.json`.
+
 These are python utilities for creating an index of the top 2000 crypto currencies, making an assignment file out of the index, and downloading the historical OHLCV data for 2000 top cryptos for the past 3 years at 5 minute granularity. I also uploaded a requirements.txt file from pip freeze to install the necessary libraries for these scripts and more.
 
 You will need to get an API key from both ANKR and TheGraph.

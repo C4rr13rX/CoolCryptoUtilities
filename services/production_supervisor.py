@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -13,6 +15,9 @@ from services.guardian_status import update_production_state
 from services.logging_utils import log_message
 
 HEARTBEAT_PATH = Path("logs/production_manager_heartbeat.json")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MAIN_PATH = REPO_ROOT / "main.py"
+MAIN_LOG_PATH = REPO_ROOT / "runtime" / "main_autostart.log"
 
 
 class ProductionSupervisor:
@@ -37,6 +42,13 @@ class ProductionSupervisor:
         self._heartbeat_ttl = float(os.getenv("PRODUCTION_HEARTBEAT_TTL", "150"))
         self._restart_cooldown = float(os.getenv("PRODUCTION_RESTART_COOLDOWN", "45"))
         self._last_boot = 0.0
+        self._main_process_enabled = os.getenv("PRODUCTION_SUPERVISOR_MAIN_PROCESS", "1").lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        self._last_main_launch = 0.0
 
     def ensure_running(self) -> None:
         if os.environ.get("PRODUCTION_AUTO_DISABLED") == "1":
@@ -81,6 +93,8 @@ class ProductionSupervisor:
         log_message("production", "production supervisor active", severity="info")
         try:
             while not self._stop.is_set():
+                if self._main_process_enabled:
+                    self._ensure_main_process()
                 running, heartbeat = self._check_heartbeat()
                 if not running:
                     self._restart_manager(heartbeat)
@@ -112,6 +126,16 @@ class ProductionSupervisor:
                 self._manager.stop()
             except Exception:
                 pass
+        self._manager = None
+        if self._main_process_enabled:
+            if self._ensure_main_process(force_start=True):
+                update_production_state(False, {"note": "launching_main_process"})
+                return
+            log_message(
+                "production",
+                "main.py launch failed; falling back to in-process manager",
+                severity="warning",
+            )
         try:
             manager = ProductionManager()
         except Exception as exc:
@@ -172,6 +196,66 @@ class ProductionSupervisor:
     def _increment_error(self) -> None:
         with self._lock:
             self._status["errors"] = int(self._status.get("errors", 0) or 0) + 1
+
+    def _ensure_main_process(self, *, force_start: bool = False) -> bool:
+        if not self._main_process_enabled:
+            return False
+        if self._main_process_running():
+            return True
+        if not force_start and time.time() - self._last_main_launch < self._restart_cooldown:
+            return False
+        if self._launch_main_process():
+            self._last_main_launch = time.time()
+            return True
+        return False
+
+    def _main_process_running(self) -> bool:
+        try:
+            import psutil  # type: ignore
+        except Exception:
+            psutil = None  # type: ignore
+
+        if psutil is not None:
+            for proc in psutil.process_iter(["cmdline"]):
+                try:
+                    cmdline = proc.info.get("cmdline") or []
+                except (psutil.NoSuchProcess, psutil.AccessDenied):  # type: ignore[attr-defined]
+                    continue
+                if any("main.py" in str(part) for part in cmdline):
+                    return True
+            return False
+
+        try:
+            output = subprocess.check_output(["ps", "-eo", "args"], text=True)
+        except Exception:
+            return False
+        return any("main.py" in line for line in output.splitlines())
+
+    def _launch_main_process(self) -> bool:
+        if not MAIN_PATH.exists():
+            log_message("production", "main.py not found; cannot start main process.", severity="error")
+            return False
+        python_bin = os.getenv("PYTHON_BIN") or sys.executable
+        cmd = [python_bin, str(MAIN_PATH), "--action", "start_production", "--stay-alive"]
+        env = os.environ.copy()
+        env.setdefault("ALLOW_SQLITE_FALLBACK", "1")
+        MAIN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with MAIN_LOG_PATH.open("a", encoding="utf-8") as handle:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(REPO_ROOT),
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    text=True,
+                    env=env,
+                )
+            log_message("production", f"launched main.py pid={proc.pid}", severity="info")
+            return True
+        except Exception as exc:
+            log_message("production", f"failed to launch main.py: {exc}", severity="error")
+            return False
 
 
 production_supervisor = ProductionSupervisor()

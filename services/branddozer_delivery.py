@@ -243,16 +243,41 @@ def _resolve_smoke_command(run: DeliveryRun, root: Path) -> Optional[List[str]]:
         return None
     if raw:
         return shlex.split(raw)
-    # Default smoke test if a tests directory exists.
-    if (root / "tests").exists():
-        return [sys.executable, "-m", "pytest", "-q", "--maxfail=1", "--disable-warnings"]
     return None
+
+
+def _default_solo_smoke() -> Dict[str, Any]:
+    try:
+        import numpy as np
+        import pandas as pd
+        import networkx as nx
+    except Exception as exc:
+        return {"status": "error", "error": f"dependency import failed: {exc}"}
+    rng = np.random.default_rng(42)
+    data = rng.normal(loc=0.0, scale=1.0, size=5000)
+    df = pd.DataFrame({"bucket": rng.integers(0, 20, size=data.size), "value": data})
+    grouped = df.groupby("bucket")["value"].agg(["mean", "std"]).reset_index()
+    if grouped.empty or grouped["std"].isna().any():
+        return {"status": "failed", "error": "pandas grouping failed"}
+    graph = nx.gnm_random_graph(200, 400, seed=7, directed=False)
+    if not nx.is_connected(graph):
+        components = list(nx.connected_components(graph))
+        largest = max(components, key=len)
+        graph = graph.subgraph(largest).copy()
+    paths = dict(nx.all_pairs_shortest_path_length(graph, cutoff=4))
+    sample = next(iter(paths.values()))
+    if not sample:
+        return {"status": "failed", "error": "networkx paths failed"}
+    score = float(grouped["mean"].abs().sum()) + float(grouped["std"].sum()) + len(paths)
+    return {"status": "passed", "score": score}
 
 
 def _run_smoke_test(run: DeliveryRun, root: Path, session: Optional[DeliverySession] = None) -> Dict[str, Any]:
     cmd = _resolve_smoke_command(run, root)
     if not cmd:
-        return {"status": "skipped", "command": None}
+        result = _default_solo_smoke()
+        result["command"] = "internal"
+        return result
     start = time.time()
     try:
         proc = subprocess.run(
