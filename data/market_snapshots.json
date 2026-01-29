@@ -1,14 +1,14 @@
 {
-  "generated_at": 1769710618.147688,
+  "generated_at": 1769711823.4668872,
   "data": [
     {
       "source": "consensus",
       "symbol": "USDT",
       "name": "Tether",
-      "price_usd": 0.999407,
-      "volume_24h": 78238415777.82483,
-      "market_cap_usd": null,
-      "percent_change_24h": -0.2,
+      "price_usd": 0.999231,
+      "volume_24h": 79486510684.33795,
+      "market_cap_usd": 186190615694.66,
+      "percent_change_24h": -0.23,
       "extra": {
         "contributors": [
           "coinlore",
@@ -16,14 +16,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0006658262591453523
+        "price_spread": 0.0008796762507089495
       }
     },
     {
       "source": "consensus",
       "symbol": "BTC",
       "name": "Bitcoin",
-      "price_usd": 84455.37,
+      "price_usd": 83867.07,
       "volume_24h": 47023007701.36946,
       "market_cap_usd": null,
       "percent_change_24h": -4.83,
@@ -34,14 +34,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 120.97605034222943
+        "price_spread": 767.1056854423805
       }
     },
     {
       "source": "consensus",
       "symbol": "ETH",
       "name": "Ethereum",
-      "price_usd": 2828.26,
+      "price_usd": 2803.85,
       "volume_24h": 22840080045.31557,
       "market_cap_usd": null,
       "percent_change_24h": -6.15,
@@ -52,7 +52,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 3.7537193241983005
+        "price_spread": 44.50012168608055
       }
     },
     {
@@ -61,7 +61,7 @@
       "name": "USDC",
       "price_usd": 1.0,
       "volume_24h": 14028162437.232498,
-      "market_cap_usd": 70684412471.0,
+      "market_cap_usd": null,
       "percent_change_24h": -0.05,
       "extra": {
         "contributors": [
@@ -70,7 +70,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 8.194829705021611e-05
+        "price_spread": 0.00010361723229623809
       }
     },
     {
@@ -78,9 +78,9 @@
       "symbol": "FDUSD",
       "name": "First Digital USD",
       "price_usd": 0.997485,
-      "volume_24h": 6096628087.31048,
-      "market_cap_usd": 1146551954.49,
-      "percent_change_24h": -0.14,
+      "volume_24h": 6289302117.272007,
+      "market_cap_usd": 1448228241.0,
+      "percent_change_24h": -0.25,
       "extra": {
         "contributors": [
           "coinlore",
@@ -88,17 +88,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0005437227482186779
+        "price_spread": 0.0006405974291827654
       }
     },
     {
       "source": "consensus",
       "symbol": "SOL",
       "name": "Solana",
-      "price_usd": 117.97,
-      "volume_24h": 3723208925.586611,
-      "market_cap_usd": 66711584930.0,
-      "percent_change_24h": -6.6,
+      "price_usd": 116.99,
+      "volume_24h": 3850040016.5008273,
+      "market_cap_usd": 66095834796.0,
+      "percent_change_24h": -7.13,
       "extra": {
         "contributors": [
           "coinlore",
@@ -106,17 +106,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.2246305482570392
+        "price_spread": 1.2321593045316774
       }
     },
     {
       "source": "consensus",
       "symbol": "XRP",
       "name": "XRP",
-      "price_usd": 1.810779401866772,
-      "volume_24h": 3519734347.859651,
-      "market_cap_usd": null,
-      "percent_change_24h": -3.96,
+      "price_usd": 1.8,
+      "volume_24h": 3553570961.1625834,
+      "market_cap_usd": 109335451120.0,
+      "percent_change_24h": -6.04,
       "extra": {
         "contributors": [
           "coinlore",
@@ -124,17 +124,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.010000000000000009
+        "price_spread": 0.01407205985976101
       }
     },
     {
       "source": "consensus",
       "symbol": "BNB",
       "name": "BNB",
-      "price_usd": 865.4324583608761,
-      "volume_24h": 1815200545.4224381,
-      "market_cap_usd": 120454733806.0,
-      "percent_change_24h": -4.1,
+      "price_usd": 862.92,
+      "volume_24h": 1935038323.9501839,
+      "market_cap_usd": 119803214382.0,
+      "percent_change_24h": -4.45,
       "extra": {
         "contributors": [
           "coinlore",
@@ -142,17 +142,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 1.1000000000000227
+        "price_spread": 4.680978813313459
       }
     },
     {
       "source": "consensus",
       "symbol": "XAUT",
       "name": "Tether Gold",
-      "price_usd": 5353.931460102762,
-      "volume_24h": 1735831633.2237384,
-      "market_cap_usd": 2013433113.86,
-      "percent_change_24h": -4.0,
+      "price_usd": 5352.6618051194155,
+      "volume_24h": 1743112620.3371305,
+      "market_cap_usd": 2004669632.37,
+      "percent_change_24h": -4.42,
       "extra": {
         "contributors": [
           "coinlore",
@@ -160,17 +160,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 13.029508492294553
+        "price_spread": 16.291460102761448
       }
     },
     {
       "source": "consensus",
       "symbol": "PAXG",
       "name": "PAX Gold",
-      "price_usd": 5388.012378803128,
-      "volume_24h": 1541911291.6729994,
-      "market_cap_usd": 1062440609.0,
-      "percent_change_24h": 1.69,
+      "price_usd": 5386.387539603339,
+      "volume_24h": 1550023826.330075,
+      "market_cap_usd": 1062120213.0,
+      "percent_change_24h": 1.49,
       "extra": {
         "contributors": [
           "coinlore",
@@ -178,17 +178,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 16.140000000000327
+        "price_spread": 14.812378803128013
       }
     },
     {
       "source": "consensus",
       "symbol": "DOGE",
       "name": "Dogecoin",
-      "price_usd": 0.11665411478257905,
-      "volume_24h": 1347673105.5873866,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.12,
+      "price_usd": 0.115594,
+      "volume_24h": 1394751532.6451578,
+      "market_cap_usd": 17214789468.0,
+      "percent_change_24h": -7.44,
       "extra": {
         "contributors": [
           "coinlore",
@@ -196,24 +196,24 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00016599999999999948
+        "price_spread": 0.0012330262518229912
       }
     },
     {
       "source": "consensus",
       "symbol": "USD1",
       "name": "USD1",
-      "price_usd": 0.9993860559080614,
-      "volume_24h": 1215713633.5907125,
-      "market_cap_usd": 2126364310.0,
-      "percent_change_24h": -0.07,
+      "price_usd": 0.9993689510024333,
+      "volume_24h": 1218513701.4317946,
+      "market_cap_usd": 2126601221.0,
+      "percent_change_24h": -0.06,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00029108244572306763
+        "price_spread": 3.42098112561251e-05
       }
     },
     {
@@ -221,9 +221,9 @@
       "symbol": "DAI",
       "name": "Dai",
       "price_usd": 1.0,
-      "volume_24h": 1110502305.8183045,
-      "market_cap_usd": 3329763761.0,
-      "percent_change_24h": -0.05,
+      "volume_24h": 1132256733.7216175,
+      "market_cap_usd": 3328585840.0,
+      "percent_change_24h": -0.07,
       "extra": {
         "contributors": [
           "coinlore",
@@ -231,14 +231,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0001612798008077121
+        "price_spread": 0.00019253235633431842
       }
     },
     {
       "source": "consensus",
       "symbol": "WETH",
       "name": "WETH",
-      "price_usd": 2828.11748898775,
+      "price_usd": 2808.678589084245,
       "volume_24h": 980187240.9391764,
       "market_cap_usd": null,
       "percent_change_24h": -6.09,
@@ -249,35 +249,17 @@
           "consensus"
         ],
         "sample_size": 4,
-        "price_spread": 10.017790368937312
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "WLD",
-      "name": "Worldcoin",
-      "price_usd": 0.486632,
-      "volume_24h": 735828544.4883958,
-      "market_cap_usd": 996748932.03,
-      "percent_change_24h": -4.87,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.0011584487897604578
+        "price_spread": 42.862507485650895
       }
     },
     {
       "source": "consensus",
       "symbol": "SUI",
       "name": "Sui",
-      "price_usd": 1.3151236977912866,
-      "volume_24h": 728837174.9781841,
-      "market_cap_usd": 4987189828.0,
-      "percent_change_24h": -6.97,
+      "price_usd": 1.3,
+      "volume_24h": 745126513.5505944,
+      "market_cap_usd": 4924037326.0,
+      "percent_change_24h": -7.65,
       "extra": {
         "contributors": [
           "coinlore",
@@ -285,14 +267,32 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.005123697791286519
+        "price_spread": 0.016653336968568855
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "WLD",
+      "name": "Worldcoin",
+      "price_usd": 0.483299,
+      "volume_24h": 737323628.6160069,
+      "market_cap_usd": 989920926.78,
+      "percent_change_24h": -5.52,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.0035299294459191777
       }
     },
     {
       "source": "consensus",
       "symbol": "TRX",
       "name": "TRON",
-      "price_usd": 0.291703,
+      "price_usd": 0.291553,
       "volume_24h": 726122935.8982145,
       "market_cap_usd": null,
       "percent_change_24h": -0.42,
@@ -303,14 +303,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0002775965714165718
+        "price_spread": 0.0005861534979417771
       }
     },
     {
       "source": "consensus",
       "symbol": "HYPE",
       "name": "Hyperliquid",
-      "price_usd": 33.37961403048493,
+      "price_usd": 32.88552712120876,
       "volume_24h": 604255981.5020766,
       "market_cap_usd": null,
       "percent_change_24h": 9.57,
@@ -321,14 +321,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.04961403048493196
+        "price_spread": 0.5296140304849288
       }
     },
     {
       "source": "consensus",
       "symbol": "ZEC",
       "name": "Zcash",
-      "price_usd": 357.53,
+      "price_usd": 356.6091049607666,
       "volume_24h": 587712948.5439721,
       "market_cap_usd": null,
       "percent_change_24h": 7.89,
@@ -339,7 +339,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.617548483649955
+        "price_spread": 1.589999999999975
       }
     },
     {
@@ -347,9 +347,9 @@
       "symbol": "WBNB",
       "name": "Wrapped BNB",
       "price_usd": 865.2446560707768,
-      "volume_24h": 534370653.579535,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.12,
+      "volume_24h": 568003800.9736803,
+      "market_cap_usd": 1361835463.0,
+      "percent_change_24h": -4.58,
       "extra": {
         "contributors": [
           "coinlore",
@@ -357,14 +357,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 5.509999999999991
+        "price_spread": 5.389665863359369
       }
     },
     {
       "source": "consensus",
       "symbol": "ADA",
       "name": "Cardano",
-      "price_usd": 0.334628,
+      "price_usd": 0.331178,
       "volume_24h": 533887478.15023434,
       "market_cap_usd": null,
       "percent_change_24h": -4.93,
@@ -375,14 +375,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0003494237421780011
+        "price_spread": 0.0037552105718116624
       }
     },
     {
       "source": "consensus",
       "symbol": "LTC",
       "name": "Litecoin",
-      "price_usd": 65.75,
+      "price_usd": 65.04,
       "volume_24h": 511385294.6681607,
       "market_cap_usd": null,
       "percent_change_24h": -5.23,
@@ -393,17 +393,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.1215578917020963
+        "price_spread": 0.7548284855048735
       }
     },
     {
       "source": "consensus",
       "symbol": "LINK",
       "name": "Chainlink",
-      "price_usd": 11.047955302446981,
-      "volume_24h": 442522145.04557544,
-      "market_cap_usd": 6925410450.0,
-      "percent_change_24h": -6.49,
+      "price_usd": 10.94,
+      "volume_24h": 462228744.6502974,
+      "market_cap_usd": 6840635263.0,
+      "percent_change_24h": -7.4,
       "extra": {
         "contributors": [
           "coinlore",
@@ -411,52 +411,34 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.01204469755301929
+        "price_spread": 0.1352399954485506
       }
     },
     {
       "source": "consensus",
       "symbol": "CBBTC",
       "name": "Coinbase Wrapped BTC",
-      "price_usd": 84729.327075685,
-      "volume_24h": 429711849.35193,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.81,
+      "price_usd": 84220.54927709568,
+      "volume_24h": 437696988.56111133,
+      "market_cap_usd": 3990372723.0,
+      "percent_change_24h": -6.3,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 749.5945378101023
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "WBTC",
-      "name": "Wrapped Bitcoin",
-      "price_usd": 84289.46,
-      "volume_24h": 381360852.7484786,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.63,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 80.40552425538772
+        "price_spread": 1017.5555971786525
       }
     },
     {
       "source": "consensus",
       "symbol": "AVAX",
       "name": "Avalanche",
-      "price_usd": 11.02,
-      "volume_24h": 381139160.1333811,
-      "market_cap_usd": 4645747093.0,
-      "percent_change_24h": -8.56,
+      "price_usd": 10.94,
+      "volume_24h": 397262545.48032904,
+      "market_cap_usd": 4613618559.0,
+      "percent_change_24h": -8.98,
       "extra": {
         "contributors": [
           "coinlore",
@@ -464,17 +446,35 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0282974190161962
+        "price_spread": 0.0943817535797642
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "WBTC",
+      "name": "Wrapped Bitcoin",
+      "price_usd": 83827.99,
+      "volume_24h": 390386364.0573086,
+      "market_cap_usd": 10964510090.0,
+      "percent_change_24h": -6.25,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 704.4831783776899
       }
     },
     {
       "source": "consensus",
       "symbol": "BCH",
       "name": "Bitcoin Cash",
-      "price_usd": 557.5455246814124,
-      "volume_24h": 330144244.8569617,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.2,
+      "price_usd": 554.56,
+      "volume_24h": 330220896.18503,
+      "market_cap_usd": 11006029968.0,
+      "percent_change_24h": -6.2,
       "extra": {
         "contributors": [
           "coinlore",
@@ -482,7 +482,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.2944753185876152
+        "price_spread": 3.5261964922306106
       }
     },
     {
@@ -500,14 +500,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 2.6512109588003016e-07
+        "price_spread": 3.317669484456705e-07
       }
     },
     {
       "source": "consensus",
       "symbol": "AAVE",
       "name": "Aave",
-      "price_usd": 146.80368946856154,
+      "price_usd": 144.71291332498618,
       "volume_24h": 295564903.0467386,
       "market_cap_usd": null,
       "percent_change_24h": -6.95,
@@ -518,14 +518,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.18999999999999773
+        "price_spread": 2.0936894685615357
       }
     },
     {
       "source": "consensus",
       "symbol": "DASH",
       "name": "Dash",
-      "price_usd": 55.074352671611805,
+      "price_usd": 54.48,
       "volume_24h": 262238765.10395062,
       "market_cap_usd": null,
       "percent_change_24h": 3.86,
@@ -536,14 +536,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.06435267161180747
+        "price_spread": 0.6716832188186217
       }
     },
     {
       "source": "consensus",
       "symbol": "PUMP",
       "name": "Pump.fun",
-      "price_usd": 0.00292362867248825,
+      "price_usd": 0.0028957608077189237,
       "volume_24h": 177618048.75685757,
       "market_cap_usd": null,
       "percent_change_24h": -3.42,
@@ -553,16 +553,16 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 3.7181949624187725e-05
+        "price_spread": 5.5735729538653345e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "AXS",
       "name": "Axie Infinity",
-      "price_usd": 2.1851804997348574,
+      "price_usd": 2.177585937220374,
       "volume_24h": 167223456.59649467,
-      "market_cap_usd": 368406366.0,
+      "market_cap_usd": null,
       "percent_change_24h": -6.82,
       "extra": {
         "contributors": [
@@ -570,14 +570,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.005566992871322007
+        "price_spread": 0.01518912502896752
       }
     },
     {
       "source": "consensus",
       "symbol": "XMR",
       "name": "Monero",
-      "price_usd": 447.01163192350106,
+      "price_usd": 447.51,
       "volume_24h": 163549943.28827372,
       "market_cap_usd": null,
       "percent_change_24h": -0.11,
@@ -588,17 +588,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.6783680764989413
+        "price_spread": 0.4997162825216037
       }
     },
     {
       "source": "consensus",
-      "symbol": "UNI",
-      "name": "Uniswap",
-      "price_usd": 4.41,
-      "volume_24h": 156687772.00957918,
-      "market_cap_usd": null,
-      "percent_change_24h": -6.89,
+      "symbol": "NEAR",
+      "name": "Near Protocol",
+      "price_usd": 1.36,
+      "volume_24h": 158080222.7351333,
+      "market_cap_usd": 1611760795.0,
+      "percent_change_24h": -7.37,
       "extra": {
         "contributors": [
           "coinlore",
@@ -606,14 +606,32 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.011113946238982209
+        "price_spread": 0.010054167578277262
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "UNI",
+      "name": "Uniswap",
+      "price_usd": 4.36,
+      "volume_24h": 157622420.53999186,
+      "market_cap_usd": 2613281647.0,
+      "percent_change_24h": -9.53,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.05761406496868027
       }
     },
     {
       "source": "consensus",
       "symbol": "CHZ",
       "name": "Chiliz",
-      "price_usd": 0.046843,
+      "price_usd": 0.046662,
       "volume_24h": 153901075.556676,
       "market_cap_usd": null,
       "percent_change_24h": -15.57,
@@ -624,35 +642,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 6.460774290346222e-05
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "NEAR",
-      "name": "Near Protocol",
-      "price_usd": 1.37,
-      "volume_24h": 153446107.946924,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.89,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.002002539599068598
+        "price_spread": 0.00020714337333836014
       }
     },
     {
       "source": "consensus",
       "symbol": "HBAR",
       "name": "Hedera Hashgraph",
-      "price_usd": 0.100269,
-      "volume_24h": 147370453.95239902,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.38,
+      "price_usd": 0.09956419654481462,
+      "volume_24h": 147795109.9178929,
+      "market_cap_usd": 4219479538.66,
+      "percent_change_24h": -5.77,
       "extra": {
         "contributors": [
           "coinlore",
@@ -660,17 +660,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00034417043623223564
+        "price_spread": 0.0007360000000000005
       }
     },
     {
       "source": "consensus",
       "symbol": "ETC",
       "name": "Ethereum Classic",
-      "price_usd": 10.79,
-      "volume_24h": 140128935.2726069,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.79,
+      "price_usd": 10.71,
+      "volume_24h": 145176090.95050576,
+      "market_cap_usd": 1661979610.0,
+      "percent_change_24h": -6.48,
       "extra": {
         "contributors": [
           "coinlore",
@@ -678,17 +678,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.015236087878944815
+        "price_spread": 0.08967248710967723
       }
     },
     {
       "source": "consensus",
       "symbol": "XLM",
       "name": "Stellar",
-      "price_usd": 0.198579,
-      "volume_24h": 134971189.17476365,
-      "market_cap_usd": 6436745388.0,
-      "percent_change_24h": -5.08,
+      "price_usd": 0.197039,
+      "volume_24h": 138230318.36427552,
+      "market_cap_usd": 6389013272.0,
+      "percent_change_24h": -5.37,
       "extra": {
         "contributors": [
           "coinlore",
@@ -696,35 +696,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00033479612000639203
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "TAO",
-      "name": "BitTensor",
-      "price_usd": 220.24,
-      "volume_24h": 128896489.23573793,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.55,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.3945957971695577
+        "price_spread": 0.001558727769769952
       }
     },
     {
       "source": "consensus",
       "symbol": "ENA",
       "name": "Ethena",
-      "price_usd": 0.158034,
-      "volume_24h": 127765079.84274037,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.4,
+      "price_usd": 0.15608263784249438,
+      "volume_24h": 130928095.99639755,
+      "market_cap_usd": 1074896052.01,
+      "percent_change_24h": -6.01,
       "extra": {
         "contributors": [
           "coinlore",
@@ -732,14 +714,32 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0006961875241013604
+        "price_spread": 0.0020050000000000068
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "TAO",
+      "name": "BitTensor",
+      "price_usd": 217.97,
+      "volume_24h": 130713313.92802556,
+      "market_cap_usd": 2090460553.0,
+      "percent_change_24h": -7.69,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 2.4267660295791416
       }
     },
     {
       "source": "consensus",
       "symbol": "ASTER",
       "name": "Aster",
-      "price_usd": 0.621666,
+      "price_usd": 0.618082208841219,
       "volume_24h": 124733750.7415312,
       "market_cap_usd": null,
       "percent_change_24h": -0.63,
@@ -750,17 +750,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0006476977339107126
+        "price_spread": 0.006076000000000081
       }
     },
     {
       "source": "consensus",
       "symbol": "FIL",
       "name": "Filecoin",
-      "price_usd": 1.190378429889823,
-      "volume_24h": 121895751.77658564,
-      "market_cap_usd": null,
-      "percent_change_24h": -3.81,
+      "price_usd": 1.18,
+      "volume_24h": 123777785.59343934,
+      "market_cap_usd": 873318374.0,
+      "percent_change_24h": -6.89,
       "extra": {
         "contributors": [
           "coinlore",
@@ -768,7 +768,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.000378429889823062
+        "price_spread": 0.011231128428272452
       }
     },
     {
@@ -786,17 +786,34 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0003377655120659906
+        "price_spread": 0.00021335790846421787
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "WBT",
+      "name": "WhiteBIT Coin",
+      "price_usd": 51.30962452077202,
+      "volume_24h": 113708619.86326616,
+      "market_cap_usd": 7345771324.0,
+      "percent_change_24h": -5.96,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.6785480566041713
       }
     },
     {
       "source": "consensus",
       "symbol": "SHIB",
       "name": "Shiba Inu",
-      "price_usd": 7.29721972661621e-06,
-      "volume_24h": 111739923.46078913,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.33,
+      "price_usd": 7.25242288910936e-06,
+      "volume_24h": 113597240.0637926,
+      "market_cap_usd": 4273598127.0,
+      "percent_change_24h": -6.49,
       "extra": {
         "contributors": [
           "coinlore",
@@ -822,14 +839,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0008667378639708456
+        "price_spread": 0.001047722239743587
       }
     },
     {
       "source": "consensus",
       "symbol": "PIPPIN",
       "name": "pippin",
-      "price_usd": 0.3278595903908249,
+      "price_usd": 0.323549728315394,
       "volume_24h": 110107498.75534244,
       "market_cap_usd": null,
       "percent_change_24h": 47.01,
@@ -839,31 +856,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.011962694776614213
+        "price_spread": 0.008619724150861763
       }
     },
     {
       "source": "consensus",
-      "symbol": "WBT",
-      "name": "WhiteBIT Coin",
-      "price_usd": 51.648898549074104,
-      "volume_24h": 109434819.85218526,
-      "market_cap_usd": 7412631625.0,
-      "percent_change_24h": -5.34,
+      "symbol": "DOT",
+      "name": "Polkadot",
+      "price_usd": 1.7253125,
+      "volume_24h": 107429767.6838611,
+      "market_cap_usd": 2604510808.41,
+      "percent_change_24h": -5.58,
       "extra": {
         "contributors": [
-          "coinpaprika",
+          "coinlore",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.4292444815857621
+        "price_spread": 0.030625000000000124
       }
     },
     {
       "source": "consensus",
       "symbol": "WIF",
       "name": "dogwifhat",
-      "price_usd": 0.2962390128136261,
+      "price_usd": 0.29339175683921725,
       "volume_24h": 107242840.693427,
       "market_cap_usd": null,
       "percent_change_24h": -0.55,
@@ -873,14 +890,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00395146171856825
+        "price_spread": 0.005694511948817704
       }
     },
     {
       "source": "consensus",
       "symbol": "PENGU",
       "name": "Pudgy Penguins",
-      "price_usd": 0.009174,
+      "price_usd": 0.009046,
       "volume_24h": 106324519.08392923,
       "market_cap_usd": null,
       "percent_change_24h": 0.94,
@@ -891,33 +908,16 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 1.6598078159651974e-05
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "DOT",
-      "name": "Polkadot",
-      "price_usd": 1.740625,
-      "volume_24h": 103827353.11264394,
-      "market_cap_usd": 2627503984.69,
-      "percent_change_24h": -4.74,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.02124999999999999
+        "price_spread": 0.0001412744697077712
       }
     },
     {
       "source": "consensus",
       "symbol": "VIRTUAL",
       "name": "Virtuals Protocol",
-      "price_usd": 0.790201,
+      "price_usd": 0.776361,
       "volume_24h": 103274051.74165556,
-      "market_cap_usd": 512367067.0,
+      "market_cap_usd": null,
       "percent_change_24h": -6.12,
       "extra": {
         "contributors": [
@@ -926,14 +926,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0037726398134064754
+        "price_spread": 0.014459530286995315
       }
     },
     {
       "source": "consensus",
       "symbol": "STABLE",
       "name": "Stable",
-      "price_usd": 0.026742196753264016,
+      "price_usd": 0.026422357720440187,
       "volume_24h": 100769760.45171224,
       "market_cap_usd": null,
       "percent_change_24h": 17.87,
@@ -943,14 +943,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 5.3558308945950844e-05
+        "price_spread": 0.0006396780656476551
       }
     },
     {
       "source": "consensus",
       "symbol": "ZRO",
       "name": "LayerZero",
-      "price_usd": 1.9762499999999998,
+      "price_usd": 1.9631249999999998,
       "volume_24h": 99525843.07056637,
       "market_cap_usd": null,
       "percent_change_24h": -3.62,
@@ -960,17 +960,17 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.012499999999999956
+        "price_spread": 0.026249999999999885
       }
     },
     {
       "source": "consensus",
       "symbol": "TRUMP",
       "name": "OFFICIAL TRUMP",
-      "price_usd": 4.57,
-      "volume_24h": 94620500.58813311,
-      "market_cap_usd": null,
-      "percent_change_24h": -2.75,
+      "price_usd": 4.551955878314392,
+      "volume_24h": 96915945.82845762,
+      "market_cap_usd": 910389023.0,
+      "percent_change_24h": -3.98,
       "extra": {
         "contributors": [
           "coinlore",
@@ -978,14 +978,50 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.010664038536071452
+        "price_spread": 0.020000000000000462
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "TON",
+      "name": "Toncoin",
+      "price_usd": 1.46,
+      "volume_24h": 94194269.32970175,
+      "market_cap_usd": 3548801470.0,
+      "percent_change_24h": -4.31,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.003182766063511977
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "ARB",
+      "name": "Arbitrum",
+      "price_usd": 0.1555865175918238,
+      "volume_24h": 93242418.5831122,
+      "market_cap_usd": 906569194.0,
+      "percent_change_24h": -7.51,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.0018480000000000163
       }
     },
     {
       "source": "consensus",
       "symbol": "USDS",
       "name": "Usds",
-      "price_usd": 1.0001348681088051,
+      "price_usd": 1.000143316016434,
       "volume_24h": 92499658.21614607,
       "market_cap_usd": null,
       "percent_change_24h": -0.07,
@@ -995,53 +1031,177 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00023433569681152733
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "ARB",
-      "name": "Arbitrum",
-      "price_usd": 0.157337,
-      "volume_24h": 91743380.11649902,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.53,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.00028070787838946343
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "TON",
-      "name": "Toncoin",
-      "price_usd": 1.46,
-      "volume_24h": 91493167.39734598,
-      "market_cap_usd": 3549703217.0,
-      "percent_change_24h": -4.46,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.0028115018196310793
+        "price_spread": 1.689581525754491e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "IP",
       "name": "Story",
-      "price_usd": 1.9340102005009883,
+      "price_usd": 1.9176714460408417,
       "volume_24h": 89912831.67927414,
       "market_cap_usd": null,
       "percent_change_24h": -3.35,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.024010200500988343
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "RIVER",
+      "name": "River",
+      "price_usd": 44.82774451117553,
+      "volume_24h": 85658745.69538713,
+      "market_cap_usd": null,
+      "percent_change_24h": -22.15,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.1603631054677166
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "WLFI",
+      "name": "World Liberty Financial",
+      "price_usd": 0.156914,
+      "volume_24h": 80769740.36573665,
+      "market_cap_usd": 3862183526.37,
+      "percent_change_24h": -2.46,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.0005292911400932021
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "BTCB",
+      "name": "Binance Bitcoin",
+      "price_usd": 84211.5851383036,
+      "volume_24h": 80360355.16916226,
+      "market_cap_usd": 6119504849.0,
+      "percent_change_24h": -6.41,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 1013.178230916019
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "OP",
+      "name": "Optimism",
+      "price_usd": 0.26409656441150614,
+      "volume_24h": 79323457.46730395,
+      "market_cap_usd": 469706512.74,
+      "percent_change_24h": -8.58,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.003330999999999973
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "ICP",
+      "name": "Internet Computer (IOU)",
+      "price_usd": 3.0518892479168236,
+      "volume_24h": 77253531.30710989,
+      "market_cap_usd": 1638798756.9,
+      "percent_change_24h": -6.3,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.020374197595886656
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "CRV",
+      "name": "Curve DAO Token",
+      "price_usd": 0.3263129276760835,
+      "volume_24h": 73609361.10458773,
+      "market_cap_usd": null,
+      "percent_change_24h": -4.66,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.0023079999999999767
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "APT",
+      "name": "Aptos",
+      "price_usd": 1.455043390809405,
+      "volume_24h": 73484333.85389961,
+      "market_cap_usd": null,
+      "percent_change_24h": -5.16,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.022712925788167304
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "WSTETH",
+      "name": "Wrapped Liquid Staked Ether 2.0",
+      "price_usd": 3440.913490364779,
+      "volume_24h": 72098217.16825147,
+      "market_cap_usd": null,
+      "percent_change_24h": -0.13,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 50.433019270441946
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "RENDER",
+      "name": "Render",
+      "price_usd": 1.7920153895761342,
+      "volume_24h": 71787049.57922168,
+      "market_cap_usd": null,
+      "percent_change_24h": -0.1,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1054,170 +1214,9 @@
     },
     {
       "source": "consensus",
-      "symbol": "RIVER",
-      "name": "River",
-      "price_usd": 44.950363105467716,
-      "volume_24h": 85658745.69538713,
-      "market_cap_usd": null,
-      "percent_change_24h": -22.15,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.019636894532283122
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "WLFI",
-      "name": "World Liberty Financial",
-      "price_usd": 0.15731225773527813,
-      "volume_24h": 80667493.26606147,
-      "market_cap_usd": null,
-      "percent_change_24h": -1.54,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.00045100000000000695
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "BTCB",
-      "name": "Binance Bitcoin",
-      "price_usd": 84718.17425376161,
-      "volume_24h": 78858344.56322671,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.69,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 785.0607501422055
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "OP",
-      "name": "Optimism",
-      "price_usd": 0.267414,
-      "volume_24h": 77149169.04145627,
-      "market_cap_usd": 475632244.95,
-      "percent_change_24h": -7.42,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.0006741953872285156
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "ICP",
-      "name": "Internet Computer (IOU)",
-      "price_usd": 3.0703741975958865,
-      "volume_24h": 76705968.27979174,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.57,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.00037419759588663837
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "CRV",
-      "name": "Curve DAO Token",
-      "price_usd": 0.328431,
-      "volume_24h": 73609361.10458773,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.66,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.0003665348642249988
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "APT",
-      "name": "Aptos",
-      "price_usd": 1.4727129257881673,
-      "volume_24h": 73484333.85389961,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.16,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.0027129257881672864
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "WSTETH",
-      "name": "Wrapped Liquid Staked Ether 2.0",
-      "price_usd": 3466.13,
-      "volume_24h": 72098217.16825147,
-      "market_cap_usd": null,
-      "percent_change_24h": -0.13,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 32.34051162714832
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "RENDER",
-      "name": "Render",
-      "price_usd": 1.8,
-      "volume_24h": 71787049.57922168,
-      "market_cap_usd": null,
-      "percent_change_24h": -0.1,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.0035181974601969923
-      }
-    },
-    {
-      "source": "consensus",
       "symbol": "ONDO",
       "name": "Ondo",
-      "price_usd": 0.31501569132062396,
+      "price_usd": 0.310647,
       "volume_24h": 67939215.58975874,
       "market_cap_usd": null,
       "percent_change_24h": 2.6,
@@ -1228,14 +1227,32 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0008980000000000099
+        "price_spread": 0.004593019427306055
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "ALGO",
+      "name": "Algorand",
+      "price_usd": 0.1134657194560034,
+      "volume_24h": 67785468.42582494,
+      "market_cap_usd": 1006200773.0,
+      "percent_change_24h": -6.09,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.0004539999999999961
       }
     },
     {
       "source": "consensus",
       "symbol": "BONK",
       "name": "Bonk",
-      "price_usd": 8.15843626169345e-06,
+      "price_usd": 8.09717664766058e-06,
       "volume_24h": 66644393.07896663,
       "market_cap_usd": null,
       "percent_change_24h": -4.71,
@@ -1246,14 +1263,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 1.5867637827720967e-07
+        "price_spread": 1.5843626169344996e-07
       }
     },
     {
       "source": "consensus",
       "symbol": "FET",
       "name": "Fetch.ai",
-      "price_usd": 0.2132864634925782,
+      "price_usd": 0.2117085358313397,
       "volume_24h": 63032572.653596185,
       "market_cap_usd": null,
       "percent_change_24h": -3.5,
@@ -1264,66 +1281,65 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.000136000000000025
+        "price_spread": 0.001957463492578221
       }
     },
     {
       "source": "consensus",
       "symbol": "LIT",
       "name": "Lighter",
-      "price_usd": 1.656994000850065,
-      "volume_24h": 60146612.7321294,
-      "market_cap_usd": 407865952.0,
-      "percent_change_24h": -12.38,
+      "price_usd": 1.635709600961866,
+      "volume_24h": 61194945.94100177,
+      "market_cap_usd": 403606300.0,
+      "percent_change_24h": -13.54,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.05106038332305762
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "ALGO",
-      "name": "Algorand",
-      "price_usd": 0.113762,
-      "volume_24h": 59086898.084425494,
-      "market_cap_usd": 1008408262.0,
-      "percent_change_24h": -5.99,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.00020529398760561757
+        "price_spread": 0.042568799776397936
       }
     },
     {
       "source": "consensus",
       "symbol": "KITE",
       "name": "Kite",
-      "price_usd": 0.14549289752390404,
-      "volume_24h": 55808449.115935266,
-      "market_cap_usd": null,
-      "percent_change_24h": 4.8,
+      "price_usd": 0.14587356354462022,
+      "volume_24h": 56125574.44715947,
+      "market_cap_usd": 263257613.0,
+      "percent_change_24h": 0.88,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00014800876017104225
+        "price_spread": 0.0007613320414323332
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "FARTCOIN",
+      "name": "Fartcoin",
+      "price_usd": 0.26973780600172026,
+      "volume_24h": 54437190.0929292,
+      "market_cap_usd": 267366440.0,
+      "percent_change_24h": -11.14,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.0047417995613348585
       }
     },
     {
       "source": "consensus",
       "symbol": "WTRX",
       "name": "Wrapped TRX",
-      "price_usd": 0.2916186852020255,
+      "price_usd": 0.29137351891245844,
       "volume_24h": 53568046.989787325,
       "market_cap_usd": null,
       "percent_change_24h": -0.52,
@@ -1333,14 +1349,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0005176187419604905
+        "price_spread": 0.0004903325791341118
       }
     },
     {
       "source": "consensus",
       "symbol": "EURC",
       "name": "EURC",
-      "price_usd": 1.1954562947135936,
+      "price_usd": 1.1951556338857157,
       "volume_24h": 53186995.80328706,
       "market_cap_usd": null,
       "percent_change_24h": 0.16,
@@ -1350,7 +1366,7 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00016733862719764403
+        "price_spread": 0.00060132165575566
       }
     },
     {
@@ -1358,9 +1374,9 @@
       "symbol": "USDF",
       "name": "Falcon USD",
       "price_usd": 0.9937262061077682,
-      "volume_24h": 51894277.66028115,
-      "market_cap_usd": 1194156731.0,
-      "percent_change_24h": -0.23,
+      "volume_24h": 51940866.272372395,
+      "market_cap_usd": 1193890949.0,
+      "percent_change_24h": 0.02,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1368,31 +1384,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0009262061077681683
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "FARTCOIN",
-      "name": "Fartcoin",
-      "price_usd": 0.27210870578238766,
-      "volume_24h": 51456951.44744092,
-      "market_cap_usd": null,
-      "percent_change_24h": -10.14,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.005218649300572864
+        "price_spread": 0.0004949670056412225
       }
     },
     {
       "source": "consensus",
       "symbol": "JUP",
       "name": "Jupiter Exchange Token",
-      "price_usd": 0.20482478855448086,
+      "price_usd": 0.20283993930854088,
       "volume_24h": 51319110.61169407,
       "market_cap_usd": null,
       "percent_change_24h": 5.08,
@@ -1402,14 +1401,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0015282848322841769
+        "price_spread": 0.003969698491879947
       }
     },
     {
       "source": "consensus",
       "symbol": "PENDLE",
       "name": "Pendle",
-      "price_usd": 1.9366920971516022,
+      "price_usd": 1.9181391883064507,
       "volume_24h": 49101918.81308459,
       "market_cap_usd": null,
       "percent_change_24h": 6.41,
@@ -1419,14 +1418,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.01601938980952311
+        "price_spread": 0.03710581769030297
       }
     },
     {
       "source": "consensus",
       "symbol": "ATOM",
       "name": "Cosmos",
-      "price_usd": 2.11,
+      "price_usd": 2.100193659782591,
       "volume_24h": 49037218.07398292,
       "market_cap_usd": null,
       "percent_change_24h": -4.61,
@@ -1437,7 +1436,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0005271691290138492
+        "price_spread": 0.009999999999999787
       }
     },
     {
@@ -1445,9 +1444,9 @@
       "symbol": "MNT",
       "name": "Mantle",
       "price_usd": 0.8353535911767922,
-      "volume_24h": 48413566.088409975,
-      "market_cap_usd": null,
-      "percent_change_24h": -7.32,
+      "volume_24h": 48490734.58989468,
+      "market_cap_usd": 2714499521.8,
+      "percent_change_24h": -7.46,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1455,14 +1454,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 4.408823207846524e-06
+        "price_spread": 0.0011817538233417357
       }
     },
     {
       "source": "consensus",
       "symbol": "POL",
       "name": "Polygon Ecosystem Token",
-      "price_usd": 0.1117377549798348,
+      "price_usd": 0.11104031055991873,
       "volume_24h": 47786970.722639754,
       "market_cap_usd": null,
       "percent_change_24h": -3.78,
@@ -1472,24 +1471,41 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0011457798550839893
+        "price_spread": 0.0013948888398321452
       }
     },
     {
       "source": "consensus",
       "symbol": "TIA",
       "name": "Celestia",
-      "price_usd": 0.41640384303534045,
-      "volume_24h": 45218091.36951263,
-      "market_cap_usd": null,
-      "percent_change_24h": -8.54,
+      "price_usd": 0.4118409867701148,
+      "volume_24h": 46218337.9149428,
+      "market_cap_usd": 254206163.0,
+      "percent_change_24h": -9.75,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.007628736309963524
+        "price_spread": 0.009125712530451191
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "BSV",
+      "name": "Bitcoin SV",
+      "price_usd": 17.23727505039814,
+      "volume_24h": 45867516.53425105,
+      "market_cap_usd": 342638258.0,
+      "percent_change_24h": -4.19,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.17880183807038108
       }
     },
     {
@@ -1497,9 +1513,9 @@
       "symbol": "CAKE",
       "name": "PancakeSwap",
       "price_usd": 1.79,
-      "volume_24h": 44398688.49790448,
-      "market_cap_usd": 597472385.0,
-      "percent_change_24h": -6.09,
+      "volume_24h": 45178793.783680566,
+      "market_cap_usd": 595281891.0,
+      "percent_change_24h": -6.36,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1507,31 +1523,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0016205443216057436
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "BSV",
-      "name": "Bitcoin SV",
-      "price_usd": 17.32667596943333,
-      "volume_24h": 44159664.63036567,
-      "market_cap_usd": 345272225.0,
-      "percent_change_24h": -3.65,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.0939615625434378
+        "price_spread": 0.004948019346759258
       }
     },
     {
       "source": "consensus",
       "symbol": "WEETH",
       "name": "Wrapped eETH",
-      "price_usd": 3085.4973197358204,
+      "price_usd": 3058.206478794139,
       "volume_24h": 41816407.18543421,
       "market_cap_usd": null,
       "percent_change_24h": -0.17,
@@ -1541,14 +1540,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 28.195983079353482
+        "price_spread": 54.58168188336231
       }
     },
     {
       "source": "consensus",
       "symbol": "STRK",
       "name": "Starknet",
-      "price_usd": 0.06409033497606226,
+      "price_usd": 0.06365869009333897,
       "volume_24h": 41289348.60552427,
       "market_cap_usd": null,
       "percent_change_24h": -5.23,
@@ -1558,14 +1557,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0008871853173982175
+        "price_spread": 0.0008632897654465843
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "SUN",
+      "name": "SUN",
+      "price_usd": 0.018612429885531613,
+      "volume_24h": 41075937.19474138,
+      "market_cap_usd": 357534379.0,
+      "percent_change_24h": 3.64,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 1.0450180399620979e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "INJ",
       "name": "Injective Protocol",
-      "price_usd": 4.118597348570544,
+      "price_usd": 4.080395586159889,
       "volume_24h": 41015898.003925234,
       "market_cap_usd": null,
       "percent_change_24h": -5.98,
@@ -1575,31 +1591,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.06494299922490843
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "SUN",
-      "name": "SUN",
-      "price_usd": 0.018607204795331803,
-      "volume_24h": 40921711.20891026,
-      "market_cap_usd": 357939229.0,
-      "percent_change_24h": 3.02,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 6.306337994531688e-05
+        "price_spread": 0.07640352482131085
       }
     },
     {
       "source": "consensus",
       "symbol": "JST",
       "name": "JUST",
-      "price_usd": 0.044172,
+      "price_usd": 0.044138873819241274,
       "volume_24h": 35991343.26425287,
       "market_cap_usd": null,
       "percent_change_24h": 11.19,
@@ -1610,35 +1609,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00017335189245150373
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "LDO",
-      "name": "Lido DAO",
-      "price_usd": 0.476256,
-      "volume_24h": 34732010.07275797,
-      "market_cap_usd": null,
-      "percent_change_24h": -7.4,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 0.00071987021212222
+        "price_spread": 6.400000000000156e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "SEI",
       "name": "Sei",
-      "price_usd": 0.10005813805702866,
-      "volume_24h": 33975455.06581058,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.37,
+      "price_usd": 0.099029,
+      "volume_24h": 35811993.928613335,
+      "market_cap_usd": 594789996.0,
+      "percent_change_24h": -6.84,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1646,41 +1627,59 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00017600000000000948
+        "price_spread": 0.0010364961272212592
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "LDO",
+      "name": "Lido DAO",
+      "price_usd": 0.470758,
+      "volume_24h": 35283276.111169934,
+      "market_cap_usd": 421705688.48,
+      "percent_change_24h": -8.63,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.006057017122291342
       }
     },
     {
       "source": "consensus",
       "symbol": "FLOKI",
       "name": "Floki Inu",
-      "price_usd": 3.9347028197535366e-05,
-      "volume_24h": 33948829.9043328,
-      "market_cap_usd": null,
-      "percent_change_24h": -3.85,
+      "price_usd": 3.902563599639618e-05,
+      "volume_24h": 34227711.21681202,
+      "market_cap_usd": 373701713.0,
+      "percent_change_24h": -6.98,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 4.319123847307244e-07
+        "price_spread": 6.427844022783723e-07
       }
     },
     {
       "source": "consensus",
       "symbol": "SAND",
       "name": "The Sandbox",
-      "price_usd": 0.11429798632203503,
-      "volume_24h": 33291312.933265448,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.82,
+      "price_usd": 0.11356705194206115,
+      "volume_24h": 33777556.41497976,
+      "market_cap_usd": 278068490.0,
+      "percent_change_24h": -8.06,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.001419405037151919
+        "price_spread": 0.0014618687599477348
       }
     },
     {
@@ -1688,9 +1687,9 @@
       "symbol": "SUSDE",
       "name": "Ethena Staked USDe",
       "price_usd": 1.2163420509281861,
-      "volume_24h": 31849446.88433194,
-      "market_cap_usd": 4935819362.0,
-      "percent_change_24h": -0.05,
+      "volume_24h": 32309710.433684394,
+      "market_cap_usd": 4934544338.0,
+      "percent_change_24h": -0.06,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1698,17 +1697,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.003733756030075863
+        "price_spread": 0.004047942769260349
       }
     },
     {
       "source": "consensus",
       "symbol": "OKB",
       "name": "OKB",
-      "price_usd": 102.54,
-      "volume_24h": 31770583.889020335,
-      "market_cap_usd": null,
-      "percent_change_24h": -1.71,
+      "price_usd": 101.91,
+      "volume_24h": 31993874.041523404,
+      "market_cap_usd": 2140149840.25,
+      "percent_change_24h": -2.35,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1716,7 +1715,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.09990906948652878
+        "price_spread": 0.8787187103784646
       }
     },
     {
@@ -1724,9 +1723,9 @@
       "symbol": "TUSD",
       "name": "TrueUSD",
       "price_usd": 0.998110809255076,
-      "volume_24h": 30976586.43304387,
-      "market_cap_usd": null,
-      "percent_change_24h": -0.01,
+      "volume_24h": 31387675.06915607,
+      "market_cap_usd": 493665231.34,
+      "percent_change_24h": 0.02,
       "extra": {
         "contributors": [
           "coinlore",
@@ -1734,24 +1733,24 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0005681907449239798
+        "price_spread": 0.00161067306582241
       }
     },
     {
       "source": "consensus",
       "symbol": "ETHFI",
       "name": "Ether.fi",
-      "price_usd": 0.5823570147618393,
-      "volume_24h": 27568584.086550508,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.82,
+      "price_usd": 0.5760206177770524,
+      "volume_24h": 28254492.87237615,
+      "market_cap_usd": 398472983.0,
+      "percent_change_24h": -7.44,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.007269669366686382
+        "price_spread": 0.012672793969573992
       }
     },
     {
@@ -1774,7 +1773,7 @@
       "source": "consensus",
       "symbol": "VET",
       "name": "VeChain",
-      "price_usd": 0.0095,
+      "price_usd": 0.009413,
       "volume_24h": 26268460.331753284,
       "market_cap_usd": null,
       "percent_change_24h": -5.43,
@@ -1785,14 +1784,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0001000170331907288
+        "price_spread": 0.0001632549723197315
       }
     },
     {
       "source": "consensus",
       "symbol": "JLP",
       "name": "Jupiter Perpetuals Liquidity Provider Token",
-      "price_usd": 4.433529692573096,
+      "price_usd": 4.415172642119192,
       "volume_24h": 25907804.101336908,
       "market_cap_usd": null,
       "percent_change_24h": -0.51,
@@ -1802,14 +1801,32 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.025800136909498228
+        "price_spread": 0.03671410090780913
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "XTZ",
+      "name": "Tezos",
+      "price_usd": 0.5046477870000274,
+      "volume_24h": 24659205.083402146,
+      "market_cap_usd": 541816055.0,
+      "percent_change_24h": -6.73,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 0.0035490963317201807
       }
     },
     {
       "source": "consensus",
       "symbol": "BGB",
       "name": "Bitget Token",
-      "price_usd": 3.482667833662355,
+      "price_usd": 3.4734813957450497,
       "volume_24h": 24274432.898773838,
       "market_cap_usd": null,
       "percent_change_24h": -3.01,
@@ -1819,32 +1836,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.01344926739153518
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "XTZ",
-      "name": "Tezos",
-      "price_usd": 0.5070990963317202,
-      "volume_24h": 24178700.084409766,
-      "market_cap_usd": 544447373.0,
-      "percent_change_24h": -6.36,
-      "extra": {
-        "contributors": [
-          "coinlore",
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 3,
-        "price_spread": 5.100000000002325e-05
+        "price_spread": 0.018372875834610447
       }
     },
     {
       "source": "consensus",
       "symbol": "CC",
       "name": "Canton Network",
-      "price_usd": 0.1661819727189155,
+      "price_usd": 0.166502599857991,
       "volume_24h": 23417121.868265178,
       "market_cap_usd": null,
       "percent_change_24h": 4.82,
@@ -1854,14 +1853,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00028862927403403016
+        "price_spread": 0.0006412542781510377
       }
     },
     {
       "source": "consensus",
       "symbol": "RAIN",
       "name": "Rain Protocol",
-      "price_usd": 0.00960456875160167,
+      "price_usd": 0.009529589929512684,
       "volume_24h": 23055659.480976123,
       "market_cap_usd": null,
       "percent_change_24h": -4.53,
@@ -1871,14 +1870,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 4.8747910495207034e-05
+        "price_spread": 0.00014995764417797576
       }
     },
     {
       "source": "consensus",
       "symbol": "QNT",
       "name": "Quant",
-      "price_usd": 72.75,
+      "price_usd": 72.13,
       "volume_24h": 21662717.613559093,
       "market_cap_usd": null,
       "percent_change_24h": 7.99,
@@ -1889,58 +1888,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.30110251348519057
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "KAIA",
-      "name": "Kaia",
-      "price_usd": 0.05921778189821002,
-      "volume_24h": 21540069.946218822,
-      "market_cap_usd": null,
-      "percent_change_24h": -2.76,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.0013889471189812222
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "XDC",
-      "name": "XDC Network",
-      "price_usd": 0.03705254986344702,
-      "volume_24h": 21103498.312135752,
-      "market_cap_usd": null,
-      "percent_change_24h": -1.35,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.0002554424307266018
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "AERO",
-      "name": "Aerodrome Finance",
-      "price_usd": 0.4328544245226106,
-      "volume_24h": 20467395.775760848,
-      "market_cap_usd": null,
-      "percent_change_24h": -6.03,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.006873890806002703
+        "price_spread": 0.72688458166175
       }
     },
     {
@@ -1948,7 +1896,7 @@
       "symbol": "RLUSD",
       "name": "Ripple USD",
       "price_usd": 1.0,
-      "volume_24h": 20405283.22378256,
+      "volume_24h": 21610985.295122087,
       "market_cap_usd": 730727697.23,
       "percent_change_24h": 0.1,
       "extra": {
@@ -1962,46 +1910,80 @@
     },
     {
       "source": "consensus",
-      "symbol": "2Z",
-      "name": "DoubleZero",
-      "price_usd": 0.11817948637507505,
-      "volume_24h": 19738351.36467147,
+      "symbol": "KAIA",
+      "name": "Kaia",
+      "price_usd": 0.05869237696847917,
+      "volume_24h": 21540069.946218822,
       "market_cap_usd": null,
-      "percent_change_24h": 4.85,
+      "percent_change_24h": -2.76,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.001030058396940245
+        "price_spread": 0.001050809859461696
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "XDC",
+      "name": "XDC Network",
+      "price_usd": 0.03694764428097197,
+      "volume_24h": 21103498.312135752,
+      "market_cap_usd": null,
+      "percent_change_24h": -1.35,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.00020981116495010638
       }
     },
     {
       "source": "consensus",
       "symbol": "NFT",
       "name": "APENFT",
-      "price_usd": 3.4794917739008564e-07,
-      "volume_24h": 19338703.59120182,
-      "market_cap_usd": 348383684.0,
-      "percent_change_24h": 0.89,
+      "price_usd": 3.521499494295728e-07,
+      "volume_24h": 20558202.658348665,
+      "market_cap_usd": 356347158.0,
+      "percent_change_24h": 2.96,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 8.75980184728748e-10
+        "price_spread": 8.401544078974372e-09
       }
     },
     {
       "source": "consensus",
-      "symbol": "STETH",
-      "name": "Lido Staked Ether",
-      "price_usd": 2832.37,
-      "volume_24h": 18234466.058492146,
+      "symbol": "AERO",
+      "name": "Aerodrome Finance",
+      "price_usd": 0.42902122499703216,
+      "volume_24h": 20467395.775760848,
       "market_cap_usd": null,
-      "percent_change_24h": -0.19,
+      "percent_change_24h": -6.03,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.007666399051156847
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "2Z",
+      "name": "DoubleZero",
+      "price_usd": 0.120816,
+      "volume_24h": 19738351.36467147,
+      "market_cap_usd": null,
+      "percent_change_24h": 4.85,
       "extra": {
         "contributors": [
           "coinlore",
@@ -2009,17 +1991,17 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 9.221304512611368
+        "price_spread": 0.0032450037927600206
       }
     },
     {
       "source": "consensus",
       "symbol": "KAS",
       "name": "Kaspa",
-      "price_usd": 0.038009,
-      "volume_24h": 17874504.667621065,
-      "market_cap_usd": 1029071873.0,
-      "percent_change_24h": -4.65,
+      "price_usd": 0.037664,
+      "volume_24h": 18381227.130860098,
+      "market_cap_usd": 1019575066.0,
+      "percent_change_24h": -5.17,
       "extra": {
         "contributors": [
           "coinlore",
@@ -2027,14 +2009,32 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00016463122642440542
+        "price_spread": 0.000465408786872179
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "STETH",
+      "name": "Lido Staked Ether",
+      "price_usd": 2805.8,
+      "volume_24h": 18280673.925389007,
+      "market_cap_usd": 27313195487.0,
+      "percent_change_24h": -7.09,
+      "extra": {
+        "contributors": [
+          "coinlore",
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 3,
+        "price_spread": 43.71543455463734
       }
     },
     {
       "source": "consensus",
       "symbol": "JASMY",
       "name": "JasmyCoin",
-      "price_usd": 0.006415093357818454,
+      "price_usd": 0.0063667943705476085,
       "volume_24h": 17690987.572230816,
       "market_cap_usd": null,
       "percent_change_24h": -4.61,
@@ -2044,14 +2044,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 8.006509883725851e-05
+        "price_spread": 9.659797454169075e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "IMX",
       "name": "Immutable X",
-      "price_usd": 0.21152875565507223,
+      "price_usd": 0.21068701158892378,
       "volume_24h": 17534182.649447575,
       "market_cap_usd": null,
       "percent_change_24h": -6.86,
@@ -2061,14 +2061,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0005944886898555379
+        "price_spread": 0.0016834881322968787
       }
     },
     {
       "source": "consensus",
       "symbol": "CRO",
       "name": "Cronos",
-      "price_usd": 0.08834,
+      "price_usd": 0.08791,
       "volume_24h": 17196586.7837884,
       "market_cap_usd": null,
       "percent_change_24h": -1.31,
@@ -2079,14 +2079,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00010330105556992375
+        "price_spread": 0.000763610918306179
       }
     },
     {
       "source": "consensus",
       "symbol": "SYRUP",
       "name": "Syrup Token",
-      "price_usd": 0.33672901106327824,
+      "price_usd": 0.33481132897803634,
       "volume_24h": 16667232.339903697,
       "market_cap_usd": null,
       "percent_change_24h": -2.36,
@@ -2096,14 +2096,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0034430212317331232
+        "price_spread": 0.0038353641704838015
       }
     },
     {
       "source": "consensus",
       "symbol": "H",
       "name": "Humanity",
-      "price_usd": 0.14279021659996072,
+      "price_usd": 0.1423358910814518,
       "volume_24h": 16230881.829704557,
       "market_cap_usd": null,
       "percent_change_24h": -0.6,
@@ -2113,31 +2113,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0004373943278294101
+        "price_spread": 0.0009086510370178158
       }
     },
     {
       "source": "consensus",
       "symbol": "ENS",
       "name": "Ethereum Name Service",
-      "price_usd": 8.43772710039806,
-      "volume_24h": 15726225.653526884,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.07,
+      "price_usd": 8.362510390737288,
+      "volume_24h": 16060763.517591862,
+      "market_cap_usd": 294905492.0,
+      "percent_change_24h": -7.67,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.11601902823195154
+        "price_spread": 0.1504334193215442
       }
     },
     {
       "source": "consensus",
       "symbol": "GRT",
       "name": "The Graph",
-      "price_usd": 0.033912053981079146,
+      "price_usd": 0.033688231004257885,
       "volume_24h": 15583317.980936639,
       "market_cap_usd": null,
       "percent_change_24h": -4.09,
@@ -2147,14 +2147,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00047336909001455263
+        "price_spread": 0.00044764595364251564
       }
     },
     {
       "source": "consensus",
       "symbol": "PI",
       "name": "Pi Network",
-      "price_usd": 0.162596,
+      "price_usd": 0.161859,
       "volume_24h": 15106305.64464355,
       "market_cap_usd": null,
       "percent_change_24h": -4.02,
@@ -2165,14 +2165,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0006059121173986604
+        "price_spread": 0.001151121544920114
       }
     },
     {
       "source": "consensus",
       "symbol": "IOTA",
       "name": "IOTA",
-      "price_usd": 0.08142576501229473,
+      "price_usd": 0.08086343307579266,
       "volume_24h": 14629144.979637098,
       "market_cap_usd": null,
       "percent_change_24h": -1.11,
@@ -2182,7 +2182,7 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0008085698402317126
+        "price_spread": 0.0011246638730041253
       }
     },
     {
@@ -2204,9 +2204,26 @@
     },
     {
       "source": "consensus",
+      "symbol": "USDC.E",
+      "name": "USD Coin.E",
+      "price_usd": 1.0000885460479259,
+      "volume_24h": 14075802.174894087,
+      "market_cap_usd": 669103337.0,
+      "percent_change_24h": -0.04,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.0001610871011894499
+      }
+    },
+    {
+      "source": "consensus",
       "symbol": "SPX",
       "name": "SPX6900",
-      "price_usd": 0.3451509554562934,
+      "price_usd": 0.34074466240111795,
       "volume_24h": 14023715.789216753,
       "market_cap_usd": null,
       "percent_change_24h": -5.95,
@@ -2216,14 +2233,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.006020301706111619
+        "price_spread": 0.00881258611035085
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "MORPHO",
+      "name": "Morpho",
+      "price_usd": 1.1963824575204658,
+      "volume_24h": 13913688.026278824,
+      "market_cap_usd": 281800997.0,
+      "percent_change_24h": -1.21,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.00339232854041982
       }
     },
     {
       "source": "consensus",
       "symbol": "WBETH",
       "name": "Wrapped Beacon ETH",
-      "price_usd": 3096.0862500000003,
+      "price_usd": 3071.2631250000004,
       "volume_24h": 13891381.21775474,
       "market_cap_usd": null,
       "percent_change_24h": 3.16,
@@ -2233,48 +2267,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 29.292500000000018
+        "price_spread": 49.64625000000024
       }
     },
     {
       "source": "consensus",
-      "symbol": "USDC.E",
-      "name": "USD Coin.E",
-      "price_usd": 1.0000080024973312,
-      "volume_24h": 13830693.287924394,
-      "market_cap_usd": null,
-      "percent_change_24h": -0.02,
+      "symbol": "TBTC",
+      "name": "tBTC",
+      "price_usd": 84216.70091808209,
+      "volume_24h": 13255535.95728272,
+      "market_cap_usd": 519867003.0,
+      "percent_change_24h": -6.22,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 2.529739847956236e-05
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "MORPHO",
-      "name": "Morpho",
-      "price_usd": 1.1980786217906756,
-      "volume_24h": 13748655.363524618,
-      "market_cap_usd": null,
-      "percent_change_24h": 0.18,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.0029612515389774163
+        "price_spread": 1004.4154847364262
       }
     },
     {
       "source": "consensus",
       "symbol": "GHO",
       "name": "GHO",
-      "price_usd": 0.9993033110456455,
+      "price_usd": 0.99914049931625,
       "volume_24h": 12531775.472379256,
       "market_cap_usd": null,
       "percent_change_24h": -0.04,
@@ -2284,31 +2301,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 1.903942927705682e-05
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "TBTC",
-      "name": "tBTC",
-      "price_usd": 84718.90866045031,
-      "volume_24h": 12495385.068990018,
-      "market_cap_usd": 523737491.0,
-      "percent_change_24h": -5.53,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 762.2969765359157
+        "price_spread": 0.00032562345879083576
       }
     },
     {
       "source": "consensus",
       "symbol": "NIGHT",
       "name": "Midnight",
-      "price_usd": 0.05505341039301948,
+      "price_usd": 0.0546755489330351,
       "volume_24h": 12300010.3686084,
       "market_cap_usd": null,
       "percent_change_24h": -3.31,
@@ -2318,14 +2318,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0004493153131171629
+        "price_spread": 0.0007557229199687751
       }
     },
     {
       "source": "consensus",
       "symbol": "BTT",
       "name": "BitTorrent",
-      "price_usd": 3.92843968530415e-07,
+      "price_usd": 3.922233499435225e-07,
       "volume_24h": 12134168.886104386,
       "market_cap_usd": null,
       "percent_change_24h": -0.33,
@@ -2335,16 +2335,16 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 1.5225406895499666e-09
+        "price_spread": 1.2412371737850256e-09
       }
     },
     {
       "source": "consensus",
       "symbol": "USDAI",
       "name": "USDAI",
-      "price_usd": 0.9997382340605867,
+      "price_usd": 0.9996721676324802,
       "volume_24h": 12022864.714602854,
-      "market_cap_usd": 255205109.0,
+      "market_cap_usd": null,
       "percent_change_24h": -0.09,
       "extra": {
         "contributors": [
@@ -2352,17 +2352,17 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 8.623302995180993e-05
+        "price_spread": 0.0001321328562129409
       }
     },
     {
       "source": "consensus",
       "symbol": "STX",
       "name": "Stacks",
-      "price_usd": 0.284224,
-      "volume_24h": 11489936.910253605,
-      "market_cap_usd": null,
-      "percent_change_24h": -2.62,
+      "price_usd": 0.281495,
+      "volume_24h": 11849661.443853373,
+      "market_cap_usd": 506683546.75,
+      "percent_change_24h": -4.84,
       "extra": {
         "contributors": [
           "coinlore",
@@ -2370,14 +2370,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.00030796410497929694
+        "price_spread": 0.002962060919234344
       }
     },
     {
       "source": "consensus",
       "symbol": "XDCE",
       "name": "XinFin Network",
-      "price_usd": 0.037102625,
+      "price_usd": 0.0370008125,
       "volume_24h": 11028175.280076452,
       "market_cap_usd": null,
       "percent_change_24h": -2.8,
@@ -2387,14 +2387,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0002832499999999988
+        "price_spread": 0.00020362499999999895
       }
     },
     {
       "source": "consensus",
       "symbol": "MYX",
       "name": "MYX Finance",
-      "price_usd": 5.794769353067471,
+      "price_usd": 5.78025005337272,
       "volume_24h": 10205269.449139498,
       "market_cap_usd": null,
       "percent_change_24h": -1.7,
@@ -2404,14 +2404,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0056745854200075385
+        "price_spread": 0.029038599389500597
       }
     },
     {
       "source": "consensus",
       "symbol": "MATIC",
       "name": "Matic Network",
-      "price_usd": 0.3791071875,
+      "price_usd": 0.37910159374999997,
       "volume_24h": 9746458.129812151,
       "market_cap_usd": null,
       "percent_change_24h": null,
@@ -2421,14 +2421,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 2.8374999999969397e-05
+        "price_spread": 1.1187500000009454e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "BDX",
       "name": "Beldex",
-      "price_usd": 0.078991,
+      "price_usd": 0.078932,
       "volume_24h": 9703082.940174747,
       "market_cap_usd": null,
       "percent_change_24h": 0.11,
@@ -2439,14 +2439,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 9.539477598040358e-05
+        "price_spread": 0.000382944011319275
       }
     },
     {
       "source": "consensus",
       "symbol": "FTM",
       "name": "Fantom",
-      "price_usd": 0.5017716875,
+      "price_usd": 0.49922334375,
       "volume_24h": 9573603.250453845,
       "market_cap_usd": null,
       "percent_change_24h": null,
@@ -2456,7 +2456,7 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.01019337500000006
+        "price_spread": 0.00509668750000003
       }
     },
     {
@@ -2464,8 +2464,8 @@
       "symbol": "SUSDS",
       "name": "sUSDS",
       "price_usd": 1.0873884764360793,
-      "volume_24h": 9367689.684637593,
-      "market_cap_usd": 2989001586.0,
+      "volume_24h": 9401718.0983417,
+      "market_cap_usd": 2988261448.0,
       "percent_change_24h": -0.04,
       "extra": {
         "contributors": [
@@ -2474,14 +2474,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.005206791250612186
+        "price_spread": 0.005475408130050319
       }
     },
     {
       "source": "consensus",
       "symbol": "NEXO",
       "name": "Nexo",
-      "price_usd": 0.9208309616119804,
+      "price_usd": 0.917936,
       "volume_24h": 8515970.424957938,
       "market_cap_usd": null,
       "percent_change_24h": -2.26,
@@ -2492,14 +2492,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0007290383880196316
+        "price_spread": 0.004549207506540975
       }
     },
     {
       "source": "consensus",
       "symbol": "RNDR",
       "name": "Render Token",
-      "price_usd": 6.691875,
+      "price_usd": 6.6809375,
       "volume_24h": 8148096.220674462,
       "market_cap_usd": null,
       "percent_change_24h": 0.02,
@@ -2509,14 +2509,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.04375000000000018
+        "price_spread": 0.021874999999999645
       }
     },
     {
       "source": "consensus",
       "symbol": "TWT",
       "name": "Trust Wallet Token",
-      "price_usd": 0.8487078121841797,
+      "price_usd": 0.8440962824459592,
       "volume_24h": 8013072.754444424,
       "market_cap_usd": null,
       "percent_change_24h": -2.59,
@@ -2526,31 +2526,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.006454582286529176
+        "price_spread": 0.009223059476440865
       }
     },
     {
       "source": "consensus",
       "symbol": "CFX",
       "name": "Conflux Network",
-      "price_usd": 0.06353520355059145,
-      "volume_24h": 7640920.8212471865,
-      "market_cap_usd": null,
-      "percent_change_24h": -4.64,
+      "price_usd": 0.06307827328493042,
+      "volume_24h": 7767988.365196271,
+      "market_cap_usd": 308678839.0,
+      "percent_change_24h": -7.06,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.0007754976260136992
+        "price_spread": 0.0009138605313220582
       }
     },
     {
       "source": "consensus",
       "symbol": "LBTC",
       "name": "Lombard Staked BTC",
-      "price_usd": 84872.67671958776,
+      "price_usd": 84365.10281585276,
       "volume_24h": 7422107.56151971,
       "market_cap_usd": null,
       "percent_change_24h": 0.08,
@@ -2560,14 +2560,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 757.4098942233395
+        "price_spread": 1015.1478074700135
       }
     },
     {
       "source": "consensus",
       "symbol": "JITOSOL",
       "name": "Jito Staked SOL",
-      "price_usd": 148.8062464774174,
+      "price_usd": 147.82291107891422,
       "volume_24h": 7339274.289019803,
       "market_cap_usd": null,
       "percent_change_24h": -1.26,
@@ -2577,7 +2577,7 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 1.4467210742658665
+        "price_spread": 1.9666707970063442
       }
     },
     {
@@ -2611,14 +2611,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.000348411232427015
+        "price_spread": 0.0007203566304181397
       }
     },
     {
       "source": "consensus",
       "symbol": "SKY",
       "name": "Sky",
-      "price_usd": 0.065058698624166,
+      "price_usd": 0.06494601053829,
       "volume_24h": 6575454.68131204,
       "market_cap_usd": null,
       "percent_change_24h": -2.0,
@@ -2628,14 +2628,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00027417638131906064
+        "price_spread": 0.000225376171751987
       }
     },
     {
       "source": "consensus",
       "symbol": "FLR",
       "name": "Flare Network",
-      "price_usd": 0.01033206218431107,
+      "price_usd": 0.010197,
       "volume_24h": 5333671.54700555,
       "market_cap_usd": null,
       "percent_change_24h": 0.04,
@@ -2646,14 +2646,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 6.9378156889298576e-06
+        "price_spread": 0.00013570554152844
       }
     },
     {
       "source": "consensus",
       "symbol": "EOS",
       "name": "EOS",
-      "price_usd": 0.6271888125,
+      "price_usd": 0.6222044062500001,
       "volume_24h": 5225887.9683251735,
       "market_cap_usd": null,
       "percent_change_24h": 0.04,
@@ -2663,14 +2663,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.015415625000000044
+        "price_spread": 0.009968812500000035
       }
     },
     {
       "source": "consensus",
       "symbol": "AB",
       "name": "AB (prev. Newton)",
-      "price_usd": 0.0028161105526313956,
+      "price_usd": 0.0028111402695962157,
       "volume_24h": 4872355.697188291,
       "market_cap_usd": null,
       "percent_change_24h": -26.42,
@@ -2680,14 +2680,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 9.668629111730161e-06
+        "price_spread": 9.940566070359806e-06
+      }
+    },
+    {
+      "source": "consensus",
+      "symbol": "M",
+      "name": "MemeCore ",
+      "price_usd": 1.534997584756645,
+      "volume_24h": 4870534.74396493,
+      "market_cap_usd": 2540592762.0,
+      "percent_change_24h": 0.13,
+      "extra": {
+        "contributors": [
+          "coinpaprika",
+          "consensus"
+        ],
+        "sample_size": 2,
+        "price_spread": 0.0040581126205481155
       }
     },
     {
       "source": "consensus",
       "symbol": "CBETH",
       "name": "Coinbase Wrapped Staked ETH",
-      "price_usd": 3182.283411826064,
+      "price_usd": 3153.772572658524,
       "volume_24h": 4845509.745895101,
       "market_cap_usd": null,
       "percent_change_24h": -0.11,
@@ -2697,41 +2714,24 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 29.08229614202446
-      }
-    },
-    {
-      "source": "consensus",
-      "symbol": "M",
-      "name": "MemeCore ",
-      "price_usd": 1.537026641066919,
-      "volume_24h": 4824605.569835454,
-      "market_cap_usd": null,
-      "percent_change_24h": 0.06,
-      "extra": {
-        "contributors": [
-          "coinpaprika",
-          "consensus"
-        ],
-        "sample_size": 2,
-        "price_spread": 0.0023882793885385833
+        "price_spread": 57.02167833507974
       }
     },
     {
       "source": "consensus",
       "symbol": "GT",
       "name": "GateToken",
-      "price_usd": 9.511240966710638,
-      "volume_24h": 4116842.3897542693,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.12,
+      "price_usd": 9.474982805621227,
+      "volume_24h": 4153281.1600359464,
+      "market_cap_usd": 1127407399.0,
+      "percent_change_24h": -5.3,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.06786122744782652
+        "price_spread": 0.07251632217881898
       }
     },
     {
@@ -2749,14 +2749,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.0006650429395872459
+        "price_spread": 0.0007852585539287471
       }
     },
     {
       "source": "consensus",
       "symbol": "DCR",
       "name": "Decred",
-      "price_usd": 17.976039968076655,
+      "price_usd": 17.873441602908713,
       "volume_24h": 3408367.3375306865,
       "market_cap_usd": null,
       "percent_change_24h": -5.04,
@@ -2766,17 +2766,17 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.13819630314985787
+        "price_spread": 0.20519673033588504
       }
     },
     {
       "source": "consensus",
       "symbol": "KCS",
       "name": "KuCoin Token",
-      "price_usd": 10.37,
-      "volume_24h": 3138694.2083069123,
-      "market_cap_usd": 1368646012.0,
-      "percent_change_24h": -4.47,
+      "price_usd": 10.3,
+      "volume_24h": 3196925.712278038,
+      "market_cap_usd": 1356831915.0,
+      "percent_change_24h": -5.22,
       "extra": {
         "contributors": [
           "coinlore",
@@ -2784,7 +2784,7 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.02363221571754437
+        "price_spread": 0.10302796827935445
       }
     },
     {
@@ -2808,7 +2808,7 @@
       "source": "consensus",
       "symbol": "USD0",
       "name": "Usual USD",
-      "price_usd": 0.9979951916341752,
+      "price_usd": 0.9979262170547485,
       "volume_24h": 2820198.6713521704,
       "market_cap_usd": null,
       "percent_change_24h": -0.02,
@@ -2818,31 +2818,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 2.0885634795742014e-05
+        "price_spread": 0.00013794915885334547
       }
     },
     {
       "source": "consensus",
       "symbol": "FRAX",
       "name": "Legacy Frax Dollar",
-      "price_usd": 0.9921410493418776,
-      "volume_24h": 2745811.019441511,
-      "market_cap_usd": null,
-      "percent_change_24h": -0.08,
+      "price_usd": 0.992410876448806,
+      "volume_24h": 2776131.926400981,
+      "market_cap_usd": 644680042.0,
+      "percent_change_24h": -0.01,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00019059862989967424
+        "price_spread": 0.0005396542138567106
       }
     },
     {
       "source": "consensus",
       "symbol": "FRXETH",
       "name": "Frax Ether",
-      "price_usd": 2831.9067588069934,
+      "price_usd": 2806.9846080272227,
       "volume_24h": 2572540.8017599434,
       "market_cap_usd": null,
       "percent_change_24h": 0.02,
@@ -2852,31 +2852,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 25.046859720284374
+        "price_spread": 49.84430155954169
       }
     },
     {
       "source": "consensus",
       "symbol": "USDTB",
       "name": "USDtb",
-      "price_usd": 0.9995283875684631,
+      "price_usd": 0.9994495847337166,
       "volume_24h": 2410768.8040802423,
-      "market_cap_usd": 1333809852.0,
-      "percent_change_24h": 0.0,
+      "market_cap_usd": null,
+      "percent_change_24h": null,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 6.41954763459518e-05
+        "price_spread": 0.00015760566949285515
       }
     },
     {
       "source": "consensus",
       "symbol": "MSOL",
       "name": "Marinade Staked Sol",
-      "price_usd": 160.51191382219048,
+      "price_usd": 159.41080542755446,
       "volume_24h": 2154791.149189604,
       "market_cap_usd": null,
       "percent_change_24h": -1.17,
@@ -2886,14 +2886,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 1.5267457862810545
+        "price_spread": 2.2022167892720006
       }
     },
     {
       "source": "consensus",
       "symbol": "GNO",
       "name": "Gnosis",
-      "price_usd": 135.49979474227098,
+      "price_usd": 134.55635463331305,
       "volume_24h": 2116804.780680315,
       "market_cap_usd": null,
       "percent_change_24h": -3.73,
@@ -2903,7 +2903,7 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.9969309623674008
+        "price_spread": 1.8868802179158592
       }
     },
     {
@@ -2937,14 +2937,14 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.02585607051832811
+        "price_spread": 0.02589051353117637
       }
     },
     {
       "source": "consensus",
       "symbol": "BNSOL",
       "name": "Binance Staked SOL",
-      "price_usd": 129.1,
+      "price_usd": 128.0,
       "volume_24h": 1943623.5238175595,
       "market_cap_usd": null,
       "percent_change_24h": -1.2,
@@ -2955,16 +2955,16 @@
           "consensus"
         ],
         "sample_size": 3,
-        "price_spread": 0.17437420024478456
+        "price_spread": 1.337821866714961
       }
     },
     {
       "source": "consensus",
       "symbol": "MKR",
       "name": "Maker",
-      "price_usd": 1366.015625,
+      "price_usd": 1362.9078125,
       "volume_24h": 1842637.1742941528,
-      "market_cap_usd": 1217797359.13,
+      "market_cap_usd": null,
       "percent_change_24h": -0.56,
       "extra": {
         "contributors": [
@@ -2972,14 +2972,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 2.2512500000000273
+        "price_spread": 6.2156250000000455
       }
     },
     {
       "source": "consensus",
       "symbol": "JUPSOL",
       "name": "Jupiter Staked SOL",
-      "price_usd": 137.97271107912047,
+      "price_usd": 137.0637737915203,
       "volume_24h": 1581277.5365229968,
       "market_cap_usd": null,
       "percent_change_24h": -5.05,
@@ -2989,14 +2989,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 1.311158451382198
+        "price_spread": 1.8178745752003351
       }
     },
     {
       "source": "consensus",
       "symbol": "TEL",
       "name": "Telcoin",
-      "price_usd": 0.003442627680428481,
+      "price_usd": 0.0034210212674601944,
       "volume_24h": 1047820.2826611805,
       "market_cap_usd": null,
       "percent_change_24h": -5.31,
@@ -3006,14 +3006,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 2.9736969158365364e-05
+        "price_spread": 4.321282593657298e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "LEO",
       "name": "LEO Token",
-      "price_usd": 9.187179268873091,
+      "price_usd": 9.187782975473835,
       "volume_24h": 1020173.2619951889,
       "market_cap_usd": null,
       "percent_change_24h": 0.85,
@@ -3023,14 +3023,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.004677582298100447
+        "price_spread": 0.0012074132014880945
       }
     },
     {
       "source": "consensus",
       "symbol": "BTC.B",
       "name": "Bitcoin Avalanche Bridged (BTC.b)",
-      "price_usd": 84718.4009276791,
+      "price_usd": 84206.29836835753,
       "volume_24h": 1018765.9511066524,
       "market_cap_usd": null,
       "percent_change_24h": -5.0,
@@ -3040,31 +3040,31 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 769.6487339657906
+        "price_spread": 1024.2051186431345
       }
     },
     {
       "source": "consensus",
       "symbol": "NIZA",
       "name": "Niza Global",
-      "price_usd": 0.055217249999999996,
-      "volume_24h": 978004.3338554528,
-      "market_cap_usd": 424170510.32,
-      "percent_change_24h": -2.19,
+      "price_usd": 0.055242625,
+      "volume_24h": 985296.4270511755,
+      "market_cap_usd": 425012941.14,
+      "percent_change_24h": -1.99,
       "extra": {
         "contributors": [
           "coinlore",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 0.00011649999999999855
+        "price_spread": 5.075000000000218e-05
       }
     },
     {
       "source": "consensus",
       "symbol": "USR",
       "name": "Resolv USR",
-      "price_usd": 0.9991564913505879,
+      "price_usd": 0.9990305573262008,
       "volume_24h": 909006.1564427887,
       "market_cap_usd": null,
       "percent_change_24h": null,
@@ -3074,14 +3074,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 6.101334744013087e-05
+        "price_spread": 0.00025186804877430635
       }
     },
     {
       "source": "consensus",
       "symbol": "RETH",
       "name": "Rocket Pool ETH",
-      "price_usd": 3283.6047138628,
+      "price_usd": 3254.6104507154805,
       "volume_24h": 805953.6207740172,
       "market_cap_usd": null,
       "percent_change_24h": -5.45,
@@ -3091,14 +3091,14 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 30.032567950961038
+        "price_spread": 57.98852629463863
       }
     },
     {
       "source": "consensus",
       "symbol": "CUSDO",
       "name": "Compounding OpenDollar",
-      "price_usd": 1.0398609553036977,
+      "price_usd": 1.0397786253854115,
       "volume_24h": 801170.9465754293,
       "market_cap_usd": null,
       "percent_change_24h": 0.08,
@@ -3108,7 +3108,7 @@
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 2.865845028976466e-05
+        "price_spread": 0.00016465983657232286
       }
     },
     {
@@ -3131,17 +3131,17 @@
       "source": "consensus",
       "symbol": "METH",
       "name": "mETH",
-      "price_usd": 3069.5875806952536,
-      "volume_24h": 428725.6981181744,
-      "market_cap_usd": null,
-      "percent_change_24h": -5.87,
+      "price_usd": 3045.4997172841686,
+      "volume_24h": 434957.5084259028,
+      "market_cap_usd": 1145006322.0,
+      "percent_change_24h": -7.44,
       "extra": {
         "contributors": [
           "coinpaprika",
           "consensus"
         ],
         "sample_size": 2,
-        "price_spread": 3.0373071907183657
+        "price_spread": 48.17572682216951
       }
     }
   ]

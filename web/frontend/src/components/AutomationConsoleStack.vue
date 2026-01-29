@@ -33,11 +33,7 @@ const guardianText = computed(() =>
 
 function scrollToBottom(el: HTMLElement | null, force = false) {
   if (!el) return;
-  const distanceFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
-  const nearBottom = distanceFromBottom <= 40;
-  if (force || nearBottom) {
-    el.scrollTop = el.scrollHeight;
-  }
+  el.scrollTop = el.scrollHeight;
 }
 
 onMounted(() => {
@@ -49,12 +45,12 @@ onMounted(() => {
 
 watch(
   () => props.managerLines?.length || 0,
-  () => nextTick(() => scrollToBottom(managerEl.value)),
+  () => nextTick(() => scrollToBottom(managerEl.value, true)),
 );
 
 watch(
   () => props.guardianLines?.length || 0,
-  () => nextTick(() => scrollToBottom(guardianEl.value)),
+  () => nextTick(() => scrollToBottom(guardianEl.value, true)),
 );
 </script>
 

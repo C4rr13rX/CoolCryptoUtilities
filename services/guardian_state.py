@@ -17,7 +17,7 @@ def get_guardian_settings(db: Optional[TradingDatabase] = None) -> Dict[str, Any
     database = _ensure_db(db)
     stored = database.get_json(SETTINGS_KEY) or {}
     default = {
-        "enabled": True,
+        "enabled": False,
         "default_prompt": DEFAULT_GUARDIAN_PROMPT,
         "interval_minutes": 120,
     }
