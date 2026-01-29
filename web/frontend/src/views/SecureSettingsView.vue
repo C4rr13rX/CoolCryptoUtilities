@@ -92,35 +92,37 @@ RPC_URL=https://..." />
       </form>
     </section>
 
-    <section class="panel" v-if="showCreate">
-      <header>
-        <div>
-          <h2>{{ editing ? 'Edit Setting' : 'New Setting' }}</h2>
-        </div>
-      </header>
-      <form class="form-grid" @submit.prevent="save">
-        <label>
-          <span>Name</span>
-          <input type="text" v-model="form.name" required />
-        </label>
-        <label>
-          <span>Category</span>
-          <input type="text" v-model="form.category" placeholder="default" />
-        </label>
-        <label class="switch-row">
-          <input type="checkbox" v-model="form.is_secret" />
-          <span>Secret value</span>
-        </label>
-        <label>
-          <span>Value</span>
-          <textarea v-model="form.value" rows="4"></textarea>
-        </label>
-        <div class="actions">
-          <button type="submit" class="btn">{{ editing ? 'Update' : 'Save' }}</button>
-          <button type="button" class="btn ghost" @click="cancel">Cancel</button>
-        </div>
-      </form>
-    </section>
+    <div v-if="showCreate" class="modal-backdrop" @click.self="cancel">
+      <div class="modal-card wide">
+        <header>
+          <div>
+            <h2>{{ editing ? 'Edit Setting' : 'New Setting' }}</h2>
+          </div>
+        </header>
+        <form class="form-grid" @submit.prevent="save">
+          <label>
+            <span>Name</span>
+            <input type="text" v-model="form.name" required />
+          </label>
+          <label>
+            <span>Category</span>
+            <input type="text" v-model="form.category" placeholder="default" />
+          </label>
+          <label class="switch-row">
+            <input type="checkbox" v-model="form.is_secret" />
+            <span>Secret value</span>
+          </label>
+          <label>
+            <span>Value</span>
+            <textarea v-model="form.value" rows="4"></textarea>
+          </label>
+          <div class="actions">
+            <button type="submit" class="btn">{{ editing ? 'Update' : 'Save' }}</button>
+            <button type="button" class="btn ghost" @click="cancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <div v-if="confirmingClear" class="modal-backdrop">
       <div class="modal-card">
@@ -418,6 +420,11 @@ async function downloadExport() {
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
+}
+
+.modal-card.wide {
+  width: min(92vw, 520px);
+  border-color: rgba(59, 130, 246, 0.35);
 }
 
 .modal-actions {

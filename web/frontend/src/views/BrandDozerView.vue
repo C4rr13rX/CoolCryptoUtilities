@@ -66,53 +66,63 @@
         </button>
       </header>
 
-      <form v-if="showForm" class="project-form" @submit.prevent="saveProject">
-        <div class="form-grid">
-          <label>
-            <span>Name</span>
-            <input v-model="form.name" type="text" required />
-          </label>
-          <label>
-            <span>Root Folder</span>
-            <div class="path-picker">
-              <input v-model="form.root_path" type="text" :placeholder="folderState.home || '/home'" readonly required />
-              <button type="button" class="btn ghost" @click="openFolderPicker">Browse</button>
+      <div v-if="showForm" class="modal" @click.self="resetForm">
+        <div class="modal-card wide">
+          <header>
+            <div>
+              <h2>{{ form.id ? 'Edit Project' : 'New Project' }}</h2>
+              <p class="caption">Define the root folder, cadence, and prompt stack.</p>
             </div>
-            <small class="caption">Browse server-side folders; defaults to your home directory.</small>
-          </label>
-          <label>
-            <span>Interval (minutes)</span>
-            <input v-model.number="form.interval_minutes" type="number" min="5" max="720" />
-          </label>
-        </div>
-        <label>
-          <span>Default Prompt (runs every cycle)</span>
-          <textarea v-model="form.default_prompt" rows="4" required />
-        </label>
-        <div class="interjections">
-          <div class="interjections-header">
-            <span>Interjectionary Prompts (run after default each cycle, in order)</span>
-            <div class="interjection-actions">
-              <button type="button" class="btn ghost" @click="addInterjection">Add Prompt</button>
-              <button type="button" class="btn ghost" @click="openAiConfirm" :disabled="store.saving || !form.default_prompt.trim()">
-                AI Expand
+          </header>
+          <form class="project-form" @submit.prevent="saveProject">
+            <div class="form-grid">
+              <label>
+                <span>Name</span>
+                <input v-model="form.name" type="text" required />
+              </label>
+              <label>
+                <span>Root Folder</span>
+                <div class="path-picker">
+                  <input v-model="form.root_path" type="text" :placeholder="folderState.home || '/home'" readonly required />
+                  <button type="button" class="btn ghost" @click="openFolderPicker">Browse</button>
+                </div>
+                <small class="caption">Browse server-side folders; defaults to your home directory.</small>
+              </label>
+              <label>
+                <span>Interval (minutes)</span>
+                <input v-model.number="form.interval_minutes" type="number" min="5" max="720" />
+              </label>
+            </div>
+            <label>
+              <span>Default Prompt (runs every cycle)</span>
+              <textarea v-model="form.default_prompt" rows="4" required />
+            </label>
+            <div class="interjections">
+              <div class="interjections-header">
+                <span>Interjectionary Prompts (run after default each cycle, in order)</span>
+                <div class="interjection-actions">
+                  <button type="button" class="btn ghost" @click="addInterjection">Add Prompt</button>
+                  <button type="button" class="btn ghost" @click="openAiConfirm" :disabled="store.saving || !form.default_prompt.trim()">
+                    AI Expand
+                  </button>
+                </div>
+              </div>
+              <div v-if="!form.interjections.length" class="empty">No interjections added.</div>
+              <div v-for="(prompt, idx) in form.interjections" :key="idx" class="interjection-row">
+                <textarea v-model="form.interjections[idx]" rows="3" />
+                <button type="button" class="btn danger ghost" @click="removeInterjection(idx)">Remove</button>
+              </div>
+              <div v-if="interjectionError" class="error">{{ interjectionError }}</div>
+            </div>
+            <div class="actions">
+              <button type="submit" class="btn" :disabled="store.saving">
+                {{ store.saving ? 'Saving…' : form.id ? 'Update' : 'Create' }}
               </button>
+              <button type="button" class="btn ghost" @click="resetForm">Cancel</button>
             </div>
-          </div>
-          <div v-if="!form.interjections.length" class="empty">No interjections added.</div>
-          <div v-for="(prompt, idx) in form.interjections" :key="idx" class="interjection-row">
-            <textarea v-model="form.interjections[idx]" rows="3" />
-            <button type="button" class="btn danger ghost" @click="removeInterjection(idx)">Remove</button>
-          </div>
-          <div v-if="interjectionError" class="error">{{ interjectionError }}</div>
+          </form>
         </div>
-        <div class="actions">
-          <button type="submit" class="btn" :disabled="store.saving">
-            {{ store.saving ? 'Saving…' : form.id ? 'Update' : 'Create' }}
-          </button>
-          <button type="button" class="btn ghost" @click="resetForm">Cancel</button>
-        </div>
-      </form>
+      </div>
 
       <div class="delivery-card">
         <div class="import-head">

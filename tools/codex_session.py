@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import os
-import pty
+try:
+    import pty
+except ImportError:  # Windows (no pty/termios)
+    pty = None
 import select
 import shutil
 import subprocess
@@ -265,6 +268,8 @@ class CodexSession:
     def _run_streaming_pty(
         self, cmd: Sequence[str], prompt_or_none: Optional[str], *, verbose: bool
     ) -> Tuple[str, int]:
+        if pty is None:
+            return "[pty unavailable on this platform]", 1
         if verbose:
             self._print(f"[codex] exec: {' '.join(map(self._q, cmd))}\n")
 

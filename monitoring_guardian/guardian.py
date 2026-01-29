@@ -13,7 +13,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-import psutil
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None  # type: ignore
 
 # --- Robust import that works in both package and script contexts ----------------
 try:
@@ -115,6 +118,8 @@ class LogFollower:
 
 
 def detect_main_process() -> Optional[psutil.Process]:
+    if psutil is None:
+        return None
     for proc in psutil.process_iter(["pid", "cmdline", "name"]):
         try:
             cmdline = proc.info.get("cmdline") or []

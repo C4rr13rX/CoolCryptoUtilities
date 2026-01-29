@@ -66,6 +66,7 @@ class GuardianLease:
         assert msvcrt is not None
         self._handle = self.lock_path.open("w+")
         try:
+            self._handle.seek(0)
             msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
         except OSError:
             self._handle.close()
@@ -96,6 +97,10 @@ class GuardianLease:
             if fcntl:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # type: ignore[attr-defined]
             elif msvcrt:
+                try:
+                    handle.seek(0)
+                except Exception:
+                    pass
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # pragma: no cover - Windows
         finally:
             try:

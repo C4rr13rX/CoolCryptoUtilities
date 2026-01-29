@@ -17,25 +17,8 @@ import numpy as np
 from services.tf_runtime import configure_tensorflow
 from services.system_profile import SystemProfile, detect_system_profile
 
-configure_tensorflow()
-import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.losses import BinaryCrossentropy
-
 from db import TradingDatabase, get_db
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs
-from model_definition import (
-    ExponentialDecay,
-    StateSaver,
-    TimeFeatureLayer,
-    build_multimodal_model,
-    gaussian_nll_loss,
-    zero_loss,
-    _compute_net_margin,
-    _identity,
-    _slice_price_log_var,
-    _slice_price_mu,
-)
 from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
 from trading.metrics import (
@@ -49,18 +32,40 @@ from trading.metrics import (
 )
 from services.logging_utils import log_message
 from services.watchlists import load_watchlists
+try:
+    from services.guardian_lock import GuardianLease
+except Exception:
+    GuardianLease = None  # type: ignore
 
 
-CUSTOM_OBJECTS = {
-    "ExponentialDecay": ExponentialDecay,
-    "TimeFeatureLayer": TimeFeatureLayer,
-    "gaussian_nll_loss": gaussian_nll_loss,
-    "zero_loss": zero_loss,
-    "_slice_price_mu": _slice_price_mu,
-    "_slice_price_log_var": _slice_price_log_var,
-    "_identity": _identity,
-    "_compute_net_margin": _compute_net_margin,
-}
+_MODEL_DEFS = None
+_CUSTOM_OBJECTS = None
+
+
+def _get_model_defs():
+    global _MODEL_DEFS
+    if _MODEL_DEFS is None:
+        import model_definition as md
+
+        _MODEL_DEFS = md
+    return _MODEL_DEFS
+
+
+def _custom_objects():
+    global _CUSTOM_OBJECTS
+    if _CUSTOM_OBJECTS is None:
+        md = _get_model_defs()
+        _CUSTOM_OBJECTS = {
+            "ExponentialDecay": md.ExponentialDecay,
+            "TimeFeatureLayer": md.TimeFeatureLayer,
+            "gaussian_nll_loss": md.gaussian_nll_loss,
+            "zero_loss": md.zero_loss,
+            "_slice_price_mu": md._slice_price_mu,
+            "_slice_price_log_var": md._slice_price_log_var,
+            "_identity": md._identity,
+            "_compute_net_margin": md._compute_net_margin,
+        }
+    return _CUSTOM_OBJECTS
 
 MODEL_OUTPUT_ORDER: Tuple[str, ...] = (
     "exit_conf",
@@ -95,6 +100,27 @@ def _format_horizon_label(seconds: int) -> str:
         return f"{int(seconds // 86400)}d"
     months = max(1, int(seconds // (30 * 86400)))
     return f"{months}mth"
+
+
+_TF_MODULE = None
+
+
+def _load_tf():
+    global _TF_MODULE
+    if _TF_MODULE is None:
+        configure_tensorflow()
+        import tensorflow as tf  # type: ignore
+
+        _TF_MODULE = tf
+    return _TF_MODULE
+
+
+class _LazyTensorFlow:
+    def __getattr__(self, name):
+        return getattr(_load_tf(), name)
+
+
+tf = _LazyTensorFlow()
 
 
 class TrainingPipeline:
@@ -244,7 +270,7 @@ class TrainingPipeline:
         if not path.exists():
             return None
         try:
-            self._active_model = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
+            self._active_model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
             return self._active_model
         except Exception as exc:
             print(f"[training] failed to load active model ({exc}); removing corrupted artifact.")
@@ -271,7 +297,8 @@ class TrainingPipeline:
             template_idx = 1
         template_idx = max(0, min(template_idx, len(self.model_templates) - 1))
         template_choice = self._select_model_template(template_idx)
-        model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
+        md = _get_model_defs()
+        model, headline_vec, full_vec, losses, loss_weights = md.build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
             sent_seq_len=self.sent_seq_len,
@@ -324,7 +351,7 @@ class TrainingPipeline:
     def _load_active_clone(self) -> tf.keras.Model:
         path = self.model_dir / "active_model.keras"
         if path.exists():
-            model = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
+            model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
         else:
             base = self.ensure_active_model()
             model = tf.keras.models.clone_model(base)
@@ -347,11 +374,12 @@ class TrainingPipeline:
         path = self.model_dir / "active_model.keras"
         upgraded.save(path, include_optimizer=False)
         self._active_model = upgraded
-        reloaded = tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False)
+        reloaded = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
         return reloaded
 
     def _rebuild_model_with_asset_vocab(self, asset_vocab_size: int, source_model: tf.keras.Model) -> tf.keras.Model:
-        new_model, _, _, _, _ = build_multimodal_model(
+        md = _get_model_defs()
+        new_model, _, _, _, _ = md.build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
             sent_seq_len=self.sent_seq_len,
@@ -468,7 +496,19 @@ class TrainingPipeline:
             pass
 
     def train_candidate(self) -> Optional[Dict[str, Any]]:
+        lease = None
+        if GuardianLease is not None:
+            lease = GuardianLease("training-pipeline", timeout=0.5, poll_interval=0.1)
+            if not lease.acquire():
+                log_message("training", "training lease busy; skipping overlap", severity="warning")
+                return {
+                    "iteration": self.iteration,
+                    "status": "busy",
+                    "score": self.active_accuracy,
+                }
         if not self._train_lock.acquire(blocking=False):
+            if lease:
+                lease.release()
             log_message("training", "train_candidate already running; skipping overlap", severity="warning")
             return {
                 "iteration": self.iteration,
@@ -479,6 +519,8 @@ class TrainingPipeline:
             return self._train_candidate_impl()
         finally:
             self._train_lock.release()
+            if lease:
+                lease.release()
 
     def _train_candidate_impl(self) -> Optional[Dict[str, Any]]:
         proposal = self.optimizer.propose()
@@ -589,7 +631,8 @@ class TrainingPipeline:
                 severity="info",
                 details={"required": required_vocab, "loader_vocab": loader_vocab},
             )
-        model, headline_vec, full_vec, losses, loss_weights = build_multimodal_model(
+        md = _get_model_defs()
+        model, headline_vec, full_vec, losses, loss_weights = md.build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
             sent_seq_len=self.sent_seq_len,
@@ -607,7 +650,7 @@ class TrainingPipeline:
                 metrics={"price_dir": ["accuracy"]},
             )
 
-        callbacks = [StateSaver()]
+        callbacks = [_get_model_defs().StateSaver()]
         if os.getenv("TRAIN_EARLY_STOP", "1").lower() in {"1", "true", "yes", "on"}:
             try:
                 patience = max(0, int(os.getenv("TRAIN_EARLY_STOP_PATIENCE", "1")))
@@ -618,7 +661,7 @@ class TrainingPipeline:
             except Exception:
                 min_delta = 0.0005
             callbacks.append(
-                EarlyStopping(
+                _load_tf().keras.callbacks.EarlyStopping(
                     monitor="loss",
                     patience=patience,
                     min_delta=min_delta,
@@ -941,11 +984,11 @@ class TrainingPipeline:
     ) -> None:
         active_path = self.model_dir / "active_model.keras"
         log_message("training", f"promoting candidate {path.name} (score={score:.3f}) to active deployment.")
-        tf.keras.models.load_model(path, custom_objects=CUSTOM_OBJECTS, compile=False).save(active_path, include_optimizer=False)
+        tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False).save(active_path, include_optimizer=False)
         self.db.register_model_version(
             version=f"active-{int(time.time())}", metrics={"score": score}, path=str(active_path), activate=True
         )
-        self._active_model = tf.keras.models.load_model(active_path, custom_objects=CUSTOM_OBJECTS, compile=False)
+        self._active_model = tf.keras.models.load_model(active_path, custom_objects=_custom_objects(), compile=False)
         self.active_accuracy = float(evaluation.get("dir_accuracy", score)) if evaluation else score
         if evaluation and evaluation.get("best_threshold") is not None:
             new_threshold = float(evaluation["best_threshold"])
@@ -1345,16 +1388,16 @@ class TrainingPipeline:
         if inputs is None or targets is None or sample_weights is None:
             raise RuntimeError("Unable to build dataset from selected files.")
         lab_model = self._load_active_clone()
-        brier_metric = BinaryCrossentropy(name="brier_like", from_logits=False)
+        brier_metric = _load_tf().keras.losses.BinaryCrossentropy(name="brier_like", from_logits=False)
         losses = {
             "exit_conf": "binary_crossentropy",
-            "price_mu": zero_loss,
-            "price_log_var": zero_loss,
+            "price_mu": _get_model_defs().zero_loss,
+            "price_log_var": _get_model_defs().zero_loss,
             "price_dir": "binary_crossentropy",
             "net_margin": "mse",
             "net_pnl": "mse",
             "tech_recon": "mse",
-            "price_gaussian": gaussian_nll_loss,
+            "price_gaussian": _get_model_defs().gaussian_nll_loss,
         }
         loss_weights = {
             "exit_conf": 0.5,
@@ -2600,7 +2643,9 @@ class TrainingPipeline:
                 "iteration": int(self.iteration),
                 "updated_at": int(time.time()),
             }
-            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(tmp_path, path)
         except Exception:
             pass
 
@@ -3404,7 +3449,14 @@ class TrainingPipeline:
     def prime_confusion_windows(self, *, min_samples: int = 128, force: bool = False) -> bool:
         if self._last_confusion_report and not force:
             return True
+        lease = None
+        if GuardianLease is not None:
+            lease = GuardianLease("training-pipeline", timeout=0.5, poll_interval=0.1)
+            if not lease.acquire():
+                return False
         if not self._train_lock.acquire(blocking=False):
+            if lease:
+                lease.release()
             return False
         try:
             model = self.ensure_active_model()
@@ -3447,6 +3499,8 @@ class TrainingPipeline:
             return False
         finally:
             self._train_lock.release()
+            if lease:
+                lease.release()
 
     def _execution_bias(self, window: int = 50) -> float:
         fills = self.db.fetch_trade_fills(limit=window)

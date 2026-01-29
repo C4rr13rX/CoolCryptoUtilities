@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -44,9 +45,27 @@ class Command(BaseCommand):
         project_root = Path(__file__).resolve().parents[4]
         frontend_dir = project_root / "web" / "frontend"
 
+        def resolve_cmd(cmd):
+            if not cmd:
+                return cmd
+            exe = cmd[0]
+            if os.name == "nt":
+                if shutil.which(exe):
+                    return cmd
+                for candidate in (f"{exe}.cmd", f"{exe}.exe", f"{exe}.bat"):
+                    path = shutil.which(candidate)
+                    if path:
+                        return [path, *cmd[1:]]
+            else:
+                path = shutil.which(exe)
+                if path:
+                    return [path, *cmd[1:]]
+            return cmd
+
         def run(cmd, cwd=None):
-            self.stdout.write(self.style.HTTP_INFO(f"$ {' '.join(cmd)}"))
-            subprocess.run(cmd, cwd=cwd, check=True)
+            resolved = resolve_cmd(cmd)
+            self.stdout.write(self.style.HTTP_INFO(f"$ {' '.join(resolved)}"))
+            subprocess.run(resolved, cwd=cwd, check=True)
 
         # Respect disable flags before Django finishes loading apps that auto-start services.
         if options.get("guardian_off"):

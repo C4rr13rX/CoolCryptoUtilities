@@ -34,6 +34,8 @@ def _python_bin() -> str:
         return candidate
     virtual_env = os.getenv("VIRTUAL_ENV")
     if virtual_env:
+        if os.name == "nt":
+            return str(Path(virtual_env) / "Scripts" / "python.exe")
         return str(Path(virtual_env) / "bin" / "python")
     import sys
 
@@ -78,7 +80,10 @@ class GuardianSupervisor:
         proc = self._process
         if proc and proc.poll() is None:
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                if os.name == "nt":
+                    proc.terminate()
+                else:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except Exception:
                 proc.terminate()
             try:

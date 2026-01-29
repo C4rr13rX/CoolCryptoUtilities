@@ -46,7 +46,10 @@ def _read_state() -> Dict[str, Any]:
 
 def _write_state(state: Dict[str, Any]) -> None:
     STATUS_DIR.mkdir(parents=True, exist_ok=True)
-    STATUS_FILE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    payload = json.dumps(state, indent=2, sort_keys=True)
+    tmp_path = STATUS_FILE.with_suffix(STATUS_FILE.suffix + ".tmp")
+    tmp_path.write_text(payload, encoding="utf-8")
+    os.replace(tmp_path, STATUS_FILE)
 
 
 @contextmanager

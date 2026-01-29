@@ -28,21 +28,12 @@
               {{ store.revealVisible[item.name] ? 'Hide' : 'Reveal' }}
             </button>
           </div>
-          <label>
-            <span>New value</span>
-            <input type="text" v-model="formState[item.name]" placeholder="Enter key" />
-          </label>
           <div class="actions">
-            <button class="btn" type="button" @click="save(item)">Save</button>
-            <button class="btn ghost" type="button" @click="clear(item)">Clear</button>
-            <button
-              v-if="item.can_test"
-              class="btn ghost"
-              type="button"
-              :disabled="store.testing[item.name]"
-              @click="test(item)"
-            >
-              {{ store.testing[item.name] ? 'Testing…' : 'Test' }}
+            <button class="btn" type="button" @click="openEditor(item)">
+              {{ item.has_value ? 'Update' : 'Set' }}
+            </button>
+            <button class="btn ghost" type="button" @click="clearDirect(item)" :disabled="!item.has_value">
+              Clear
             </button>
           </div>
           <p v-if="store.testResult[item.name]" class="test-result">{{ store.testResult[item.name] }}</p>
@@ -50,43 +41,54 @@
       </div>
       <p v-if="!store.items.length" class="empty-text">No integrations configured.</p>
     </section>
+
+    <div v-if="activeItem" class="modal-backdrop" @click.self="closeEditor">
+      <div class="modal-card">
+        <header>
+          <div>
+            <h3>{{ activeItem.label }}</h3>
+            <p class="caption">{{ activeItem.description }}</p>
+          </div>
+        </header>
+        <form class="form-grid" @submit.prevent="saveActive">
+          <label>
+            <span>New value</span>
+            <input type="text" v-model="draftValue" placeholder="Enter key" />
+          </label>
+          <div class="actions">
+            <button class="btn" type="submit">Save</button>
+            <button class="btn ghost" type="button" @click="closeEditor">Cancel</button>
+            <button class="btn ghost" type="button" @click="clearActive" :disabled="!activeItem.has_value">
+              Clear
+            </button>
+            <button
+              v-if="activeItem.can_test"
+              class="btn ghost"
+              type="button"
+              :disabled="store.testing[activeItem.name]"
+              @click="testActive"
+            >
+              {{ store.testing[activeItem.name] ? 'Testing…' : 'Test' }}
+            </button>
+          </div>
+        </form>
+        <p v-if="store.testResult[activeItem.name]" class="test-result">{{ store.testResult[activeItem.name] }}</p>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, watch } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useIntegrationsStore } from '@/stores/integrations';
 
 const store = useIntegrationsStore();
-const formState = reactive<Record<string, string>>({});
+const activeItem = ref<any | null>(null);
+const draftValue = ref('');
 
 onMounted(() => {
   store.load();
 });
-
-watch(
-  () => store.items,
-  (items) => {
-    items.forEach((item: any) => {
-      if (formState[item.name] === undefined) {
-        formState[item.name] = '';
-      }
-    });
-  },
-  { immediate: true }
-);
-
-watch(
-  () => store.revealState,
-  (state) => {
-    Object.entries(state).forEach(([name, value]) => {
-      if (value) {
-        formState[name] = value as string;
-      }
-    });
-  },
-  { deep: true }
-);
 
 function displayValue(item: any) {
   if (store.revealVisible[item.name]) {
@@ -99,20 +101,37 @@ function toggleReveal(name: string) {
   store.reveal(name);
 }
 
-async function save(item: any) {
-  await store.save(item.name, formState[item.name] || null);
-  formState[item.name] = '';
+function openEditor(item: any) {
+  activeItem.value = item;
+  draftValue.value = store.revealState[item.name] || '';
 }
 
-async function clear(item: any) {
-  formState[item.name] = '';
+function closeEditor() {
+  activeItem.value = null;
+  draftValue.value = '';
+}
+
+async function saveActive() {
+  if (!activeItem.value) return;
+  await store.save(activeItem.value.name, draftValue.value || null);
+  closeEditor();
+}
+
+async function clearActive() {
+  if (!activeItem.value) return;
+  await store.save(activeItem.value.name, null);
+  closeEditor();
+}
+
+async function clearDirect(item: any) {
   await store.save(item.name, null);
 }
 
-async function test(item: any) {
-  const value = formState[item.name] || '';
+async function testActive() {
+  if (!activeItem.value) return;
+  const value = draftValue.value || '';
   try {
-    await store.test(item.name, value);
+    await store.test(activeItem.value.name, value);
   } catch (error) {
     // eslint-disable-next-line no-console
     console.warn('Integration test failed', error);
@@ -171,14 +190,6 @@ async function test(item: any) {
   gap: 0.3rem;
 }
 
-.integration-card input {
-  border-radius: 10px;
-  border: 1px solid rgba(111, 167, 255, 0.25);
-  background: rgba(255, 255, 255, 0.03);
-  color: #fefefe;
-  padding: 0.45rem 0.7rem;
-}
-
 .stored-value {
   display: flex;
   justify-content: space-between;
@@ -200,5 +211,40 @@ async function test(item: any) {
 
 .empty-text {
   color: rgba(255, 255, 255, 0.6);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 3, 8, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.modal-card {
+  background: rgba(9, 15, 24, 0.95);
+  border-radius: 18px;
+  padding: 1.4rem;
+  width: min(92vw, 460px);
+  border: 1px solid rgba(111, 167, 255, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.modal-card input {
+  border-radius: 10px;
+  border: 1px solid rgba(111, 167, 255, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  color: #fefefe;
+  padding: 0.45rem 0.7rem;
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
 }
 </style>

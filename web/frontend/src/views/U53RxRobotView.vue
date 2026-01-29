@@ -139,27 +139,10 @@
       <div class="panel">
         <div class="panel__header">
           <h3>Create Task</h3>
+          <button class="ghost" @click="showTaskModal = true">New Task</button>
         </div>
-        <form class="form" @submit.prevent="submitTask">
-          <label>
-            <span>Title</span>
-            <input v-model="form.title" class="input" placeholder="Walk navigation" required />
-          </label>
-          <label>
-            <span>Description</span>
-            <textarea v-model="form.description" class="input" rows="3" placeholder="Open each nav item and capture screenshot" />
-          </label>
-          <label>
-            <span>Target URL (optional)</span>
-            <input v-model="form.target_url" class="input" placeholder="http://127.0.0.1:8000/pipeline" />
-          </label>
-          <label>
-            <span>Stage</span>
-            <input v-model="form.stage" class="input" placeholder="overview" />
-          </label>
-          <button type="submit" class="primary">Add task</button>
-          <p v-if="store.error" class="error">{{ store.error }}</p>
-        </form>
+        <p class="muted">Use the modal to add a new task for the UX agents.</p>
+        <p v-if="store.error" class="error">{{ store.error }}</p>
       </div>
 
       <div class="panel findings">
@@ -182,6 +165,40 @@
         <div v-if="!store.findings.length" class="empty">No findings yet.</div>
       </div>
     </section>
+
+    <div v-if="showTaskModal" class="modal-backdrop" @click.self="closeTaskModal">
+      <div class="modal-card">
+        <header>
+          <div>
+            <h3>New Task</h3>
+            <p class="muted">Provide a short objective and optional URL.</p>
+          </div>
+        </header>
+        <form class="form" @submit.prevent="submitTask">
+          <label>
+            <span>Title</span>
+            <input v-model="form.title" class="input" placeholder="Walk navigation" required />
+          </label>
+          <label>
+            <span>Description</span>
+            <textarea v-model="form.description" class="input" rows="3" placeholder="Open each nav item and capture screenshot" />
+          </label>
+          <label>
+            <span>Target URL (optional)</span>
+            <input v-model="form.target_url" class="input" placeholder="http://127.0.0.1:8000/pipeline" />
+          </label>
+          <label>
+            <span>Stage</span>
+            <input v-model="form.stage" class="input" placeholder="overview" />
+          </label>
+          <div class="actions">
+            <button type="submit" class="primary">Save</button>
+            <button type="button" class="ghost" @click="closeTaskModal">Cancel</button>
+          </div>
+          <p v-if="store.error" class="error">{{ store.error }}</p>
+        </form>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -197,6 +214,7 @@ const form = reactive({
   target_url: '',
   stage: 'overview',
 });
+const showTaskModal = ref(false);
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -338,6 +356,11 @@ async function submitTask() {
   await store.addTask({ ...form });
   form.description = '';
   form.target_url = '';
+  showTaskModal.value = false;
+}
+
+function closeTaskModal() {
+  showTaskModal.value = false;
 }
 
 onMounted(() => {
@@ -663,4 +686,31 @@ onBeforeUnmount(() => {
 }
 
 .pill.warn.finding, .pill.error.finding { color: inherit; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 3, 8, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.modal-card {
+  background: rgba(7, 17, 32, 0.95);
+  border: 1px solid rgba(122, 183, 255, 0.35);
+  border-radius: 14px;
+  padding: 1.2rem;
+  width: min(92vw, 480px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.modal-card .actions {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
 </style>
