@@ -122,7 +122,15 @@ class TradingBot:
         self._predict_fn: Optional[Callable[..., Any]] = None
         self._active_model_ref: Optional[tf.keras.Model] = None
         self._asset_vocab_limit: Optional[int] = None
-        self.portfolio = PortfolioState(db=self.db)
+        focus_chain_list_raw = os.getenv("LIVE_FOCUS_CHAINS", "")
+        focus_chains = [
+            entry.strip().lower()
+            for entry in focus_chain_list_raw.split(",")
+            if entry.strip()
+        ]
+        if not focus_chains:
+            focus_chains = [PRIMARY_CHAIN]
+        self.portfolio = PortfolioState(db=self.db, chains=focus_chains)
         self._snapshot_interval = max(1.0, float(os.getenv("ORGANISM_SNAPSHOT_INTERVAL", "5.0")))
         self._timeline_path = Path(os.getenv("ORGANISM_TIMELINE_PATH", "runtime/organism_timeline.json"))
         self._last_snapshot_ts: float = 0.0
@@ -2696,7 +2704,7 @@ class TradingBot:
         if total_stable < float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000")):
             return
         desired_chains = {self.primary_chain}
-        optional_chains = os.getenv("SECONDARY_CHAINS", "ethereum,arbitrum,optimism").split(",")
+        optional_chains = os.getenv("SECONDARY_CHAINS", os.getenv("LIVE_FOCUS_CHAINS", "ethereum,arbitrum,optimism")).split(",")
         for chain in optional_chains:
             chain_clean = chain.strip().lower()
             if not chain_clean:
@@ -2715,6 +2723,7 @@ class TradingBot:
         quote_token: str,
         shortfall: float,
         quote_usd_price: float,
+        expected_profit_usd: float = 0.0,
     ) -> Optional[Dict[str, Any]]:
         """
         Build a swap plan to convert available stablecoins into the required
@@ -2738,7 +2747,7 @@ class TradingBot:
             if key_chain == chain_l and sym in self.stable_tokens and sym != quote_u and holding.quantity > 0.0
         ]
         if not stable_holdings:
-            return None
+            stable_holdings = []
         stable_holdings.sort(key=lambda entry: entry.usd, reverse=True)
 
         shortfall_usd = shortfall * max(quote_usd_price, 1e-6)
@@ -2795,10 +2804,39 @@ class TradingBot:
         }
         if remaining_usd > 0.0:
             plan["remaining_usd_gap"] = remaining_usd
+        if quote_u in self.stable_tokens:
+            bridge_enabled = os.getenv("ENABLE_BRIDGE_TOPUP", "0").lower() in {"1", "true", "yes", "on"}
+            if bridge_enabled and remaining_usd > 0.0:
+                bridge_fee_flat = float(os.getenv("BRIDGE_FEE_USD", "1.5") or 0.0)
+                bridge_fee_ratio = float(os.getenv("BRIDGE_FEE_RATIO", "0.001") or 0.0)
+                min_profit = float(os.getenv("BRIDGE_MIN_PROFIT_USD", "1.0") or 0.0)
+                total_fee = bridge_fee_flat + remaining_usd * bridge_fee_ratio
+                if expected_profit_usd <= 0.0 or expected_profit_usd >= total_fee + min_profit:
+                    bridge_sources = []
+                    for (key_chain, sym), holding in self.portfolio.holdings.items():
+                        if key_chain == chain_l:
+                            continue
+                        if sym.upper() not in self.stable_tokens:
+                            continue
+                        if holding.usd <= 0:
+                            continue
+                        bridge_sources.append(
+                            {
+                                "chain": key_chain,
+                                "symbol": sym,
+                                "token": holding.token,
+                                "usd": holding.usd,
+                                "quantity": holding.quantity,
+                            }
+                        )
+                    bridge_sources.sort(key=lambda entry: entry.get("usd", 0.0), reverse=True)
+                    if bridge_sources:
+                        plan["bridge_sources"] = bridge_sources
+                        plan["bridge_quote_token"] = quote_u
         return plan
 
     def _execute_quote_topup(self, *, chain: str, plan: Dict[str, Any]) -> bool:
-        if not plan or not plan.get("sources"):
+        if not plan:
             return False
         if self._bridge is None:
             self._bridge = self._init_bridge()
@@ -2833,6 +2871,92 @@ class TradingBot:
                     severity=FeedbackSeverity.WARNING,
                     label="quote_swap_failed",
                     details={"token": token, "amount": amount, "reason": str(exc)},
+                )
+        bridged = False
+        if not executed:
+            bridged = self._execute_bridge_topup(chain=chain, plan=plan)
+        return executed or bridged
+
+    def _execute_bridge_topup(self, *, chain: str, plan: Dict[str, Any]) -> bool:
+        if not plan or not plan.get("bridge_sources"):
+            return False
+        if os.getenv("ENABLE_BRIDGE_TOPUP", "0").lower() not in {"1", "true", "yes", "on"}:
+            return False
+        if self._bridge is None:
+            self._bridge = self._init_bridge()
+        if self._bridge is None:
+            return False
+        try:
+            from services.bridge_service import BridgeService  # type: ignore
+        except Exception as exc:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="bridge_unavailable",
+                details={"reason": str(exc)},
+            )
+            return False
+
+        gap_usd = float(plan.get("remaining_usd_gap", 0.0) or 0.0)
+        if gap_usd <= 0.0:
+            return False
+        quote_u = str(plan.get("bridge_quote_token") or plan.get("quote_token") or "").upper()
+        if quote_u not in self.stable_tokens:
+            return False
+        dst_chain = str(chain).lower()
+        dst_token = self._resolve_token_address(dst_chain, quote_u) or quote_u
+        slippage = int(os.getenv("BRIDGE_SLIPPAGE_BPS", "100"))
+        bridge = BridgeService(self._bridge)
+        executed = False
+        for source in plan.get("bridge_sources", []):
+            if gap_usd <= 0.0:
+                break
+            src_chain = str(source.get("chain") or "").lower()
+            symbol = str(source.get("symbol") or quote_u).upper()
+            if not src_chain or src_chain == dst_chain:
+                continue
+            available_usd = float(source.get("usd", 0.0) or 0.0)
+            if available_usd <= 0.0:
+                continue
+            move_usd = min(available_usd, gap_usd)
+            if move_usd <= 0.0:
+                continue
+            token_addr = source.get("token") or self._resolve_token_address(src_chain, symbol) or symbol
+            try:
+                bridge.bridge(
+                    src_chain=src_chain,
+                    dst_chain=dst_chain,
+                    token=token_addr,
+                    amount_human=f"{move_usd:.6f}",
+                    dst_token=dst_token,
+                    slippage_bps=slippage,
+                    wait=False,
+                )
+                executed = True
+                gap_usd -= move_usd
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.INFO,
+                    label="bridge_topup_executed",
+                    details={
+                        "from_chain": src_chain,
+                        "to_chain": dst_chain,
+                        "token": symbol,
+                        "amount_usd": move_usd,
+                    },
+                )
+            except Exception as exc:
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="bridge_topup_failed",
+                    details={
+                        "from_chain": src_chain,
+                        "to_chain": dst_chain,
+                        "token": symbol,
+                        "amount_usd": move_usd,
+                        "reason": str(exc),
+                    },
                 )
         return executed
 
@@ -2902,6 +3026,7 @@ class TradingBot:
             quote_token=quote_token,
             shortfall=shortfall,
             quote_usd_price=quote_usd_price,
+            expected_profit_usd=expected_profit_usd,
         )
         if not plan:
             return result
