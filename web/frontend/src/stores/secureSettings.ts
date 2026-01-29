@@ -5,6 +5,8 @@ import {
   fetchSecureSettings,
   updateSecureSetting,
   importSecureSettings,
+  importSecureSettingsFile,
+  exportSecureSettings,
   clearSecureSettings,
   revealSecureSetting,
   SecureSettingPayload,
@@ -55,6 +57,14 @@ export const useSecureSettingsStore = defineStore('secureSettings', {
     async importFromEnv(payload: SecureSettingImportPayload) {
       await importSecureSettings(payload);
       await this.load();
+    },
+    async importFromEnvFile(file: File, isSecret = true) {
+      await importSecureSettingsFile(file, isSecret);
+      await this.load();
+    },
+    async exportEnv() {
+      const data = await exportSecureSettings();
+      return data as string;
     },
     async reveal(id: number) {
       const data = await revealSecureSetting(id);

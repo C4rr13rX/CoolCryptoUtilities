@@ -275,6 +275,21 @@ export async function importSecureSettings(payload: SecureSettingImportPayload) 
   return data;
 }
 
+export async function importSecureSettingsFile(file: File, isSecret = true) {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('is_secret', isSecret ? '1' : '0');
+  const { data } = await api.post('/secure/settings/import-file/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
+
+export async function exportSecureSettings() {
+  const { data } = await api.get('/secure/settings/export/', { responseType: 'text' });
+  return data;
+}
+
 export async function clearSecureSettings(category?: string) {
   const { data } = await api.delete('/secure/settings/', { params: category ? { category } : undefined });
   return data;

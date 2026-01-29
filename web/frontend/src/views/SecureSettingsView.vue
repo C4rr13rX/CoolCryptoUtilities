@@ -62,7 +62,12 @@
       <header>
         <div>
           <h2>Import from .env</h2>
-          <p>Paste entries (comments beginning with # are ignored). The parsed values populate the Default category.</p>
+          <p>Paste entries or upload a .env file. Parsed values populate the Default category.</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" class="btn ghost" @click="downloadExport" :disabled="store.loading">
+            Export .env
+          </button>
         </div>
         <label class="switch-row import-secret-toggle">
           <input type="checkbox" v-model="importForm.is_secret" />
@@ -75,8 +80,13 @@
           <textarea v-model="importForm.content" rows="6" placeholder="API_KEY=example123
 RPC_URL=https://..." />
         </label>
+        <label>
+          <span>.env file</span>
+          <input type="file" accept=".env,text/plain" @change="handleFile" />
+        </label>
         <div class="actions">
           <button type="submit" class="btn" :disabled="!importForm.content.trim()">Import</button>
+          <button type="button" class="btn ghost" @click="importFile" :disabled="!importForm.file">Import File</button>
           <button type="button" class="btn ghost" @click="resetImport">Clear Text</button>
         </div>
       </form>
@@ -144,6 +154,7 @@ const form = reactive({
 const importForm = reactive({
   content: '',
   is_secret: true,
+  file: null as File | null,
 });
 
 onMounted(() => {
@@ -225,6 +236,7 @@ async function importEnv() {
 
 function resetImport() {
   importForm.content = '';
+  importForm.file = null;
 }
 
 async function toggleReveal(item: any) {
@@ -238,6 +250,31 @@ async function toggleReveal(item: any) {
   const secret = data?.revealed_value || data?.value || '';
   revealValues[item.id] = secret;
   revealVisible[item.id] = true;
+}
+
+function handleFile(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const file = target?.files?.[0] || null;
+  importForm.file = file;
+}
+
+async function importFile() {
+  if (!importForm.file) return;
+  await store.importFromEnvFile(importForm.file, importForm.is_secret);
+  importForm.file = null;
+}
+
+async function downloadExport() {
+  const content = await store.exportEnv();
+  const blob = new Blob([content || ''], { type: 'text/plain;charset=utf-8' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'secure_settings.env';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 </script>
 

@@ -10,4 +10,6 @@ urlpatterns = [
     path("settings/", views.SecureSettingListCreateView.as_view(), name="settings-list"),
     path("settings/<int:pk>/", views.SecureSettingDetailView.as_view(), name="settings-detail"),
     path("settings/import/", views.SecureSettingBulkImportView.as_view(), name="settings-import"),
+    path("settings/import-file/", views.SecureSettingFileImportView.as_view(), name="settings-import-file"),
+    path("settings/export/", views.SecureSettingExportView.as_view(), name="settings-export"),
 ]

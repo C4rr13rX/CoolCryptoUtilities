@@ -7,7 +7,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from services.secure_settings import encrypt_secret
+from services.secure_settings import encrypt_secret, decrypt_secret
 from services.secure_settings_catalog import CATALOG_LOOKUP, SECURE_SETTINGS_CATALOG
 from .models import SecureSetting
 from .serializers import SecureSettingSerializer
@@ -115,6 +115,80 @@ class SecureSettingBulkImportView(APIView):
         return Response({"imported": imported, "category": normalized_category}, status=status.HTTP_201_CREATED)
 
 
+class SecureSettingFileImportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        uploaded = request.FILES.get("file")
+        if not uploaded:
+            return Response({"detail": "file is required"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            content = uploaded.read().decode("utf-8", errors="ignore")
+        except Exception:
+            content = ""
+        if not content.strip():
+            return Response({"detail": "file was empty"}, status=status.HTTP_400_BAD_REQUEST)
+        treat_as_secret = request.data.get("is_secret", True)
+        entries = _parse_env_block(content)
+        if not entries:
+            return Response({"detail": "no settings detected"}, status=status.HTTP_400_BAD_REQUEST)
+        normalized_category = "default"
+        imported = 0
+        with transaction.atomic():
+            for name, value in entries:
+                setting, _ = SecureSetting.objects.get_or_create(
+                    user=request.user,
+                    category=normalized_category,
+                    name=name,
+                    defaults={"is_secret": bool(treat_as_secret)},
+                )
+                setting.is_secret = bool(treat_as_secret)
+                if setting.is_secret:
+                    payload = encrypt_secret(value)
+                    setting.value_plain = None
+                    setting.ciphertext = payload["ciphertext"]
+                    setting.encapsulated_key = payload["encapsulated_key"]
+                    setting.nonce = payload["nonce"]
+                else:
+                    setting.value_plain = value
+                    setting.ciphertext = None
+                    setting.encapsulated_key = None
+                    setting.nonce = None
+                setting.save()
+                imported += 1
+        return Response({"imported": imported, "category": normalized_category}, status=status.HTTP_201_CREATED)
+
+
+class SecureSettingExportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        settings = SecureSetting.objects.filter(user=request.user).order_by("category", "name")
+        lines = []
+        last_category = None
+        for setting in settings:
+            if setting.is_secret:
+                try:
+                    value = decrypt_secret(setting.encapsulated_key, setting.ciphertext, setting.nonce)
+                except Exception:
+                    value = ""
+            else:
+                value = setting.value_plain or ""
+            if not value:
+                continue
+            category = (setting.category or "default").lower()
+            if category != last_category:
+                if lines:
+                    lines.append("")
+                lines.append(f"# [{category}]")
+                last_category = category
+            lines.append(f"{setting.name}={_format_env_value(value)}")
+        content = "\n".join(lines).strip() + "\n" if lines else ""
+        resp = Response(content, content_type="text/plain")
+        resp["Content-Disposition"] = 'attachment; filename="secure_settings.env"'
+        return resp
+
+
 def _parse_env_block(content: str) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
     for raw_line in content.splitlines():
@@ -156,3 +230,12 @@ def _strip_inline_comment(line: str) -> str:
         if ch == "#" and not in_quotes:
             return line[:idx]
     return line
+
+
+def _format_env_value(value: str) -> str:
+    if value is None:
+        return ""
+    raw = str(value)
+    if "\n" in raw:
+        return '"' + raw.replace('"', '\\"').replace("\n", "\\n") + '"'
+    return raw
