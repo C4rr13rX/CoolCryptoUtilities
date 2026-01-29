@@ -11,9 +11,12 @@ bin/
 __pycache__/
 .pytest_cache/
 pyvenv.cfg
+.venv/
+**/.venv/
 storage/
 *.db
 models/
+*.log
 
 .backup_*/
 *.patch
@@ -28,6 +31,9 @@ web/frontend/dist/
 web/frontend/.vite/
 web/frontend/.cache/
 logs/
+codex_transcripts/
+web/codex_transcripts/
+monitoring_guardian/codex_transcripts/
 web/collected_static/
 data/news/ethical_news.parquet
 data/news/free_news.parquet
@@ -37,10 +43,14 @@ data/news/cache/
 data/cache/datasets/
 data/intermediate/synthetic_ohlcv/
 data/market_snapshots_history/
+data/market_snapshots.json
+data/reports/
 orchestration/dependency_state.json
 runtime/
 web/data/
 config/wallet_balance_overrides.json
+monitoring_guardian/config.json
+.env.bak
 # Rust agent build artifacts
 u53rxr080t/agent-rs/target/
 # Local packaged binaries for UX robot
