@@ -11,6 +11,10 @@ from operator import itemgetter
 # .env loader (robust, PyDroid/CLI friendly)
 # -----------------------------------------------------------------------
 from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
+try:
+    from services.env_loader import EnvLoader
+except Exception:
+    EnvLoader = None  # type: ignore
 
 def load_env_robust() -> None:
     path = find_dotenv(usecwd=True)
@@ -44,6 +48,28 @@ def load_env_robust() -> None:
             pass
 
 load_env_robust()
+# Try to hydrate secure settings (if running inside the Django repo)
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
+os.environ.setdefault("DJANGO_PREFER_SQLITE_FALLBACK", "1")
+os.environ.setdefault("ALLOW_SQLITE_FALLBACK", "1")
+repo_root = Path(__file__).resolve().parent
+web_dir = repo_root / "web"
+if str(web_dir) not in sys.path:
+    sys.path.insert(0, str(web_dir))
+if EnvLoader is not None:
+    try:
+        EnvLoader.load()
+    except Exception:
+        pass
+try:
+    import django
+    django.setup()
+    import importlib
+    import services.secure_settings as secure_settings
+    secure_settings = importlib.reload(secure_settings)
+    os.environ.update(secure_settings.build_process_env())
+except Exception:
+    pass
 
 # -----------------------------------------------------------------------
 # CONFIGURATION — pulled from environment (no hard-coded secrets)
@@ -132,7 +158,7 @@ def fetch_pairs(order_by_field: str, batch_size: int = 1000):
 def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     if os.path.exists(OUTPUT_PATH):
-        print(f"⚠️  {OUTPUT_PATH} already exists, skipping fetch")
+        print(f"Output already exists, skipping fetch: {OUTPUT_PATH}")
         return
 
     # 1) fetch top by cumulative swap volume (volumeUSD)
@@ -169,7 +195,7 @@ def main():
     # save to file
     with open(OUTPUT_PATH, "w") as f:
         json.dump(index, f, indent=2)
-    print(f"✅ Saved {len(index)} pairs to {OUTPUT_PATH}")
+    print(f"Saved {len(index)} pairs to {OUTPUT_PATH}")
 
 if __name__ == "__main__":
     main()
