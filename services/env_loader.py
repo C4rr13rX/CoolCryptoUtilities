@@ -141,9 +141,7 @@ class EnvLoader:
 
         # 3) hydrate from secure settings (Postgres-backed secrets) if available.
         #    Do this once per process to avoid repeated DB hits.
-        if testing:
-            return
-        if os.environ.get(_SECURE_ENV_FLAG) != "1":
+        if not testing and os.environ.get(_SECURE_ENV_FLAG) != "1":
             try:
                 from services.secure_settings import build_process_env
                 env = build_process_env()
@@ -154,6 +152,56 @@ class EnvLoader:
             except Exception:
                 # Silent fail: fallback to plain .env-only mode
                 pass
+
+        _apply_default_env()
+
+
+def _apply_default_env() -> None:
+    """
+    Set non-secret defaults so the pipeline has sensible baselines even when
+    env files are minimal. Only applies when values are missing.
+    """
+    defaults = {
+        "ALCHEMY_TIMEOUT_SEC": "10",
+        "HTTP_TIMEOUT_SEC": "8",
+        "TX_TIMEOUT_SEC": "120",
+        "PORTFOLIO_REORG_SAFETY": "12",
+        "MARKET_DATA_COINGECKO_IDS": "bitcoin,ethereum",
+        "MARKET_DATA_TOP_N": "25",
+        "MARKET_DATA_REFRESH_SEC": "1200",
+        "MARKET_DATA_SNAPSHOT_PATH": "data/market_snapshots.json",
+        "PRICE_UNISWAP": "1",
+        "PRICE_TTL_SEC": "300",
+        "PRICE_MAX_TOKENS": "25",
+        "PRICE_WORKERS": "8",
+        "CG_TIMEOUT": "6",
+        "DS_TIMEOUT": "6",
+        "FILTER_SCAMS": "1",
+        "SCAM_STRICT": "1",
+        "SCAM_MIN_LIQ_USD": "2000",
+        "SCAM_MAX_TAX_PCT": "25",
+        "SCAM_USE_GOPLUS": "1",
+        "BLOCKSCOUT_INCLUDE_UNVERIFIED": "1",
+        "REPRICE_COVALENT": "0",
+        "AUTO_WRAP_NATIVE": "1",
+        "APPROVE_MODE": "u",
+        "GAS_BASE_MULT": "2.0",
+        "LIVE_ALLOW_MICRO": "0",
+        "LIVE_MICRO_MIN_CAPITAL_USD": "5",
+        "LIVE_MICRO_NATIVE_BUFFER_USD": "1.5",
+        "LIVE_MICRO_MIN_CLIP_USD": "2",
+        "LIVE_MICRO_RISK_BUDGET": "0.2",
+        "LIVE_MICRO_MAX_TRADE_SHARE": "0.08",
+        "LIVE_MICRO_AUTO_PROMOTE": "0",
+        "LIVE_FOCUS_CHAINS": "base,arbitrum,optimism,polygon",
+        "SIMULATE_BRIDGE_TOPUP": "1",
+        "ENABLE_BRIDGE_TOPUP": "0",
+        "BRIDGE_FEE_USD": "1.5",
+        "BRIDGE_FEE_RATIO": "0.001",
+        "BRIDGE_MIN_PROFIT_USD": "1.0",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
 
 
 def _derive_stream_env(env: dict) -> dict:

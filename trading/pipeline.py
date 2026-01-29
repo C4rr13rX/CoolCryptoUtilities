@@ -19,6 +19,7 @@ from services.system_profile import SystemProfile, detect_system_profile
 
 from db import TradingDatabase, get_db
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs
+from trading.portfolio import NATIVE_SYMBOL
 from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
 from trading.metrics import (
@@ -2793,17 +2794,30 @@ class TrainingPipeline:
     def _wallet_state(self) -> Dict[str, Any]:
         wallet = (os.getenv("TRADING_WALLET") or os.getenv("WALLET_NAME") or "guardian").strip().lower()
         min_capital_usd = float(os.getenv("LIVE_MIN_CAPITAL_USD", "50"))
+        micro_min_capital = float(os.getenv("LIVE_MICRO_MIN_CAPITAL_USD", "5"))
+        allow_micro = (os.getenv("LIVE_ALLOW_MICRO", "0") or "0").lower() in {"1", "true", "yes", "on"}
         dust_threshold = float(os.getenv("WALLET_DUST_USD", "5"))
         stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "USDBC", "USDC.E", "TUSD", "USDP"}
         native_tokens = {"ETH", "WETH", "MATIC", "BNB", "AVAX", "SOL"}
-        stable_usd = 0.0
-        native_usd = 0.0
-        native_buffer_target = float(os.getenv("LIVE_NATIVE_BUFFER_USD", "5"))
-        holdings = 0
-        dust_tokens: List[str] = []
+        stable_usd_total = 0.0
+        native_usd_total = 0.0
+        native_buffer_default = float(os.getenv("LIVE_NATIVE_BUFFER_USD", "5"))
+        micro_native_buffer = float(os.getenv("LIVE_MICRO_NATIVE_BUFFER_USD", "1.5"))
+        holdings_total = 0
+        dust_tokens_total: List[str] = []
+        focus_chain = (os.getenv("LIVE_FOCUS_CHAIN") or PRIMARY_CHAIN).strip().lower() or PRIMARY_CHAIN
+        focus_chain_list_raw = os.getenv("LIVE_FOCUS_CHAINS", "")
+        focus_chain_list = [
+            entry.strip().lower()
+            for entry in focus_chain_list_raw.split(",")
+            if entry.strip()
+        ]
+        if focus_chain not in focus_chain_list and focus_chain_list:
+            focus_chain_list.insert(0, focus_chain)
+        chain_stats: Dict[str, Dict[str, Any]] = {}
         try:
             db = getattr(self, "db", None)
-            balances = db.fetch_balances_flat(wallet=wallet, chains=[PRIMARY_CHAIN], include_zero=False) if db else []
+            balances = db.fetch_balances_flat(wallet=wallet, include_zero=False) if db else []
         except Exception as exc:
             return {
                 "wallet": wallet,
@@ -2816,40 +2830,88 @@ class TrainingPipeline:
                 "error": str(exc),
             }
         for row in balances:
+            chain = str(row["chain"] or "").lower()
             symbol = str(row["symbol"] or row["token"] or "").upper()
             usd_val = float(row["usd_amount"] or 0.0)
-            holdings += 1
+            holdings_total += 1
+            stats = chain_stats.setdefault(
+                chain,
+                {"stable_usd": 0.0, "native_usd": 0.0, "holdings": 0, "dust_tokens": []},
+            )
+            stats["holdings"] += 1
             if symbol in stable_tokens:
-                stable_usd += usd_val
-            if symbol in native_tokens:
-                native_usd += usd_val
+                stable_usd_total += usd_val
+                stats["stable_usd"] += usd_val
+            native_symbol = NATIVE_SYMBOL.get(chain, "").upper()
+            if symbol in native_tokens or (native_symbol and symbol == native_symbol):
+                native_usd_total += usd_val
+                stats["native_usd"] += usd_val
             if usd_val < dust_threshold and symbol:
-                dust_tokens.append(symbol)
-        fragment_ratio = (len(dust_tokens) / holdings) if holdings else 0.0
-        fragmented = len(dust_tokens) >= 3 or fragment_ratio >= 0.5
-        native_buffer_gap = max(0.0, native_buffer_target - native_usd)
+                dust_tokens_total.append(symbol)
+                stats["dust_tokens"].append(symbol)
+        focus_candidates = focus_chain_list or [focus_chain]
+        focus_choice = focus_chain
+        best_stable = -1.0
+        for candidate in focus_candidates:
+            stats = chain_stats.get(candidate)
+            if not stats:
+                continue
+            stable_val = float(stats.get("stable_usd", 0.0))
+            if stable_val > best_stable:
+                best_stable = stable_val
+                focus_choice = candidate
+        focus_chain = focus_choice
+        focus_stats = chain_stats.get(
+            focus_chain,
+            {"stable_usd": 0.0, "native_usd": 0.0, "holdings": 0, "dust_tokens": []},
+        )
+        focus_stable_usd = float(focus_stats.get("stable_usd", 0.0))
+        focus_native_usd = float(focus_stats.get("native_usd", 0.0))
+        focus_holdings = int(focus_stats.get("holdings", 0))
+        focus_dust_tokens = list(focus_stats.get("dust_tokens", []))
+        focus_fragment_ratio = (len(focus_dust_tokens) / focus_holdings) if focus_holdings else 0.0
+        fragmented = len(focus_dust_tokens) >= 3 or focus_fragment_ratio >= 0.5
+        fragmented_total = len(dust_tokens_total) >= 3 or (len(dust_tokens_total) / holdings_total if holdings_total else 0.0) >= 0.5
+        micro_mode = bool(allow_micro and focus_stable_usd >= micro_min_capital and focus_stable_usd < min_capital_usd)
+        effective_min_capital = micro_min_capital if micro_mode else min_capital_usd
+        native_buffer_target = micro_native_buffer if micro_mode else native_buffer_default
+        native_buffer_gap = max(0.0, native_buffer_target - focus_native_usd)
         native_starved = native_buffer_gap > 0.0
-        stable_deficit = max(0.0, min_capital_usd - stable_usd)
+        stable_deficit = max(0.0, effective_min_capital - focus_stable_usd)
         sparse_reasons: List[str] = []
-        if holdings == 0:
-            sparse_reasons.append("empty_wallet")
+        if focus_holdings == 0:
+            sparse_reasons.append("focus_empty")
         if stable_deficit > 0:
             sparse_reasons.append("stable_below_min")
         if native_starved:
             sparse_reasons.append("native_gas_low")
         if fragmented:
             sparse_reasons.append("fragmented")
-        sparse = bool(stable_deficit > 0 or fragmented or native_starved or holdings == 0)
+        sparse = bool(stable_deficit > 0 or fragmented or native_starved or focus_holdings == 0)
+        micro_allowed = bool(micro_mode and not sparse)
         return {
             "wallet": wallet,
-            "stable_usd": stable_usd,
-            "native_usd": native_usd,
+            "stable_usd": focus_stable_usd,
+            "native_usd": focus_native_usd,
+            "stable_usd_total": stable_usd_total,
+            "native_usd_total": native_usd_total,
             "sparse": sparse,
             "fragmented": fragmented,
-            "fragment_ratio": fragment_ratio,
-            "dust_tokens": dust_tokens[:8],
+            "fragmented_total": fragmented_total,
+            "fragment_ratio": focus_fragment_ratio,
+            "fragment_ratio_total": (len(dust_tokens_total) / holdings_total) if holdings_total else 0.0,
+            "dust_tokens": focus_dust_tokens[:8],
             "dust_threshold_usd": dust_threshold,
-            "min_capital_usd": min_capital_usd,
+            "min_capital_usd": effective_min_capital,
+            "min_capital_usd_standard": min_capital_usd,
+            "micro_min_capital_usd": micro_min_capital,
+            "micro_native_buffer_usd": micro_native_buffer,
+            "micro_mode": micro_mode,
+            "micro_allowed": micro_allowed,
+            "focus_chain": focus_chain,
+            "focus_candidates": focus_candidates,
+            "focus_holdings": focus_holdings,
+            "holdings_total": holdings_total,
             "stable_deficit_usd": stable_deficit,
             "native_buffer_gap_usd": native_buffer_gap,
             "native_buffer_target_usd": native_buffer_target,
@@ -2938,6 +3000,9 @@ class TrainingPipeline:
                     "ghost_win_rate": ghost_check.get("win_rate", 0.0),
                     "ghost_tail_risk": ghost_check.get("tail_risk", 0.0),
                     "wallet_state": wallet_state,
+                    "micro_mode": bool(wallet_state.get("micro_mode")),
+                    "micro_allowed": bool(wallet_state.get("micro_allowed")),
+                    "focus_chain": wallet_state.get("focus_chain"),
                 }
             )
             return report_fb
@@ -3006,6 +3071,9 @@ class TrainingPipeline:
                 "ghost_tail_risk": ghost_check.get("tail_risk", 0.0),
                 "wallet_state": wallet_state,
                 "sparse_reasons": wallet_state.get("sparse_reasons"),
+                "micro_mode": bool(wallet_state.get("micro_mode")),
+                "micro_allowed": bool(wallet_state.get("micro_allowed")),
+                "focus_chain": wallet_state.get("focus_chain"),
             }
         )
         return report_ready
@@ -3033,6 +3101,12 @@ class TrainingPipeline:
         min_clip_usd = float(os.getenv("LIVE_MIN_CLIP_USD", "10"))
         stable_usd = float(wallet_state.get("stable_usd", 0.0))
         native_usd = float(wallet_state.get("native_usd", 0.0))
+        min_live_capital = float(wallet_state.get("min_capital_usd", min_live_capital))
+        if wallet_state.get("micro_mode"):
+            try:
+                min_clip_usd = float(os.getenv("LIVE_MICRO_MIN_CLIP_USD", str(min_clip_usd)))
+            except Exception:
+                pass
         native_buffer_target = float(wallet_state.get("native_buffer_target_usd", os.getenv("LIVE_NATIVE_BUFFER_USD", "5")))
         native_buffer_gap = float(wallet_state.get("native_buffer_gap_usd", max(0.0, native_buffer_target - native_usd)))
         stable_deficit = float(wallet_state.get("stable_deficit_usd", max(0.0, min_live_capital - stable_usd)))
@@ -3385,6 +3459,9 @@ class TrainingPipeline:
             "stable_deficit_usd": stable_deficit,
             "min_clip_usd": min_clip_usd,
             "min_clip_block": min_clip_block,
+            "micro_mode": bool(wallet_state.get("micro_mode")),
+            "micro_allowed": bool(wallet_state.get("micro_allowed")),
+            "focus_chain": wallet_state.get("focus_chain"),
         }
         plan["guardrails"] = {
             "min_ghost_trades": ghost_min_trades,

@@ -10,6 +10,15 @@
           <button type="button" class="btn ghost" @click="refresh" :disabled="store.loading">
             {{ store.loading ? 'Refreshing…' : 'Refresh' }}
           </button>
+          <button
+            v-if="wizardSteps.length"
+            type="button"
+            class="btn"
+            @click="wizardOpen = true"
+            :disabled="store.loading"
+          >
+            Open Pipeline Wizard
+          </button>
           <button type="button" class="btn danger" @click="confirmingClear = true" :disabled="store.loading || !store.items.length">
             Clear All
           </button>
@@ -135,16 +144,58 @@ RPC_URL=https://..." />
       </div>
     </div>
   </div>
+  <TradingStartupWizard
+    v-if="wizardSteps.length"
+    v-model:open="wizardOpen"
+    :steps="wizardSteps"
+    title="Pipeline Setup Wizard"
+    subtitle="Add the missing keys so the pipeline can run end-to-end."
+    eyebrow="Settings Wizard"
+  >
+    <template v-for="step in wizardSteps" #[`step-${step.id}`]="{ step: slotStep }">
+      <div class="wizard-field">
+        <label :for="`wizard-${step.id}`">{{ step.label }}</label>
+        <textarea
+          v-if="step.input === 'textarea'"
+          :id="`wizard-${step.id}`"
+          v-model="wizardValues[step.id]"
+          rows="3"
+          :placeholder="step.placeholder"
+        ></textarea>
+        <input
+          v-else
+          :id="`wizard-${step.id}`"
+          :type="step.is_secret ? 'password' : 'text'"
+          v-model="wizardValues[step.id]"
+          :placeholder="step.placeholder"
+        />
+        <div class="wizard-actions">
+          <button class="btn" type="button" @click="saveWizardStep(step)" :disabled="!wizardValues[step.id]?.trim() || wizardSaving[step.id]">
+            {{ wizardSaving[step.id] ? 'Saving…' : 'Save' }}
+          </button>
+          <button class="btn ghost" type="button" @click="clearWizardStep(step)">
+            Clear
+          </button>
+        </div>
+        <p v-if="wizardErrors[step.id]" class="wizard-error">{{ wizardErrors[step.id] }}</p>
+      </div>
+    </template>
+  </TradingStartupWizard>
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, onMounted, computed } from 'vue';
+import { reactive, ref, onMounted, computed, watch } from 'vue';
 import { useSecureSettingsStore } from '@/stores/secureSettings';
+import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
 
 const store = useSecureSettingsStore();
 const showCreate = ref(false);
 const editing = ref<number | null>(null);
 const confirmingClear = ref(false);
+const wizardOpen = ref(true);
+const wizardValues = reactive<Record<string, string>>({});
+const wizardSaving = reactive<Record<string, boolean>>({});
+const wizardErrors = reactive<Record<string, string>>({});
 const revealVisible = reactive<Record<number, boolean>>({});
 const revealValues = reactive<Record<number, string>>({});
 const form = reactive({
@@ -163,6 +214,115 @@ onMounted(() => {
   refresh();
 });
 
+type WizardStep = {
+  id: string;
+  name: string;
+  label: string;
+  title: string;
+  description: string;
+  detail?: string;
+  placeholder?: string;
+  is_secret: boolean;
+  input?: 'text' | 'textarea';
+  tone?: 'info' | 'warning' | 'critical' | 'success';
+};
+
+const pipelineRequirements: WizardStep[] = [
+  {
+    id: 'mnemonic',
+    name: 'MNEMONIC',
+    label: 'Wallet recovery phrase',
+    title: 'Add wallet recovery phrase',
+    description: 'Needed to sign transactions and run live trading.',
+    detail: 'Stored securely in the vault.',
+    placeholder: 'problem tube idea ...',
+    is_secret: true,
+    input: 'textarea',
+    tone: 'critical',
+  },
+  {
+    id: 'alchemy',
+    name: 'ALCHEMY_API_KEY',
+    label: 'Alchemy API Key',
+    title: 'Connect RPC provider',
+    description: 'RPC + NFT data for Base/ETH monitoring.',
+    detail: 'Used for wallet sync, price sampling, and on-chain reads.',
+    placeholder: 'Alchemy API key',
+    is_secret: true,
+    tone: 'critical',
+  },
+  {
+    id: 'cryptopanic',
+    name: 'CRYPTOPANIC_API_KEY',
+    label: 'CryptoPanic API Key',
+    title: 'Enable news ingest',
+    description: 'Unlocks headline + news sentiment feeds.',
+    placeholder: 'CryptoPanic API key',
+    is_secret: true,
+    tone: 'warning',
+  },
+  {
+    id: 'thegraph',
+    name: 'THEGRAPH_API_KEY',
+    label: 'The Graph API Key',
+    title: 'Enable subgraph data',
+    description: 'Needed for Uniswap/DEX data and analytics.',
+    placeholder: 'The Graph API key',
+    is_secret: true,
+    tone: 'warning',
+  },
+  {
+    id: 'zerox',
+    name: 'ZEROX_API_KEY',
+    label: '0x API Key',
+    title: 'Enable swap routing',
+    description: 'Unlocks swap pricing + routing quotes.',
+    placeholder: '0x API key',
+    is_secret: true,
+    tone: 'warning',
+  },
+  {
+    id: 'lifi',
+    name: 'LIFI_API_KEY',
+    label: 'LI.FI API Key',
+    title: 'Enable bridging',
+    description: 'Bridge + swap orchestration for cross-chain moves.',
+    placeholder: 'LI.FI API key',
+    is_secret: true,
+    tone: 'warning',
+  },
+  {
+    id: 'ankr',
+    name: 'ANKR_API_KEY',
+    label: 'Ankr API Key',
+    title: 'Enable historical data pulls',
+    description: 'Provides multichain RPC + historical queries.',
+    placeholder: 'Ankr API key',
+    is_secret: true,
+    tone: 'info',
+  },
+  {
+    id: 'goplus-key',
+    name: 'GOPLUS_APP_KEY',
+    label: 'GoPlus App Key',
+    title: 'Enable token safety checks',
+    description: 'Scam filtering uses GoPlus for security scoring.',
+    placeholder: 'GoPlus app key',
+    is_secret: true,
+    tone: 'warning',
+  },
+  {
+    id: 'goplus-secret',
+    name: 'GOPLUS_APP_SECRET',
+    label: 'GoPlus App Secret',
+    title: 'Confirm GoPlus secret',
+    description: 'Pairs with the GoPlus app key.',
+    placeholder: 'GoPlus app secret',
+    is_secret: true,
+    tone: 'warning',
+  },
+];
+
 const groupedSettings = computed(() => {
   const groups: Record<string, any[]> = {};
   store.items.forEach((item: any) => {
@@ -179,6 +339,43 @@ const groupedSettings = computed(() => {
     items,
   }));
 });
+
+const settingsByName = computed(() => {
+  const map = new Map<string, any>();
+  store.items.forEach((item: any) => {
+    if (item?.name) {
+      map.set(item.name, item);
+    }
+  });
+  return map;
+});
+
+const wizardSteps = computed<WizardStep[]>(() => {
+  const steps: WizardStep[] = [];
+  pipelineRequirements.forEach((req) => {
+    const entry = settingsByName.value.get(req.name);
+    const missing = !entry || entry.is_placeholder;
+    if (missing) {
+      steps.push(req);
+    }
+  });
+  return steps;
+});
+
+watch(
+  () => wizardSteps.value,
+  (steps) => {
+    steps.forEach((step) => {
+      if (!(step.id in wizardValues)) {
+        wizardValues[step.id] = '';
+      }
+    });
+    if (!steps.length) {
+      wizardOpen.value = false;
+    }
+  },
+  { immediate: true }
+);
 
 function refresh() {
   store.load();
@@ -277,6 +474,31 @@ async function downloadExport() {
   link.click();
   link.remove();
   window.URL.revokeObjectURL(url);
+}
+
+async function saveWizardStep(step: WizardStep) {
+  const value = (wizardValues[step.id] || '').trim();
+  if (!value) return;
+  wizardSaving[step.id] = true;
+  wizardErrors[step.id] = '';
+  try {
+    await store.save({
+      name: step.name,
+      category: 'default',
+      is_secret: step.is_secret,
+      value,
+    });
+    wizardValues[step.id] = '';
+  } catch (error: any) {
+    wizardErrors[step.id] = error?.message || 'Failed to save setting';
+  } finally {
+    wizardSaving[step.id] = false;
+  }
+}
+
+function clearWizardStep(step: WizardStep) {
+  wizardValues[step.id] = '';
+  wizardErrors[step.id] = '';
 }
 </script>
 
@@ -431,5 +653,37 @@ async function downloadExport() {
   display: flex;
   justify-content: flex-end;
   gap: 0.6rem;
+}
+
+.wizard-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.wizard-field label {
+  font-weight: 600;
+  color: #dbeafe;
+}
+
+.wizard-field textarea,
+.wizard-field input {
+  background: rgba(4, 10, 20, 0.75);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 12px;
+  padding: 0.6rem 0.8rem;
+  color: #e2e8f0;
+}
+
+.wizard-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.wizard-error {
+  margin: 0;
+  color: #fca5a5;
+  font-size: 0.85rem;
 }
 </style>

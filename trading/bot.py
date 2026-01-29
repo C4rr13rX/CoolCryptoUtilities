@@ -445,6 +445,71 @@ class TradingBot:
                 break
         return obtained, sources
 
+    def _simulate_bridge_topup(
+        self,
+        *,
+        chain: str,
+        quote_token: str,
+        shortfall: float,
+        expected_profit_usd: float = 0.0,
+    ) -> Tuple[float, List[Dict[str, Any]]]:
+        """
+        Simulate bridging stable balances from other chains to cover a shortfall.
+        Only applies to stable quote tokens and when expected profit covers fees.
+        """
+        if shortfall <= 0.0 or self.live_trading_enabled:
+            return 0.0, []
+        if (os.getenv("SIMULATE_BRIDGE_TOPUP", "1") or "1").lower() not in {"1", "true", "yes", "on"}:
+            return 0.0, []
+        quote_u = quote_token.upper()
+        if quote_u not in self.stable_tokens:
+            return 0.0, []
+        fee_flat = float(os.getenv("BRIDGE_FEE_USD", "1.5") or 0.0)
+        fee_ratio = float(os.getenv("BRIDGE_FEE_RATIO", "0.001") or 0.0)
+        min_profit = float(os.getenv("BRIDGE_MIN_PROFIT_USD", "1.0") or 0.0)
+        if expected_profit_usd > 0.0 and expected_profit_usd < (fee_flat + min_profit):
+            return 0.0, []
+        chain_l = chain.lower()
+        obtained = 0.0
+        sources: List[Dict[str, Any]] = []
+        candidates = [
+            ((c, sym), bal)
+            for (c, sym), bal in self.sim_quote_balances.items()
+            if c != chain_l and sym == quote_u and bal > 0.0
+        ]
+        candidates.sort(key=lambda entry: entry[1], reverse=True)
+        for (src_chain, sym), bal in candidates:
+            remaining = shortfall - obtained
+            if remaining <= 0.0:
+                break
+            move = min(bal, remaining)
+            if move <= 0.0:
+                continue
+            fee = fee_flat + move * fee_ratio
+            if expected_profit_usd > 0.0 and (move - fee) <= 0.0:
+                continue
+            if expected_profit_usd > 0.0 and expected_profit_usd < fee + min_profit:
+                continue
+            net = max(0.0, move - fee)
+            if net <= 0.0:
+                continue
+            self.sim_quote_balances[(src_chain, sym)] = max(0.0, bal - move)
+            dest_key = (chain_l, quote_u)
+            self.sim_quote_balances[dest_key] = self.sim_quote_balances.get(dest_key, 0.0) + net
+            obtained += net
+            sources.append(
+                {
+                    "from_chain": src_chain,
+                    "token": sym,
+                    "amount": round(net, 6),
+                    "gross": round(move, 6),
+                    "fee_usd": round(fee, 4),
+                }
+            )
+            if obtained >= shortfall - 1e-9:
+                break
+        return obtained, sources
+
     def _consume_sim_gas(self, chain: str, gas_native: float) -> None:
         if self.live_trading_enabled:
             return
@@ -1142,10 +1207,29 @@ class TradingBot:
         allow_mini = os.getenv("LIVE_MINI_AUTO_PROMOTE", "1").lower() in {"1", "true", "yes", "on"}
         if not ready_flag and mini_ready and allow_mini:
             ready_flag = True
+        wallet_state = readiness.get("wallet_state") if isinstance(readiness, dict) else None
+        micro_mode = bool(wallet_state.get("micro_mode")) if isinstance(wallet_state, dict) else False
+        micro_allowed = bool(wallet_state.get("micro_allowed")) if isinstance(wallet_state, dict) else False
+        allow_micro = os.getenv("LIVE_MICRO_AUTO_PROMOTE", "0").lower() in {"1", "true", "yes", "on"}
+        if not ready_flag and micro_allowed and allow_micro:
+            ready_flag = True
         if self.live_trading_enabled:
             return
         if not readiness or not ready_flag:
             return
+        if micro_mode:
+            try:
+                micro_risk = float(os.getenv("LIVE_MICRO_RISK_BUDGET", "0.2"))
+            except Exception:
+                micro_risk = 0.2
+            try:
+                micro_share = float(os.getenv("LIVE_MICRO_MAX_TRADE_SHARE", "0.08"))
+            except Exception:
+                micro_share = 0.08
+            if micro_risk > 0:
+                self.global_risk_budget = min(self.global_risk_budget, micro_risk)
+            if micro_share > 0:
+                self.max_trade_share = min(self.max_trade_share, micro_share)
         precision = float(readiness.get("precision", 0.0))
         recall = float(readiness.get("recall", 0.0))
         samples = int(readiness.get("samples", 0))
@@ -2028,12 +2112,21 @@ class TradingBot:
             return decision
         if pos is None and trade_size > 0.0 and price > 0.0:
             quote_needed = trade_size * price
+            expected_profit_usd = 0.0
+            if directive is not None:
+                try:
+                    expected_profit_usd = max(0.0, float(getattr(directive, "expected_return", 0.0))) * quote_needed
+                except Exception:
+                    expected_profit_usd = 0.0
+            if expected_profit_usd <= 0.0:
+                expected_profit_usd = max(0.0, margin) * quote_needed
             liquidity = self._ensure_quote_liquidity(
                 chain=chain_name,
                 quote_token=quote_token,
                 required_quote=quote_needed,
                 price=price,
                 use_sim=use_sim,
+                expected_profit_usd=expected_profit_usd,
             )
             available_quote = float(liquidity.get("available_quote", available_quote))
         if native_balance < gas_required:
@@ -2751,6 +2844,7 @@ class TradingBot:
         required_quote: float,
         price: float,
         use_sim: bool,
+        expected_profit_usd: float = 0.0,
     ) -> Dict[str, Any]:
         """
         Ensure we have enough quote balance to size the trade. In ghost mode we
@@ -2765,14 +2859,32 @@ class TradingBot:
 
         if use_sim:
             gained, sources = self._simulate_quote_topup(chain=chain, quote_token=quote_token, shortfall=shortfall)
-            if gained > 0.0:
-                result["available_quote"] = available + gained
-                result["simulated"] = {"gained": gained, "sources": sources}
+            bridged, bridge_sources = (0.0, [])
+            if gained < shortfall:
+                bridged, bridge_sources = self._simulate_bridge_topup(
+                    chain=chain,
+                    quote_token=quote_token,
+                    shortfall=shortfall - gained,
+                    expected_profit_usd=expected_profit_usd,
+                )
+            total = gained + bridged
+            if total > 0.0:
+                result["available_quote"] = available + total
+                sim_payload: Dict[str, Any] = {"gained": total, "sources": sources}
+                if bridge_sources:
+                    sim_payload["bridge_sources"] = bridge_sources
+                result["simulated"] = sim_payload
                 self.metrics.feedback(
                     "trading",
                     severity=FeedbackSeverity.INFO,
                     label="quote_topup_simulated",
-                    details={"quote_token": quote_token.upper(), "gained": gained, "sources": sources, "chain": chain},
+                    details={
+                        "quote_token": quote_token.upper(),
+                        "gained": total,
+                        "sources": sources,
+                        "bridge_sources": bridge_sources,
+                        "chain": chain,
+                    },
                 )
             return result
 

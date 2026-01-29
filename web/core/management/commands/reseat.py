@@ -40,6 +40,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Disable BrandDozer background worker auto-start.",
         )
+        parser.add_argument(
+            "--no-runserver",
+            action="store_true",
+            help="Skip launching the Django dev server after setup.",
+        )
 
     def handle(self, *args, **options):
         project_root = Path(__file__).resolve().parents[4]
@@ -50,12 +55,50 @@ class Command(BaseCommand):
                 return cmd
             exe = cmd[0]
             if os.name == "nt":
-                if shutil.which(exe):
-                    return cmd
+                found = shutil.which(exe)
+                if found:
+                    if str(found).lower().endswith(".ps1"):
+                        return [
+                            "powershell",
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            found,
+                            *cmd[1:],
+                        ]
+                    return [found, *cmd[1:]]
                 for candidate in (f"{exe}.cmd", f"{exe}.exe", f"{exe}.bat"):
                     path = shutil.which(candidate)
                     if path:
                         return [path, *cmd[1:]]
+                if exe.lower() == "npm":
+                    roots = [
+                        os.getenv("ProgramFiles"),
+                        os.getenv("ProgramFiles(x86)"),
+                        os.getenv("LocalAppData"),
+                        os.getenv("APPDATA"),
+                    ]
+                    extra = [
+                        Path("C:/Program Files/nodejs/npm.cmd"),
+                        Path("C:/Program Files (x86)/nodejs/npm.cmd"),
+                    ]
+                    for root in filter(None, roots):
+                        extra.extend(
+                            [
+                                Path(root) / "nodejs" / "npm.cmd",
+                                Path(root) / "npm" / "npm.cmd",
+                                Path(root) / "nvm" / "npm.cmd",
+                                Path(root) / "NVM" / "npm.cmd",
+                                Path(root) / "nvs" / "nodejs" / "npm.cmd",
+                            ]
+                        )
+                    for candidate in extra:
+                        try:
+                            if candidate.exists():
+                                return [str(candidate), *cmd[1:]]
+                        except Exception:
+                            continue
             else:
                 path = shutil.which(exe)
                 if path:
@@ -98,12 +141,15 @@ class Command(BaseCommand):
                 env=worker_env,
             )
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[6/6] Runserver"))
-        runserver_args = options.get("runserver_args") or []
-        if all(arg != "--noreload" for arg in runserver_args):
-            runserver_args.append("--noreload")
-        try:
-            call_command("runserver", *runserver_args)
-        finally:
-            if worker_process and worker_process.poll() is None:
-                worker_process.terminate()
+        if options.get("no_runserver"):
+            self.stdout.write(self.style.MIGRATE_HEADING("[6/6] Runserver skipped"))
+        else:
+            self.stdout.write(self.style.MIGRATE_HEADING("[6/6] Runserver"))
+            runserver_args = options.get("runserver_args") or []
+            if all(arg != "--noreload" for arg in runserver_args):
+                runserver_args.append("--noreload")
+            try:
+                call_command("runserver", *runserver_args)
+            finally:
+                if worker_process and worker_process.poll() is None:
+                    worker_process.terminate()

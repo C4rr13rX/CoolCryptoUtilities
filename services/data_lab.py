@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -284,7 +286,9 @@ class DataLabRunner:
         return env
 
     def _build_command(self, job_type: str, options: Dict[str, Any]) -> Optional[List[str]]:
-        python = options.get("python_bin") or "python3"
+        python = options.get("python_bin") or os.getenv("PYTHON_BIN") or sys.executable
+        if os.name == "nt" and python == "python3":
+            python = sys.executable
         if job_type == "make2000index":
             return [python, "make2000index.py"]
         if job_type in {"make_assignments", "assignment"}:
