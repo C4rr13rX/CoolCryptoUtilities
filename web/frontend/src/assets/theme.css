@@ -73,6 +73,8 @@ body::before {
   display: grid;
   grid-template-columns: 280px 1fr;
   min-height: calc(100vh - 120px);
+  width: 100%;
+  min-width: 0;
 }
 
 nav.side-panel {
@@ -119,6 +121,8 @@ main.dashboard-content {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .card {
@@ -127,6 +131,9 @@ main.dashboard-content {
   border-radius: 18px;
   padding: 1.3rem 1.4rem;
   box-shadow: 0 16px 38px rgba(0, 0, 0, 0.35);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .card h2 {
@@ -179,12 +186,16 @@ main.dashboard-content {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1.25rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .grid-three {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1.25rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .btn {
@@ -253,6 +264,22 @@ code {
 .content__viewport,
 .dashboard-shell {
   max-width: 100%;
+  min-width: 0;
+}
+
+.content__body,
+.content__viewport {
+  overflow-x: hidden;
+}
+
+.panel {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.panel > *,
+.card > * {
   min-width: 0;
 }
 

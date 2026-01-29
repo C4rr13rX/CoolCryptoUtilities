@@ -1,5 +1,7 @@
 # CoolCryptoUtilities
 
+**Heads up:** Organism, Code Graph, and U53R xR080T are awkward and still in active development.
+
 A Django-first crypto trading dashboard with a full pipeline behind it: data ingest, training, ghost trading, live readiness gates, wallet tooling, and ops consoles. The **Django website in `web/` is the main entrypoint**.
 
 ## What’s included
