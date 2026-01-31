@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import html
+import json
 import os
 import random
 import re
 import time
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import List
 from urllib.parse import quote, parse_qs, urlparse, unquote
 
@@ -45,6 +47,8 @@ class WebSearch:
         self._max_delay = 0.5
         self._brave_key = (os.getenv("BRAVE_API_KEY") or os.getenv("BRAVE_SEARCH_API_KEY") or "").strip()
         self._last_brave_request = 0.0
+        self._brave_limit = int(os.getenv("BRAVE_MAX_SEARCHES_PER_MONTH", "2000") or "2000")
+        self._brave_usage_path = Path("runtime/brave_usage.json")
 
     def _polite_delay(self) -> None:
         time.sleep(random.uniform(self._min_delay, self._max_delay))
@@ -56,15 +60,47 @@ class WebSearch:
             time.sleep(1.0 - elapsed)
         self._last_brave_request = time.time()
 
+    def _brave_allowed(self) -> bool:
+        if not self._brave_key:
+            return False
+        try:
+            now = time.localtime()
+            month_key = f"{now.tm_year}-{now.tm_mon:02d}"
+            usage = self._read_brave_usage()
+            count = int(usage.get(month_key, 0))
+            return count < self._brave_limit
+        except Exception:
+            return True
+
+    def _record_brave_usage(self) -> None:
+        try:
+            now = time.localtime()
+            month_key = f"{now.tm_year}-{now.tm_mon:02d}"
+            usage = self._read_brave_usage()
+            usage[month_key] = int(usage.get(month_key, 0)) + 1
+            self._brave_usage_path.parent.mkdir(parents=True, exist_ok=True)
+            self._brave_usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _read_brave_usage(self) -> dict:
+        if not self._brave_usage_path.exists():
+            return {}
+        try:
+            return json.loads(self._brave_usage_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
     def search(self, query: str, limit: int = 5) -> List[SearchResult]:
         q = (query or "").strip()
         if not q:
             return []
         # Try lite endpoint first; fall back to html endpoint if no results.
         results: List[SearchResult] = []
-        if self._brave_key:
+        if self._brave_key and self._brave_allowed():
             results = self._search_brave(q, limit=limit)
         if results:
+            self._record_brave_usage()
             return self._dedupe_results(results, limit)
         for endpoint in (LITE_URL, HTML_URL):
             url = endpoint.format(query=quote(q))

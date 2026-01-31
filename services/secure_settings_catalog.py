@@ -68,6 +68,11 @@ SECURE_SETTINGS_CATALOG: List[Dict[str, object]] = [
     {"name": "GOPLUS_APP_KEY", "category": "default", "is_secret": True, "label": "GoPlus App Key"},
     {"name": "GOPLUS_APP_SECRET", "category": "default", "is_secret": True, "label": "GoPlus App Secret"},
     {"name": "COINGECKO_API_KEY", "category": "default", "is_secret": True, "label": "CoinGecko API Key"},
+    {"name": "BRAVE_API_KEY", "category": "default", "is_secret": True, "label": "Brave Search API Key"},
+    {"name": "C0D3R_SESSION_BUCKET", "category": "default", "is_secret": False, "label": "c0d3r Session S3 Bucket"},
+    {"name": "C0D3R_SESSION_REGION", "category": "default", "is_secret": False, "label": "c0d3r Session S3 Region"},
+    {"name": "C0D3R_SESSION_PREFIX", "category": "default", "is_secret": False, "label": "c0d3r Session S3 Prefix"},
+    {"name": "C0D3R_SESSION_MODE", "category": "default", "is_secret": False, "label": "c0d3r Session Storage Mode"},
 ]
 
 CATALOG_LOOKUP = {

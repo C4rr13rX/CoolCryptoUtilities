@@ -1,0 +1,12 @@
+{
+  "reasoning_effort": "high",
+  "max_tokens": 2560,
+  "temperature": 0.2,
+  "top_p": 0.9,
+  "max_revisions": 1,
+  "min_score": 7,
+  "research": false,
+  "stream_default": true,
+  "multi_model": true,
+  "config_path": "config/c0d3r_settings.json"
+}

@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 import boto3
 
 from services.research_sources import allowed_domains_for_query, select_sources_for_query
+from services.session_storage import SessionStore, default_session_config
 from services.web_search import WebSearch
 from services.web_research import NCBIClient, ReferenceDataClient, ScholarlyAPIClient, WebResearcher
 
@@ -69,7 +70,7 @@ ROLE_FALLBACK_MODEL = {
 
 def c0d3r_default_settings() -> dict[str, Any]:
     reasoning = os.getenv("C0D3R_REASONING_EFFORT", "high")
-    return {
+    settings = {
         "model": os.getenv("C0D3R_MODEL", "").strip(),
         "reasoning_effort": reasoning,
         "profile": _resolve_aws_profile(),
@@ -83,7 +84,31 @@ def c0d3r_default_settings() -> dict[str, Any]:
         "stream_default": _env_bool("C0D3R_STREAM_DEFAULT", True),
         "inference_profile": os.getenv("C0D3R_INFERENCE_PROFILE", "").strip(),
         "multi_model": _env_bool("C0D3R_MULTI_MODEL", True),
+        "config_path": os.getenv("C0D3R_CONFIG_PATH", "config/c0d3r_settings.json"),
+        "consensus_k": int(os.getenv("C0D3R_CONSENSUS_K", "1") or "1"),
     }
+    settings = _apply_file_config(settings)
+    return settings
+
+
+def _apply_file_config(settings: dict[str, Any]) -> dict[str, Any]:
+    path = settings.get("config_path")
+    if not path:
+        return settings
+    cfg_path = Path(str(path))
+    if not cfg_path.exists():
+        return settings
+    try:
+        payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return settings
+    if not isinstance(payload, dict):
+        return settings
+    for key, value in payload.items():
+        if key in settings and settings.get(key):
+            continue
+        settings[key] = value
+    return settings
 
 
 def c0d3r_settings_for_role(role: str | None = None) -> dict[str, Any]:
@@ -187,6 +212,7 @@ class C0d3r:
         self.research_enabled = bool(settings.get("research"))
         self.inference_profile = settings.get("inference_profile") or ""
         self.multi_model = bool(settings.get("multi_model"))
+        self.consensus_k = int(settings.get("consensus_k") or 1)
         effort = str(settings.get("reasoning_effort") or "").strip().lower()
         if effort in {"extra_high", "xhigh", "xh"}:
             self.max_revisions = max(self.max_revisions, 2)
@@ -256,12 +282,31 @@ class C0d3r:
             self._build_prompt("planner", prompt, system=system, research=synthesis or research_payload),
             images=images,
         )
-        draft = self._invoke_model(
-            self._model_for_stage("executor"),
-            self._build_prompt("executor", prompt, system=system, plan=plan, research=synthesis or research_payload),
-            images=images,
-        )
-        output = draft
+        if self.consensus_k > 1:
+            drafts = []
+            for _ in range(min(self.consensus_k, 4)):
+                drafts.append(
+                    self._invoke_model(
+                        self._model_for_stage("executor"),
+                        self._build_prompt("executor", prompt, system=system, plan=plan, research=synthesis or research_payload),
+                        images=images,
+                    )
+                )
+            output = self._select_best_candidate(
+                drafts,
+                prompt,
+                system=system,
+                plan=plan,
+                research=synthesis or research_payload,
+                images=images,
+            )
+        else:
+            output = self._invoke_model(
+                self._model_for_stage("executor"),
+                self._build_prompt("executor", prompt, system=system, plan=plan, research=synthesis or research_payload),
+                images=images,
+            )
+        output = self._enforce_schema(output, prompt, system=system, plan=plan, research=synthesis or research_payload, images=images)
         for _ in range(max(0, self.max_revisions)):
             review = self._invoke_model(
                 self._model_for_stage("reviewer"),
@@ -284,6 +329,7 @@ class C0d3r:
                 ),
                 images=images,
             )
+            output = self._enforce_schema(output, prompt, system=system, plan=plan, research=synthesis or research_payload, images=images)
         return output.strip()
 
     def _preferred_models(self) -> List[str]:
@@ -315,12 +361,16 @@ class C0d3r:
         research: Optional[str] = None,
     ) -> str:
         sys_block = system or (
-            "You are a senior software engineer. Produce accurate, safe code and clear plans. "
-            "If UI requirements are vague, apply modern web design best practices: responsive layout, "
-            "clear hierarchy, accessible contrast, consistent spacing, and semantic HTML. "
-            "Follow CLI best practices: check git status, run relevant tests, and document changes. "
-            "Prefer local docs and CLI help (`--help`) over internet research unless research is explicitly enabled. "
-            "Use concise scientific/engineering language; avoid self-talk; output only what is requested."
+            "System constraints (non-negotiable):\n"
+            "1) Output must match the required schema for the stage.\n"
+            "2) If evidence is requested, cite only from provided context.\n"
+            "3) If commands are requested, return a JSON list of shell commands only.\n"
+            "4) If JSON is required, return JSON only (no prose).\n"
+            "5) Avoid speculation; mark unknowns explicitly.\n"
+            "6) Be concise; do not include self-talk.\n"
+            "Execution policy:\n"
+            "- Use a constrained plan->execute->verify loop.\n"
+            "- If output fails schema validation, retry with corrections.\n"
         )
         parts = [f"[system]\n{sys_block}"]
         if research:
@@ -349,7 +399,8 @@ class C0d3r:
             )
         elif stage == "reviewer":
             parts.append(
-                "Return JSON with keys: score (0-10), issues (list), improvements (list), tests (list), notes."
+                "Return JSON with keys: score (0-10), issues (list), improvements (list), tests (list), notes. "
+                "Explicitly check for: missing evidence, schema violations, cognitive bias, and unsafe assumptions."
             )
         elif stage == "refiner":
             parts.append("Improve the draft using feedback. Return final answer only.")
@@ -382,6 +433,74 @@ class C0d3r:
             return score, feedback
         except Exception:
             return 0.0, text
+
+    def _enforce_schema(
+        self,
+        output: str,
+        prompt: str,
+        *,
+        system: Optional[str],
+        plan: Optional[str],
+        research: Optional[str],
+        images: Optional[Sequence[str]],
+    ) -> str:
+        """
+        Enforce JSON-only outputs when the prompt requires it by re-asking with constraints.
+        """
+        issues = _validate_output(prompt, output)
+        if not issues:
+            return output
+        if _requires_json(prompt) and _looks_like_json(output) and not issues:
+            return output
+        repair_prompt = (
+            "Return ONLY valid JSON matching the requested schema. "
+            "Do not include any other text."
+        )
+        corrected = self._invoke_model(
+            self._model_for_stage("refiner"),
+            self._build_prompt(
+                "refiner",
+                prompt,
+                system=system,
+                plan=plan,
+                draft=output,
+                feedback=repair_prompt,
+                research=research,
+            ),
+            images=images,
+        )
+        return corrected
+
+    def _select_best_candidate(
+        self,
+        drafts: List[str],
+        prompt: str,
+        *,
+        system: Optional[str],
+        plan: Optional[str],
+        research: Optional[str],
+        images: Optional[Sequence[str]],
+    ) -> str:
+        if not drafts:
+            return ""
+        if len(drafts) == 1:
+            return drafts[0]
+        scored: List[tuple[float, str]] = []
+        for draft in drafts:
+            issues = _validate_output(prompt, draft)
+            score = 10.0 - float(len(issues))
+            scored.append((score, draft))
+        best_score, best = max(scored, key=lambda item: item[0])
+        if _validate_output(prompt, best):
+            review = self._invoke_model(
+                self._model_for_stage("reviewer"),
+                self._build_prompt("reviewer", prompt, system=system, plan=plan, draft=best, research=research),
+                images=images,
+            )
+            score, _ = self._parse_review(review)
+            if score >= self.min_score:
+                return best
+        return best
 
     def _invoke_model(self, model_id: str, prompt: str, *, images: Optional[Sequence[str]] = None) -> str:
         effective_model_id = self.inference_profile or model_id
@@ -607,6 +726,10 @@ class C0d3rSession:
             self.stream_default = bool(merged.get("stream_default"))
         self.settings = merged
         self._c0d3r = C0d3r(merged)
+        self._store = SessionStore(default_session_config(), profile=merged.get("profile"))
+        self.session_id = self._store.next_session_id()
+        self._store.update_next_session_id(self.session_id + 1)
+        self._log_event("session_start", {"session_name": self.session_name})
 
     def send(
         self,
@@ -626,12 +749,14 @@ class C0d3rSession:
             self._stream_callback = stream_callback
         if verbose:
             self._print(f"[c0d3r] model={self._c0d3r.ensure_model()}\n")
+        self._log_event("prompt", {"prompt": prompt})
         output = self._c0d3r.generate(
             prompt,
             system=system,
             research=self.settings.get("research", False),
             images=images_list if images_list else None,
         )
+        self._log_event("response", {"response": output})
         self._append_transcript(prompt, output)
         if stream:
             self._stream_output(output)
@@ -646,6 +771,21 @@ class C0d3rSession:
                 f"{divider}\nTIMESTAMP: {ts}\nSESSION: {self.session_name}\n"
                 f"PROMPT:\n{prompt}\nRESPONSE:\n{response}\n"
             )
+
+    def _log_event(self, event_type: str, payload: dict) -> None:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        record = {
+            "timestamp": ts,
+            "epoch": time.time(),
+            "session_id": self.session_id,
+            "session_name": self.session_name,
+            "event": event_type,
+            "data": payload,
+        }
+        try:
+            self._store.append_event(self.session_id, record)
+        except Exception:
+            pass
 
     def _print(self, s: str) -> None:
         if self._stream_callback:
@@ -671,6 +811,42 @@ def _extract_json(text: str) -> str:
     if start == -1 or end == -1 or end <= start:
         return "{}"
     return text[start : end + 1]
+
+
+def _requires_json(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return "return only json" in lower or "return only json:" in lower or "return only json" in lower
+
+
+def _looks_like_json(text: str) -> bool:
+    stripped = (text or "").strip()
+    return stripped.startswith("{") and stripped.endswith("}")
+
+
+def _requires_commands(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return "commands" in lower and "return only json" in lower
+
+
+def _requires_citations(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return "cite" in lower or "citation" in lower or "sources" in lower
+
+
+def _has_citations(text: str) -> bool:
+    lower = (text or "").lower()
+    return "http" in lower or "[" in lower and "]" in lower
+
+
+def _validate_output(prompt: str, output: str) -> List[str]:
+    issues: List[str] = []
+    if _requires_json(prompt) and not _looks_like_json(output):
+        issues.append("missing_json")
+    if _requires_commands(prompt) and "commands" not in output:
+        issues.append("missing_commands")
+    if _requires_citations(prompt) and not _has_citations(output):
+        issues.append("missing_citations")
+    return issues
 
 
 def _build_bedrock_payload(

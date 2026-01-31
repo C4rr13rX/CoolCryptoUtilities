@@ -43,8 +43,11 @@ def main(argv: List[str] | None = None) -> int:
         prompt = sys.stdin.read().strip()
     if not prompt:
         parser.error("Prompt is required (args or stdin).")
+    from services.env_loader import EnvLoader
     from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
     from services.agent_workspace import run_command
+
+    EnvLoader.load()
 
     settings = c0d3r_default_settings()
     if args.model:
