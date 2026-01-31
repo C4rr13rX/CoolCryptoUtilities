@@ -110,10 +110,12 @@ def _write_output(output_dir: Path, snapshot: Dict[str, Any], text: str) -> Path
 
 
 def _send_codex(prompt: str, workdir: str | Path) -> str:
-    from tools.codex_session import CodexSession, codex_default_settings
+    from tools.ai_session import get_session_class, default_settings, session_provider_from_context
 
-    settings = codex_default_settings()
-    session = CodexSession(
+    provider = session_provider_from_context({})
+    settings = default_settings(provider)
+    SessionClass = get_session_class(provider)
+    session = SessionClass(
         session_name="branddozer-feedback",
         transcript_dir=Path("runtime/branddozer/feedback_transcripts"),
         read_timeout_s=None,
@@ -131,7 +133,7 @@ def run_once(run_id: str, workdir: str | Path, output_dir: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="BrandDozer feedback loop using CodexSession.")
+    parser = argparse.ArgumentParser(description="BrandDozer feedback loop using the configured AI session.")
     parser.add_argument("run_id", help="Delivery run id (UUID).")
     parser.add_argument("--settings", default="coolcrypto_dashboard.settings", help="Django settings module.")
     parser.add_argument("--interval", type=int, default=1200, help="Seconds between feedback runs (default 1200s).")

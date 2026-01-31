@@ -86,12 +86,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--team-mode",
         choices=["full", "solo"],
         default="full",
-        help="Delivery mode: full team or solo (single Codex session).",
+        help="Delivery mode: full team or solo (single session).",
+    )
+    start.add_argument(
+        "--session-provider",
+        choices=["codex", "c0d3r"],
+        default=os.getenv("BRANDDOZER_SESSION_PROVIDER", "codex"),
+        help="AI session provider to use (codex or c0d3r).",
     )
     start.add_argument("--codex-model", help="Override Codex model for this run (e.g. gpt-5.2-codex).")
     start.add_argument(
         "--codex-reasoning",
         help="Reasoning effort (extra_high, high, medium, low). Defaults to environment settings.",
+    )
+    start.add_argument("--c0d3r-model", help="Override c0d3r (Bedrock) model id for this run.")
+    start.add_argument(
+        "--c0d3r-reasoning",
+        help="Reasoning effort for c0d3r (maps to internal loop settings).",
     )
     start.add_argument(
         "--smoke-test-cmd",
@@ -191,8 +202,11 @@ def main(argv: List[str] | None = None) -> int:
             mode=cmd_args.mode,
             run_id=cmd_args.run_id,
             team_mode=cmd_args.team_mode,
+            session_provider=cmd_args.session_provider,
             codex_model=cmd_args.codex_model,
             codex_reasoning=cmd_args.codex_reasoning,
+            c0d3r_model=cmd_args.c0d3r_model,
+            c0d3r_reasoning=cmd_args.c0d3r_reasoning,
             smoke_test_cmd=cmd_args.smoke_test_cmd,
         )
         context = dict(run.context or {})
@@ -204,10 +218,16 @@ def main(argv: List[str] | None = None) -> int:
             context["research_mode"] = True
         if cmd_args.team_mode:
             context["team_mode"] = cmd_args.team_mode
+        if cmd_args.session_provider:
+            context["session_provider"] = cmd_args.session_provider
         if cmd_args.codex_model:
             context["codex_model"] = cmd_args.codex_model
         if cmd_args.codex_reasoning:
             context["codex_reasoning"] = cmd_args.codex_reasoning
+        if cmd_args.c0d3r_model:
+            context["c0d3r_model"] = cmd_args.c0d3r_model
+        if cmd_args.c0d3r_reasoning:
+            context["c0d3r_reasoning"] = cmd_args.c0d3r_reasoning
         if cmd_args.smoke_test_cmd:
             context["smoke_test_cmd"] = cmd_args.smoke_test_cmd
         run.context = context
@@ -334,7 +354,7 @@ def main(argv: List[str] | None = None) -> int:
                 return
             time.sleep(poll_interval)
             waited += poll_interval
-        print(f"No worker claimed job {job.id} after {timeout:.1f}s. Running delivery inline via CLI to avoid idle Codex usage.")
+        print(f"No worker claimed job {job.id} after {timeout:.1f}s. Running delivery inline via CLI to avoid idle agent usage.")
         _run_inline_delivery(job, run)
 
     def _run_inline_delivery(job, run) -> None:

@@ -281,8 +281,11 @@ export const useBrandDozerStore = defineStore('branddozer', {
       prompt: string;
       mode?: string;
       team_mode?: string;
+      session_provider?: string;
       codex_model?: string;
       codex_reasoning?: string;
+      c0d3r_model?: string;
+      c0d3r_reasoning?: string;
       smoke_test_cmd?: string;
     }) {
       this.deliveryLoading = true;

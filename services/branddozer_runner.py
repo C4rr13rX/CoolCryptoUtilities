@@ -5,10 +5,11 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import shutil
 from django.db import close_old_connections
 
-from tools.codex_session import CodexSession, codex_default_settings
+import shutil
+
+from tools.ai_session import get_session_class, default_settings, session_provider_from_context
 from services.branddozer_state import get_project, list_projects, update_project_fields
 from services.logging_utils import log_message
 
@@ -18,6 +19,10 @@ LOG_ROOT.mkdir(parents=True, exist_ok=True)
 BASE_INSTRUCTIONS = (
     "Act as a full-access Codex agent working on the specified project root. "
     "For each run: stay in a fix/test/fix/test loop until errors are resolved; "
+    "If UI requirements are vague, apply modern web design best practices: responsive layout, "
+    "clear hierarchy, accessible contrast, consistent spacing, and semantic HTML. "
+    "Use CLI best practices: check git status, run relevant tests, keep diffs small, and document changes. "
+    "Prefer local docs and CLI help (`--help`) over internet research unless explicitly enabled. "
     "generate or update CLI test harnesses for every GUI function; take Chromium screenshots when it helps you assess UI/UX; "
     "use scripts/branddozer_ui_capture.py to capture UI screenshots when needed; "
     "avoid destructive actions; summarize changes; and stop cleanly when done."
@@ -37,7 +42,8 @@ class BrandDozerManager:
         with self._lock:
             if project_id in self._threads and self._threads[project_id].is_alive():
                 return {"status": "running"}
-            if not shutil.which("codex"):
+            provider = session_provider_from_context({})
+            if provider in {"codex"} and not shutil.which("codex"):
                 msg = "codex CLI not available on PATH; cannot start BrandDozer cycle."
                 log_message("branddozer", msg, severity="error")
                 self._status[project_id] = {"state": "error", "last_message": msg}
@@ -156,18 +162,20 @@ class BrandDozerManager:
                 self._status[project["id"]] = {"state": "running", "last_message": f"{label} done"}
 
     def _run_prompt(self, project: Dict[str, str], prompt: str, label: str) -> str:
-        if not shutil.which("codex"):
+        provider = session_provider_from_context({})
+        if provider in {"codex"} and not shutil.which("codex"):
             raise RuntimeError("codex CLI not available on PATH")
         root = project.get("root_path") or "."
         session_name = f"branddozer-{project.get('id')}"
         transcript_dir = LOG_ROOT / "transcripts"
         transcript_dir.mkdir(parents=True, exist_ok=True)
-        session = CodexSession(
+        SessionClass = get_session_class(provider)
+        session = SessionClass(
             session_name,
             transcript_dir=transcript_dir,
             read_timeout_s=None,
             workdir=str(root),
-            **codex_default_settings(),
+            **default_settings(provider),
         )
         header = f"[BrandDozer Project: {project.get('name')}]\nRoot: {root}\nMode: {label}\n{BASE_INSTRUCTIONS}\n"
         full_prompt = f"{header}\n{prompt}"

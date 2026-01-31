@@ -466,8 +466,11 @@ export async function startBrandDeliveryRun(payload: {
   prompt: string;
   mode?: string;
   team_mode?: string;
+  session_provider?: string;
   codex_model?: string;
   codex_reasoning?: string;
+  c0d3r_model?: string;
+  c0d3r_reasoning?: string;
   smoke_test_cmd?: string;
 }) {
   const { data } = await api.post('/branddozer/delivery/runs/', payload, { timeout: 120000 });

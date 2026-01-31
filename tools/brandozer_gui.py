@@ -139,6 +139,7 @@ class BrandozerGUI(App):
                 ("github_username", "GitHub username", False),
                 ("inline_timeout", "Inline timeout seconds", False, "5.0"),
                 ("codex_model", "Codex model override", False),
+                ("c0d3r_model", "c0d3r model override", False),
                 ("smoke_test_cmd", "Solo smoke test command", False),
             ],
             toggles=[
@@ -148,7 +149,9 @@ class BrandozerGUI(App):
             spinners=[
                 ("team_mode", "Team mode", ["full", "solo"], "full"),
                 ("mode", "Mode", ["auto", "new", "existing"], "auto"),
+                ("session_provider", "Session provider", ["codex", "c0d3r"], "codex"),
                 ("codex_reasoning", "Reasoning effort", ["medium", "high", "extra_high", "low"], "medium"),
+                ("c0d3r_reasoning", "c0d3r reasoning", ["medium", "high", "extra_high", "low"], "high"),
             ],
         )
         refs.inputs["prompt"].hint_text = "Enter delivery prompt"
@@ -350,6 +353,7 @@ class BrandozerGUI(App):
         self._maybe_add(cmd, "--name", refs.inputs["name"].text)
         cmd.extend(["--team-mode", refs.spinners["team_mode"].text])
         cmd.extend(["--mode", refs.spinners["mode"].text])
+        cmd.extend(["--session-provider", refs.spinners["session_provider"].text])
         self._maybe_add(cmd, "--default-prompt", refs.inputs["default_prompt"].text)
         self._maybe_add(cmd, "--run-id", refs.inputs["run_id"].text)
         if not refs.toggles["acceptance_required"].active:
@@ -358,6 +362,8 @@ class BrandozerGUI(App):
         self._maybe_add(cmd, "--github-username", refs.inputs["github_username"].text)
         self._maybe_add(cmd, "--codex-model", refs.inputs["codex_model"].text)
         cmd.extend(["--codex-reasoning", refs.spinners["codex_reasoning"].text])
+        self._maybe_add(cmd, "--c0d3r-model", refs.inputs["c0d3r_model"].text)
+        cmd.extend(["--c0d3r-reasoning", refs.spinners["c0d3r_reasoning"].text])
         self._maybe_add(cmd, "--smoke-test-cmd", refs.inputs["smoke_test_cmd"].text)
         inline_timeout = _safe_float(refs.inputs["inline_timeout"].text, 5.0)
         if inline_timeout is None:

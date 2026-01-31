@@ -52,14 +52,16 @@ def _build_prompt(run_id: Optional[str]) -> str:
 
 
 def _run_once(run_id: Optional[str], workdir: Path) -> str:
-    from tools.codex_session import CodexSession, codex_default_settings
+    from tools.ai_session import get_session_class, default_settings, session_provider_from_context
 
-    session = CodexSession(
+    provider = session_provider_from_context({})
+    SessionClass = get_session_class(provider)
+    session = SessionClass(
         session_name="branddozer-auto-upgrader",
         transcript_dir=Path("runtime/branddozer/auto_upgrade_transcripts"),
         read_timeout_s=None,
         workdir=str(workdir),
-        **codex_default_settings(),
+        **default_settings(provider),
     )
     prompt = _build_prompt(run_id)
     return session.send(prompt, stream=False)
@@ -89,7 +91,7 @@ def _ensure_sqlite_ready() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Continuous BrandDozer auto-upgrade loop using CodexSession.")
+    parser = argparse.ArgumentParser(description="Continuous BrandDozer auto-upgrade loop using the configured AI session.")
     parser.add_argument("--run-id", help="Active delivery run id to target (optional).")
     parser.add_argument("--settings", default="coolcrypto_dashboard.settings", help="Django settings module.")
     parser.add_argument("--interval", type=int, default=1200, help="Seconds between upgrade passes.")

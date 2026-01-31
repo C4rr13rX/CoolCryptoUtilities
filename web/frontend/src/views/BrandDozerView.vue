@@ -171,12 +171,32 @@
             </select>
           </label>
           <label>
+            <span>Session Provider</span>
+            <select v-model="deliveryForm.session_provider">
+              <option value="codex">Codex (CLI)</option>
+              <option value="c0d3r">c0d3r (Bedrock)</option>
+            </select>
+          </label>
+          <label>
             <span>Codex Model</span>
             <input v-model="deliveryForm.codex_model" placeholder="gpt-5.2-codex" />
           </label>
           <label>
-            <span>Reasoning</span>
+            <span>Codex Reasoning</span>
             <select v-model="deliveryForm.codex_reasoning">
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="extra_high">Extra High</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label>
+            <span>c0d3r Model</span>
+            <input v-model="deliveryForm.c0d3r_model" placeholder="anthropic.claude-3-5-sonnet" />
+          </label>
+          <label>
+            <span>c0d3r Reasoning</span>
+            <select v-model="deliveryForm.c0d3r_reasoning">
               <option value="medium">Medium</option>
               <option value="high">High</option>
               <option value="extra_high">Extra High</option>
@@ -899,8 +919,11 @@ const deliveryForm = ref({
   project_id: '',
   mode: 'auto',
   team_mode: 'full',
+  session_provider: 'codex',
   codex_model: '',
   codex_reasoning: 'medium',
+  c0d3r_model: '',
+  c0d3r_reasoning: 'high',
   prompt: '',
   smoke_test_cmd: '',
 });
@@ -1762,8 +1785,11 @@ async function startDeliveryRun() {
       prompt: deliveryForm.value.prompt,
       mode: deliveryForm.value.mode,
       team_mode: deliveryForm.value.team_mode,
+      session_provider: deliveryForm.value.session_provider,
       codex_model: deliveryForm.value.codex_model,
       codex_reasoning: deliveryForm.value.codex_reasoning,
+      c0d3r_model: deliveryForm.value.c0d3r_model,
+      c0d3r_reasoning: deliveryForm.value.c0d3r_reasoning,
       smoke_test_cmd: deliveryForm.value.smoke_test_cmd,
     });
     store.activeDeliveryRun = run;

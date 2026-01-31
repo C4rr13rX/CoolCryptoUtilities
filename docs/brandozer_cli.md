@@ -11,7 +11,8 @@
 brandozer --help
 brandozer start "Ship the new dashboard UX"          # creates/reuses a project rooted at CWD
 brandozer start "Ghost-trade upgrade" --run-id <uuid> # restart or reuse a specific delivery run id
-brandozer start "Solo plan loop" --team-mode solo --codex-model gpt-5.2-codex --codex-reasoning medium
+brandozer start "Solo plan loop" --team-mode solo --session-provider codex --codex-model gpt-5.2-codex --codex-reasoning medium
+brandozer start "Solo plan loop" --team-mode solo --session-provider c0d3r --c0d3r-model anthropic.claude-3-7-sonnet-20250219-v1:0
 brandozer runs --limit 5                              # list recent runs
 brandozer status <run-id>                             # show run state and phase
 brandozer tail <run-id> --lines 120                   # tail the latest orchestrator log
@@ -22,4 +23,5 @@ brandozer projects                                    # list known BrandDozer pr
 - `--root` lets you target a different project path.
 - `--no-acceptance` on `start` will skip the acceptance gating step for the run.
 - Logs are tailed from the most recent orchestrator session; if none are present, the CLI falls back to the latest session on that run.
-- `--team-mode solo` runs a single Codex session that maintains a plan file under `runtime/branddozer/solo_plans/<run-id>/plan.json`.
+- `--session-provider` selects the engine: `codex` (CLI) or `c0d3r` (Bedrock).
+- `--team-mode solo` runs a single session that maintains a plan file under `runtime/branddozer/solo_plans/<run-id>/plan.json`.

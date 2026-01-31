@@ -116,8 +116,11 @@ class DeliveryRunListView(APIView):
         mode = data.get("mode") or "auto"
         research_mode = bool(data.get("research") or data.get("research_mode"))
         team_mode = data.get("team_mode")
+        session_provider = data.get("session_provider") or data.get("provider")
         codex_model = data.get("codex_model")
         codex_reasoning = data.get("codex_reasoning") or data.get("reasoning_effort")
+        c0d3r_model = data.get("c0d3r_model")
+        c0d3r_reasoning = data.get("c0d3r_reasoning")
         smoke_test_cmd = data.get("smoke_test_cmd")
         if not project_id:
             return Response({"detail": "project_id is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -130,8 +133,11 @@ class DeliveryRunListView(APIView):
                 mode=mode,
                 research_mode=research_mode,
                 team_mode=team_mode,
+                session_provider=session_provider,
                 codex_model=codex_model,
                 codex_reasoning=codex_reasoning,
+                c0d3r_model=c0d3r_model,
+                c0d3r_reasoning=c0d3r_reasoning,
                 smoke_test_cmd=smoke_test_cmd,
             )
         except ValueError as exc:
@@ -147,6 +153,8 @@ class DeliveryRunListView(APIView):
         context = {**(run.context or {}), "job_id": str(job.id)}
         if research_mode:
             context["research_mode"] = True
+        if session_provider:
+            context["session_provider"] = session_provider
         run.context = context
         run.save(update_fields=["context"])
         return Response({"run": _run_payload(run), "job_id": str(job.id)}, status=status.HTTP_201_CREATED)

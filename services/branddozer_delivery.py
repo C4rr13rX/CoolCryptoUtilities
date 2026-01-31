@@ -24,7 +24,7 @@ from django.core.management import call_command
 from django.db import close_old_connections, DatabaseError, OperationalError, connection
 from django.utils import timezone
 
-from tools.codex_session import CodexSession, codex_settings_for_role
+from tools.ai_session import get_session_class, settings_for_role, session_provider_from_context
 from services.branddozer_ui import UISnapshotResult, capture_ui_screenshots
 from services.branddozer_jobs import update_job
 from services.branddozer_github import publish_project
@@ -38,6 +38,7 @@ from services.homeostasis import (
     should_throttle,
     save_control_state,
 )
+from services.agent_workspace import build_context, init_notes, append_notes
 from services.codex_usage import get_codex_usage
 from branddozer.models import (
     AcceptanceRecord,
@@ -103,19 +104,19 @@ _SCHEMA_READY = False
 _SCHEMA_LOCK = threading.Lock()
 
 
-def _log_codex_choice(session: DeliverySession, codex_settings: Dict[str, Any], context: str) -> None:
+def _log_ai_choice(session: DeliverySession, provider: str, settings: Dict[str, Any], context: str) -> None:
     """
-    Record which Codex model/role was selected for transparency and cost tracking.
+    Record which AI session provider/model was selected for transparency and cost tracking.
     """
     try:
-        model = codex_settings.get("model") or "<unknown>"
-        role = codex_settings.get("meta_role") or context
-        _append_session_log(session, f"[codex] role={role} model={model}")
+        model = settings.get("model") or "<unknown>"
+        role = settings.get("meta_role") or context
+        _append_session_log(session, f"[{provider}] role={role} model={model}")
     except Exception:
         return
 
 
-def _record_intent(run: DeliveryRun, backlog_item: BacklogItem, codex_settings: Dict[str, Any]) -> None:
+def _record_intent(run: DeliveryRun, backlog_item: BacklogItem, settings: Dict[str, Any], provider: str) -> None:
     try:
         content = json.dumps(
             {
@@ -123,8 +124,9 @@ def _record_intent(run: DeliveryRun, backlog_item: BacklogItem, codex_settings: 
                 "id": str(backlog_item.id),
                 "priority": backlog_item.priority,
                 "status": backlog_item.status,
-                "codex_model": codex_settings.get("model"),
-                "codex_role": codex_settings.get("meta_role"),
+                "provider": provider,
+                "model": settings.get("model"),
+                "role": settings.get("meta_role"),
             },
             indent=2,
         )
@@ -161,22 +163,32 @@ def _normalize_reasoning(value: Optional[str]) -> Optional[str]:
     return _REASONING_MAP.get(key, str(value).strip())
 
 
-def _codex_settings_for_run(run: DeliveryRun, role: str) -> Dict[str, Any]:
+def _is_codex_provider(provider: str) -> bool:
+    return provider.strip().lower() not in {"c0d3r", "coder", "bedrock"}
+
+
+def _session_settings_for_run(run: DeliveryRun, role: str) -> Dict[str, Any]:
     """
     Merge role defaults with run overrides while forcing full agent access.
     """
-    settings = codex_settings_for_role(role)
+    provider = session_provider_from_context(run.context or {})
+    settings = settings_for_role(provider, role)
     ctx = run.context or {}
-    model = (ctx.get("codex_model") or ctx.get("model") or "").strip()
+    if provider in {"c0d3r", "coder", "bedrock"}:
+        model = (ctx.get("c0d3r_model") or ctx.get("model") or "").strip()
+        reasoning = _normalize_reasoning(ctx.get("c0d3r_reasoning") or ctx.get("reasoning_effort"))
+    else:
+        model = (ctx.get("codex_model") or ctx.get("model") or "").strip()
+        reasoning = _normalize_reasoning(ctx.get("codex_reasoning") or ctx.get("reasoning_effort"))
     if model:
         settings["model"] = model
-    reasoning = _normalize_reasoning(ctx.get("codex_reasoning") or ctx.get("reasoning_effort"))
     if reasoning:
         settings["reasoning_effort"] = reasoning
-    # Enforce full agent access regardless of overrides.
-    settings["sandbox_mode"] = "danger-full-access"
-    settings["approval_policy"] = "never"
-    settings["bypass_sandbox_confirm"] = True
+    if provider not in {"c0d3r", "coder", "bedrock"}:
+        # Enforce full agent access regardless of overrides for Codex CLI.
+        settings["sandbox_mode"] = "danger-full-access"
+        settings["approval_policy"] = "never"
+        settings["bypass_sandbox_confirm"] = True
     return settings
 
 
@@ -342,6 +354,57 @@ def _append_session_log(session: DeliverySession, message: str) -> None:
             handle.write(f"[{stamp}] {message}\n")
     except Exception:
         pass
+
+
+def _backup_diff(workspace: Path, session_id: uuid.UUID) -> Optional[Path]:
+    """
+    Save a patch of the current workspace diff for safety/rollback.
+    """
+    try:
+        from services.agent_workspace import run_command
+    except Exception:
+        return None
+    out_dir = Path("runtime/branddozer/backups")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    path = out_dir / f"{session_id}_{ts}.patch"
+    code, stdout, stderr = run_command("git diff", cwd=workspace)
+    if code != 0 and not stdout:
+        return None
+    content = stdout or stderr
+    if not content.strip():
+        return None
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _maybe_commit_changes(workspace: Path, message: str) -> Optional[str]:
+    auto_commit = (os.getenv("BRANDDOZER_AUTO_COMMIT") or "0").strip().lower() not in {"0", "false", "no", "off"}
+    if not auto_commit:
+        return None
+    try:
+        from services.agent_workspace import run_command
+    except Exception:
+        return None
+    run_command("git add -A", cwd=workspace)
+    code, stdout, stderr = run_command(f'git commit -m "{message}"', cwd=workspace)
+    if code != 0:
+        return (stdout or stderr or "").strip()
+    return (stdout or "").strip()
+
+
+def _maybe_push_changes(workspace: Path) -> Optional[str]:
+    auto_push = (os.getenv("BRANDDOZER_AUTO_PUSH") or "0").strip().lower() not in {"0", "false", "no", "off"}
+    if not auto_push:
+        return None
+    try:
+        from services.agent_workspace import run_command
+    except Exception:
+        return None
+    code, stdout, stderr = run_command("git push", cwd=workspace)
+    if code != 0:
+        return (stdout or stderr or "").strip()
+    return (stdout or "").strip()
 
 
 def _latest_gate_statuses(run: DeliveryRun) -> Dict[str, str]:
@@ -652,6 +715,9 @@ def _cleanup_run_sessions(run: DeliveryRun, reason: str = "stale session cleanup
         sess.save(update_fields=["status", "completed_at"])
 
 def _codex_budget_ok(run: DeliveryRun) -> Tuple[bool, Optional[str]]:
+    provider = session_provider_from_context(run.context or {})
+    if not _is_codex_provider(provider):
+        return True, None
     usage = get_codex_usage()
     ctx = dict(run.context or {})
     ctx["codex_usage"] = usage
@@ -735,7 +801,8 @@ def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
     except Exception:
         return
     _append_session_log(session, f"Analyzing stuck state: {reason}")
-    codex_settings = _codex_settings_for_run(run, "manager")
+    provider = session_provider_from_context(run.context or {})
+    ai_settings = _session_settings_for_run(run, "manager")
     try:
         codex_timeout = int(os.getenv("UNSTICK_TIMEOUT", "180"))
     except Exception:
@@ -750,20 +817,22 @@ def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
         f"Gates: {list(GateRun.objects.filter(run=run).values('name','status'))}"
     )
     try:
-        codex = CodexSession(
+        SessionClass = get_session_class(provider)
+        codex = SessionClass(
             session_name=f"unstick-{run.id}",
             transcript_dir=Path("runtime/branddozer/transcripts"),
             read_timeout_s=codex_timeout,
             workdir=str(root),
-            **codex_settings,
+            **ai_settings,
         )
         output = codex.send(prompt, stream=True)
-        exhausted = _codex_quota_exhausted(output)
-        refusal = _codex_refusal(output)
-        if exhausted:
-            _pause_run_for_codex(run, session, exhausted)
-        elif refusal:
-            _handle_codex_refusal(run, session, refusal, block=False)
+        if _is_codex_provider(provider):
+            exhausted = _codex_quota_exhausted(output)
+            refusal = _codex_refusal(output)
+            if exhausted:
+                _pause_run_for_codex(run, session, exhausted)
+            elif refusal:
+                _handle_codex_refusal(run, session, refusal, block=False)
         DeliveryArtifact.objects.create(
             project=run.project,
             run=run,
@@ -1525,8 +1594,11 @@ class DeliveryOrchestrator:
         run_id: Optional[str] = None,
         research_mode: bool = False,
         team_mode: Optional[str] = None,
+        session_provider: Optional[str] = None,
         codex_model: Optional[str] = None,
         codex_reasoning: Optional[str] = None,
+        c0d3r_model: Optional[str] = None,
+        c0d3r_reasoning: Optional[str] = None,
         smoke_test_cmd: Optional[str] = None,
     ) -> DeliveryRun:
         _ensure_branddozer_schema("create_run")
@@ -1555,10 +1627,16 @@ class DeliveryOrchestrator:
                 ctx["research_mode"] = True
             if team_mode:
                 ctx["team_mode"] = team_mode
+            if session_provider:
+                ctx["session_provider"] = session_provider
             if codex_model:
                 ctx["codex_model"] = codex_model
             if codex_reasoning:
                 ctx["codex_reasoning"] = codex_reasoning
+            if c0d3r_model:
+                ctx["c0d3r_model"] = c0d3r_model
+            if c0d3r_reasoning:
+                ctx["c0d3r_reasoning"] = c0d3r_reasoning
             if smoke_test_cmd:
                 ctx["smoke_test_cmd"] = smoke_test_cmd
             run.context = ctx
@@ -1582,10 +1660,16 @@ class DeliveryOrchestrator:
             context = {"research_mode": True} if research_mode else {}
             if team_mode:
                 context["team_mode"] = team_mode
+            if session_provider:
+                context["session_provider"] = session_provider
             if codex_model:
                 context["codex_model"] = codex_model
             if codex_reasoning:
                 context["codex_reasoning"] = codex_reasoning
+            if c0d3r_model:
+                context["c0d3r_model"] = c0d3r_model
+            if c0d3r_reasoning:
+                context["c0d3r_reasoning"] = c0d3r_reasoning
             if smoke_test_cmd:
                 context["smoke_test_cmd"] = smoke_test_cmd
             run = DeliveryRun.objects.create(
@@ -1613,8 +1697,11 @@ class DeliveryOrchestrator:
         github_account_id: Optional[str] = None,
         research_mode: bool = False,
         team_mode: Optional[str] = None,
+        session_provider: Optional[str] = None,
         codex_model: Optional[str] = None,
         codex_reasoning: Optional[str] = None,
+        c0d3r_model: Optional[str] = None,
+        c0d3r_reasoning: Optional[str] = None,
         smoke_test_cmd: Optional[str] = None,
     ) -> DeliveryRun:
         run = self.create_run(
@@ -1624,8 +1711,11 @@ class DeliveryOrchestrator:
             run_id=run_id,
             research_mode=research_mode,
             team_mode=team_mode,
+            session_provider=session_provider,
             codex_model=codex_model,
             codex_reasoning=codex_reasoning,
+            c0d3r_model=c0d3r_model,
+            c0d3r_reasoning=c0d3r_reasoning,
             smoke_test_cmd=smoke_test_cmd,
         )
         if job_user_id or github_account_id:
@@ -1656,31 +1746,39 @@ class DeliveryOrchestrator:
             run.started_at = timezone.now()
         run.save(update_fields=["status", "phase", "started_at"])
 
+        provider = session_provider_from_context(run.context or {})
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
             role="dev",
-            name="Solo Codex Session",
+            name=f"Solo {provider} Session",
             status="running",
             workspace_path=str(root),
             last_heartbeat=timezone.now(),
             meta={"mode": "solo"},
         )
+        workspace_ctx = build_context(root, notes_name=str(session.id))
+        init_notes(workspace_ctx, extra=[f"## Run\n- Provider: {provider}", f"- Run ID: {run.id}", ""])
+        session.meta = {**(session.meta or {}), "notes_path": str(workspace_ctx.notes_path)}
+        session.save(update_fields=["meta"])
         context = dict(run.context or {})
         context["solo_plan_path"] = str(_solo_plan_path(run.id))
         context["solo_history_path"] = str(_solo_history_path(run.id))
+        context["notes_path"] = str(workspace_ctx.notes_path)
         run.context = context
         run.save(update_fields=["context"])
 
-        codex_settings = _codex_settings_for_run(run, "worker")
-        codex = CodexSession(
+        provider = session_provider_from_context(run.context or {})
+        ai_settings = _session_settings_for_run(run, "worker")
+        SessionClass = get_session_class(provider)
+        codex = SessionClass(
             session_name=f"solo-{run.id}",
             transcript_dir=Path("runtime/branddozer/transcripts") / str(run.id),
             read_timeout_s=None,
             workdir=str(root),
-            **codex_settings,
+            **ai_settings,
         )
-        _log_codex_choice(session, codex_settings, "worker")
+        _log_ai_choice(session, provider, ai_settings, "worker")
 
         max_iters = int(os.getenv("BRANDDOZER_SOLO_MAX_ITERS", "12"))
         plan = _load_solo_plan(run.id)
@@ -1693,20 +1791,21 @@ class DeliveryOrchestrator:
                 f"User prompt:\n{run.prompt}\n"
             )
             output = codex.send(plan_prompt, stream=True)
-            exhausted = _codex_quota_exhausted(output)
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-                session.status = "blocked"
-                session.completed_at = timezone.now()
-                session.save(update_fields=["status", "completed_at"])
-                raise StopDelivery(exhausted)
-            refusal = _codex_refusal(output)
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
-                session.status = "blocked"
-                session.completed_at = timezone.now()
-                session.save(update_fields=["status", "completed_at"])
-                raise StopDelivery(refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(output)
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                    session.status = "blocked"
+                    session.completed_at = timezone.now()
+                    session.save(update_fields=["status", "completed_at"])
+                    raise StopDelivery(exhausted)
+                refusal = _codex_refusal(output)
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
+                    session.status = "blocked"
+                    session.completed_at = timezone.now()
+                    session.save(update_fields=["status", "completed_at"])
+                    raise StopDelivery(refusal)
             payload = _extract_json_payload(output)
             steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps"))
             plan = {
@@ -1719,6 +1818,7 @@ class DeliveryOrchestrator:
                 "suggestions": payload.get("suggestions") or "",
             }
             _write_solo_plan(run.id, plan)
+            append_notes(workspace_ctx, f"- [x] Plan generated at {time.strftime('%H:%M:%S')}")
             _append_solo_history(run.id, {"event": "plan_generated", "output": output})
             try:
                 DeliveryArtifact.objects.create(
@@ -1762,14 +1862,15 @@ class DeliveryOrchestrator:
                 f"Next step: {next_step}\n"
             )
             output = codex.send(exec_prompt, stream=True)
-            exhausted = _codex_quota_exhausted(output)
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-                raise StopDelivery(exhausted)
-            refusal = _codex_refusal(output)
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
-                raise StopDelivery(refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(output)
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                    raise StopDelivery(exhausted)
+                refusal = _codex_refusal(output)
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
+                    raise StopDelivery(refusal)
             try:
                 DeliveryArtifact.objects.create(
                     project=run.project,
@@ -1795,14 +1896,15 @@ class DeliveryOrchestrator:
                 f"Smoke test result: {smoke_result.get('status')}\n"
             )
             reflect_output = codex.send(reflect_prompt, stream=True)
-            exhausted = _codex_quota_exhausted(reflect_output)
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-                raise StopDelivery(exhausted)
-            refusal = _codex_refusal(reflect_output)
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
-                raise StopDelivery(refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(reflect_output)
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                    raise StopDelivery(exhausted)
+                refusal = _codex_refusal(reflect_output)
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
+                    raise StopDelivery(refusal)
             payload = _extract_json_payload(reflect_output)
             steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps") or plan.get("steps"))
             plan = {
@@ -2893,7 +2995,8 @@ class DeliveryOrchestrator:
         run.phase = "ux_audit"
         run.save(update_fields=["phase"])
         _set_run_note(run, "UX Audit", "Running UX auditor feedback loop")
-        codex_settings = _codex_settings_for_run(run, "auditor")
+        provider = session_provider_from_context(run.context or {})
+        ai_settings = _session_settings_for_run(run, "auditor")
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
@@ -2904,13 +3007,14 @@ class DeliveryOrchestrator:
             last_heartbeat=timezone.now(),
             meta={
                 "sprint": sprint.number,
-                "codex": {k: v for k, v in codex_settings.items() if k not in {"bypass_sandbox_confirm"}},
+                "provider": provider,
+                "codex": {k: v for k, v in ai_settings.items() if k not in {"bypass_sandbox_confirm"}},
             },
         )
         log_path = _session_log_path(session.id)
         session.log_path = str(log_path)
         session.save(update_fields=["log_path"])
-        _log_codex_choice(session, codex_settings, "auditor")
+        _log_ai_choice(session, provider, ai_settings, "auditor")
 
         backlog_items = list(BacklogItem.objects.filter(run=run).order_by("priority", "created_at"))
         backlog_lines = []
@@ -2936,7 +3040,7 @@ class DeliveryOrchestrator:
         ]
 
         offline_mode = (os.getenv("BRANDDOZER_OFFLINE_MODE") or "0").lower() in {"1", "true", "yes", "on"}
-        if offline_mode or shutil.which("codex") is None:
+        if offline_mode or (_is_codex_provider(provider) and shutil.which("codex") is None):
             _append_session_log(session, "Offline mode: skipping UX audit and recording placeholder.")
             payload = {
                 "status": "skipped",
@@ -2983,12 +3087,13 @@ class DeliveryOrchestrator:
 
         transcript_dir = Path("runtime/branddozer/transcripts") / str(session.id)
         transcript_dir.mkdir(parents=True, exist_ok=True)
-        codex = CodexSession(
+        SessionClass = get_session_class(provider)
+        codex = SessionClass(
             session_name=f"ux-audit-{session.id}",
             transcript_dir=transcript_dir,
             read_timeout_s=None,
             workdir=str(root),
-            **codex_settings,
+            **ai_settings,
         )
 
         last_heartbeat = 0.0
@@ -3012,23 +3117,25 @@ class DeliveryOrchestrator:
                 stream_callback=_stream_writer,
                 images=screenshot_paths if screenshot_paths else None,
             )
-            exhausted = _codex_quota_exhausted(output)
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-                raise StopDelivery(exhausted)
-            refusal = _codex_refusal(output)
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
-                raise StopDelivery(refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(output)
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                    raise StopDelivery(exhausted)
+                refusal = _codex_refusal(output)
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
+                    raise StopDelivery(refusal)
         except Exception as exc:
-            exhausted = _codex_quota_exhausted(str(exc))
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-                raise StopDelivery(exhausted)
-            refusal = _codex_refusal(str(exc))
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
-                raise StopDelivery(refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(str(exc))
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                    raise StopDelivery(exhausted)
+                refusal = _codex_refusal(str(exc))
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
+                    raise StopDelivery(refusal)
             _append_session_log(session, f"UX audit failed: {exc}")
             exists = BacklogItem.objects.filter(run=run, source="ux_audit", title="UX audit failed").exclude(status="done").exists()
             if not exists:
@@ -3173,25 +3280,39 @@ class DeliveryOrchestrator:
             self._execution_loop(run, root, sprint)
 
     def _run_task_session(self, run: DeliveryRun, root: Path, backlog_item: BacklogItem) -> str:
-        codex_settings = _codex_settings_for_run(run, "worker")
+        provider = session_provider_from_context(run.context or {})
+        ai_settings = _session_settings_for_run(run, "worker")
         session = DeliverySession.objects.create(
             project=run.project,
             run=run,
             role="dev",
-            name=f"CodexSession: {backlog_item.title[:80]}",
+            name=f"{provider} session: {backlog_item.title[:80]}",
             status="running",
             workspace_path="",
             last_heartbeat=timezone.now(),
             meta={
                 "backlog_item_id": str(backlog_item.id),
                 "title": backlog_item.title,
-                "codex": {k: v for k, v in codex_settings.items() if k not in {"bypass_sandbox_confirm"}},
+                "provider": provider,
+                "codex": {k: v for k, v in ai_settings.items() if k not in {"bypass_sandbox_confirm"}},
             },
         )
-        _log_codex_choice(session, codex_settings, "worker")
-        _record_intent(run, backlog_item, codex_settings)
+        workspace_ctx = build_context(root, notes_name=str(session.id))
+        init_notes(
+            workspace_ctx,
+            extra=[
+                f"## Task\n- Title: {backlog_item.title}",
+                f"- ID: {backlog_item.id}",
+                f"- Provider: {provider}",
+                "",
+            ],
+        )
+        session.meta = {**(session.meta or {}), "notes_path": str(workspace_ctx.notes_path)}
+        session.save(update_fields=["meta"])
+        _log_ai_choice(session, provider, ai_settings, "worker")
+        _record_intent(run, backlog_item, ai_settings, provider)
         offline_mode = (os.getenv("BRANDDOZER_OFFLINE_MODE") or "0").lower() in {"1", "true", "yes", "on"}
-        if offline_mode or shutil.which("codex") is None:
+        if offline_mode or (_is_codex_provider(provider) and shutil.which("codex") is None):
             placeholder = f"[offline placeholder] {backlog_item.title}"
             _append_session_log(session, "Offline mode detected; marking task as done with placeholder.")
             DeliveryArtifact.objects.create(
@@ -3211,22 +3332,38 @@ class DeliveryOrchestrator:
         session.workspace_path = str(workspace)
         session.save(update_fields=["workspace_path"])
         _append_session_log(session, f"Workspace ready at {workspace}.")
+        append_notes(workspace_ctx, f"- [x] Workspace ready: {workspace}")
+        try:
+            from services.agent_workspace import run_command
+
+            code, stdout, stderr = run_command("git status -sb", cwd=workspace)
+            if stdout:
+                append_notes(workspace_ctx, "## Git status (start)\n```\n" + stdout.strip() + "\n```")
+            if stderr:
+                append_notes(workspace_ctx, "```\n" + stderr.strip() + "\n```")
+        except Exception:
+            pass
         transcript_dir = Path("runtime/branddozer/transcripts") / str(session.id)
         transcript_dir.mkdir(parents=True, exist_ok=True)
         prompt = (
-            f"[CodexSession Task]\nProject: {run.project.name}\nRoot: {workspace}\n"
+            f"[Session Task]\nProject: {run.project.name}\nRoot: {workspace}\n"
             f"Task: {backlog_item.title}\nDescription: {backlog_item.description}\n"
             f"Acceptance: {backlog_item.acceptance_criteria}\n"
             "Work in a fix/test loop. Attach diff + gate results. "
+            "If UI requirements are vague, apply modern web design best practices: responsive layout, "
+            "clear hierarchy, accessible contrast, consistent spacing, and semantic HTML. "
+            "Use CLI best practices: check git status, run relevant tests, keep diffs small, and document changes. "
+            "Prefer local docs and CLI help (`--help`) over internet research unless explicitly enabled. "
             "For UI checks, run `python scripts/branddozer_ui_capture.py --base-url http://127.0.0.1:8000` "
-            "and include the screenshot paths in your output (or review them with `codex --image <path>`)."
+            "and include the screenshot paths in your output (or review them with `codex --image <path>` when available)."
         )
-        codex = CodexSession(
+        SessionClass = get_session_class(provider)
+        codex = SessionClass(
             session_name=f"delivery-{session.id}",
             transcript_dir=transcript_dir,
             read_timeout_s=None,
             workdir=str(workspace),
-            **codex_settings,
+            **ai_settings,
         )
         log_path = _session_log_path(session.id)
         session.log_path = str(log_path)
@@ -3247,21 +3384,25 @@ class DeliveryOrchestrator:
 
         try:
             output = codex.send(prompt, stream=True, stream_callback=_stream_writer)
-            exhausted = _codex_quota_exhausted(output)
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-                raise StopDelivery(exhausted)
-            refusal = _codex_refusal(output)
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
-                raise StopDelivery(refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(output)
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                    raise StopDelivery(exhausted)
+                refusal = _codex_refusal(output)
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
+                    raise StopDelivery(refusal)
             diff_text = _compute_diff(root, workspace)
+            backup_path = _backup_diff(workspace, session.id)
+            if backup_path:
+                append_notes(workspace_ctx, f"- [x] Backup patch: {backup_path}")
             DeliveryArtifact.objects.create(
                 project=run.project,
                 run=run,
                 session=session,
                 kind="session_log",
-                title=f"Codex output: {backlog_item.title[:60]}",
+                title=f"{provider} output: {backlog_item.title[:60]}",
                 content=output,
                 path=str(codex.transcript_path),
             )
@@ -3274,18 +3415,30 @@ class DeliveryOrchestrator:
                     title=f"Diff: {backlog_item.title[:60]}",
                     content=diff_text,
                 )
+                append_notes(workspace_ctx, f"- [x] Diff captured ({len(diff_text)} chars)")
             session.status = "done"
             session.completed_at = timezone.now()
             session.log_path = str(codex.transcript_path)
             session.save(update_fields=["status", "completed_at", "log_path"])
+            if (os.getenv("BRANDDOZER_TASK_SMOKE") or "1").strip().lower() not in {"0", "false", "no", "off"}:
+                smoke = _run_smoke_test(run, root, session=session)
+                append_notes(workspace_ctx, f"- [x] Smoke test: {smoke.get('status')}")
+            commit_msg = f"{backlog_item.title[:60]} (branddozer)"
+            commit_out = _maybe_commit_changes(workspace, commit_msg)
+            if commit_out:
+                append_notes(workspace_ctx, "## Git commit\n```\n" + commit_out[:2000] + "\n```")
+            push_out = _maybe_push_changes(workspace)
+            if push_out:
+                append_notes(workspace_ctx, "## Git push\n```\n" + push_out[:2000] + "\n```")
             return diff_text
         except Exception as exc:
-            exhausted = _codex_quota_exhausted(str(exc))
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-            refusal = _codex_refusal(str(exc))
-            if refusal:
-                _handle_codex_refusal(run, session, refusal)
+            if _is_codex_provider(provider):
+                exhausted = _codex_quota_exhausted(str(exc))
+                if exhausted:
+                    _pause_run_for_codex(run, session, exhausted)
+                refusal = _codex_refusal(str(exc))
+                if refusal:
+                    _handle_codex_refusal(run, session, refusal)
             _append_session_log(session, f"Error: {exc}")
             session.status = "error"
             session.completed_at = timezone.now()
@@ -3436,7 +3589,8 @@ class DeliveryOrchestrator:
                 )
             return
         _set_run_note(run, "UI Evidence", "Capturing UI snapshots")
-        codex_settings = _codex_settings_for_run(run, "auditor")
+        provider = session_provider_from_context(run.context or {})
+        ai_settings = _session_settings_for_run(run, "auditor")
         try:
             session = DeliverySession.objects.create(
                 project=run.project,
@@ -3453,10 +3607,11 @@ class DeliveryOrchestrator:
             return
         session.meta = {
             **(session.meta or {}),
-            "codex": {k: v for k, v in codex_settings.items() if k not in {"bypass_sandbox_confirm"}},
+            "provider": provider,
+            "codex": {k: v for k, v in ai_settings.items() if k not in {"bypass_sandbox_confirm"}},
         }
         session.save(update_fields=["meta"])
-        _log_codex_choice(session, codex_settings, "qa")
+        _log_ai_choice(session, provider, ai_settings, "qa")
         _append_session_log(session, "Capturing UI screenshots.")
         output_dir = Path("runtime/branddozer/ui") / str(run.id) / str(session.id)
         snapshot_root = Path("runtime/branddozer/snapshots") / str(run.id)
@@ -3786,7 +3941,7 @@ class DeliveryOrchestrator:
             session.completed_at = timezone.now()
             session.save(update_fields=["status", "completed_at"])
             return
-        _append_session_log(session, "Running visual review with Codex.")
+        _append_session_log(session, f"Running visual review with {provider}.")
         backlog_items = list(BacklogItem.objects.filter(run=run).order_by("priority")[:12])
         backlog_summary = "\n".join(
             f"- {item.title}: {item.acceptance_criteria}" for item in backlog_items
@@ -3794,16 +3949,21 @@ class DeliveryOrchestrator:
         review_prompt = (
             "You are a QA reviewer for the project. Review the attached UI screenshots and verify "
             "they match the prompt and acceptance criteria. Focus on layout, overflow, missing controls, "
-            "and any visible errors. Return ONLY JSON with keys: "
-            '{"status":"pass|fail","issues":[{"title":"","detail":"","severity":"info|warn|error"}],"notes":""}.'
+            "and any visible errors. Evaluate like a modern web designer: hierarchy, spacing rhythm, "
+            "typography scale, contrast, alignment, and responsive consistency. "
+            "Identify missing or misplaced UI elements and describe where they should be. "
+            "Return ONLY JSON with keys: "
+            '{"status":"pass|fail","issues":[{"title":"","detail":"","severity":"info|warn|error","location":"","suggested_fix":""}],"notes":""}.'
             f"\nProject prompt:\n{run.prompt}\n\nBacklog acceptance:\n{backlog_summary}"
         )
-        review_codex = CodexSession(
+        _append_session_log(session, "UX rubric: hierarchy, spacing, typography scale, contrast, alignment, responsiveness.")
+        SessionClass = get_session_class(provider)
+        review_codex = SessionClass(
             session_name=f"ui-review-{session.id}",
             transcript_dir=Path("runtime/branddozer/transcripts") / str(session.id),
             read_timeout_s=None,
             workdir=str(root),
-            **codex_settings,
+            **ai_settings,
         )
         review_start = time.time()
         last_heartbeat = 0.0
@@ -3819,14 +3979,15 @@ class DeliveryOrchestrator:
             stream_callback=_review_stream,
             images=[str(shot["path"]) for shot in normalized_shots[:6]],
         )
-        exhausted = _codex_quota_exhausted(review_output)
-        if exhausted:
-            _pause_run_for_codex(run, session, exhausted)
-            raise StopDelivery(exhausted)
-        refusal = _codex_refusal(review_output)
-        if refusal:
-            _handle_codex_refusal(run, session, refusal)
-            raise StopDelivery(refusal)
+        if _is_codex_provider(provider):
+            exhausted = _codex_quota_exhausted(review_output)
+            if exhausted:
+                _pause_run_for_codex(run, session, exhausted)
+                raise StopDelivery(exhausted)
+            refusal = _codex_refusal(review_output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                raise StopDelivery(refusal)
         try:
             DeliveryArtifact.objects.create(
                 project=run.project,
@@ -3944,7 +4105,8 @@ class DeliveryOrchestrator:
             "yes",
             "on",
         }
-        codex_available = shutil.which("codex") is not None and not offline_mode
+        provider = session_provider_from_context(run.context or {})
+        provider_available = not offline_mode and (not _is_codex_provider(provider) or shutil.which("codex") is not None)
         read_timeout_s = None
         try:
             read_timeout_s = float(os.getenv("CODEX_READ_TIMEOUT", "600"))
@@ -3952,19 +4114,21 @@ class DeliveryOrchestrator:
             read_timeout_s = 600.0
         fallback_output = ""
         codex_error = ""
-        if codex_available:
+        if provider_available:
             try:
-                codex = CodexSession(
+                SessionClass = get_session_class(provider)
+                ai_settings = _session_settings_for_run(run, "planner")
+                codex = SessionClass(
                     session_name=f"{fallback_kind}-{run.id}",
                     transcript_dir=Path("runtime/branddozer/transcripts"),
                     read_timeout_s=read_timeout_s,
                     workdir=str(root),
-                    **_codex_settings_for_run(run, "planner"),
+                    **ai_settings,
                 )
                 full_prompt = (
                     f"{prompt}\nUser prompt: {run.prompt}\n"
                     "If UI verification is needed, use scripts/branddozer_ui_capture.py to capture screenshots "
-                    "and review them with codex --image.\n"
+                    "and review them with the configured session provider (codex --image when available).\n"
                 )
                 last_heartbeat = 0.0
 
@@ -3978,20 +4142,21 @@ class DeliveryOrchestrator:
                         last_heartbeat = now
 
                 output = codex.send(full_prompt, stream=True, stream_callback=_stream_writer)
-                exhausted = _codex_quota_exhausted(output)
-                if exhausted:
-                    _pause_run_for_codex(run, session, exhausted)
-                    raise StopDelivery(exhausted)
-                refusal = _codex_refusal(output)
-                if refusal:
-                    # Fallback to template but still record refusal
-                    _handle_codex_refusal(run, session, refusal, block=False)
-                    codex_error = refusal
-                    fallback_output = output
-                    raise Exception(refusal)
+                if _is_codex_provider(provider):
+                    exhausted = _codex_quota_exhausted(output)
+                    if exhausted:
+                        _pause_run_for_codex(run, session, exhausted)
+                        raise StopDelivery(exhausted)
+                    refusal = _codex_refusal(output)
+                    if refusal:
+                        # Fallback to template but still record refusal
+                        _handle_codex_refusal(run, session, refusal, block=False)
+                        codex_error = refusal
+                        fallback_output = output
+                        raise Exception(refusal)
                 if session:
                     _append_session_log(session, f"{fallback_kind} generated.")
-                    _log_codex_choice(session, _codex_settings_for_run(run, "planner"), "planner")
+                    _log_ai_choice(session, provider, ai_settings, "planner")
                 DeliveryArtifact.objects.create(
                     project=run.project,
                     run=run,

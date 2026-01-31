@@ -22,6 +22,10 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _fallback_enabled() -> bool:
+    return _env_bool("CODEX_FALLBACK_C0D3R", True)
+
+
 ROLE_MODEL_MAP = {
     "planner": os.getenv("CODEX_MODEL_PLANNER"),
     "manager": os.getenv("CODEX_MODEL_MANAGER"),
@@ -141,6 +145,7 @@ class CodexSession:
         self.bypass_sandbox_confirm = (
             bypass_sandbox_confirm if bypass_sandbox_confirm is not None else defaults["bypass_sandbox_confirm"]
         )
+        self._resolved_executable = shutil.which(self.executable) or self.executable
         self._cli_prefix = self._build_cli_prefix()
         self.workdir = Path(workdir).resolve() if workdir else None
         self._stream_callback = None
@@ -167,6 +172,10 @@ class CodexSession:
         cli_prefix = [*self._cli_prefix, *self._image_args(images)]
 
         if not self._codex_available:
+            if _fallback_enabled():
+                resp = self._fallback_to_c0d3r(prompt, stream=stream, images=images)
+                self._stream_callback = prev_callback
+                return resp
             resp = "[codex missing] Install or place `codex` on PATH."
             self._append_transcript(prompt, resp)
             if stream:
@@ -191,7 +200,8 @@ class CodexSession:
                 self._stream_callback = prev_callback
                 return combined
 
-        if stream:
+        # On Windows, PTY is unavailable; avoid PTY fallbacks and rely on non-interactive modes.
+        if os.name != "nt" and stream:
             final, rc5 = self._run_streaming_pty(cli_prefix, prompt, verbose=verbose)
             pty_attempted = True
             if final.strip():
@@ -231,8 +241,8 @@ class CodexSession:
             self._stream_callback = prev_callback
             return out4
 
-        # 2) Interactive PTY fallback with progressive actions
-        if not pty_attempted:
+        # 2) Interactive PTY fallback with progressive actions (non-Windows only)
+        if not pty_attempted and os.name != "nt":
             final, rc5 = self._run_streaming_pty(cli_prefix, prompt, verbose=verbose)
             if final.strip():
                 self._append_transcript(prompt, final)
@@ -240,10 +250,15 @@ class CodexSession:
                 return final
 
         # Last resort: PTY with positional arg
-        final2, rc6 = self._run_streaming_pty([*cli_prefix, prompt], None, verbose=verbose)
-        self._append_transcript(prompt, final2 if final2.strip() else f"[codex error] exit {rc6}")
+        if os.name != "nt":
+            final2, rc6 = self._run_streaming_pty([*cli_prefix, prompt], None, verbose=verbose)
+            self._append_transcript(prompt, final2 if final2.strip() else f"[codex error] exit {rc6}")
+            self._stream_callback = prev_callback
+            return final2
+        fallback = "[codex error] non-interactive modes produced no output"
+        self._append_transcript(prompt, fallback)
         self._stream_callback = prev_callback
-        return final2
+        return fallback
 
     # ===== Simple runners ======================================================
 
@@ -454,8 +469,21 @@ class CodexSession:
         if verbose:
             self._print(f"[codex] exec-stream: {' '.join(map(self._q, cmd))}\n")
         try:
+            resolved_cmd = self._resolve_windows_cmd(cmd)
+            if os.name == "nt":
+                proc = subprocess.run(
+                    resolved_cmd,
+                    input=prompt,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    cwd=str(self.workdir) if self.workdir else None,
+                )
+                if stream and proc.stdout:
+                    self._print(proc.stdout)
+                return (proc.stdout or ""), proc.returncode, (proc.stderr or "")
             proc = subprocess.Popen(
-                cmd,
+                resolved_cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -613,6 +641,36 @@ class CodexSession:
                 f"PROMPT:\n{prompt}\nRESPONSE:\n{response}\n"
             )
 
+    def _fallback_to_c0d3r(self, prompt: str, *, stream: bool, images: Optional[Sequence[str]]) -> str:
+        try:
+            from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
+        except Exception:
+            resp = "[codex missing] c0d3r fallback unavailable."
+            self._append_transcript(prompt, resp)
+            if stream:
+                self._print(resp + "\n")
+            return resp
+        settings = c0d3r_default_settings()
+        merged = dict(settings)
+        merged.update(
+            {
+                "stream_default": self.stream_default,
+                "verbose_default": self.verbose_default,
+            }
+        )
+        session = C0d3rSession(
+            session_name=self.session_name,
+            transcript_dir=self.transcript_dir,
+            read_timeout_s=self.read_timeout_s,
+            workdir=str(self.workdir) if self.workdir else None,
+            **merged,
+        )
+        header = "[fallback:c0d3r] codex not available; using Bedrock c0d3r session.\n"
+        if stream:
+            self._print(header)
+        self._append_transcript(prompt, header)
+        return session.send(prompt, stream=stream, images=images)
+
     def _print(self, s: str) -> None:
         if self._stream_callback:
             try:
@@ -636,7 +694,7 @@ class CodexSession:
         return any(needle in lower for needle in needles)
 
     def _build_cli_prefix(self) -> list[str]:
-        parts = [self.executable]
+        parts = [self._resolved_executable]
         if self.model:
             parts.extend(["--model", self.model])
         if self.model_reasoning_effort:
@@ -648,6 +706,19 @@ class CodexSession:
         elif self.approval_policy:
             parts.extend(["--ask-for-approval", self.approval_policy])
         return parts
+
+    @staticmethod
+    def _resolve_windows_cmd(cmd: Sequence[str]) -> list[str]:
+        if os.name != "nt":
+            return list(cmd)
+        exe = str(cmd[0])
+        if not exe.lower().endswith(".ps1"):
+            resolved = shutil.which(exe)
+            if resolved:
+                exe = resolved
+        if exe.lower().endswith(".ps1"):
+            return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", exe, *cmd[1:]]
+        return list(cmd)
 
     @staticmethod
     def _image_args(images: Optional[Sequence[str]]) -> list[str]:

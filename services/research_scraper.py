@@ -7,7 +7,9 @@ environments and be extended by delivery tasks.
 """
 from __future__ import annotations
 
+import random
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
@@ -15,7 +17,7 @@ from urllib.parse import urlencode, urlparse
 
 import requests
 
-from services.research_sources import allowed_domains
+from services.research_sources import allowed_domains, allowed_domains_for_query
 from services import research_ranker
 
 
@@ -51,10 +53,16 @@ class DuckDuckGoScraper:
         self.cache_dir = cache_dir
         if cache_dir:
             cache_dir.mkdir(parents=True, exist_ok=True)
+        self._min_delay = 0.1
+        self._max_delay = 0.5
+
+    def _polite_delay(self) -> None:
+        time.sleep(random.uniform(self._min_delay, self._max_delay))
 
     def search(self, query: str, max_results: int = 10, domains: Optional[Iterable[str]] = None) -> List[SearchResult]:
         params = {"q": query, "kl": "us-en"}
         url = f"{self.base_url}?{urlencode(params)}"
+        self._polite_delay()
         resp = self.session.get(url, headers={"User-Agent": USER_AGENT}, timeout=10)
         resp.raise_for_status()
         html = resp.text
@@ -70,7 +78,12 @@ class DuckDuckGoScraper:
                 break
         return results
 
+    def search_for_query(self, query: str, max_results: int = 10) -> List[SearchResult]:
+        domains = allowed_domains_for_query(query, max_sources=12)
+        return self.search(query, max_results=max_results, domains=domains)
+
     def fetch_text(self, url: str, timeout: int = 15) -> str:
+        self._polite_delay()
         resp = self.session.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
         resp.raise_for_status()
         resp.encoding = resp.encoding or "utf-8"
@@ -91,6 +104,7 @@ class DuckDuckGoScraper:
             except Exception:
                 html = None
         if html is None:
+            self._polite_delay()
             html = self.fetch_text(url, timeout=timeout)
             if cache_path:
                 try:

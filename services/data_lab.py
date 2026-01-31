@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import hashlib
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from services.news_lab import collect_news_for_terms
@@ -17,6 +18,8 @@ from services.secure_settings import build_process_env
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DATA_ROOT = REPO_ROOT / "data"
 HIST_ROOT = DATA_ROOT / "historical_ohlcv"
+RUNTIME_ROOT = REPO_ROOT / "runtime"
+DEPS_CACHE_PATH = RUNTIME_ROOT / "datalab_deps.json"
 
 
 @dataclass
@@ -187,6 +190,9 @@ class DataLabRunner:
             self._append_log(f"Unknown job type requested: {job_type}")
             self._set_status(False, message=f"Unknown job type: {job_type}")
             return
+        if not self._ensure_python_ready(command[0]):
+            self._set_status(False, message="python environment not ready for data lab job")
+            return
         self._append_log(f"Starting job `{job_type}` with command: {' '.join(command)}")
         try:
             proc = subprocess.Popen(
@@ -285,10 +291,86 @@ class DataLabRunner:
             env["ANKR_RPC_URL"] = str(options["rpc_url"])
         return env
 
+    def _resolve_python_bin(self, options: Dict[str, Any]) -> str:
+        requested = options.get("python_bin") or os.getenv("PYTHON_BIN")
+        venv = os.getenv("VIRTUAL_ENV")
+        if requested:
+            candidate = Path(requested)
+            if requested in {"python", "python3"} or not candidate.is_absolute():
+                if venv:
+                    venv_bin = Path(venv) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+                    if venv_bin.exists():
+                        return str(venv_bin)
+            if candidate.is_absolute() and candidate.exists():
+                return str(candidate)
+        return sys.executable
+
+    def _ensure_python_ready(self, python_bin: str) -> bool:
+        auto_install = os.getenv("AUTO_INSTALL_REQUIREMENTS", "1").strip().lower() not in {"0", "false", "no"}
+        if not auto_install:
+            self._append_log("Auto-install disabled (AUTO_INSTALL_REQUIREMENTS=0).")
+            return True
+        requirements = REPO_ROOT / "requirements.txt"
+        if not requirements.exists():
+            self._append_log("requirements.txt not found; cannot auto-install.")
+            return True
+        requirements_text = requirements.read_text(encoding="utf-8", errors="ignore")
+        requirements_hash = hashlib.sha256(requirements_text.encode("utf-8")).hexdigest()
+        cache = self._load_deps_cache()
+        if (
+            cache.get("python_bin") == python_bin
+            and cache.get("requirements_hash") == requirements_hash
+            and cache.get("status") == "ok"
+        ):
+            return True
+        self._append_log("Syncing Python dependencies for data lab job...")
+        try:
+            result = subprocess.run(
+                [python_bin, "-m", "pip", "install", "-r", str(requirements)],
+                cwd=str(REPO_ROOT),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except Exception as exc:
+            self._append_log(f"Auto-install failed to start: {exc}")
+            self._save_deps_cache(python_bin, requirements_hash, "failed")
+            return False
+        if result.stdout:
+            self._append_log(result.stdout.strip())
+        if result.stderr:
+            self._append_log(result.stderr.strip())
+        if result.returncode != 0:
+            self._append_log(f"Auto-install failed with exit code {result.returncode}.")
+            self._save_deps_cache(python_bin, requirements_hash, "failed")
+            return False
+        self._save_deps_cache(python_bin, requirements_hash, "ok")
+        return True
+
+    def _load_deps_cache(self) -> Dict[str, Any]:
+        try:
+            if DEPS_CACHE_PATH.exists():
+                return json.loads(DEPS_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return {}
+
+    def _save_deps_cache(self, python_bin: str, requirements_hash: str, status: str) -> None:
+        try:
+            RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "python_bin": python_bin,
+                "requirements_hash": requirements_hash,
+                "status": status,
+                "updated_at": time.time(),
+            }
+            DEPS_CACHE_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except Exception:
+            # Cache failures should never block the job.
+            pass
+
     def _build_command(self, job_type: str, options: Dict[str, Any]) -> Optional[List[str]]:
-        python = options.get("python_bin") or os.getenv("PYTHON_BIN") or sys.executable
-        if os.name == "nt" and python == "python3":
-            python = sys.executable
+        python = self._resolve_python_bin(options)
         if job_type == "make2000index":
             return [python, "make2000index.py"]
         if job_type in {"make_assignments", "assignment"}:
