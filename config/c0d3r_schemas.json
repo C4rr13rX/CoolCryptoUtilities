@@ -1,0 +1,20 @@
+{
+  "scientific_method": {
+    "required": [
+      "observations",
+      "hypotheses",
+      "tests",
+      "findings",
+      "conclusion",
+      "next_steps"
+    ],
+    "list_fields": ["observations", "hypotheses", "tests", "findings", "next_steps"],
+    "object_list_fields": {
+      "findings": ["severity", "claim", "evidence_cmd", "evidence_excerpt", "files"]
+    }
+  },
+  "tool_loop": {
+    "required": ["commands", "final"],
+    "list_fields": ["commands"]
+  }
+}

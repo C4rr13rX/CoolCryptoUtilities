@@ -460,7 +460,7 @@ class C0d3r:
             f"Fix these issues: {issues}"
         )
         corrected = output
-        for _ in range(2):
+        for _ in range(3):
             corrected = self._invoke_model(
                 self._model_for_stage("refiner"),
                 self._build_prompt(
@@ -477,6 +477,8 @@ class C0d3r:
             issues = _validate_output(prompt, corrected)
             if not issues:
                 break
+        if issues:
+            return json.dumps({"error": "schema_validation_failed", "issues": issues})
         return corrected
 
     def _record_bias_audit(self, payload: dict) -> None:
@@ -892,28 +894,9 @@ def _validate_schema(prompt: str, output: str) -> List[str]:
     if not isinstance(payload, dict):
         return ["invalid_json"]
     issues: List[str] = []
-    lower = (prompt or "").lower()
-    if "observations (list of strings)" in lower and "findings" in lower:
-        required = ["observations", "hypotheses", "tests", "findings", "conclusion", "next_steps"]
-        for key in required:
-            if key not in payload:
-                issues.append(f"missing_{key}")
-        findings = payload.get("findings")
-        if isinstance(findings, list):
-            for item in findings:
-                if not isinstance(item, dict):
-                    issues.append("finding_not_object")
-                    break
-                for k in ("severity", "claim", "evidence_cmd", "evidence_excerpt", "files"):
-                    if k not in item:
-                        issues.append(f"finding_missing_{k}")
-        else:
-            issues.append("findings_not_list")
-    if "commands (list of strings)" in lower and "final (string" in lower:
-        if "commands" not in payload:
-            issues.append("missing_commands")
-        if "final" not in payload:
-            issues.append("missing_final")
+    schema = _schema_for_prompt(prompt)
+    if schema:
+        issues.extend(_apply_schema(schema, payload))
     return issues
 
 
@@ -927,13 +910,77 @@ def _validate_evidence(output: str) -> List[str]:
     if not isinstance(findings, list):
         return ["findings_not_list"]
     issues: List[str] = []
+    evidence_bundle = _extract_evidence_bundle(output)
+    if evidence_bundle is None:
+        return ["missing_evidence_bundle"]
     for item in findings:
         if not isinstance(item, dict):
             issues.append("finding_not_object")
             continue
         if not item.get("evidence_cmd") or not item.get("evidence_excerpt"):
             issues.append("missing_evidence_fields")
+            continue
+        excerpt = str(item.get("evidence_excerpt") or "")
+        if excerpt and evidence_bundle and excerpt not in evidence_bundle:
+            issues.append("evidence_excerpt_not_in_bundle")
     return issues
+
+
+def _schema_for_prompt(prompt: str) -> Optional[dict]:
+    lower = (prompt or "").lower()
+    schemas = _load_schemas()
+    if "observations (list of strings)" in lower and "findings" in lower:
+        return schemas.get("scientific_method")
+    if "commands (list of strings)" in lower and "final (string" in lower:
+        return schemas.get("tool_loop")
+    return None
+
+
+def _apply_schema(schema: dict, payload: dict) -> List[str]:
+    issues: List[str] = []
+    required = schema.get("required") or []
+    for key in required:
+        if key not in payload:
+            issues.append(f"missing_{key}")
+    list_fields = schema.get("list_fields") or []
+    for field in list_fields:
+        if field in payload and not isinstance(payload[field], list):
+            issues.append(f"{field}_not_list")
+    object_list_fields = schema.get("object_list_fields") or {}
+    for field, required_keys in object_list_fields.items():
+        items = payload.get(field)
+        if items is None:
+            continue
+        if not isinstance(items, list):
+            issues.append(f"{field}_not_list")
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                issues.append(f"{field}_item_not_object")
+                break
+            for key in required_keys:
+                if key not in item:
+                    issues.append(f"{field}_missing_{key}")
+    return issues
+
+
+def _load_schemas() -> dict:
+    path = Path("config/c0d3r_schemas.json")
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _extract_evidence_bundle(prompt: str) -> Optional[str]:
+    marker = "Evidence bundle:"
+    if marker not in prompt:
+        return None
+    idx = prompt.find(marker)
+    return prompt[idx + len(marker):]
 
 
 def _safe_json(text: str) -> object:
