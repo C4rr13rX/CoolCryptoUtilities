@@ -399,8 +399,9 @@ class C0d3r:
             )
         elif stage == "reviewer":
             parts.append(
-                "Return JSON with keys: score (0-10), issues (list), improvements (list), tests (list), notes. "
-                "Explicitly check for: missing evidence, schema violations, cognitive bias, and unsafe assumptions."
+                "Return JSON with keys: score (0-10), issues (list), improvements (list), tests (list), "
+                "bias_flags (list), notes. Explicitly check for: missing evidence, schema violations, "
+                "cognitive bias, and unsafe assumptions."
             )
         elif stage == "refiner":
             parts.append("Improve the draft using feedback. Return final answer only.")
