@@ -430,6 +430,7 @@ class C0d3r:
         try:
             payload = json.loads(_extract_json(text))
             score = float(payload.get("score") or 0)
+            self._record_bias_audit(payload)
             feedback = json.dumps(payload, indent=2)
             return score, feedback
         except Exception:
@@ -455,22 +456,46 @@ class C0d3r:
             return output
         repair_prompt = (
             "Return ONLY valid JSON matching the requested schema. "
-            "Do not include any other text."
+            "Do not include any other text. "
+            f"Fix these issues: {issues}"
         )
-        corrected = self._invoke_model(
-            self._model_for_stage("refiner"),
-            self._build_prompt(
-                "refiner",
-                prompt,
-                system=system,
-                plan=plan,
-                draft=output,
-                feedback=repair_prompt,
-                research=research,
-            ),
-            images=images,
-        )
+        corrected = output
+        for _ in range(2):
+            corrected = self._invoke_model(
+                self._model_for_stage("refiner"),
+                self._build_prompt(
+                    "refiner",
+                    prompt,
+                    system=system,
+                    plan=plan,
+                    draft=corrected,
+                    feedback=repair_prompt,
+                    research=research,
+                ),
+                images=images,
+            )
+            issues = _validate_output(prompt, corrected)
+            if not issues:
+                break
         return corrected
+
+    def _record_bias_audit(self, payload: dict) -> None:
+        try:
+            out_dir = Path("runtime/c0d3r")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            path = out_dir / "bias_audit.jsonl"
+            record = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "epoch": time.time(),
+                "session": self.settings.get("session_name", "unknown"),
+                "bias_flags": payload.get("bias_flags", []),
+                "issues": payload.get("issues", []),
+                "notes": payload.get("notes", ""),
+            }
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     def _select_best_candidate(
         self,
@@ -723,6 +748,7 @@ class C0d3rSession:
 
         defaults = c0d3r_default_settings()
         merged = {**defaults, **settings}
+        merged["session_name"] = session_name
         if "stream_default" in merged:
             self.stream_default = bool(merged.get("stream_default"))
         self.settings = merged
@@ -847,7 +873,74 @@ def _validate_output(prompt: str, output: str) -> List[str]:
         issues.append("missing_commands")
     if _requires_citations(prompt) and not _has_citations(output):
         issues.append("missing_citations")
+    schema_issues = _validate_schema(prompt, output)
+    issues.extend(schema_issues)
+    if _requires_evidence(prompt):
+        issues.extend(_validate_evidence(output))
     return issues
+
+
+def _requires_evidence(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return "evidence bundle" in lower or "use only the provided empirical evidence" in lower
+
+
+def _validate_schema(prompt: str, output: str) -> List[str]:
+    if not _requires_json(prompt) or not _looks_like_json(output):
+        return []
+    payload = _safe_json(output)
+    if not isinstance(payload, dict):
+        return ["invalid_json"]
+    issues: List[str] = []
+    lower = (prompt or "").lower()
+    if "observations (list of strings)" in lower and "findings" in lower:
+        required = ["observations", "hypotheses", "tests", "findings", "conclusion", "next_steps"]
+        for key in required:
+            if key not in payload:
+                issues.append(f"missing_{key}")
+        findings = payload.get("findings")
+        if isinstance(findings, list):
+            for item in findings:
+                if not isinstance(item, dict):
+                    issues.append("finding_not_object")
+                    break
+                for k in ("severity", "claim", "evidence_cmd", "evidence_excerpt", "files"):
+                    if k not in item:
+                        issues.append(f"finding_missing_{k}")
+        else:
+            issues.append("findings_not_list")
+    if "commands (list of strings)" in lower and "final (string" in lower:
+        if "commands" not in payload:
+            issues.append("missing_commands")
+        if "final" not in payload:
+            issues.append("missing_final")
+    return issues
+
+
+def _validate_evidence(output: str) -> List[str]:
+    if not _looks_like_json(output):
+        return ["missing_json_for_evidence"]
+    payload = _safe_json(output)
+    if not isinstance(payload, dict):
+        return ["invalid_json_for_evidence"]
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        return ["findings_not_list"]
+    issues: List[str] = []
+    for item in findings:
+        if not isinstance(item, dict):
+            issues.append("finding_not_object")
+            continue
+        if not item.get("evidence_cmd") or not item.get("evidence_excerpt"):
+            issues.append("missing_evidence_fields")
+    return issues
+
+
+def _safe_json(text: str) -> object:
+    try:
+        return json.loads(_extract_json(text))
+    except Exception:
+        return {}
 
 
 def _build_bedrock_payload(
