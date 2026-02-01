@@ -53,6 +53,14 @@ def _emit_live(message: str) -> None:
         pass
 
 
+def _emit_status_line(message: str) -> None:
+    try:
+        sys.stdout.write("\r" + message + " " * 10)
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="c0d3r",
@@ -983,7 +991,9 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
         def _runner():
             tick = 0
             while not stop_event.is_set():
-                _emit_live(f"{label}... ({tick * interval:.0f}s)")
+                msg = f"{label}... ({tick * interval:.0f}s)"
+                _emit_status_line(msg)
+                _emit_live(msg)
                 stop_event.wait(interval)
                 tick += 1
 
@@ -991,10 +1001,11 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
         t.start()
         return t
 
-    _emit_live("math_grounding: model pass 1 (equations)")
+    model_id = session.get_model_id()
+    _emit_live(f"math_grounding: model pass 1 (equations) -> waiting on Bedrock response [{model_id}]")
     try:
         stop = threading.Event()
-        _heartbeat("math_grounding: awaiting model pass 1", stop)
+        _heartbeat(f"math_grounding: awaiting Bedrock response (model pass 1) [{model_id}]", stop)
         raw = session.send(prompt=base_request, stream=False, system=system)
         stop.set()
         payload = _safe_json(raw)

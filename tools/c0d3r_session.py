@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import time
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
@@ -24,6 +25,28 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _bedrock_live_enabled() -> bool:
+    return os.getenv("C0D3R_BEDROCK_LIVE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _emit_bedrock_live(message: str) -> None:
+    if not _bedrock_live_enabled():
+        return
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] {message}"
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        path = Path("runtime/c0d3r/bedrock_live.log")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
 
 
 def _resolve_aws_profile() -> Optional[str]:
@@ -263,8 +286,23 @@ class C0d3r:
             self.model_id = self.inference_profile
             return self.model_id
         if self.model_id:
+            try:
+                _emit_bedrock_live("bedrock: ensure_model listing catalog to validate model id")
+                models = self._catalog.list_models()
+            except Exception:
+                models = []
+            if models:
+                ids = [m.model_id for m in models]
+                if self.model_id not in ids:
+                    pref = self._preferred_models()
+                    fallback = pref[0] if pref else self.model_id
+                    _emit_bedrock_live(
+                        f"bedrock: requested model not in catalog ({self.model_id}); using {fallback}"
+                    )
+                    self.model_id = fallback
             return self.model_id
         try:
+            _emit_bedrock_live("bedrock: ensure_model listing catalog (no model set)")
             models = self._catalog.list_models()
         except Exception:
             models = []
@@ -275,6 +313,7 @@ class C0d3r:
             return self.model_id
         preference = self._preferred_models()
         try:
+            _emit_bedrock_live("bedrock: ensure_model listing inference profiles")
             profiles = self._catalog.list_inference_profiles()
         except Exception:
             profiles = []
@@ -305,6 +344,7 @@ class C0d3r:
         images: Optional[Sequence[str]] = None,
         evidence_bundle: Optional[str] = None,
     ) -> str:
+        _emit_bedrock_live("bedrock: generate start")
         model_id = self.ensure_model()
         if not model_id:
             return "[c0d3r error] no Bedrock models available"
@@ -684,17 +724,41 @@ class C0d3r:
             top_p=self.top_p,
             images=images,
         )
+        payload_size = 0
+        try:
+            payload_size = len(json.dumps(payload))
+        except Exception:
+            payload_size = 0
+        _emit_bedrock_live(
+            f"bedrock: invoke start model={effective_model_id} prompt_len={len(prompt)} payload_bytes={payload_size} "
+            f"region={self.region} profile={self.profile or 'default'}"
+        )
+        stop = threading.Event()
+        def _heartbeat():
+            tick = 0
+            while not stop.is_set():
+                _emit_bedrock_live(f"bedrock: awaiting response model={effective_model_id} ({tick * 5:.0f}s)")
+                stop.wait(5.0)
+                tick += 1
+        t = threading.Thread(target=_heartbeat, daemon=True)
+        t.start()
+        start = time.time()
         try:
             result = self._runtime.invoke(model_id=effective_model_id, payload=payload)
         except Exception as exc:
+            stop.set()
             if self.inference_profile or "inference profile" not in str(exc).lower():
+                _emit_bedrock_live(f"bedrock: invoke error model={effective_model_id} err={exc}")
                 raise
             resolved = self._resolve_inference_profile(model_id)
             if not resolved:
+                _emit_bedrock_live(f"bedrock: inference profile not found for {model_id}")
                 raise
             self.inference_profile = resolved
             self.model_id = resolved
             result = self._runtime.invoke(model_id=resolved, payload=payload)
+        stop.set()
+        _emit_bedrock_live(f"bedrock: response received model={effective_model_id} elapsed={time.time()-start:.1f}s")
         return _extract_text(model_id, result)
 
     def _resolve_inference_profile(self, model_id: str) -> str:
