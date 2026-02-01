@@ -95,6 +95,10 @@ def main(argv: List[str] | None = None) -> int:
     # Silence noisy startup warnings for CLI usage.
     os.environ.setdefault("C0D3R_QUIET_STARTUP", "1")
     os.environ.setdefault("PYTHONWARNINGS", "ignore")
+    # Default to full verbosity unless user disables it.
+    os.environ.setdefault("C0D3R_VERBOSE_MODEL_OUTPUT", "1")
+    os.environ.setdefault("C0D3R_BEDROCK_LIVE", "1")
+    os.environ.setdefault("C0D3R_BEDROCK_STREAM", "1")
     from services.env_loader import EnvLoader
     from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
     from services.agent_workspace import run_command
@@ -1157,6 +1161,8 @@ def _typewriter_callback(usage, header=None, controller=None):
         usage.add_output(chunk)
         if header:
             header.update()
+        if os.getenv("C0D3R_VERBOSE_MODEL_OUTPUT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            sys.stdout.write("\n[model]\n")
         for ch in chunk:
             if controller and controller.interrupted:
                 return

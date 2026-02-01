@@ -40,6 +40,25 @@ def _emit_bedrock_live(message: str) -> None:
         print(line, flush=True)
     except Exception:
         pass
+
+
+def _typewriter_output(text: str) -> None:
+    try:
+        delay_ms = float(os.getenv("C0D3R_TYPEWRITER_MS", "8") or "8")
+    except Exception:
+        delay_ms = 8.0
+    delay_s = max(0.0, delay_ms / 1000.0)
+    try:
+        for ch in text:
+            sys.stdout.write(ch)
+            sys.stdout.flush()
+            if ch.strip():
+                time.sleep(delay_s)
+    except Exception:
+        try:
+            print(text, end="", flush=True)
+        except Exception:
+            pass
     try:
         path = Path("runtime/c0d3r/bedrock_live.log")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,6 +257,21 @@ class BedrockClient:
         raw = response["body"].read().decode("utf-8", errors="replace")
         return json.loads(raw)
 
+    def invoke_stream(self, *, model_id: str, payload: Dict[str, Any]):
+        response = self.client.invoke_model_with_response_stream(
+            modelId=model_id,
+            body=json.dumps(payload).encode("utf-8"),
+            accept="application/json",
+            contentType="application/json",
+        )
+        for event in response.get("body"):
+            chunk = event.get("chunk")
+            if not chunk:
+                continue
+            data = chunk.get("bytes") or b""
+            text = data.decode("utf-8", errors="ignore")
+            yield text
+
 
 class C0d3r:
     def __init__(self, settings: Dict[str, Any]) -> None:
@@ -260,6 +294,7 @@ class C0d3r:
         self.rigorous_mode = bool(settings.get("rigorous_mode"))
         self.rigorous_routes_path = settings.get("rigorous_routes_path") or "config/c0d3r_rigorous_routes.json"
         self._rigorous_routes = self._load_rigorous_routes(self.rigorous_routes_path)
+        self.stream_callback: Optional[Callable[[str], None]] = None
         effort = str(settings.get("reasoning_effort") or "").strip().lower()
         if effort in {"extra_high", "xhigh", "xh"}:
             self.max_revisions = max(self.max_revisions, 2)
@@ -744,7 +779,44 @@ class C0d3r:
         t.start()
         start = time.time()
         try:
-            result = self._runtime.invoke(model_id=effective_model_id, payload=payload)
+            use_stream = os.getenv("C0D3R_BEDROCK_STREAM", "1").strip().lower() not in {"0", "false", "no", "off"}
+            if use_stream and self.stream_callback:
+                _emit_bedrock_live("bedrock: streaming response")
+                chunks: List[str] = []
+                parsed_text: List[str] = []
+                for chunk in self._runtime.invoke_stream(model_id=effective_model_id, payload=payload):
+                    if not chunk:
+                        continue
+                    chunks.append(chunk)
+                    try:
+                        obj = json.loads(chunk)
+                    except Exception:
+                        obj = None
+                    if obj and isinstance(obj, dict):
+                        ctype = obj.get("type")
+                        if ctype == "content_block_delta":
+                            delta = obj.get("delta") or {}
+                            if delta.get("type") == "text_delta":
+                                text_piece = delta.get("text") or ""
+                                if text_piece:
+                                    parsed_text.append(text_piece)
+                                    try:
+                                        self.stream_callback(text_piece)
+                                    except Exception:
+                                        pass
+                        elif ctype == "message_start":
+                            pass
+                    else:
+                        # Fallback raw chunk
+                        try:
+                            self.stream_callback(chunk)
+                        except Exception:
+                            pass
+                if parsed_text:
+                    return "".join(parsed_text)
+                result = json.loads("".join(chunks)) if chunks else {}
+            else:
+                result = self._runtime.invoke(model_id=effective_model_id, payload=payload)
         except Exception as exc:
             stop.set()
             if self.inference_profile or "inference profile" not in str(exc).lower():
@@ -790,15 +862,22 @@ class C0d3r:
                 questions = [query]
             snippets: List[str] = []
             for q in questions[:6]:
+                _emit_bedrock_live(f"research: query => {q}")
                 strategy = self._research_strategy(q)
                 max_sources = strategy.get("max_sources", 8)
                 max_results = strategy.get("max_results", 4)
                 sources = select_sources_for_query(q, max_sources=max_sources)
                 domains = allowed_domains_for_query(q, max_sources=max_sources)
+                _emit_bedrock_live(
+                    f"research: domains={len(domains)} max_results={max_results} use_ncbi={strategy.get('use_ncbi', True)} "
+                    f"use_scholarly={strategy.get('use_scholarly', True)}"
+                )
                 results = search.search_domains(q, domains, limit_per_domain=1, total_limit=max_results)
+                _emit_bedrock_live(f"research: search results={len(results)}")
                 snippets.append(f"[question] {q}")
                 if strategy.get("use_ncbi", True) and any("ncbi.nlm.nih.gov" in src.domain for src in sources):
                     try:
+                        _emit_bedrock_live("research: NCBI PubMed summaries")
                         ncbi = NCBIClient(timeout=8.0)
                         summaries = ncbi.pubmed_summaries(self._ncbi_query(q), retmax=5)
                         if "crispr" in q.lower():
@@ -812,6 +891,7 @@ class C0d3r:
                 if strategy.get("use_scholarly", True):
                     api_client = ScholarlyAPIClient(timeout=8.0)
                     try:
+                        _emit_bedrock_live("research: OpenAlex")
                         oa = api_client.openalex(q, limit=2)
                         if oa:
                             snippets.append("[OpenAlex]")
@@ -820,6 +900,7 @@ class C0d3r:
                     except Exception:
                         pass
                     try:
+                        _emit_bedrock_live("research: Crossref")
                         cr = api_client.crossref(q, limit=2)
                         if cr:
                             snippets.append("[Crossref]")
@@ -828,6 +909,7 @@ class C0d3r:
                     except Exception:
                         pass
                     try:
+                        _emit_bedrock_live("research: Semantic Scholar")
                         ss = api_client.semantic_scholar(q, limit=2)
                         if ss:
                             snippets.append("[Semantic Scholar]")
@@ -994,12 +1076,21 @@ class C0d3rSession:
                 pass
         images_list = list(images) if images else []
         stream = self.stream_default if stream is None else stream
+        if os.getenv("C0D3R_VERBOSE_MODEL_OUTPUT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            stream = True
         verbose = self.verbose_default if verbose is None else verbose
         prev_callback = self._stream_callback
         if stream_callback is not None:
             self._stream_callback = stream_callback
+        elif stream and os.getenv("C0D3R_VERBOSE_MODEL_OUTPUT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            # Provide a default stream callback to emit model text as it arrives.
+            def _default_cb(chunk: str) -> None:
+                _typewriter_output(chunk)
+            self._stream_callback = _default_cb
         if verbose:
             self._print(f"[c0d3r] model={self._c0d3r.ensure_model()}\n")
+        # Allow Bedrock streaming to use the session stream callback.
+        self._c0d3r.stream_callback = self._stream_callback if stream else None
         self._log_event("prompt", {"prompt": prompt})
         _diag(f"send:start model={self._c0d3r.ensure_model()} prompt_len={len(prompt)}")
         output = self._c0d3r.generate(
@@ -1014,7 +1105,17 @@ class C0d3rSession:
         _diag(f"send:response_len={len(output or '')}")
         self._log_event("response", {"response": output})
         self._append_transcript(prompt, output)
-        if stream:
+        if os.getenv("C0D3R_VERBOSE_MODEL_OUTPUT", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            try:
+                print("\n[model raw]\n", end="", flush=True)
+            except Exception:
+                pass
+            _typewriter_output(output or "")
+            try:
+                print("\n", end="", flush=True)
+            except Exception:
+                pass
+        elif stream:
             self._stream_output(output)
         self._stream_callback = prev_callback
         return output
