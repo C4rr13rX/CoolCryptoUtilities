@@ -79,9 +79,11 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: List[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    _emit_live("boot: start")
     prompt = " ".join(args.prompt).strip()
     if not prompt:
         prompt = sys.stdin.read().strip()
+    _emit_live(f"boot: prompt loaded (len={len(prompt)})")
     # Silence noisy startup warnings for CLI usage.
     os.environ.setdefault("C0D3R_QUIET_STARTUP", "1")
     os.environ.setdefault("PYTHONWARNINGS", "ignore")
@@ -90,8 +92,10 @@ def main(argv: List[str] | None = None) -> int:
     from services.agent_workspace import run_command
     from services.system_probe import system_probe_context
 
+    _emit_live("boot: env load")
     EnvLoader.load()
 
+    _emit_live("boot: settings build")
     settings = c0d3r_default_settings()
     if args.model:
         settings["model"] = args.model
@@ -104,6 +108,7 @@ def main(argv: List[str] | None = None) -> int:
     if args.research:
         settings["research"] = True
 
+    _emit_live("boot: resolve workdir")
     workdir = Path(args.workdir or os.getcwd()).resolve()
     os.environ.setdefault("C0D3R_ROOT_CWD", str(workdir))
     if _requires_rigorous_constraints(prompt):
@@ -111,6 +116,7 @@ def main(argv: List[str] | None = None) -> int:
     scientific = args.scientific or (os.getenv("C0D3R_SCIENTIFIC_MODE", "1").strip().lower() not in {"0", "false", "no", "off"})
     if args.no_scientific:
         scientific = False
+    _emit_live("boot: build context")
     context_block = ""
     if not args.no_context:
         context_block = _build_context_block(workdir, run_command)
@@ -118,6 +124,7 @@ def main(argv: List[str] | None = None) -> int:
     if args.no_tools:
         tool_loop = False
 
+    _emit_live("boot: probe context")
     probe_block = system_probe_context(workdir)
     if context_block:
         context_block = f"{probe_block}\n{context_block}"
@@ -128,6 +135,7 @@ def main(argv: List[str] | None = None) -> int:
     settings = dict(settings)
     if "stream_default" in settings:
         settings["stream_default"] = settings.get("stream_default") and not args.no_stream
+    _emit_live("boot: session init")
     session = C0d3rSession(
         session_name="c0d3r-cli",
         transcript_dir=Path("runtime/c0d3r/transcripts"),
@@ -137,9 +145,11 @@ def main(argv: List[str] | None = None) -> int:
     usage = UsageTracker(model_id=session.get_model_id())
     math_block = ""
     if settings.get("math_grounding", True):
+        _emit_live("boot: math grounding")
         math_block = _math_grounding_block(session, prompt, workdir)
     if math_block:
         prompt = f"{math_block}\n\n{prompt}"
+    _emit_live("boot: enter repl")
     return _run_repl(
         session,
         usage,
@@ -334,7 +344,11 @@ def _run_tool_loop(
         if response is None:
             _emit_live("tool_loop: model call timed out")
             _diag_log("tool_loop: model call timeout")
-            last_error = f"model call timed out after {_model_timeout_s()}s"
+            timeout_val = _model_timeout_s()
+            if timeout_val is None:
+                last_error = "model call returned no response (timeouts disabled)"
+            else:
+                last_error = f"model call timed out after {timeout_val}s"
             model_timeouts += 1
             if model_timeouts >= 3:
                 fallback_model = os.getenv("C0D3R_TOOL_FALLBACK_MODEL", "mistral.mistral-large-3-675b-instruct")
@@ -363,7 +377,7 @@ def _run_tool_loop(
                     session._c0d3r.inference_profile = ""
                     response = _call_with_timeout(
                         session._safe_send,
-                        timeout_s=max(10.0, _model_timeout_s() / 2),
+                        timeout_s=max(10.0, _model_timeout_value() / 2),
                         kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
                     )
                 finally:
@@ -374,7 +388,7 @@ def _run_tool_loop(
             else:
                 response = _call_with_timeout(
                     session._safe_send,
-                    timeout_s=max(10.0, _model_timeout_s() / 2),
+                    timeout_s=max(10.0, _model_timeout_value() / 2),
                     kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
                 )
             if response is None:
@@ -493,7 +507,7 @@ def _run_tool_loop(
                 )
                 response = _call_with_timeout(
                     session._safe_send,
-                    timeout_s=max(20.0, _model_timeout_s()),
+                    timeout_s=max(20.0, _model_timeout_value()),
                     kwargs={"prompt": emergency_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
                 )
                 if response:
@@ -1188,6 +1202,7 @@ def _run_repl(
     budget = BudgetTracker(header.budget_usd)
     budget.enabled = header.budget_enabled
     header.render()
+    _emit_live("repl: header rendered")
     while True:
         try:
             header.freeze()
@@ -1197,6 +1212,7 @@ def _run_repl(
         except (EOFError, KeyboardInterrupt):
             print("\nExiting.")
             return 0
+        _emit_live(f"repl: prompt received (len={len(prompt)})")
         if not prompt.strip():
             continue
         if prompt.strip().lower() in {"/exit", "/quit"}:
@@ -1407,14 +1423,33 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
         return ""
 
 
-def _model_timeout_s() -> float:
+def _model_timeout_s() -> float | None:
+    # Default to no timeouts unless explicitly enabled.
+    no_timeouts = os.getenv("C0D3R_NO_TIMEOUTS", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if no_timeouts:
+        return None
     try:
-        return float(os.getenv("C0D3R_MODEL_TIMEOUT_S", "60") or "60")
+        raw = os.getenv("C0D3R_MODEL_TIMEOUT_S", "-1") or "-1"
+        val = float(raw)
+        if val <= 0:
+            return None
+        return val
     except Exception:
         return 60.0
 
 
-def _call_with_timeout(fn, *, timeout_s: float, kwargs: dict) -> str | None:
+def _model_timeout_value(default: float = 60.0) -> float:
+    val = _model_timeout_s()
+    return default if val is None else val
+
+
+def _call_with_timeout(fn, *, timeout_s: float | None, kwargs: dict) -> str | None:
+    if timeout_s is None:
+        try:
+            return fn(**kwargs)
+        except Exception as exc:
+            _diag_log(f"model error: {exc}")
+            return None
     result: dict = {}
     error: dict = {}
 
