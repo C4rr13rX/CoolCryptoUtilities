@@ -23,41 +23,89 @@ PROMPTS = [
 ]
 
 
-def run_prompt(name: str, prompt: str, timeout_s: int = 1800) -> tuple[bool, float, str]:
-    """
-    Run each benchmark in its own elevated PowerShell window and wait for completion.
-    """
+def _build_master_script() -> Path:
+    scripts_dir = ROOT / "runtime" / "c0d3r" / "bench_scripts"
+    logs_dir = ROOT / "runtime" / "c0d3r" / "bench_logs"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    master_path = scripts_dir / "run_all.ps1"
+    summary_path = logs_dir / "summary.log"
+    lines = [
+        '$ErrorActionPreference = "Continue"',
+        f'$summary = "{summary_path}"',
+        'if (Test-Path $summary) { Remove-Item $summary -Force }',
+        'function Write-Result($name, $status, $seconds) {',
+        '  $line = "[$name] $status in ${seconds}s"',
+        '  $line | Tee-Object -FilePath $summary -Append',
+        '}',
+        '',
+    ]
+    for name, prompt in PROMPTS:
+        bench_root = DEFAULT_BENCH_ROOT / name
+        try:
+            if str(bench_root).startswith(str(ROOT)):
+                bench_root = Path("C:/Users/Adam/Projects/c0d3r_benchmarks") / name
+        except Exception:
+            bench_root = Path("C:/Users/Adam/Projects/c0d3r_benchmarks") / name
+        out_path = logs_dir / f"{name}.out.log"
+        err_path = logs_dir / f"{name}.err.log"
+        safe_prompt = prompt.replace('"', '`"')
+        lines.extend(
+            [
+                f'Write-Host "=== {name} ==="',
+                f'New-Item -ItemType Directory -Force "{bench_root}" | Out-Null',
+                f'Set-Location -Path "{bench_root}"',
+                f'Write-Host "Starting benchmark in {bench_root}..."',
+                '$start = Get-Date',
+                '$env:C0D3R_ONESHOT="1"',
+                '$env:C0D3R_MINIMAL_CONTEXT="1"',
+                '$env:C0D3R_TOOL_LOOP="1"',
+                '$env:C0D3R_SCIENTIFIC_MODE="0"',
+                '$env:C0D3R_ENABLE_RESEARCH="0"',
+                f'$log = "{out_path}"',
+                f'$err = "{err_path}"',
+                'if (Test-Path $log) { Clear-Content $log }',
+                'if (Test-Path $err) { Clear-Content $err }',
+                f'$proc = Start-Process -FilePath "c0d3r" -ArgumentList @("{safe_prompt}") -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $err',
+                '$spinner = @("|","/","-","\\")',
+                '$spin = 0',
+                '$lastSize = -1',
+                '$stale = 0',
+                'while (-not $proc.HasExited) {',
+                '  Start-Sleep -Seconds 2',
+                '  $size = 0',
+                '  if (Test-Path $log) { $size = (Get-Item $log).Length }',
+                '  if ($size -eq $lastSize) { $stale += 5 } else { $stale = 0; $lastSize = $size }',
+                '  $char = $spinner[$spin % $spinner.Length]',
+                '  $spin += 1',
+                '  $diag = "runtime/c0d3r/diagnostics.log"',
+                '  $diagTail = ""',
+                '  if (Test-Path $diag) { $diagTail = (Get-Content $diag -Tail 2 | Out-String).Trim() }',
+                '  Write-Host ("[{0}] running... output bytes={1} stale={2}s" -f $char, $size, $stale)',
+                '  if ($diagTail) { Write-Host ("[diag] {0}" -f $diagTail) }',
+                '  if ($stale -ge 60) { Write-Host "No output for 60s; stopping."; $proc.Kill(); break }',
+                '}',
+                '$code = $proc.ExitCode',
+                '$elapsed = [int]((Get-Date) - $start).TotalSeconds',
+                'if ($code -eq 0) { Write-Result "%s" "ok" $elapsed } else { Write-Result "%s" "fail" $elapsed }'
+                % (name, name),
+                '',
+            ]
+        )
+    lines.append('Write-Host "Benchmarks complete. Summary:"')
+    lines.append('Get-Content $summary')
+    master_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return master_path
+
+
+def run_all(timeout_s: int = 7200) -> tuple[bool, float, str]:
     env = os.environ.copy()
     env.setdefault("C0D3R_TOOL_STEPS", "5")
     env.setdefault("C0D3R_MODEL_TIMEOUT_S", "60")
     env.setdefault("C0D3R_CMD_TIMEOUT_S", "240")
     env.setdefault("C0D3R_READ_TIMEOUT_S", "60")
     env.setdefault("C0D3R_CONNECT_TIMEOUT_S", "10")
-
-    scripts_dir = ROOT / "runtime" / "c0d3r" / "bench_scripts"
-    logs_dir = ROOT / "runtime" / "c0d3r" / "bench_logs"
-    scripts_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    script_path = scripts_dir / f"{name}.ps1"
-    log_path = logs_dir / f"{name}.out.log"
-    err_path = logs_dir / f"{name}.err.log"
-    bench_root = DEFAULT_BENCH_ROOT / name
-    # Ensure we never run benchmarks inside the repo.
-    try:
-        if str(bench_root).startswith(str(ROOT)):
-            bench_root = Path("C:/Users/Adam/Projects/c0d3r_benchmarks") / name
-    except Exception:
-        bench_root = Path("C:/Users/Adam/Projects/c0d3r_benchmarks") / name
-    bench_root.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(
-        f'$ErrorActionPreference = "Continue"\n'
-        f'Set-Location -Path "{bench_root}"\n'
-        f'$out = "{log_path}"\n'
-        f'$err = "{err_path}"\n'
-        f'c0d3r "{prompt}" 1> $out 2> $err\n'
-        "exit $LASTEXITCODE\n",
-        encoding="utf-8",
-    )
+    script_path = _build_master_script()
     ps_cmd = [
         "powershell",
         "-NoProfile",
@@ -83,41 +131,16 @@ def run_prompt(name: str, prompt: str, timeout_s: int = 1800) -> tuple[bool, flo
     except subprocess.TimeoutExpired:
         return False, timeout_s, "timeout"
     duration = time.time() - start
-    stdout = ""
-    stderr = ""
-    if log_path.exists():
-        stdout = log_path.read_text(encoding="utf-8", errors="ignore")
-    if err_path.exists():
-        stderr = err_path.read_text(encoding="utf-8", errors="ignore")
-    ok = "Success:" in stdout
-    tail = (stdout + "\n" + stderr + "\n" + (out.stderr or "")).strip()[-1200:]
-    return ok, duration, tail
+    tail = (out.stdout or "") + "\n" + (out.stderr or "")
+    return out.returncode == 0, duration, tail.strip()[-1200:]
 
 
 def main() -> int:
-    results = []
-    for name, prompt in PROMPTS:
-        ok, duration, tail = run_prompt(name, prompt)
-        results.append((name, ok, duration, tail))
-        status = "ok" if ok else "fail"
-        print(f"[{name}] {status} in {duration:.1f}s")
-        if not ok:
-            print(tail)
-            print("-" * 60)
-    passed = sum(1 for _, ok, _, _ in results if ok)
-    total = len(results)
-    print(f"Bench complete: {passed}/{total} succeeded")
-    # write log
-    log_path = ROOT / "runtime" / "c0d3r" / "bench_results.txt"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as fh:
-        for name, ok, duration, tail in results:
-            fh.write(f"[{name}] {'ok' if ok else 'fail'} in {duration:.1f}s\n")
-            if tail:
-                fh.write(tail + "\n")
-            fh.write("-" * 60 + "\n")
-        fh.write(f"Bench complete: {passed}/{total} succeeded\n")
-    return 0 if passed == total else 1
+    ok, duration, tail = run_all()
+    print(f"Benchmarks finished in {duration:.1f}s")
+    if tail:
+        print(tail)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

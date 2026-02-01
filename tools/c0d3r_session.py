@@ -138,12 +138,17 @@ class ModelChoice:
 
 
 class BedrockModelCatalog:
-    def __init__(self, *, profile: Optional[str], region: str) -> None:
+    def __init__(self, *, profile: Optional[str], region: str, read_timeout_s: float | None = None, connect_timeout_s: float | None = None) -> None:
         if profile:
             session = boto3.Session(profile_name=profile, region_name=region)
         else:
             session = boto3.Session(region_name=region)
-        self.client = session.client("bedrock")
+        config = Config(
+            read_timeout=read_timeout_s or 15,
+            connect_timeout=connect_timeout_s or 5,
+            retries={"max_attempts": 2, "mode": "standard"},
+        )
+        self.client = session.client("bedrock", config=config)
 
     def list_models(self) -> List[ModelChoice]:
         models: List[ModelChoice] = []
@@ -231,7 +236,12 @@ class C0d3r:
         elif effort in {"high", "h"}:
             self.max_revisions = max(self.max_revisions, 1)
             self.max_tokens = max(self.max_tokens, 2560)
-        self._catalog = BedrockModelCatalog(profile=self.profile, region=self.region)
+        self._catalog = BedrockModelCatalog(
+            profile=self.profile,
+            region=self.region,
+            read_timeout_s=self.read_timeout_s,
+            connect_timeout_s=self.connect_timeout_s,
+        )
         self._runtime = BedrockClient(
             profile=self.profile,
             region=self.region,
@@ -249,6 +259,11 @@ class C0d3r:
             models = self._catalog.list_models()
         except Exception:
             models = []
+        if not models:
+            # Fall back to preferred model list to avoid blocking on catalog.
+            pref = self._preferred_models()
+            self.model_id = pref[0] if pref else ""
+            return self.model_id
         preference = self._preferred_models()
         try:
             profiles = self._catalog.list_inference_profiles()
@@ -821,6 +836,18 @@ class C0d3rSession:
         evidence_bundle: Optional[str] = None,
         research_override: Optional[bool] = None,
     ) -> str:
+        diag_path = Path("runtime/c0d3r/diagnostics.log")
+        try:
+            diag_path.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        def _diag(msg: str) -> None:
+            try:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                with diag_path.open("a", encoding="utf-8") as fh:
+                    fh.write(f"[{ts}] {msg}\n")
+            except Exception:
+                pass
         images_list = list(images) if images else []
         stream = self.stream_default if stream is None else stream
         verbose = self.verbose_default if verbose is None else verbose
@@ -830,6 +857,7 @@ class C0d3rSession:
         if verbose:
             self._print(f"[c0d3r] model={self._c0d3r.ensure_model()}\n")
         self._log_event("prompt", {"prompt": prompt})
+        _diag(f"send:start model={self._c0d3r.ensure_model()} prompt_len={len(prompt)}")
         output = self._c0d3r.generate(
             prompt,
             system=system,
@@ -837,12 +865,30 @@ class C0d3rSession:
             images=images_list if images_list else None,
             evidence_bundle=evidence_bundle,
         )
+        _diag("send:complete")
+        # log model output length for diagnostics
+        _diag(f"send:response_len={len(output or '')}")
         self._log_event("response", {"response": output})
         self._append_transcript(prompt, output)
         if stream:
             self._stream_output(output)
         self._stream_callback = prev_callback
         return output
+        
+        
+    def _safe_send(self, *args, **kwargs) -> str:
+        try:
+            return self.send(*args, **kwargs)
+        except Exception as exc:
+            try:
+                diag_path = Path("runtime/c0d3r/diagnostics.log")
+                diag_path.parent.mkdir(parents=True, exist_ok=True)
+                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                with diag_path.open("a", encoding="utf-8") as fh:
+                    fh.write(f"[{ts}] send:error {exc}\n")
+            except Exception:
+                pass
+            raise
 
     def get_model_id(self) -> str:
         try:

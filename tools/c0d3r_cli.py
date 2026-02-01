@@ -17,6 +17,28 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _live_log_enabled() -> bool:
+    return os.getenv("C0D3R_LIVE_LOG", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _emit_live(message: str) -> None:
+    if not _live_log_enabled():
+        return
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {message}"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        log_path = Path("runtime/c0d3r/live.log")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="c0d3r",
@@ -154,12 +176,16 @@ def _run_tool_loop(
     require_tests = _requires_tests(prompt)
     for step in range(max_steps):
         usage_tracker.set_status("planning", f"step {step+1}/{max_steps}")
+        _emit_live(f"tool_loop step {step+1}/{max_steps}: preparing model prompt")
         tool_prompt = (
             "You can run local shell commands to inspect the repo and validate work. "
             "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
             "If you are done, set final to your response and commands to []. "
             "Always create minimal unit tests and run them before declaring success. "
             "Do not finalize until tests pass.\n"
+            "Work inside the current working directory. Do NOT create new project directories "
+            "or switch to other folders unless the user explicitly asks. "
+            "Prefer modifying existing files in the target project and running its tests.\n"
             "Meta commands available:\n"
             "- ::bg <command> (run long-lived command in background, returns pid)\n"
             "- ::wait_http <url> <seconds> (poll until HTTP 200 or timeout)\n"
@@ -178,15 +204,18 @@ def _run_tool_loop(
             + ("\n\nRecent outputs:\n" + "\n".join(history[-6:]) if history else "")
         )
         usage_tracker.add_input(tool_prompt)
+        _emit_live("tool_loop: calling model for commands")
         response = _call_with_timeout(
-            session.send,
+            session._safe_send,
             timeout_s=_model_timeout_s(),
             kwargs={"prompt": tool_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
         )
         if response is None:
+            _emit_live("tool_loop: model call timed out")
             history.append("note: model call timed out; retrying with shorter context")
             continue
         commands, final = _extract_commands(response)
+        _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
         if final and not commands:
             if _requires_commands_for_task(prompt) and not success:
                 history.append("note: commands required for this task; no final allowed without verified success")
@@ -196,6 +225,7 @@ def _run_tool_loop(
             return response
         for cmd in commands[:8]:
             usage_tracker.set_status("executing", cmd)
+            _emit_live(f"exec: {cmd}")
             if cmd.lower().startswith("cd "):
                 cmd = "::cd " + cmd[3:].strip()
             if ("mkdir" in cmd.lower() or "new-item" in cmd.lower()) and created_dirs:
@@ -242,6 +272,11 @@ def _run_tool_loop(
                     else:
                         code, stdout, stderr = run_command(normalized, cwd=workdir, timeout_s=_command_timeout_s(normalized))
                         _append_tool_log(log_path, normalized, code, stdout, stderr)
+            _emit_live(f"exec result: exit={code}")
+            if stdout.strip():
+                _emit_live(f"stdout: {stdout.strip()[:800]}")
+            if stderr.strip():
+                _emit_live(f"stderr: {stderr.strip()[:800]}")
             snippet = f"$ {cmd}\n(exit {code})\n{stdout.strip()}\n{stderr.strip()}".strip()
             history.append(snippet[:4000])
             if (workdir / "package.json").exists() and workdir not in known_projects:
@@ -404,7 +439,7 @@ def _run_scientific_loop(
     )
     usage_tracker.add_input(analysis_prompt)
     response = _call_with_timeout(
-        session.send,
+        session._safe_send,
         timeout_s=_model_timeout_s(),
         kwargs={
             "prompt": analysis_prompt,
@@ -553,6 +588,8 @@ def _run_repl(
     summary_path = Path("runtime/c0d3r/summary.txt")
     summary = summary_path.read_text(encoding="utf-8", errors="ignore") if summary_path.exists() else ""
     pending = initial_prompt
+    oneshot = os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}
+    minimal = oneshot or os.getenv("C0D3R_MINIMAL_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}
     allow_interrupt = sys.stdin.isatty() and initial_prompt is None
     header = HeaderRenderer(usage)
     header.render()
@@ -584,16 +621,19 @@ def _run_repl(
                 print(stderr.strip())
             continue
 
-        context = memory.build_context(summary)
+        context = ""
+        if not minimal:
+            context = memory.build_context(summary)
         try:
             from services.system_probe import system_probe_context
             probe_block = system_probe_context(workdir)
             context = f"{probe_block}\n{context}" if context else probe_block
         except Exception:
             pass
-        recall_hits = memory.search_if_referenced(prompt, limit=5)
-        if recall_hits:
-            context = context + "\n\n[recall]\n" + "\n".join(recall_hits)
+        if not minimal:
+            recall_hits = memory.search_if_referenced(prompt, limit=5)
+            if recall_hits:
+                context = context + "\n\n[recall]\n" + "\n".join(recall_hits)
         system = (
             "Role: You are a senior software engineer. The user is a project manager. "
             "Return ONLY JSON with keys: status_updates (list of short strings) and final (string). "
@@ -604,30 +644,45 @@ def _run_repl(
         usage.add_input(full_prompt)
         print("[status] Planning...")
         print("[status] Executing...")
+        _emit_live("repl: starting request")
         usage.set_status("planning", "routing + research")
         mode = _decide_mode(session, prompt, default_scientific=scientific, default_tool_loop=tool_loop)
         research_summary = ""
         if mode in {"tool_loop", "scientific"}:
             usage.set_status("research", "gathering references")
+            _emit_live("repl: pre-research starting")
             research_summary = _pre_research(session, prompt)
+            _emit_live("repl: pre-research complete")
         controller = InterruptController()
         if allow_interrupt:
             controller.start()
         try:
             if mode == "scientific":
                 usage.set_status("executing", "scientific analysis")
+                _emit_live("repl: scientific loop starting")
                 response = _run_scientific_loop(
                     session, full_prompt, workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
                 )
+                _emit_live("repl: scientific loop complete")
             elif mode == "tool_loop":
                 usage.set_status("executing", "local commands")
+                _emit_live("repl: tool loop starting")
                 response = _run_tool_loop(
                     session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
                     workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
                 )
+                _emit_live("repl: tool loop complete")
             else:
                 usage.set_status("executing", "direct response")
-                response = session.send(full_prompt, stream=False, system=system)
+                _emit_live("repl: direct model call starting")
+                response = _call_with_timeout(
+                    session._safe_send,
+                    timeout_s=_model_timeout_s(),
+                    kwargs={"prompt": full_prompt, "stream": False, "system": system},
+                )
+                if response is None:
+                    response = "Model call timed out. Try again or adjust C0D3R_MODEL_TIMEOUT_S."
+                _emit_live("repl: direct model call complete")
         finally:
             controller.stop()
         rendered = _render_json_response(response) or response
@@ -645,10 +700,13 @@ def _run_repl(
         _typewriter_print(rendered, usage, header=header, controller=controller)
         sys.stdout.write("\n")
         sys.stdout.flush()
-        memory.append(prompt, response)
-        summary = memory.update_summary(summary, prompt, response, session)
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(summary, encoding="utf-8")
+        if not minimal:
+            memory.append(prompt, response)
+            summary = memory.update_summary(summary, prompt, response, session)
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(summary, encoding="utf-8")
+        if oneshot:
+            return 0
 
 
 def _read_input(workdir: Path) -> str:
@@ -659,6 +717,8 @@ def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool
     """
     Ask a routing model to choose the best execution mode.
     """
+    if os.getenv("C0D3R_FORCE_DIRECT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return "direct"
     router_prompt = (
         "Return ONLY JSON: {\"mode\": \"tool_loop|direct|scientific\"}.\n"
         "Choose scientific for repo inspection/summaries with evidence bundles. "
@@ -689,7 +749,7 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
     )
     try:
         response = _call_with_timeout(
-            session.send,
+            session._safe_send,
             timeout_s=_model_timeout_s(),
             kwargs={"prompt": research_prompt, "stream": False, "research_override": True},
         )
