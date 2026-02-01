@@ -143,6 +143,10 @@ def main(argv: List[str] | None = None) -> int:
         **settings,
     )
     usage = UsageTracker(model_id=session.get_model_id())
+    header = HeaderRenderer(usage)
+    header.render()
+    _emit_live("boot: header rendered")
+    _refresh_pricing_cache(session, header, session.get_model_id())
     math_block = ""
     if settings.get("math_grounding", True):
         _emit_live("boot: math grounding")
@@ -158,6 +162,7 @@ def main(argv: List[str] | None = None) -> int:
         scientific=scientific,
         tool_loop=tool_loop,
         initial_prompt=prompt or None,
+        header=header,
     )
 
 
@@ -974,10 +979,31 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
         "provide symbolic placeholders AND at least 3 research_questions to "
         "identify missing constants/relations."
     )
+    def _heartbeat(label: str, stop_event: threading.Event, interval: float = 5.0) -> threading.Thread:
+        def _runner():
+            tick = 0
+            while not stop_event.is_set():
+                _emit_live(f"{label}... ({tick * interval:.0f}s)")
+                stop_event.wait(interval)
+                tick += 1
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        return t
+
+    _emit_live("math_grounding: model pass 1 (equations)")
     try:
+        stop = threading.Event()
+        _heartbeat("math_grounding: awaiting model pass 1", stop)
         raw = session.send(prompt=base_request, stream=False, system=system)
+        stop.set()
         payload = _safe_json(raw)
-    except Exception:
+    except Exception as exc:
+        try:
+            stop.set()
+        except Exception:
+            pass
+        _emit_live(f"math_grounding: model pass 1 error: {exc}")
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
@@ -987,13 +1013,23 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
             f"Find equations, constants, or constraints needed to model: {base_request}"
         ]
     research_notes = ""
+    _emit_live("math_grounding: research starting")
     try:
+        stop = threading.Event()
+        _heartbeat("math_grounding: awaiting research", stop)
         # Use internal research pipeline to build evidence
         queries = "\n".join(str(q) for q in research_questions[:6])
         research_notes = session._c0d3r._research(queries)
+        stop.set()
     except Exception:
+        try:
+            stop.set()
+        except Exception:
+            pass
         research_notes = ""
+    _emit_live("math_grounding: research complete")
     if research_notes:
+        _emit_live("math_grounding: model pass 2 (equations from research)")
         system2 = (
             "Return ONLY JSON with keys: equations (list), constraints (list), "
             "gap_fill_steps (list), research_links (list). "
@@ -1188,6 +1224,7 @@ def _run_repl(
     scientific: bool,
     tool_loop: bool,
     initial_prompt: str | None = None,
+    header: "HeaderRenderer | None" = None,
 ) -> int:
     from services.conversation_memory import ConversationMemory
 
@@ -1198,7 +1235,7 @@ def _run_repl(
     oneshot = os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}
     minimal = oneshot or os.getenv("C0D3R_MINIMAL_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}
     allow_interrupt = sys.stdin.isatty() and initial_prompt is None
-    header = HeaderRenderer(usage)
+    header = header or HeaderRenderer(usage)
     budget = BudgetTracker(header.budget_usd)
     budget.enabled = header.budget_enabled
     header.render()
@@ -1266,6 +1303,7 @@ def _run_repl(
             else:
                 _emit_live("repl: pre-research starting")
                 research_summary = _pre_research(session, prompt)
+                _emit_live(f"repl: pre-research complete (len={len(research_summary)})")
                 _emit_live("repl: pre-research complete")
         controller = InterruptController()
         if allow_interrupt:
@@ -1350,6 +1388,68 @@ def _read_input(workdir: Path) -> str:
     return input(f"[{workdir}]> ")
 
 
+_PRICING_REFRESHED: set[str] = set()
+
+
+def _is_pricing_stale(pricing) -> bool:
+    if not pricing or not getattr(pricing, "as_of", None):
+        return True
+    raw = str(pricing.as_of)
+    try:
+        if len(raw) == 7:
+            as_of = datetime.datetime.strptime(raw, "%Y-%m")
+        else:
+            as_of = datetime.datetime.strptime(raw, "%Y-%m-%d")
+        now = datetime.datetime.utcnow()
+        return as_of.year != now.year or as_of.month != now.month
+    except Exception:
+        return True
+
+
+def _refresh_pricing_cache(session: C0d3rSession, header: "HeaderRenderer", model_id: str) -> None:
+    from services.bedrock_pricing import lookup_pricing, ModelPricing, cache_pricing
+
+    if not model_id or model_id in _PRICING_REFRESHED:
+        return
+    _PRICING_REFRESHED.add(model_id)
+    pricing = lookup_pricing(model_id)
+    if pricing and not _is_pricing_stale(pricing):
+        return
+    _emit_live("pricing: research starting")
+    query = (
+        f"Find the latest published pricing (current month if available) for AWS Bedrock model {model_id}. "
+        "Return authoritative source URL."
+    )
+    research = ""
+    try:
+        research = session._c0d3r._research(query)
+    except Exception:
+        research = ""
+    system = (
+        "Return ONLY JSON with keys: input_per_1k (number), output_per_1k (number), "
+        "source_url (string), as_of (YYYY-MM or YYYY-MM-DD). "
+        "Use the latest month published. If unknown, return null values."
+    )
+    try:
+        response = session.send(prompt=f"Research:\n{research}\n\nModel: {model_id}", stream=False, system=system)
+        payload = _safe_json(response)
+    except Exception:
+        payload = {}
+    try:
+        inp = float(payload.get("input_per_1k"))
+        outp = float(payload.get("output_per_1k"))
+        source = str(payload.get("source_url") or "")
+        as_of = str(payload.get("as_of") or "")
+        if inp > 0 and outp > 0 and source and as_of:
+            cache_pricing(model_id, ModelPricing(inp, outp, source, as_of))
+            _emit_live("pricing: cache updated")
+            header.update()
+        else:
+            _emit_live("pricing: research incomplete; keeping existing rates")
+    except Exception:
+        _emit_live("pricing: research parse failed")
+
+
 def _prompt_budget_choice(budget_usd: float) -> str:
     print(f"\nBudget reached (${budget_usd:.2f}). Choose:")
     print("1) Continue with current budget")
@@ -1411,15 +1511,30 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
         f"Task: {prompt}"
     )
     try:
+        _emit_live("pre_research: model call starting")
+        stop = threading.Event()
+        def _heartbeat():
+            tick = 0
+            while not stop.is_set():
+                _emit_live(f"pre_research: waiting... ({tick * 5:.0f}s)")
+                stop.wait(5.0)
+                tick += 1
+        t = threading.Thread(target=_heartbeat, daemon=True)
+        t.start()
         response = _call_with_timeout(
             session._safe_send,
             timeout_s=_model_timeout_s(),
             kwargs={"prompt": research_prompt, "stream": False, "research_override": True},
         )
+        stop.set()
         if response:
             _append_bibliography_from_text(response)
         return response or ""
     except Exception:
+        try:
+            stop.set()
+        except Exception:
+            pass
         return ""
 
 
