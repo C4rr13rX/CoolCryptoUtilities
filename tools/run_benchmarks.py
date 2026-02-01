@@ -42,10 +42,19 @@ def run_prompt(name: str, prompt: str, timeout_s: int = 1800) -> tuple[bool, flo
     log_path = logs_dir / f"{name}.out.log"
     err_path = logs_dir / f"{name}.err.log"
     bench_root = DEFAULT_BENCH_ROOT / name
+    # Ensure we never run benchmarks inside the repo.
+    try:
+        if str(bench_root).startswith(str(ROOT)):
+            bench_root = Path("C:/Users/Adam/Projects/c0d3r_benchmarks") / name
+    except Exception:
+        bench_root = Path("C:/Users/Adam/Projects/c0d3r_benchmarks") / name
     bench_root.mkdir(parents=True, exist_ok=True)
     script_path.write_text(
-        f'cd /d "{bench_root}"\n'
-        f'c0d3r "{prompt}"\n'
+        f'$ErrorActionPreference = "Continue"\n'
+        f'Set-Location -Path "{bench_root}"\n'
+        f'$out = "{log_path}"\n'
+        f'$err = "{err_path}"\n'
+        f'c0d3r "{prompt}" 1> $out 2> $err\n'
         "exit $LASTEXITCODE\n",
         encoding="utf-8",
     )
@@ -60,10 +69,6 @@ def run_prompt(name: str, prompt: str, timeout_s: int = 1800) -> tuple[bool, flo
         "-Verb",
         "RunAs",
         "-Wait",
-        "-RedirectStandardOutput",
-        str(log_path),
-        "-RedirectStandardError",
-        str(err_path),
     ]
     start = time.time()
     try:
