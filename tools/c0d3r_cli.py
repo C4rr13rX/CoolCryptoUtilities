@@ -106,6 +106,8 @@ def main(argv: List[str] | None = None) -> int:
 
     workdir = Path(args.workdir or os.getcwd()).resolve()
     os.environ.setdefault("C0D3R_ROOT_CWD", str(workdir))
+    if _requires_rigorous_constraints(prompt):
+        settings["rigorous_mode"] = True
     scientific = args.scientific or (os.getenv("C0D3R_SCIENTIFIC_MODE", "1").strip().lower() not in {"0", "false", "no", "off"})
     if args.no_scientific:
         scientific = False
@@ -133,6 +135,11 @@ def main(argv: List[str] | None = None) -> int:
         **settings,
     )
     usage = UsageTracker(model_id=session.get_model_id())
+    math_block = ""
+    if settings.get("math_grounding", True):
+        math_block = _math_grounding_block(session, prompt, workdir)
+    if math_block:
+        prompt = f"{math_block}\n\n{prompt}"
     return _run_repl(
         session,
         usage,
@@ -226,6 +233,7 @@ def _run_tool_loop(
                 history.append("[research]\n" + research_note[:2000])
                 _append_research_notes(research_note)
         enforce_progress = consecutive_no_progress >= 2 and full_completion
+        base_request = _strip_context_block(prompt)
         tool_prompt = (
             "You can run local shell commands to inspect the repo and validate work. "
             "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
@@ -233,23 +241,37 @@ def _run_tool_loop(
             "Always create minimal unit tests with representative sample (foo) data and run them "
             "after each file write, and again before declaring success. "
             "Do not finalize until tests pass.\n"
-            "Create and maintain a checklist of requirements in your reasoning. "
+            + (
+                "This request requires rigorous mathematical/engineering constraints. "
+                "Use explicit assumptions, invariants, and verification steps. "
+                "Prioritize research, formal reasoning, and validation before coding. "
+                "Do NOT shortcut with stubs or placeholders.\n"
+                if _requires_rigorous_constraints(prompt)
+                else ""
+            )
+            + "Create and maintain a checklist of requirements in your reasoning. "
             "Before finalizing, explicitly verify each checklist item is complete. "
             "If incomplete, keep working and iterate. "
             "It is OK to loop across tasks if they depend on each other.\n"
             "Create and update these files in runtime/c0d3r:\n"
             "- plan.md (expanded plan)\n"
             "- checklist.md (requirements checklist + verification notes)\n"
+            "- bibliography.md (APA citations for any research/software used)\n"
             "Do not finalize until these files exist and are updated.\n"
             "Work inside the current working directory. Do NOT create new project directories "
             "or switch to other folders unless the user explicitly asks. "
             "Prefer modifying existing files in the target project and running its tests.\n"
             "If any errors or missing knowledge are detected, perform targeted research and "
             "record source->decision->code in checklist.md before continuing.\n"
+            "If code/data is derived from research, add APA-formatted citations in code comments "
+            "and append them to runtime/c0d3r/bibliography.md.\n"
+            "If third-party libraries or datasets are added, record license obligations in "
+            "runtime/c0d3r/bibliography.md and include required license files/notices in the repo.\n"
             + (
                 "The request includes 'outperforms' or 'novel' claims. "
                 "You must create a benchmark script that compares your solver to a baseline "
-                "on the same generated dataset, and write results to runtime/c0d3r/benchmarks.json. "
+                "on the same generated dataset, and write results to runtime/c0d3r/benchmarks.json "
+                "including keys: generated_by, baseline, candidate, dataset, metrics. "
                 "Do not finalize without that file.\n"
                 if require_benchmark
                 else ""
@@ -269,39 +291,100 @@ def _run_tool_loop(
             "4) ::bg npx @ionic/cli@latest serve --no-open --port <port>\n"
             "5) ::wait_http http://localhost:<port> 120\n"
             f"Step {step + 1}/{max_steps}.\n"
-            f"Request:\n{prompt}\n"
+            f"Request:\n{base_request}\n"
             + ("\n\nRecent outputs:\n" + "\n".join(history[-6:]) if history else "")
             + (f"\n\n[gap_score]\n{gap_score}\n[last_error]\n{last_error}" if gap_score or last_error else "")
         )
+        if model_timeouts >= 2:
+            tool_prompt = (
+                "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+                "Provide 2-6 concrete shell commands. Do not return an empty list.\n"
+                f"Request:\n{base_request}\n"
+            )
         usage_tracker.add_input(tool_prompt)
         _emit_live("tool_loop: calling model for commands")
         _diag_log("tool_loop: model call start")
-        response = _call_with_timeout(
-            session._safe_send,
-            timeout_s=_model_timeout_s(),
-            kwargs={"prompt": tool_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-        )
+        if _requires_rigorous_constraints(prompt):
+            command_model = os.getenv("C0D3R_COMMAND_MODEL", "mistral.mistral-large-3-675b-instruct")
+            saved_model = getattr(session._c0d3r, "model_id", "")
+            saved_multi = getattr(session._c0d3r, "multi_model", True)
+            saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
+            saved_profile = getattr(session._c0d3r, "inference_profile", "")
+            try:
+                session._c0d3r.model_id = command_model
+                session._c0d3r.multi_model = False
+                session._c0d3r.rigorous_mode = False
+                session._c0d3r.inference_profile = ""
+                response = _call_with_timeout(
+                    session._safe_send,
+                    timeout_s=_model_timeout_s(),
+                    kwargs={"prompt": tool_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
+                )
+            finally:
+                session._c0d3r.model_id = saved_model
+                session._c0d3r.multi_model = saved_multi
+                session._c0d3r.rigorous_mode = saved_rigorous
+                session._c0d3r.inference_profile = saved_profile
+        else:
+            response = _call_with_timeout(
+                session._safe_send,
+                timeout_s=_model_timeout_s(),
+                kwargs={"prompt": tool_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
+            )
         if response is None:
             _emit_live("tool_loop: model call timed out")
             _diag_log("tool_loop: model call timeout")
             last_error = f"model call timed out after {_model_timeout_s()}s"
             model_timeouts += 1
+            if model_timeouts >= 3:
+                fallback_model = os.getenv("C0D3R_TOOL_FALLBACK_MODEL", "mistral.mistral-large-3-675b-instruct")
+                try:
+                    session._c0d3r.rigorous_mode = False
+                    session._c0d3r.model_id = fallback_model
+                    _emit_live(f"tool_loop: switching to fallback model {fallback_model}")
+                except Exception:
+                    pass
             history.append("note: model call timed out; retrying with shorter context")
             mini_prompt = (
                 "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
                 "Focus on executing the request with minimal steps.\n"
                 f"Request:\n{prompt}\n"
             )
-            response = _call_with_timeout(
-                session._safe_send,
-                timeout_s=max(10.0, _model_timeout_s() / 2),
-                kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-            )
+            if _requires_rigorous_constraints(prompt):
+                command_model = os.getenv("C0D3R_COMMAND_MODEL", "mistral.mistral-large-3-675b-instruct")
+                saved_model = getattr(session._c0d3r, "model_id", "")
+                saved_multi = getattr(session._c0d3r, "multi_model", True)
+                saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
+                saved_profile = getattr(session._c0d3r, "inference_profile", "")
+                try:
+                    session._c0d3r.model_id = command_model
+                    session._c0d3r.multi_model = False
+                    session._c0d3r.rigorous_mode = False
+                    session._c0d3r.inference_profile = ""
+                    response = _call_with_timeout(
+                        session._safe_send,
+                        timeout_s=max(10.0, _model_timeout_s() / 2),
+                        kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
+                    )
+                finally:
+                    session._c0d3r.model_id = saved_model
+                    session._c0d3r.multi_model = saved_multi
+                    session._c0d3r.rigorous_mode = saved_rigorous
+                    session._c0d3r.inference_profile = saved_profile
+            else:
+                response = _call_with_timeout(
+                    session._safe_send,
+                    timeout_s=max(10.0, _model_timeout_s() / 2),
+                    kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
+                )
             if response is None:
                 _emit_live("tool_loop: minimal prompt timed out")
                 _diag_log("tool_loop: minimal prompt timeout")
                 last_error = "model call timed out (minimal prompt)"
                 model_timeouts += 1
+                if model_timeouts >= 5:
+                    _emit_live("tool_loop: repeated timeouts; backing off for 3s")
+                    time.sleep(3.0)
                 continue
         _diag_log("tool_loop: model call complete")
         commands, final = _extract_commands(response)
@@ -332,7 +415,19 @@ def _run_tool_loop(
             if full_completion and require_tests and not _tests_passed_recently():
                 history.append("note: recent tests did not pass; re-run tests and fix failures before finalizing")
                 continue
-            return final
+            if full_completion and _disallow_placeholder_code(workdir):
+                history.append("note: placeholder implementation detected; implement real logic before finalizing")
+                continue
+        if full_completion and _has_empty_tests(workdir):
+            history.append("note: empty test files detected; add real tests before finalizing")
+            continue
+        if full_completion and _requires_rigorous_constraints(prompt) and not _unbounded_math_ready():
+            history.append("note: missing equations/research links; unbounded resolver must populate them")
+            continue
+        if full_completion and _requires_rigorous_constraints(prompt) and not _equation_graph_ready():
+            history.append("note: equation graph is empty; ingestion must populate it before finalizing")
+            continue
+        return final
         if not commands and not final:
             no_command_count += 1
             if full_completion:
@@ -341,15 +436,76 @@ def _run_tool_loop(
                 research_note = _pre_research(session, prompt)
                 if research_note:
                     history.append("[research]\n" + research_note[:2000])
-                continue
-            return response
+                _emit_live("tool_loop: requesting command generator due to empty commands")
+                alt_model = os.getenv("C0D3R_COMMAND_MODEL", "anthropic.claude-opus-4-20250514-v1:0")
+                saved_model = getattr(session._c0d3r, "model_id", "")
+                saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
+                try:
+                    session._c0d3r.rigorous_mode = False
+                    resolver = getattr(session._c0d3r, "_resolve_profile_cached", None)
+                    resolved_model = resolver(alt_model) if callable(resolver) else alt_model
+                    session._c0d3r.model_id = resolved_model
+                    saved_profile = getattr(session._c0d3r, "inference_profile", "")
+                    session._c0d3r.inference_profile = ""
+                    base_request = _strip_context_block(prompt)
+                    emergency_prompt = (
+                        "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+                        "Provide 2-5 concrete shell commands to make progress on the task. "
+                        "Do NOT return an empty commands list.\n"
+                        f"CWD: {workdir}\n"
+                        f"Request:\n{base_request}\n"
+                    )
+                    try:
+                        raw = session._c0d3r._invoke_model(resolved_model, emergency_prompt, images=images)
+                    except Exception:
+                        raw = ""
+                    if raw:
+                        commands, final = _extract_commands(raw)
+                        _save_empty_commands_response(raw)
+                finally:
+                    session._c0d3r.model_id = saved_model
+                    session._c0d3r.rigorous_mode = saved_rigorous
+                    try:
+                        session._c0d3r.inference_profile = saved_profile
+                    except Exception:
+                        pass
+                if not commands:
+                    _emit_live("tool_loop: command generator still empty; using fallback inspection commands")
+                    commands = _fallback_inspection_commands(workdir)
+                    final = ""
+            else:
+                return response
         if commands:
             no_command_count = 0
         if no_command_count >= 2:
-            _emit_live("tool_loop: no commands twice; running fallback inspection commands")
-            fallback = _fallback_inspection_commands(workdir)
-            commands = fallback
-            final = ""
+            _emit_live("tool_loop: no commands twice; switching to command-generator model")
+            alt_model = os.getenv("C0D3R_COMMAND_MODEL", "anthropic.claude-opus-4-20250514-v1:0")
+            saved_model = getattr(session._c0d3r, "model_id", "")
+            saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
+            try:
+                session._c0d3r.rigorous_mode = False
+                session._c0d3r.model_id = alt_model
+                emergency_prompt = (
+                    "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+                    "Provide 2-5 concrete shell commands to make progress on the task. "
+                    "Do NOT return an empty commands list.\n"
+                    f"Request:\n{prompt}\n"
+                )
+                response = _call_with_timeout(
+                    session._safe_send,
+                    timeout_s=max(20.0, _model_timeout_s()),
+                    kwargs={"prompt": emergency_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
+                )
+                if response:
+                    commands, final = _extract_commands(response)
+            finally:
+                session._c0d3r.model_id = saved_model
+                session._c0d3r.rigorous_mode = saved_rigorous
+            if not commands:
+                _emit_live("tool_loop: command-generator still empty; running fallback inspection commands")
+                fallback = _fallback_inspection_commands(workdir)
+                commands = fallback
+                final = ""
         if commands and _commands_only_runtime(commands):
             history.append("note: commands only touch runtime/c0d3r; must operate on project files too")
             _emit_live("tool_loop: commands only touched runtime; inserting inspection commands")
@@ -384,11 +540,19 @@ def _run_tool_loop(
                 history.append("note: benchmarks.json must be generated by running a benchmark script, not echo")
                 _append_tool_log(log_path, cmd, 1, "", "blocked: echo > benchmarks.json")
                 continue
+            if _requires_rigorous_constraints(prompt) and cmd.lower().strip().startswith("touch ") and "tests" in cmd.lower():
+                history.append("note: empty test file creation blocked; write real tests instead")
+                _append_tool_log(log_path, cmd, 1, "", "blocked: touch test file")
+                continue
+            if _requires_rigorous_constraints(prompt) and cmd.lower().strip().startswith("touch ") and ".py" in cmd.lower():
+                history.append("note: empty source file creation blocked; write real code instead")
+                _append_tool_log(log_path, cmd, 1, "", "blocked: touch sat source")
+                continue
             if "pip install" in cmd.lower() and ("sat" in prompt.lower()) and ("django" in cmd.lower()):
                 history.append("note: pip install for Django packages blocked for SAT task; use confcutdir for tests")
                 _append_tool_log(log_path, cmd, 1, "", "blocked: unrelated pip install")
                 continue
-            if "pytest" in cmd.lower() and _is_sat_prompt(prompt):
+            if "pytest" in cmd.lower() and _requires_rigorous_constraints(prompt):
                 history.append("note: pytest command from model blocked; c0d3r runs targeted tests with confcutdir")
                 _append_tool_log(log_path, cmd, 1, "", "blocked: pytest command")
                 continue
@@ -523,15 +687,6 @@ def _run_tool_loop(
                     history.append("error: tests failed after write; fix and re-run before continuing")
                     test_failures += 1
                     break
-        if require_tests and test_failures >= 2 and _is_sat_prompt(prompt):
-            _emit_live("auto-remediation: applying SAT template to resolve repeated test failures")
-            ok = _apply_sat_template(workdir, run_command, usage_tracker, log_path)
-            if ok:
-                history.append("note: SAT template applied and tests passed; returning final response")
-                return (
-                    "Complete: SAT template applied with DPLL-based solver, generator, tests, and benchmark. "
-                    "Tests passed and benchmarks written to runtime/c0d3r/benchmarks.json."
-                )
         if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
             _emit_live("unbounded: detected spiral; building bounded objective matrix")
             unbounded_payload = _resolve_unbounded_request(session, prompt)
@@ -565,9 +720,18 @@ def _normalize_command(cmd: str, workdir: Path) -> str:
     """
     if os.name != "nt":
         return cmd
+    # Split chained commands for PowerShell.
+    if "&&" in cmd:
+        parts = [p.strip() for p in cmd.split("&&") if p.strip()]
+        normalized_parts = [_normalize_command(p, workdir) for p in parts]
+        normalized_parts = [p for p in normalized_parts if p]
+        return " ; ".join(normalized_parts)
+    # Remove shell activation steps that don't apply in non-interactive runs.
+    if "venv\\Scripts\\activate" in cmd or "venv/Scripts/activate" in cmd:
+        cmd = cmd.replace("venv\\Scripts\\activate", "").replace("venv/Scripts/activate", "").strip()
     # Expand multi-arg mkdir into separate New-Item calls.
     if cmd.lower().startswith("mkdir "):
-        parts = cmd.split()[1:]
+        parts = [p for p in cmd.split()[1:] if p not in {"-p", "--parents"}]
         if parts:
             targets = [p.strip().strip('"') for p in parts]
             commands = []
@@ -711,7 +875,18 @@ def _extract_commands(text: str) -> Tuple[List[str], str]:
     try:
         import json
 
-        payload = json.loads(_extract_json(text))
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+        if cleaned.startswith("[") and cleaned.endswith("]"):
+            try:
+                payload_list = json.loads(cleaned)
+                if isinstance(payload_list, list):
+                    commands = [str(c) for c in payload_list if str(c).strip()]
+                    return commands, ""
+            except Exception:
+                pass
+        payload = json.loads(_extract_json(cleaned))
         commands = payload.get("commands") or []
         if isinstance(commands, list):
             commands = [str(c) for c in commands if str(c).strip()]
@@ -728,6 +903,14 @@ def _extract_commands(text: str) -> Tuple[List[str], str]:
             if cmd_match:
                 inner = cmd_match.group(1)
                 commands = [c.strip().strip('"') for c in inner.split(",") if c.strip()]
+            if not commands:
+                # Fallback: parse bullet/numbered lists as commands
+                lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                for ln in lines:
+                    if ln.startswith(("-", "*")):
+                        commands.append(ln.lstrip("-* ").strip())
+                    elif re.match(r"^\d+\.\s+", ln):
+                        commands.append(re.sub(r"^\d+\.\s+", "", ln))
             final_match = re.search(r'"final"\s*:\s*"(.+)"', text, re.S)
             if final_match:
                 final = final_match.group(1).strip()
@@ -752,6 +935,152 @@ def _safe_json(text: str):
         return _json.loads(_extract_json(text))
     except Exception:
         return {}
+
+
+def _strip_context_block(prompt: str) -> str:
+    if not prompt:
+        return ""
+    marker = "User request:"
+    if marker in prompt:
+        return prompt.split(marker, 1)[-1].strip()
+    return prompt.strip()
+
+
+def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> str:
+    """
+    Convert the prompt into mathematical form, solve with local tools when possible,
+    and return a grounding block to prepend to the request.
+    """
+    base_request = _strip_context_block(prompt)
+    system = (
+        "Return ONLY JSON with keys: variables (list), unknowns (list), "
+        "equations (list of strings), constraints (list), "
+        "mapping (list), research_questions (list). "
+        "Express the request as math; if you cannot form explicit equations, "
+        "provide symbolic placeholders AND at least 3 research_questions to "
+        "identify missing constants/relations."
+    )
+    try:
+        raw = session.send(prompt=base_request, stream=False, system=system)
+        payload = _safe_json(raw)
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    research_questions = payload.get("research_questions") or []
+    if not research_questions:
+        research_questions = [
+            f"Find equations, constants, or constraints needed to model: {base_request}"
+        ]
+    research_notes = ""
+    try:
+        # Use internal research pipeline to build evidence
+        queries = "\n".join(str(q) for q in research_questions[:6])
+        research_notes = session._c0d3r._research(queries)
+    except Exception:
+        research_notes = ""
+    if research_notes:
+        system2 = (
+            "Return ONLY JSON with keys: equations (list), constraints (list), "
+            "gap_fill_steps (list), research_links (list). "
+            "Convert the research into explicit equations and constraints."
+        )
+        try:
+            raw2 = session.send(
+                prompt=f"Request:\n{base_request}\n\nResearch:\n{research_notes}",
+                stream=False,
+                system=system2,
+            )
+            payload2 = _safe_json(raw2)
+            if isinstance(payload2, dict):
+                for key in ("equations", "constraints", "gap_fill_steps", "research_links"):
+                    if payload2.get(key):
+                        payload[key] = payload2.get(key)
+        except Exception:
+            pass
+        if not payload.get("research_links"):
+            try:
+                links = re.findall(r"https?://[^\s\]\)\"']+", research_notes)
+                if links:
+                    payload["research_links"] = links
+            except Exception:
+                pass
+        try:
+            from services.equation_graph import ingest_equations, extract_equations
+
+            if not payload.get("equations"):
+                payload["equations"] = extract_equations(research_notes)
+            for link in payload.get("research_links") or []:
+                ingest_equations(
+                    research_notes,
+                    source_title="Research Notes",
+                    source_url=str(link),
+                    discipline_tags=["cross-disciplinary"],
+                    raw_excerpt=research_notes[:1000],
+                )
+        except Exception:
+            pass
+
+    solutions = []
+    try:
+        import sympy as _sp
+
+        eqs = []
+        symbols = {}
+        for eq in payload.get("equations") or []:
+            try:
+                if "=" in eq:
+                    left, right = eq.split("=", 1)
+                    expr = _sp.Eq(_sp.sympify(left), _sp.sympify(right))
+                else:
+                    expr = _sp.sympify(eq)
+                eqs.append(expr)
+            except Exception:
+                continue
+        for var in payload.get("unknowns") or []:
+            try:
+                symbols[str(var)] = _sp.symbols(str(var))
+            except Exception:
+                continue
+        if eqs and symbols:
+            try:
+                sol = _sp.solve(eqs, list(symbols.values()), dict=True)
+                solutions = sol if isinstance(sol, list) else [sol]
+            except Exception:
+                solutions = []
+    except Exception:
+        solutions = []
+
+    record = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "request": base_request,
+        "variables": payload.get("variables") or [],
+        "unknowns": payload.get("unknowns") or [],
+        "equations": payload.get("equations") or [],
+        "constraints": payload.get("constraints") or [],
+        "gap_fill_steps": payload.get("gap_fill_steps") or [],
+        "research_links": payload.get("research_links") or [],
+        "solutions": solutions,
+    }
+    try:
+        out_dir = Path("runtime/c0d3r")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "math_grounding.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+        with (out_dir / "math_grounding_history.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+    block = [
+        "[math_grounding]",
+        f"variables: {record['variables']}",
+        f"unknowns: {record['unknowns']}",
+        f"equations: {record['equations']}",
+        f"constraints: {record['constraints']}",
+        f"gap_fill_steps: {record['gap_fill_steps']}",
+        f"research_links: {record['research_links']}",
+        f"solutions: {record['solutions']}",
+    ]
+    return "\n".join(block)
 
 
 def _typewriter_callback(usage, header=None, controller=None):
@@ -784,6 +1113,20 @@ def _typewriter_print(text: str, usage, header=None, controller=None) -> None:
     if text and not text.endswith("\n"):
         sys.stdout.write("\n")
         sys.stdout.flush()
+
+
+def _save_empty_commands_response(text: str) -> None:
+    try:
+        if not text:
+            return
+        path = Path("runtime/c0d3r/empty_commands_response.txt")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"\n--- {ts} ---\n")
+            fh.write(text.strip() + "\n")
+    except Exception:
+        pass
 
 
 def _render_json_response(text: str) -> str:
@@ -1057,6 +1400,8 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
             timeout_s=_model_timeout_s(),
             kwargs={"prompt": research_prompt, "stream": False, "research_override": True},
         )
+        if response:
+            _append_bibliography_from_text(response)
         return response or ""
     except Exception:
         return ""
@@ -1258,6 +1603,33 @@ def _commands_only_runtime(commands: List[str]) -> bool:
     return True
 
 
+def _unbounded_math_ready() -> bool:
+    """
+    Ensure unbounded resolver produced equations + research links and they are persisted.
+    """
+    try:
+        payload_path = Path("runtime/c0d3r/unbounded_payload.json")
+        if not payload_path.exists():
+            return False
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        equations = payload.get("equations") or []
+        links = payload.get("research_links") or []
+        if not equations or not links:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _equation_graph_ready() -> bool:
+    try:
+        from core.models import Equation
+
+        return Equation.objects.exists()
+    except Exception:
+        return False
+
+
 def _prompt_allows_new_dirs(prompt: str) -> bool:
     lower = (prompt or "").lower()
     return "new directory" in lower or "new folder" in lower or "create a new directory" in lower
@@ -1268,6 +1640,29 @@ def _requires_benchmark(prompt: str) -> bool:
     return "outperform" in lower or "outperforms" in lower or "novel" in lower
 
 
+def _requires_rigorous_constraints(prompt: str) -> bool:
+    """
+    Detect requests that demand rigorous mathematical/engineering constraints
+    and should trigger heavy research + verification.
+    """
+    lower = (prompt or "").lower()
+    triggers = [
+        "novel",
+        "outperform",
+        "outperforms",
+        "algorithm",
+        "theorem",
+        "proof",
+        "unsat",
+        "sat ",
+        "satisfiability",
+        "optimal",
+        "optimality",
+        "correctness",
+    ]
+    return any(t in lower for t in triggers)
+
+
 def _benchmark_evidence_present() -> bool:
     path = Path("runtime/c0d3r/benchmarks.json")
     if not path.exists():
@@ -1275,9 +1670,12 @@ def _benchmark_evidence_present() -> bool:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        _diag_log(f"auto-remediation failed: {exc}")
+        _diag_log(f"benchmark parse failed: {exc}")
         return False
     if not isinstance(payload, dict):
+        return False
+    # Require explicit metadata from the benchmark script
+    if "generated_by" not in payload:
         return False
     if not ("baseline" in payload and "candidate" in payload):
         return False
@@ -1440,9 +1838,37 @@ def _is_benchmark_echo(cmd: str) -> bool:
     return ("benchmarks.json" in lower) and ("echo " in lower or "set-content" in lower or "add-content" in lower)
 
 
-def _is_sat_prompt(prompt: str) -> bool:
-    lower = (prompt or "").lower()
-    return "sat" in lower and ("solver" in lower or "unsat" in lower)
+def _disallow_placeholder_code(workdir: Path) -> bool:
+    try:
+        for path in workdir.rglob("*.py"):
+            if "runtime" in str(path).replace("\\", "/"):
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            lower = text.lower()
+            if "todo" in lower:
+                return True
+            if "return true  # simplified" in lower or "return true # simplified" in lower:
+                return True
+            if "return false  # simplified" in lower or "return false # simplified" in lower:
+                return True
+            if "pass  # stub" in lower or "pass  # todo" in lower:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _has_empty_tests(workdir: Path) -> bool:
+    try:
+        tests_dir = workdir / "tests"
+        if not tests_dir.exists():
+            return True
+        for path in tests_dir.rglob("test*.py"):
+            if path.stat().st_size == 0:
+                return True
+        return False
+    except Exception:
+        return True
 
 
 def _unbounded_trigger(no_progress: int, test_failures: int, model_timeouts: int) -> bool:
@@ -1452,13 +1878,19 @@ def _unbounded_trigger(no_progress: int, test_failures: int, model_timeouts: int
 def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | None:
     system = (
         "Return ONLY JSON with keys: branches (list), matrix (list of rows), "
-        "integrated_mechanics (list), anomalies (list), hypotheses (list), "
-        "bounded_task (string), constraints (list), next_steps (list). "
+        "integrated_mechanics (list), equations (list), gap_fill_steps (list), "
+        "research_links (list), anomalies (list), hypotheses (list), "
+        "experiments (list), decision_criteria (list), candidate_nodes (list), "
+        "selected_node (object), bounded_task (string), constraints (list), next_steps (list). "
         "branches must name 4 disciplines + critical thinking psychology + neuroscience of engineering. "
-        "First integrate mechanics across disciplines (integrated_mechanics). "
-        "Only then list anomalies/paradoxes nearest to those mechanics. "
-        "Derive hypotheses that reconcile paradoxes with proven mechanics. "
-        "If no hypothesis is strong, include next_steps to continue. "
+        "Treat the problem as a mathematical traversal of a multi-disciplinary knowledge matrix. "
+        "First integrate mechanics across disciplines (integrated_mechanics), then express them as "
+        "explicit equations (equations). Fill gaps between equations by proposing bridging equations "
+        "and tests (gap_fill_steps). Only then list anomalies/paradoxes nearest to those mechanics, "
+        "and derive hypotheses that reconcile paradoxes with proven mechanics. "
+        "Use experiments to refine hypotheses. Build candidate_nodes as objects with fields: "
+        "{id, rationale, supporting_mechanics, tests, score_0_1}. "
+        "selected_node must be the best-scoring candidate and explain why it matches the request. "
         "matrix rows should be compact (discipline, axis_x, axis_y, axis_z, axis_w, insight). "
         "bounded_task must be a concrete, testable task with explicit completion criteria."
     )
@@ -1467,13 +1899,20 @@ def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | Non
         payload = _safe_json(response)
         if not isinstance(payload, dict):
             return None
+        if not payload.get("selected_node") and payload.get("candidate_nodes"):
+            try:
+                nodes = payload.get("candidate_nodes") or []
+                best = max(nodes, key=lambda n: float(n.get("score_0_1") or 0))
+                payload["selected_node"] = best
+            except Exception:
+                pass
         # If no hypotheses, prompt once more for next-step refinement.
         if not (payload.get("hypotheses") or payload.get("bounded_task")):
             followup = session.send(
                 prompt=(
                     f"Unbounded request:\n{prompt}\n\n"
                     "You returned no hypotheses. Provide integrated_mechanics, anomalies, "
-                    "and a bounded_task with explicit completion criteria."
+                    "equations, gap_fill_steps, candidate_nodes, selected_node, and a bounded_task with explicit completion criteria."
                 ),
                 stream=False,
                 system=system,
@@ -1481,6 +1920,7 @@ def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | Non
             follow_payload = _safe_json(followup)
             if isinstance(follow_payload, dict):
                 payload = follow_payload
+        _persist_unbounded_payload(payload)
         return payload
     except Exception:
         return None
@@ -1491,6 +1931,7 @@ def _append_unbounded_matrix(payload: dict) -> None:
         out_dir = Path("runtime/c0d3r")
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / "unbounded_matrix.md"
+        history_path = out_dir / "unbounded_matrix_history.jsonl"
         lines = ["# Unbounded Request Matrix", ""]
         branches = payload.get("branches") or []
         if branches:
@@ -1513,6 +1954,24 @@ def _append_unbounded_matrix(payload: dict) -> None:
             for item in mechanics:
                 lines.append(f"- {item}")
             lines.append("")
+        equations = payload.get("equations") or []
+        if equations:
+            lines.append("## Equations")
+            for item in equations:
+                lines.append(f"- {item}")
+            lines.append("")
+        gap_steps = payload.get("gap_fill_steps") or []
+        if gap_steps:
+            lines.append("## Gap Fill Steps")
+            for item in gap_steps:
+                lines.append(f"- {item}")
+            lines.append("")
+        research_links = payload.get("research_links") or []
+        if research_links:
+            lines.append("## Research Links")
+            for item in research_links:
+                lines.append(f"- {item}")
+            lines.append("")
         anomalies = payload.get("anomalies") or []
         if anomalies:
             lines.append("## Anomalies/Paradoxes")
@@ -1524,6 +1983,29 @@ def _append_unbounded_matrix(payload: dict) -> None:
             lines.append("## Hypotheses")
             for h in hypotheses:
                 lines.append(f"- {h}")
+            lines.append("")
+        candidate_nodes = payload.get("candidate_nodes") or []
+        if candidate_nodes:
+            lines.append("## Candidate Nodes")
+            for node in candidate_nodes:
+                lines.append(f"- {node}")
+            lines.append("")
+        selected = payload.get("selected_node")
+        if selected:
+            lines.append("## Selected Node")
+            lines.append(f"- {selected}")
+            lines.append("")
+        experiments = payload.get("experiments") or []
+        if experiments:
+            lines.append("## Experiments / Thought Tests")
+            for exp in experiments:
+                lines.append(f"- {exp}")
+            lines.append("")
+        criteria = payload.get("decision_criteria") or []
+        if criteria:
+            lines.append("## Decision Criteria")
+            for item in criteria:
+                lines.append(f"- {item}")
             lines.append("")
         next_steps = payload.get("next_steps") or []
         if next_steps:
@@ -1543,6 +2025,27 @@ def _append_unbounded_matrix(payload: dict) -> None:
             lines.append(bounded)
             lines.append("")
         path.write_text("\n".join(lines), encoding="utf-8")
+        record = {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "branches": payload.get("branches") or [],
+            "matrix": payload.get("matrix") or [],
+            "integrated_mechanics": payload.get("integrated_mechanics") or [],
+            "equations": payload.get("equations") or [],
+            "gap_fill_steps": payload.get("gap_fill_steps") or [],
+            "research_links": payload.get("research_links") or [],
+            "anomalies": payload.get("anomalies") or [],
+            "hypotheses": payload.get("hypotheses") or [],
+            "experiments": payload.get("experiments") or [],
+            "decision_criteria": payload.get("decision_criteria") or [],
+            "bounded_task": bounded,
+            "constraints": payload.get("constraints") or [],
+            "payload": payload,
+            "candidate_nodes": payload.get("candidate_nodes") or [],
+            "selected_node": payload.get("selected_node") or {},
+        }
+        with history_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+        _write_matrix_db(record)
     except Exception:
         pass
 
@@ -1550,9 +2053,39 @@ def _append_unbounded_matrix(payload: dict) -> None:
 def _apply_unbounded_constraints(prompt: str, payload: dict) -> str:
     constraints = payload.get("constraints") or []
     bounded = str(payload.get("bounded_task") or "").strip()
+    mechanics = payload.get("integrated_mechanics") or []
+    equations = payload.get("equations") or []
+    gap_steps = payload.get("gap_fill_steps") or []
+    research_links = payload.get("research_links") or []
+    hypotheses = payload.get("hypotheses") or []
+    experiments = payload.get("experiments") or []
     block = []
     if bounded:
         block.append(f"Bounded task: {bounded}")
+    if mechanics:
+        block.append("Integrated mechanics:")
+        for item in mechanics:
+            block.append(f"- {item}")
+    if equations:
+        block.append("Equations:")
+        for item in equations:
+            block.append(f"- {item}")
+    if gap_steps:
+        block.append("Gap fill steps:")
+        for item in gap_steps:
+            block.append(f"- {item}")
+    if research_links:
+        block.append("Research links:")
+        for item in research_links:
+            block.append(f"- {item}")
+    if hypotheses:
+        block.append("Hypotheses:")
+        for item in hypotheses:
+            block.append(f"- {item}")
+    if experiments:
+        block.append("Experiments:")
+        for item in experiments:
+            block.append(f"- {item}")
     if constraints:
         block.append("Constraints:")
         for c in constraints:
@@ -1560,6 +2093,16 @@ def _apply_unbounded_constraints(prompt: str, payload: dict) -> str:
     if not block:
         return prompt
     return f"{prompt}\n\n[unbounded_resolution]\n" + "\n".join(block)
+
+
+def _persist_unbounded_payload(payload: dict) -> None:
+    try:
+        out_dir = Path("runtime/c0d3r")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "unbounded_payload.json"
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _capture_behavior_snapshot(
@@ -1619,6 +2162,18 @@ def _apply_behavior_insights(payload: dict, behavior_log: list[dict]) -> None:
             for item in hypotheses:
                 lines.append(f"- {item}")
             lines.append("")
+        equations = payload.get("equations") or []
+        if equations:
+            lines.append("## Equations")
+            for item in equations:
+                lines.append(f"- {item}")
+            lines.append("")
+        gap_steps = payload.get("gap_fill_steps") or []
+        if gap_steps:
+            lines.append("## Gap Fill Steps")
+            for item in gap_steps:
+                lines.append(f"- {item}")
+            lines.append("")
         lines.append("## Behavior Signals")
         for item in behavior_log[-5:]:
             lines.append(f"- {item}")
@@ -1627,170 +2182,61 @@ def _apply_behavior_insights(payload: dict, behavior_log: list[dict]) -> None:
         pass
 
 
-def _apply_sat_template(workdir: Path, run_command, usage_tracker, log_path: Path) -> bool:
+def _append_bibliography_from_text(text: str) -> None:
     try:
-        sat_dir = workdir / "core" / "sat"
-        test_dir = workdir / "tests" / "sat_solver"
-        tool_dir = workdir / "tools"
-        sat_dir.mkdir(parents=True, exist_ok=True)
-        test_dir.mkdir(parents=True, exist_ok=True)
-        tool_dir.mkdir(parents=True, exist_ok=True)
-        (workdir / "core" / "__init__.py").write_text("", encoding="utf-8")
-        (sat_dir / "__init__.py").write_text("", encoding="utf-8")
-        (workdir / "tests" / "__init__.py").write_text("", encoding="utf-8")
-        (test_dir / "__init__.py").write_text("", encoding="utf-8")
+        urls = []
+        for token in (text or "").split():
+            if token.startswith("http://") or token.startswith("https://"):
+                urls.append(token.strip().rstrip(").,;"))
+        if not urls:
+            return
+        out = Path("runtime/c0d3r/bibliography.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        existing = out.read_text(encoding="utf-8", errors="ignore") if out.exists() else ""
+        lines = []
+        for url in urls:
+            if url in existing:
+                continue
+            title = url.split("//", 1)[-1].split("/", 1)[0]
+            entry = f"Unknown Author. (n.d.). {title}. {url}. (Accessed {time.strftime('%Y-%m-%d')})."
+            lines.append(entry)
+        if lines:
+            with out.open("a", encoding="utf-8") as fh:
+                for line in lines:
+                    fh.write(line + "\n")
+    except Exception:
+        pass
 
-        solver = (
-            "from __future__ import annotations\n"
-            "from typing import Dict, List, Optional, Tuple\n\n"
-            "def _eval_clause(clause: List[int], assignment: Dict[int, bool]) -> Optional[bool]:\n"
-            "    undecided = False\n"
-            "    for lit in clause:\n"
-            "        var = abs(lit)\n"
-            "        if var not in assignment:\n"
-            "            undecided = True\n"
-            "            continue\n"
-            "        val = assignment[var]\n"
-            "        if (lit > 0 and val) or (lit < 0 and not val):\n"
-            "            return True\n"
-            "    return None if undecided else False\n\n"
-            "def dpll(clauses: List[List[int]], assignment: Dict[int, bool]) -> Optional[Dict[int, bool]]:\n"
-            "    # Unit propagation\n"
-            "    changed = True\n"
-            "    while changed:\n"
-            "        changed = False\n"
-            "        for clause in clauses:\n"
-            "            res = _eval_clause(clause, assignment)\n"
-            "            if res is False:\n"
-            "                # check for unit clause\n"
-            "                unassigned = [lit for lit in clause if abs(lit) not in assignment]\n"
-            "                if len(unassigned) == 1:\n"
-            "                    lit = unassigned[0]\n"
-            "                    assignment[abs(lit)] = lit > 0\n"
-            "                    changed = True\n"
-            "                else:\n"
-            "                    return None\n"
-            "    # check if all clauses satisfied\n"
-            "    if all(_eval_clause(c, assignment) is True for c in clauses):\n"
-            "        return assignment\n"
-            "    # choose an unassigned variable\n"
-            "    vars_all = {abs(lit) for clause in clauses for lit in clause}\n"
-            "    for var in vars_all:\n"
-            "        if var not in assignment:\n"
-            "            for value in (True, False):\n"
-            "                new_assignment = dict(assignment)\n"
-            "                new_assignment[var] = value\n"
-            "                result = dpll(clauses, new_assignment)\n"
-            "                if result is not None:\n"
-            "                    return result\n"
-            "            return None\n"
-            "    return None\n\n"
-            "class HybridSATSolver:\n"
-            "    def __init__(self):\n"
-            "        self.clauses: List[List[int]] = []\n"
-            "    def add_clause(self, clause: List[int]) -> None:\n"
-            "        self.clauses.append(list(clause))\n"
-            "    def solve(self) -> Optional[Dict[int, bool]]:\n"
-            "        return dpll(self.clauses, {})\n"
+
+def _write_matrix_db(record: dict) -> None:
+    """
+    Best-effort write to Django DB if available.
+    """
+    try:
+        import os as _os
+        if not _os.getenv("DJANGO_SETTINGS_MODULE"):
+            _os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
+        import django
+        django.setup()
+        from core.models import UnboundedMatrixRecord
+        UnboundedMatrixRecord.objects.create(
+            prompt=record.get("bounded_task") or "",
+            branches=record.get("branches") or [],
+            matrix=record.get("matrix") or [],
+            integrated_mechanics=record.get("integrated_mechanics") or [],
+            equations=record.get("equations") or [],
+            gap_fill_steps=record.get("gap_fill_steps") or [],
+            research_links=record.get("research_links") or [],
+            anomalies=record.get("anomalies") or [],
+            hypotheses=record.get("hypotheses") or [],
+            experiments=record.get("experiments") or [],
+            decision_criteria=record.get("decision_criteria") or [],
+            bounded_task=record.get("bounded_task") or "",
+            constraints=record.get("constraints") or [],
+            payload=record,
         )
-        (sat_dir / "hybrid_solver.py").write_text(solver, encoding="utf-8")
-
-        generator = (
-            "import random\n"
-            "from typing import List\n\n"
-            "def generate_sat_problem(num_vars: int, num_clauses: int) -> List[List[int]]:\n"
-            "    clauses = []\n"
-            "    for _ in range(num_clauses):\n"
-            "        clause = []\n"
-            "        while len(clause) < 3:\n"
-            "            var = random.randint(1, num_vars)\n"
-            "            lit = var if random.random() > 0.5 else -var\n"
-            "            if lit not in clause and -lit not in clause:\n"
-            "                clause.append(lit)\n"
-            "        clauses.append(clause)\n"
-            "    return clauses\n"
-        )
-        (sat_dir / "generator.py").write_text(generator, encoding="utf-8")
-
-        tests = (
-            "from core.sat.hybrid_solver import HybridSATSolver\n"
-            "from core.sat.generator import generate_sat_problem\n\n"
-            "def test_simple_sat():\n"
-            "    solver = HybridSATSolver()\n"
-            "    solver.add_clause([1, -2])\n"
-            "    solver.add_clause([-1, 2])\n"
-            "    assert solver.solve() is not None\n\n"
-            "def test_simple_unsat():\n"
-            "    solver = HybridSATSolver()\n"
-            "    solver.add_clause([1])\n"
-            "    solver.add_clause([-1])\n"
-            "    assert solver.solve() is None\n\n"
-            "def test_random_problem():\n"
-            "    clauses = generate_sat_problem(6, 10)\n"
-            "    solver = HybridSATSolver()\n"
-            "    for clause in clauses:\n"
-            "        solver.add_clause(clause)\n"
-            "    result = solver.solve()\n"
-            "    assert result is None or isinstance(result, dict)\n"
-        )
-        (test_dir / "test_hybrid_solver.py").write_text(tests, encoding="utf-8")
-
-        benchmark = (
-            "import os\n"
-            "import sys\n"
-            "from pathlib import Path\n"
-            "import json\n"
-            "import time\n"
-            "ROOT = Path(__file__).resolve().parents[1]\n"
-            "if str(ROOT) not in sys.path:\n"
-            "    sys.path.insert(0, str(ROOT))\n"
-            "from core.sat.generator import generate_sat_problem\n"
-            "from core.sat.hybrid_solver import HybridSATSolver, dpll\n\n"
-            "def run():\n"
-            "    clauses = generate_sat_problem(20, 40)\n"
-            "    # baseline\n"
-            "    t0 = time.time()\n"
-            "    _ = dpll(clauses, {})\n"
-            "    baseline = time.time() - t0\n"
-            "    # candidate\n"
-            "    solver = HybridSATSolver()\n"
-            "    for c in clauses:\n"
-            "        solver.add_clause(c)\n"
-            "    t1 = time.time()\n"
-            "    _ = solver.solve()\n"
-            "    candidate = time.time() - t1\n"
-            "    payload = {\n"
-            "        \"baseline\": {\"time\": baseline},\n"
-            "        \"candidate\": {\"time\": candidate}\n"
-            "    }\n"
-            "    with open(\"runtime/c0d3r/benchmarks.json\", \"w\") as fh:\n"
-            "        json.dump(payload, fh, indent=2)\n\n"
-            "if __name__ == \"__main__\":\n"
-            "    run()\n"
-        )
-        bench_path = tool_dir / "run_sat_benchmark.py"
-        bench_path.write_text(benchmark, encoding="utf-8")
-
-        # run tests with confcutdir to avoid Django fixtures
-        python_exec = _resolve_project_python(workdir) or "python"
-        cmd = _ps_prefix(f"\"{python_exec}\" -m pytest \"{test_dir / 'test_hybrid_solver.py'}\" -v --confcutdir=\"{test_dir}\"")
-        code, stdout, stderr = run_command(cmd, cwd=workdir, timeout_s=_command_timeout_s(cmd))
-        _append_tool_log(log_path, cmd, code, stdout, stderr)
-        if code != 0:
-            if "no module named pytest" in (stdout + "\n" + stderr).lower():
-                _install_pytest(python_exec, workdir, run_command, log_path)
-                code, stdout, stderr = run_command(cmd, cwd=workdir, timeout_s=_command_timeout_s(cmd))
-                _append_tool_log(log_path, cmd, code, stdout, stderr)
-            if code != 0:
-                return False
-        # run benchmark
-        cmd = _ps_prefix(f"\"{python_exec}\" \"{bench_path}\"")
-        code, stdout, stderr = run_command(cmd, cwd=workdir, timeout_s=_command_timeout_s(cmd))
-        _append_tool_log(log_path, cmd, code, stdout, stderr)
-        return code == 0
-    except Exception as exc:
-        _diag_log(f"auto-remediation failed: {exc}")
-        return False
+    except Exception:
+        return
 
 
 def _install_pytest(python_exec: str | None, project_root: Path, run_command, log_path: Path) -> None:

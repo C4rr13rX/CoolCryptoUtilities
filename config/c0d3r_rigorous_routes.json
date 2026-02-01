@@ -1,0 +1,9 @@
+{
+  "routes": {
+    "planner": "qwen.qwen3-next-80b-a3b",
+    "synthesizer": "qwen.qwen3-next-80b-a3b",
+    "executor": "qwen.qwen3-next-80b-a3b",
+    "reviewer": "mistral.mistral-large-3-675b-instruct",
+    "refiner": "qwen.qwen3-next-80b-a3b"
+  }
+}

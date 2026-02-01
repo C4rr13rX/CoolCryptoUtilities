@@ -53,10 +53,13 @@ monitoring_guardian/config.json
 .env.bak
 # c0d3r-generated scratch projects (non-prod)
 quantum_physics_web3_compute/
+quantum_web3_compute/
 scientific_web3_compute/
 IonicCrypto*/
 django_crypto/
 fastapi_core/
+NoMansLand*/
+c0d3r_benchmarks/
 runtime/c0d3r/bench_logs/
 runtime/c0d3r/bench_scripts/
 runtime/c0d3r/bench_results.txt
@@ -65,6 +68,9 @@ core/sat/
 tests/sat_solver/
 tools/run_sat_benchmark.py
 data/sat_problems/
+# c0d3r benchmark inputs (generated)
+config/c0d3r_question_sheet.json
+config/c0d3r_benchmark_models.json
 # Rust agent build artifacts
 u53rxr080t/agent-rs/target/
 # Local packaged binaries for UX robot

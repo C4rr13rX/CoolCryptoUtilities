@@ -91,6 +91,9 @@ def c0d3r_default_settings() -> dict[str, Any]:
         "fast_tool_loop": _env_bool("C0D3R_FAST_TOOL_LOOP", True),
         "read_timeout_s": float(os.getenv("C0D3R_READ_TIMEOUT_S", "60") or "60"),
         "connect_timeout_s": float(os.getenv("C0D3R_CONNECT_TIMEOUT_S", "10") or "10"),
+        "rigorous_mode": _env_bool("C0D3R_RIGOROUS_MODE", False),
+        "rigorous_routes_path": os.getenv("C0D3R_RIGOROUS_ROUTES", "config/c0d3r_rigorous_routes.json"),
+        "math_grounding": _env_bool("C0D3R_MATH_GROUNDING", True),
     }
     settings = _apply_file_config(settings)
     return settings
@@ -231,6 +234,9 @@ class C0d3r:
         self.fast_tool_loop = bool(settings.get("fast_tool_loop", True))
         self.read_timeout_s = float(settings.get("read_timeout_s") or 60)
         self.connect_timeout_s = float(settings.get("connect_timeout_s") or 10)
+        self.rigorous_mode = bool(settings.get("rigorous_mode"))
+        self.rigorous_routes_path = settings.get("rigorous_routes_path") or "config/c0d3r_rigorous_routes.json"
+        self._rigorous_routes = self._load_rigorous_routes(self.rigorous_routes_path)
         effort = str(settings.get("reasoning_effort") or "").strip().lower()
         if effort in {"extra_high", "xhigh", "xh"}:
             self.max_revisions = max(self.max_revisions, 2)
@@ -250,6 +256,7 @@ class C0d3r:
             read_timeout_s=self.read_timeout_s,
             connect_timeout_s=self.connect_timeout_s,
         )
+        self._profile_map = self._build_profile_map()
 
     def ensure_model(self) -> str:
         if self.inference_profile:
@@ -406,8 +413,15 @@ class C0d3r:
         if raw.strip():
             return [p.strip() for p in raw.split(",") if p.strip()]
         return [
-            "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+            "anthropic.claude-sonnet-4-20250514-v1:0",
+            "anthropic.claude-opus-4-20250514-v1:0",
+            "deepseek.r1-v1:0",
+            "openai.gpt-oss-120b-1:0",
+            "mistral.mistral-large-3-675b-instruct",
+            "qwen.qwen3-next-80b-a3b",
+            "qwen.qwen3-32b-v1:0",
             "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+            "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
             "claude-3-7-sonnet-20250219",
             "claude-3-5-sonnet-20241022",
             "claude-3-5-sonnet-20240620",
@@ -487,6 +501,10 @@ class C0d3r:
     def _model_for_stage(self, stage: str) -> str:
         if not self.multi_model:
             return self.ensure_model()
+        if self.rigorous_mode:
+            routed = self._rigorous_routes.get(stage)
+            if routed:
+                return self._resolve_profile_cached(routed)
         mapping = {
             "planner": "planner",
             "synthesizer": "manager",
@@ -497,9 +515,52 @@ class C0d3r:
         role = mapping.get(stage, "worker")
         override = ROLE_MODEL_MAP.get(role)
         if override:
-            return override
+            return self._resolve_profile_cached(override)
         fallback = ROLE_FALLBACK_MODEL.get(role)
-        return fallback or self.ensure_model()
+        return self._resolve_profile_cached(fallback or self.ensure_model())
+
+    @staticmethod
+    def _load_rigorous_routes(path: str) -> Dict[str, str]:
+        try:
+            cfg_path = Path(path)
+            if not cfg_path.exists():
+                return {}
+            payload = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return {}
+            routes = payload.get("routes") or payload
+            if isinstance(routes, dict):
+                return {k: str(v) for k, v in routes.items() if v}
+        except Exception:
+            return {}
+        return {}
+
+    def _build_profile_map(self) -> Dict[str, str]:
+        mapping: Dict[str, str] = {}
+        try:
+            profiles = self._catalog.list_inference_profiles()
+        except Exception:
+            profiles = []
+        for profile in profiles:
+            profile_id = str(profile.get("inferenceProfileId") or "")
+            model_entries = profile.get("modelIds") or profile.get("models") or []
+            if isinstance(model_entries, list):
+                for entry in model_entries:
+                    if isinstance(entry, dict):
+                        model_arn = str(entry.get("modelArn") or "")
+                        model_id = str(entry.get("modelId") or "")
+                        if model_id:
+                            mapping[model_id] = profile_id
+                        elif model_arn:
+                            mapping[model_arn.split("/")[-1]] = profile_id
+                    else:
+                        mapping[str(entry)] = profile_id
+        return mapping
+
+    def _resolve_profile_cached(self, model_id: str) -> str:
+        if not model_id:
+            return model_id
+        return self._profile_map.get(model_id, model_id)
 
     def _parse_review(self, text: str) -> tuple[float, str]:
         try:
@@ -616,7 +677,7 @@ class C0d3r:
     def _invoke_model(self, model_id: str, prompt: str, *, images: Optional[Sequence[str]] = None) -> str:
         effective_model_id = self.inference_profile or model_id
         payload = _build_bedrock_payload(
-            model_id=model_id,
+            model_id=effective_model_id,
             prompt=prompt,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
@@ -1154,6 +1215,14 @@ def _build_bedrock_payload(
                 }
             ],
         }
+    if any(key in lower for key in ("openai", "mistral", "qwen", "deepseek")):
+        # Bedrock chat-style payload
+        return {
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        }
     if "llama" in lower or "meta." in lower:
         return {
             "prompt": f"<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n{prompt}\n<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n",
@@ -1188,6 +1257,19 @@ def _extract_text(model_id: str, payload: Dict[str, Any]) -> str:
             text = content[0].get("text")
             if text:
                 return text
+    if any(key in lower for key in ("openai", "mistral", "qwen", "deepseek")):
+        if "outputText" in payload:
+            return str(payload.get("outputText") or "")
+        choices = payload.get("choices") or []
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") or {}
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if content:
+                    return str(content)
+            text = choices[0].get("text")
+            if text:
+                return str(text)
     if "llama" in lower or "meta." in lower:
         return str(payload.get("generation") or "")
     if "titan" in lower or "amazon." in lower:

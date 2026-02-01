@@ -261,3 +261,115 @@ class PairAdjustment(models.Model):
 
     class Meta:
         db_table = "pair_adjustments"
+
+
+class UnboundedMatrixRecord(models.Model):
+    prompt = models.TextField(default="", blank=True)
+    branches = models.JSONField(default=list)
+    matrix = models.JSONField(default=list)
+    integrated_mechanics = models.JSONField(default=list)
+    equations = models.JSONField(default=list)
+    gap_fill_steps = models.JSONField(default=list)
+    research_links = models.JSONField(default=list)
+    anomalies = models.JSONField(default=list)
+    hypotheses = models.JSONField(default=list)
+    experiments = models.JSONField(default=list)
+    decision_criteria = models.JSONField(default=list)
+    bounded_task = models.TextField(default="", blank=True)
+    constraints = models.JSONField(default=list)
+    payload = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "unbounded_matrix_records"
+        indexes = [
+            models.Index(fields=["created_at"]),
+        ]
+
+
+class EquationDiscipline(models.Model):
+    name = models.CharField(max_length=128, unique=True)
+    description = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "equation_disciplines"
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return self.name
+
+
+class EquationSource(models.Model):
+    title = models.CharField(max_length=255)
+    url = models.TextField(blank=True, default="")
+    authors = models.CharField(max_length=255, blank=True, default="")
+    year = models.IntegerField(null=True, blank=True)
+    publisher = models.CharField(max_length=255, blank=True, default="")
+    accessed_at = models.DateTimeField(auto_now_add=True)
+    citation = models.TextField(blank=True, default="")
+    tags = models.JSONField(default=list)
+    raw_excerpt = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "equation_sources"
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return self.title
+
+
+class EquationVariable(models.Model):
+    symbol = models.CharField(max_length=64)
+    name = models.CharField(max_length=255, blank=True, default="")
+    units = models.CharField(max_length=128, blank=True, default="")
+    dimension = models.CharField(max_length=128, blank=True, default="")
+    description = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "equation_variables"
+        unique_together = ("symbol", "dimension")
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return self.symbol
+
+
+class Equation(models.Model):
+    text = models.TextField()
+    latex = models.TextField(blank=True, default="")
+    variables = models.JSONField(default=list)
+    constraints = models.JSONField(default=list)
+    assumptions = models.JSONField(default=list)
+    domains = models.JSONField(default=list)
+    disciplines = models.JSONField(default=list)
+    confidence = models.FloatField(default=0.5)
+    source = models.ForeignKey(EquationSource, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "equations"
+        indexes = [
+            models.Index(fields=["created_at"]),
+        ]
+
+
+class EquationLink(models.Model):
+    from_equation = models.ForeignKey(Equation, related_name="out_links", on_delete=models.CASCADE)
+    to_equation = models.ForeignKey(Equation, related_name="in_links", on_delete=models.CASCADE)
+    relation_type = models.CharField(max_length=64, default="bridges")
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "equation_links"
+        indexes = [
+            models.Index(fields=["relation_type"]),
+        ]
+
+
+class EquationGapFill(models.Model):
+    description = models.TextField()
+    steps = models.JSONField(default=list)
+    equations = models.ManyToManyField(Equation, related_name="gap_fills")
+    status = models.CharField(max_length=32, default="open")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "equation_gap_fills"
