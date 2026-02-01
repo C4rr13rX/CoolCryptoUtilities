@@ -769,10 +769,12 @@ class C0d3r:
             f"region={self.region} profile={self.profile or 'default'}"
         )
         stop = threading.Event()
+        stream_started = threading.Event()
         def _heartbeat():
             tick = 0
             while not stop.is_set():
-                _emit_bedrock_live(f"bedrock: awaiting response model={effective_model_id} ({tick * 5:.0f}s)")
+                if not stream_started.is_set():
+                    _emit_bedrock_live(f"bedrock: awaiting response model={effective_model_id} ({tick * 5:.0f}s)")
                 stop.wait(5.0)
                 tick += 1
         t = threading.Thread(target=_heartbeat, daemon=True)
@@ -784,21 +786,31 @@ class C0d3r:
                 _emit_bedrock_live("bedrock: streaming response")
                 chunks: List[str] = []
                 parsed_text: List[str] = []
+                buffer = ""
+                decoder = json.JSONDecoder()
                 for chunk in self._runtime.invoke_stream(model_id=effective_model_id, payload=payload):
                     if not chunk:
                         continue
                     chunks.append(chunk)
-                    try:
-                        obj = json.loads(chunk)
-                    except Exception:
-                        obj = None
-                    if obj and isinstance(obj, dict):
+                    buffer += chunk
+                    # Parse as many JSON objects as possible from the buffer.
+                    while buffer:
+                        try:
+                            obj, idx = decoder.raw_decode(buffer)
+                        except Exception:
+                            break
+                        buffer = buffer[idx:].lstrip()
+                        if not isinstance(obj, dict):
+                            continue
                         ctype = obj.get("type")
                         if ctype == "content_block_delta":
                             delta = obj.get("delta") or {}
                             if delta.get("type") == "text_delta":
                                 text_piece = delta.get("text") or ""
                                 if text_piece:
+                                    if not stream_started.is_set():
+                                        stream_started.set()
+                                        _emit_bedrock_live("bedrock: stream started")
                                     parsed_text.append(text_piece)
                                     try:
                                         self.stream_callback(text_piece)
@@ -806,14 +818,14 @@ class C0d3r:
                                         pass
                         elif ctype == "message_start":
                             pass
-                    else:
-                        # Fallback raw chunk
-                        try:
-                            self.stream_callback(chunk)
-                        except Exception:
-                            pass
                 if parsed_text:
                     return "".join(parsed_text)
+                # Fallback: try to parse any remaining buffered JSON or the full payload.
+                try:
+                    if buffer.strip():
+                        return _extract_text(model_id, json.loads(buffer))
+                except Exception:
+                    pass
                 result = json.loads("".join(chunks)) if chunks else {}
             else:
                 result = self._runtime.invoke(model_id=effective_model_id, payload=payload)
