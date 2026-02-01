@@ -149,12 +149,17 @@ def _run_tool_loop(
     created_dirs: List[str] = []
     known_projects: List[Path] = []
     success = False
+    tests_ran = False
+    tests_ok = False
+    require_tests = _requires_tests(prompt)
     for step in range(max_steps):
         usage_tracker.set_status("planning", f"step {step+1}/{max_steps}")
         tool_prompt = (
             "You can run local shell commands to inspect the repo and validate work. "
             "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
             "If you are done, set final to your response and commands to []. "
+            "Always create minimal unit tests and run them before declaring success. "
+            "Do not finalize until tests pass.\n"
             "Meta commands available:\n"
             "- ::bg <command> (run long-lived command in background, returns pid)\n"
             "- ::wait_http <url> <seconds> (poll until HTTP 200 or timeout)\n"
@@ -247,11 +252,23 @@ def _run_tool_loop(
                     created_dirs = new_dirs
             if cmd.startswith("::wait_http") and code == 0 and known_projects:
                 success = True
+                if require_tests:
+                    tests_ran, tests_ok = _run_tests_for_project(known_projects[-1], run_command, usage_tracker, log_path)
+                    if not tests_ok:
+                        history.append("error: tests failed; fix and re-run tests before finalizing")
+                        success = False
+                        continue
                 return f"Success: ionic serve reachable; project at {known_projects[-1]}"
             if _requires_skeleton(prompt):
                 skeleton = _find_skeleton_root(workdir)
                 if skeleton:
                     success = True
+                    if require_tests:
+                        tests_ran, tests_ok = _run_tests_for_project(Path(skeleton), run_command, usage_tracker, log_path)
+                        if not tests_ok:
+                            history.append("error: tests failed; fix and re-run tests before finalizing")
+                            success = False
+                            continue
                     return f"Success: skeleton created at {skeleton}"
             if code != 0:
                 history.append("error: previous command failed; analyze stderr and retry with correction")
@@ -816,6 +833,52 @@ def _requires_pip_install(prompt: str) -> bool:
     lower = (prompt or "").lower()
     keywords = ("install", "dependencies", "pip", "run", "serve", "start", "execute", "setup env", "virtualenv")
     return any(k in lower for k in keywords)
+
+
+def _requires_tests(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    keywords = ("create", "setup", "initialize", "build", "generate", "scaffold", "project")
+    return any(k in lower for k in keywords)
+
+
+def _run_tests_for_project(
+    project_root: Path,
+    run_command,
+    usage_tracker,
+    log_path: Path,
+) -> Tuple[bool, bool]:
+    tests_ran = False
+    tests_ok = False
+    usage_tracker.set_status("testing", f"tests in {project_root}")
+    # Python tests
+    if (project_root / "pytest.ini").exists() or (project_root / "tests").exists():
+        tests_ran = True
+        cmd = "python -m pytest"
+        code, stdout, stderr = run_command(cmd, cwd=project_root, timeout_s=_command_timeout_s(cmd))
+        _append_tool_log(log_path, cmd, code, stdout, stderr)
+        if code == 0:
+            tests_ok = True
+        else:
+            return tests_ran, False
+    # Node tests
+    pkg = project_root / "package.json"
+    if pkg.exists():
+        try:
+            import json as _json
+            payload = _json.loads(pkg.read_text(encoding="utf-8"))
+            scripts = payload.get("scripts") or {}
+            if "test" in scripts:
+                tests_ran = True
+                cmd = "npm test -- --watch=false"
+                code, stdout, stderr = run_command(cmd, cwd=project_root, timeout_s=_command_timeout_s(cmd))
+                _append_tool_log(log_path, cmd, code, stdout, stderr)
+                if code == 0:
+                    tests_ok = True
+                else:
+                    return tests_ran, False
+        except Exception:
+            pass
+    return tests_ran, tests_ok
 
 
 def _command_timeout_s(cmd: str) -> int:

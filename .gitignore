@@ -55,6 +55,11 @@ monitoring_guardian/config.json
 quantum_physics_web3_compute/
 scientific_web3_compute/
 IonicCrypto*/
+django_crypto/
+fastapi_core/
+runtime/c0d3r/bench_logs/
+runtime/c0d3r/bench_scripts/
+runtime/c0d3r/bench_results.txt
 # Rust agent build artifacts
 u53rxr080t/agent-rs/target/
 # Local packaged binaries for UX robot
