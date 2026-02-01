@@ -60,6 +60,11 @@ fastapi_core/
 runtime/c0d3r/bench_logs/
 runtime/c0d3r/bench_scripts/
 runtime/c0d3r/bench_results.txt
+# c0d3r-generated SAT/benchmark artifacts
+core/sat/
+tests/sat_solver/
+tools/run_sat_benchmark.py
+data/sat_problems/
 # Rust agent build artifacts
 u53rxr080t/agent-rs/target/
 # Local packaged binaries for UX robot

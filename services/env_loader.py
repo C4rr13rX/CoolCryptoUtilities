@@ -71,11 +71,7 @@ def _maybe_enable_sqlite_fallback() -> None:
         return
     os.environ["DJANGO_DB_VENDOR"] = "sqlite"
     os.environ["ALLOW_SQLITE_FALLBACK"] = "1"
-    # Silence fallback warnings to keep CLI output clean.
-    # If needed, set DJANGO_LOG_DB_FALLBACK=1 to emit.
-    if _bool_env(os.getenv("DJANGO_LOG_DB_FALLBACK")):
-        if os.getenv("C0D3R_QUIET_STARTUP", "").strip().lower() not in {"1", "true", "yes", "on"}:
-            sys.stderr.write(f"Postgres unavailable ({error}); using SQLite fallback for Django.\n")
+    # Always silence fallback warnings to keep CLI output clean.
 
 
 class EnvLoader:
