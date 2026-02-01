@@ -6,7 +6,8 @@
       "tests",
       "findings",
       "conclusion",
-      "next_steps"
+      "next_steps",
+      "_evidence_bundle_sha256"
     ],
     "list_fields": ["observations", "hypotheses", "tests", "findings", "next_steps"],
     "object_list_fields": {

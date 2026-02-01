@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import time
@@ -263,6 +264,7 @@ class C0d3r:
         system: Optional[str] = None,
         research: bool = False,
         images: Optional[Sequence[str]] = None,
+        evidence_bundle: Optional[str] = None,
     ) -> str:
         model_id = self.ensure_model()
         if not model_id:
@@ -277,6 +279,8 @@ class C0d3r:
                 self._build_prompt("synthesizer", prompt, system=system, research=research_payload),
                 images=images,
             )
+        if evidence_bundle and _requires_evidence(prompt):
+            prompt = f"{prompt}\n\nEvidence bundle:\n{evidence_bundle}"
         plan = self._invoke_model(
             self._model_for_stage("planner"),
             self._build_prompt("planner", prompt, system=system, research=synthesis or research_payload),
@@ -306,7 +310,15 @@ class C0d3r:
                 self._build_prompt("executor", prompt, system=system, plan=plan, research=synthesis or research_payload),
                 images=images,
             )
-        output = self._enforce_schema(output, prompt, system=system, plan=plan, research=synthesis or research_payload, images=images)
+        output = self._enforce_schema(
+            output,
+            prompt,
+            system=system,
+            plan=plan,
+            research=synthesis or research_payload,
+            images=images,
+            evidence_bundle=evidence_bundle,
+        )
         for _ in range(max(0, self.max_revisions)):
             review = self._invoke_model(
                 self._model_for_stage("reviewer"),
@@ -329,7 +341,15 @@ class C0d3r:
                 ),
                 images=images,
             )
-            output = self._enforce_schema(output, prompt, system=system, plan=plan, research=synthesis or research_payload, images=images)
+            output = self._enforce_schema(
+                output,
+                prompt,
+                system=system,
+                plan=plan,
+                research=synthesis or research_payload,
+                images=images,
+                evidence_bundle=evidence_bundle,
+            )
         return output.strip()
 
     def _preferred_models(self) -> List[str]:
@@ -379,6 +399,12 @@ class C0d3r:
                 "[directive]\nIf research is provided, treat it as authoritative context. "
                 "Do not claim sources are unavailable; extract the needed facts directly from [research]."
             )
+        if _requires_evidence(prompt):
+            evidence_bundle = _extract_evidence_bundle(prompt) or ""
+            parts.append(
+                "[directive]\nWhen evidence is required, include field _evidence_bundle_sha256 with the value below."
+            )
+            parts.append(f"[evidence_sha256]\n{_hash_text(evidence_bundle)}")
         parts.append(f"[user]\n{prompt}")
         if plan:
             parts.append(f"[plan]\n{plan}")
@@ -445,11 +471,14 @@ class C0d3r:
         plan: Optional[str],
         research: Optional[str],
         images: Optional[Sequence[str]],
+        evidence_bundle: Optional[str],
     ) -> str:
         """
         Enforce JSON-only outputs when the prompt requires it by re-asking with constraints.
         """
-        issues = _validate_output(prompt, output)
+        if _requires_evidence(prompt) and _looks_like_json(output):
+            output = _inject_evidence_hash(output, evidence_bundle or _extract_evidence_bundle(prompt) or "")
+        issues = _validate_output(prompt, output, evidence_bundle=evidence_bundle)
         if not issues:
             return output
         if _requires_json(prompt) and _looks_like_json(output) and not issues:
@@ -457,8 +486,11 @@ class C0d3r:
         repair_prompt = (
             "Return ONLY valid JSON matching the requested schema. "
             "Do not include any other text. "
-            f"Fix these issues: {issues}"
+            f"Fix these issues: {issues}. "
         )
+        if _requires_evidence(prompt):
+            evidence_bundle = evidence_bundle or _extract_evidence_bundle(prompt) or ""
+            repair_prompt += f"Include _evidence_bundle_sha256={_hash_text(evidence_bundle)}."
         corrected = output
         for _ in range(3):
             corrected = self._invoke_model(
@@ -474,7 +506,9 @@ class C0d3r:
                 ),
                 images=images,
             )
-            issues = _validate_output(prompt, corrected)
+            if _requires_evidence(prompt) and _looks_like_json(corrected):
+                corrected = _inject_evidence_hash(corrected, evidence_bundle or "")
+            issues = _validate_output(prompt, corrected, evidence_bundle=evidence_bundle)
             if not issues:
                 break
         if issues:
@@ -769,6 +803,7 @@ class C0d3rSession:
         verbose: Optional[bool] = None,
         stream_callback: Optional[Callable[[str], None]] = None,
         images: Optional[Sequence[str]] = None,
+        evidence_bundle: Optional[str] = None,
     ) -> str:
         images_list = list(images) if images else []
         stream = self.stream_default if stream is None else stream
@@ -784,6 +819,7 @@ class C0d3rSession:
             system=system,
             research=self.settings.get("research", False),
             images=images_list if images_list else None,
+            evidence_bundle=evidence_bundle,
         )
         self._log_event("response", {"response": output})
         self._append_transcript(prompt, output)
@@ -791,6 +827,12 @@ class C0d3rSession:
             self._stream_output(output)
         self._stream_callback = prev_callback
         return output
+
+    def get_model_id(self) -> str:
+        try:
+            return self._c0d3r.ensure_model()
+        except Exception:
+            return self.settings.get("model") or ""
 
     def _append_transcript(self, prompt: str, response: str) -> None:
         divider = "=" * 80
@@ -867,7 +909,7 @@ def _has_citations(text: str) -> bool:
     return "http" in lower or "[" in lower and "]" in lower
 
 
-def _validate_output(prompt: str, output: str) -> List[str]:
+def _validate_output(prompt: str, output: str, *, evidence_bundle: Optional[str] = None) -> List[str]:
     issues: List[str] = []
     if _requires_json(prompt) and not _looks_like_json(output):
         issues.append("missing_json")
@@ -878,7 +920,7 @@ def _validate_output(prompt: str, output: str) -> List[str]:
     schema_issues = _validate_schema(prompt, output)
     issues.extend(schema_issues)
     if _requires_evidence(prompt):
-        issues.extend(_validate_evidence(output))
+        issues.extend(_validate_evidence(output, evidence_bundle=evidence_bundle))
     return issues
 
 
@@ -900,7 +942,7 @@ def _validate_schema(prompt: str, output: str) -> List[str]:
     return issues
 
 
-def _validate_evidence(output: str) -> List[str]:
+def _validate_evidence(output: str, *, evidence_bundle: Optional[str] = None) -> List[str]:
     if not _looks_like_json(output):
         return ["missing_json_for_evidence"]
     payload = _safe_json(output)
@@ -910,9 +952,12 @@ def _validate_evidence(output: str) -> List[str]:
     if not isinstance(findings, list):
         return ["findings_not_list"]
     issues: List[str] = []
-    evidence_bundle = _extract_evidence_bundle(output)
+    evidence_bundle = evidence_bundle or _extract_evidence_bundle(output)
     if evidence_bundle is None:
         return ["missing_evidence_bundle"]
+    bundle_hash = _hash_text(evidence_bundle)
+    if payload.get("_evidence_bundle_sha256") and payload.get("_evidence_bundle_sha256") != bundle_hash:
+        issues.append("evidence_bundle_hash_mismatch")
     for item in findings:
         if not isinstance(item, dict):
             issues.append("finding_not_object")
@@ -981,6 +1026,18 @@ def _extract_evidence_bundle(prompt: str) -> Optional[str]:
         return None
     idx = prompt.find(marker)
     return prompt[idx + len(marker):]
+
+
+def _hash_text(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _inject_evidence_hash(text: str, evidence_bundle: str) -> str:
+    payload = _safe_json(text)
+    if not isinstance(payload, dict):
+        return text
+    payload["_evidence_bundle_sha256"] = _hash_text(evidence_bundle)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _safe_json(text: str) -> object:
