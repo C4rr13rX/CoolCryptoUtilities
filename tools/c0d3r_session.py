@@ -88,6 +88,7 @@ def c0d3r_default_settings() -> dict[str, Any]:
         "multi_model": _env_bool("C0D3R_MULTI_MODEL", True),
         "config_path": os.getenv("C0D3R_CONFIG_PATH", "config/c0d3r_settings.json"),
         "consensus_k": int(os.getenv("C0D3R_CONSENSUS_K", "1") or "1"),
+        "fast_tool_loop": _env_bool("C0D3R_FAST_TOOL_LOOP", True),
         "read_timeout_s": float(os.getenv("C0D3R_READ_TIMEOUT_S", "60") or "60"),
         "connect_timeout_s": float(os.getenv("C0D3R_CONNECT_TIMEOUT_S", "10") or "10"),
     }
@@ -227,6 +228,7 @@ class C0d3r:
         self.inference_profile = settings.get("inference_profile") or ""
         self.multi_model = bool(settings.get("multi_model"))
         self.consensus_k = int(settings.get("consensus_k") or 1)
+        self.fast_tool_loop = bool(settings.get("fast_tool_loop", True))
         self.read_timeout_s = float(settings.get("read_timeout_s") or 60)
         self.connect_timeout_s = float(settings.get("connect_timeout_s") or 10)
         effort = str(settings.get("reasoning_effort") or "").strip().lower()
@@ -299,6 +301,23 @@ class C0d3r:
         model_id = self.ensure_model()
         if not model_id:
             return "[c0d3r error] no Bedrock models available"
+        # Fast path for tool loop: avoid planner/reviewer loops.
+        if self.fast_tool_loop and _requires_commands(prompt):
+            output = self._invoke_model(
+                self._model_for_stage("executor"),
+                self._build_prompt("executor", prompt, system=system),
+                images=images,
+            )
+            output = self._enforce_schema(
+                output,
+                prompt,
+                system=system,
+                plan=None,
+                research=None,
+                images=images,
+                evidence_bundle=evidence_bundle,
+            )
+            return output.strip()
         research_payload = ""
         if research or self.research_enabled:
             research_payload = self._research(prompt)

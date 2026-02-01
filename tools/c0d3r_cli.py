@@ -91,6 +91,7 @@ def main(argv: List[str] | None = None) -> int:
         settings["research"] = True
 
     workdir = Path(args.workdir or os.getcwd()).resolve()
+    os.environ.setdefault("C0D3R_ROOT_CWD", str(workdir))
     scientific = args.scientific or (os.getenv("C0D3R_SCIENTIFIC_MODE", "1").strip().lower() not in {"0", "false", "no", "off"})
     if args.no_scientific:
         scientific = False
@@ -171,6 +172,7 @@ def _run_tool_loop(
     created_dirs: List[str] = []
     known_projects: List[Path] = []
     success = False
+    any_success = False
     tests_ran = False
     tests_ok = False
     require_tests = _requires_tests(prompt)
@@ -213,11 +215,23 @@ def _run_tool_loop(
         if response is None:
             _emit_live("tool_loop: model call timed out")
             history.append("note: model call timed out; retrying with shorter context")
-            continue
+            mini_prompt = (
+                "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+                "Focus on executing the request with minimal steps.\n"
+                f"Request:\n{prompt}\n"
+            )
+            response = _call_with_timeout(
+                session._safe_send,
+                timeout_s=max(10.0, _model_timeout_s() / 2),
+                kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
+            )
+            if response is None:
+                _emit_live("tool_loop: minimal prompt timed out")
+                continue
         commands, final = _extract_commands(response)
         _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
         if final and not commands:
-            if _requires_commands_for_task(prompt) and not success:
+            if _requires_commands_for_task(prompt) and not (success or any_success):
                 history.append("note: commands required for this task; no final allowed without verified success")
                 continue
             return final
@@ -287,6 +301,7 @@ def _run_tool_loop(
                     created_dirs = new_dirs
             if cmd.startswith("::wait_http") and code == 0 and known_projects:
                 success = True
+                any_success = True
                 if require_tests:
                     tests_ran, tests_ok = _run_tests_for_project(known_projects[-1], run_command, usage_tracker, log_path)
                     if not tests_ok:
@@ -298,6 +313,7 @@ def _run_tool_loop(
                 skeleton = _find_skeleton_root(workdir)
                 if skeleton:
                     success = True
+                    any_success = True
                     if require_tests:
                         tests_ran, tests_ok = _run_tests_for_project(Path(skeleton), run_command, usage_tracker, log_path)
                         if not tests_ok:
@@ -307,6 +323,8 @@ def _run_tool_loop(
                     return f"Success: skeleton created at {skeleton}"
             if code != 0:
                 history.append("error: previous command failed; analyze stderr and retry with correction")
+            else:
+                any_success = True
         # post-check: if prompt asks for new dir under Projects, ensure one exists
         if base_snapshot and _requires_new_projects_dir(prompt):
             new_dirs = _diff_projects_dir(base_snapshot)
@@ -374,6 +392,12 @@ def _normalize_command(cmd: str, workdir: Path) -> str:
             return " ; ".join(commands)
     # Ensure Set-Content/Add-Content values are safe by translating to python file write.
     lower = cmd.lower()
+    if lower.startswith("dir "):
+        # Translate common cmd-style dir flags to PowerShell.
+        if "/b" in lower and "/a-d" in lower:
+            return "Get-ChildItem -File -Name"
+        if "/b" in lower:
+            return "Get-ChildItem -Name"
     if lower.startswith("set-content") or lower.startswith("add-content"):
         try:
             path_token = '-Path "'
@@ -650,9 +674,12 @@ def _run_repl(
         research_summary = ""
         if mode in {"tool_loop", "scientific"}:
             usage.set_status("research", "gathering references")
-            _emit_live("repl: pre-research starting")
-            research_summary = _pre_research(session, prompt)
-            _emit_live("repl: pre-research complete")
+            if minimal or os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+                research_summary = ""
+            else:
+                _emit_live("repl: pre-research starting")
+                research_summary = _pre_research(session, prompt)
+                _emit_live("repl: pre-research complete")
         controller = InterruptController()
         if allow_interrupt:
             controller.start()
@@ -853,6 +880,12 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
             return 0, f"cwd unchanged (already in {workdir})", "", workdir
         if not new_path.exists():
             return 1, "", f"path not found: {new_path}", None
+        if os.getenv("C0D3R_LOCK_CWD", "1").strip().lower() not in {"0", "false", "no", "off"}:
+            root = Path(os.getenv("C0D3R_ROOT_CWD", str(workdir))).resolve()
+            try:
+                new_path.relative_to(root)
+            except Exception:
+                return 1, "", f"cd blocked outside project root: {root}", None
         return 0, f"cwd -> {new_path}", "", new_path
     return 1, "", f"unknown meta command {action}", None
 
@@ -910,15 +943,20 @@ def _run_tests_for_project(
     tests_ran = False
     tests_ok = False
     usage_tracker.set_status("testing", f"tests in {project_root}")
+    python_exec = _resolve_project_python(project_root)
     # Python tests
     if (project_root / "pytest.ini").exists() or (project_root / "tests").exists():
         tests_ran = True
-        cmd = "python -m pytest"
+        cmd = f"\"{python_exec}\" -m pytest" if python_exec else "python -m pytest"
         code, stdout, stderr = run_command(cmd, cwd=project_root, timeout_s=_command_timeout_s(cmd))
         _append_tool_log(log_path, cmd, code, stdout, stderr)
         if code == 0:
             tests_ok = True
         else:
+            if _auto_install_enabled() and (project_root / "requirements.txt").exists():
+                _emit_live("tests failed; attempting pip install -r requirements.txt")
+                pip_cmd = f"\"{python_exec}\" -m pip install -r requirements.txt" if python_exec else "python -m pip install -r requirements.txt"
+                run_command(pip_cmd, cwd=project_root, timeout_s=_command_timeout_s(pip_cmd))
             return tests_ran, False
     # Node tests
     pkg = project_root / "package.json"
@@ -939,6 +977,22 @@ def _run_tests_for_project(
         except Exception:
             pass
     return tests_ran, tests_ok
+
+
+def _resolve_project_python(project_root: Path) -> str | None:
+    # Prefer local virtual envs
+    for candidate in (project_root / ".venv" / "Scripts" / "python.exe", project_root / "Scripts" / "python.exe"):
+        if candidate.exists():
+            return str(candidate)
+    # Unix-style
+    for candidate in (project_root / ".venv" / "bin" / "python", project_root / "bin" / "python"):
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _auto_install_enabled() -> bool:
+    return os.getenv("C0D3R_AUTO_INSTALL", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _command_timeout_s(cmd: str) -> int:
