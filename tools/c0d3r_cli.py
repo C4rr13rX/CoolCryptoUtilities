@@ -1407,7 +1407,7 @@ def _is_pricing_stale(pricing) -> bool:
 
 
 def _refresh_pricing_cache(session: C0d3rSession, header: "HeaderRenderer", model_id: str) -> None:
-    from services.bedrock_pricing import lookup_pricing, ModelPricing, cache_pricing
+    from services.bedrock_pricing import lookup_pricing, ModelPricing, cache_pricing, refresh_pricing_from_aws
 
     if not model_id or model_id in _PRICING_REFRESHED:
         return
@@ -1415,16 +1415,53 @@ def _refresh_pricing_cache(session: C0d3rSession, header: "HeaderRenderer", mode
     pricing = lookup_pricing(model_id)
     if pricing and not _is_pricing_stale(pricing):
         return
+    _emit_live("pricing: fetch from AWS pricing page")
+    try:
+        aws_pricing = refresh_pricing_from_aws(model_id)
+        if aws_pricing:
+            _emit_live(
+                f"pricing: AWS pricing parsed in={aws_pricing.input_per_1k} out={aws_pricing.output_per_1k} as_of={aws_pricing.as_of}"
+            )
+            header.update()
+            return
+    except Exception:
+        pass
     _emit_live("pricing: research starting")
     query = (
         f"Find the latest published pricing (current month if available) for AWS Bedrock model {model_id}. "
         "Return authoritative source URL."
     )
     research = ""
-    try:
-        research = session._c0d3r._research(query)
-    except Exception:
-        research = ""
+    stop = threading.Event()
+    def _heartbeat():
+        tick = 0
+        while not stop.is_set():
+            _emit_live(f"pricing: waiting on research... ({tick * 5:.0f}s)")
+            stop.wait(5.0)
+            tick += 1
+    t = threading.Thread(target=_heartbeat, daemon=True)
+    t.start()
+    def _do_research():
+        nonlocal research
+        try:
+            _emit_live(f"pricing: search query => {query}")
+            research = session._c0d3r._research(query)
+        except Exception:
+            research = ""
+        finally:
+            stop.set()
+    th = threading.Thread(target=_do_research, daemon=True)
+    th.start()
+    th.join(timeout=8.0)
+    if th.is_alive():
+        _emit_live("pricing: slow research; continuing with cached rates and updating async")
+        # Let it finish in background; return without blocking header.
+        return
+    if research:
+        preview = research.strip().replace("\n", " ")
+        if len(preview) > 300:
+            preview = preview[:300] + "..."
+        _emit_live(f"pricing: research preview => {preview}")
     system = (
         "Return ONLY JSON with keys: input_per_1k (number), output_per_1k (number), "
         "source_url (string), as_of (YYYY-MM or YYYY-MM-DD). "
