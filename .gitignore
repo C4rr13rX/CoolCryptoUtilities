@@ -51,6 +51,10 @@ web/data/
 config/wallet_balance_overrides.json
 monitoring_guardian/config.json
 .env.bak
+# c0d3r-generated scratch projects (non-prod)
+quantum_physics_web3_compute/
+scientific_web3_compute/
+IonicCrypto*/
 # Rust agent build artifacts
 u53rxr080t/agent-rs/target/
 # Local packaged binaries for UX robot

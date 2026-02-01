@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 import boto3
+from botocore.config import Config
 
 from services.research_sources import allowed_domains_for_query, select_sources_for_query
 from services.session_storage import SessionStore, default_session_config
@@ -87,6 +88,8 @@ def c0d3r_default_settings() -> dict[str, Any]:
         "multi_model": _env_bool("C0D3R_MULTI_MODEL", True),
         "config_path": os.getenv("C0D3R_CONFIG_PATH", "config/c0d3r_settings.json"),
         "consensus_k": int(os.getenv("C0D3R_CONSENSUS_K", "1") or "1"),
+        "read_timeout_s": float(os.getenv("C0D3R_READ_TIMEOUT_S", "60") or "60"),
+        "connect_timeout_s": float(os.getenv("C0D3R_CONNECT_TIMEOUT_S", "10") or "10"),
     }
     settings = _apply_file_config(settings)
     return settings
@@ -181,12 +184,17 @@ class BedrockModelCatalog:
 
 
 class BedrockClient:
-    def __init__(self, *, profile: Optional[str], region: str) -> None:
+    def __init__(self, *, profile: Optional[str], region: str, read_timeout_s: float | None = None, connect_timeout_s: float | None = None) -> None:
         if profile:
             session = boto3.Session(profile_name=profile, region_name=region)
         else:
             session = boto3.Session(region_name=region)
-        self.client = session.client("bedrock-runtime")
+        config = Config(
+            read_timeout=read_timeout_s or 60,
+            connect_timeout=connect_timeout_s or 10,
+            retries={"max_attempts": 2, "mode": "standard"},
+        )
+        self.client = session.client("bedrock-runtime", config=config)
 
     def invoke(self, *, model_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         response = self.client.invoke_model(
@@ -214,6 +222,8 @@ class C0d3r:
         self.inference_profile = settings.get("inference_profile") or ""
         self.multi_model = bool(settings.get("multi_model"))
         self.consensus_k = int(settings.get("consensus_k") or 1)
+        self.read_timeout_s = float(settings.get("read_timeout_s") or 60)
+        self.connect_timeout_s = float(settings.get("connect_timeout_s") or 10)
         effort = str(settings.get("reasoning_effort") or "").strip().lower()
         if effort in {"extra_high", "xhigh", "xh"}:
             self.max_revisions = max(self.max_revisions, 2)
@@ -222,7 +232,12 @@ class C0d3r:
             self.max_revisions = max(self.max_revisions, 1)
             self.max_tokens = max(self.max_tokens, 2560)
         self._catalog = BedrockModelCatalog(profile=self.profile, region=self.region)
-        self._runtime = BedrockClient(profile=self.profile, region=self.region)
+        self._runtime = BedrockClient(
+            profile=self.profile,
+            region=self.region,
+            read_timeout_s=self.read_timeout_s,
+            connect_timeout_s=self.connect_timeout_s,
+        )
 
     def ensure_model(self) -> str:
         if self.inference_profile:
@@ -804,6 +819,7 @@ class C0d3rSession:
         stream_callback: Optional[Callable[[str], None]] = None,
         images: Optional[Sequence[str]] = None,
         evidence_bundle: Optional[str] = None,
+        research_override: Optional[bool] = None,
     ) -> str:
         images_list = list(images) if images else []
         stream = self.stream_default if stream is None else stream
@@ -817,7 +833,7 @@ class C0d3rSession:
         output = self._c0d3r.generate(
             prompt,
             system=system,
-            research=self.settings.get("research", False),
+            research=self.settings.get("research", False) if research_override is None else bool(research_override),
             images=images_list if images_list else None,
             evidence_bundle=evidence_bundle,
         )
