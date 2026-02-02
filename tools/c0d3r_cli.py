@@ -13,12 +13,14 @@ import urllib.request
 from pathlib import Path
 from typing import List, Tuple
 import json
+from collections import deque
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 _INSTALL_ATTEMPTS: set[str] = set()
+_UI_MANAGER = None
 
 
 def _live_log_enabled() -> bool:
@@ -41,8 +43,11 @@ def _emit_live(message: str) -> None:
         return
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {message}"
+    if _UI_MANAGER:
+        _UI_MANAGER.write_line(line)
     try:
-        print(line, flush=True)
+        if not _UI_MANAGER:
+            print(line, flush=True)
     except Exception:
         pass
     try:
@@ -55,11 +60,139 @@ def _emit_live(message: str) -> None:
 
 
 def _emit_status_line(message: str) -> None:
+    if _UI_MANAGER:
+        _UI_MANAGER.set_status(message)
+        return
     try:
         sys.stdout.write("\r" + message + " " * 10)
         sys.stdout.flush()
     except Exception:
         pass
+
+
+class TerminalUI:
+    def __init__(self, header: HeaderRenderer, workdir: Path) -> None:
+        self.header = header
+        self.workdir = workdir
+        self.lines = deque(maxlen=1000)
+        self.footer = ""
+        self.status = ""
+        self._lock = threading.Lock()
+        self._input_queue: "queue.Queue[str]" = queue.Queue()
+        self._running = False
+        self._prompt_thread: threading.Thread | None = None
+        self._use_rich = False
+        self._live = None
+        self._console = None
+        self._layout = None
+        self._init_tui()
+
+    def _init_tui(self) -> None:
+        try:
+            from rich.console import Console
+            from rich.live import Live
+            from rich.layout import Layout
+            from rich.panel import Panel
+            self._console = Console()
+            self._layout = Layout()
+            self._layout.split_column(
+                Layout(name="header", size=5),
+                Layout(name="body", ratio=1),
+                Layout(name="footer", size=3),
+            )
+            self._live = Live(self._layout, console=self._console, refresh_per_second=8, transient=False)
+            self._use_rich = True
+        except Exception:
+            self._use_rich = False
+
+    def start(self) -> None:
+        self._running = True
+        if self._use_rich and self._live:
+            self._live.start()
+        self._prompt_thread = threading.Thread(target=self._input_loop, daemon=True)
+        self._prompt_thread.start()
+        self.render()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._use_rich and self._live:
+            self._live.stop()
+
+    def _input_loop(self) -> None:
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.patch_stdout import patch_stdout
+            session = PromptSession()
+            while self._running:
+                with patch_stdout():
+                    text = session.prompt(f"[{self.workdir}]> ")
+                if text is not None:
+                    self._input_queue.put(text)
+        except Exception:
+            # Fallback to blocking input
+            while self._running:
+                try:
+                    text = input(f"[{self.workdir}]> ")
+                    self._input_queue.put(text)
+                except Exception:
+                    break
+
+    def read_input(self, prompt: str) -> str:
+        # Block until input is available.
+        return self._input_queue.get()
+
+    def set_header(self, text: str) -> None:
+        with self._lock:
+            self.header_text = text
+        self.render()
+
+    def set_status(self, text: str) -> None:
+        with self._lock:
+            self.status = text
+        self.render()
+
+    def set_footer(self, text: str) -> None:
+        with self._lock:
+            self.footer = text
+        self.render()
+
+    def write_line(self, line: str) -> None:
+        with self._lock:
+            self.lines.append(line)
+        self.render()
+
+    def write_text(self, text: str, *, delay_s: float = 0.0, controller=None) -> None:
+        for ch in text:
+            if controller and controller.interrupted:
+                return
+            with self._lock:
+                if not self.lines:
+                    self.lines.append("")
+                if ch == "\n":
+                    self.lines.append("")
+                else:
+                    self.lines[-1] = self.lines[-1] + ch
+            self.render()
+            if ch.strip() and delay_s:
+                time.sleep(delay_s)
+
+    def render(self) -> None:
+        header_text = getattr(self, "header_text", self.header.render_text())
+        body_text = "\n".join(self.lines)
+        footer_text = self.footer or "input queued" if not self._input_queue.empty() else ""
+        if self._use_rich and self._layout:
+            from rich.panel import Panel
+            from rich.text import Text
+            self._layout["header"].update(Panel(header_text, title="c0d3r", border_style="blue"))
+            self._layout["body"].update(Panel(Text(body_text), title="output"))
+            self._layout["footer"].update(Panel(footer_text or "ready", title="input"))
+            return
+        # Basic ANSI fallback: clear + render.
+        sys.stdout.write("\x1b[2J\x1b[H")
+        sys.stdout.write(header_text)
+        sys.stdout.write(body_text + "\n")
+        sys.stdout.write(footer_text + "\n")
+        sys.stdout.flush()
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -157,11 +290,26 @@ def main(argv: List[str] | None = None) -> int:
     )
     usage = UsageTracker(model_id=session.get_model_id())
     header = HeaderRenderer(usage)
+    # Initialize terminal UI if available.
+    global _UI_MANAGER
+    use_tui = os.getenv("C0D3R_TUI", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if use_tui:
+        try:
+            _UI_MANAGER = TerminalUI(header, workdir)
+            _UI_MANAGER.start()
+        except Exception:
+            _UI_MANAGER = None
     header.render()
     _emit_live("boot: header rendered")
     _refresh_pricing_cache(session, header, session.get_model_id())
     math_block = ""
-    if settings.get("math_grounding", True):
+    # Lightweight plan to avoid over-work on simple prompts.
+    plan = _plan_execution(session, prompt)
+    if plan.get("model_override"):
+        session._c0d3r.model_id = str(plan.get("model_override"))
+    do_math = bool(plan.get("do_math", settings.get("math_grounding", True)))
+    do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
+    if do_math:
         _emit_live("boot: math grounding")
         math_block = _math_grounding_block(session, prompt, workdir)
     if math_block:
@@ -172,10 +320,11 @@ def main(argv: List[str] | None = None) -> int:
         usage,
         workdir,
         run_command,
-        scientific=scientific,
-        tool_loop=tool_loop,
+        scientific=scientific if plan.get("mode") != "tool_loop" else False,
+        tool_loop=tool_loop if plan.get("do_tool_loop", True) else False,
         initial_prompt=prompt or None,
         header=header,
+        pre_research_enabled=do_research,
     )
 
 
@@ -1762,6 +1911,9 @@ def _typewriter_callback(usage, header=None, controller=None):
         usage.add_output(chunk)
         if header:
             header.update()
+        if _UI_MANAGER:
+            _UI_MANAGER.write_text(chunk, delay_s=delay_s, controller=controller)
+            return
         if os.getenv("C0D3R_VERBOSE_MODEL_OUTPUT", "0").strip().lower() in {"1", "true", "yes", "on"}:
             sys.stdout.write("\n[model]\n")
         for ch in chunk:
@@ -2529,6 +2681,7 @@ def _run_repl(
     tool_loop: bool,
     initial_prompt: str | None = None,
     header: "HeaderRenderer | None" = None,
+    pre_research_enabled: bool = True,
 ) -> int:
     from services.conversation_memory import ConversationMemory
 
@@ -2553,6 +2706,8 @@ def _run_repl(
             pending = None
         except (EOFError, KeyboardInterrupt):
             print("\nExiting.")
+            if _UI_MANAGER:
+                _UI_MANAGER.stop()
             return 0
         _emit_live(f"repl: prompt received (len={len(prompt)})")
         if not prompt.strip():
@@ -2631,7 +2786,7 @@ def _run_repl(
         research_summary = ""
         if mode in {"tool_loop", "scientific"}:
             usage.set_status("research", "gathering references")
-            if minimal or os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+            if not pre_research_enabled or minimal or os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
                 research_summary = ""
             else:
                 _emit_live("repl: pre-research starting")
@@ -2763,6 +2918,8 @@ def _run_repl(
 
 
 def _read_input(workdir: Path) -> str:
+    if _UI_MANAGER:
+        return _UI_MANAGER.read_input(f"[{workdir}]> ")
     return input(f"[{workdir}]> ")
 
 
@@ -2931,6 +3088,27 @@ def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool
     if default_tool_loop:
         return "tool_loop"
     return "direct"
+
+
+def _plan_execution(session: C0d3rSession, prompt: str) -> dict:
+    """
+    Lightweight planner to choose initial tool sequence and model for the job.
+    Returns JSON with keys: mode, do_math, do_research, do_tool_loop, model_override.
+    """
+    system = (
+        "Return ONLY JSON with keys: mode, do_math, do_research, do_tool_loop, model_override. "
+        "Choose the minimal set of steps needed to complete the task. "
+        "Use do_math/do_research only if required to succeed. "
+        "mode should be tool_loop for tasks that write files or run commands."
+    )
+    try:
+        raw = session.send(prompt=prompt, stream=False, system=system)
+        payload = _safe_json(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
 
 
 def _pre_research(session: C0d3rSession, prompt: str) -> str:
@@ -4689,6 +4867,9 @@ class HeaderRenderer:
         if not self.enabled:
             return
         header = self._build_header()
+        if _UI_MANAGER:
+            _UI_MANAGER.set_header(header)
+            return
         if self.ansi_ok:
             sys.stdout.write("\x1b[2J\x1b[H")
         sys.stdout.write(header)
@@ -4701,6 +4882,10 @@ class HeaderRenderer:
         header = self._build_header()
         if header == self._last:
             return
+        if _UI_MANAGER:
+            _UI_MANAGER.set_header(header)
+            self._last = header
+            return
         if not self.ansi_ok:
             return
         # Save cursor, move to home, write header, restore cursor
@@ -4709,6 +4894,9 @@ class HeaderRenderer:
         sys.stdout.write("\x1b8")
         sys.stdout.flush()
         self._last = header
+
+    def render_text(self) -> str:
+        return self._build_header()
 
     def _build_header(self) -> str:
         from services.bedrock_pricing import estimate_cost, lookup_pricing
