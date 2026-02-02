@@ -1409,6 +1409,8 @@ def _extract_file_ops_from_text(text: str) -> list[dict]:
     payload = _safe_json(text)
     if isinstance(payload, dict) and payload.get("file_ops"):
         return payload.get("file_ops") or []
+    if isinstance(payload, dict) and payload.get("actions"):
+        return payload.get("actions") or []
     # Heuristic: ```file path/to/file\n...```
     ops: list[dict] = []
     for block in re.findall(r"```file\\s+([^\\n]+)\\n([\\s\\S]+?)```", text):
@@ -1447,6 +1449,20 @@ def _apply_file_ops(ops: list, workdir: Path) -> list[Path]:
         if not str(target).startswith(str(base)):
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        if action in {"mkdir", "dir", "directory"}:
+            target.mkdir(parents=True, exist_ok=True)
+            written.append(target)
+            continue
+        if action in {"delete", "remove"}:
+            if target.is_dir():
+                for child in target.glob("**/*"):
+                    if child.is_file():
+                        child.unlink(missing_ok=True)
+                target.rmdir()
+            elif target.exists():
+                target.unlink(missing_ok=True)
+            written.append(target)
+            continue
         if action == "append":
             with target.open("a", encoding="utf-8") as fh:
                 fh.write(str(content))
@@ -1508,6 +1524,7 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
     system = (
         "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
         "file_ops (list of {path, action, content}). "
+        "Actions can be write|append|delete|mkdir. "
         "You MUST provide commands or file_ops for actionable tasks."
     )
     try:
