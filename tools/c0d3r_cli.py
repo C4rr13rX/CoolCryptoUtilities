@@ -220,6 +220,15 @@ def _context_scan_path(workdir: Path) -> Path:
 def _is_existing_project(workdir: Path) -> bool:
     # Heuristic: git repo or framework markers or common project files.
     root = workdir.resolve()
+    # Treat workspace-like directories (many subfolders, no project markers) as non-projects.
+    try:
+        entries = [p for p in root.iterdir() if p.is_dir()]
+        if len(entries) >= 6:
+            markers = ["pyproject.toml", "requirements.txt", "package.json", "manage.py", ".git"]
+            if not any((root / m).exists() for m in markers):
+                return False
+    except Exception:
+        pass
     markers = ["pyproject.toml", "requirements.txt", "package.json", "manage.py", ".git"]
     return any((root / m).exists() for m in markers)
 
@@ -360,6 +369,7 @@ def _run_tool_loop(
     behavior_log: list[dict] = []
     step = 0
     no_command_count = 0
+    petals = PetalManager()
     while True:
         step += 1
         if not unlimited and step > max_steps:
@@ -380,7 +390,38 @@ def _run_tool_loop(
             if research_note:
                 history.append("[research]\n" + research_note[:2000])
                 _append_research_notes(research_note)
+        # Apply dynamic petals via capability mapping (no hardwired petals).
+        constraint_list = petals.state.get("constraints") or []
+        petal_plan = _petal_action_plan(session, constraint_list, prompt)
+        petal_effects = _apply_petal_plan(petal_plan) if petal_plan else {}
+        if petal_effects:
+            research_queries = petal_effects.get("research_queries") or []
+            if research_queries:
+                _emit_live(f"petal: research queries -> {len(research_queries)}")
+                for rq in research_queries[:3]:
+                    note = _pre_research(session, rq)
+                    if note:
+                        history.append(f"[petal research]\n{note[:1500]}")
+            if petal_effects.get("pause_for_input") and sys.stdin.isatty():
+                _emit_live("petal: pause_for_user_input")
+                print("\n[pause] Petal requested input. Add note and press Enter:")
+                note = input("> ").strip()
+                if note:
+                    history.append(f"[petal note]\n{note}")
+        # Matrix query for gaps/hits
+        matrix_info = _query_unbounded_matrix(prompt)
+        if matrix_info:
+            history.append(f"[matrix] hits={matrix_info.get('hits')} missing={matrix_info.get('missing')}")
+            if matrix_info.get("missing"):
+                _emit_live("matrix: missing items; targeted research")
+                for item in matrix_info["missing"][:3]:
+                    research_note = _pre_research(session, item)
+                    if research_note:
+                        history.append(f"[matrix research]\n{research_note[:1200]}")
         enforce_progress = consecutive_no_progress >= 2 and full_completion
+        if petal_effects.get("force_file_edits"):
+            enforce_progress = True
+        force_tests = bool(petal_effects.get("force_tests")) if petal_effects else False
         base_request = _strip_context_block(prompt)
         tool_prompt = (
             "You can run local shell commands to inspect the repo and validate work. "
@@ -452,6 +493,55 @@ def _run_tool_loop(
         usage_tracker.add_input(tool_prompt)
         _emit_live("tool_loop: calling model for commands")
         _diag_log("tool_loop: model call start")
+        # Apply petal overrides (model/timeout/microtests)
+        saved_model_id = getattr(session._c0d3r, "model_id", "")
+        saved_timeout = os.getenv("C0D3R_MODEL_TIMEOUT_S")
+        if petal_effects.get("model_override"):
+            session._c0d3r.model_id = str(petal_effects["model_override"])
+            _emit_live(f"petal: switch_model -> {session._c0d3r.model_id}")
+        if petal_effects.get("timeout_override") is not None:
+            os.environ["C0D3R_MODEL_TIMEOUT_S"] = str(petal_effects["timeout_override"])
+            _emit_live(f"petal: adjust_timeout_s -> {petal_effects['timeout_override']}")
+        if petal_effects.get("enforce_microtests"):
+            os.environ["C0D3R_MICROTESTS"] = "1"
+            _emit_live("petal: enforce_microtests")
+        def _timeout_reroute(note: str) -> tuple[str, list[str]]:
+            """
+            Failure-aware reroute: use research + local inspection + constrained command generator.
+            Returns (response_text, injected_history).
+            """
+            injected: list[str] = []
+            _emit_live(f"tool_loop: reroute on timeout ({note}) -> research + diagnostics")
+            # 1) Targeted research based on last_error + base_request.
+            try:
+                research_note = _pre_research(session, base_request)
+                if research_note:
+                    injected.append("[reroute-research]\n" + research_note[:2000])
+            except Exception:
+                pass
+            # 2) Local diagnostics to gather empirical evidence.
+            diag_cmds = _fallback_inspection_commands(workdir)
+            for cmd in diag_cmds[:4]:
+                if cmd:
+                    _emit_live(f"reroute: diag {cmd}")
+                    code, stdout, stderr = run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                    snippet = (stdout or "")[:1500]
+                    err_snip = (stderr or "")[:800]
+                    injected.append(f"[diagnostic] {cmd}\n{snippet}\n{err_snip}".strip())
+            # 3) Constrained command generator using research + diagnostics.
+            reroute_prompt = (
+                "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
+                "file_ops (list of {path, action, content}). "
+                "Use the diagnostics and research below to choose the next actionable steps. "
+                "Provide 2-6 concrete shell commands OR file_ops. Do NOT return empty commands/file_ops.\n"
+                f"Request:\n{base_request}\n\n"
+                + ("\n\n[reroute_context]\n" + "\n".join(injected) if injected else "")
+            )
+            try:
+                response = session.send(prompt=reroute_prompt, stream=False)
+                return response or "", injected
+            except Exception:
+                return "", injected
         if _requires_rigorous_constraints(prompt):
             command_model = os.getenv("C0D3R_COMMAND_MODEL", "mistral.mistral-large-3-675b-instruct")
             saved_model = getattr(session._c0d3r, "model_id", "")
@@ -496,7 +586,20 @@ def _run_tool_loop(
                     _emit_live(f"tool_loop: switching to fallback model {fallback_model}")
                 except Exception:
                     pass
-            history.append("note: model call timed out; retrying with shorter context")
+            history.append("note: model call timed out; rerouting to research+diagnostics path")
+            reroute, injected = _timeout_reroute("primary")
+            if injected:
+                history.extend(injected[-3:])
+            if reroute:
+                response = reroute
+            else:
+                # Last-resort: local inspection commands to ensure forward motion.
+                _emit_live("tool_loop: timeout reroute failed; using fallback inspection commands")
+                commands = _fallback_inspection_commands(workdir)
+                for cmd in commands[:5]:
+                    if cmd:
+                        run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                continue
             mini_prompt = (
                 "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
                 "file_ops (list of {path, action, content}). "
@@ -538,9 +641,30 @@ def _run_tool_loop(
                 if model_timeouts >= 5:
                     _emit_live("tool_loop: repeated timeouts; backing off for 3s")
                     time.sleep(3.0)
-                continue
+                # Reroute again before continuing.
+                reroute, injected = _timeout_reroute("minimal")
+                if injected:
+                    history.extend(injected[-3:])
+                if reroute:
+                    response = reroute
+                else:
+                    continue
+        # Restore petal overrides
+        session._c0d3r.model_id = saved_model_id
+        if saved_timeout is None:
+            os.environ.pop("C0D3R_MODEL_TIMEOUT_S", None)
+        else:
+            os.environ["C0D3R_MODEL_TIMEOUT_S"] = saved_timeout
         _diag_log("tool_loop: model call complete")
-        response = _enforce_actionability(session, tool_prompt, response or "")
+        # Force file_ops if petal demands it
+        if petal_effects.get("force_file_ops"):
+            response = _enforce_actionability(
+                session,
+                "Return ONLY JSON with file_ops; do not include commands.",
+                response or "",
+            )
+        else:
+            response = _enforce_actionability(session, tool_prompt, response or "")
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
             _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
@@ -742,10 +866,22 @@ def _run_tool_loop(
                     plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
                 except Exception:
                     pass
-                state = _load_plan_state()
-                if not state or state.get("steps") != plan_steps:
-                    state = _init_plan_state(plan_steps, workdir, run_command)
-                    _save_plan_state(state)
+                # Apply dynamic plan reordering from petals if provided.
+                if petal_effects and petal_effects.get("reorder_steps"):
+                    order = [s for s in petal_effects.get("reorder_steps") if s]
+                    if order:
+                        _emit_live("petal: applying dynamic step order")
+                        plan_steps = order + [s for s in plan_steps if s not in order]
+                # Add extra plan steps if requested by petals.
+                if petal_effects and petal_effects.get("add_plan_steps"):
+                    extras = [s for s in petal_effects.get("add_plan_steps") if s]
+                    if extras:
+                        _emit_live("petal: adding plan steps")
+                        plan_steps = list(plan_steps) + extras
+            state = _load_plan_state()
+            if not state or state.get("steps") != plan_steps:
+                state = _init_plan_state(plan_steps, workdir, run_command)
+                _save_plan_state(state)
             needs_code = bool(checkpoint.get("needs_code_changes"))
             if needs_code and not commands:
                 _emit_live("critical: needs code changes; forcing file ops")
@@ -782,6 +918,9 @@ def _run_tool_loop(
         wrote_project = False
         written_files: set[str] = set()
         defer_tests = os.getenv("C0D3R_DEFER_TESTS", "1").strip().lower() not in {"0", "false", "no", "off"}
+        if force_tests:
+            require_tests = True
+            defer_tests = False
         pending_test_targets: List[Path | None] = []
         for cmd in commands[:8]:
             usage_tracker.set_status("executing", cmd)
@@ -1039,6 +1178,12 @@ def _run_tool_loop(
                 history.append("error: tests still failing after remediation")
                 continue
             test_failures = 0
+        # If loop appears stuck, disable active petals generically.
+        if consecutive_no_progress >= 3 or test_failures >= 2 or model_timeouts >= 3:
+            for name, active in (petals.state.get("active") or {}).items():
+                if active:
+                    petals.disable(name, "loop detected: no progress or timeouts")
+                    _emit_live(f"petal: disabled {name} (loop detected)")
         if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
             _emit_live("unbounded: detected spiral; building bounded objective matrix")
             unbounded_payload = _enforce_unbounded_matrix(session, prompt)
@@ -1424,6 +1569,24 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
             pass
         _emit_live(f"math_grounding: model pass 1 error: {exc}")
         payload = {}
+        # Reroute: if math grounding fails, perform research-only grounding.
+        try:
+            _emit_live("math_grounding: reroute to research-only grounding")
+            research_only = session._c0d3r._research(base_request)
+            if research_only:
+                payload = {
+                    "variables": [],
+                    "unknowns": [],
+                    "equations": [],
+                    "constraints": [],
+                    "mapping": [],
+                    "research_questions": [f"Use research to derive equations for: {base_request}"],
+                    "symbol_definitions": {},
+                    "equation_units": {},
+                    "research_only": research_only[:3000],
+                }
+        except Exception:
+            pass
     if not isinstance(payload, dict):
         payload = {}
     research_questions = payload.get("research_questions") or []
@@ -2031,6 +2194,172 @@ def _microtest_enabled() -> bool:
     return os.getenv("C0D3R_MICROTESTS", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
+class PetalManager:
+    """
+    Dynamic constraint registry (petals).
+    No hardwired petals; constraints are learned from user input or model directives.
+    """
+    def __init__(self) -> None:
+        self.path = Path("runtime/c0d3r/petals.json")
+        self.state = {
+            "constraints": [],
+            "active": {},
+            "cooldowns": {},
+            "last_used": {},
+        }
+        self._load()
+
+    def _load(self) -> None:
+        if not self.path.exists():
+            return
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                self.state.update(payload)
+        except Exception:
+            pass
+
+    def save(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self.state, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def update_from_directives(self, directives: list[dict]) -> None:
+        if directives:
+            self.state["constraints"] = directives
+        self.save()
+
+    def active(self, name: str) -> bool:
+        return bool(self.state.get("active", {}).get(name, True))
+
+    def mark_used(self, name: str) -> None:
+        self.state.setdefault("last_used", {})[name] = time.time()
+        self.save()
+
+    def disable(self, name: str, reason: str) -> None:
+        self.state.setdefault("active", {})[name] = False
+        self.state.setdefault("cooldowns", {})[name] = {
+            "disabled_at": time.time(),
+            "reason": reason,
+        }
+        self.save()
+
+
+def _extract_petal_directives(prompt: str) -> list[dict]:
+    """
+    Extract dynamic constraints from user input. Each constraint is a dict:
+    {name, type, payload, ttl, priority, rationale}.
+    """
+    if not prompt:
+        return []
+    directives: list[dict] = []
+    # Minimal heuristic extraction; model can override by writing petals.json via file_ops if needed.
+    lower = prompt.lower()
+    if "research before" in lower:
+        directives.append({
+            "name": "dynamic_research_before",
+            "type": "research_before",
+            "payload": prompt.strip(),
+            "ttl": "session",
+            "priority": 5,
+            "rationale": "user requested research before execution",
+        })
+    if "before coding" in lower or "code before" in lower:
+        directives.append({
+            "name": "dynamic_order",
+            "type": "ordering_hint",
+            "payload": prompt.strip(),
+            "ttl": "session",
+            "priority": 4,
+            "rationale": "user specified ordering preference",
+        })
+    return directives
+
+
+def _query_unbounded_matrix(prompt: str) -> dict:
+    matrix_path = Path("runtime/c0d3r/unbounded_matrix.md")
+    if not matrix_path.exists() or not prompt:
+        return {}
+    try:
+        content = matrix_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return {}
+    tokens = [t for t in re.findall(r"[a-zA-Z_]{3,}", prompt.lower()) if t not in {"that","this","with","from","into","then"}]
+    hits = []
+    for tok in set(tokens[:20]):
+        if tok in content.lower():
+            hits.append(tok)
+    return {
+        "hits": hits,
+        "missing": [t for t in set(tokens[:10]) if t not in hits],
+    }
+
+
+def _petal_action_plan(session: C0d3rSession, constraints: list[dict], prompt: str) -> dict:
+    """
+    Map dynamic constraints to available capabilities without hardwiring.
+    Returns: {research_queries: [], reorder_steps: [], mode_hint: str}
+    """
+    if not constraints:
+        return {}
+    capabilities = [
+        "research_queries",
+        "reorder_plan_steps",
+        "prioritize_tests",
+        "prioritize_file_edits",
+        "pause_for_user_input",
+        "force_file_ops",
+        "force_tool_loop",
+        "force_scientific",
+        "switch_model",
+        "adjust_timeout_s",
+        "enforce_microtests",
+        "add_plan_steps",
+        "skip_math_grounding",
+    ]
+    system = (
+        "Return ONLY JSON with keys: research_queries (list), reorder_steps (list), "
+        "mode_hint (string). Use constraints to decide how to use capabilities. "
+        "Do not invent capabilities not listed."
+    )
+    try:
+        raw = session.send(
+            prompt=f"Constraints:\n{json.dumps(constraints, indent=2)}\n\nCapabilities:\n{capabilities}\n\nTask:\n{prompt}",
+            stream=False,
+            system=system,
+        )
+        payload = _safe_json(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _apply_petal_plan(petal_plan: dict) -> dict:
+    """
+    Normalize a petal plan into actionable flags for the execution loop.
+    """
+    effects = {
+        "research_queries": petal_plan.get("research_queries") or [],
+        "reorder_steps": petal_plan.get("reorder_steps") or [],
+        "force_tests": bool(petal_plan.get("prioritize_tests")),
+        "force_file_edits": bool(petal_plan.get("prioritize_file_edits")),
+        "pause_for_input": bool(petal_plan.get("pause_for_user_input")),
+        "force_file_ops": bool(petal_plan.get("force_file_ops")),
+        "force_tool_loop": bool(petal_plan.get("force_tool_loop")),
+        "force_scientific": bool(petal_plan.get("force_scientific")),
+        "model_override": petal_plan.get("switch_model") or "",
+        "timeout_override": petal_plan.get("adjust_timeout_s"),
+        "enforce_microtests": bool(petal_plan.get("enforce_microtests")),
+        "add_plan_steps": petal_plan.get("add_plan_steps") or [],
+        "skip_math_grounding": bool(petal_plan.get("skip_math_grounding")),
+    }
+    return effects
+
+
 def _write_microtest_harness(workdir: Path, targets: list[Path]) -> Path:
     runtime_dir = Path("runtime/c0d3r/microtests")
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -2157,6 +2486,13 @@ def _run_repl(
         _emit_live(f"repl: prompt received (len={len(prompt)})")
         if not prompt.strip():
             continue
+        # Petal directives from user prompt (dynamic constraints)
+        petals = PetalManager()
+        directives = _extract_petal_directives(prompt)
+        if directives:
+            names = [d.get("name") for d in directives if isinstance(d, dict)]
+            _emit_live(f"petal: updating directives {names}")
+            petals.update_from_directives(directives)
         if prompt.strip().lower() in {"/exit", "/quit"}:
             return 0
         if prompt.startswith("!"):
@@ -2190,9 +2526,6 @@ def _run_repl(
                 _emit_live("context: scanning existing project before edits")
                 scan = _scan_project_context(workdir, run_command)
                 context = context + "\n\n[project_scan]\n" + json.dumps(scan, indent=2)
-                # Skip this loop to ensure next prompt includes scan context.
-                pending = prompt
-                continue
         if not minimal:
             recall_hits = memory.search_if_referenced(prompt, limit=5)
             if recall_hits:
@@ -2248,7 +2581,17 @@ def _run_repl(
                     kwargs={"prompt": full_prompt, "stream": False, "system": system},
                 )
                 if response is None:
-                    response = "Model call timed out. Try again or adjust C0D3R_MODEL_TIMEOUT_S."
+                    _emit_live("repl: direct mode timed out; rerouting to tool loop")
+                    response = _run_tool_loop(
+                        session,
+                        full_prompt,
+                        workdir,
+                        run_command,
+                        images=None,
+                        stream=False,
+                        stream_callback=None,
+                        usage_tracker=usage,
+                    )
                 _emit_live("repl: direct model call complete")
         finally:
             controller.stop()
@@ -2536,7 +2879,12 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
             stop.set()
         except Exception:
             pass
-        return ""
+        # Reroute: fall back to direct web research if model times out.
+        try:
+            _emit_live("pre_research: timeout; rerouting to direct web research")
+            return session._c0d3r._research(research_prompt) or ""
+        except Exception:
+            return ""
 
 
 def _model_timeout_s() -> float | None:
@@ -2673,7 +3021,21 @@ def _requires_commands_for_task(prompt: str) -> bool:
 
 def _requires_new_projects_dir(prompt: str) -> bool:
     lower = (prompt or "").lower()
-    return "c:/users/adam/projects" in lower and "create" in lower and "directory" in lower
+    if "project" in lower and any(k in lower for k in ("create", "template", "scaffold", "setup", "set up", "initialize")):
+        return True
+    if "c:/users/adam/projects" in lower and "create" in lower and "directory" in lower:
+        return True
+    # If current dir looks like a workspace (many folders, no markers) and user asks for a template/scaffold.
+    try:
+        root = Path(os.getenv("C0D3R_ROOT_CWD", "") or os.getcwd()).resolve()
+        entries = [p for p in root.iterdir() if p.is_dir()]
+        markers = ["pyproject.toml", "requirements.txt", "package.json", "manage.py", ".git"]
+        workspace = len(entries) >= 6 and not any((root / m).exists() for m in markers)
+        if workspace and any(k in lower for k in ("template", "scaffold", "setup", "set up", "initialize", "new project")):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _requires_skeleton(prompt: str) -> bool:
