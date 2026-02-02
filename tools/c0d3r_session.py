@@ -235,6 +235,32 @@ class BedrockModelCatalog:
         return choices[0].model_id
 
 
+def _safe_json_blob(raw: str) -> dict:
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    # Try to extract the first JSON object/array in the blob.
+    starts = [i for i, ch in enumerate(raw) if ch in "{["]
+    for start in starts[:5]:
+        stack = []
+        for i in range(start, len(raw)):
+            ch = raw[i]
+            if ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack:
+                    break
+                stack.pop()
+                if not stack:
+                    candidate = raw[start : i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except Exception:
+                        break
+    return {}
+
+
 class BedrockClient:
     def __init__(self, *, profile: Optional[str], region: str, read_timeout_s: float | None = None, connect_timeout_s: float | None = None) -> None:
         if profile:
@@ -256,7 +282,7 @@ class BedrockClient:
             contentType="application/json",
         )
         raw = response["body"].read().decode("utf-8", errors="replace")
-        return json.loads(raw)
+        return _safe_json_blob(raw)
 
     def invoke_stream(self, *, model_id: str, payload: Dict[str, Any]):
         response = self.client.invoke_model_with_response_stream(

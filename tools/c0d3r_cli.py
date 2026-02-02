@@ -186,6 +186,10 @@ def _build_context_block(workdir: Path, run_command) -> str:
         f"- cwd: {workdir}",
         f"- os: {os.name}",
     ]
+    try:
+        lines.append(f"- project_root: {workdir.resolve()}")
+    except Exception:
+        pass
     frameworks = detect_frameworks(workdir)
     if frameworks:
         lines.append(f"- frameworks: {', '.join(frameworks)}")
@@ -206,6 +210,100 @@ def _build_context_block(workdir: Path, run_command) -> str:
         lines.append("top-level files:")
         lines.append("\n".join(stdout.strip().splitlines()[:80]))
     return "\n".join(lines)
+
+
+def _context_scan_path(workdir: Path) -> Path:
+    root = workdir.resolve()
+    return Path("runtime/c0d3r") / f"context_scan_{root.name}.json"
+
+
+def _is_existing_project(workdir: Path) -> bool:
+    # Heuristic: git repo or framework markers or common project files.
+    root = workdir.resolve()
+    markers = ["pyproject.toml", "requirements.txt", "package.json", "manage.py", ".git"]
+    return any((root / m).exists() for m in markers)
+
+
+def _scan_project_context(workdir: Path, run_command) -> dict:
+    root = workdir.resolve()
+    files: list[str] = []
+    git_snapshot = _snapshot_git(root, run_command)
+    # Prefer rg for speed.
+    code, stdout, _ = run_command("rg --files", cwd=root)
+    if code == 0 and stdout.strip():
+        files = stdout.strip().splitlines()
+    else:
+        code, stdout, _ = run_command("Get-ChildItem -Recurse -File | Select-Object -ExpandProperty FullName", cwd=root)
+        if code == 0 and stdout.strip():
+            files = [f.replace(str(root) + os.sep, "") for f in stdout.strip().splitlines()]
+    key_files = []
+    for name in ("pyproject.toml", "requirements.txt", "package.json", "manage.py", "setup.cfg", "Pipfile"):
+        if (root / name).exists():
+            key_files.append(name)
+    contents: dict[str, str] = {}
+    for name in key_files:
+        try:
+            contents[name] = (root / name).read_text(encoding="utf-8", errors="ignore")[:4000]
+        except Exception:
+            continue
+    scan = {
+        "root": str(root),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "file_count": len(files),
+        "files_sample": files[:200],
+        "key_files": key_files,
+        "key_contents": contents,
+        "git_snapshot": git_snapshot,
+    }
+    try:
+        path = _context_scan_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(scan, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return scan
+
+
+def _scan_is_fresh(workdir: Path, run_command, max_age_minutes: int = 15) -> bool:
+    path = _context_scan_path(workdir)
+    if not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    ts = payload.get("timestamp") or ""
+    try:
+        scan_time = datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return False
+    age = (datetime.datetime.now() - scan_time).total_seconds() / 60.0
+    if age > max_age_minutes:
+        return False
+    git_snapshot = payload.get("git_snapshot") or ""
+    current = _snapshot_git(workdir, run_command)
+    if git_snapshot != current:
+        return False
+    return True
+
+
+def _ensure_preflight(workdir: Path, run_command) -> None:
+    path = Path("runtime/c0d3r/preflight.json")
+    if path.exists():
+        return
+    checks = {}
+    for cmd in ("python", "git", "node", "npm"):
+        if os.name == "nt":
+            code, stdout, _ = run_command(f"where {cmd}", cwd=workdir)
+        else:
+            code, stdout, _ = run_command(f"which {cmd}", cwd=workdir)
+        checks[cmd] = {"found": code == 0, "path": stdout.strip().splitlines()[0] if stdout.strip() else ""}
+    payload = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "checks": checks}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _framework_decision(session: C0d3rSession, prompt: str, workdir: Path) -> dict:
@@ -447,9 +545,47 @@ def _run_tool_loop(
         if file_ops:
             _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
             applied = _apply_file_ops(file_ops, workdir)
+            if not applied:
+                history.append("error: file_ops rejected (paths/validation). Retrying with strict paths.")
+                strict_prompt = (
+                    "Your file_ops were rejected (invalid paths or missing allow_full_replace). "
+                    "Return ONLY JSON with file_ops using relative paths within the project root "
+                    f"({workdir}). If overwriting, set allow_full_replace=true. "
+                    "Do NOT reference runtime/ paths."
+                )
+                retry = session.send(prompt=strict_prompt, stream=False)
+                retry = _enforce_actionability(session, strict_prompt, retry or "")
+                retry_ops = _extract_file_ops_from_text(retry or "")
+                if retry_ops:
+                    applied = _apply_file_ops(retry_ops, workdir)
             for path in applied:
                 history.append(f"model file write: {path}")
             wrote_project = wrote_project or bool(applied)
+            if _microtest_enabled() and applied:
+                py_targets = [p for p in applied if str(p).endswith(".py") and "/tests/" not in str(p).replace("\\", "/")]
+                if py_targets:
+                    _emit_live(f"microtests: running on {len(py_targets)} files")
+                    ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
+                    if not ok:
+                        history.append("error: microtests failed; fixing before continuing")
+                        fix_prompt = (
+                            "Microtests failed. Provide file_ops or commands to fix the errors, "
+                            "then re-run microtests. Return ONLY JSON with commands and file_ops.\n"
+                            f"Errors:\n{output}"
+                        )
+                        response = session.send(prompt=fix_prompt, stream=False)
+                        response = _enforce_actionability(session, fix_prompt, response or "")
+                        retry_ops = _extract_file_ops_from_text(response or "")
+                        if retry_ops:
+                            _apply_file_ops(retry_ops, workdir)
+                        commands, _ = _extract_commands(response)
+                        for cmd in commands[:5]:
+                            if cmd:
+                                run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                        ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
+                        if not ok:
+                            history.append("error: microtests still failing after remediation")
+                            test_failures += 1
         elif _looks_like_code(response or ""):
             _emit_live("tool_loop: code detected without file targets; rejecting and requesting file_ops")
             history.append("error: code output without file targets; re-requesting with file_ops")
@@ -650,6 +786,11 @@ def _run_tool_loop(
         for cmd in commands[:8]:
             usage_tracker.set_status("executing", cmd)
             _emit_live(f"exec: {cmd}")
+            if _command_outside_root(cmd, workdir, allow_projects=_requires_new_projects_dir(prompt)):
+                history.append("error: command targets path outside project root; blocked")
+                _append_tool_log(log_path, cmd, 1, "", "blocked: outside project root")
+                consecutive_no_progress += 1
+                continue
             if cmd.lower().startswith("cd "):
                 cmd = "::cd " + cmd[3:].strip()
             if os.name == "nt" and ("<<" in cmd or cmd.strip().lower().startswith("cat ")):
@@ -854,6 +995,28 @@ def _run_tool_loop(
                     history.append("error: tests failed after write; fix and re-run before continuing")
                     test_failures += 1
                     break
+        # Enforce test creation for new Python files
+        if wrote_project:
+            new_py = [p for p in written_files if p.endswith(".py") and "\\tests\\" not in p and "/tests/" not in p]
+            if new_py and not tests_ran:
+                history.append("error: new Python files without tests; create tests before continuing")
+                fix_prompt = (
+                    "You created new Python files without tests. Provide file_ops to add tests under tests/ "
+                    "and commands to run them. Return ONLY JSON with commands and file_ops."
+                )
+                response = session.send(prompt=fix_prompt, stream=False)
+                response = _enforce_actionability(session, fix_prompt, response or "")
+                file_ops = _extract_file_ops_from_text(response or "")
+                if file_ops:
+                    _apply_file_ops(file_ops, workdir)
+                commands, _ = _extract_commands(response)
+                for cmd in commands[:5]:
+                    if cmd:
+                        run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                tests_ran, tests_ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path)
+                if not tests_ok:
+                    history.append("error: tests failed after adding tests")
+                    test_failures += 1
         if test_failures:
             _emit_live("tests: failure detected; enforcing remediation before continuing")
             fix_prompt = (
@@ -878,13 +1041,19 @@ def _run_tool_loop(
             test_failures = 0
         if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
             _emit_live("unbounded: detected spiral; building bounded objective matrix")
-            unbounded_payload = _resolve_unbounded_request(session, prompt)
+            unbounded_payload = _enforce_unbounded_matrix(session, prompt)
             if unbounded_payload:
                 unbounded_resolved = True
                 history.append("[unbounded]\n" + unbounded_payload.get("bounded_task", "").strip())
                 _append_unbounded_matrix(unbounded_payload)
                 prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
                 _apply_behavior_insights(unbounded_payload, behavior_log)
+        if _requires_rigorous_constraints(prompt) and not _unbounded_math_ready():
+            _emit_live("unbounded: required matrix not complete; forcing resolver")
+            unbounded_payload = _enforce_unbounded_matrix(session, prompt)
+            if unbounded_payload:
+                unbounded_resolved = True
+                prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
         if full_completion:
             _append_verification_snapshot(workdir, run_command, history)
             _update_system_map(workdir)
@@ -1016,6 +1185,35 @@ def _normalize_command(cmd: str, workdir: Path) -> str:
     return cmd
 
 
+def _extract_paths_from_command(cmd: str) -> list[str]:
+    paths: list[str] = []
+    if not cmd:
+        return paths
+    for match in re.findall(r"[A-Za-z]:\\\\[^\\s\"']+", cmd):
+        paths.append(match)
+    for match in re.findall(r"(?:^|\\s)(/[^\\s\"']+)", cmd):
+        paths.append(match.strip())
+    return paths
+
+
+def _command_outside_root(cmd: str, workdir: Path, *, allow_projects: bool) -> bool:
+    raw_paths = _extract_paths_from_command(cmd)
+    if not raw_paths:
+        return False
+    root = workdir.resolve()
+    projects_root = Path("C:/Users/Adam/Projects").resolve()
+    for raw in raw_paths:
+        try:
+            candidate = Path(raw).resolve()
+        except Exception:
+            continue
+        if allow_projects and str(candidate).startswith(str(projects_root)):
+            continue
+        if not str(candidate).startswith(str(root)):
+            return True
+    return False
+
+
 def _run_scientific_loop(
     session: C0d3rSession,
     prompt: str,
@@ -1124,21 +1322,54 @@ def _extract_commands(text: str) -> Tuple[List[str], str]:
         return [], ""
 
 
-def _extract_json(text: str) -> str:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return "{}"
-    return text[start : end + 1]
+def _extract_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    if not text:
+        return candidates
+    # Prefer fenced JSON blocks.
+    for block in re.findall(r"```json\\s*([\\s\\S]+?)```", text, re.IGNORECASE):
+        candidates.append(block.strip())
+    # Then any fenced blocks.
+    for block in re.findall(r"```([\\s\\S]+?)```", text):
+        if "{" in block and "}" in block:
+            candidates.append(block.strip())
+    # Finally, scan for balanced JSON objects.
+    start_indices = [i for i, ch in enumerate(text) if ch in "{["]
+    for start in start_indices[:5]:
+        stack = []
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack:
+                    break
+                stack.pop()
+                if not stack:
+                    candidates.append(text[start : i + 1])
+                    break
+    return candidates
 
 
 def _safe_json(text: str):
     try:
         import json as _json
-
-        return _json.loads(_extract_json(text))
     except Exception:
         return {}
+    for candidate in _extract_json_candidates(text):
+        try:
+            return _json.loads(candidate)
+        except Exception:
+            continue
+    # Fallback: best-effort slice from first to last brace.
+    try:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            return _json.loads(text[start : end + 1])
+    except Exception:
+        pass
+    return {}
 
 
 def _strip_context_block(prompt: str) -> str:
@@ -1159,10 +1390,10 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
     system = (
         "Return ONLY JSON with keys: variables (list), unknowns (list), "
         "equations (list of strings), constraints (list), "
-        "mapping (list), research_questions (list). "
+        "mapping (list), research_questions (list), symbol_definitions (dict), equation_units (dict). "
         "Express the request as math; if you cannot form explicit equations, "
         "provide symbolic placeholders AND at least 3 research_questions to "
-        "identify missing constants/relations."
+        "identify missing constants/relations. Provide units for equations."
     )
     def _heartbeat(label: str, stop_event: threading.Event, interval: float = 5.0) -> threading.Thread:
         def _runner():
@@ -1298,6 +1529,8 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
         "constraints": payload.get("constraints") or [],
         "gap_fill_steps": payload.get("gap_fill_steps") or [],
         "research_links": payload.get("research_links") or [],
+        "symbol_definitions": payload.get("symbol_definitions") or {},
+        "equation_units": payload.get("equation_units") or {},
         "solutions": solutions,
     }
     try:
@@ -1428,48 +1661,233 @@ def _looks_like_code(text: str) -> bool:
     return any(k in text for k in keywords)
 
 
+def _validate_action_schema(text: str) -> bool:
+    payload = _safe_json(text)
+    if not isinstance(payload, dict):
+        return False
+    cmds = payload.get("commands")
+    ops = payload.get("file_ops") or payload.get("actions")
+    if cmds is None and ops is None:
+        return False
+    if cmds is not None and not isinstance(cmds, list):
+        return False
+    if ops is not None and not isinstance(ops, list):
+        return False
+    return True
+
+
 def _apply_file_ops(ops: list, workdir: Path) -> list[Path]:
-    written: list[Path] = []
-    for op in ops:
-        if not isinstance(op, dict):
+    executor = FileExecutor(workdir)
+    return executor.apply_ops(ops)
+
+
+def _apply_unified_diff(original: str, diff_text: str) -> str:
+    lines = original.splitlines(keepends=True)
+    diff_lines = diff_text.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    di = 0
+    while di < len(diff_lines):
+        line = diff_lines[di]
+        if not line.startswith("@@"):
+            di += 1
             continue
-        path = str(op.get("path") or "").strip()
-        action = str(op.get("action") or "write").strip().lower()
-        content = op.get("content") if op.get("content") is not None else ""
-        if not path:
+        # Parse hunk header: @@ -l,s +l,s @@
+        m = re.match(r"@@\s+-([0-9]+)(?:,([0-9]+))?\s+\+([0-9]+)(?:,([0-9]+))?\s+@@", line)
+        if not m:
+            di += 1
             continue
-        base = workdir.resolve()
-        target = (base / path) if not Path(path).is_absolute() else Path(path).resolve()
+        start_old = int(m.group(1)) - 1
+        # flush unchanged
+        while i < start_old and i < len(lines):
+            out.append(lines[i])
+            i += 1
+        di += 1
+        # Apply hunk
+        while di < len(diff_lines):
+            hline = diff_lines[di]
+            if hline.startswith("@@"):
+                break
+            if hline.startswith(" "):
+                out.append(lines[i])
+                i += 1
+            elif hline.startswith("-"):
+                i += 1
+            elif hline.startswith("+"):
+                out.append(hline[1:])
+            di += 1
+    # Append remaining
+    out.extend(lines[i:])
+    return "".join(out)
+
+
+def _resolve_target_path(base: Path, raw_path: str) -> Path | None:
+    if not raw_path:
+        return None
+    path = raw_path.strip().strip('"').strip("'")
+    path = os.path.expandvars(os.path.expanduser(path))
+    base = base.resolve()
+    target = (base / path) if not Path(path).is_absolute() else Path(path)
+    try:
+        target = target.resolve()
+    except Exception:
+        return None
+    if _is_runtime_path(target):
+        return None
+    if not str(target).startswith(str(base)):
+        return None
+    return target
+
+
+class FileExecutor:
+    def __init__(self, workdir: Path) -> None:
+        self.base = workdir.resolve()
+        self.log_path = Path("runtime/c0d3r/executor.log")
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _log(self, msg: str) -> None:
         try:
-            target = target.resolve()
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            with self.log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"[{ts}] {msg}\n")
         except Exception:
-            continue
-        if _is_runtime_path(target):
-            continue
-        if not str(target).startswith(str(base)):
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if action in {"mkdir", "dir", "directory"}:
-            target.mkdir(parents=True, exist_ok=True)
+            pass
+
+    def _comment_prefix(self, path: Path) -> str:
+        ext = path.suffix.lower()
+        if ext in {".py", ".sh", ".rb", ".pl"}:
+            return "#"
+        if ext in {".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp", ".cs", ".go"}:
+            return "//"
+        if ext in {".md", ".txt"}:
+            return ""
+        return "#"
+
+    def _citation_block(self, sources: list, path: Path) -> str:
+        prefix = self._comment_prefix(path)
+        lines = ["C0D3R-CITATIONS:"]
+        for src in sources:
+            lines.append(f"- {src}")
+        if prefix:
+            return "\n".join(f"{prefix} {line}".rstrip() for line in lines) + "\n\n"
+        return "\n".join(lines) + "\n\n"
+
+    def _log_missing_sources(self, path: Path, action: str) -> None:
+        try:
+            todo_path = Path("runtime/c0d3r/bibliography_todo.jsonl")
+            todo_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "path": str(path),
+                "action": action,
+                "note": "Missing APA sources for file op; add citations if research was used.",
+            }
+            with todo_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload) + "\n")
+        except Exception:
+            pass
+
+    def apply_ops(self, ops: list) -> list[Path]:
+        written: list[Path] = []
+        for op in ops:
+            if not isinstance(op, dict):
+                continue
+            action = str(op.get("action") or "write").strip().lower()
+            raw_path = str(op.get("path") or "").strip()
+            target = _resolve_target_path(self.base, raw_path)
+            if not target:
+                self._log(f"reject path: {raw_path}")
+                continue
+            content = op.get("content") if op.get("content") is not None else ""
+            sources = op.get("sources") or []
+            if isinstance(sources, str):
+                sources = [sources]
+            self._log(f"op={action} path={target}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Backup before destructive writes
+            if target.exists() and action in {"write", "append", "replace", "patch", "delete", "remove", "move", "rename"}:
+                backup_dir = Path("runtime/c0d3r/backups") / time.strftime("%Y%m%d_%H%M%S")
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup_path = backup_dir / target.name
+                try:
+                    backup_path.write_bytes(target.read_bytes())
+                    self._log(f"backup: {backup_path}")
+                except Exception:
+                    pass
+            if action in {"mkdir", "dir", "directory"}:
+                target.mkdir(parents=True, exist_ok=True)
+                written.append(target)
+                continue
+            if action in {"delete", "remove"}:
+                if target.is_dir():
+                    for child in target.glob("**/*"):
+                        if child.is_file():
+                            child.unlink(missing_ok=True)
+                    target.rmdir()
+                elif target.exists():
+                    target.unlink(missing_ok=True)
+                written.append(target)
+                continue
+            # Evidence-first guard for large writes (warn + record, but do not block)
+            if action in {"write", "append", "replace", "patch"} and not sources:
+                self._log(f"warn: missing sources for write {target}")
+                self._log_missing_sources(target, action)
+            # Diff enforcement: do not overwrite existing files without allow_full_replace
+            if action == "write" and target.exists() and not op.get("allow_full_replace"):
+                self._log(f"reject: write requires allow_full_replace {target}")
+                continue
+            if action in {"move", "rename"}:
+                dest_raw = str(op.get("dest") or "").strip()
+                dest = _resolve_target_path(self.base, dest_raw)
+                if dest:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    target.replace(dest)
+                    written.append(dest)
+                continue
+            if action == "copy":
+                dest_raw = str(op.get("dest") or "").strip()
+                dest = _resolve_target_path(self.base, dest_raw)
+                if dest and target.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(target.read_bytes())
+                    written.append(dest)
+                continue
+            if action == "patch":
+                if target.exists():
+                    original = target.read_text(encoding="utf-8", errors="ignore")
+                else:
+                    original = ""
+                patched = _apply_unified_diff(original, str(content))
+                if sources and "C0D3R-CITATIONS" not in patched:
+                    patched = self._citation_block(sources, target) + patched
+                target.write_text(patched, encoding="utf-8")
+                written.append(target)
+                continue
+            if action == "replace":
+                find_text = str(op.get("find") or "")
+                replace_text = str(op.get("replace") or "")
+                original = target.read_text(encoding="utf-8", errors="ignore") if target.exists() else ""
+                updated = original.replace(find_text, replace_text)
+                if sources and "C0D3R-CITATIONS" not in updated:
+                    updated = self._citation_block(sources, target) + updated
+                target.write_text(updated, encoding="utf-8")
+                written.append(target)
+                continue
+            if action == "append":
+                existing = target.read_text(encoding="utf-8", errors="ignore") if target.exists() else ""
+                if sources and "C0D3R-CITATIONS" not in existing:
+                    existing = self._citation_block(sources, target) + existing
+                with target.open("w", encoding="utf-8") as fh:
+                    fh.write(existing + str(content))
+            else:
+                text = str(content)
+                if sources and "C0D3R-CITATIONS" not in text:
+                    text = self._citation_block(sources, target) + text
+                target.write_text(text, encoding="utf-8")
             written.append(target)
-            continue
-        if action in {"delete", "remove"}:
-            if target.is_dir():
-                for child in target.glob("**/*"):
-                    if child.is_file():
-                        child.unlink(missing_ok=True)
-                target.rmdir()
-            elif target.exists():
-                target.unlink(missing_ok=True)
-            written.append(target)
-            continue
-        if action == "append":
-            with target.open("a", encoding="utf-8") as fh:
-                fh.write(str(content))
-        else:
-            target.write_text(str(content), encoding="utf-8")
-        written.append(target)
-    return written
+            if not target.exists():
+                self._log(f"warn: file op did not create target {target}")
+        return written
 
 
 def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path) -> list[Path]:
@@ -1477,6 +1895,7 @@ def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path) -> list[P
         "Return ONLY JSON with key: file_ops (list). "
         "Each item: {\"path\": \"relative/path\", \"action\": \"write|append\", \"content\": \"...\"}. "
         "Write concrete project files that implement the request. No runtime/ notes/ logs. "
+        "Include sources (APA format) for any write/append/patch/replace in a 'sources' list. "
         "At least 2 file_ops."
     )
     try:
@@ -1517,14 +1936,32 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
     # If response is only text and task is actionable, re-ask for commands/file_ops.
     if not response:
         return response
+    if _validate_action_schema(response):
+        return response
     if _extract_commands(response)[0]:
         return response
     if _extract_file_ops_from_text(response):
         return response
+    if _looks_like_code(response):
+        # Force file targets for code output.
+        system = (
+            "You returned code without file targets. Return ONLY JSON with keys: "
+            "commands (list of strings), final (string or empty), "
+            "file_ops (list of {path, action, content}). "
+            "Actions can be write|append|delete|mkdir|patch|replace|move|copy. "
+            "If you output code, it MUST be in file_ops with explicit paths. "
+            "Include sources (APA format list) for any write/append/patch/replace."
+        )
+        try:
+            raw = session.send(prompt=prompt, stream=False, system=system)
+            return raw
+        except Exception:
+            return response
     system = (
         "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
         "file_ops (list of {path, action, content}). "
-        "Actions can be write|append|delete|mkdir. "
+        "Actions can be write|append|delete|mkdir|patch|replace|move|copy. "
+        "Include sources (APA format list) for any write/append/patch/replace. "
         "You MUST provide commands or file_ops for actionable tasks."
     )
     try:
@@ -1590,6 +2027,98 @@ def _verify_step(step: str, workdir: Path, run_command, usage_tracker, log_path:
     return bool(current)
 
 
+def _microtest_enabled() -> bool:
+    return os.getenv("C0D3R_MICROTESTS", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _write_microtest_harness(workdir: Path, targets: list[Path]) -> Path:
+    runtime_dir = Path("runtime/c0d3r/microtests")
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    target_list = [str(t.resolve()) for t in targets]
+    payload_path = runtime_dir / "targets.json"
+    payload_path.write_text(json.dumps(target_list, indent=2), encoding="utf-8")
+    harness = runtime_dir / "run_microtests.py"
+    harness.write_text(
+        (
+            "import json, inspect, importlib.util, sys, traceback\n"
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[2]\n"
+            "sys.path.insert(0, str(ROOT))\n"
+            "targets = json.loads(Path(__file__).with_name('targets.json').read_text())\n"
+            "errors = []\n"
+            "def dummy_for(param):\n"
+            "    name = param.name.lower()\n"
+            "    ann = getattr(param, 'annotation', None)\n"
+            "    if ann in (int, 'int'): return 1\n"
+            "    if ann in (float, 'float'): return 1.0\n"
+            "    if ann in (str, 'str'): return 'foo'\n"
+            "    if ann in (bool, 'bool'): return True\n"
+            "    if ann in (list, 'list'): return []\n"
+            "    if ann in (dict, 'dict'): return {}\n"
+            "    if 'path' in name or 'file' in name: return str(ROOT / 'runtime' / 'c0d3r' / 'foo_data.json')\n"
+            "    if 'name' in name: return 'foo'\n"
+            "    if 'count' in name or 'num' in name: return 1\n"
+            "    return None\n"
+            "def safe_call(func, params):\n"
+            "    args = []\n"
+            "    kwargs = {}\n"
+            "    for p in params:\n"
+            "        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):\n"
+            "            continue\n"
+            "        if p.default is not inspect._empty:\n"
+            "            continue\n"
+            "        kwargs[p.name] = dummy_for(p)\n"
+            "    return func(**kwargs)\n"
+            "def should_skip(name):\n"
+            "    skip = ['delete','remove','drop','write','save','send','request','open','close','connect']\n"
+            "    return any(s in name.lower() for s in skip)\n"
+            "for target in targets:\n"
+            "    path = Path(target)\n"
+            "    if not path.exists():\n"
+            "        continue\n"
+            "    modname = path.stem\n"
+            "    try:\n"
+            "        spec = importlib.util.spec_from_file_location(modname, str(path))\n"
+            "        mod = importlib.util.module_from_spec(spec)\n"
+            "        spec.loader.exec_module(mod)\n"
+            "    except Exception as exc:\n"
+            "        errors.append(f'import {path}: {exc}\\n{traceback.format_exc()}')\n"
+            "        continue\n"
+            "    for name, obj in inspect.getmembers(mod):\n"
+            "        if name.startswith('_'):\n"
+            "            continue\n"
+            "        try:\n"
+            "            if inspect.isfunction(obj):\n"
+            "                if should_skip(name):\n"
+            "                    continue\n"
+            "                sig = inspect.signature(obj)\n"
+            "                safe_call(obj, sig.parameters.values())\n"
+            "            elif inspect.isclass(obj):\n"
+            "                if should_skip(name):\n"
+            "                    continue\n"
+            "                sig = inspect.signature(obj.__init__)\n"
+            "                safe_call(obj, list(sig.parameters.values())[1:])\n"
+            "        except Exception as exc:\n"
+            "            errors.append(f'{path}:{name}: {exc}\\n{traceback.format_exc()}')\n"
+            "if errors:\n"
+            "    raise SystemExit('\\n\\n'.join(errors))\n"
+            "print('microtests: ok')\n"
+        ),
+        encoding="utf-8",
+    )
+    return harness
+
+
+def _run_microtests_for_paths(workdir: Path, run_command, targets: list[Path]) -> tuple[bool, str]:
+    if not targets:
+        return True, ""
+    harness = _write_microtest_harness(workdir, targets)
+    cmd = f'python "{harness}"'
+    code, stdout, stderr = run_command(cmd, cwd=workdir, timeout_s=300)
+    combined = (stdout or "") + ("\n" + stderr if stderr else "")
+    return code == 0, combined.strip()
+
+
 def _run_repl(
     session: C0d3rSession,
     usage: UsageTracker,
@@ -1615,6 +2144,7 @@ def _run_repl(
     budget.enabled = header.budget_enabled
     header.render()
     _emit_live("repl: header rendered")
+    _ensure_preflight(workdir, run_command)
     while True:
         try:
             header.freeze()
@@ -1653,6 +2183,16 @@ def _run_repl(
             context = f"{probe_block}\n{context}" if context else probe_block
         except Exception:
             pass
+        # Existing project gate: scan context before edits.
+        if _is_existing_project(workdir):
+            scan_path = _context_scan_path(workdir)
+            if not scan_path.exists() or not _scan_is_fresh(workdir, run_command, max_age_minutes=10):
+                _emit_live("context: scanning existing project before edits")
+                scan = _scan_project_context(workdir, run_command)
+                context = context + "\n\n[project_scan]\n" + json.dumps(scan, indent=2)
+                # Skip this loop to ensure next prompt includes scan context.
+                pending = prompt
+                continue
         if not minimal:
             recall_hits = memory.search_if_referenced(prompt, limit=5)
             if recall_hits:
@@ -1712,7 +2252,42 @@ def _run_repl(
                 _emit_live("repl: direct model call complete")
         finally:
             controller.stop()
+        if mode == "direct" and _is_actionable_prompt(prompt):
+            response = _enforce_actionability(session, full_prompt, response or "")
         rendered = _render_json_response(response) or response
+        # Apply file ops from any mode (direct/scientific/tool-loop) if present.
+        file_ops = _extract_file_ops_from_text(response or "")
+        if file_ops:
+            _emit_live(f"executor: applying {len(file_ops)} file ops from response")
+            applied = _apply_file_ops(file_ops, workdir)
+            for path in applied:
+                _emit_live(f"executor: wrote {path}")
+            if not applied:
+                _emit_live("executor: file_ops provided but none applied (validation/paths)")
+            if _microtest_enabled() and applied:
+                py_targets = [p for p in applied if str(p).endswith(".py") and "/tests/" not in str(p).replace("\\", "/")]
+                if py_targets:
+                    _emit_live(f"microtests: running on {len(py_targets)} files")
+                    ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
+                    if not ok:
+                        _emit_live("microtests: failed; attempting remediation")
+                        fix_prompt = (
+                            "Microtests failed. Provide file_ops or commands to fix errors, then re-run microtests. "
+                            "Return ONLY JSON with commands and file_ops.\n"
+                            f"Errors:\n{output}"
+                        )
+                        response = session.send(prompt=fix_prompt, stream=False)
+                        response = _enforce_actionability(session, fix_prompt, response or "")
+                        retry_ops = _extract_file_ops_from_text(response or "")
+                        if retry_ops:
+                            _apply_file_ops(retry_ops, workdir)
+                        commands, _ = _extract_commands(response)
+                        for cmd in commands[:5]:
+                            if cmd:
+                                run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                        ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
+                        if not ok:
+                            _emit_live("microtests: still failing after remediation")
         # update budget usage
         try:
             from services.bedrock_pricing import estimate_cost
@@ -1888,6 +2463,18 @@ def _prompt_budget_value(current: float) -> float:
         return current
 
 
+def _is_actionable_prompt(prompt: str) -> bool:
+    if not prompt:
+        return False
+    lower = prompt.lower()
+    keywords = [
+        "create", "update", "modify", "fix", "implement", "add", "remove", "delete",
+        "run", "test", "build", "install", "generate", "scaffold", "refactor", "migrate",
+        "configure", "setup", "set up", "deploy", "serve",
+    ]
+    return any(k in lower for k in keywords)
+
+
 def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool, default_tool_loop: bool) -> str:
     """
     Ask a routing model to choose the best execution mode.
@@ -1906,6 +2493,8 @@ def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool
         payload = _safe_json(response)
         mode = str(payload.get("mode") or "").strip().lower()
         if mode in {"tool_loop", "direct", "scientific"}:
+            if mode == "direct" and _is_actionable_prompt(prompt):
+                return "tool_loop"
             return mode
     except Exception:
         pass
@@ -2176,7 +2765,27 @@ def _unbounded_math_ready() -> bool:
         payload = json.loads(payload_path.read_text(encoding="utf-8"))
         equations = payload.get("equations") or []
         links = payload.get("research_links") or []
+        matrix = payload.get("matrix") or []
+        gaps = payload.get("gap_fill_steps") or []
+        nodes = payload.get("candidate_nodes") or []
+        selected = payload.get("selected_node")
+        symbol_defs = payload.get("symbol_definitions") or {}
+        eq_units = payload.get("equation_units") or {}
+        prior_matrix = _load_unbounded_matrix_context()
+        matrix_hits = payload.get("matrix_hits") or []
         if not equations or not links:
+            return False
+        if not matrix or not gaps or not nodes or not selected:
+            return False
+        if not isinstance(symbol_defs, dict) or not symbol_defs:
+            return False
+        if not isinstance(eq_units, dict) or not eq_units:
+            return False
+        if prior_matrix and not matrix_hits:
+            return False
+        # Require advanced math tokens in equations
+        math_tokens = ("=", "\\frac", "\\int", "\\sum", "\\partial", "d/d", "exp(", "log(")
+        if not any(any(tok in str(eq) for tok in math_tokens) for eq in equations):
             return False
         return True
     except Exception:
@@ -2437,6 +3046,78 @@ def _unbounded_trigger(no_progress: int, test_failures: int, model_timeouts: int
     return (no_progress >= 2) or (test_failures >= 3) or (model_timeouts >= 2)
 
 
+def _enforce_unbounded_matrix(session: C0d3rSession, prompt: str) -> dict | None:
+    payload = _resolve_unbounded_request(session, prompt)
+    if not payload:
+        return None
+    # Contradiction detection across equations (duplicate LHS with different RHS).
+    try:
+        lhs_map = {}
+        conflict = False
+        for eq in payload.get("equations") or []:
+            if "=" not in eq:
+                continue
+            left, right = eq.split("=", 1)
+            left_key = left.strip()
+            prev = lhs_map.get(left_key)
+            if prev and prev.strip() != right.strip():
+                conflict = True
+                break
+            lhs_map[left_key] = right
+        if conflict:
+            payload["equations"] = []
+    except Exception:
+        pass
+    # Validate equations are computable via sympy where possible
+    try:
+        import sympy as _sp
+
+        valid = 0
+        for eq in payload.get("equations") or []:
+            try:
+                if "=" in eq:
+                    left, right = eq.split("=", 1)
+                    _sp.Eq(_sp.sympify(left), _sp.sympify(right))
+                else:
+                    _sp.sympify(eq)
+                valid += 1
+            except Exception:
+                continue
+        if valid == 0:
+            payload["equations"] = []
+    except Exception:
+        pass
+    # Validate unit consistency if provided.
+    try:
+        eq_units = payload.get("equation_units") or {}
+        if isinstance(eq_units, dict):
+            for eq, units in eq_units.items():
+                if not isinstance(units, dict):
+                    payload["equations"] = []
+                    break
+                lhs = units.get("lhs_units")
+                rhs = units.get("rhs_units")
+                if lhs is None or rhs is None or str(lhs) != str(rhs):
+                    payload["equations"] = []
+                    break
+    except Exception:
+        pass
+    _append_unbounded_matrix(payload)
+    _persist_unbounded_payload(payload)
+    return payload
+
+
+def _load_unbounded_matrix_context(max_chars: int = 6000) -> str:
+    path = Path("runtime/c0d3r/unbounded_matrix.md")
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        return text[-max_chars:]
+    except Exception:
+        return ""
+
+
 def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | None:
     system = (
         "Return ONLY JSON with keys: branches (list), matrix (list of rows), "
@@ -2447,7 +3128,11 @@ def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | Non
         "branches must name 4 disciplines + critical thinking psychology + neuroscience of engineering. "
         "Treat the problem as a mathematical traversal of a multi-disciplinary knowledge matrix. "
         "First integrate mechanics across disciplines (integrated_mechanics), then express them as "
-        "explicit equations (equations). Fill gaps between equations by proposing bridging equations "
+        "explicit equations (equations) using real math (LaTeX or SymPy-friendly). "
+        "Equations MUST be computable locally and reference measurable quantities. "
+        "Provide symbol_definitions as dict {symbol: {meaning, units}} and "
+        "equation_units as dict {equation: {lhs_units, rhs_units}}. "
+        "Fill gaps between equations by proposing bridging equations "
         "and tests (gap_fill_steps). Only then list anomalies/paradoxes nearest to those mechanics, "
         "and derive hypotheses that reconcile paradoxes with proven mechanics. "
         "Use experiments to refine hypotheses. Build candidate_nodes as objects with fields: "
@@ -2457,7 +3142,22 @@ def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | Non
         "bounded_task must be a concrete, testable task with explicit completion criteria."
     )
     try:
-        response = session.send(prompt=f"Unbounded request:\n{prompt}", stream=False, system=system)
+        prior_matrix = _load_unbounded_matrix_context()
+        matrix_context = ""
+        if prior_matrix:
+            # Query existing matrix for relevant nodes before creating new ones.
+            reuse_system = (
+                "Return ONLY JSON with keys: matrix_hits (list). "
+                "Each hit: {equation, discipline, rationale}. "
+                "Select the most relevant existing equations/mechanics for the request."
+            )
+            reuse_prompt = f"Existing matrix:\n{prior_matrix}\n\nRequest:\n{prompt}"
+            reuse_raw = session.send(prompt=reuse_prompt, stream=False, system=reuse_system)
+            reuse_payload = _safe_json(reuse_raw)
+            matrix_hits = reuse_payload.get("matrix_hits") if isinstance(reuse_payload, dict) else None
+            if matrix_hits:
+                matrix_context = f"\n\n[matrix_hits]\n{json.dumps(matrix_hits, indent=2)}"
+        response = session.send(prompt=f"Unbounded request:\n{prompt}{matrix_context}", stream=False, system=system)
         payload = _safe_json(response)
         if not isinstance(payload, dict):
             return None
