@@ -195,20 +195,33 @@ def _build_context_block(workdir: Path, run_command) -> str:
         lines.append(f"- frameworks: {', '.join(frameworks)}")
     else:
         lines.append("- frameworks: (none detected)")
-    code, stdout, stderr = run_command("git status -sb", cwd=workdir)
-    if stdout.strip():
-        lines.append("git status -sb:")
-        lines.append(stdout.strip()[:2000])
-    if stderr.strip():
-        lines.append("git status stderr:")
-        lines.append(stderr.strip()[:500])
-    code, stdout, stderr = run_command("git rev-parse --show-toplevel", cwd=workdir)
-    if stdout.strip():
-        lines.append(f"repo root: {stdout.strip()}")
-    code, stdout, stderr = run_command("Get-ChildItem -Name", cwd=workdir) if os.name == "nt" else run_command("ls -1", cwd=workdir)
-    if stdout.strip():
-        lines.append("top-level files:")
-        lines.append("\n".join(stdout.strip().splitlines()[:80]))
+    # Parallelize independent context probes.
+    tasks = []
+    tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
+    tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
+    if os.name == "nt":
+        tasks.append(("ls", lambda: run_command("Get-ChildItem -Name", cwd=workdir)))
+    else:
+        tasks.append(("ls", lambda: run_command("ls -1", cwd=workdir)))
+    results = _run_parallel_tasks([(name, fn) for name, fn in tasks], max_workers=3)
+    result_map = {name: res for name, res in results}
+    if "git_status" in result_map:
+        code, stdout, stderr = result_map["git_status"]
+        if stdout.strip():
+            lines.append("git status -sb:")
+            lines.append(stdout.strip()[:2000])
+        if stderr.strip():
+            lines.append("git status stderr:")
+            lines.append(stderr.strip()[:500])
+    if "git_root" in result_map:
+        code, stdout, stderr = result_map["git_root"]
+        if stdout.strip():
+            lines.append(f"repo root: {stdout.strip()}")
+    if "ls" in result_map:
+        code, stdout, stderr = result_map["ls"]
+        if stdout.strip():
+            lines.append("top-level files:")
+            lines.append("\n".join(stdout.strip().splitlines()[:80]))
     return "\n".join(lines)
 
 
@@ -384,12 +397,10 @@ def _run_tool_loop(
             model_timeouts=model_timeouts,
             note="prepare_prompt",
         )
+        research_tasks: list[tuple[str, callable]] = []
         if gap_score >= 2:
             _emit_live("tool_loop: gap score high; running targeted research")
-            research_note = _pre_research(session, prompt)
-            if research_note:
-                history.append("[research]\n" + research_note[:2000])
-                _append_research_notes(research_note)
+            research_tasks.append(("gap_score", lambda: _pre_research(session, prompt)))
         # Apply dynamic petals via capability mapping (no hardwired petals).
         constraint_list = petals.state.get("constraints") or []
         petal_plan = _petal_action_plan(session, constraint_list, prompt)
@@ -399,9 +410,7 @@ def _run_tool_loop(
             if research_queries:
                 _emit_live(f"petal: research queries -> {len(research_queries)}")
                 for rq in research_queries[:3]:
-                    note = _pre_research(session, rq)
-                    if note:
-                        history.append(f"[petal research]\n{note[:1500]}")
+                    research_tasks.append((f"petal:{rq[:60]}", lambda rq=rq: _pre_research(session, rq)))
             if petal_effects.get("pause_for_input") and sys.stdin.isatty():
                 _emit_live("petal: pause_for_user_input")
                 print("\n[pause] Petal requested input. Add note and press Enter:")
@@ -415,9 +424,18 @@ def _run_tool_loop(
             if matrix_info.get("missing"):
                 _emit_live("matrix: missing items; targeted research")
                 for item in matrix_info["missing"][:3]:
-                    research_note = _pre_research(session, item)
-                    if research_note:
-                        history.append(f"[matrix research]\n{research_note[:1200]}")
+                    research_tasks.append((f"matrix:{item[:60]}", lambda item=item: _pre_research(session, item)))
+        if research_tasks:
+            _emit_live(f"research: running {len(research_tasks)} tasks in parallel")
+            for label, note in _run_parallel_tasks(research_tasks, max_workers=3):
+                if note:
+                    tag = "research"
+                    if label.startswith("petal:"):
+                        tag = "petal research"
+                    elif label.startswith("matrix:"):
+                        tag = "matrix research"
+                    history.append(f"[{tag}]\n{note[:2000]}")
+                    _append_research_notes(note)
         enforce_progress = consecutive_no_progress >= 2 and full_completion
         if petal_effects.get("force_file_edits"):
             enforce_progress = True
@@ -2467,6 +2485,40 @@ def _run_microtests_for_paths(workdir: Path, run_command, targets: list[Path]) -
     return code == 0, combined.strip()
 
 
+def _run_parallel_tasks(tasks: list[tuple[str, callable]], max_workers: int = 3) -> list[tuple[str, object]]:
+    """
+    Run independent tasks in parallel; return list of (label, result_text).
+    """
+    if not tasks:
+        return []
+    results: list[tuple[str, str]] = []
+    use_parallel = os.getenv("C0D3R_PARALLEL_TASKS", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if not use_parallel or len(tasks) == 1:
+        for label, fn in tasks:
+            try:
+                results.append((label, fn()))
+            except Exception:
+                results.append((label, None))
+        return results
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            future_map = {ex.submit(fn): label for label, fn in tasks}
+            for fut in as_completed(future_map):
+                label = future_map[fut]
+                try:
+                    results.append((label, fut.result()))
+                except Exception:
+                    results.append((label, None))
+    except Exception:
+        for label, fn in tasks:
+            try:
+                results.append((label, fn()))
+            except Exception:
+                results.append((label, None))
+    return results
+
+
 def _run_repl(
     session: C0d3rSession,
     usage: UsageTracker,
@@ -2538,17 +2590,31 @@ def _run_repl(
             context = f"{probe_block}\n{context}" if context else probe_block
         except Exception:
             pass
-        # Existing project gate: scan context before edits.
+        # Existing project gate: scan context before edits (parallelized).
+        scan_future = None
+        scan_executor = None
         if _is_existing_project(workdir):
             scan_path = _context_scan_path(workdir)
             if not scan_path.exists() or not _scan_is_fresh(workdir, run_command, max_age_minutes=10):
                 _emit_live("context: scanning existing project before edits")
-                scan = _scan_project_context(workdir, run_command)
-                context = context + "\n\n[project_scan]\n" + json.dumps(scan, indent=2)
+                try:
+                    from concurrent.futures import ThreadPoolExecutor
+                    scan_executor = ThreadPoolExecutor(max_workers=1)
+                    scan_future = scan_executor.submit(_scan_project_context, workdir, run_command)
+                except Exception:
+                    scan_future = None
         if not minimal:
             recall_hits = memory.search_if_referenced(prompt, limit=5)
             if recall_hits:
                 context = context + "\n\n[recall]\n" + "\n".join(recall_hits)
+        if scan_future:
+            try:
+                scan = scan_future.result()
+                if scan:
+                    context = context + "\n\n[project_scan]\n" + json.dumps(scan, indent=2)
+            finally:
+                if scan_executor:
+                    scan_executor.shutdown(wait=True)
         system = (
             "Role: You are a senior software engineer. The user is a project manager. "
             "Return ONLY JSON with keys: status_updates (list of short strings) and final (string). "
