@@ -597,7 +597,7 @@ def _run_tool_loop(
         if petal_effects.get("force_file_edits"):
             enforce_progress = True
         force_tests = bool(petal_effects.get("force_tests")) if petal_effects else False
-        base_request = _strip_context_block(prompt)
+        base_request = _tool_loop_base_request(prompt)
         target_root = project_root_for_ops or workdir
         tool_prompt = (
             "You can run local shell commands to inspect the repo and validate work. "
