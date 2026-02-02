@@ -207,6 +207,22 @@ def _build_context_block(workdir: Path, run_command) -> str:
     return "\n".join(lines)
 
 
+def _framework_decision(session: C0d3rSession, prompt: str, workdir: Path) -> dict:
+    system = (
+        "Return ONLY JSON with keys: framework (string), scaffold_commands (list), rationale (string). "
+        "Choose a concrete framework stack for a new project and provide shell commands to scaffold it. "
+        "If no new project is needed, return framework='existing' and empty scaffold_commands."
+    )
+    try:
+        raw = session.send(prompt=f"Task:\n{prompt}\nCWD:\n{workdir}", stream=False, system=system)
+        payload = _safe_json(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
 def _run_tool_loop(
     session: C0d3rSession,
     prompt: str,
@@ -383,7 +399,8 @@ def _run_tool_loop(
                     pass
             history.append("note: model call timed out; retrying with shorter context")
             mini_prompt = (
-                "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+                "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
+                "file_ops (list of {path, action, content}). "
                 "Focus on executing the request with minimal steps.\n"
                 f"Request:\n{prompt}\n"
             )
@@ -424,6 +441,31 @@ def _run_tool_loop(
                     time.sleep(3.0)
                 continue
         _diag_log("tool_loop: model call complete")
+        response = _enforce_actionability(session, tool_prompt, response or "")
+        file_ops = _extract_file_ops_from_text(response or "")
+        if file_ops:
+            _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
+            applied = _apply_file_ops(file_ops, workdir)
+            for path in applied:
+                history.append(f"model file write: {path}")
+            wrote_project = wrote_project or bool(applied)
+        elif _looks_like_code(response or ""):
+            _emit_live("tool_loop: code detected without file targets; rejecting and requesting file_ops")
+            history.append("error: code output without file targets; re-requesting with file_ops")
+            repair_prompt = (
+                "You produced code without file paths. Return ONLY JSON with key file_ops "
+                "(list of {path, action, content}) so the code can be written to disk. "
+                "Do not include prose.\n"
+                f"Original response:\n{response}"
+            )
+            response = session.send(repair_prompt, stream=False)
+            file_ops = _extract_file_ops_from_text(response or "")
+            if file_ops:
+                _emit_live(f"tool_loop: applying {len(file_ops)} file ops after repair")
+                applied = _apply_file_ops(file_ops, workdir)
+                for path in applied:
+                    history.append(f"model file write: {path}")
+                wrote_project = wrote_project or bool(applied)
         commands, final = _extract_commands(response)
         _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
         if final and not commands:
@@ -523,9 +565,10 @@ def _run_tool_loop(
                 session._c0d3r.rigorous_mode = False
                 session._c0d3r.model_id = alt_model
                 emergency_prompt = (
-                    "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
-                    "Provide 2-5 concrete shell commands to make progress on the task. "
-                    "Do NOT return an empty commands list.\n"
+                    "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
+                    "file_ops (list of {path, action, content}). "
+                    "Provide 2-5 concrete shell commands OR file_ops to make progress on the task. "
+                    "Do NOT return empty commands and file_ops.\n"
                     f"Request:\n{prompt}\n"
                 )
                 response = _call_with_timeout(
@@ -562,6 +605,10 @@ def _run_tool_loop(
                     plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
                 except Exception:
                     pass
+                state = _load_plan_state()
+                if not state or state.get("steps") != plan_steps:
+                    state = _init_plan_state(plan_steps, workdir, run_command)
+                    _save_plan_state(state)
             needs_code = bool(checkpoint.get("needs_code_changes"))
             if needs_code and not commands:
                 _emit_live("critical: needs code changes; forcing file ops")
@@ -570,6 +617,27 @@ def _run_tool_loop(
                     for path in forced:
                         history.append(f"forced write: {path}")
                     wrote_project = True
+        plan_state = _load_plan_state()
+        if plan_state and plan_state.get("status") == "in_progress":
+            steps = plan_state.get("steps") or []
+            idx = int(plan_state.get("current_index") or 0)
+            if idx < len(steps):
+                current_step = steps[idx]
+                _emit_live(f"plan: enforcing step {idx+1}/{len(steps)} -> {current_step}")
+                prompt = f"[plan step]\n{current_step}\n\n{prompt}"
+        if _requires_new_projects_dir(prompt):
+            decision = _framework_decision(session, prompt, workdir)
+            if decision:
+                try:
+                    path = Path("runtime/c0d3r/framework_decision.json")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(decision, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+                scaffold_cmds = decision.get("scaffold_commands") or []
+                if scaffold_cmds:
+                    _emit_live(f"framework: scaffold via {decision.get('framework')}")
+                    commands = list(scaffold_cmds) + (commands or [])
         if commands and _commands_only_runtime(commands):
             history.append("note: commands only touch runtime/c0d3r; must operate on project files too")
             _emit_live("tool_loop: commands only touched runtime; inserting inspection commands")
@@ -751,6 +819,28 @@ def _run_tool_loop(
                         _run_tests_for_project(workdir, run_command, usage_tracker, log_path, target=path)
         else:
             consecutive_no_progress = 0
+        # Repository mutation audit
+        if full_completion:
+            before = _snapshot_git(workdir, run_command)
+            if not _require_repo_change(before, workdir, run_command):
+                history.append("error: no repo mutations detected; forcing new edits")
+                strict_prompt = (
+                    "No repository changes were detected. Provide commands or file_ops that create or "
+                    "update actual project files. Return ONLY JSON with keys: commands, final, file_ops."
+                )
+                response = session.send(prompt=strict_prompt, stream=False)
+                response = _enforce_actionability(session, strict_prompt, response or "")
+                file_ops = _extract_file_ops_from_text(response or "")
+                if file_ops:
+                    _apply_file_ops(file_ops, workdir)
+                commands, _ = _extract_commands(response)
+                for cmd in commands[:5]:
+                    if cmd:
+                        run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                # Re-check repo state
+                if not _require_repo_change(before, workdir, run_command):
+                    history.append("error: still no repo mutations after forced edits")
+                    continue
         if require_tests and defer_tests and pending_test_targets:
             unique_targets: List[Path | None] = []
             for target in pending_test_targets:
@@ -763,6 +853,28 @@ def _run_tool_loop(
                     history.append("error: tests failed after write; fix and re-run before continuing")
                     test_failures += 1
                     break
+        if test_failures:
+            _emit_live("tests: failure detected; enforcing remediation before continuing")
+            fix_prompt = (
+                "Tests failed. Provide commands or file_ops to fix the failures, then re-run tests. "
+                "Return ONLY JSON with keys: commands, final, file_ops."
+            )
+            response = session.send(prompt=fix_prompt, stream=False)
+            response = _enforce_actionability(session, fix_prompt, response or "")
+            file_ops = _extract_file_ops_from_text(response or "")
+            if file_ops:
+                _apply_file_ops(file_ops, workdir)
+            commands, _ = _extract_commands(response)
+            for cmd in commands[:5]:
+                if cmd:
+                    run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+            # Re-run tests after remediation
+            _emit_live("tests: re-running after remediation")
+            _, tests_ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path)
+            if not tests_ok:
+                history.append("error: tests still failing after remediation")
+                continue
+            test_failures = 0
         if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
             _emit_live("unbounded: detected spiral; building bounded objective matrix")
             unbounded_payload = _resolve_unbounded_request(session, prompt)
@@ -782,6 +894,21 @@ def _run_tool_loop(
             if not _spec_validator():
                 history.append("error: spec validator failed (checklist incomplete or missing verification)")
                 continue
+        # Enforce plan verification gate.
+        if plan_state and plan_state.get("status") == "in_progress":
+            steps = plan_state.get("steps") or []
+            idx = int(plan_state.get("current_index") or 0)
+            if idx < len(steps):
+                current_step = steps[idx]
+                if _verify_step(current_step, workdir, run_command, usage_tracker, log_path):
+                    plan_state["current_index"] = idx + 1
+                    plan_state["snapshot"] = _snapshot_git(workdir, run_command)
+                    if plan_state["current_index"] >= len(steps):
+                        plan_state["status"] = "complete"
+                    _save_plan_state(plan_state)
+                else:
+                    history.append("error: plan verification failed; must fix before advancing")
+                    continue
         # post-check: if prompt asks for new dir under Projects, ensure one exists
         if base_snapshot and _requires_new_projects_dir(prompt):
             new_dirs = _diff_projects_dir(base_snapshot)
@@ -1277,6 +1404,27 @@ def _render_json_response(text: str) -> str:
     return ""
 
 
+def _extract_file_ops_from_text(text: str) -> list[dict]:
+    payload = _safe_json(text)
+    if isinstance(payload, dict) and payload.get("file_ops"):
+        return payload.get("file_ops") or []
+    # Heuristic: ```file path/to/file\n...```
+    ops: list[dict] = []
+    for block in re.findall(r"```file\\s+([^\\n]+)\\n([\\s\\S]+?)```", text):
+        path, content = block
+        ops.append({"path": path.strip(), "action": "write", "content": content})
+    return ops
+
+
+def _looks_like_code(text: str) -> bool:
+    if not text:
+        return False
+    if "```" in text:
+        return True
+    keywords = ["def ", "class ", "import ", "function ", "const ", "let ", "var ", "public ", "private "]
+    return any(k in text for k in keywords)
+
+
 def _apply_file_ops(ops: list, workdir: Path) -> list[Path]:
     written: list[Path] = []
     for op in ops:
@@ -1287,10 +1435,15 @@ def _apply_file_ops(ops: list, workdir: Path) -> list[Path]:
         content = op.get("content") if op.get("content") is not None else ""
         if not path:
             continue
-        target = (workdir / path) if not Path(path).is_absolute() else Path(path)
+        base = workdir.resolve()
+        target = (base / path) if not Path(path).is_absolute() else Path(path).resolve()
+        try:
+            target = target.resolve()
+        except Exception:
+            continue
         if _is_runtime_path(target):
             continue
-        if not str(target.resolve()).startswith(str(workdir.resolve())):
+        if not str(target).startswith(str(base)):
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         if action == "append":
@@ -1341,6 +1494,82 @@ def _critical_thinking_checkpoint(session: C0d3rSession, prompt: str, history: L
     except Exception:
         pass
     return {}
+
+
+def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) -> str:
+    # If response is only text and task is actionable, re-ask for commands/file_ops.
+    if not response:
+        return response
+    if _extract_commands(response)[0]:
+        return response
+    if _extract_file_ops_from_text(response):
+        return response
+    system = (
+        "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
+        "file_ops (list of {path, action, content}). "
+        "You MUST provide commands or file_ops for actionable tasks."
+    )
+    try:
+        raw = session.send(prompt=prompt, stream=False, system=system)
+        return raw
+    except Exception:
+        return response
+
+
+def _plan_state_path() -> Path:
+    return Path("runtime/c0d3r/plan_state.json")
+
+
+def _load_plan_state() -> dict:
+    path = _plan_state_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_plan_state(state: dict) -> None:
+    try:
+        path = _plan_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _init_plan_state(plan_steps: list, workdir: Path, run_command) -> dict:
+    return {
+        "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "steps": plan_steps,
+        "current_index": 0,
+        "snapshot": _snapshot_git(workdir, run_command),
+        "status": "in_progress",
+    }
+
+
+def _snapshot_git(workdir: Path, run_command) -> str:
+    code, stdout, _ = run_command("git status --porcelain", cwd=workdir)
+    if code != 0:
+        return ""
+    return stdout.strip()
+
+
+def _require_repo_change(before: str, workdir: Path, run_command) -> bool:
+    after = _snapshot_git(workdir, run_command)
+    return bool(after) and after != before
+
+
+def _verify_step(step: str, workdir: Path, run_command, usage_tracker, log_path: Path) -> bool:
+    step_lower = (step or "").lower()
+    if "test" in step_lower or "pytest" in step_lower or "unit" in step_lower:
+        _emit_live(f"verify: running tests for step '{step}'")
+        _, ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path)
+        return ok
+    # Default verification: ensure repo changed since snapshot.
+    current = _snapshot_git(workdir, run_command)
+    return bool(current)
 
 
 def _run_repl(

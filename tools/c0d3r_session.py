@@ -783,8 +783,24 @@ class C0d3r:
         start = time.time()
         try:
             use_stream = os.getenv("C0D3R_BEDROCK_STREAM", "1").strip().lower() not in {"0", "false", "no", "off"}
+            provider = ""
+            if "anthropic" in effective_model_id or "claude" in effective_model_id:
+                provider = "anthropic"
+            elif "mistral" in effective_model_id:
+                provider = "mistral"
+            elif "cohere" in effective_model_id:
+                provider = "cohere"
+            elif "llama" in effective_model_id:
+                provider = "llama"
+            elif "amazon.nova" in effective_model_id or "nova" in effective_model_id:
+                provider = "nova"
+            else:
+                provider = "unknown"
+            # Only stream for providers with known event formats.
+            if provider not in {"anthropic"}:
+                use_stream = False
             if use_stream and self.stream_callback:
-                _emit_bedrock_live("bedrock: streaming response")
+                _emit_bedrock_live(f"bedrock: streaming response provider={provider}")
                 chunks: List[str] = []
                 parsed_text: List[str] = []
                 buffer = ""
@@ -804,21 +820,22 @@ class C0d3r:
                         if not isinstance(obj, dict):
                             continue
                         ctype = obj.get("type")
-                        if ctype == "content_block_delta":
-                            delta = obj.get("delta") or {}
-                            if delta.get("type") == "text_delta":
-                                text_piece = delta.get("text") or ""
-                                if text_piece:
-                                    if not stream_started.is_set():
-                                        stream_started.set()
-                                        _emit_bedrock_live("bedrock: stream started")
-                                    parsed_text.append(text_piece)
-                                    try:
-                                        self.stream_callback(text_piece)
-                                    except Exception:
-                                        pass
-                        elif ctype == "message_start":
-                            pass
+                        if provider == "anthropic":
+                            if ctype == "content_block_delta":
+                                delta = obj.get("delta") or {}
+                                if delta.get("type") == "text_delta":
+                                    text_piece = delta.get("text") or ""
+                                    if text_piece:
+                                        if not stream_started.is_set():
+                                            stream_started.set()
+                                            _emit_bedrock_live("bedrock: stream started")
+                                        parsed_text.append(text_piece)
+                                        try:
+                                            self.stream_callback(text_piece)
+                                        except Exception:
+                                            pass
+                            elif ctype == "message_start":
+                                pass
                 if parsed_text:
                     return "".join(parsed_text)
                 # Fallback: try to parse any remaining buffered JSON or the full payload.
