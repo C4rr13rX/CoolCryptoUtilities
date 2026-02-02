@@ -656,6 +656,13 @@ def _run_tool_loop(
         else:
             os.environ["C0D3R_MODEL_TIMEOUT_S"] = saved_timeout
         _diag_log("tool_loop: model call complete")
+        if response and "schema_validation_failed" in response:
+            _emit_live("tool_loop: schema validation failed; forcing file_ops retry")
+            forced = _force_file_ops(session, prompt, workdir)
+            if forced:
+                for path in forced:
+                    history.append(f"forced write: {path}")
+                wrote_project = True
         # Force file_ops if petal demands it
         if petal_effects.get("force_file_ops"):
             response = _enforce_actionability(
@@ -729,6 +736,13 @@ def _run_tool_loop(
                 wrote_project = wrote_project or bool(applied)
         commands, final = _extract_commands(response)
         _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
+        if not commands and not file_ops and _requires_new_projects_dir(prompt):
+            _emit_live("tool_loop: no commands for new project; forcing file_ops scaffold")
+            forced = _force_file_ops(session, prompt, workdir)
+            if forced:
+                for path in forced:
+                    history.append(f"forced write: {path}")
+                wrote_project = True
         if final and not commands:
             if _requires_commands_for_task(prompt) and not (success or any_success):
                 history.append("note: commands required for this task; no final allowed without verified success")
@@ -2061,6 +2075,11 @@ def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path) -> list[P
         "Include sources (APA format) for any write/append/patch/replace in a 'sources' list. "
         "At least 2 file_ops."
     )
+    if _requires_new_projects_dir(prompt):
+        system += (
+            " The task requires a NEW project folder under the current workspace. "
+            "Ensure file_ops create that folder and place files inside it."
+        )
     try:
         raw = session.send(prompt=prompt, stream=False, system=system)
         payload = _safe_json(raw)

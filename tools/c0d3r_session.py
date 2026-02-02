@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -688,6 +689,13 @@ class C0d3r:
         """
         Enforce JSON-only outputs when the prompt requires it by re-asking with constraints.
         """
+        # Pre-coerce schema shape before validation when possible.
+        schema = _schema_for_prompt(prompt)
+        schemas = _load_schemas()
+        if schema == schemas.get("tool_loop"):
+            output = _coerce_tool_loop_output(output)
+        if schema == schemas.get("scientific_method"):
+            output = _coerce_scientific_output(output)
         if _requires_evidence(prompt) and _looks_like_json(output):
             output = _inject_evidence_hash(output, evidence_bundle or _extract_evidence_bundle(prompt) or "")
         issues = _validate_output(prompt, output, evidence_bundle=evidence_bundle)
@@ -697,14 +705,17 @@ class C0d3r:
             return output
         repair_prompt = (
             "Return ONLY valid JSON matching the requested schema. "
-            "Do not include any other text. "
+            "No prose, no markdown fences, no code blocks. "
             f"Fix these issues: {issues}. "
         )
         if _requires_evidence(prompt):
             evidence_bundle = evidence_bundle or _extract_evidence_bundle(prompt) or ""
             repair_prompt += f"Include _evidence_bundle_sha256={_hash_text(evidence_bundle)}."
         corrected = output
-        for _ in range(3):
+        max_retries = int(os.getenv("C0D3R_SCHEMA_RETRY_MAX", "5") or "5")
+        if max_retries <= 0:
+            max_retries = 50
+        for _ in range(max_retries):
             corrected = self._invoke_model(
                 self._model_for_stage("refiner"),
                 self._build_prompt(
@@ -1258,12 +1269,35 @@ class C0d3rSession:
             print(text)
 
 
+def _extract_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    if not text:
+        return candidates
+    for block in re.findall(r"```json\\s*([\\s\\S]+?)```", text, re.IGNORECASE):
+        candidates.append(block.strip())
+    for block in re.findall(r"```([\\s\\S]+?)```", text):
+        if "{" in block and "}" in block:
+            candidates.append(block.strip())
+    starts = [i for i, ch in enumerate(text) if ch in "{["]
+    for start in starts[:5]:
+        stack = []
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack:
+                    break
+                stack.pop()
+                if not stack:
+                    candidates.append(text[start : i + 1])
+                    break
+    return candidates
+
+
 def _extract_json(text: str) -> str:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return "{}"
-    return text[start : end + 1]
+    candidates = _extract_json_candidates(text)
+    return candidates[0] if candidates else "{}"
 
 
 def _requires_json(prompt: str) -> bool:
@@ -1272,8 +1306,19 @@ def _requires_json(prompt: str) -> bool:
 
 
 def _looks_like_json(text: str) -> bool:
+    if not text:
+        return False
     stripped = (text or "").strip()
-    return stripped.startswith("{") and stripped.endswith("}")
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return True
+    if "```json" in stripped.lower():
+        return True
+    # Fallback: if we can parse any JSON object from the text.
+    try:
+        payload = _safe_json(text)
+        return isinstance(payload, (dict, list)) and bool(payload)
+    except Exception:
+        return False
 
 
 def _requires_commands(prompt: str) -> bool:
@@ -1296,7 +1341,9 @@ def _validate_output(prompt: str, output: str, *, evidence_bundle: Optional[str]
     if _requires_json(prompt) and not _looks_like_json(output):
         issues.append("missing_json")
     if _requires_commands(prompt) and "commands" not in output:
-        issues.append("missing_commands")
+        # Allow file_ops-only outputs for tool loop.
+        if "file_ops" not in output and "actions" not in output:
+            issues.append("missing_commands")
     if _requires_citations(prompt) and not _has_citations(output):
         issues.append("missing_citations")
     schema_issues = _validate_schema(prompt, output)
@@ -1322,6 +1369,50 @@ def _validate_schema(prompt: str, output: str) -> List[str]:
     if schema:
         issues.extend(_apply_schema(schema, payload))
     return issues
+
+
+def _coerce_tool_loop_output(output: str) -> str:
+    """
+    Coerce tool-loop outputs into a valid JSON shape when possible.
+    If file_ops exists without commands/final, inject defaults.
+    """
+    payload = _safe_json(output)
+    if not isinstance(payload, dict):
+        return output
+    if "file_ops" in payload or "actions" in payload:
+        if "commands" not in payload:
+            payload["commands"] = []
+        if "final" not in payload:
+            payload["final"] = ""
+        return json.dumps(payload, ensure_ascii=False)
+    return output
+
+
+def _coerce_scientific_output(output: str) -> str:
+    """
+    Coerce scientific-method outputs into a valid JSON shape when possible.
+    Injects required keys with sane defaults.
+    """
+    payload = _safe_json(output)
+    if not isinstance(payload, dict):
+        return output
+    # Required fields for scientific_method schema.
+    defaults = {
+        "observations": [],
+        "hypotheses": [],
+        "tests": [],
+        "findings": [],
+        "conclusion": "",
+        "next_steps": [],
+    }
+    for key, val in defaults.items():
+        if key not in payload:
+            payload[key] = val
+    # Ensure findings is a list of objects.
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        payload["findings"] = []
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _validate_evidence(output: str, *, evidence_bundle: Optional[str] = None) -> List[str]:
@@ -1368,6 +1459,8 @@ def _apply_schema(schema: dict, payload: dict) -> List[str]:
     required = schema.get("required") or []
     for key in required:
         if key not in payload:
+            if key == "commands" and ("file_ops" in payload or "actions" in payload):
+                continue
             issues.append(f"missing_{key}")
     list_fields = schema.get("list_fields") or []
     for field in list_fields:
@@ -1424,6 +1517,11 @@ def _inject_evidence_hash(text: str, evidence_bundle: str) -> str:
 
 def _safe_json(text: str) -> object:
     try:
+        for candidate in _extract_json_candidates(text):
+            try:
+                return json.loads(candidate)
+            except Exception:
+                continue
         return json.loads(_extract_json(text))
     except Exception:
         return {}
