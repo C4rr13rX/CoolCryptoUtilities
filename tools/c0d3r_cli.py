@@ -307,8 +307,13 @@ def main(argv: List[str] | None = None) -> int:
     plan = _plan_execution(session, prompt)
     if plan.get("model_override"):
         session._c0d3r.model_id = str(plan.get("model_override"))
-    do_math = bool(plan.get("do_math", settings.get("math_grounding", True)))
-    do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
+    # Simple/actionable tasks should avoid heavy math/research on first pass.
+    if _is_simple_file_task(prompt):
+        do_math = False
+        do_research = False
+    else:
+        do_math = bool(plan.get("do_math", settings.get("math_grounding", True)))
+        do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
     if do_math:
         _emit_live("boot: math grounding")
         math_block = _math_grounding_block(session, prompt, workdir)
@@ -898,6 +903,15 @@ def _run_tool_loop(
             if file_ops:
                 _emit_live(f"tool_loop: applying {len(file_ops)} file ops after repair")
                 applied = _apply_file_ops(file_ops, workdir)
+                for path in applied:
+                    history.append(f"model file write: {path}")
+                wrote_project = wrote_project or bool(applied)
+        # If still nothing applied but response has JSON, try coercing file ops again.
+        if not wrote_project and _safe_json(response):
+            extra_ops = _extract_file_ops_from_text(response or "")
+            if extra_ops:
+                _emit_live(f"tool_loop: applying {len(extra_ops)} coerced file ops")
+                applied = _apply_file_ops(extra_ops, workdir)
                 for path in applied:
                     history.append(f"model file write: {path}")
                 wrote_project = wrote_project or bool(applied)
@@ -1991,6 +2005,24 @@ def _extract_file_ops_from_text(text: str) -> list[dict]:
         return payload.get("file_ops") or []
     if isinstance(payload, dict) and payload.get("actions"):
         return payload.get("actions") or []
+    # Common alternative shape: {"files": [{"path": "...", "content": "..."}]}
+    if isinstance(payload, dict) and payload.get("files"):
+        ops: list[dict] = []
+        files = payload.get("files") or []
+        if isinstance(files, dict):
+            files = [files]
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path") or item.get("file") or item.get("name")
+            content = item.get("content") or item.get("text") or ""
+            if path:
+                ops.append({"path": str(path), "action": "write", "content": content})
+        if ops:
+            return ops
+    # Common alternative: {"path": "...", "content": "..."}
+    if isinstance(payload, dict) and payload.get("path") and payload.get("content") is not None:
+        return [{"path": str(payload["path"]), "action": "write", "content": payload.get("content") or ""}]
     # Heuristic: ```file path/to/file\n...```
     ops: list[dict] = []
     for block in re.findall(r"```file\\s+([^\\n]+)\\n([\\s\\S]+?)```", text):
@@ -2783,6 +2815,8 @@ def _run_repl(
         _emit_live("repl: starting request")
         usage.set_status("planning", "routing + research")
         mode = _decide_mode(session, prompt, default_scientific=scientific, default_tool_loop=tool_loop)
+        if _is_actionable_prompt(prompt):
+            mode = "tool_loop"
         research_summary = ""
         if mode in {"tool_loop", "scientific"}:
             usage.set_status("research", "gathering references")
@@ -3078,7 +3112,7 @@ def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool
         payload = _safe_json(response)
         mode = str(payload.get("mode") or "").strip().lower()
         if mode in {"tool_loop", "direct", "scientific"}:
-            if mode == "direct" and _is_actionable_prompt(prompt):
+            if _is_actionable_prompt(prompt):
                 return "tool_loop"
             return mode
     except Exception:
@@ -3088,6 +3122,17 @@ def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool
     if default_tool_loop:
         return "tool_loop"
     return "direct"
+
+
+def _is_simple_file_task(prompt: str) -> bool:
+    if not prompt:
+        return False
+    lower = prompt.lower().strip()
+    if any(k in lower for k in ("create a new file", "create file", "create folder", "create a folder", "mkdir")):
+        return True
+    if "ionic" in lower or "scaffold" in lower or "template" in lower:
+        return True
+    return False
 
 
 def _plan_execution(session: C0d3rSession, prompt: str) -> dict:
