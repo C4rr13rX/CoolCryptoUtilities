@@ -278,6 +278,7 @@ def main(argv: List[str] | None = None) -> int:
         context_block = probe_block
     if context_block:
         prompt = f"{context_block}\n\nUser request:\n{prompt}"
+    base_request = _strip_context_block(prompt)
     settings = dict(settings)
     if "stream_default" in settings:
         settings["stream_default"] = settings.get("stream_default") and not args.no_stream
@@ -304,11 +305,11 @@ def main(argv: List[str] | None = None) -> int:
     _refresh_pricing_cache(session, header, session.get_model_id())
     math_block = ""
     # Lightweight plan to avoid over-work on simple prompts.
-    plan = _plan_execution(session, prompt)
+    plan = _plan_execution(session, base_request)
     if plan.get("model_override"):
         session._c0d3r.model_id = str(plan.get("model_override"))
     # Simple/actionable tasks should avoid heavy math/research on first pass.
-    if _is_simple_file_task(prompt):
+    if _is_simple_file_task(base_request):
         do_math = False
         do_research = False
     else:
@@ -537,6 +538,8 @@ def _run_tool_loop(
     step = 0
     no_command_count = 0
     petals = PetalManager()
+    wrote_project = False
+    project_root_for_ops = _ensure_project_root(prompt, workdir) if _requires_new_projects_dir(prompt) else None
     while True:
         step += 1
         if not unlimited and step > max_steps:
@@ -595,6 +598,7 @@ def _run_tool_loop(
             enforce_progress = True
         force_tests = bool(petal_effects.get("force_tests")) if petal_effects else False
         base_request = _strip_context_block(prompt)
+        target_root = project_root_for_ops or workdir
         tool_prompt = (
             "You can run local shell commands to inspect the repo and validate work. "
             "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
@@ -619,8 +623,8 @@ def _run_tool_loop(
             "- checklist.md (requirements checklist + verification notes)\n"
             "- bibliography.md (APA citations for any research/software used)\n"
             "Do not finalize until these files exist and are updated.\n"
-            "Work inside the current working directory. Do NOT create new project directories "
-            "or switch to other folders unless the user explicitly asks. "
+            f"Work inside the current project root: {target_root}. "
+            "If the user asked for a new project, you MUST create a new folder and place all files inside it. "
             "Prefer modifying existing files in the target project and running its tests.\n"
             "If any errors or missing knowledge are detected, perform targeted research and "
             "record source->decision->code in checklist.md before continuing.\n"
@@ -830,7 +834,7 @@ def _run_tool_loop(
         _diag_log("tool_loop: model call complete")
         if response and "schema_validation_failed" in response:
             _emit_live("tool_loop: schema validation failed; forcing file_ops retry")
-            forced = _force_file_ops(session, prompt, workdir)
+            forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
             if forced:
                 for path in forced:
                     history.append(f"forced write: {path}")
@@ -847,20 +851,25 @@ def _run_tool_loop(
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
             _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
-            applied = _apply_file_ops(file_ops, workdir)
+            applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
             if not applied:
                 history.append("error: file_ops rejected (paths/validation). Retrying with strict paths.")
                 strict_prompt = (
                     "Your file_ops were rejected (invalid paths or missing allow_full_replace). "
                     "Return ONLY JSON with file_ops using relative paths within the project root "
-                    f"({workdir}). If overwriting, set allow_full_replace=true. "
+                    f"({project_root_for_ops or workdir}). If overwriting, set allow_full_replace=true. "
                     "Do NOT reference runtime/ paths."
                 )
                 retry = session.send(prompt=strict_prompt, stream=False)
                 retry = _enforce_actionability(session, strict_prompt, retry or "")
                 retry_ops = _extract_file_ops_from_text(retry or "")
                 if retry_ops:
-                    applied = _apply_file_ops(retry_ops, workdir)
+                    applied = _apply_file_ops(retry_ops, workdir, base_root=project_root_for_ops or workdir)
+            if not applied and project_root_for_ops and _requires_new_projects_dir(prompt):
+                _emit_live("tool_loop: no applied file_ops for new project; running scaffold command")
+                scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
+                for cmd in scaffold_cmds:
+                    run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
             for path in applied:
                 history.append(f"model file write: {path}")
             wrote_project = wrote_project or bool(applied)
@@ -902,7 +911,7 @@ def _run_tool_loop(
             file_ops = _extract_file_ops_from_text(response or "")
             if file_ops:
                 _emit_live(f"tool_loop: applying {len(file_ops)} file ops after repair")
-                applied = _apply_file_ops(file_ops, workdir)
+                applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
                 for path in applied:
                     history.append(f"model file write: {path}")
                 wrote_project = wrote_project or bool(applied)
@@ -911,15 +920,20 @@ def _run_tool_loop(
             extra_ops = _extract_file_ops_from_text(response or "")
             if extra_ops:
                 _emit_live(f"tool_loop: applying {len(extra_ops)} coerced file ops")
-                applied = _apply_file_ops(extra_ops, workdir)
+                applied = _apply_file_ops(extra_ops, workdir, base_root=project_root_for_ops or workdir)
                 for path in applied:
                     history.append(f"model file write: {path}")
                 wrote_project = wrote_project or bool(applied)
         commands, final = _extract_commands(response)
         _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
+        if _commands_only_runtime(commands):
+            _emit_live("tool_loop: runtime-only commands detected; forcing scaffold for new project")
+            if project_root_for_ops and _requires_new_projects_dir(prompt):
+                scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
+                commands = scaffold_cmds
         if not commands and not file_ops and _requires_new_projects_dir(prompt):
             _emit_live("tool_loop: no commands for new project; forcing file_ops scaffold")
-            forced = _force_file_ops(session, prompt, workdir)
+            forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
             if forced:
                 for path in forced:
                     history.append(f"forced write: {path}")
@@ -1080,7 +1094,7 @@ def _run_tool_loop(
             needs_code = bool(checkpoint.get("needs_code_changes"))
             if needs_code and not commands:
                 _emit_live("critical: needs code changes; forcing file ops")
-                forced = _force_file_ops(session, prompt, workdir)
+                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
                 if forced:
                     for path in forced:
                         history.append(f"forced write: {path}")
@@ -1110,7 +1124,6 @@ def _run_tool_loop(
             history.append("note: commands only touch runtime/c0d3r; must operate on project files too")
             _emit_live("tool_loop: commands only touched runtime; inserting inspection commands")
             commands = _fallback_inspection_commands(workdir) + commands
-        wrote_project = False
         written_files: set[str] = set()
         defer_tests = os.getenv("C0D3R_DEFER_TESTS", "1").strip().lower() not in {"0", "false", "no", "off"}
         if force_tests:
@@ -1283,7 +1296,7 @@ def _run_tool_loop(
             consecutive_no_progress += 1
         if consecutive_no_progress >= 2 and not wrote_project:
             _emit_live("no-progress: forcing file edits via file_ops")
-            forced = _force_file_ops(session, prompt, workdir)
+            forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
             if forced:
                 for path in forced:
                     history.append(f"forced write: {path}")
@@ -2055,8 +2068,8 @@ def _validate_action_schema(text: str) -> bool:
     return True
 
 
-def _apply_file_ops(ops: list, workdir: Path) -> list[Path]:
-    executor = FileExecutor(workdir)
+def _apply_file_ops(ops: list, workdir: Path, *, base_root: Path | None = None) -> list[Path]:
+    executor = FileExecutor(base_root or workdir)
     return executor.apply_ops(ops)
 
 
@@ -2269,7 +2282,7 @@ class FileExecutor:
         return written
 
 
-def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path) -> list[Path]:
+def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path, *, base_root: Path | None = None) -> list[Path]:
     system = (
         "Return ONLY JSON with key: file_ops (list). "
         "Each item: {\"path\": \"relative/path\", \"action\": \"write|append\", \"content\": \"...\"}. "
@@ -2290,7 +2303,7 @@ def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path) -> list[P
     ops = payload.get("file_ops") if isinstance(payload, dict) else None
     if not ops:
         return []
-    return _apply_file_ops(ops, workdir)
+    return _apply_file_ops(ops, workdir, base_root=base_root or workdir)
 
 
 def _critical_thinking_checkpoint(session: C0d3rSession, prompt: str, history: List[str]) -> dict:
@@ -2744,9 +2757,10 @@ def _run_repl(
         _emit_live(f"repl: prompt received (len={len(prompt)})")
         if not prompt.strip():
             continue
+        user_prompt = _strip_context_block(prompt)
         # Petal directives from user prompt (dynamic constraints)
         petals = PetalManager()
-        directives = _extract_petal_directives(prompt)
+        directives = _extract_petal_directives(user_prompt)
         if directives:
             names = [d.get("name") for d in directives if isinstance(d, dict)]
             _emit_live(f"petal: updating directives {names}")
@@ -2777,6 +2791,8 @@ def _run_repl(
             context = f"{probe_block}\n{context}" if context else probe_block
         except Exception:
             pass
+        # Normalize user prompt (strip injected context if any).
+        user_prompt = _strip_context_block(prompt)
         # Existing project gate: scan context before edits (parallelized).
         scan_future = None
         scan_executor = None
@@ -2791,7 +2807,7 @@ def _run_repl(
                 except Exception:
                     scan_future = None
         if not minimal:
-            recall_hits = memory.search_if_referenced(prompt, limit=5)
+            recall_hits = memory.search_if_referenced(user_prompt, limit=5)
             if recall_hits:
                 context = context + "\n\n[recall]\n" + "\n".join(recall_hits)
         if scan_future:
@@ -2808,14 +2824,14 @@ def _run_repl(
             "Provide brief, concrete status updates before the final response. "
             "Avoid private chain-of-thought; summarize reasoning at a high level."
         )
-        full_prompt = f"{context}\n\nUser:\n{prompt}"
+        full_prompt = f"{context}\n\nUser:\n{user_prompt}"
         usage.add_input(full_prompt)
         print("[status] Planning...")
         print("[status] Executing...")
         _emit_live("repl: starting request")
         usage.set_status("planning", "routing + research")
-        mode = _decide_mode(session, prompt, default_scientific=scientific, default_tool_loop=tool_loop)
-        if _is_actionable_prompt(prompt):
+        mode = _decide_mode(session, user_prompt, default_scientific=scientific, default_tool_loop=tool_loop)
+        if _is_actionable_prompt(user_prompt):
             mode = "tool_loop"
         research_summary = ""
         if mode in {"tool_loop", "scientific"}:
@@ -2824,7 +2840,7 @@ def _run_repl(
                 research_summary = ""
             else:
                 _emit_live("repl: pre-research starting")
-                research_summary = _pre_research(session, prompt)
+                research_summary = _pre_research(session, user_prompt)
                 _emit_live(f"repl: pre-research complete (len={len(research_summary)})")
                 _emit_live("repl: pre-research complete")
         controller = InterruptController()
@@ -2943,8 +2959,8 @@ def _run_repl(
             else:
                 return 0
         if not minimal:
-            memory.append(prompt, response)
-            summary = memory.update_summary(summary, prompt, response, session)
+            memory.append(user_prompt, response)
+            summary = memory.update_summary(summary, user_prompt, response, session)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
             summary_path.write_text(summary, encoding="utf-8")
         if oneshot:
@@ -3133,6 +3149,38 @@ def _is_simple_file_task(prompt: str) -> bool:
     if "ionic" in lower or "scaffold" in lower or "template" in lower:
         return True
     return False
+
+
+def _slugify_project_name(prompt: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9\\s_-]", " ", prompt.lower())
+    tokens = [t for t in text.split() if t not in {"create","new","project","scaffolding","template","ionic","angular"}]
+    base = "_".join(tokens[:5]) if tokens else "new_project"
+    base = re.sub(r"_+", "_", base).strip("_")
+    return base or "new_project"
+
+
+def _ensure_project_root(prompt: str, workdir: Path) -> Path | None:
+    if not _requires_new_projects_dir(prompt):
+        return None
+    name = _slugify_project_name(prompt)
+    root = (workdir / name).resolve()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return None
+    return root
+
+
+def _fallback_scaffold_commands(prompt: str, project_root: Path) -> list[str]:
+    lower = (prompt or "").lower()
+    name = project_root.name
+    if "ionic" in lower:
+        return [
+            f"npx @ionic/cli@latest start {name} tabs --type=angular --no-interactive --no-confirm --no-git",
+        ]
+    if "django" in lower:
+        return [f"python -m django startproject {name}"]
+    return []
 
 
 def _plan_execution(session: C0d3rSession, prompt: str) -> dict:
@@ -3325,6 +3373,10 @@ def _requires_commands_for_task(prompt: str) -> bool:
     lower = (prompt or "").lower()
     keywords = ("create", "start", "run", "serve", "install", "build", "generate")
     return any(k in lower for k in keywords)
+
+
+def _tool_loop_base_request(prompt: str) -> str:
+    return _strip_context_block(prompt)
 
 
 def _requires_new_projects_dir(prompt: str) -> bool:
