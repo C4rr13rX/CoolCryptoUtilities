@@ -21,6 +21,28 @@ LITE_URL = "https://lite.duckduckgo.com/lite/?q={query}"
 HTML_URL = "https://duckduckgo.com/html/?q={query}"
 
 
+def _research_log_enabled() -> bool:
+    return os.getenv("C0D3R_RESEARCH_VERBOSE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _research_log(message: str) -> None:
+    if not _research_log_enabled():
+        return
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] research: {message}"
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        path = Path("runtime/c0d3r/research_live.log")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
+
+
 @dataclass
 class SearchResult:
     title: str
@@ -98,6 +120,7 @@ class WebSearch:
         # Try lite endpoint first; fall back to html endpoint if no results.
         results: List[SearchResult] = []
         if self._brave_key and self._brave_allowed():
+            _research_log(f"brave search: {q}")
             results = self._search_brave(q, limit=limit)
         if results:
             self._record_brave_usage()
@@ -105,6 +128,7 @@ class WebSearch:
         for endpoint in (LITE_URL, HTML_URL):
             url = endpoint.format(query=quote(q))
             try:
+                _research_log(f"duckduckgo search: {q}")
                 self._polite_delay()
                 resp = self.session.get(url, timeout=self.timeout)
                 resp.raise_for_status()
@@ -130,6 +154,21 @@ class WebSearch:
     ) -> List[SearchResult]:
         if not domains:
             return self.search(query, limit=total_limit)
+        # Fast path: search once, then filter by allowed domains.
+        if self._brave_key and self._brave_allowed():
+            _research_log(f"brave search (filter domains): {query}")
+            results = self.search(query, limit=total_limit * 2)
+            filtered: List[SearchResult] = []
+            for result in results:
+                host = urlparse(result.url).netloc
+                for domain in domains:
+                    if domain.replace("https://", "").replace("http://", "") in host:
+                        filtered.append(result)
+                        break
+                if len(filtered) >= total_limit:
+                    break
+            if filtered:
+                return self._dedupe_results(filtered, total_limit)
         results: List[SearchResult] = []
         seen = set()
         for domain in domains:
@@ -140,6 +179,7 @@ class WebSearch:
             if not host:
                 continue
             site_query = f"site:{host} {query}"
+            _research_log(f"site search: {site_query}")
             for result in self.search(site_query, limit=limit_per_domain):
                 if result.url in seen:
                     continue
@@ -152,6 +192,7 @@ class WebSearch:
         return results
 
     def fetch_text(self, url: str, *, max_bytes: int = MAX_FETCH_BYTES) -> str:
+        _research_log(f"fetch: {url}")
         self._polite_delay()
         resp = self.session.get(url, timeout=self.timeout, stream=True)
         resp.raise_for_status()

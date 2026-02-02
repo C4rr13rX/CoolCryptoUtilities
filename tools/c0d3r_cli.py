@@ -179,11 +179,17 @@ def main(argv: List[str] | None = None) -> int:
 
 
 def _build_context_block(workdir: Path, run_command) -> str:
+    from services.framework_catalog import detect_frameworks
     lines = [
         "[context]",
         f"- cwd: {workdir}",
         f"- os: {os.name}",
     ]
+    frameworks = detect_frameworks(workdir)
+    if frameworks:
+        lines.append(f"- frameworks: {', '.join(frameworks)}")
+    else:
+        lines.append("- frameworks: (none detected)")
     code, stdout, stderr = run_command("git status -sb", cwd=workdir)
     if stdout.strip():
         lines.append("git status -sb:")
@@ -537,6 +543,33 @@ def _run_tool_loop(
                 fallback = _fallback_inspection_commands(workdir)
                 commands = fallback
                 final = ""
+        checkpoint = _critical_thinking_checkpoint(session, prompt, history)
+        if checkpoint:
+            try:
+                path = Path("runtime/c0d3r/critical_thinking.jsonl")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"ts": time.time(), **checkpoint}) + "\n")
+            except Exception:
+                pass
+            # Keep a rolling plan checklist
+            plan_steps = checkpoint.get("plan_steps") or []
+            if plan_steps:
+                try:
+                    plan_path = Path("runtime/c0d3r/plan.json")
+                    plan_path.parent.mkdir(parents=True, exist_ok=True)
+                    plan_payload = {"updated": time.strftime("%Y-%m-%d %H:%M:%S"), "steps": plan_steps}
+                    plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+            needs_code = bool(checkpoint.get("needs_code_changes"))
+            if needs_code and not commands:
+                _emit_live("critical: needs code changes; forcing file ops")
+                forced = _force_file_ops(session, prompt, workdir)
+                if forced:
+                    for path in forced:
+                        history.append(f"forced write: {path}")
+                    wrote_project = True
         if commands and _commands_only_runtime(commands):
             history.append("note: commands only touch runtime/c0d3r; must operate on project files too")
             _emit_live("tool_loop: commands only touched runtime; inserting inspection commands")
@@ -704,6 +737,18 @@ def _run_tool_loop(
         if full_completion and not wrote_project:
             history.append("note: no project files were written this step; continue with concrete file edits")
             consecutive_no_progress += 1
+        if consecutive_no_progress >= 2 and not wrote_project:
+            _emit_live("no-progress: forcing file edits via file_ops")
+            forced = _force_file_ops(session, prompt, workdir)
+            if forced:
+                for path in forced:
+                    history.append(f"forced write: {path}")
+                wrote_project = True
+                consecutive_no_progress = 0
+                if require_tests:
+                    for path in forced:
+                        _emit_live(f"post-write: running targeted tests for {path}")
+                        _run_tests_for_project(workdir, run_command, usage_tracker, log_path, target=path)
         else:
             consecutive_no_progress = 0
         if require_tests and defer_tests and pending_test_targets:
@@ -1230,6 +1275,72 @@ def _render_json_response(text: str) -> str:
                 lines.append(f"- {step}")
         return "\n".join([l for l in lines if l]).strip()
     return ""
+
+
+def _apply_file_ops(ops: list, workdir: Path) -> list[Path]:
+    written: list[Path] = []
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        path = str(op.get("path") or "").strip()
+        action = str(op.get("action") or "write").strip().lower()
+        content = op.get("content") if op.get("content") is not None else ""
+        if not path:
+            continue
+        target = (workdir / path) if not Path(path).is_absolute() else Path(path)
+        if _is_runtime_path(target):
+            continue
+        if not str(target.resolve()).startswith(str(workdir.resolve())):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if action == "append":
+            with target.open("a", encoding="utf-8") as fh:
+                fh.write(str(content))
+        else:
+            target.write_text(str(content), encoding="utf-8")
+        written.append(target)
+    return written
+
+
+def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path) -> list[Path]:
+    system = (
+        "Return ONLY JSON with key: file_ops (list). "
+        "Each item: {\"path\": \"relative/path\", \"action\": \"write|append\", \"content\": \"...\"}. "
+        "Write concrete project files that implement the request. No runtime/ notes/ logs. "
+        "At least 2 file_ops."
+    )
+    try:
+        raw = session.send(prompt=prompt, stream=False, system=system)
+        payload = _safe_json(raw)
+    except Exception:
+        payload = {}
+    ops = payload.get("file_ops") if isinstance(payload, dict) else None
+    if not ops:
+        return []
+    return _apply_file_ops(ops, workdir)
+
+
+def _critical_thinking_checkpoint(session: C0d3rSession, prompt: str, history: List[str]) -> dict:
+    system = (
+        "Return ONLY JSON with keys: needs_code_changes (bool), needs_tests (bool), "
+        "missing_info (list), next_actions (list), rationale (string), "
+        "framework_guess (string), plan_steps (list). "
+        "Use a critical-thinking checklist: clarify task, compare to evidence, "
+        "decide if code edits are required now."
+    )
+    try:
+        context = "\n".join(history[-6:])
+        raw = session.send(
+            prompt=f"Task:\n{prompt}\n\nRecent context:\n{context}",
+            stream=False,
+            system=system,
+        )
+        payload = _safe_json(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
 
 
 def _run_repl(

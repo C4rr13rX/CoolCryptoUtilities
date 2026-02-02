@@ -7,6 +7,7 @@ import json
 import os
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
@@ -873,6 +874,8 @@ class C0d3r:
             if not questions:
                 questions = [query]
             snippets: List[str] = []
+            fetch_workers = int(os.getenv("C0D3R_RESEARCH_FETCH_WORKERS", "4") or "4")
+            fetch_timeout = float(os.getenv("C0D3R_RESEARCH_FETCH_TIMEOUT_S", "12") or "12")
             for q in questions[:6]:
                 _emit_bedrock_live(f"research: query => {q}")
                 strategy = self._research_strategy(q)
@@ -959,9 +962,26 @@ class C0d3r:
                 for src in sources:
                     snippets.append(f"- {src.name} ({src.domain})")
                 snippets.append("[findings]")
-                for result in results:
-                    text = researcher.fetch_text(result.url)
-                    snippets.append(f"- {result.title} ({result.url})\n  {text[:800]}")
+                if results:
+                    _emit_bedrock_live(f"research: fetching {len(results)} sources (workers={fetch_workers})")
+                def _fetch_one(res):
+                    start = time.time()
+                    try:
+                        text = researcher.fetch_text(res.url, max_bytes=200_000)
+                        elapsed = time.time() - start
+                        return res, text, elapsed, None
+                    except Exception as exc:
+                        elapsed = time.time() - start
+                        return res, "", elapsed, exc
+                with ThreadPoolExecutor(max_workers=fetch_workers) as pool:
+                    futures = {pool.submit(_fetch_one, res): res for res in results}
+                    for fut in as_completed(futures, timeout=fetch_timeout * max(1, len(results))):
+                        res, text, elapsed, err = fut.result()
+                        if err:
+                            _emit_bedrock_live(f"research: fetch failed {res.url} ({elapsed:.1f}s) {err}")
+                            continue
+                        _emit_bedrock_live(f"research: fetched {res.url} ({elapsed:.1f}s)")
+                        snippets.append(f"- {res.title} ({res.url})\n  {text[:800]}")
             self._write_research_report(query, snippets)
             return "\n".join(snippets)
         except Exception:
