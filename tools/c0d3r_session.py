@@ -1378,6 +1378,20 @@ def _coerce_tool_loop_output(output: str) -> str:
     """
     payload = _safe_json(output)
     if not isinstance(payload, dict):
+        # Try to extract shell commands from fenced code blocks.
+        try:
+            blocks = re.findall(r"```(?:bash|sh|powershell)?\n([\s\S]+?)```", output or "", re.IGNORECASE)
+            commands: list[str] = []
+            for block in blocks:
+                for line in block.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    commands.append(line)
+            if commands:
+                return json.dumps({"commands": commands, "file_ops": [], "final": ""}, ensure_ascii=False)
+        except Exception:
+            pass
         return output
     if "file_ops" in payload or "actions" in payload:
         if "commands" not in payload:
@@ -1447,6 +1461,10 @@ def _validate_evidence(output: str, *, evidence_bundle: Optional[str] = None) ->
 def _schema_for_prompt(prompt: str) -> Optional[dict]:
     lower = (prompt or "").lower()
     schemas = _load_schemas()
+    if "[schema:tool_loop]" in lower:
+        return schemas.get("tool_loop")
+    if "[schema:scientific]" in lower:
+        return schemas.get("scientific_method")
     if "observations (list of strings)" in lower and "findings" in lower:
         return schemas.get("scientific_method")
     if "commands (list of strings)" in lower and "final (string" in lower:

@@ -305,7 +305,10 @@ def main(argv: List[str] | None = None) -> int:
     _refresh_pricing_cache(session, header, session.get_model_id())
     math_block = ""
     # Lightweight plan to avoid over-work on simple prompts.
-    plan = _plan_execution(session, base_request)
+    if _is_simple_file_task(base_request) or _is_scaffold_task(base_request):
+        plan = {"mode": "tool_loop", "do_math": False, "do_research": False, "do_tool_loop": True}
+    else:
+        plan = _plan_execution(session, base_request)
     if plan.get("model_override"):
         session._c0d3r.model_id = str(plan.get("model_override"))
     # Simple/actionable tasks should avoid heavy math/research on first pass.
@@ -511,6 +514,7 @@ def _run_tool_loop(
     usage_tracker,
 ) -> str:
     max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "4"))
+    wants_new_project = False
     full_completion = _requires_full_completion(prompt)
     unlimited = full_completion and os.getenv("C0D3R_FULL_UNLIMITED", "1").strip().lower() not in {"0", "false", "no", "off"}
     if full_completion and not unlimited:
@@ -527,8 +531,14 @@ def _run_tool_loop(
     any_success = False
     tests_ran = False
     tests_ok = False
+    base_request = _tool_loop_base_request(prompt)
+    wants_new_project = _requires_new_projects_dir(base_request)
+    simple_task = _is_simple_file_task(base_request)
+    scaffold_task = _is_scaffold_task(base_request)
+    if simple_task or scaffold_task:
+        full_completion = False
     require_tests = _requires_tests(prompt)
-    allow_new_root_dirs = _requires_new_projects_dir(prompt) or _prompt_allows_new_dirs(prompt)
+    allow_new_root_dirs = wants_new_project or _prompt_allows_new_dirs(prompt)
     require_benchmark = _requires_benchmark(prompt)
     consecutive_no_progress = 0
     test_failures = 0
@@ -539,7 +549,10 @@ def _run_tool_loop(
     no_command_count = 0
     petals = PetalManager()
     wrote_project = False
-    project_root_for_ops = _ensure_project_root(prompt, workdir) if _requires_new_projects_dir(prompt) else None
+    project_root_for_ops = _ensure_project_root(base_request, workdir) if wants_new_project else None
+    if wants_new_project:
+        _emit_live(f"tool_loop: new-project mode -> root={project_root_for_ops or workdir}")
+    scaffold_done = False
     while True:
         step += 1
         if not unlimited and step > max_steps:
@@ -555,14 +568,14 @@ def _run_tool_loop(
             note="prepare_prompt",
         )
         research_tasks: list[tuple[str, callable]] = []
-        if gap_score >= 2:
+        if gap_score >= 2 and not (simple_task or scaffold_task):
             _emit_live("tool_loop: gap score high; running targeted research")
             research_tasks.append(("gap_score", lambda: _pre_research(session, prompt)))
         # Apply dynamic petals via capability mapping (no hardwired petals).
         constraint_list = petals.state.get("constraints") or []
         petal_plan = _petal_action_plan(session, constraint_list, prompt)
         petal_effects = _apply_petal_plan(petal_plan) if petal_plan else {}
-        if petal_effects:
+        if petal_effects and not (simple_task or scaffold_task):
             research_queries = petal_effects.get("research_queries") or []
             if research_queries:
                 _emit_live(f"petal: research queries -> {len(research_queries)}")
@@ -574,14 +587,15 @@ def _run_tool_loop(
                 note = input("> ").strip()
                 if note:
                     history.append(f"[petal note]\n{note}")
-        # Matrix query for gaps/hits
-        matrix_info = _query_unbounded_matrix(prompt)
-        if matrix_info:
-            history.append(f"[matrix] hits={matrix_info.get('hits')} missing={matrix_info.get('missing')}")
-            if matrix_info.get("missing"):
-                _emit_live("matrix: missing items; targeted research")
-                for item in matrix_info["missing"][:3]:
-                    research_tasks.append((f"matrix:{item[:60]}", lambda item=item: _pre_research(session, item)))
+        # Matrix query for gaps/hits (skip for simple tasks)
+        if not (simple_task or scaffold_task):
+            matrix_info = _query_unbounded_matrix(prompt)
+            if matrix_info:
+                history.append(f"[matrix] hits={matrix_info.get('hits')} missing={matrix_info.get('missing')}")
+                if matrix_info.get("missing"):
+                    _emit_live("matrix: missing items; targeted research")
+                    for item in matrix_info["missing"][:3]:
+                        research_tasks.append((f"matrix:{item[:60]}", lambda item=item: _pre_research(session, item)))
         if research_tasks:
             _emit_live(f"research: running {len(research_tasks)} tasks in parallel")
             for label, note in _run_parallel_tasks(research_tasks, max_workers=3):
@@ -597,11 +611,15 @@ def _run_tool_loop(
         if petal_effects.get("force_file_edits"):
             enforce_progress = True
         force_tests = bool(petal_effects.get("force_tests")) if petal_effects else False
-        base_request = _tool_loop_base_request(prompt)
         target_root = project_root_for_ops or workdir
+        if simple_task or scaffold_task:
+            history_block = ""
+        else:
+            history_block = ("\n\nRecent outputs:\n" + "\n".join(history[-6:])) if history else ""
         tool_prompt = (
+            "[schema:tool_loop]\n"
             "You can run local shell commands to inspect the repo and validate work. "
-            "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+            "Return ONLY JSON with keys: commands (list of strings), file_ops (list), and final (string or empty). "
             "If you are done, set final to your response and commands to []. "
             "Always create minimal unit tests with representative sample (foo) data and run them "
             "after each file write, and again before declaring success. "
@@ -614,24 +632,25 @@ def _run_tool_loop(
                 if _requires_rigorous_constraints(prompt)
                 else ""
             )
-            + "Create and maintain a checklist of requirements in your reasoning. "
-            "Before finalizing, explicitly verify each checklist item is complete. "
-            "If incomplete, keep working and iterate. "
-            "It is OK to loop across tasks if they depend on each other.\n"
-            "Create and update these files in runtime/c0d3r:\n"
-            "- plan.md (expanded plan)\n"
-            "- checklist.md (requirements checklist + verification notes)\n"
-            "- bibliography.md (APA citations for any research/software used)\n"
-            "Do not finalize until these files exist and are updated.\n"
-            f"Work inside the current project root: {target_root}. "
-            "If the user asked for a new project, you MUST create a new folder and place all files inside it. "
-            "Prefer modifying existing files in the target project and running its tests.\n"
-            "If any errors or missing knowledge are detected, perform targeted research and "
-            "record source->decision->code in checklist.md before continuing.\n"
-            "If code/data is derived from research, add APA-formatted citations in code comments "
-            "and append them to runtime/c0d3r/bibliography.md.\n"
-            "If third-party libraries or datasets are added, record license obligations in "
-            "runtime/c0d3r/bibliography.md and include required license files/notices in the repo.\n"
+            + (
+                ""
+                if simple_task
+                else "Create and maintain a checklist of requirements in your reasoning. "
+                "Before finalizing, explicitly verify each checklist item is complete. "
+                "If incomplete, keep working and iterate. "
+                "It is OK to loop across tasks if they depend on each other.\n"
+                "Create and update these files in runtime/c0d3r:\n"
+                "- plan.md (expanded plan)\n"
+                "- checklist.md (requirements checklist + verification notes)\n"
+                "- bibliography.md (APA citations for any research/software used)\n"
+                "Do not finalize until these files exist and are updated.\n"
+                "If any errors or missing knowledge are detected, perform targeted research and "
+                "record source->decision->code in checklist.md before continuing.\n"
+                "If code/data is derived from research, add APA-formatted citations in code comments "
+                "and append them to runtime/c0d3r/bibliography.md.\n"
+                "If third-party libraries or datasets are added, record license obligations in "
+                "runtime/c0d3r/bibliography.md and include required license files/notices in the repo.\n"
+            )
             + (
                 "The request includes 'outperforms' or 'novel' claims. "
                 "You must create a benchmark script that compares your solver to a baseline "
@@ -642,6 +661,9 @@ def _run_tool_loop(
                 else ""
             )
             + ("You must modify at least one project file this step; runtime-only edits are not allowed.\n" if enforce_progress else "")
+            + f"Work inside the current project root: {target_root}. "
+            "If the user asked for a new project, you MUST create a new folder and place all files inside it. "
+            "Prefer modifying existing files in the target project and running its tests.\n"
             + "Meta commands available:\n"
             "- ::bg <command> (run long-lived command in background, returns pid)\n"
             "- ::wait_http <url> <seconds> (poll until HTTP 200 or timeout)\n"
@@ -657,12 +679,12 @@ def _run_tool_loop(
             "5) ::wait_http http://localhost:<port> 120\n"
             f"Step {step + 1}/{max_steps}.\n"
             f"Request:\n{base_request}\n"
-            + ("\n\nRecent outputs:\n" + "\n".join(history[-6:]) if history else "")
+            + history_block
             + (f"\n\n[gap_score]\n{gap_score}\n[last_error]\n{last_error}" if gap_score or last_error else "")
         )
         if model_timeouts >= 2:
             tool_prompt = (
-                "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
+            "Return ONLY JSON with keys: commands (list of strings), file_ops (list), and final (string or empty). "
                 "Provide 2-6 concrete shell commands. Do not return an empty list.\n"
                 f"Request:\n{base_request}\n"
             )
@@ -850,6 +872,12 @@ def _run_tool_loop(
             response = _enforce_actionability(session, tool_prompt, response or "")
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
+            if project_root_for_ops and _requires_scaffold_cmd(prompt) and not scaffold_done:
+                _emit_live("tool_loop: running scaffold command before applying file_ops")
+                scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
+                for cmd in scaffold_cmds:
+                    run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                scaffold_done = True
             _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
             applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
             if not applied:
@@ -865,11 +893,12 @@ def _run_tool_loop(
                 retry_ops = _extract_file_ops_from_text(retry or "")
                 if retry_ops:
                     applied = _apply_file_ops(retry_ops, workdir, base_root=project_root_for_ops or workdir)
-            if not applied and project_root_for_ops and _requires_new_projects_dir(prompt):
-                _emit_live("tool_loop: no applied file_ops for new project; running scaffold command")
+            if not applied and project_root_for_ops and _file_ops_only_runtime(file_ops, project_root_for_ops):
+                _emit_live("tool_loop: file_ops runtime-only; forcing scaffold")
                 scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
                 for cmd in scaffold_cmds:
                     run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                scaffold_done = True
             for path in applied:
                 history.append(f"model file write: {path}")
             wrote_project = wrote_project or bool(applied)
@@ -928,10 +957,10 @@ def _run_tool_loop(
         _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
         if _commands_only_runtime(commands):
             _emit_live("tool_loop: runtime-only commands detected; forcing scaffold for new project")
-            if project_root_for_ops and _requires_new_projects_dir(prompt):
+            if project_root_for_ops and wants_new_project:
                 scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
                 commands = scaffold_cmds
-        if not commands and not file_ops and _requires_new_projects_dir(prompt):
+        if not commands and not file_ops and wants_new_project:
             _emit_live("tool_loop: no commands for new project; forcing file_ops scaffold")
             forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
             if forced:
@@ -976,8 +1005,14 @@ def _run_tool_loop(
         if full_completion and _requires_rigorous_constraints(prompt) and not _equation_graph_ready():
             history.append("note: equation graph is empty; ingestion must populate it before finalizing")
             continue
-        return final
+        if final and not commands:
+            return final
         if not commands and not final:
+            if simple_task and not file_ops:
+                _emit_live("simple_task: applying local fallback")
+                if _apply_simple_task_fallback(base_request, workdir):
+                    wrote_project = True
+                    return "Success: simple task completed."
             no_command_count += 1
             if full_completion:
                 history.append("note: no commands returned; running research to fill gaps")
@@ -998,8 +1033,8 @@ def _run_tool_loop(
                     session._c0d3r.inference_profile = ""
                     base_request = _strip_context_block(prompt)
                     emergency_prompt = (
-                        "Return ONLY JSON with keys: commands (list of strings) and final (string or empty). "
-                        "Provide 2-5 concrete shell commands to make progress on the task. "
+                        "Return ONLY JSON with keys: commands (list of strings), file_ops (list), and final (string or empty). "
+                        "Provide 2-5 concrete shell commands OR file_ops to make progress on the task. "
                         "Do NOT return an empty commands list.\n"
                         f"CWD: {workdir}\n"
                         f"Request:\n{base_request}\n"
@@ -1100,14 +1135,14 @@ def _run_tool_loop(
                         history.append(f"forced write: {path}")
                     wrote_project = True
         plan_state = _load_plan_state()
-        if plan_state and plan_state.get("status") == "in_progress":
+        if plan_state and plan_state.get("status") == "in_progress" and not simple_task:
             steps = plan_state.get("steps") or []
             idx = int(plan_state.get("current_index") or 0)
             if idx < len(steps):
                 current_step = steps[idx]
                 _emit_live(f"plan: enforcing step {idx+1}/{len(steps)} -> {current_step}")
                 prompt = f"[plan step]\n{current_step}\n\n{prompt}"
-        if _requires_new_projects_dir(prompt):
+        if wants_new_project:
             decision = _framework_decision(session, prompt, workdir)
             if decision:
                 try:
@@ -1133,7 +1168,7 @@ def _run_tool_loop(
         for cmd in commands[:8]:
             usage_tracker.set_status("executing", cmd)
             _emit_live(f"exec: {cmd}")
-            if _command_outside_root(cmd, workdir, allow_projects=_requires_new_projects_dir(prompt)):
+            if _command_outside_root(cmd, workdir, allow_projects=wants_new_project):
                 history.append("error: command targets path outside project root; blocked")
                 _append_tool_log(log_path, cmd, 1, "", "blocked: outside project root")
                 consecutive_no_progress += 1
@@ -1259,7 +1294,7 @@ def _run_tool_loop(
             history.append(snippet[:4000])
             if (workdir / "package.json").exists() and workdir not in known_projects:
                 known_projects.append(workdir)
-            if base_snapshot and _requires_new_projects_dir(prompt):
+            if base_snapshot and wants_new_project:
                 new_dirs = _diff_projects_dir(base_snapshot)
                 if new_dirs:
                     created_dirs = new_dirs
@@ -1433,7 +1468,7 @@ def _run_tool_loop(
                     history.append("error: plan verification failed; must fix before advancing")
                     continue
         # post-check: if prompt asks for new dir under Projects, ensure one exists
-        if base_snapshot and _requires_new_projects_dir(prompt):
+        if base_snapshot and wants_new_project:
             new_dirs = _diff_projects_dir(base_snapshot)
             if not new_dirs:
                 history.append("note: no new directory detected under C:/Users/Adam/Projects")
@@ -1731,6 +1766,8 @@ def _strip_context_block(prompt: str) -> str:
     marker = "User request:"
     if marker in prompt:
         return prompt.split(marker, 1)[-1].strip()
+    if "User:\n" in prompt:
+        return prompt.split("User:\n", 1)[-1].strip()
     return prompt.strip()
 
 
@@ -2892,7 +2929,8 @@ def _run_repl(
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
             _emit_live(f"executor: applying {len(file_ops)} file ops from response")
-            applied = _apply_file_ops(file_ops, workdir)
+            base_root = _ensure_project_root(user_prompt, workdir) if _requires_new_projects_dir(user_prompt) else workdir
+            applied = _apply_file_ops(file_ops, workdir, base_root=base_root)
             for path in applied:
                 _emit_live(f"executor: wrote {path}")
             if not applied:
@@ -3146,16 +3184,28 @@ def _is_simple_file_task(prompt: str) -> bool:
     lower = prompt.lower().strip()
     if any(k in lower for k in ("create a new file", "create file", "create folder", "create a folder", "mkdir")):
         return True
-    if "ionic" in lower or "scaffold" in lower or "template" in lower:
-        return True
     return False
+
+
+def _is_scaffold_task(prompt: str) -> bool:
+    if not prompt:
+        return False
+    lower = prompt.lower().strip()
+    return "ionic" in lower or "scaffold" in lower or "template" in lower or "startproject" in lower
 
 
 def _slugify_project_name(prompt: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9\\s_-]", " ", prompt.lower())
-    tokens = [t for t in text.split() if t not in {"create","new","project","scaffolding","template","ionic","angular"}]
+    stop = {
+        "create", "new", "project", "scaffolding", "template", "ionic", "angular",
+        "that", "will", "contain", "with", "for", "and", "the", "a", "an", "to", "of",
+        "tabs",
+    }
+    tokens = [t for t in text.split() if t not in stop]
     base = "_".join(tokens[:5]) if tokens else "new_project"
     base = re.sub(r"_+", "_", base).strip("_")
+    if base and base[0].isdigit():
+        base = f"project_{base}"
     return base or "new_project"
 
 
@@ -3164,10 +3214,12 @@ def _ensure_project_root(prompt: str, workdir: Path) -> Path | None:
         return None
     name = _slugify_project_name(prompt)
     root = (workdir / name).resolve()
-    try:
-        root.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return None
+    # Do not pre-create folder for scaffold commands that need an empty target.
+    if not _requires_scaffold_cmd(prompt):
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
     return root
 
 
@@ -3181,6 +3233,24 @@ def _fallback_scaffold_commands(prompt: str, project_root: Path) -> list[str]:
     if "django" in lower:
         return [f"python -m django startproject {name}"]
     return []
+
+
+def _requires_scaffold_cmd(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return "ionic" in lower or "django" in lower
+
+
+def _file_ops_only_runtime(ops: list, base_root: Path) -> bool:
+    if not ops:
+        return False
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        raw = str(op.get("path") or "")
+        target = _resolve_target_path(base_root, raw)
+        if target and not _is_runtime_path(target):
+            return False
+    return True
 
 
 def _plan_execution(session: C0d3rSession, prompt: str) -> dict:
@@ -3385,6 +3455,8 @@ def _requires_new_projects_dir(prompt: str) -> bool:
         return True
     if "c:/users/adam/projects" in lower and "create" in lower and "directory" in lower:
         return True
+    if "ionic" in lower and any(k in lower for k in ("create", "new", "project", "scaffold", "tabs", "angular", "start")):
+        return True
     # If current dir looks like a workspace (many folders, no markers) and user asks for a template/scaffold.
     try:
         root = Path(os.getenv("C0D3R_ROOT_CWD", "") or os.getcwd()).resolve()
@@ -3474,6 +3546,31 @@ def _commands_only_runtime(commands: List[str]) -> bool:
             continue
         return False
     return True
+
+
+def _apply_simple_task_fallback(prompt: str, workdir: Path) -> bool:
+    """
+    Local fallback for trivial file/folder tasks when the model fails to return commands.
+    """
+    text = (prompt or "").strip()
+    lower = text.lower()
+    # Create a new file with optional content.
+    m = re.search(r"create (?:a )?new file\s+([^\s]+)(?:\s+with content\s+(.+))?$", text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip().strip('"').strip("'")
+        content = m.group(2) or ""
+        content = content.strip().strip('"').strip("'")
+        executor = FileExecutor(workdir)
+        ops = [{"path": name, "action": "write", "content": content}]
+        return bool(executor.apply_ops(ops))
+    # Create a new folder.
+    m = re.search(r"create (?:a )?(?:new )?folder\s+([^\s]+)$", text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip().strip('"').strip("'")
+        executor = FileExecutor(workdir)
+        ops = [{"path": name, "action": "mkdir"}]
+        return bool(executor.apply_ops(ops))
+    return False
 
 
 def _unbounded_math_ready() -> bool:
