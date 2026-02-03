@@ -81,6 +81,11 @@ class TerminalUI:
         self._input_queue: "queue.Queue[str]" = queue.Queue()
         self._running = False
         self._prompt_thread: threading.Thread | None = None
+        self._render_thread: threading.Thread | None = None
+        self._render_event = threading.Event()
+        self._dirty = False
+        self._last_render = 0.0
+        self._min_render_interval = 1.0 / 30.0
         self._use_rich = False
         self._live = None
         self._console = None
@@ -111,12 +116,22 @@ class TerminalUI:
             self._live.start()
         self._prompt_thread = threading.Thread(target=self._input_loop, daemon=True)
         self._prompt_thread.start()
+        self._render_thread = threading.Thread(target=self._render_loop, daemon=True)
+        self._render_thread.start()
         self.render()
 
     def stop(self) -> None:
         self._running = False
         if self._use_rich and self._live:
             self._live.stop()
+        self._render_event.set()
+
+    def _render_loop(self) -> None:
+        while self._running:
+            self._render_event.wait(0.05)
+            self._render_event.clear()
+            if self._dirty:
+                self.render(force=True)
 
     def _input_loop(self) -> None:
         try:
@@ -159,6 +174,7 @@ class TerminalUI:
     def write_line(self, line: str) -> None:
         with self._lock:
             self.lines.append(line)
+            self._dirty = True
         self.render()
 
     def write_text(self, text: str, *, delay_s: float = 0.0, controller=None) -> None:
@@ -172,11 +188,16 @@ class TerminalUI:
                     self.lines.append("")
                 else:
                     self.lines[-1] = self.lines[-1] + ch
+                self._dirty = True
             self.render()
             if ch.strip() and delay_s:
                 time.sleep(delay_s)
 
-    def render(self) -> None:
+    def render(self, force: bool = False) -> None:
+        now = time.time()
+        if not force and (now - self._last_render) < self._min_render_interval:
+            self._render_event.set()
+            return
         header_text = getattr(self, "header_text", self.header.render_text())
         body_text = "\n".join(self.lines)
         footer_text = self.footer or "input queued" if not self._input_queue.empty() else ""
@@ -186,6 +207,8 @@ class TerminalUI:
             self._layout["header"].update(Panel(header_text, title="c0d3r", border_style="blue"))
             self._layout["body"].update(Panel(Text(body_text), title="output"))
             self._layout["footer"].update(Panel(footer_text or "ready", title="input"))
+            self._last_render = now
+            self._dirty = False
             return
         # Basic ANSI fallback: clear + render.
         sys.stdout.write("\x1b[2J\x1b[H")
@@ -193,6 +216,8 @@ class TerminalUI:
         sys.stdout.write(body_text + "\n")
         sys.stdout.write(footer_text + "\n")
         sys.stdout.flush()
+        self._last_render = now
+        self._dirty = False
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -230,7 +255,7 @@ def main(argv: List[str] | None = None) -> int:
     os.environ.setdefault("C0D3R_QUIET_STARTUP", "1")
     os.environ.setdefault("PYTHONWARNINGS", "ignore")
     # Default to full verbosity unless user disables it.
-    os.environ.setdefault("C0D3R_VERBOSE_MODEL_OUTPUT", "1")
+    os.environ.setdefault("C0D3R_VERBOSE_MODEL_OUTPUT", "0")
     os.environ.setdefault("C0D3R_BEDROCK_LIVE", "1")
     os.environ.setdefault("C0D3R_BEDROCK_STREAM", "1")
     from services.env_loader import EnvLoader
@@ -312,12 +337,16 @@ def main(argv: List[str] | None = None) -> int:
     if plan.get("model_override"):
         session._c0d3r.model_id = str(plan.get("model_override"))
     # Simple/actionable tasks should avoid heavy math/research on first pass.
-    if _is_simple_file_task(base_request):
+    if _is_simple_file_task(base_request) or _is_scaffold_task(base_request):
         do_math = False
         do_research = False
     else:
         do_math = bool(plan.get("do_math", settings.get("math_grounding", True)))
         do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
+    if do_math and not _requires_rigorous_constraints(base_request):
+        do_math = False
+    if os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+        do_research = False
     if do_math:
         _emit_live("boot: math grounding")
         math_block = _math_grounding_block(session, prompt, workdir)
@@ -550,6 +579,8 @@ def _run_tool_loop(
     petals = PetalManager()
     wrote_project = False
     project_root_for_ops = _ensure_project_root(base_request, workdir) if wants_new_project else None
+    if wants_new_project and project_root_for_ops is None:
+        project_root_for_ops = (workdir / _slugify_project_name(base_request)).resolve()
     if wants_new_project:
         _emit_live(f"tool_loop: new-project mode -> root={project_root_for_ops or workdir}")
     scaffold_done = False
@@ -568,14 +599,15 @@ def _run_tool_loop(
             note="prepare_prompt",
         )
         research_tasks: list[tuple[str, callable]] = []
-        if gap_score >= 2 and not (simple_task or scaffold_task):
+        disable_pr = os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
+        if gap_score >= 2 and not (simple_task or scaffold_task) and not disable_pr:
             _emit_live("tool_loop: gap score high; running targeted research")
             research_tasks.append(("gap_score", lambda: _pre_research(session, prompt)))
         # Apply dynamic petals via capability mapping (no hardwired petals).
         constraint_list = petals.state.get("constraints") or []
         petal_plan = _petal_action_plan(session, constraint_list, prompt)
         petal_effects = _apply_petal_plan(petal_plan) if petal_plan else {}
-        if petal_effects and not (simple_task or scaffold_task):
+        if petal_effects and not (simple_task or scaffold_task) and not disable_pr:
             research_queries = petal_effects.get("research_queries") or []
             if research_queries:
                 _emit_live(f"petal: research queries -> {len(research_queries)}")
@@ -588,7 +620,7 @@ def _run_tool_loop(
                 if note:
                     history.append(f"[petal note]\n{note}")
         # Matrix query for gaps/hits (skip for simple tasks)
-        if not (simple_task or scaffold_task):
+        if not (simple_task or scaffold_task) and not disable_pr:
             matrix_info = _query_unbounded_matrix(prompt)
             if matrix_info:
                 history.append(f"[matrix] hits={matrix_info.get('hits')} missing={matrix_info.get('missing')}")
@@ -855,12 +887,14 @@ def _run_tool_loop(
             os.environ["C0D3R_MODEL_TIMEOUT_S"] = saved_timeout
         _diag_log("tool_loop: model call complete")
         if response and "schema_validation_failed" in response:
-            _emit_live("tool_loop: schema validation failed; forcing file_ops retry")
-            forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-            if forced:
-                for path in forced:
-                    history.append(f"forced write: {path}")
-                wrote_project = True
+            # Only force file ops when the task is actionable (needs file/command work).
+            if _is_actionable_prompt(base_request) or _requires_commands_for_task(prompt):
+                _emit_live("tool_loop: schema validation failed; forcing file_ops retry")
+                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
+                if forced:
+                    for path in forced:
+                        history.append(f"forced write: {path}")
+                    wrote_project = True
         # Force file_ops if petal demands it
         if petal_effects.get("force_file_ops"):
             response = _enforce_actionability(
@@ -870,6 +904,14 @@ def _run_tool_loop(
             )
         else:
             response = _enforce_actionability(session, tool_prompt, response or "")
+        actionable = _is_actionable_prompt(base_request) or _requires_commands_for_task(prompt) or wants_new_project
+        response = _ensure_actionable_response(
+            session,
+            tool_prompt,
+            response or "",
+            actionable=actionable,
+            max_retries=int(os.getenv("C0D3R_ACTION_RETRIES", "2")),
+        )
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
             if project_root_for_ops and _requires_scaffold_cmd(prompt) and not scaffold_done:
@@ -955,6 +997,17 @@ def _run_tool_loop(
                 wrote_project = wrote_project or bool(applied)
         commands, final = _extract_commands(response)
         _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
+        if actionable and not commands and not file_ops:
+            history.append("error: actionable response without commands/file_ops; retrying")
+            consecutive_no_progress += 1
+            if consecutive_no_progress >= 1:
+                history.append("note: forcing file_ops due to no actionable output")
+                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
+                if forced:
+                    for path in forced:
+                        history.append(f"forced write: {path}")
+                    wrote_project = True
+                continue
         if _commands_only_runtime(commands):
             _emit_live("tool_loop: runtime-only commands detected; forcing scaffold for new project")
             if project_root_for_ops and wants_new_project:
@@ -1013,6 +1066,12 @@ def _run_tool_loop(
                 if _apply_simple_task_fallback(base_request, workdir):
                     wrote_project = True
                     return "Success: simple task completed."
+            if step == 1 and not file_ops:
+                _emit_live("tool_loop: forcing file_ops on first step")
+                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
+                if forced:
+                    wrote_project = True
+                    return "Success: initial file ops applied."
             no_command_count += 1
             if full_completion:
                 history.append("note: no commands returned; running research to fill gaps")
@@ -1427,21 +1486,22 @@ def _run_tool_loop(
                 if active:
                     petals.disable(name, "loop detected: no progress or timeouts")
                     _emit_live(f"petal: disabled {name} (loop detected)")
-        if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
-            _emit_live("unbounded: detected spiral; building bounded objective matrix")
-            unbounded_payload = _enforce_unbounded_matrix(session, prompt)
-            if unbounded_payload:
-                unbounded_resolved = True
-                history.append("[unbounded]\n" + unbounded_payload.get("bounded_task", "").strip())
-                _append_unbounded_matrix(unbounded_payload)
-                prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
-                _apply_behavior_insights(unbounded_payload, behavior_log)
-        if _requires_rigorous_constraints(prompt) and not _unbounded_math_ready():
-            _emit_live("unbounded: required matrix not complete; forcing resolver")
-            unbounded_payload = _enforce_unbounded_matrix(session, prompt)
-            if unbounded_payload:
-                unbounded_resolved = True
-                prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
+        if not (simple_task or scaffold_task):
+            if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
+                _emit_live("unbounded: detected spiral; building bounded objective matrix")
+                unbounded_payload = _enforce_unbounded_matrix(session, prompt)
+                if unbounded_payload:
+                    unbounded_resolved = True
+                    history.append("[unbounded]\n" + unbounded_payload.get("bounded_task", "").strip())
+                    _append_unbounded_matrix(unbounded_payload)
+                    prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
+                    _apply_behavior_insights(unbounded_payload, behavior_log)
+            if _requires_rigorous_constraints(prompt) and not _unbounded_math_ready():
+                _emit_live("unbounded: required matrix not complete; forcing resolver")
+                unbounded_payload = _enforce_unbounded_matrix(session, prompt)
+                if unbounded_payload:
+                    unbounded_resolved = True
+                    prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
         if full_completion:
             _append_verification_snapshot(workdir, run_command, history)
             _update_system_map(workdir)
@@ -1471,7 +1531,15 @@ def _run_tool_loop(
         if base_snapshot and wants_new_project:
             new_dirs = _diff_projects_dir(base_snapshot)
             if not new_dirs:
-                history.append("note: no new directory detected under C:/Users/Adam/Projects")
+                history.append("error: no new project directory detected under C:/Users/Adam/Projects")
+                consecutive_no_progress += 1
+                if project_root_for_ops and _requires_scaffold_cmd(prompt):
+                    _emit_live("tool_loop: forcing scaffold for missing project dir")
+                    scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
+                    for cmd in scaffold_cmds:
+                        run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+                    scaffold_done = True
+                continue
     return history[-1] if history else "No output."
 
 
@@ -1744,9 +1812,13 @@ def _safe_json(text: str):
         import json as _json
     except Exception:
         return {}
+    preferred = None
     for candidate in _extract_json_candidates(text):
         try:
-            return _json.loads(candidate)
+            parsed = _json.loads(candidate)
+            if isinstance(parsed, dict) and ("file_ops" in parsed or "commands" in parsed):
+                return parsed
+            preferred = parsed
         except Exception:
             continue
     # Fallback: best-effort slice from first to last brace.
@@ -1754,10 +1826,21 @@ def _safe_json(text: str):
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end > start:
-            return _json.loads(text[start : end + 1])
+            parsed = _json.loads(text[start : end + 1])
+            if isinstance(parsed, dict) and ("file_ops" in parsed or "commands" in parsed):
+                return parsed
+            preferred = preferred or parsed
     except Exception:
         pass
-    return {}
+    return preferred or {}
+
+
+def _looks_like_json(text: str) -> bool:
+    if not text:
+        return False
+    if "{" in text and "}" in text:
+        return True
+    return False
 
 
 def _strip_context_block(prompt: str) -> str:
@@ -2027,6 +2110,9 @@ def _render_json_response(text: str) -> str:
         return "\n".join(lines).strip()
     if "final" in payload:
         return str(payload.get("final") or "")
+    # Tool-loop JSON without final should not be printed verbatim.
+    if "commands" in payload or "file_ops" in payload or "actions" in payload:
+        return ""
     if "conclusion" in payload:
         lines = []
         if payload.get("observations"):
@@ -2050,11 +2136,23 @@ def _render_json_response(text: str) -> str:
 
 
 def _extract_file_ops_from_text(text: str) -> list[dict]:
+    # Prefer any JSON block that includes file_ops.
+    for candidate in _extract_json_candidates(text):
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict) and parsed.get("file_ops"):
+            return _normalize_file_ops(parsed.get("file_ops") or [])
+        if isinstance(parsed, dict) and parsed.get("actions"):
+            return _normalize_file_ops(parsed.get("actions") or [])
     payload = _safe_json(text)
     if isinstance(payload, dict) and payload.get("file_ops"):
-        return payload.get("file_ops") or []
+        ops = payload.get("file_ops") or []
+        return _normalize_file_ops(ops)
     if isinstance(payload, dict) and payload.get("actions"):
-        return payload.get("actions") or []
+        ops = payload.get("actions") or []
+        return _normalize_file_ops(ops)
     # Common alternative shape: {"files": [{"path": "...", "content": "..."}]}
     if isinstance(payload, dict) and payload.get("files"):
         ops: list[dict] = []
@@ -2069,16 +2167,16 @@ def _extract_file_ops_from_text(text: str) -> list[dict]:
             if path:
                 ops.append({"path": str(path), "action": "write", "content": content})
         if ops:
-            return ops
+            return _normalize_file_ops(ops)
     # Common alternative: {"path": "...", "content": "..."}
     if isinstance(payload, dict) and payload.get("path") and payload.get("content") is not None:
-        return [{"path": str(payload["path"]), "action": "write", "content": payload.get("content") or ""}]
+        return _normalize_file_ops([{"path": str(payload["path"]), "action": "write", "content": payload.get("content") or ""}])
     # Heuristic: ```file path/to/file\n...```
     ops: list[dict] = []
     for block in re.findall(r"```file\\s+([^\\n]+)\\n([\\s\\S]+?)```", text):
         path, content = block
         ops.append({"path": path.strip(), "action": "write", "content": content})
-    return ops
+    return _normalize_file_ops(ops)
 
 
 def _looks_like_code(text: str) -> bool:
@@ -2088,6 +2186,35 @@ def _looks_like_code(text: str) -> bool:
         return True
     keywords = ["def ", "class ", "import ", "function ", "const ", "let ", "var ", "public ", "private "]
     return any(k in text for k in keywords)
+
+
+def _normalize_file_ops(ops: list) -> list[dict]:
+    normalized: list[dict] = []
+    for op in ops or []:
+        if not isinstance(op, dict):
+            continue
+        action = op.get("action") or op.get("operation") or op.get("type")
+        if action:
+            action = str(action).strip().lower()
+        # Map common verbs to executor actions.
+        if action in {"create", "write", "update", "add", "insert"}:
+            action = "write"
+        elif action in {"append"}:
+            action = "append"
+        elif action in {"delete", "remove"}:
+            action = "delete"
+        elif action in {"mkdir", "dir", "directory"}:
+            action = "mkdir"
+        elif action in {"move", "rename", "copy", "patch", "replace"}:
+            action = action
+        elif action in {"read", "read_file", "read_directory", "list", "ls"}:
+            # Ignore read ops (no executor support).
+            continue
+        op_norm = dict(op)
+        if action:
+            op_norm["action"] = action
+        normalized.append(op_norm)
+    return normalized
 
 
 def _validate_action_schema(text: str) -> bool:
@@ -2218,10 +2345,14 @@ class FileExecutor:
 
     def apply_ops(self, ops: list) -> list[Path]:
         written: list[Path] = []
+        created_this_batch: set[str] = set()
         for op in ops:
             if not isinstance(op, dict):
                 continue
             action = str(op.get("action") or "write").strip().lower()
+            if action in {"read", "read_file", "read_directory", "list", "ls"}:
+                self._log(f"skip read op: {op.get('path')}")
+                continue
             raw_path = str(op.get("path") or "").strip()
             target = _resolve_target_path(self.base, raw_path)
             if not target:
@@ -2261,10 +2392,16 @@ class FileExecutor:
             if action in {"write", "append", "replace", "patch"} and not sources:
                 self._log(f"warn: missing sources for write {target}")
                 self._log_missing_sources(target, action)
-            # Diff enforcement: do not overwrite existing files without allow_full_replace
+            # Diff enforcement: do not overwrite existing files without allow_full_replace,
+            # except for files created earlier in this batch.
             if action == "write" and target.exists() and not op.get("allow_full_replace"):
-                self._log(f"reject: write requires allow_full_replace {target}")
-                continue
+                if str(target) not in created_this_batch:
+                    self._log(f"reject: write requires allow_full_replace {target}")
+                    continue
+                # Allow overwrite if created in this batch.
+                pass
+            if action == "write" and not target.exists():
+                created_this_batch.add(str(target))
             if action in {"move", "rename"}:
                 dest_raw = str(op.get("dest") or "").strip()
                 dest = _resolve_target_path(self.base, dest_raw)
@@ -2376,6 +2513,17 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         return response
     if _extract_file_ops_from_text(response):
         return response
+    if "schema_validation_failed" in response:
+        system = (
+            "Return ONLY valid JSON with keys: commands (list of strings), final (string or empty), "
+            "file_ops (list of {path, action, content}). No extra text. "
+            "Actions can be write|append|delete|mkdir|patch|replace|move|copy."
+        )
+        try:
+            raw = session.send(prompt=prompt, stream=False, system=system)
+            return raw
+        except Exception:
+            return response
     if _looks_like_code(response):
         # Force file targets for code output.
         system = (
@@ -2403,6 +2551,37 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         return raw
     except Exception:
         return response
+
+
+def _ensure_actionable_response(
+    session: C0d3rSession,
+    prompt: str,
+    response: str,
+    *,
+    actionable: bool,
+    max_retries: int = 2,
+) -> str:
+    """
+    Ensure actionable tasks produce commands or file_ops.
+    If code appears without file targets, force file_ops.
+    """
+    attempt = 0
+    while True:
+        if _validate_action_schema(response):
+            return response
+        if _extract_commands(response)[0]:
+            return response
+        if _extract_file_ops_from_text(response):
+            return response
+        if not actionable:
+            return response
+        if _looks_like_code(response):
+            response = _enforce_actionability(session, prompt, response)
+        else:
+            response = _enforce_actionability(session, prompt, response)
+        attempt += 1
+        if attempt > max_retries:
+            return response
 
 
 def _plan_state_path() -> Path:
@@ -2780,6 +2959,8 @@ def _run_repl(
     header.render()
     _emit_live("repl: header rendered")
     _ensure_preflight(workdir, run_command)
+    if os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+        pre_research_enabled = False
     while True:
         try:
             header.freeze()
@@ -2877,7 +3058,19 @@ def _run_repl(
                 research_summary = ""
             else:
                 _emit_live("repl: pre-research starting")
-                research_summary = _pre_research(session, user_prompt)
+                # Run pre-research with a soft timeout to avoid blocking execution.
+                try:
+                    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+                    timeout_s = float(os.getenv("C0D3R_PRERESEARCH_TIMEOUT_S", "20") or "20")
+                    with ThreadPoolExecutor(max_workers=1) as ex:
+                        future = ex.submit(_pre_research, session, user_prompt)
+                        try:
+                            research_summary = future.result(timeout=timeout_s)
+                        except TimeoutError:
+                            research_summary = ""
+                            _emit_live(f"repl: pre-research timed out after {timeout_s}s; continuing")
+                except Exception:
+                    research_summary = _pre_research(session, user_prompt)
                 _emit_live(f"repl: pre-research complete (len={len(research_summary)})")
                 _emit_live("repl: pre-research complete")
         controller = InterruptController()
@@ -2924,7 +3117,17 @@ def _run_repl(
             controller.stop()
         if mode == "direct" and _is_actionable_prompt(prompt):
             response = _enforce_actionability(session, full_prompt, response or "")
-        rendered = _render_json_response(response) or response
+        rendered = _render_json_response(response)
+        if not rendered and _looks_like_json(response or ""):
+            # Avoid dumping raw JSON to the UI; keep output clean.
+            rendered = ""
+        if rendered and not rendered.strip():
+            rendered = ""
+        if not rendered:
+            # Still account for output tokens so header cost updates.
+            usage.add_output(response or "")
+            if header:
+                header.update()
         # Apply file ops from any mode (direct/scientific/tool-loop) if present.
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
@@ -2980,7 +3183,8 @@ def _run_repl(
                 usage.add_input(continuation)
                 response = session.send(continuation, stream=False, system=system)
                 rendered = _render_json_response(response) or response
-        _typewriter_print(rendered, usage, header=header, controller=controller)
+        if rendered:
+            _typewriter_print(rendered, usage, header=header, controller=controller)
         sys.stdout.write("\n")
         sys.stdout.flush()
         if budget.exceeded():
@@ -3275,6 +3479,8 @@ def _plan_execution(session: C0d3rSession, prompt: str) -> dict:
 
 
 def _pre_research(session: C0d3rSession, prompt: str) -> str:
+    if os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return ""
     research_prompt = (
         "Perform preliminary research for the task. Summarize the most relevant framework/library setup steps, "
         "best practices, and any constraints. Return 6-10 bullets.\n\n"
@@ -3457,13 +3663,15 @@ def _requires_new_projects_dir(prompt: str) -> bool:
         return True
     if "ionic" in lower and any(k in lower for k in ("create", "new", "project", "scaffold", "tabs", "angular", "start")):
         return True
+    if "kivy" in lower and "app" in lower and "create" in lower:
+        return True
     # If current dir looks like a workspace (many folders, no markers) and user asks for a template/scaffold.
     try:
         root = Path(os.getenv("C0D3R_ROOT_CWD", "") or os.getcwd()).resolve()
         entries = [p for p in root.iterdir() if p.is_dir()]
         markers = ["pyproject.toml", "requirements.txt", "package.json", "manage.py", ".git"]
         workspace = len(entries) >= 6 and not any((root / m).exists() for m in markers)
-        if workspace and any(k in lower for k in ("template", "scaffold", "setup", "set up", "initialize", "new project")):
+        if workspace and any(k in lower for k in ("template", "scaffold", "setup", "set up", "initialize", "new project", "app")):
             return True
     except Exception:
         pass
