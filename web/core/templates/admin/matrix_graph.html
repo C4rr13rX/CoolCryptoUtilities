@@ -1,0 +1,27 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<h1>Equation Matrix Graph</h1>
+<p><a href="../">Back to admin</a></p>
+
+<svg width="800" height="760" viewBox="0 0 800 760" style="border:1px solid #222; background:#0b0f17;">
+  {% for edge in edges %}
+    {% for n1 in nodes %}
+      {% if n1.id == edge.from %}
+        {% for n2 in nodes %}
+          {% if n2.id == edge.to %}
+            <line x1="{{ n1.x|floatformat:0 }}" y1="{{ n1.y|floatformat:0 }}" x2="{{ n2.x|floatformat:0 }}" y2="{{ n2.y|floatformat:0 }}" stroke="#2a4a7b" stroke-width="1" />
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+  {% for node in nodes %}
+    <circle cx="{{ node.x|floatformat:0 }}" cy="{{ node.y|floatformat:0 }}" r="6" fill="#42a5f5" />
+    <text x="{{ node.x|floatformat:0|add:8 }}" y="{{ node.y|floatformat:0|add:4 }}" fill="#e3f2fd" font-size="10">{{ node.label }}</text>
+  {% endfor %}
+</svg>
+
+<p style="margin-top:16px;">Nodes: {{ nodes|length }} | Edges: {{ edges|length }}</p>
+{% endblock %}

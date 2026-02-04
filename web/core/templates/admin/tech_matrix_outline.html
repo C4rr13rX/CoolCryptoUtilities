@@ -1,0 +1,21 @@
+{% extends "admin/base_site.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+{% if record %}
+  <p><strong>Created:</strong> {{ record.created_at }}</p>
+  <p><strong>Prompt:</strong> {{ record.prompt }}</p>
+  <h2>Components</h2>
+  <pre>{{ record.components|safe }}</pre>
+  <h2>Requirements</h2>
+  <pre>{{ record.requirements|safe }}</pre>
+  <h2>Interfaces</h2>
+  <pre>{{ record.interfaces|safe }}</pre>
+  <h2>Data Shapes</h2>
+  <pre>{{ record.data_shapes|safe }}</pre>
+  <h2>Outline</h2>
+  <pre>{{ record.outline|safe }}</pre>
+{% else %}
+  <p>No tech matrix records available yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from django.contrib import admin
+from django.template.response import TemplateResponse
+from django.urls import path
 
 from .models import (
     Advisory,
@@ -26,6 +28,14 @@ from .models import (
     EquationLink,
     EquationSource,
     EquationVariable,
+    TextbookSource,
+    TextbookPage,
+    TextbookQACandidate,
+    KnowledgeDocument,
+    KnowledgeQueueItem,
+    LabelQueueItem,
+    VisualLabelQueueItem,
+    TechMatrixRecord,
 )
 
 
@@ -182,3 +192,126 @@ class EquationLinkAdmin(admin.ModelAdmin):
 class EquationGapFillAdmin(admin.ModelAdmin):
     list_display = ("description", "status", "created_at")
     search_fields = ("description", "status")
+
+
+@admin.register(TextbookSource)
+class TextbookSourceAdmin(admin.ModelAdmin):
+    list_display = ("title", "authors", "year", "publisher", "print_id", "downloaded_at")
+    search_fields = ("title", "authors", "print_id", "url")
+    ordering = ("-downloaded_at",)
+
+
+@admin.register(TextbookPage)
+class TextbookPageAdmin(admin.ModelAdmin):
+    list_display = ("textbook", "page_num", "created_at")
+    search_fields = ("textbook__title",)
+    ordering = ("-created_at",)
+
+
+@admin.register(TextbookQACandidate)
+class TextbookQACandidateAdmin(admin.ModelAdmin):
+    list_display = ("textbook", "page_num", "status", "confidence", "created_at")
+    search_fields = ("textbook__title", "question", "answer")
+    ordering = ("-created_at",)
+
+
+@admin.register(KnowledgeDocument)
+class KnowledgeDocumentAdmin(admin.ModelAdmin):
+    list_display = ("id", "source", "title", "created_at")
+    search_fields = ("source", "title", "body", "citation_apa")
+    ordering = ("-created_at",)
+
+
+@admin.register(KnowledgeQueueItem)
+class KnowledgeQueueItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "document", "status", "confidence", "created_at")
+    search_fields = ("document__title", "label")
+    list_filter = ("status",)
+    ordering = ("-created_at",)
+
+
+@admin.register(LabelQueueItem)
+class LabelQueueItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "document", "status", "label", "confidence", "created_at")
+    search_fields = ("document__title", "label")
+    list_filter = ("status",)
+    ordering = ("-created_at",)
+
+
+@admin.register(VisualLabelQueueItem)
+class VisualLabelQueueItemAdmin(admin.ModelAdmin):
+    list_display = ("id", "document", "status", "label", "confidence", "created_at")
+    search_fields = ("document__title", "label", "image_path")
+    list_filter = ("status",)
+    ordering = ("-created_at",)
+
+
+@admin.register(TechMatrixRecord)
+class TechMatrixRecordAdmin(admin.ModelAdmin):
+    list_display = ("id", "prompt", "created_at")
+    search_fields = ("prompt",)
+    ordering = ("-created_at",)
+
+
+def _matrix_graph_view(request):
+    from core.models import Equation, EquationLink
+    equations = list(Equation.objects.order_by("-created_at")[:120])
+    links = list(EquationLink.objects.order_by("-created_at")[:180])
+    # Simple circular layout
+    nodes = []
+    total = max(len(equations), 1)
+    radius = 320
+    cx, cy = 380, 360
+    for idx, eq in enumerate(equations):
+        angle = (2 * 3.1415926 * idx) / total
+        x = cx + radius * __import__("math").cos(angle)
+        y = cy + radius * __import__("math").sin(angle)
+        nodes.append(
+            {
+                "id": eq.id,
+                "label": (eq.text[:40] + "...") if len(eq.text) > 40 else eq.text,
+                "x": x,
+                "y": y,
+                "domain": ",".join(eq.disciplines or eq.domains or []),
+            }
+        )
+    edge_list = []
+    for link in links:
+        edge_list.append(
+            {
+                "from": link.from_equation_id,
+                "to": link.to_equation_id,
+                "relation": link.relation_type,
+            }
+        )
+    context = dict(
+        admin.site.each_context(request),
+        nodes=nodes,
+        edges=edge_list,
+        title="Equation Matrix Graph",
+    )
+    return TemplateResponse(request, "admin/matrix_graph.html", context)
+
+
+def _tech_matrix_outline_view(request):
+    from core.models import TechMatrixRecord
+    record = TechMatrixRecord.objects.order_by("-created_at").first()
+    context = dict(
+        admin.site.each_context(request),
+        record=record,
+        title="Tech Matrix Outline",
+    )
+    return TemplateResponse(request, "admin/tech_matrix_outline.html", context)
+
+
+def _matrix_graph_urls(urls):
+    def get_urls():
+        extra = [
+            path("matrix-graph/", admin.site.admin_view(_matrix_graph_view), name="matrix-graph"),
+            path("tech-matrix-outline/", admin.site.admin_view(_tech_matrix_outline_view), name="tech-matrix-outline"),
+        ]
+        return extra + urls
+    return get_urls
+
+
+admin.site.get_urls = _matrix_graph_urls(admin.site.get_urls())

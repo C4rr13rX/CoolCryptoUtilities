@@ -27,6 +27,7 @@ _UI_MANAGER = None
 _LAST_FILE_OPS_ERRORS: list[str] = []
 _LAST_FILE_OPS_WRITTEN: list[str] = []
 _MATRIX_SEED_VERSION = "2026-02-04"
+_TECH_MATRIX_DIR = Path("runtime/c0d3r/tech_matrix")
 
 
 def _trace_event(payload: dict) -> None:
@@ -378,6 +379,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-context", action="store_true", help="Disable automatic repo context summary.")
     parser.add_argument("--scientific", action="store_true", help="Enable scientific-method analysis mode.")
     parser.add_argument("--no-scientific", action="store_true", help="Disable scientific-method analysis mode.")
+    parser.add_argument("--matrix-query", dest="matrix_query", help="Query the equation matrix and exit.")
     return parser
 
 
@@ -416,6 +418,19 @@ def main(argv: List[str] | None = None) -> int:
         settings["region"] = args.region
     if args.research:
         settings["research"] = True
+
+    if args.matrix_query:
+        query = args.matrix_query.strip()
+        if not query:
+            print("matrix query is empty")
+            return 1
+        if not _ensure_django_ready():
+            print("matrix query requires Django + database configured")
+            return 1
+        _seed_base_matrix_django()
+        result = _matrix_search(query, limit=20)
+        print(json.dumps(result, indent=2))
+        return 0
 
     _emit_live("boot: resolve workdir")
     workdir = Path(args.workdir or os.getcwd()).resolve()
@@ -510,6 +525,11 @@ def main(argv: List[str] | None = None) -> int:
         do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
     if do_math and not _requires_rigorous_constraints(base_request):
         do_math = False
+    # Long-form tech descriptions: build tech matrix + outline before tool loop.
+    tech_matrix = None
+    if _is_longform_request(base_request):
+        _emit_live("longform: building tech matrix + outline")
+        tech_matrix = _build_tech_matrix(session, base_request)
     if os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
         do_research = False
     if do_math:
@@ -825,6 +845,9 @@ def _run_tool_loop(
             history_block = ""
         else:
             history_block = ("\n\nRecent outputs:\n" + "\n".join(history[-6:])) if history else ""
+        code_memory = _load_code_memory_summary()
+        if code_memory and not simple_task:
+            history_block = history_block + "\n\n" + code_memory
         tool_prompt = (
             "[schema:tool_loop]\n"
             "You can run local shell commands to inspect the repo and validate work. "
@@ -879,6 +902,20 @@ def _run_tool_loop(
             "- ::sleep <seconds>\n"
             "- ::kill <pid>\n"
             "- ::cd <path> (change working directory for subsequent commands)\n"
+            "- ::textbook_deps (npm install for textbook pipeline)\n"
+            "- ::textbook_fetch [path] (download LibreTexts PDFs into textbooks/)\n"
+            "- ::textbook_segment [path] (extract/segment text from PDFs)\n"
+            "- ::textbook_build_dataset [path] (build segments.ndjson)\n"
+            "- ::textbook_build_tiles [path] (build tiles.ndjson)\n"
+            "- ::textbook_fix_pages [path] (repair pages.json counts)\n"
+            "- ::textbook_verify_pages [path] (verify processed page counts)\n"
+            "- ::textbook_reprocess [path] (reprocess incomplete books; Windows-only)\n"
+            "- ::textbook_import [path] (import manifest into Django DB + citations)\n"
+            "- ::textbook_ocr [path] (OCR page PNGs -> Django DB)\n"
+            "- ::textbook_list (list textbooks from DB)\n"
+            "- ::textbook_prepare_qa [path] (generate QA candidates)\n"
+            "- ::textbook_import_qa [path] (import QA candidates into DB)\n"
+            "- ::textbook_knowledge [path] (build knowledge docs + queue items)\n"
             "Be concise and execution-focused. Always execute commands before returning final.\n"
             "Use this pattern for Ionic projects:\n"
             "1) ::cd C:/Users/Adam/Projects\n"
@@ -3056,6 +3093,130 @@ def _normalize_equation(eq: str) -> str:
     return re.sub(r"\s+", "", (eq or "")).strip()
 
 
+def _authoritative_domains() -> list[str]:
+    return [
+        "nist.gov",
+        "nih.gov",
+        "ncbi.nlm.nih.gov",
+        "arxiv.org",
+        "nature.com",
+        "science.org",
+        "sciencemag.org",
+        "ieee.org",
+        "acm.org",
+        "springer.com",
+        "springerlink.com",
+        "wiley.com",
+        "sciencedirect.com",
+        "royalsocietypublishing.org",
+        "aps.org",
+        "aip.org",
+        "iop.org",
+        "cambridge.org",
+        "mit.edu",
+        "stanford.edu",
+        "harvard.edu",
+        "caltech.edu",
+        "ox.ac.uk",
+        "cam.ac.uk",
+    ]
+
+
+def _is_authoritative_source(url: str) -> bool:
+    if not url:
+        return False
+    lowered = url.lower()
+    return any(dom in lowered for dom in _authoritative_domains())
+
+
+def _is_longform_request(prompt: str) -> bool:
+    return len(prompt or "") > 12000
+
+
+def _split_longform(prompt: str, chunk_size: int = 4000) -> list[str]:
+    text = prompt or ""
+    chunks = []
+    idx = 0
+    while idx < len(text):
+        chunks.append(text[idx : idx + chunk_size])
+        idx += chunk_size
+    return chunks
+
+
+def _build_tech_matrix(session: C0d3rSession, prompt: str) -> dict:
+    """
+    Build a component matrix for long-form technology descriptions.
+    Returns dict with nodes, connections, requirements, and outline.
+    """
+    _TECH_MATRIX_DIR.mkdir(parents=True, exist_ok=True)
+    chunks = _split_longform(prompt)
+    nodes: list[dict] = []
+    requirements: list[str] = []
+    interfaces: list[dict] = []
+    data_shapes: list[dict] = []
+    system = (
+        "Return ONLY JSON with keys: components (list), requirements (list), interfaces (list), data_shapes (list). "
+        "components should include {name, responsibility, inputs, outputs, dependencies}. "
+        "interfaces should include {name, direction, protocol, payload_schema}. "
+        "data_shapes should include {name, fields, storage, validation}."
+    )
+    for idx, chunk in enumerate(chunks):
+        raw = session.send(prompt=f"[chunk {idx+1}/{len(chunks)}]\n{chunk}", stream=False, system=system)
+        payload = _safe_json(raw)
+        if not isinstance(payload, dict):
+            continue
+        nodes.extend(payload.get("components") or [])
+        requirements.extend(payload.get("requirements") or [])
+        interfaces.extend(payload.get("interfaces") or [])
+        data_shapes.extend(payload.get("data_shapes") or [])
+    matrix = {
+        "prompt": prompt,
+        "components": nodes,
+        "requirements": requirements,
+        "interfaces": interfaces,
+        "data_shapes": data_shapes,
+        "chunks": len(chunks),
+    }
+    ( _TECH_MATRIX_DIR / "latest.json").write_text(json.dumps(matrix, indent=2), encoding="utf-8")
+    outline = _compile_tech_outline(session, matrix)
+    matrix["outline"] = outline
+    ( _TECH_MATRIX_DIR / "latest_outline.json").write_text(json.dumps(outline, indent=2), encoding="utf-8")
+    _write_tech_matrix_db(matrix, prompt=prompt)
+    return matrix
+
+
+def _write_tech_matrix_db(matrix: dict, *, prompt: str = "") -> None:
+    try:
+        if not _ensure_django_ready():
+            return
+        import os as _os
+        if not _os.getenv("DJANGO_SETTINGS_MODULE"):
+            _os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
+        import django
+        django.setup()
+        from core.models import TechMatrixRecord
+        TechMatrixRecord.objects.create(
+            prompt=prompt or "",
+            components=matrix.get("components") or [],
+            requirements=matrix.get("requirements") or [],
+            interfaces=matrix.get("interfaces") or [],
+            data_shapes=matrix.get("data_shapes") or [],
+            outline=matrix.get("outline") or {},
+        )
+    except Exception:
+        pass
+
+
+def _compile_tech_outline(session: C0d3rSession, matrix: dict) -> dict:
+    system = (
+        "Return ONLY JSON with keys: architecture (list), modules (list), data_flows (list), tests (list). "
+        "Use the matrix to propose a concrete software outline."
+    )
+    raw = session.send(prompt=f"Matrix:\n{json.dumps(matrix, indent=2)[:12000]}", stream=False, system=system)
+    payload = _safe_json(raw)
+    return payload if isinstance(payload, dict) else {}
+
+
 def _matrix_search(query: str, limit: int = 12) -> dict:
     if not query:
         return {"hits": [], "missing": []}
@@ -3460,6 +3621,10 @@ def _run_repl(
                 _emit_live(f"repl: pre-research complete (len={len(research_summary)})")
                 _emit_live("repl: pre-research complete")
         controller = InterruptController()
+        if tech_matrix and mode != "direct":
+            outline = tech_matrix.get("outline") or {}
+            matrix_context = json.dumps(outline, indent=2)[:6000]
+            full_prompt = f"{full_prompt}\n\n[longform_outline]\n{matrix_context}"
         if allow_interrupt:
             controller.start()
         try:
@@ -3572,6 +3737,8 @@ def _run_repl(
                         ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
                         if not ok:
                             _emit_live("microtests: still failing after remediation")
+            if applied:
+                _update_system_map(workdir)
         # update budget usage
         try:
             from services.bedrock_pricing import estimate_cost
@@ -3963,6 +4130,7 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
         stop.set()
         if response:
             _append_bibliography_from_text(response)
+            _persist_research_knowledge(prompt, response)
         return response or ""
     except Exception:
         try:
@@ -3972,9 +4140,44 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
         # Reroute: fall back to direct web research if model times out.
         try:
             _emit_live("pre_research: timeout; rerouting to direct web research")
-            return session._c0d3r._research(research_prompt) or ""
+            fallback = session._c0d3r._research(research_prompt) or ""
+            if fallback:
+                _persist_research_knowledge(prompt, fallback)
+            return fallback
         except Exception:
             return ""
+
+
+def _persist_research_knowledge(prompt: str, summary: str) -> None:
+    try:
+        if not _ensure_django_ready():
+            return
+        import os as _os
+        if not _os.getenv("DJANGO_SETTINGS_MODULE"):
+            _os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
+        import django
+        django.setup()
+        from core.models import KnowledgeDocument, KnowledgeQueueItem
+        title = prompt.strip()[:200] if prompt else "c0d3r research"
+        doc, created = KnowledgeDocument.objects.get_or_create(
+            source="c0d3r_pre_research",
+            title=title,
+            defaults={
+                "abstract": "",
+                "body": summary,
+                "url": "",
+                "citation_apa": "",
+                "metadata": {"prompt": prompt},
+            },
+        )
+        if not created and doc.body != summary:
+            doc.body = summary
+            doc.metadata = doc.metadata or {}
+            doc.metadata["prompt"] = prompt
+            doc.save(update_fields=["body", "metadata"])
+        KnowledgeQueueItem.objects.get_or_create(document=doc, defaults={"status": "pending", "confidence": 0.0})
+    except Exception:
+        pass
 
 
 def _model_timeout_s() -> float | None:
@@ -4100,6 +4303,169 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
             except Exception:
                 return 1, "", f"cd blocked outside project root: {root}", None
         return 0, f"cwd -> {new_path}", "", new_path
+    if action.startswith("textbook"):
+        scripts_root = PROJECT_ROOT / "tools" / "textbooks"
+        scripts_dir = scripts_root / "scripts"
+        if not scripts_dir.exists():
+            return 1, "", "textbook scripts not found", None
+        target_dir = workdir
+        if len(parts) >= 2 and parts[1] not in {"", None}:
+            maybe = parts[1] if len(parts) == 2 else parts[1] + " " + (parts[2] if len(parts) > 2 else "")
+            if maybe and maybe.strip():
+                target_dir = Path(maybe).expanduser().resolve()
+        if action == "textbook_deps":
+            npm_cmd = "npm.cmd" if os.name == "nt" else "npm"
+            try:
+                proc = subprocess.run([npm_cmd, "install"], cwd=str(scripts_root), capture_output=True, text=True)
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        if action == "textbook_list":
+            script = scripts_dir / "list-textbooks.py"
+            try:
+                proc = subprocess.run(
+                    ["python", str(script)],
+                    cwd=str(scripts_root),
+                    capture_output=True,
+                    text=True,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        if action == "textbook_import":
+            script = scripts_dir / "import-manifest.py"
+            try:
+                env = os.environ.copy()
+                env["TEXTBOOKS_DIR"] = str(target_dir)
+                proc = subprocess.run(
+                    ["python", str(script)],
+                    cwd=str(scripts_root),
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        if action == "textbook_ocr":
+            script = scripts_dir / "ocr-pages.py"
+            try:
+                env = os.environ.copy()
+                env["TEXTBOOKS_DIR"] = str(target_dir)
+                proc = subprocess.run(
+                    ["python", str(script)],
+                    cwd=str(scripts_root),
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        if action == "textbook_prepare_qa":
+            script = scripts_dir / "prepare-textbook-qa.py"
+            try:
+                env = os.environ.copy()
+                env["TEXTBOOKS_DIR"] = str(target_dir)
+                proc = subprocess.run(
+                    ["python", str(script), "--input-root", str(Path(target_dir) / "textbooks"), "--output-root", str(Path(target_dir) / "data" / "textbooks")],
+                    cwd=str(scripts_root),
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        if action == "textbook_import_qa":
+            script = scripts_dir / "import-qa.py"
+            try:
+                env = os.environ.copy()
+                env["TEXTBOOKS_DIR"] = str(target_dir)
+                proc = subprocess.run(
+                    ["python", str(script)],
+                    cwd=str(scripts_root),
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        if action == "textbook_knowledge":
+            script = scripts_dir / "build-knowledge-docs.py"
+            try:
+                env = os.environ.copy()
+                env["TEXTBOOKS_DIR"] = str(target_dir)
+                proc = subprocess.run(
+                    ["python", str(script)],
+                    cwd=str(scripts_root),
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        script_map = {
+            "textbook_fetch": "fetch-libretexts.mjs",
+            "textbook_segment": "segment-textbook.mjs",
+            "textbook_build_dataset": "build-seg-dataset.mjs",
+            "textbook_build_tiles": "build-tiles.mjs",
+            "textbook_fix_pages": "fix-pages-json.mjs",
+            "textbook_verify_pages": "verify-pages-count.mjs",
+            "textbook_label_heuristic": "label-heuristic.mjs",
+            "textbook_label_openai": "label-with-openai.mjs",
+            "textbook_export_labels": "export-labeling-tsv.mjs",
+            "textbook_train_microcortex": "train-microcortex.mjs",
+        }
+        if action == "textbook_reprocess":
+            script = scripts_dir / "reprocess-incomplete.ps1"
+            if os.name != "nt":
+                return 1, "", "reprocess-incomplete.ps1 is Windows-only", None
+            if not script.exists():
+                return 1, "", "reprocess-incomplete.ps1 not found", None
+            try:
+                proc = subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                    cwd=str(target_dir),
+                    capture_output=True,
+                    text=True,
+                )
+                return proc.returncode, proc.stdout, proc.stderr, None
+            except Exception as exc:
+                return 1, "", str(exc), None
+        script_name = script_map.get(action)
+        if not script_name:
+            return 1, "", f"unknown meta command {action}", None
+        script = scripts_dir / script_name
+        if not script.exists():
+            return 1, "", f"script not found: {script_name}", None
+        try:
+            node_cmd = "node"
+            env = os.environ.copy()
+            # If requesting a fetch, inject skip lists from DB to avoid duplicates.
+            if action == "textbook_fetch":
+                try:
+                    if _ensure_django_ready():
+                        from core.models import TextbookSource
+                        skip_ids = []
+                        skip_titles = []
+                        for tb in TextbookSource.objects.all():
+                            if tb.print_id:
+                                skip_ids.append(tb.print_id)
+                            if tb.title:
+                                skip_titles.append(tb.title)
+                        if skip_ids:
+                            env["SKIP_PRINT_IDS"] = ",".join(skip_ids)
+                        if skip_titles:
+                            env["SKIP_TITLES"] = ",".join(skip_titles)
+                except Exception:
+                    pass
+            proc = subprocess.run([node_cmd, str(script)], cwd=str(target_dir), capture_output=True, text=True, env=env)
+            return proc.returncode, proc.stdout, proc.stderr, None
+        except Exception as exc:
+            return 1, "", str(exc), None
     return 1, "", f"unknown meta command {action}", None
 
 
@@ -5013,13 +5379,18 @@ def _write_matrix_db(record: dict) -> None:
         equations = record.get("equations") or []
         disciplines = record.get("branches") or []
         research_links = record.get("research_links") or []
+        authoritative_links = [l for l in research_links if _is_authoritative_source(str(l))]
+        if equations and not authoritative_links:
+            # Do not insert equations without authoritative sources.
+            _emit_live("matrix: skipping equation insert (no authoritative sources)")
+            return
         source = None
-        if research_links:
+        if authoritative_links:
             source, _ = EquationSource.objects.get_or_create(
-                title=research_links[0][:255],
+                title=authoritative_links[0][:255],
                 defaults={
-                    "url": research_links[0],
-                    "citation": research_links[0],
+                    "url": authoritative_links[0],
+                    "citation": authoritative_links[0],
                     "tags": ["research"],
                 },
             )
@@ -5031,7 +5402,7 @@ def _write_matrix_db(record: dict) -> None:
                 "latex": str(eq),
                 "domains": disciplines,
                 "disciplines": disciplines,
-                "confidence": 0.6 if research_links else 0.4,
+                "confidence": 0.6,
                 "source": source,
             }
             obj, _ = Equation.objects.get_or_create(text=str(eq), defaults=defaults)
@@ -5077,7 +5448,7 @@ def _update_system_map(workdir: Path) -> None:
         root = workdir.resolve()
         files = []
         tests = []
-        symbols = {"classes": {}, "functions": {}, "imports": {}}
+        symbols = {"classes": {}, "functions": {}, "imports": {}, "signatures": {}}
         for path in root.rglob("*"):
             if path.is_dir():
                 continue
@@ -5091,6 +5462,11 @@ def _update_system_map(workdir: Path) -> None:
                     tree = ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
                     classes = [n.name for n in tree.body if isinstance(n, ast.ClassDef)]
                     funcs = [n.name for n in tree.body if isinstance(n, ast.FunctionDef)]
+                    sigs = []
+                    for n in tree.body:
+                        if isinstance(n, ast.FunctionDef):
+                            args = [a.arg for a in n.args.args]
+                            sigs.append({"name": n.name, "args": args})
                     imps = []
                     for n in tree.body:
                         if isinstance(n, ast.Import):
@@ -5100,7 +5476,20 @@ def _update_system_map(workdir: Path) -> None:
                                 imps.append(n.module)
                     symbols["classes"][rel] = classes
                     symbols["functions"][rel] = funcs
+                    symbols["signatures"][rel] = sigs
                     symbols["imports"][rel] = sorted(set(imps))
+                except Exception:
+                    pass
+            elif path.suffix in {".ts", ".js", ".tsx", ".jsx"}:
+                try:
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                    class_names = re.findall(r"class\s+([A-Za-z0-9_]+)", text)
+                    func_names = re.findall(r"function\s+([A-Za-z0-9_]+)\s*\(", text)
+                    arrow_funcs = re.findall(r"const\s+([A-Za-z0-9_]+)\s*=\s*\\(", text)
+                    sigs = [{"name": n, "args": []} for n in func_names + arrow_funcs]
+                    symbols["classes"][rel] = class_names
+                    symbols["functions"][rel] = func_names + arrow_funcs
+                    symbols["signatures"][rel] = sigs
                 except Exception:
                     pass
         payload = {
@@ -5126,6 +5515,33 @@ def _append_evidence(cmd: str, code: int, stdout: str, stderr: str) -> None:
             fh.write(f"[{ts}] $ {cmd}\n(exit {code})\n{stdout.strip()}\n{stderr.strip()}\n\n")
     except Exception:
         pass
+
+
+def _load_code_memory_summary(max_chars: int = 2000) -> str:
+    path = Path("runtime/c0d3r/system_map.json")
+    if not path.exists():
+        return ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+        symbols = data.get("symbols") or {}
+        classes = symbols.get("classes") or {}
+        funcs = symbols.get("functions") or {}
+        sigs = symbols.get("signatures") or {}
+        lines = ["# Code Memory Summary"]
+        for rel, names in list(classes.items())[:8]:
+            if names:
+                lines.append(f"{rel} classes: {', '.join(names[:6])}")
+        for rel, names in list(funcs.items())[:8]:
+            if names:
+                lines.append(f"{rel} funcs: {', '.join(names[:6])}")
+        for rel, items in list(sigs.items())[:6]:
+            if items:
+                snippet = ", ".join(f"{i.get('name')}({', '.join(i.get('args') or [])})" for i in items[:4])
+                lines.append(f"{rel} sigs: {snippet}")
+        text = "\n".join(lines)
+        return text[:max_chars]
+    except Exception:
+        return ""
 
 
 def _append_research_notes(text: str) -> None:

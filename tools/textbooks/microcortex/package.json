@@ -1,0 +1,10 @@
+{
+  "name": "@state-of-loci/microcortex",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Lightweight CPU-friendly neural primitives for layout detection",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
+  }
+}

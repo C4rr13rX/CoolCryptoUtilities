@@ -29,6 +29,9 @@ $py = Join-Path (Resolve-Path .venv) "Scripts\python.exe"
 Write-Host "[setup] Installing Python deps" -ForegroundColor Yellow
 & $py -m pip install -r requirements.txt
 & $py -m pip install django psycopg[binary]
+if (Test-Path requirements_textbooks.txt) {
+  & $py -m pip install -r requirements_textbooks.txt
+}
 
 # Install Postgres if missing
 if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
@@ -39,6 +42,18 @@ if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
     choco install postgresql -y
   } else {
     Write-Host "No winget/choco found. Install PostgreSQL manually." -ForegroundColor Red
+  }
+}
+
+# Install tesseract for OCR if missing
+if (-not (Get-Command tesseract -ErrorAction SilentlyContinue)) {
+  Write-Host "[setup] Tesseract not found; attempting install" -ForegroundColor Yellow
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    winget install --id UB-Mannheim.TesseractOCR --silent --accept-source-agreements --accept-package-agreements
+  } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+    choco install tesseract -y
+  } else {
+    Write-Host "No winget/choco found. Install Tesseract manually." -ForegroundColor Red
   }
 }
 

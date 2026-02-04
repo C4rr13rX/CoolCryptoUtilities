@@ -145,6 +145,15 @@ class HistoricalDataLoader:
         )
         self._news_network_last_log = 0.0
         self.news_items = self._load_news()
+        self.knowledge_documents = self._load_knowledge_documents()
+        if self.knowledge_documents:
+            for doc in self.knowledge_documents:
+                title = (doc.get("title") or "").strip()
+                body = (doc.get("body") or "").strip()
+                if title:
+                    self._headline_samples.append(title)
+                if body:
+                    self._headline_samples.append(body[:512])
         self._news_window_schedule = self._load_news_window_schedule()
         self._dataset_cache: Dict[Tuple[Any, ...], Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]] = {}
         self._dataset_profile_cache: Dict[Tuple[Any, ...], Dict[str, Dict[str, float]]] = {}
@@ -1798,6 +1807,32 @@ class HistoricalDataLoader:
             if col not in df.columns:
                 df[col] = ""
         return df[["timestamp", "headline", "article", "sentiment", "tokens"]]
+
+    def _load_knowledge_documents(self) -> List[Dict[str, Any]]:
+        if os.getenv("KNOWLEDGE_DOCS_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return []
+        try:
+            import os as _os
+            if not _os.getenv("DJANGO_SETTINGS_MODULE"):
+                _os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
+            import django
+            django.setup()
+            from core.models import KnowledgeDocument
+            limit = max(10, int(os.getenv("KNOWLEDGE_DOCS_LIMIT", "200")))
+            rows = KnowledgeDocument.objects.order_by("-created_at")[:limit]
+            payload = []
+            for row in rows:
+                payload.append(
+                    {
+                        "title": row.title,
+                        "body": row.body,
+                        "source": row.source,
+                        "citation": row.citation_apa,
+                    }
+                )
+            return payload
+        except Exception:
+            return []
 
     def _load_rss_news(self, cache_path: Path, since_ts: int) -> Optional[pd.DataFrame]:
         feeds = os.getenv(

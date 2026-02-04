@@ -373,3 +373,148 @@ class EquationGapFill(models.Model):
 
     class Meta:
         db_table = "equation_gap_fills"
+
+
+class TextbookSource(models.Model):
+    title = models.CharField(max_length=255)
+    authors = models.CharField(max_length=255, blank=True, default="")
+    year = models.IntegerField(null=True, blank=True)
+    publisher = models.CharField(max_length=255, blank=True, default="")
+    url = models.TextField(blank=True, default="")
+    print_id = models.CharField(max_length=128, blank=True, default="")
+    file_path = models.TextField(blank=True, default="")
+    sha256 = models.CharField(max_length=128, blank=True, default="")
+    citation_apa = models.TextField(blank=True, default="")
+    downloaded_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "textbook_sources"
+        indexes = [
+            models.Index(fields=["title"], name="textbook_sources_title_idx"),
+            models.Index(fields=["print_id"], name="textbook_sources_print_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return self.title
+
+
+class TextbookPage(models.Model):
+    textbook = models.ForeignKey(TextbookSource, on_delete=models.CASCADE)
+    page_num = models.IntegerField()
+    image_path = models.TextField(blank=True, default="")
+    ocr_text = models.TextField(blank=True, default="")
+    ocr_confidence = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "textbook_pages"
+        indexes = [
+            models.Index(fields=["page_num"], name="textbook_pages_page_idx"),
+        ]
+
+
+class TextbookQACandidate(models.Model):
+    textbook = models.ForeignKey(TextbookSource, on_delete=models.CASCADE)
+    page_num = models.IntegerField()
+    question = models.TextField()
+    answer = models.TextField()
+    confidence = models.FloatField(default=0.0)
+    status = models.CharField(max_length=32, default="pending")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "textbook_qa_candidates"
+        indexes = [
+            models.Index(fields=["status"], name="textbook_qa_status_idx"),
+            models.Index(fields=["page_num"], name="textbook_qa_page_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return f"{self.textbook.title} p{self.page_num}"
+
+
+class KnowledgeDocument(models.Model):
+    source = models.CharField(max_length=255, blank=True, default="")
+    title = models.TextField(blank=True, default="")
+    abstract = models.TextField(blank=True, default="")
+    body = models.TextField(blank=True, default="")
+    url = models.TextField(blank=True, default="")
+    citation_apa = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "knowledge_documents"
+        indexes = [
+            models.Index(fields=["created_at"], name="knowledge_docs_created_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return self.title or self.source or f"KnowledgeDoc {self.pk}"
+
+
+class KnowledgeQueueItem(models.Model):
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE)
+    status = models.CharField(max_length=32, default="pending")
+    confidence = models.FloatField(default=0.0)
+    label = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "knowledge_queue_items"
+        indexes = [
+            models.Index(fields=["status"], name="knowledge_queue_status_idx"),
+        ]
+
+
+class LabelQueueItem(models.Model):
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE)
+    status = models.CharField(max_length=32, default="pending")
+    label = models.CharField(max_length=255, blank=True, default="")
+    confidence = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "label_queue_items"
+        indexes = [
+            models.Index(fields=["status"], name="label_queue_status_idx"),
+        ]
+
+
+class VisualLabelQueueItem(models.Model):
+    document = models.ForeignKey(KnowledgeDocument, on_delete=models.CASCADE)
+    image_path = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=32, default="pending")
+    label = models.CharField(max_length=255, blank=True, default="")
+    confidence = models.FloatField(default=0.0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "visual_label_queue_items"
+        indexes = [
+            models.Index(fields=["status"], name="visual_label_queue_status_idx"),
+        ]
+
+
+class TechMatrixRecord(models.Model):
+    prompt = models.TextField(default="", blank=True)
+    components = models.JSONField(default=list)
+    requirements = models.JSONField(default=list)
+    interfaces = models.JSONField(default=list)
+    data_shapes = models.JSONField(default=list)
+    outline = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "tech_matrix_records"
+        indexes = [
+            models.Index(fields=["created_at"], name="tech_matrix_created_idx"),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        return f"TechMatrix {self.pk}"

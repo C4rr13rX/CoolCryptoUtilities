@@ -25,6 +25,9 @@ $PY -m pip install -U pip
 echo "[setup] Installing Python deps"
 $PY -m pip install -r requirements.txt
 $PY -m pip install django "psycopg[binary]"
+if [ -f requirements_textbooks.txt ]; then
+  $PY -m pip install -r requirements_textbooks.txt
+fi
 
 if ! command -v psql >/dev/null 2>&1; then
   echo "[setup] PostgreSQL not found; attempting install"
@@ -41,6 +44,20 @@ if ! command -v psql >/dev/null 2>&1; then
     sudo systemctl enable --now postgresql
   else
     echo "Install PostgreSQL manually for your distro." >&2
+  fi
+fi
+
+if ! command -v tesseract >/dev/null 2>&1; then
+  echo "[setup] Tesseract not found; attempting install"
+  if command -v brew >/dev/null 2>&1; then
+    brew install tesseract
+  elif command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y tesseract-ocr
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y tesseract
+  else
+    echo "Install Tesseract manually for your distro." >&2
   fi
 fi
 
