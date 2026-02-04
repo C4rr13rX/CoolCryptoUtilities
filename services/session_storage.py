@@ -25,7 +25,12 @@ class SessionStore:
         self.profile = profile
         self._s3 = None
         self._s3_ready = False
-        self._base_dir = Path("storage/c0d3r_sessions")
+        base_root = os.getenv("C0D3R_STORAGE_ROOT")
+        if base_root:
+            self._base_dir = Path(base_root).expanduser().resolve()
+        else:
+            project_root = Path(__file__).resolve().parents[1]
+            self._base_dir = (project_root / "storage" / "c0d3r_sessions").resolve()
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._local_next = self._base_dir / "next.txt"
 

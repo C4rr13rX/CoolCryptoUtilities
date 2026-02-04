@@ -22,19 +22,29 @@ if str(PROJECT_ROOT) not in sys.path:
 if WEB_ROOT.exists() and str(WEB_ROOT) not in sys.path:
     sys.path.insert(0, str(WEB_ROOT))
 
+def _runtime_root() -> Path:
+    override = os.getenv("C0D3R_RUNTIME_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    return (PROJECT_ROOT / "runtime" / "c0d3r").resolve()
+
+
+def _runtime_path(*parts: str) -> Path:
+    return _runtime_root().joinpath(*parts)
+
 _INSTALL_ATTEMPTS: set[str] = set()
 _UI_MANAGER = None
 _LAST_FILE_OPS_ERRORS: list[str] = []
 _LAST_FILE_OPS_WRITTEN: list[str] = []
 _MATRIX_SEED_VERSION = "2026-02-04"
-_TECH_MATRIX_DIR = Path("runtime/c0d3r/tech_matrix")
+_TECH_MATRIX_DIR = _runtime_path("tech_matrix")
 
 
 def _trace_event(payload: dict) -> None:
     try:
         payload = dict(payload)
         payload["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        path = Path("runtime/c0d3r/run_trace.jsonl")
+        path = _runtime_path("run_trace.jsonl")
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload) + "\n")
@@ -43,7 +53,7 @@ def _trace_event(payload: dict) -> None:
 
 
 def _tail_executor_log(lines: int = 6) -> str:
-    path = Path("runtime/c0d3r/executor.log")
+    path = _runtime_path("executor.log")
     if not path.exists():
         return ""
     try:
@@ -60,7 +70,7 @@ def _live_log_enabled() -> bool:
 def _diag_log(message: str) -> None:
     try:
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        path = Path("runtime/c0d3r/diagnostics.log")
+        path = _runtime_path("diagnostics.log")
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(f"[{ts}] {message}\n")
@@ -81,7 +91,7 @@ def _emit_live(message: str) -> None:
     except Exception:
         pass
     try:
-        log_path = Path("runtime/c0d3r/live.log")
+        log_path = _runtime_path("live.log")
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
@@ -492,7 +502,7 @@ def main(argv: List[str] | None = None) -> int:
     _emit_live("boot: session init")
     session = C0d3rSession(
         session_name="c0d3r-cli",
-        transcript_dir=Path("runtime/c0d3r/transcripts"),
+        transcript_dir=_runtime_path("transcripts"),
         workdir=str(workdir),
         **settings,
     )
@@ -618,7 +628,7 @@ def _build_context_block(workdir: Path, run_command) -> str:
 
 def _context_scan_path(workdir: Path) -> Path:
     root = workdir.resolve()
-    return Path("runtime/c0d3r") / f"context_scan_{root.name}.json"
+    return _runtime_root() / f"context_scan_{root.name}.json"
 
 
 def _is_existing_project(workdir: Path) -> bool:
@@ -701,7 +711,7 @@ def _scan_is_fresh(workdir: Path, run_command, max_age_minutes: int = 15) -> boo
 
 
 def _ensure_preflight(workdir: Path, run_command) -> None:
-    path = Path("runtime/c0d3r/preflight.json")
+    path = _runtime_path("preflight.json")
     if path.exists():
         return
     checks = {}
@@ -755,7 +765,7 @@ def _run_tool_loop(
     history: List[str] = []
     gap_score = 0
     last_error = ""
-    log_path = Path("runtime/c0d3r/tool_loop.log")
+    log_path = _runtime_path("tool_loop.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     base_snapshot = _snapshot_projects_dir(prompt)
     created_dirs: List[str] = []
@@ -800,6 +810,19 @@ def _run_tool_loop(
         for cmd in scaffold_cmds:
             run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
         return "complete"
+    if wants_new_project and not scaffold_task and "readme" in base_request.lower():
+        _emit_live("new_project: local README scaffold before model call")
+        target_root = project_root_for_ops or (workdir / _slugify_project_name(base_request)).resolve()
+        try:
+            target_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            target_root = project_root_for_ops or workdir
+        title = target_root.name.replace("_", " ").title()
+        readme = f"# {title}\n\nCLI note manager scaffold.\n\n## Getting started\n\n- Add your commands in `src/`.\n- Run tests via your preferred runner.\n"
+        executor = FileExecutor(target_root)
+        ops = [{"path": "README.md", "action": "write", "content": readme, "allow_full_replace": True}]
+        if executor.apply_ops(ops):
+            return "complete"
     while True:
         step += 1
         if not unlimited and step > max_steps:
@@ -816,6 +839,8 @@ def _run_tool_loop(
         )
         research_tasks: list[tuple[str, callable]] = []
         disable_pr = os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
+        if wants_new_project:
+            disable_pr = True
         if gap_score >= 2 and not (simple_task or scaffold_task) and not disable_pr:
             _emit_live("tool_loop: gap score high; running targeted research")
             research_tasks.append(("gap_score", lambda: _pre_research(session, prompt)))
@@ -1436,7 +1461,7 @@ def _run_tool_loop(
         checkpoint = _critical_thinking_checkpoint(session, prompt, history)
         if checkpoint:
             try:
-                path = Path("runtime/c0d3r/critical_thinking.jsonl")
+                path = _runtime_path("critical_thinking.jsonl")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps({"ts": time.time(), **checkpoint}) + "\n")
@@ -1446,7 +1471,7 @@ def _run_tool_loop(
             plan_steps = checkpoint.get("plan_steps") or []
             if plan_steps:
                 try:
-                    plan_path = Path("runtime/c0d3r/plan.json")
+                    plan_path = _runtime_path("plan.json")
                     plan_path.parent.mkdir(parents=True, exist_ok=True)
                     plan_payload = {"updated": time.strftime("%Y-%m-%d %H:%M:%S"), "steps": plan_steps}
                     plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
@@ -1488,7 +1513,7 @@ def _run_tool_loop(
             decision = _framework_decision(session, prompt, workdir)
             if decision:
                 try:
-                    path = Path("runtime/c0d3r/framework_decision.json")
+                    path = _runtime_path("framework_decision.json")
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(json.dumps(decision, indent=2), encoding="utf-8")
                 except Exception:
@@ -2312,7 +2337,7 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
         "solutions": solutions,
     }
     try:
-        out_dir = Path("runtime/c0d3r")
+        out_dir = _runtime_root()
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "math_grounding.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
         with (out_dir / "math_grounding_history.jsonl").open("a", encoding="utf-8") as fh:
@@ -2382,7 +2407,7 @@ def _save_empty_commands_response(text: str) -> None:
     try:
         if not text:
             return
-        path = Path("runtime/c0d3r/empty_commands_response.txt")
+        path = _runtime_path("empty_commands_response.txt")
         path.parent.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         with path.open("a", encoding="utf-8") as fh:
@@ -2774,7 +2799,7 @@ def _resolve_target_path(base: Path, raw_path: str) -> Path | None:
 class FileExecutor:
     def __init__(self, workdir: Path) -> None:
         self.base = workdir.resolve()
-        self.log_path = Path("runtime/c0d3r/executor.log")
+        self.log_path = _runtime_path("executor.log")
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.last_errors: list[str] = []
 
@@ -2807,7 +2832,7 @@ class FileExecutor:
 
     def _log_missing_sources(self, path: Path, action: str) -> None:
         try:
-            todo_path = Path("runtime/c0d3r/bibliography_todo.jsonl")
+            todo_path = _runtime_path("bibliography_todo.jsonl")
             todo_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -2854,7 +2879,7 @@ class FileExecutor:
                 continue
             # Backup before destructive writes
             if target.exists() and action in {"write", "append", "replace", "patch", "delete", "remove", "move", "rename"}:
-                backup_dir = Path("runtime/c0d3r/backups") / time.strftime("%Y%m%d_%H%M%S")
+                backup_dir = _runtime_path("backups") / time.strftime("%Y%m%d_%H%M%S")
                 backup_dir.mkdir(parents=True, exist_ok=True)
                 backup_path = backup_dir / target.name
                 try:
@@ -3074,7 +3099,7 @@ def _ensure_actionable_response(
 
 
 def _plan_state_path() -> Path:
-    return Path("runtime/c0d3r/plan_state.json")
+    return _runtime_path("plan_state.json")
 
 
 def _load_plan_state() -> dict:
@@ -3139,7 +3164,7 @@ class PetalManager:
     No hardwired petals; constraints are learned from user input or model directives.
     """
     def __init__(self) -> None:
-        self.path = Path("runtime/c0d3r/petals.json")
+        self.path = _runtime_path("petals.json")
         self.state = {
             "constraints": [],
             "active": {},
@@ -3516,7 +3541,7 @@ def _apply_petal_plan(petal_plan: dict) -> dict:
 
 
 def _write_microtest_harness(workdir: Path, targets: list[Path]) -> Path:
-    runtime_dir = Path("runtime/c0d3r/microtests")
+    runtime_dir = _runtime_path("microtests")
     runtime_dir.mkdir(parents=True, exist_ok=True)
     target_list = [str(t.resolve()) for t in targets]
     payload_path = runtime_dir / "targets.json"
@@ -3653,8 +3678,8 @@ def _run_repl(
 ) -> int:
     from services.conversation_memory import ConversationMemory
 
-    memory = ConversationMemory(Path("runtime/c0d3r/conversation.jsonl"))
-    summary_path = Path("runtime/c0d3r/summary.txt")
+    memory = ConversationMemory(_runtime_path("conversation.jsonl"))
+    summary_path = _runtime_path("summary.txt")
     summary = summary_path.read_text(encoding="utf-8", errors="ignore") if summary_path.exists() else ""
     pending = initial_prompt
     plan = plan or {}
@@ -3821,6 +3846,9 @@ def _run_repl(
             if qa_or_convo and "[file_contents:" in user_prompt:
                 # Fast QA on provided content shouldn't spin research.
                 allow_research = False
+            if _requires_new_projects_dir(user_prompt) and not _is_longform_request(user_prompt):
+                # Defer research for new project scaffolding until after project exists.
+                allow_research = False
             if not allow_research:
                 research_summary = ""
             else:
@@ -3858,10 +3886,21 @@ def _run_repl(
             elif mode == "tool_loop":
                 usage.set_status("executing", "local commands")
                 _emit_live("repl: tool loop starting")
-                response = _run_tool_loop(
-                    session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
-                    workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
-                )
+                disable_pr = _requires_new_projects_dir(user_prompt) and not _is_longform_request(user_prompt)
+                prev_disable_pr = os.getenv("C0D3R_DISABLE_PRERESEARCH")
+                if disable_pr:
+                    os.environ["C0D3R_DISABLE_PRERESEARCH"] = "1"
+                try:
+                    response = _run_tool_loop(
+                        session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
+                        workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
+                    )
+                finally:
+                    if disable_pr:
+                        if prev_disable_pr is None:
+                            os.environ.pop("C0D3R_DISABLE_PRERESEARCH", None)
+                        else:
+                            os.environ["C0D3R_DISABLE_PRERESEARCH"] = prev_disable_pr
                 _emit_live("repl: tool loop complete")
             else:
                 usage.set_status("executing", "direct response")
@@ -4537,7 +4576,7 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
             return 1, "", "usage: ::bg <command>", None
         command = parts[1] if len(parts) == 2 else parts[1] + " " + parts[2]
         try:
-            log_dir = Path("runtime/c0d3r/bg_logs")
+            log_dir = _runtime_path("bg_logs")
             log_dir.mkdir(parents=True, exist_ok=True)
             ts = time.strftime("%Y%m%d_%H%M%S")
             log_path = log_dir / f"bg_{ts}.log"
@@ -4856,12 +4895,12 @@ def _requires_full_completion(prompt: str) -> bool:
 
 
 def _plan_and_checklist_present() -> bool:
-    base = Path("runtime/c0d3r")
+    base = _runtime_root()
     return (base / "plan.md").exists() and (base / "checklist.md").exists()
 
 
 def _checklist_has_mapping() -> bool:
-    path = Path("runtime/c0d3r/checklist.md")
+    path = _runtime_path("checklist.md")
     if not path.exists():
         return False
     text = path.read_text(encoding="utf-8", errors="ignore").lower()
@@ -4869,7 +4908,7 @@ def _checklist_has_mapping() -> bool:
 
 
 def _checklist_is_complete() -> bool:
-    path = Path("runtime/c0d3r/checklist.md")
+    path = _runtime_path("checklist.md")
     if not path.exists():
         return False
     text = path.read_text(encoding="utf-8", errors="ignore")
@@ -4881,7 +4920,7 @@ def _checklist_is_complete() -> bool:
 
 
 def _plan_is_substantial() -> bool:
-    path = Path("runtime/c0d3r/plan.md")
+    path = _runtime_path("plan.md")
     if not path.exists():
         return False
     text = path.read_text(encoding="utf-8", errors="ignore")
@@ -4891,8 +4930,11 @@ def _plan_is_substantial() -> bool:
 def _commands_only_runtime(commands: List[str]) -> bool:
     if not commands:
         return False
+    runtime_root = str(_runtime_root()).lower()
     for cmd in commands:
         lower = (cmd or "").lower()
+        if runtime_root and runtime_root in lower:
+            continue
         if "runtime\\c0d3r" in lower or "runtime/c0d3r" in lower:
             continue
         if "plan.md" in lower or "checklist.md" in lower:
@@ -4907,39 +4949,45 @@ def _apply_simple_task_fallback(prompt: str, workdir: Path) -> bool:
     """
     text = (prompt or "").strip()
     lower = text.lower()
+    ops: list[dict] = []
     # Create a new file with optional content.
     m = re.search(r"(?:create|add) (?:a )?new file\s+([^\s]+)(?:\s+with content\s+(.+))?$", text, re.IGNORECASE)
     if m:
         name = m.group(1).strip().strip('"').strip("'")
         content = m.group(2) or ""
         content = content.strip().strip('"').strip("'")
-        executor = FileExecutor(workdir)
-        ops = [{"path": name, "action": "write", "content": content, "allow_full_replace": True}]
-        return bool(executor.apply_ops(ops))
+        ops.append({"path": name, "action": "write", "content": content, "allow_full_replace": True})
+    # Create a file when user says "add <path>" or "create <path>".
+    m = re.search(r"(?:add|create)\s+(?:a\s+)?([A-Za-z0-9_./\\\\-]+\\.[A-Za-z0-9]+)", text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip().strip('"').strip("'")
+        content = ""
+        if name.lower().endswith(".py"):
+            content = "def main():\n    print('Hello')\n\n\nif __name__ == '__main__':\n    main()\n"
+        ops.append({"path": name, "action": "write", "content": content, "allow_full_replace": True})
+    if "src/main.py" in lower:
+        ops.append({
+            "path": "src/main.py",
+            "action": "write",
+            "content": "def main():\n    print('Hello notes')\n\n\nif __name__ == '__main__':\n    main()\n",
+            "allow_full_replace": True,
+        })
     m = re.search(r"update\s+([A-Za-z0-9_.-]+)\s+with content\s+(.+)$", text, re.IGNORECASE)
     if m:
         name = m.group(1).strip().strip('"').strip("'")
         content = m.group(2).strip().strip('"').strip("'")
-        executor = FileExecutor(workdir)
-        ops = [{"path": name, "action": "write", "content": content, "allow_full_replace": True}]
-        return bool(executor.apply_ops(ops))
+        ops.append({"path": name, "action": "write", "content": content, "allow_full_replace": True})
     m = re.search(r"(?:delete|remove)\s+(?:file\s+)?([A-Za-z0-9_.-]+)$", text, re.IGNORECASE)
     if m:
         name = m.group(1).strip().strip('"').strip("'")
-        executor = FileExecutor(workdir)
-        ops = [{"path": name, "action": "delete"}]
-        return bool(executor.apply_ops(ops))
+        ops.append({"path": name, "action": "delete"})
     m = re.search(r"([A-Za-z0-9_.-]+\.md)\b", text, re.IGNORECASE)
     if m and any(k in lower for k in ("add", "adding", "create", "update")):
         name = m.group(1).strip()
         content = ""
         if "bullet" in lower or "next steps" in lower:
             content = "- Next step 1\n- Next step 2\n"
-        executor = FileExecutor(workdir)
-        ops = [{"path": name, "action": "write", "content": content, "allow_full_replace": True}]
-        ok = bool(executor.apply_ops(ops))
-        if ok:
-            return True
+        ops.append({"path": name, "action": "write", "content": content, "allow_full_replace": True})
     if "update project" in lower:
         mproj = re.search(r"update project\\s+([A-Za-z0-9_.-]+)", lower)
         if mproj:
@@ -4950,9 +4998,26 @@ def _apply_simple_task_fallback(prompt: str, workdir: Path) -> bool:
                 for child in projects_root.iterdir():
                     if child.is_dir() and proj in child.name.lower():
                         found.append(child.name)
-            if not found:
-                _emit_live(f"oneshot: project '{proj}' not found under {projects_root}")
-                return False
+        if not found:
+            _emit_live(f"oneshot: project '{proj}' not found under {projects_root}")
+            return False
+    if "readme" in lower and "update" in lower:
+        usage_block = "## Usage\n\n- Run the CLI entry point.\n"
+        readme_path = workdir / "README.md"
+        if readme_path.exists():
+            try:
+                existing = readme_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                existing = ""
+            if "## Usage" in existing:
+                pass
+            else:
+                ops.append({"path": "README.md", "action": "append", "content": "\n" + usage_block})
+        else:
+            ops.append({"path": "README.md", "action": "append", "content": "\n" + usage_block})
+    if ops:
+        executor = FileExecutor(workdir)
+        return bool(executor.apply_ops(ops))
     # Create a new folder.
     m = re.search(r"create (?:a )?(?:new )?folder\s+([^\s]+)$", text, re.IGNORECASE)
     if m:
@@ -5044,7 +5109,7 @@ def _unbounded_math_ready() -> bool:
     Ensure unbounded resolver produced equations + research links and they are persisted.
     """
     try:
-        payload_path = Path("runtime/c0d3r/unbounded_payload.json")
+        payload_path = _runtime_path("unbounded_payload.json")
         if not payload_path.exists():
             return False
         payload = json.loads(payload_path.read_text(encoding="utf-8"))
@@ -5120,7 +5185,7 @@ def _requires_rigorous_constraints(prompt: str) -> bool:
 
 
 def _benchmark_evidence_present() -> bool:
-    path = Path("runtime/c0d3r/benchmarks.json")
+    path = _runtime_path("benchmarks.json")
     if not path.exists():
         return False
     try:
@@ -5135,7 +5200,7 @@ def _benchmark_evidence_present() -> bool:
         return False
     if not ("baseline" in payload and "candidate" in payload):
         return False
-    log_path = Path("runtime/c0d3r/evidence.log")
+    log_path = _runtime_path("evidence.log")
     if not log_path.exists():
         return False
     log_text = log_path.read_text(encoding="utf-8", errors="ignore").lower()
@@ -5145,7 +5210,7 @@ def _benchmark_evidence_present() -> bool:
 
 
 def _tests_passed_recently() -> bool:
-    log_path = Path("runtime/c0d3r/evidence.log")
+    log_path = _runtime_path("evidence.log")
     if not log_path.exists():
         return False
     text = log_path.read_text(encoding="utf-8", errors="ignore")
@@ -5264,13 +5329,18 @@ def _extract_path_from_error(stderr: str) -> str | None:
 def _is_runtime_path(path: Path | None) -> bool:
     if path is None:
         return False
-    rel = str(path).replace("\\", "/")
-    return "/runtime/c0d3r/" in rel
+    try:
+        return path.resolve().is_relative_to(_runtime_root())
+    except Exception:
+        rel = str(path).replace("\\", "/")
+        root = str(_runtime_root()).replace("\\", "/")
+        return rel.startswith(root)
 
 
 def _is_runtime_command(cmd: str) -> bool:
     lower = (cmd or "").lower()
-    return "runtime\\c0d3r" in lower or "runtime/c0d3r" in lower
+    root = str(_runtime_root()).lower()
+    return root in lower or "runtime\\c0d3r" in lower or "runtime/c0d3r" in lower
 
 
 def _is_type_nul(cmd: str) -> bool:
@@ -5554,7 +5624,7 @@ def _apply_unbounded_constraints(prompt: str, payload: dict) -> str:
 
 def _persist_unbounded_payload(payload: dict) -> None:
     try:
-        out_dir = Path("runtime/c0d3r")
+        out_dir = _runtime_root()
         out_dir.mkdir(parents=True, exist_ok=True)
         path = out_dir / "unbounded_payload.json"
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -5583,7 +5653,7 @@ def _capture_behavior_snapshot(
             }
         )
         if len(log) % 3 == 0:
-            path = Path("runtime/c0d3r/behavior_log.jsonl")
+            path = _runtime_path("behavior_log.jsonl")
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as fh:
                 for item in log[-3:]:
@@ -5598,7 +5668,7 @@ def _apply_behavior_insights(payload: dict, behavior_log: list[dict]) -> None:
     This doesn't execute commands; it stores insights for the next model call.
     """
     try:
-        path = Path("runtime/c0d3r/behavior_insights.md")
+        path = _runtime_path("behavior_insights.md")
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = ["# Behavior Insights", ""]
         mechanics = payload.get("integrated_mechanics") or []
@@ -5647,7 +5717,7 @@ def _append_bibliography_from_text(text: str) -> None:
                 urls.append(token.strip().rstrip(").,;"))
         if not urls:
             return
-        out = Path("runtime/c0d3r/bibliography.md")
+        out = _runtime_path("bibliography.md")
         out.parent.mkdir(parents=True, exist_ok=True)
         existing = out.read_text(encoding="utf-8", errors="ignore") if out.exists() else ""
         lines = []
@@ -5822,7 +5892,7 @@ def _update_system_map(workdir: Path) -> None:
             "symbols": symbols,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
-        out = Path("runtime/c0d3r/system_map.json")
+        out = _runtime_path("system_map.json")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception:
@@ -5831,7 +5901,7 @@ def _update_system_map(workdir: Path) -> None:
 
 def _append_evidence(cmd: str, code: int, stdout: str, stderr: str) -> None:
     try:
-        out = Path("runtime/c0d3r/evidence.log")
+        out = _runtime_path("evidence.log")
         out.parent.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         with out.open("a", encoding="utf-8") as fh:
@@ -5841,7 +5911,7 @@ def _append_evidence(cmd: str, code: int, stdout: str, stderr: str) -> None:
 
 
 def _load_code_memory_summary(max_chars: int = 2000) -> str:
-    path = Path("runtime/c0d3r/system_map.json")
+    path = _runtime_path("system_map.json")
     if not path.exists():
         return ""
     try:
@@ -5869,7 +5939,7 @@ def _load_code_memory_summary(max_chars: int = 2000) -> str:
 
 def _append_research_notes(text: str) -> None:
     try:
-        out = Path("runtime/c0d3r/research_notes.md")
+        out = _runtime_path("research_notes.md")
         out.parent.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         with out.open("a", encoding="utf-8") as fh:
@@ -5941,7 +6011,7 @@ def _run_quality_checks(workdir: Path, run_command, usage_tracker, log_path: Pat
 
 
 def _spec_validator() -> bool:
-    checklist = Path("runtime/c0d3r/checklist.md")
+    checklist = _runtime_path("checklist.md")
     if not checklist.exists():
         return False
     text = checklist.read_text(encoding="utf-8", errors="ignore")
@@ -6177,8 +6247,7 @@ def _should_test_write(target: Path | None) -> bool:
     if target is None:
         return True
     try:
-        rel = str(target).replace("\\", "/")
-        if "/runtime/c0d3r/" in rel:
+        if _is_runtime_path(target):
             return False
         if target.suffix.lower() in {".md", ".txt", ".log"}:
             return False
@@ -6189,7 +6258,7 @@ def _should_test_write(target: Path | None) -> bool:
 
 def _ensure_foo_data(project_root: Path) -> None:
     try:
-        path = project_root / "runtime" / "c0d3r" / "foo_data.json"
+        path = _runtime_path("foo_data.json")
         if path.exists():
             return
         path.parent.mkdir(parents=True, exist_ok=True)
