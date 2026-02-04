@@ -60,6 +60,16 @@ django_crypto/
 fastapi_core/
 NoMansLand*/
 c0d3r_benchmarks/
+hello_from_c0d3r*/
+hello_from_c0d3r.txt
+c0d3r_quick_test.txt
+executor_sandbox*/
+executor_test/
+kivy_app_teaches_russian_language/
+project_8_phaser3_rpg/
+ionforge/
+system_probe_-_os_name_windows_-*/
+NOTES.md
 runtime/c0d3r/bench_logs/
 runtime/c0d3r/bench_scripts/
 runtime/c0d3r/bench_results.txt

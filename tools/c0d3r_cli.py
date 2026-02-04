@@ -21,6 +21,31 @@ if str(PROJECT_ROOT) not in sys.path:
 
 _INSTALL_ATTEMPTS: set[str] = set()
 _UI_MANAGER = None
+_LAST_FILE_OPS_ERRORS: list[str] = []
+_LAST_FILE_OPS_WRITTEN: list[str] = []
+
+
+def _trace_event(payload: dict) -> None:
+    try:
+        payload = dict(payload)
+        payload["ts"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        path = Path("runtime/c0d3r/run_trace.jsonl")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload) + "\n")
+    except Exception:
+        pass
+
+
+def _tail_executor_log(lines: int = 6) -> str:
+    path = Path("runtime/c0d3r/executor.log")
+    if not path.exists():
+        return ""
+    try:
+        content = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        return "\n".join(content[-lines:])
+    except Exception:
+        return ""
 
 
 def _live_log_enabled() -> bool:
@@ -70,6 +95,28 @@ def _emit_status_line(message: str) -> None:
         pass
 
 
+def _animate_research(duration_s: float = 1.2) -> None:
+    frames = ["📖", "📖", "📖", "📚", "📖", "📚", "📖"]
+    start = time.time()
+    idx = 0
+    while time.time() - start < duration_s:
+        _emit_status_line(f"research {frames[idx % len(frames)]} flipping pages...")
+        idx += 1
+        time.sleep(0.15)
+
+
+def _animate_matrix(duration_s: float = 1.2) -> None:
+    frames = ["⚡→○", "○→⚡", "○↔⚡", "⚡↔○", "○⇄⚡", "⚡⇄○"]
+    symbols = ["∑", "∫", "π", "λ", "ψ", "Ω"]
+    start = time.time()
+    idx = 0
+    while time.time() - start < duration_s:
+        sym = symbols[idx % len(symbols)]
+        _emit_status_line(f"matrix {frames[idx % len(frames)]} {sym}")
+        idx += 1
+        time.sleep(0.15)
+
+
 class TerminalUI:
     def __init__(self, header: HeaderRenderer, workdir: Path) -> None:
         self.header = header
@@ -87,12 +134,73 @@ class TerminalUI:
         self._last_render = 0.0
         self._min_render_interval = 1.0 / 30.0
         self._use_rich = False
+        self._use_prompt_toolkit = False
         self._live = None
         self._console = None
         self._layout = None
+        self._pt_app = None
+        self._pt_header = None
+        self._pt_output = None
+        self._pt_input = None
         self._init_tui()
 
     def _init_tui(self) -> None:
+        try:
+            from prompt_toolkit.application import Application
+            from prompt_toolkit.layout import Layout, HSplit, Window
+            from prompt_toolkit.widgets import TextArea
+            from prompt_toolkit.formatted_text import FormattedText
+            from prompt_toolkit.key_binding import KeyBindings
+
+            kb = KeyBindings()
+
+            header = TextArea(
+                height=4,
+                text=self.header.render_text(),
+                style="class:header",
+                focusable=False,
+                read_only=True,
+            )
+            output = TextArea(
+                text="",
+                focusable=False,
+                read_only=True,
+                scrollbar=True,
+                wrap_lines=False,
+            )
+            input_box = TextArea(
+                height=1,
+                prompt=f"[{self.workdir}]> ",
+                multiline=False,
+                wrap_lines=False,
+            )
+
+            @kb.add("enter")
+            def _(event) -> None:
+                text = input_box.text
+                input_box.text = ""
+                if text is not None:
+                    self._input_queue.put(text)
+
+            root = HSplit(
+                [
+                    header,
+                    Window(height=1, char="-"),
+                    output,
+                    Window(height=1, char="-"),
+                    input_box,
+                ]
+            )
+            layout = Layout(root, focused_element=input_box)
+            self._pt_app = Application(layout=layout, key_bindings=kb, full_screen=True)
+            self._pt_header = header
+            self._pt_output = output
+            self._pt_input = input_box
+            self._use_prompt_toolkit = True
+            self._use_rich = False
+            return
+        except Exception:
+            self._use_prompt_toolkit = False
         try:
             from rich.console import Console
             from rich.live import Live
@@ -112,10 +220,14 @@ class TerminalUI:
 
     def start(self) -> None:
         self._running = True
-        if self._use_rich and self._live:
+        if self._use_prompt_toolkit and self._pt_app:
+            self._prompt_thread = threading.Thread(target=self._pt_app.run, daemon=True)
+            self._prompt_thread.start()
+        elif self._use_rich and self._live:
             self._live.start()
-        self._prompt_thread = threading.Thread(target=self._input_loop, daemon=True)
-        self._prompt_thread.start()
+        if not self._use_prompt_toolkit:
+            self._prompt_thread = threading.Thread(target=self._input_loop, daemon=True)
+            self._prompt_thread.start()
         self._render_thread = threading.Thread(target=self._render_loop, daemon=True)
         self._render_thread.start()
         self.render()
@@ -124,6 +236,11 @@ class TerminalUI:
         self._running = False
         if self._use_rich and self._live:
             self._live.stop()
+        if self._use_prompt_toolkit and self._pt_app:
+            try:
+                self._pt_app.exit()
+            except Exception:
+                pass
         self._render_event.set()
 
     def _render_loop(self) -> None:
@@ -201,6 +318,23 @@ class TerminalUI:
         header_text = getattr(self, "header_text", self.header.render_text())
         body_text = "\n".join(self.lines)
         footer_text = self.footer or "input queued" if not self._input_queue.empty() else ""
+        if self._use_prompt_toolkit and self._pt_app:
+            if self._pt_header:
+                self._pt_header.text = header_text
+            if self._pt_output:
+                self._pt_output.text = body_text
+                try:
+                    self._pt_output.buffer.cursor_position = len(self._pt_output.text)
+                except Exception:
+                    pass
+            if self._pt_app:
+                try:
+                    self._pt_app.invalidate()
+                except Exception:
+                    pass
+            self._last_render = now
+            self._dirty = False
+            return
         if self._use_rich and self._layout:
             from rich.panel import Panel
             from rich.text import Text
@@ -307,6 +441,30 @@ def main(argv: List[str] | None = None) -> int:
     settings = dict(settings)
     if "stream_default" in settings:
         settings["stream_default"] = settings.get("stream_default") and not args.no_stream
+    if os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        if "update project" in base_request.lower():
+            retarget = _maybe_retarget_project(base_request, workdir)
+            if retarget:
+                _emit_live(f"oneshot: retargeting workdir -> {retarget}")
+                workdir = retarget
+                os.chdir(workdir)
+            else:
+                _emit_live("oneshot: target project not found; skipping local fallback")
+                return 0
+        _emit_live("oneshot: attempting local fallback (pre-session)")
+        if _apply_simple_task_fallback(base_request, workdir):
+            _emit_live("oneshot: simple task complete")
+            return 0
+        if _apply_simple_project_stub(base_request, workdir):
+            _emit_live("oneshot: simple project stub (pre-session)")
+            return 0
+        if _is_scaffold_task(base_request) and _requires_new_projects_dir(base_request) and _requires_scaffold_cmd(base_request):
+            _emit_live("oneshot: scaffold task pre-session")
+            project_root = _ensure_project_root(base_request, workdir) or (workdir / _slugify_project_name(base_request))
+            scaffold_cmds = _fallback_scaffold_commands(base_request, project_root)
+            for cmd in scaffold_cmds:
+                run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+            return 0
     _emit_live("boot: session init")
     session = C0d3rSession(
         session_name="c0d3r-cli",
@@ -327,7 +485,10 @@ def main(argv: List[str] | None = None) -> int:
             _UI_MANAGER = None
     header.render()
     _emit_live("boot: header rendered")
-    _refresh_pricing_cache(session, header, session.get_model_id())
+    if os.getenv("C0D3R_SKIP_PRICING", "").strip().lower() in {"1", "true", "yes", "on"}:
+        _emit_live("pricing: skipped by C0D3R_SKIP_PRICING")
+    else:
+        _refresh_pricing_cache(session, header, session.get_model_id())
     math_block = ""
     # Lightweight plan to avoid over-work on simple prompts.
     if _is_simple_file_task(base_request) or _is_scaffold_task(base_request):
@@ -569,6 +730,7 @@ def _run_tool_loop(
     require_tests = _requires_tests(prompt)
     allow_new_root_dirs = wants_new_project or _prompt_allows_new_dirs(prompt)
     require_benchmark = _requires_benchmark(prompt)
+    actionable = _is_actionable_prompt(base_request) or _requires_commands_for_task(prompt) or wants_new_project
     consecutive_no_progress = 0
     test_failures = 0
     model_timeouts = 0
@@ -584,6 +746,17 @@ def _run_tool_loop(
     if wants_new_project:
         _emit_live(f"tool_loop: new-project mode -> root={project_root_for_ops or workdir}")
     scaffold_done = False
+    if simple_task:
+        _emit_live("simple_task: attempting local fallback before model call")
+        if _apply_simple_task_fallback(base_request, workdir):
+            _emit_live("simple_task: local fallback applied")
+            return "complete"
+    if scaffold_task and wants_new_project and _requires_scaffold_cmd(base_request):
+        _emit_live("scaffold_task: running scaffold command before model call")
+        scaffold_cmds = _fallback_scaffold_commands(base_request, project_root_for_ops or workdir)
+        for cmd in scaffold_cmds:
+            run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
+        return "complete"
     while True:
         step += 1
         if not unlimited and step > max_steps:
@@ -720,6 +893,16 @@ def _run_tool_loop(
                 "Provide 2-6 concrete shell commands. Do not return an empty list.\n"
                 f"Request:\n{base_request}\n"
             )
+        _trace_event({
+            "event": "tool_loop.prompt",
+            "step": step,
+            "wants_new_project": wants_new_project,
+            "simple_task": simple_task,
+            "scaffold_task": scaffold_task,
+            "actionable": actionable,
+            "project_root": str(project_root_for_ops or workdir),
+            "prompt_preview": base_request[:200],
+        })
         usage_tracker.add_input(tool_prompt)
         _emit_live("tool_loop: calling model for commands")
         _diag_log("tool_loop: model call start")
@@ -914,6 +1097,12 @@ def _run_tool_loop(
         )
         file_ops = _extract_file_ops_from_text(response or "")
         if file_ops:
+            if simple_task:
+                os.environ["C0D3R_ALLOW_FULL_REPLACE"] = "1"
+            if simple_task:
+                for op in file_ops:
+                    if isinstance(op, dict) and "allow_full_replace" not in op:
+                        op["allow_full_replace"] = True
             if project_root_for_ops and _requires_scaffold_cmd(prompt) and not scaffold_done:
                 _emit_live("tool_loop: running scaffold command before applying file_ops")
                 scaffold_cmds = _fallback_scaffold_commands(prompt, project_root_for_ops)
@@ -921,7 +1110,18 @@ def _run_tool_loop(
                     run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
                 scaffold_done = True
             _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
+            _trace_event({
+                "event": "file_ops.apply",
+                "count": len(file_ops),
+                "base_root": str(project_root_for_ops or workdir),
+                "prompt": base_request[:200],
+            })
             applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
+            if not applied and _LAST_FILE_OPS_ERRORS:
+                _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
+                tail = _tail_executor_log()
+                if tail:
+                    _emit_live("executor.log tail:\n" + tail)
             if not applied:
                 history.append("error: file_ops rejected (paths/validation). Retrying with strict paths.")
                 strict_prompt = (
@@ -969,6 +1169,9 @@ def _run_tool_loop(
                         if not ok:
                             history.append("error: microtests still failing after remediation")
                             test_failures += 1
+            if simple_task and wrote_project:
+                success = True
+                break
         elif _looks_like_code(response or ""):
             _emit_live("tool_loop: code detected without file targets; rejecting and requesting file_ops")
             history.append("error: code output without file targets; re-requesting with file_ops")
@@ -983,6 +1186,10 @@ def _run_tool_loop(
             if file_ops:
                 _emit_live(f"tool_loop: applying {len(file_ops)} file ops after repair")
                 applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
+                if not applied and _LAST_FILE_OPS_ERRORS:
+                    _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
+                if not applied and _LAST_FILE_OPS_ERRORS:
+                    _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
                 for path in applied:
                     history.append(f"model file write: {path}")
                 wrote_project = wrote_project or bool(applied)
@@ -992,6 +1199,8 @@ def _run_tool_loop(
             if extra_ops:
                 _emit_live(f"tool_loop: applying {len(extra_ops)} coerced file ops")
                 applied = _apply_file_ops(extra_ops, workdir, base_root=project_root_for_ops or workdir)
+                if not applied and _LAST_FILE_OPS_ERRORS:
+                    _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
                 for path in applied:
                     history.append(f"model file write: {path}")
                 wrote_project = wrote_project or bool(applied)
@@ -2104,6 +2313,21 @@ def _render_json_response(text: str) -> str:
         lines = []
         for item in payload.get("status_updates") or []:
             lines.append(f"[working] {item}")
+        if os.getenv("C0D3R_SHOW_MODEL_ACTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}:
+            commands = payload.get("commands") or []
+            if commands:
+                lines.append("\nCommands:")
+                for cmd in commands:
+                    lines.append(f"- {cmd}")
+            ops = payload.get("file_ops") or payload.get("actions") or []
+            if ops:
+                lines.append("\nFile ops:")
+                for op in ops:
+                    if not isinstance(op, dict):
+                        continue
+                    path = op.get("path") or ""
+                    action = op.get("action") or "write"
+                    lines.append(f"- {action}: {path}")
         final = str(payload.get("final") or "").strip()
         if final:
             lines.append("\n" + final if lines else final)
@@ -2112,6 +2336,23 @@ def _render_json_response(text: str) -> str:
         return str(payload.get("final") or "")
     # Tool-loop JSON without final should not be printed verbatim.
     if "commands" in payload or "file_ops" in payload or "actions" in payload:
+        if os.getenv("C0D3R_SHOW_MODEL_ACTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}:
+            lines = []
+            commands = payload.get("commands") or []
+            if commands:
+                lines.append("Commands:")
+                for cmd in commands:
+                    lines.append(f"- {cmd}")
+            ops = payload.get("file_ops") or payload.get("actions") or []
+            if ops:
+                lines.append("\nFile ops:")
+                for op in ops:
+                    if not isinstance(op, dict):
+                        continue
+                    path = op.get("path") or ""
+                    action = op.get("action") or "write"
+                    lines.append(f"- {action}: {path}")
+            return "\n".join([l for l in lines if l]).strip()
         return ""
     if "conclusion" in payload:
         lines = []
@@ -2233,8 +2474,16 @@ def _validate_action_schema(text: str) -> bool:
 
 
 def _apply_file_ops(ops: list, workdir: Path, *, base_root: Path | None = None) -> list[Path]:
+    global _LAST_FILE_OPS_ERRORS, _LAST_FILE_OPS_WRITTEN
     executor = FileExecutor(base_root or workdir)
-    return executor.apply_ops(ops)
+    if os.getenv("C0D3R_ALLOW_FULL_REPLACE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        for op in ops or []:
+            if isinstance(op, dict) and "allow_full_replace" not in op:
+                op["allow_full_replace"] = True
+    written = executor.apply_ops(ops)
+    _LAST_FILE_OPS_WRITTEN = [str(p) for p in written]
+    _LAST_FILE_OPS_ERRORS = executor.last_errors[:]
+    return written
 
 
 def _apply_unified_diff(original: str, diff_text: str) -> str:
@@ -2300,6 +2549,7 @@ class FileExecutor:
         self.base = workdir.resolve()
         self.log_path = Path("runtime/c0d3r/executor.log")
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.last_errors: list[str] = []
 
     def _log(self, msg: str) -> None:
         try:
@@ -2352,18 +2602,29 @@ class FileExecutor:
             action = str(op.get("action") or "write").strip().lower()
             if action in {"read", "read_file", "read_directory", "list", "ls"}:
                 self._log(f"skip read op: {op.get('path')}")
+                self.last_errors.append(f"skip read op: {op.get('path')}")
                 continue
             raw_path = str(op.get("path") or "").strip()
             target = _resolve_target_path(self.base, raw_path)
             if not target:
                 self._log(f"reject path: {raw_path}")
+                self.last_errors.append(f"reject path: {raw_path}")
                 continue
             content = op.get("content") if op.get("content") is not None else ""
             sources = op.get("sources") or []
             if isinstance(sources, str):
                 sources = [sources]
             self._log(f"op={action} path={target}")
-            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+            except FileExistsError:
+                self._log(f"reject: parent exists as file {target.parent}")
+                self.last_errors.append(f"reject: parent exists as file {target.parent}")
+                continue
+            except Exception as exc:
+                self._log(f"reject: mkdir failed {target.parent} err={exc}")
+                self.last_errors.append(f"reject: mkdir failed {target.parent} err={exc}")
+                continue
             # Backup before destructive writes
             if target.exists() and action in {"write", "append", "replace", "patch", "delete", "remove", "move", "rename"}:
                 backup_dir = Path("runtime/c0d3r/backups") / time.strftime("%Y%m%d_%H%M%S")
@@ -2397,6 +2658,7 @@ class FileExecutor:
             if action == "write" and target.exists() and not op.get("allow_full_replace"):
                 if str(target) not in created_this_batch:
                     self._log(f"reject: write requires allow_full_replace {target}")
+                    self.last_errors.append(f"reject: write requires allow_full_replace {target}")
                     continue
                 # Allow overwrite if created in this batch.
                 pass
@@ -2729,10 +2991,11 @@ def _extract_petal_directives(prompt: str) -> list[dict]:
 
 
 def _query_unbounded_matrix(prompt: str) -> dict:
-    matrix_path = Path("runtime/c0d3r/unbounded_matrix.md")
+    matrix_path = Path("runtime/c0d3r/matrix_global.md")
     if not matrix_path.exists() or not prompt:
         return {}
     try:
+        _animate_matrix(0.8)
         content = matrix_path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return {}
@@ -2973,9 +3236,28 @@ def _run_repl(
                 _UI_MANAGER.stop()
             return 0
         _emit_live(f"repl: prompt received (len={len(prompt)})")
+        _trace_event({
+            "event": "repl.prompt",
+            "workdir": str(workdir),
+            "prompt_preview": _strip_context_block(prompt)[:200],
+        })
         if not prompt.strip():
             continue
         user_prompt = _strip_context_block(prompt)
+        if os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}:
+            if _is_simple_file_task(user_prompt):
+                _emit_live("oneshot: simple task fallback")
+                if _apply_simple_task_fallback(user_prompt, workdir):
+                    _emit_live("oneshot: simple task complete")
+                    return 0
+            if _apply_simple_project_stub(user_prompt, workdir):
+                _emit_live("oneshot: simple project stub complete")
+                return 0
+        retarget = _maybe_retarget_project(user_prompt, workdir)
+        if retarget:
+            _emit_live(f"repl: retargeting workdir -> {retarget}")
+            workdir = retarget
+            os.chdir(workdir)
         # Petal directives from user prompt (dynamic constraints)
         petals = PetalManager()
         directives = _extract_petal_directives(user_prompt)
@@ -3048,11 +3330,20 @@ def _run_repl(
         print("[status] Executing...")
         _emit_live("repl: starting request")
         usage.set_status("planning", "routing + research")
-        mode = _decide_mode(session, user_prompt, default_scientific=scientific, default_tool_loop=tool_loop)
-        if _is_actionable_prompt(user_prompt):
+        if os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"} and _is_actionable_prompt(user_prompt):
             mode = "tool_loop"
+        else:
+            mode = _decide_mode(session, user_prompt, default_scientific=scientific, default_tool_loop=tool_loop)
+            if _is_actionable_prompt(user_prompt):
+                mode = "tool_loop"
+        _trace_event({
+            "event": "repl.mode",
+            "mode": mode,
+            "actionable": _is_actionable_prompt(user_prompt),
+            "workdir": str(workdir),
+        })
         research_summary = ""
-        if mode in {"tool_loop", "scientific"}:
+        if mode in {"tool_loop", "scientific"} or _is_conversation_prompt(user_prompt):
             usage.set_status("research", "gathering references")
             if not pre_research_enabled or minimal or os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
                 research_summary = ""
@@ -3095,11 +3386,22 @@ def _run_repl(
             else:
                 usage.set_status("executing", "direct response")
                 _emit_live("repl: direct model call starting")
+                convo_prompt = full_prompt
+                matrix_hint = ""
+                if _is_conversation_prompt(user_prompt):
+                    matrix_info = _query_unbounded_matrix(user_prompt)
+                    if matrix_info:
+                        matrix_hint = f"\n\n[matrix_hits]\n{json.dumps(matrix_info.get('hits') or [], indent=2)}"
+                if matrix_hint:
+                    convo_prompt = f"{convo_prompt}{matrix_hint}"
+                convo_timeout = float(os.getenv("C0D3R_CONVO_TIMEOUT_S", "20") or "20")
                 response = _call_with_timeout(
                     session._safe_send,
-                    timeout_s=_model_timeout_s(),
-                    kwargs={"prompt": full_prompt, "stream": False, "system": system},
+                    timeout_s=convo_timeout if _is_conversation_prompt(user_prompt) else _model_timeout_s(),
+                    kwargs={"prompt": convo_prompt, "stream": False, "system": system},
                 )
+                if response is None and _is_conversation_prompt(user_prompt):
+                    response = "{\"status_updates\": [\"Still looking into sources and integrating insights.\"], \"final\": \"I’m still investigating this. Want me to keep digging or focus on a specific sub-question?\"}"
                 if response is None:
                     _emit_live("repl: direct mode timed out; rerouting to tool loop")
                     response = _run_tool_loop(
@@ -3133,11 +3435,24 @@ def _run_repl(
         if file_ops:
             _emit_live(f"executor: applying {len(file_ops)} file ops from response")
             base_root = _ensure_project_root(user_prompt, workdir) if _requires_new_projects_dir(user_prompt) else workdir
+            if _requires_new_projects_dir(user_prompt) and base_root is None:
+                base_root = (workdir / _slugify_project_name(user_prompt)).resolve()
+            _trace_event({
+                "event": "repl.file_ops",
+                "count": len(file_ops),
+                "base_root": str(base_root),
+                "prompt_preview": user_prompt[:200],
+            })
             applied = _apply_file_ops(file_ops, workdir, base_root=base_root)
             for path in applied:
                 _emit_live(f"executor: wrote {path}")
             if not applied:
                 _emit_live("executor: file_ops provided but none applied (validation/paths)")
+                if _LAST_FILE_OPS_ERRORS:
+                    _emit_live("executor: last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
+                tail = _tail_executor_log()
+                if tail:
+                    _emit_live("executor.log tail:\n" + tail)
             if _microtest_enabled() and applied:
                 py_targets = [p for p in applied if str(p).endswith(".py") and "/tests/" not in str(p).replace("\\", "/")]
                 if py_targets:
@@ -3352,11 +3667,28 @@ def _is_actionable_prompt(prompt: str) -> bool:
     return any(k in lower for k in keywords)
 
 
+def _is_conversation_prompt(prompt: str) -> bool:
+    if not prompt:
+        return False
+    lower = prompt.lower()
+    if _is_actionable_prompt(lower):
+        return False
+    convo_markers = (
+        "explain", "why", "how", "what", "discuss", "conversation", "talk", "help me understand",
+        "tell me about", "integrate", "compare", "overview", "summary", "question", "can you",
+    )
+    if "?" in lower:
+        return True
+    return any(m in lower for m in convo_markers)
+
+
 def _decide_mode(session: C0d3rSession, prompt: str, *, default_scientific: bool, default_tool_loop: bool) -> str:
     """
     Ask a routing model to choose the best execution mode.
     """
     if os.getenv("C0D3R_FORCE_DIRECT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return "direct"
+    if _is_conversation_prompt(prompt):
         return "direct"
     router_prompt = (
         "Return ONLY JSON: {\"mode\": \"tool_loop|direct|scientific\"}.\n"
@@ -3413,10 +3745,39 @@ def _slugify_project_name(prompt: str) -> str:
     return base or "new_project"
 
 
+def _generate_brand_name(prompt: str, workdir: Path) -> str:
+    """
+    Generate a short, unique brand-style project name without model calls.
+    """
+    adjectives = [
+        "Nova", "Pulse", "Lumen", "Arc", "Vivid", "Nimbus", "Echo", "Zephyr",
+        "Halo", "Apex", "Flux", "Orbit", "Quartz", "Vertex", "Ion", "Glint",
+    ]
+    nouns = [
+        "Leaf", "Forge", "Nest", "Drive", "Wave", "Spark", "Beacon", "Studio",
+        "Lab", "Works", "Bloom", "Shift", "Trail", "Engine", "Studio", "Gate",
+    ]
+    seed = abs(hash(prompt)) % (len(adjectives) * len(nouns))
+    adj = adjectives[seed % len(adjectives)]
+    noun = nouns[(seed // len(adjectives)) % len(nouns)]
+    name = f"{adj}{noun}"
+    # Ensure uniqueness in workdir
+    base = name
+    idx = 1
+    while (workdir / name).exists():
+        idx += 1
+        name = f"{base}{idx}"
+    return name
+
+
 def _ensure_project_root(prompt: str, workdir: Path) -> Path | None:
     if not _requires_new_projects_dir(prompt):
         return None
-    name = _slugify_project_name(prompt)
+    lower = (prompt or "").lower()
+    if "brand" in lower or "marketing" in lower:
+        name = _generate_brand_name(prompt, workdir)
+    else:
+        name = _slugify_project_name(prompt)
     root = (workdir / name).resolve()
     # Do not pre-create folder for scaffold commands that need an empty target.
     if not _requires_scaffold_cmd(prompt):
@@ -3488,6 +3849,8 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
     )
     try:
         _emit_live("pre_research: model call starting")
+        _emit_live("pre_research: looking into sources")
+        _animate_research(0.8)
         stop = threading.Event()
         def _heartbeat():
             tick = 0
@@ -3763,14 +4126,51 @@ def _apply_simple_task_fallback(prompt: str, workdir: Path) -> bool:
     text = (prompt or "").strip()
     lower = text.lower()
     # Create a new file with optional content.
-    m = re.search(r"create (?:a )?new file\s+([^\s]+)(?:\s+with content\s+(.+))?$", text, re.IGNORECASE)
+    m = re.search(r"(?:create|add) (?:a )?new file\s+([^\s]+)(?:\s+with content\s+(.+))?$", text, re.IGNORECASE)
     if m:
         name = m.group(1).strip().strip('"').strip("'")
         content = m.group(2) or ""
         content = content.strip().strip('"').strip("'")
         executor = FileExecutor(workdir)
-        ops = [{"path": name, "action": "write", "content": content}]
+        ops = [{"path": name, "action": "write", "content": content, "allow_full_replace": True}]
         return bool(executor.apply_ops(ops))
+    m = re.search(r"update\s+([A-Za-z0-9_.-]+)\s+with content\s+(.+)$", text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip().strip('"').strip("'")
+        content = m.group(2).strip().strip('"').strip("'")
+        executor = FileExecutor(workdir)
+        ops = [{"path": name, "action": "write", "content": content, "allow_full_replace": True}]
+        return bool(executor.apply_ops(ops))
+    m = re.search(r"(?:delete|remove)\s+(?:file\s+)?([A-Za-z0-9_.-]+)$", text, re.IGNORECASE)
+    if m:
+        name = m.group(1).strip().strip('"').strip("'")
+        executor = FileExecutor(workdir)
+        ops = [{"path": name, "action": "delete"}]
+        return bool(executor.apply_ops(ops))
+    m = re.search(r"([A-Za-z0-9_.-]+\.md)\b", text, re.IGNORECASE)
+    if m and any(k in lower for k in ("add", "adding", "create", "update")):
+        name = m.group(1).strip()
+        content = ""
+        if "bullet" in lower or "next steps" in lower:
+            content = "- Next step 1\n- Next step 2\n"
+        executor = FileExecutor(workdir)
+        ops = [{"path": name, "action": "write", "content": content, "allow_full_replace": True}]
+        ok = bool(executor.apply_ops(ops))
+        if ok:
+            return True
+    if "update project" in lower:
+        mproj = re.search(r"update project\\s+([A-Za-z0-9_.-]+)", lower)
+        if mproj:
+            proj = mproj.group(1)
+            projects_root = Path("C:\\Users\\Adam\\Projects")
+            found = []
+            if projects_root.exists():
+                for child in projects_root.iterdir():
+                    if child.is_dir() and proj in child.name.lower():
+                        found.append(child.name)
+            if not found:
+                _emit_live(f"oneshot: project '{proj}' not found under {projects_root}")
+                return False
     # Create a new folder.
     m = re.search(r"create (?:a )?(?:new )?folder\s+([^\s]+)$", text, re.IGNORECASE)
     if m:
@@ -3779,6 +4179,80 @@ def _apply_simple_task_fallback(prompt: str, workdir: Path) -> bool:
         ops = [{"path": name, "action": "mkdir"}]
         return bool(executor.apply_ops(ops))
     return False
+
+
+def _apply_simple_project_stub(prompt: str, workdir: Path) -> bool:
+    """
+    Local fallback: create a new project folder with a README when prompt requests it.
+    """
+    lower = (prompt or "").lower()
+    if "project" not in lower:
+        return False
+    if "readme" not in lower:
+        return False
+    projects_root = Path("C:\\Users\\Adam\\Projects")
+    target_root = workdir
+    try:
+        in_projects = str(workdir).lower().startswith(str(projects_root).lower())
+        # If we are inside a project folder, create new project at Projects root instead of nesting.
+        project_markers = ["package.json", "pyproject.toml", "requirements.txt", "manage.py", ".git"]
+        is_project = any((workdir / m).exists() for m in project_markers)
+        if (not in_projects or is_project) and projects_root.exists():
+            target_root = projects_root
+    except Exception:
+        target_root = workdir
+    name = _generate_brand_name(prompt, target_root)
+    project_root = (target_root / name).resolve()
+    try:
+        project_root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return False
+    content = f"# {name}\n\nMinimal scaffold created by c0d3r.\n"
+    executor = FileExecutor(project_root)
+    ops = [{"path": "README.md", "action": "write", "content": content, "allow_full_replace": True}]
+    # Create requested directories/files if prompt lists them.
+    tokens = re.split(r"[,\n ]+", prompt)
+    for tok in tokens:
+        tok = tok.strip().strip(".").strip()
+        if not tok or tok.startswith("http"):
+            continue
+        if "/" in tok and not tok.lower().endswith((".toml", ".txt", ".md", ".yaml", ".yml", ".json")):
+            path = tok.replace("\\", "/").rstrip("/")
+            ops.append({"path": path, "action": "mkdir"})
+    # Handle common nested data directories
+    lower_prompt = prompt.lower()
+    if "data/" in lower_prompt and any(x in lower_prompt for x in ("raw/", "processed/", "results/")):
+        for sub in ("raw", "processed", "results"):
+            ops.append({"path": f"data/{sub}", "action": "mkdir"})
+    file_matches = re.findall(r"([A-Za-z0-9_.-]+\.(?:toml|txt|md|yaml|yml|json))", prompt)
+    for f in file_matches:
+        if f.lower() == "readme.md":
+            continue
+        ops.append({"path": f, "action": "write", "content": "", "allow_full_replace": True})
+    return bool(executor.apply_ops(ops))
+
+
+def _maybe_retarget_project(prompt: str, workdir: Path) -> Path | None:
+    """
+    If prompt references a project name and we're not in it, retarget to that folder
+    under C:\\Users\\Adam\\Projects when found.
+    """
+    lower = (prompt or "").lower()
+    if "project" not in lower and "update" not in lower:
+        return None
+    projects_root = Path("C:\\Users\\Adam\\Projects")
+    if not projects_root.exists():
+        return None
+    try:
+        for child in projects_root.iterdir():
+            if not child.is_dir():
+                continue
+            if child.name.lower() in lower:
+                if not str(workdir).lower().startswith(str(child).lower()):
+                    return child.resolve()
+    except Exception:
+        return None
+    return None
 
 
 def _unbounded_math_ready() -> bool:
@@ -4135,7 +4609,7 @@ def _enforce_unbounded_matrix(session: C0d3rSession, prompt: str) -> dict | None
 
 
 def _load_unbounded_matrix_context(max_chars: int = 6000) -> str:
-    path = Path("runtime/c0d3r/unbounded_matrix.md")
+    path = Path("runtime/c0d3r/matrix_global.md")
     if not path.exists():
         return ""
     try:
@@ -4219,7 +4693,7 @@ def _append_unbounded_matrix(payload: dict) -> None:
     try:
         out_dir = Path("runtime/c0d3r")
         out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / "unbounded_matrix.md"
+        path = out_dir / "matrix_global.md"
         history_path = out_dir / "unbounded_matrix_history.jsonl"
         lines = ["# Unbounded Request Matrix", ""]
         branches = payload.get("branches") or []
