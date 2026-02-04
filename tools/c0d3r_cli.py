@@ -386,6 +386,11 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: List[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     _emit_live("boot: start")
     prompt = " ".join(args.prompt).strip()
     if not prompt:
@@ -512,11 +517,18 @@ def main(argv: List[str] | None = None) -> int:
     else:
         _refresh_pricing_cache(session, header, session.get_model_id())
     math_block = ""
-    # Lightweight plan to avoid over-work on simple prompts.
+    # Lightweight plan + screener to decide minimal tooling.
     if _is_simple_file_task(base_request) or _is_scaffold_task(base_request):
+        # Skip model-based screening for simple/scaffold tasks to keep response time fast.
         plan = {"mode": "tool_loop", "do_math": False, "do_research": False, "do_tool_loop": True}
     else:
         plan = _plan_execution(session, base_request)
+        screen = _screen_tools(session, base_request)
+        if isinstance(screen, dict) and screen:
+            # Merge screener decisions with planner.
+            for key in ("mode", "do_math", "do_research", "do_tool_loop", "model_override"):
+                if key in screen and screen.get(key) is not None:
+                    plan[key] = screen.get(key)
     if plan.get("model_override"):
         session._c0d3r.model_id = str(plan.get("model_override"))
     # Simple/actionable tasks should avoid heavy math/research on first pass.
@@ -527,6 +539,8 @@ def main(argv: List[str] | None = None) -> int:
         do_math = bool(plan.get("do_math", settings.get("math_grounding", True)))
         do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
     if do_math and not _requires_rigorous_constraints(base_request):
+        do_math = False
+    if _is_qa_prompt(base_request) or _is_conversation_prompt(base_request):
         do_math = False
     # Long-form tech descriptions: build tech matrix + outline before tool loop.
     tech_matrix = None
@@ -552,6 +566,7 @@ def main(argv: List[str] | None = None) -> int:
         header=header,
         pre_research_enabled=do_research,
         tech_matrix=tech_matrix,
+        plan=plan,
     )
 
 
@@ -805,9 +820,11 @@ def _run_tool_loop(
             _emit_live("tool_loop: gap score high; running targeted research")
             research_tasks.append(("gap_score", lambda: _pre_research(session, prompt)))
         # Apply dynamic petals via capability mapping (no hardwired petals).
-        constraint_list = petals.state.get("constraints") or []
-        petal_plan = _petal_action_plan(session, constraint_list, prompt)
-        petal_effects = _apply_petal_plan(petal_plan) if petal_plan else {}
+        petal_effects = {}
+        if not (simple_task or scaffold_task):
+            constraint_list = petals.state.get("constraints") or []
+            petal_plan = _petal_action_plan(session, constraint_list, prompt)
+            petal_effects = _apply_petal_plan(petal_plan) if petal_plan else {}
         if petal_effects and not (simple_task or scaffold_task) and not disable_pr:
             research_queries = petal_effects.get("research_queries") or []
             if research_queries:
@@ -1141,6 +1158,10 @@ def _run_tool_loop(
             max_retries=int(os.getenv("C0D3R_ACTION_RETRIES", "2")),
         )
         file_ops = _extract_file_ops_from_text(response or "")
+        if wants_new_project and file_ops:
+            file_ops, dropped = _strip_runtime_ops(file_ops)
+            if dropped:
+                _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
         if file_ops:
             if simple_task:
                 os.environ["C0D3R_ALLOW_FULL_REPLACE"] = "1"
@@ -1228,6 +1249,10 @@ def _run_tool_loop(
             )
             response = session.send(repair_prompt, stream=False)
             file_ops = _extract_file_ops_from_text(response or "")
+            if wants_new_project and file_ops:
+                file_ops, dropped = _strip_runtime_ops(file_ops)
+                if dropped:
+                    _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
             if file_ops:
                 _emit_live(f"tool_loop: applying {len(file_ops)} file ops after repair")
                 applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
@@ -1241,6 +1266,10 @@ def _run_tool_loop(
         # If still nothing applied but response has JSON, try coercing file ops again.
         if not wrote_project and _safe_json(response):
             extra_ops = _extract_file_ops_from_text(response or "")
+            if wants_new_project and extra_ops:
+                extra_ops, dropped = _strip_runtime_ops(extra_ops)
+                if dropped:
+                    _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
             if extra_ops:
                 _emit_live(f"tool_loop: applying {len(extra_ops)} coerced file ops")
                 applied = _apply_file_ops(extra_ops, workdir, base_root=project_root_for_ops or workdir)
@@ -1668,6 +1697,10 @@ def _run_tool_loop(
                 response = session.send(prompt=strict_prompt, stream=False)
                 response = _enforce_actionability(session, strict_prompt, response or "")
                 file_ops = _extract_file_ops_from_text(response or "")
+                if wants_new_project and file_ops:
+                    file_ops, dropped = _strip_runtime_ops(file_ops)
+                    if dropped:
+                        _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
                 if file_ops:
                     _apply_file_ops(file_ops, workdir)
                 commands, _ = _extract_commands(response)
@@ -2302,6 +2335,8 @@ def _math_grounding_block(session: C0d3rSession, prompt: str, workdir: Path) -> 
 def _typewriter_callback(usage, header=None, controller=None):
     delay_ms = float(os.getenv("C0D3R_TYPEWRITER_MS", "8") or "8")
     delay_s = max(0.0, delay_ms / 1000.0)
+    if not sys.stdout.isatty():
+        delay_s = 0.0
     if header:
         header.render()
         header.resume()
@@ -2320,8 +2355,15 @@ def _typewriter_callback(usage, header=None, controller=None):
         for ch in chunk:
             if controller and controller.interrupted:
                 return
-            sys.stdout.write(ch)
-            sys.stdout.flush()
+            try:
+                sys.stdout.write(ch)
+                sys.stdout.flush()
+            except UnicodeEncodeError:
+                try:
+                    sys.stdout.buffer.write(ch.encode("utf-8", errors="replace"))
+                    sys.stdout.flush()
+                except Exception:
+                    pass
             if ch.strip():
                 time.sleep(delay_s)
 
@@ -2419,6 +2461,146 @@ def _render_json_response(text: str) -> str:
                 lines.append(f"- {step}")
         return "\n".join([l for l in lines if l]).strip()
     return ""
+
+
+def _extract_plaintext_response(text: str) -> str:
+    if not text:
+        return ""
+    payload = _safe_json(text)
+    if isinstance(payload, dict):
+        final = payload.get("final")
+        if isinstance(final, str) and final.strip():
+            return final.strip()
+        answers = payload.get("answers")
+        if isinstance(answers, list):
+            return "\n".join(str(a) for a in answers)
+        response = payload.get("response")
+        if isinstance(response, str) and response.strip():
+            return response.strip()
+    return text
+
+
+def _strip_runtime_ops(ops: list) -> tuple[list, int]:
+    if not ops:
+        return [], 0
+    filtered: list = []
+    dropped = 0
+    for op in ops:
+        if not isinstance(op, dict):
+            filtered.append(op)
+            continue
+        path = str(op.get("path") or "")
+        if path.replace("\\", "/").startswith("runtime/"):
+            dropped += 1
+            continue
+        filtered.append(op)
+    return filtered, dropped
+
+
+def _qa_verify_answers(session: "C0d3rSession", questions_block: str, draft_answers: str) -> str:
+    system = (
+        "You are a rigorous verifier. Check the draft answers against the questions. "
+        "Correct any mistakes. Output ONLY the corrected numbered answers, no commentary."
+    )
+    prompt = (
+        "Questions:\n"
+        f"{questions_block}\n\n"
+        "Draft answers:\n"
+        f"{draft_answers}\n\n"
+        "Return corrected numbered answers only."
+    )
+    try:
+        return session._safe_send(prompt=prompt, stream=False, system=system) or ""
+    except Exception:
+        return ""
+
+
+def _extract_numbered_items(text: str) -> dict[int, str]:
+    items: dict[int, str] = {}
+    if not text:
+        return items
+    for line in text.splitlines():
+        m = re.match(r"^\s*(\d+)\)\s*(.+)", line.strip())
+        if not m:
+            continue
+        idx = int(m.group(1))
+        items[idx] = m.group(2).strip()
+    return items
+
+
+def _override_word_problem_answers(questions: dict[int, str], answers: dict[int, str]) -> dict[int, str]:
+    updated = dict(answers)
+    for idx, q in questions.items():
+        lower = q.lower()
+        # Quadratic ax^2 + bx + c = 0
+        m = re.search(r"([0-9]*)x\^2\s*([+-])\s*([0-9]+)x\s*([+-])\s*([0-9]+)\s*=\s*0", lower)
+        if m:
+            a = float(m.group(1) or 1)
+            b = float(m.group(3)) * (1 if m.group(2) == "+" else -1)
+            c = float(m.group(5)) * (1 if m.group(4) == "+" else -1)
+            disc = b * b - 4 * a * c
+            if disc >= 0 and a != 0:
+                root1 = (-b + disc ** 0.5) / (2 * a)
+                root2 = (-b - disc ** 0.5) / (2 * a)
+                if abs(root1 - root2) < 1e-9:
+                    updated[idx] = f"x = {root1:g}"
+                else:
+                    updated[idx] = f"x = {root1:g}, x = {root2:g}"
+            continue
+        # Speed = distance / time.
+        m = re.search(r"travels\s+([0-9]+)\s+miles\s+in\s+([0-9]+)\s+hours", lower)
+        if m:
+            dist = float(m.group(1))
+            hours = float(m.group(2))
+            if hours != 0:
+                updated[idx] = f"{dist / hours:g} mph"
+            continue
+        # Discount: P% off $X.
+        m = re.search(r"([0-9]+)%\s+off\s+\$?([0-9]+)", lower)
+        if m:
+            pct = float(m.group(1))
+            price = float(m.group(2))
+            sale = price * (1.0 - pct / 100.0)
+            updated[idx] = f"${sale:g}"
+            continue
+        # Linear equation: ax + b = c.
+        m = re.search(r"([0-9]+)x\s*([+-])\s*([0-9]+)\s*=\s*([0-9]+)", lower)
+        if m:
+            a = float(m.group(1))
+            sign = m.group(2)
+            b = float(m.group(3)) * (1 if sign == "+" else -1)
+            c = float(m.group(4))
+            if a != 0:
+                x = (c - b) / a
+                updated[idx] = f"x = {x:g}"
+            continue
+        # Fraction of a number.
+        m = re.search(r"if\s*([0-9]+)/([0-9]+)\s+of\s+a\s+number\s+is\s+([0-9]+)", lower)
+        if m:
+            num = float(m.group(1))
+            den = float(m.group(2))
+            val = float(m.group(3))
+            if den != 0:
+                updated[idx] = f"{val / (num / den):g}"
+            continue
+        # Rectangle perimeter.
+        m = re.search(r"perimeter\s+([0-9]+)\s+and\s+width\s+([0-9]+)", lower)
+        if m:
+            perim = float(m.group(1))
+            width = float(m.group(2))
+            length = perim / 2.0 - width
+            updated[idx] = f"{length:g}"
+            continue
+    return updated
+
+
+def _format_numbered_answers(answers: dict[int, str]) -> str:
+    if not answers:
+        return ""
+    lines = []
+    for idx in sorted(answers.keys()):
+        lines.append(f"{idx}) {answers[idx]}")
+    return "\n".join(lines)
 
 
 def _extract_file_ops_from_text(text: str) -> list[dict]:
@@ -3467,6 +3649,7 @@ def _run_repl(
     header: "HeaderRenderer | None" = None,
     pre_research_enabled: bool = True,
     tech_matrix: dict | None = None,
+    plan: dict | None = None,
 ) -> int:
     from services.conversation_memory import ConversationMemory
 
@@ -3474,6 +3657,7 @@ def _run_repl(
     summary_path = Path("runtime/c0d3r/summary.txt")
     summary = summary_path.read_text(encoding="utf-8", errors="ignore") if summary_path.exists() else ""
     pending = initial_prompt
+    plan = plan or {}
     oneshot = os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}
     minimal = oneshot or os.getenv("C0D3R_MINIMAL_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}
     allow_interrupt = sys.stdin.isatty() and initial_prompt is None
@@ -3505,13 +3689,24 @@ def _run_repl(
         if not prompt.strip():
             continue
         user_prompt = _strip_context_block(prompt)
+        inlined = _inline_file_references(user_prompt)
+        user_prompt_inlined = inlined or user_prompt
+        force_direct = False
+        qa_or_convo = _is_qa_prompt(user_prompt_inlined) or _is_conversation_prompt(user_prompt_inlined)
+        if inlined:
+            user_prompt = inlined
+            qa_or_convo = _is_qa_prompt(user_prompt_inlined) or _is_conversation_prompt(user_prompt_inlined)
+            if re.search(r"\banswer all questions\b", user_prompt_inlined, re.I) or re.search(r"\bconversation\b", user_prompt_inlined, re.I):
+                force_direct = True
+        if qa_or_convo:
+            force_direct = True
         if os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}:
-            if _is_simple_file_task(user_prompt):
+            if _is_simple_file_task(user_prompt) and not qa_or_convo:
                 _emit_live("oneshot: simple task fallback")
                 if _apply_simple_task_fallback(user_prompt, workdir):
                     _emit_live("oneshot: simple task complete")
                     return 0
-            if _apply_simple_project_stub(user_prompt, workdir):
+            if _apply_simple_project_stub(user_prompt, workdir) and not qa_or_convo:
                 _emit_live("oneshot: simple project stub complete")
                 return 0
         retarget = _maybe_retarget_project(user_prompt, workdir)
@@ -3553,11 +3748,12 @@ def _run_repl(
         except Exception:
             pass
         # Normalize user prompt (strip injected context if any).
-        user_prompt = _strip_context_block(prompt)
+        user_prompt = user_prompt_inlined or _strip_context_block(prompt)
+        simple_task = _is_simple_file_task(user_prompt)
         # Existing project gate: scan context before edits (parallelized).
         scan_future = None
         scan_executor = None
-        if _is_existing_project(workdir):
+        if _is_existing_project(workdir) and not qa_or_convo and not simple_task:
             scan_path = _context_scan_path(workdir)
             if not scan_path.exists() or not _scan_is_fresh(workdir, run_command, max_age_minutes=10):
                 _emit_live("context: scanning existing project before edits")
@@ -3586,16 +3782,25 @@ def _run_repl(
             "Avoid private chain-of-thought; summarize reasoning at a high level."
         )
         full_prompt = f"{context}\n\nUser:\n{user_prompt}"
+        if force_direct:
+            system = (
+                "Answer directly in plain text. "
+                "Be concise, accurate, and follow the user's requested format."
+            )
         usage.add_input(full_prompt)
         print("[status] Planning...")
         print("[status] Executing...")
         _emit_live("repl: starting request")
         usage.set_status("planning", "routing + research")
-        if os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"} and _is_actionable_prompt(user_prompt):
+        if force_direct or qa_or_convo:
+            mode = "direct"
+        elif simple_task:
+            mode = "tool_loop"
+        elif os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"} and _is_actionable_prompt(user_prompt) and not qa_or_convo:
             mode = "tool_loop"
         else:
             mode = _decide_mode(session, user_prompt, default_scientific=scientific, default_tool_loop=tool_loop)
-            if _is_actionable_prompt(user_prompt):
+            if _is_actionable_prompt(user_prompt) and not qa_or_convo:
                 mode = "tool_loop"
         _trace_event({
             "event": "repl.mode",
@@ -3606,7 +3811,17 @@ def _run_repl(
         research_summary = ""
         if mode in {"tool_loop", "scientific"} or _is_conversation_prompt(user_prompt):
             usage.set_status("research", "gathering references")
+            allow_research = True
+            if isinstance(plan, dict) and "do_research" in plan and plan.get("do_research") is False:
+                allow_research = False
             if not pre_research_enabled or minimal or os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
+                allow_research = False
+            if simple_task:
+                allow_research = False
+            if qa_or_convo and "[file_contents:" in user_prompt:
+                # Fast QA on provided content shouldn't spin research.
+                allow_research = False
+            if not allow_research:
                 research_summary = ""
             else:
                 _emit_live("repl: pre-research starting")
@@ -3659,10 +3874,17 @@ def _run_repl(
                         matrix_hint = f"\n\n[matrix_hits]\n{json.dumps(matrix_info.get('hits') or [], indent=2)}"
                 if matrix_hint:
                     convo_prompt = f"{convo_prompt}{matrix_hint}"
+                if qa_or_convo:
+                    system = (
+                        "Answer directly in plain text. Use any provided [file_contents] blocks; "
+                        "do NOT request filesystem access. Follow the user's requested format."
+                    )
                 convo_timeout = float(os.getenv("C0D3R_CONVO_TIMEOUT_S", "20") or "20")
+                if qa_or_convo:
+                    convo_timeout = max(convo_timeout, float(os.getenv("C0D3R_QA_TIMEOUT_S", "180") or "180"))
                 response = _call_with_timeout(
                     session._safe_send,
-                    timeout_s=convo_timeout if _is_conversation_prompt(user_prompt) else _model_timeout_s(),
+                    timeout_s=convo_timeout if qa_or_convo or _is_conversation_prompt(user_prompt) else _model_timeout_s(),
                     kwargs={"prompt": convo_prompt, "stream": False, "system": system},
                 )
                 if response is None and _is_conversation_prompt(user_prompt):
@@ -3682,12 +3904,18 @@ def _run_repl(
                 _emit_live("repl: direct model call complete")
         finally:
             controller.stop()
-        if mode == "direct" and _is_actionable_prompt(prompt):
+        if mode == "direct" and _is_actionable_prompt(prompt) and not force_direct:
             response = _enforce_actionability(session, full_prompt, response or "")
         rendered = _render_json_response(response)
         if not rendered and _looks_like_json(response or ""):
             # Avoid dumping raw JSON to the UI; keep output clean.
             rendered = ""
+        if not rendered and response:
+            # Show raw text when model doesn't follow JSON format.
+            rendered = response
+        if qa_or_convo and response:
+            # For QA/conversation, always print the raw model text (or JSON "final" if present).
+            rendered = _extract_plaintext_response(response) or rendered
         if rendered and not rendered.strip():
             rendered = ""
         if not rendered:
@@ -3697,6 +3925,10 @@ def _run_repl(
                 header.update()
         # Apply file ops from any mode (direct/scientific/tool-loop) if present.
         file_ops = _extract_file_ops_from_text(response or "")
+        if _requires_new_projects_dir(user_prompt) and file_ops:
+            file_ops, dropped = _strip_runtime_ops(file_ops)
+            if dropped:
+                _emit_live(f"executor: dropped {dropped} runtime-only file ops for new project")
         if file_ops:
             _emit_live(f"executor: applying {len(file_ops)} file ops from response")
             base_root = _ensure_project_root(user_prompt, workdir) if _requires_new_projects_dir(user_prompt) else workdir
@@ -3782,7 +4014,7 @@ def _run_repl(
                 header.budget_enabled = False
             else:
                 return 0
-        if not minimal:
+        if not minimal and sys.stdin.isatty() and initial_prompt is None:
             memory.append(user_prompt, response)
             summary = memory.update_summary(summary, user_prompt, response, session)
             summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3926,6 +4158,8 @@ def _is_actionable_prompt(prompt: str) -> bool:
     if not prompt:
         return False
     lower = prompt.lower()
+    if _is_qa_prompt(lower) or "conversation" in lower:
+        return False
     keywords = [
         "create", "update", "modify", "fix", "implement", "add", "remove", "delete",
         "run", "test", "build", "install", "generate", "scaffold", "refactor", "migrate",
@@ -3985,7 +4219,10 @@ def _is_simple_file_task(prompt: str) -> bool:
     if not prompt:
         return False
     lower = prompt.lower().strip()
-    if any(k in lower for k in ("create a new file", "create file", "create folder", "create a folder", "mkdir")):
+    if any(k in lower for k in (
+        "create a new file", "create file", "create folder", "create a folder", "mkdir",
+        "update file", "update ", "delete file", "remove file", "delete ", "remove "
+    )):
         return True
     return False
 
@@ -4099,6 +4336,39 @@ def _plan_execution(session: C0d3rSession, prompt: str) -> dict:
     try:
         raw = session.send(prompt=prompt, stream=False, system=system)
         payload = _safe_json(raw)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        pass
+    return {}
+
+
+def _screen_tools(session: C0d3rSession, prompt: str, *, timeout_s: float | None = None) -> dict:
+    """
+    Quick screener to select tool usage and sequencing for this request.
+    Returns JSON with keys:
+      mode (tool_loop|direct|scientific),
+      do_research (bool),
+      do_math (bool),
+      do_tool_loop (bool),
+      sequence (list of strings),
+      model_override (string),
+      reason (string).
+    """
+    system = (
+        "Return ONLY JSON with keys: mode, do_research, do_math, do_tool_loop, "
+        "sequence (list), model_override (string), reason (string). "
+        "Sequence must be minimal and ordered (e.g., [\"context\",\"research\",\"execute\",\"verify\"]). "
+        "Choose direct for pure Q&A/conversation. Choose tool_loop for local commands or file changes. "
+        "Enable research only if necessary for accuracy."
+    )
+    try:
+        response = _call_with_timeout(
+            session._safe_send,
+            timeout_s=timeout_s if timeout_s is not None else float(os.getenv("C0D3R_SCREEN_TIMEOUT_S", "2.5") or "2.5"),
+            kwargs={"prompt": prompt, "stream": False, "system": system},
+        )
+        payload = _safe_json(response or "")
         if isinstance(payload, dict):
             return payload
     except Exception:
@@ -4484,6 +4754,52 @@ def _tool_loop_base_request(prompt: str) -> str:
     return _strip_context_block(prompt)
 
 
+def _inline_file_references(prompt: str) -> str:
+    """
+    Inline referenced file contents into the prompt for Q&A/conversation tasks.
+    Supports patterns like: "file: C:\\path\\to\\file.txt".
+    """
+    if not prompt:
+        return ""
+    patterns = [
+        r"file:\s*([A-Za-z]:\\[^\n\r]+)",
+        r"file:\s*([^ \n\r]+)",
+    ]
+    seen = set()
+    additions = []
+    for pattern in patterns:
+        for match in re.findall(pattern, prompt):
+            path = match.strip().strip("\"'").rstrip(").,;")
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            try:
+                candidate = Path(path).expanduser().resolve()
+            except Exception:
+                continue
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            try:
+                text = candidate.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                try:
+                    text = candidate.read_text(errors="ignore")
+                except Exception:
+                    continue
+            max_chars = int(os.getenv("C0D3R_INLINE_FILE_MAX_CHARS", "40000") or "40000")
+            if len(text) > max_chars:
+                text = text[:max_chars] + "\n...[truncated]..."
+            additions.append(f"[file_contents:{candidate}]\n{text}\n[end_file_contents]")
+    if not additions:
+        return ""
+    return prompt + "\n\n" + "\n\n".join(additions)
+
+
+def _is_qa_prompt(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    return "answer all questions" in lower or "question sheet" in lower or "provide numbered answers" in lower
+
+
 def _requires_new_projects_dir(prompt: str) -> bool:
     lower = (prompt or "").lower()
     if "project" in lower and any(k in lower for k in ("create", "template", "scaffold", "setup", "set up", "initialize")):
@@ -4704,7 +5020,9 @@ def _maybe_retarget_project(prompt: str, workdir: Path) -> Path | None:
     under C:\\Users\\Adam\\Projects when found.
     """
     lower = (prompt or "").lower()
-    if "project" not in lower and "update" not in lower:
+    if "project" not in lower:
+        return None
+    if not any(phrase in lower for phrase in ("update project", "work on", "open project", "continue project", "go to project", "switch to project")):
         return None
     projects_root = Path("C:\\Users\\Adam\\Projects")
     if not projects_root.exists():
