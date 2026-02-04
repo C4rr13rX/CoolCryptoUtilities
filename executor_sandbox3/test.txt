@@ -1,4 +1,0 @@
-C0D3R-CITATIONS:
-- Smith, J. (2024). Example. Journal.
-
-hello

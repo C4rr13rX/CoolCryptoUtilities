@@ -16,13 +16,17 @@ import json
 from collections import deque
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+WEB_ROOT = PROJECT_ROOT / "web"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if WEB_ROOT.exists() and str(WEB_ROOT) not in sys.path:
+    sys.path.insert(0, str(WEB_ROOT))
 
 _INSTALL_ATTEMPTS: set[str] = set()
 _UI_MANAGER = None
 _LAST_FILE_OPS_ERRORS: list[str] = []
 _LAST_FILE_OPS_WRITTEN: list[str] = []
+_MATRIX_SEED_VERSION = "2026-02-04"
 
 
 def _trace_event(payload: dict) -> None:
@@ -2990,24 +2994,115 @@ def _extract_petal_directives(prompt: str) -> list[dict]:
     return directives
 
 
-def _query_unbounded_matrix(prompt: str) -> dict:
-    matrix_path = Path("runtime/c0d3r/matrix_global.md")
-    if not matrix_path.exists() or not prompt:
-        return {}
+def _ensure_django_ready() -> bool:
     try:
-        _animate_matrix(0.8)
-        content = matrix_path.read_text(encoding="utf-8", errors="ignore")
+        import os as _os
+        if not _os.getenv("DJANGO_SETTINGS_MODULE"):
+            _os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
+        import django
+        django.setup()
+        return True
     except Exception:
+        return False
+
+
+def _seed_base_matrix_django() -> None:
+    if not _ensure_django_ready():
+        return
+    try:
+        from core.models import Equation, EquationDiscipline, EquationSource
+        if Equation.objects.filter(domains__contains=["ClassicalMechanics"]).exists():
+            return
+        base = [
+            ("ClassicalMechanics", "F = m * a", "Newton's second law of motion."),
+            ("ClassicalMechanics", "p = m * v", "Linear momentum."),
+            ("Thermodynamics", "dU = T * dS - P * dV", "Fundamental thermodynamic relation."),
+            ("Thermodynamics", "P * V = n * R * T", "Ideal gas law."),
+            ("Electromagnetism", "∇ · E = ρ / ε0", "Gauss's law (electric)."),
+            ("Electromagnetism", "∇ · B = 0", "Gauss's law (magnetic)."),
+            ("Electromagnetism", "∇ × E = -∂B/∂t", "Faraday's law of induction."),
+            ("Electromagnetism", "∇ × B = μ0 * J + μ0 * ε0 * ∂E/∂t", "Ampere-Maxwell law."),
+            ("QuantumMechanics", "i * ħ * ∂ψ/∂t = Ĥ * ψ", "Time-dependent Schrödinger equation."),
+            ("QuantumMechanics", "E = ħ * ω", "Planck-Einstein relation."),
+            ("Relativity", "E^2 = (p*c)^2 + (m*c^2)^2", "Energy-momentum relation."),
+            ("StatisticalMechanics", "S = k_B * ln(Ω)", "Boltzmann entropy."),
+        ]
+        source, _ = EquationSource.objects.get_or_create(
+            title="Standard physics textbooks",
+            defaults={
+                "citation": "Standard physics textbooks (collected seed).",
+                "tags": ["seed", _MATRIX_SEED_VERSION],
+            },
+        )
+        for domain, eq, desc in base:
+            EquationDiscipline.objects.get_or_create(name=domain)
+            Equation.objects.get_or_create(
+                text=eq,
+                defaults={
+                    "latex": eq,
+                    "domains": [domain],
+                    "disciplines": [domain],
+                    "confidence": 0.95,
+                    "source": source,
+                    "assumptions": [],
+                    "constraints": [],
+                },
+            )
+    except Exception:
+        pass
+
+
+def _normalize_equation(eq: str) -> str:
+    return re.sub(r"\s+", "", (eq or "")).strip()
+
+
+def _matrix_search(query: str, limit: int = 12) -> dict:
+    if not query:
+        return {"hits": [], "missing": []}
+    if not _ensure_django_ready():
+        return {"hits": [], "missing": []}
+    _seed_base_matrix_django()
+    try:
+        from core.models import Equation
+        q = query.strip()
+        tokens = [t for t in re.findall(r"[a-zA-Z_]{3,}", q.lower()) if t not in {"that","this","with","from","into","then"}]
+        hits: list[dict] = []
+        qs = Equation.objects.all()
+        if any(ch in q for ch in ("=", "∇", "∂", "ħ", "Ω", "λ", "μ")):
+            qs = qs.filter(text__icontains=q)
+        else:
+            qs = qs.filter(text__icontains=q) | qs.filter(latex__icontains=q)
+        for eq in qs[:limit]:
+            hits.append({"equation": eq.text, "domain": ",".join(eq.disciplines or eq.domains or []), "summary": ""})
+        if tokens:
+            for eq in Equation.objects.all()[:200]:
+                norm = _normalize_equation(eq.text)
+                if any(_normalize_equation(t) in norm for t in tokens):
+                    hits.append({"equation": eq.text, "domain": ",".join(eq.disciplines or eq.domains or []), "summary": ""})
+        unique = []
+        seen = set()
+        for item in hits:
+            key = item["equation"]
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+            if len(unique) >= limit:
+                break
+        missing = [t for t in set(tokens[:10]) if not any(t in str(h["equation"]).lower() for h in unique)]
+        return {"hits": unique, "missing": missing}
+    except Exception:
+        return {"hits": [], "missing": []}
+
+
+def _query_unbounded_matrix(prompt: str) -> dict:
+    if not prompt:
         return {}
-    tokens = [t for t in re.findall(r"[a-zA-Z_]{3,}", prompt.lower()) if t not in {"that","this","with","from","into","then"}]
-    hits = []
-    for tok in set(tokens[:20]):
-        if tok in content.lower():
-            hits.append(tok)
-    return {
-        "hits": hits,
-        "missing": [t for t in set(tokens[:10]) if t not in hits],
-    }
+    _animate_matrix(0.8)
+    result = _matrix_search(prompt)
+    if result.get("hits"):
+        return result
+    return result
 
 
 def _petal_action_plan(session: C0d3rSession, constraints: list[dict], prompt: str) -> dict:
@@ -4609,11 +4704,20 @@ def _enforce_unbounded_matrix(session: C0d3rSession, prompt: str) -> dict | None
 
 
 def _load_unbounded_matrix_context(max_chars: int = 6000) -> str:
-    path = Path("runtime/c0d3r/matrix_global.md")
-    if not path.exists():
+    if not _ensure_django_ready():
         return ""
+    _seed_base_matrix_django()
     try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        from core.models import Equation
+        lines = ["# Matrix Snapshot", ""]
+        rows = Equation.objects.order_by("-created_at")[:30]
+        if rows:
+            lines.append("## Recent Equations")
+            for eq in rows:
+                domain = ",".join(eq.disciplines or eq.domains or [])
+                lines.append(f"- [{domain}] {eq.text}")
+            lines.append("")
+        text = "\n".join(lines)
         return text[-max_chars:]
     except Exception:
         return ""
@@ -4691,103 +4795,6 @@ def _resolve_unbounded_request(session: C0d3rSession, prompt: str) -> dict | Non
 
 def _append_unbounded_matrix(payload: dict) -> None:
     try:
-        out_dir = Path("runtime/c0d3r")
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / "matrix_global.md"
-        history_path = out_dir / "unbounded_matrix_history.jsonl"
-        lines = ["# Unbounded Request Matrix", ""]
-        branches = payload.get("branches") or []
-        if branches:
-            lines.append("## Branches")
-            for b in branches:
-                lines.append(f"- {b}")
-            lines.append("")
-        matrix = payload.get("matrix") or []
-        if matrix:
-            lines.append("## Matrix")
-            for row in matrix:
-                if isinstance(row, dict):
-                    lines.append(f"- {row}")
-                else:
-                    lines.append(f"- {row}")
-            lines.append("")
-        mechanics = payload.get("integrated_mechanics") or []
-        if mechanics:
-            lines.append("## Integrated Mechanics")
-            for item in mechanics:
-                lines.append(f"- {item}")
-            lines.append("")
-        equations = payload.get("equations") or []
-        if equations:
-            lines.append("## Equations")
-            for item in equations:
-                lines.append(f"- {item}")
-            lines.append("")
-        gap_steps = payload.get("gap_fill_steps") or []
-        if gap_steps:
-            lines.append("## Gap Fill Steps")
-            for item in gap_steps:
-                lines.append(f"- {item}")
-            lines.append("")
-        research_links = payload.get("research_links") or []
-        if research_links:
-            lines.append("## Research Links")
-            for item in research_links:
-                lines.append(f"- {item}")
-            lines.append("")
-        anomalies = payload.get("anomalies") or []
-        if anomalies:
-            lines.append("## Anomalies/Paradoxes")
-            for a in anomalies:
-                lines.append(f"- {a}")
-            lines.append("")
-        hypotheses = payload.get("hypotheses") or []
-        if hypotheses:
-            lines.append("## Hypotheses")
-            for h in hypotheses:
-                lines.append(f"- {h}")
-            lines.append("")
-        candidate_nodes = payload.get("candidate_nodes") or []
-        if candidate_nodes:
-            lines.append("## Candidate Nodes")
-            for node in candidate_nodes:
-                lines.append(f"- {node}")
-            lines.append("")
-        selected = payload.get("selected_node")
-        if selected:
-            lines.append("## Selected Node")
-            lines.append(f"- {selected}")
-            lines.append("")
-        experiments = payload.get("experiments") or []
-        if experiments:
-            lines.append("## Experiments / Thought Tests")
-            for exp in experiments:
-                lines.append(f"- {exp}")
-            lines.append("")
-        criteria = payload.get("decision_criteria") or []
-        if criteria:
-            lines.append("## Decision Criteria")
-            for item in criteria:
-                lines.append(f"- {item}")
-            lines.append("")
-        next_steps = payload.get("next_steps") or []
-        if next_steps:
-            lines.append("## Next Steps")
-            for step in next_steps:
-                lines.append(f"- {step}")
-            lines.append("")
-        constraints = payload.get("constraints") or []
-        if constraints:
-            lines.append("## Constraints")
-            for c in constraints:
-                lines.append(f"- {c}")
-            lines.append("")
-        bounded = str(payload.get("bounded_task") or "").strip()
-        if bounded:
-            lines.append("## Bounded Task")
-            lines.append(bounded)
-            lines.append("")
-        path.write_text("\n".join(lines), encoding="utf-8")
         record = {
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
             "branches": payload.get("branches") or [],
@@ -4806,8 +4813,6 @@ def _append_unbounded_matrix(payload: dict) -> None:
             "candidate_nodes": payload.get("candidate_nodes") or [],
             "selected_node": payload.get("selected_node") or {},
         }
-        with history_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
         _write_matrix_db(record)
     except Exception:
         pass
@@ -4981,7 +4986,14 @@ def _write_matrix_db(record: dict) -> None:
             _os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
         import django
         django.setup()
-        from core.models import UnboundedMatrixRecord
+        from core.models import (
+            UnboundedMatrixRecord,
+            Equation,
+            EquationDiscipline,
+            EquationSource,
+            EquationLink,
+        )
+        _seed_base_matrix_django()
         UnboundedMatrixRecord.objects.create(
             prompt=record.get("bounded_task") or "",
             branches=record.get("branches") or [],
@@ -4998,6 +5010,42 @@ def _write_matrix_db(record: dict) -> None:
             constraints=record.get("constraints") or [],
             payload=record,
         )
+        equations = record.get("equations") or []
+        disciplines = record.get("branches") or []
+        research_links = record.get("research_links") or []
+        source = None
+        if research_links:
+            source, _ = EquationSource.objects.get_or_create(
+                title=research_links[0][:255],
+                defaults={
+                    "url": research_links[0],
+                    "citation": research_links[0],
+                    "tags": ["research"],
+                },
+            )
+        created_eqs: list[Equation] = []
+        for eq in equations:
+            if not eq:
+                continue
+            defaults = {
+                "latex": str(eq),
+                "domains": disciplines,
+                "disciplines": disciplines,
+                "confidence": 0.6 if research_links else 0.4,
+                "source": source,
+            }
+            obj, _ = Equation.objects.get_or_create(text=str(eq), defaults=defaults)
+            created_eqs.append(obj)
+        for disc in disciplines:
+            if disc:
+                EquationDiscipline.objects.get_or_create(name=str(disc))
+        # Link consecutive equations to form a minimal graph.
+        for idx in range(len(created_eqs) - 1):
+            EquationLink.objects.get_or_create(
+                from_equation=created_eqs[idx],
+                to_equation=created_eqs[idx + 1],
+                defaults={"relation_type": "bridges", "notes": "auto-linked from unbounded record"},
+            )
     except Exception:
         return
 
