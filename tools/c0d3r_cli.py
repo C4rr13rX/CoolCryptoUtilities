@@ -496,6 +496,9 @@ def main(argv: List[str] | None = None) -> int:
     # Initialize terminal UI if available.
     global _UI_MANAGER
     use_tui = os.getenv("C0D3R_TUI", "1").strip().lower() not in {"0", "false", "no", "off"}
+    # Disable TUI when not attached to a real terminal (e.g., redirected output).
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        use_tui = False
     if use_tui:
         try:
             _UI_MANAGER = TerminalUI(header, workdir)
@@ -548,6 +551,7 @@ def main(argv: List[str] | None = None) -> int:
         initial_prompt=prompt or None,
         header=header,
         pre_research_enabled=do_research,
+        tech_matrix=tech_matrix,
     )
 
 
@@ -3462,6 +3466,7 @@ def _run_repl(
     initial_prompt: str | None = None,
     header: "HeaderRenderer | None" = None,
     pre_research_enabled: bool = True,
+    tech_matrix: dict | None = None,
 ) -> int:
     from services.conversation_memory import ConversationMemory
 

@@ -1,7 +1,0 @@
-{
-  "name": "IonicCryptoApp",
-  "integrations": {
-    "capacitor": {}
-  },
-  "type": "angular"
-}
