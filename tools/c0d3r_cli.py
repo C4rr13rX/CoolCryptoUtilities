@@ -13,7 +13,7 @@ import urllib.request
 import hashlib
 import shutil
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 import json
 from collections import deque
 
@@ -426,11 +426,13 @@ def main(argv: List[str] | None = None) -> int:
     os.environ.setdefault("PYTHONWARNINGS", "ignore")
     # Default to full verbosity unless user disables it.
     os.environ.setdefault("C0D3R_VERBOSE_MODEL_OUTPUT", "1")
-    # Defaults tuned for "executor_v2": model decides terminal commands; python file_ops are opt-in.
+    # Defaults tuned for "executor_v2": model decides terminal commands; python file_ops are disabled.
     os.environ.setdefault("C0D3R_EXECUTOR_V2", "1")
-    os.environ.setdefault("C0D3R_ENABLE_FILE_OPS", "0")
+    os.environ.setdefault("C0D3R_COMMANDS_ONLY", "1")
+    os.environ["C0D3R_ENABLE_FILE_OPS"] = "0"
     os.environ.setdefault("C0D3R_BEDROCK_LIVE", "1")
     os.environ.setdefault("C0D3R_BEDROCK_STREAM", "1")
+    os.environ.setdefault("C0D3R_AUTO_CONTEXT_COMMANDS", "0")
     from services.env_loader import EnvLoader
     from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
     from services.agent_workspace import run_command
@@ -575,8 +577,109 @@ def main(argv: List[str] | None = None) -> int:
     )
 
 
+def _auto_context_commands_enabled() -> bool:
+    return os.getenv("C0D3R_AUTO_CONTEXT_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _detect_shells() -> List[str]:
+    shells = [
+        ("pwsh", "pwsh"),
+        ("powershell", "powershell"),
+        ("cmd", "cmd"),
+        ("bash", "bash"),
+        ("sh", "sh"),
+        ("zsh", "zsh"),
+    ]
+    available = []
+    for name, exe in shells:
+        if shutil.which(exe):
+            available.append(name)
+    return available
+
+
+def _detect_tools() -> Dict[str, str]:
+    tools = ("python", "pip", "git", "node", "npm", "npx", "yarn", "pnpm", "uv", "rg")
+    found: Dict[str, str] = {}
+    for tool in tools:
+        path = shutil.which(tool) or ""
+        found[tool] = path
+    return found
+
+
+def _environment_context_block(workdir: Path) -> str:
+    lines = ["[environment]"]
+    lines.append(f"- platform: {sys.platform}")
+    lines.append(f"- os_name: {os.name}")
+    lines.append(f"- cwd: {workdir}")
+    try:
+        lines.append(f"- project_root: {workdir.resolve()}")
+    except Exception:
+        pass
+    shells = _detect_shells()
+    lines.append(f"- shells: {', '.join(shells) if shells else '(none found)'}")
+    tools = _detect_tools()
+    for name, path in tools.items():
+        lines.append(f"- tool.{name}: {path or 'missing'}")
+    try:
+        from services.system_probe import collect_system_probe
+
+        probe = collect_system_probe(cwd=workdir)
+        lines.append(f"- is_admin: {probe.is_admin}")
+        lines.append(f"- cpu_count: {probe.cpu_count}")
+        lines.append(f"- total_memory_gb: {probe.total_memory_gb}")
+        lines.append(f"- hostname: {probe.hostname}")
+        lines.append(f"- network_available: {probe.network_available}")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
+def _load_rolling_summary(max_chars: int = 2000) -> str:
+    path = _runtime_path("summary.txt")
+    if not path.exists():
+        return ""
+    try:
+        summary = path.read_text(encoding="utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+    if not summary:
+        return ""
+    return summary[:max_chars]
+
+
+def _extract_key_points(summary: str, limit: int = 6) -> List[str]:
+    if not summary:
+        return []
+    points = []
+    for line in summary.splitlines():
+        raw = line.strip()
+        if not raw:
+            continue
+        if raw.startswith(("-", "*", "•")):
+            points.append(raw.lstrip("-*• ").strip())
+    if points:
+        return points[:limit]
+    # Fallback: split by sentence-ish boundaries.
+    sentences = re.split(r"(?<=[.!?])\s+", summary.strip())
+    for sent in sentences:
+        if sent.strip():
+            points.append(sent.strip())
+        if len(points) >= limit:
+            break
+    return points[:limit]
+
+
+def _key_points_block(summary: str) -> str:
+    points = _extract_key_points(summary)
+    if not points:
+        return ""
+    lines = ["[key_points]"]
+    for item in points:
+        lines.append(f"- {item}")
+    return "\n".join(lines)
+
+
 def _build_context_block(workdir: Path, run_command) -> str:
-    from services.framework_catalog import detect_frameworks
     lines = [
         "[context]",
         f"- cwd: {workdir}",
@@ -586,38 +689,50 @@ def _build_context_block(workdir: Path, run_command) -> str:
         lines.append(f"- project_root: {workdir.resolve()}")
     except Exception:
         pass
-    frameworks = detect_frameworks(workdir)
-    if frameworks:
-        lines.append(f"- frameworks: {', '.join(frameworks)}")
-    else:
-        lines.append("- frameworks: (none detected)")
-    # Parallelize independent context probes.
-    tasks = []
-    tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
-    tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
-    if os.name == "nt":
-        tasks.append(("ls", lambda: run_command("Get-ChildItem -Name", cwd=workdir)))
-    else:
-        tasks.append(("ls", lambda: run_command("ls -1", cwd=workdir)))
-    results = _run_parallel_tasks([(name, fn) for name, fn in tasks], max_workers=3)
-    result_map = {name: res for name, res in results}
-    if "git_status" in result_map:
-        code, stdout, stderr = result_map["git_status"]
-        if stdout.strip():
-            lines.append("git status -sb:")
-            lines.append(stdout.strip()[:2000])
-        if stderr.strip():
-            lines.append("git status stderr:")
-            lines.append(stderr.strip()[:500])
-    if "git_root" in result_map:
-        code, stdout, stderr = result_map["git_root"]
-        if stdout.strip():
-            lines.append(f"repo root: {stdout.strip()}")
-    if "ls" in result_map:
-        code, stdout, stderr = result_map["ls"]
-        if stdout.strip():
-            lines.append("top-level files:")
-            lines.append("\n".join(stdout.strip().splitlines()[:80]))
+    lines.append(_environment_context_block(workdir))
+    summary = _load_rolling_summary()
+    if summary:
+        lines.append("[rolling_summary]\n" + summary)
+        key_points = _key_points_block(summary)
+        if key_points:
+            lines.append(key_points)
+    if _auto_context_commands_enabled():
+        try:
+            from services.framework_catalog import detect_frameworks
+            frameworks = detect_frameworks(workdir)
+            if frameworks:
+                lines.append(f"- frameworks: {', '.join(frameworks)}")
+            else:
+                lines.append("- frameworks: (none detected)")
+        except Exception:
+            lines.append("- frameworks: (unknown)")
+        # Parallelize independent context probes.
+        tasks = []
+        tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
+        tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
+        if os.name == "nt":
+            tasks.append(("ls", lambda: run_command("Get-ChildItem -Name", cwd=workdir)))
+        else:
+            tasks.append(("ls", lambda: run_command("ls -1", cwd=workdir)))
+        results = _run_parallel_tasks([(name, fn) for name, fn in tasks], max_workers=3)
+        result_map = {name: res for name, res in results}
+        if "git_status" in result_map:
+            code, stdout, stderr = result_map["git_status"]
+            if stdout.strip():
+                lines.append("git status -sb:")
+                lines.append(stdout.strip()[:2000])
+            if stderr.strip():
+                lines.append("git status stderr:")
+                lines.append(stderr.strip()[:500])
+        if "git_root" in result_map:
+            code, stdout, stderr = result_map["git_root"]
+            if stdout.strip():
+                lines.append(f"repo root: {stdout.strip()}")
+        if "ls" in result_map:
+            code, stdout, stderr = result_map["ls"]
+            if stdout.strip():
+                lines.append("top-level files:")
+                lines.append("\n".join(stdout.strip().splitlines()[:80]))
     return "\n".join(lines)
 
 
@@ -720,12 +835,9 @@ def _ensure_preflight(workdir: Path, run_command) -> None:
     if path.exists():
         return
     checks = {}
-    for cmd in ("python", "git", "node", "npm"):
-        if os.name == "nt":
-            code, stdout, _ = run_command(f"where {cmd}", cwd=workdir)
-        else:
-            code, stdout, _ = run_command(f"which {cmd}", cwd=workdir)
-        checks[cmd] = {"found": code == 0, "path": stdout.strip().splitlines()[0] if stdout.strip() else ""}
+    for cmd in ("python", "pip", "git", "node", "npm", "npx", "yarn", "pnpm", "uv", "rg"):
+        found_path = shutil.which(cmd) or ""
+        checks[cmd] = {"found": bool(found_path), "path": found_path}
     payload = {"timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "checks": checks}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -830,11 +942,13 @@ def _tool_loop_v2_enabled() -> bool:
     v2 disables direct python file_ops writes by default and expects the model
     to express *all* filesystem changes as terminal commands.
     """
-    return os.getenv("C0D3R_EXECUTOR_V2", "1").strip().lower() not in {"0", "false", "no", "off"}
+    # Enforce v2 to keep execution fully model-driven (commands-only).
+    return True
 
 
 def _file_ops_enabled() -> bool:
-    return os.getenv("C0D3R_ENABLE_FILE_OPS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    # File ops are disabled to enforce command-only execution.
+    return False
 
 
 def _ui_write(line: str) -> None:
@@ -850,6 +964,93 @@ def _ui_write(line: str) -> None:
         sys.stdout.flush()
     except Exception:
         pass
+
+
+def _chunk_output(text: str, *, lines_per_chunk: int = 200, max_chunks: int = 20) -> List[str]:
+    if not text:
+        return []
+    lines = text.splitlines()
+    chunks: List[str] = []
+    for i in range(0, len(lines), lines_per_chunk):
+        if len(chunks) >= max_chunks:
+            break
+        chunk = "\n".join(lines[i:i + lines_per_chunk])
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
+
+
+def _infer_task_type(base_request: str, last_error: str = "") -> str:
+    text = f"{base_request} {last_error}".lower()
+    if any(k in text for k in ("research", "paper", "docs", "citations", "reference", "sources")):
+        return "research"
+    if any(k in text for k in ("debug", "error", "traceback", "exception", "fail", "failing", "fix")):
+        return "debug"
+    if any(k in text for k in ("install", "setup", "build", "compile", "test", "run", "execute", "shell", "command")):
+        return "command"
+    if any(k in text for k in ("edit", "update", "modify", "refactor", "write", "create", "delete", "move", "rename")):
+        return "command"
+    return "default"
+
+
+def _select_model_for_step(session: "C0d3rSession", base_request: str, *, step: int, step_failed: bool, failure_count: int, last_error: str, sys_info: str) -> str:
+    default_model = (
+        os.getenv("C0D3R_MODEL_DEFAULT")
+        or getattr(session, "get_model_id", lambda: "")()
+        or getattr(getattr(session, "_c0d3r", None), "model_id", "")
+    )
+    model_research = os.getenv("C0D3R_MODEL_RESEARCH") or default_model
+    model_debug = os.getenv("C0D3R_MODEL_DEBUG") or default_model
+    model_command = os.getenv("C0D3R_MODEL_COMMAND") or default_model
+    model_fallback = os.getenv("C0D3R_MODEL_FALLBACK") or default_model
+    model_windows = os.getenv("C0D3R_MODEL_WINDOWS") or ""
+
+    task_type = _infer_task_type(base_request, last_error)
+    if step_failed or failure_count > 0:
+        task_type = "debug"
+
+    selected = default_model
+    if task_type == "research":
+        selected = model_research
+    elif task_type == "debug":
+        selected = model_debug
+    elif task_type == "command":
+        selected = model_command
+
+    if os.name == "nt" and model_windows:
+        if task_type in {"command", "debug"}:
+            selected = model_windows
+
+    if not selected:
+        selected = default_model or model_fallback
+    return selected or model_fallback or ""
+
+
+def _send_with_model_override(session: "C0d3rSession", *, prompt: str, model_id: str, stream: bool, **kwargs) -> str:
+    saved_model_id = getattr(getattr(session, "_c0d3r", None), "model_id", "")
+    saved_multi = getattr(getattr(session, "_c0d3r", None), "multi_model", True)
+    switched = False
+    if model_id and hasattr(session, "_c0d3r"):
+        if saved_model_id != model_id:
+            session._c0d3r.model_id = model_id
+            session._c0d3r.multi_model = False
+            switched = True
+    try:
+        return session.send(prompt=prompt, stream=stream, **kwargs)
+    finally:
+        if switched and hasattr(session, "_c0d3r"):
+            session._c0d3r.model_id = saved_model_id
+            session._c0d3r.multi_model = saved_multi
+
+
+def _intent_for_step(step: int, *, step_failed: bool, last_error: str = "", output_request: bool = False) -> str:
+    if output_request:
+        return "Deep-dive into prior command output chunks to remove ambiguity before proposing new commands."
+    if step_failed:
+        return "Diagnose the failure and propose corrective commands and verification checks."
+    if step == 1:
+        return "Generate the initial command plan and verification checks to satisfy the objective."
+    return "Continue with the next commands and checks to complete the objective."
 
 
 def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
@@ -1062,6 +1263,8 @@ def _validate_tool_loop_v2_payload(payload: dict) -> tuple[bool, str]:
         return False, "payload is not an object"
     if "final" not in payload:
         return False, "missing key: final"
+    if "needs_terminal" not in payload:
+        return False, "missing key: needs_terminal"
     if "commands" not in payload:
         return False, "missing key: commands"
     commands = payload.get("commands")
@@ -1076,12 +1279,29 @@ def _validate_tool_loop_v2_payload(payload: dict) -> tuple[bool, str]:
     elif not isinstance(checks, list):
         return False, "checks must be a list"
     needs_terminal = payload.get("needs_terminal")
-    if needs_terminal is None:
-        payload["needs_terminal"] = bool(commands)
-    elif not isinstance(needs_terminal, bool):
+    if not isinstance(needs_terminal, bool):
         return False, "needs_terminal must be boolean"
+    if commands and payload["needs_terminal"] is False:
+        return False, "needs_terminal must be true when commands are provided"
     if payload["needs_terminal"] and not commands and not (payload.get("final") or "").strip():
         return False, "needs_terminal=true but no commands and empty final"
+    output_request = payload.get("output_request")
+    if output_request is not None:
+        if not isinstance(output_request, list):
+            return False, "output_request must be a list"
+        for item in output_request:
+            if not isinstance(item, dict):
+                return False, "output_request items must be objects"
+            key = item.get("key")
+            idx = item.get("chunk_index")
+            if not isinstance(key, str) or not key.strip():
+                return False, "output_request.key must be a non-empty string"
+            if not isinstance(idx, int) or idx < 0:
+                return False, "output_request.chunk_index must be a non-negative integer"
+        if payload.get("needs_terminal") is True:
+            return False, "output_request requires needs_terminal=false"
+        if commands or (payload.get("checks") or []):
+            return False, "output_request must be used without commands/checks"
     return True, ""
 
 
@@ -1105,9 +1325,17 @@ def _run_tool_loop_v2(
     base_request = _tool_loop_base_request(prompt)
     max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "10") or "10")
     max_commands_per_step = int(os.getenv("C0D3R_TOOL_MAX_CMDS", "12") or "12")
+    max_json_attempts = min(10, int(os.getenv("C0D3R_JSON_MAX_ATTEMPTS", "3") or "3"))
     history: list[str] = []
     last_payload: dict | None = None
     current_cwd = Path(workdir).resolve()
+    failure_count = 0
+    last_error = ""
+    prev_step_failed = False
+    output_cache: dict[str, list[str]] = {}
+    output_cursor: dict[str, int] = {}
+    rolling_summary = _load_rolling_summary()
+    key_points_block = _key_points_block(rolling_summary) if rolling_summary else ""
 
     def _history_block() -> str:
         if not history:
@@ -1122,13 +1350,15 @@ def _run_tool_loop_v2(
         "    { \"purpose\": string, \"shell\": \"auto\"|\"powershell\"|\"cmd\"|\"bash\"|\"sh\"|\"python\", \"cwd\": string, \"timeout_s\": number|null, \"command\": string }\n"
         "  ],\n"
         "  \"checks\": [ same shape as commands ],\n"
+        "  \"output_request\": [ { \"key\": string, \"chunk_index\": number } ],\n"
         "  \"final\": string\n"
         "}\n"
         "Rules:\n"
-        "- If you need to read/write/update/delete/unzip files, you MUST do it via terminal commands in commands[].\n"
+        "- All filesystem/OS actions MUST be expressed as terminal commands in commands[]. No file_ops.\n"
         "- Prefer idempotent commands. Avoid creating helper scripts unless absolutely required by the task.\n"
         "- Always include verification in checks[] (tests, grep, ls, python -m ...), and interpret failures to produce the next command batch.\n"
-        "- If done, set needs_terminal=false, commands=[], checks=[] and put the user-facing answer in final.\n"
+        "- If you need more output context, use output_request with a key and chunk_index; do not include commands/checks in that response.\n"
+        "- If done, set needs_terminal=false, commands=[], checks=[], output_request=[] and put the user-facing answer in final.\n"
     )
 
     for step in range(1, max_steps + 1):
@@ -1142,6 +1372,11 @@ def _run_tool_loop_v2(
         except Exception:
             sys_info = f"[system]\nos={os.name} platform={sys.platform} cwd={current_cwd}"
 
+        env_block = _environment_context_block(current_cwd)
+        objective = base_request.strip()
+        intent = _intent_for_step(step, step_failed=prev_step_failed, last_error=last_error)
+        summary_block = f"[rolling_summary]\n{rolling_summary}" if rolling_summary else ""
+
         last_json = ""
         if last_payload:
             try:
@@ -1154,6 +1389,13 @@ def _run_tool_loop_v2(
             + schema_doc
             + "\n"
             + sys_info
+            + ("\n\n" + env_block if env_block else "")
+            + ("\n\n" + summary_block if summary_block else "")
+            + ("\n\n" + key_points_block if key_points_block else "")
+            + "\n\n[objective]\n"
+            + objective
+            + "\n\n[intent]\n"
+            + intent
             + ("\n\n[context]\n" + context_block[:6000] if context_block else "")
             + "\n\n[task]\n"
             + base_request
@@ -1161,44 +1403,57 @@ def _run_tool_loop_v2(
             + ("\n\n[last_payload]\n" + last_json if last_json else "")
         )
 
-        raw = session.send(prompt=tool_prompt, stream=False)
-        payload = _extract_json_object(raw or "")
-        if payload is None:
-            repair = (
-                "[schema:tool_loop_v2]\n"
-                + schema_doc
-                + "\nYour previous response was not valid JSON. Re-emit ONLY valid JSON matching the schema.\n\n"
-                + (raw or "")[:2000]
-            )
-            raw2 = session.send(prompt=repair, stream=False)
-            payload = _extract_json_object(raw2 or "")
-        if payload is None:
-            history.append("[parse_error] Model did not return JSON. Provide valid JSON next.")
-            continue
+        selected_model = _select_model_for_step(
+            session,
+            base_request,
+            step=step,
+            step_failed=prev_step_failed,
+            failure_count=failure_count,
+            last_error=last_error,
+            sys_info=sys_info,
+        )
+        if selected_model:
+            usage_tracker.model_id = selected_model
 
-        ok, err = _validate_tool_loop_v2_payload(payload)
-        if not ok:
-            repair = (
+        payload = None
+        ok = False
+        err = ""
+        attempt = 0
+        active_prompt = tool_prompt
+        while attempt < max_json_attempts:
+            attempt += 1
+            raw = _send_with_model_override(session, prompt=active_prompt, model_id=selected_model, stream=False)
+            payload = _extract_json_object(raw or "")
+            if payload is None:
+                active_prompt = (
+                    "[schema:tool_loop_v2]\n"
+                    + schema_doc
+                    + "\nYour previous response was not valid JSON. Re-emit ONLY valid JSON matching the schema.\n\n"
+                    + (raw or "")[:2000]
+                )
+                continue
+            ok, err = _validate_tool_loop_v2_payload(payload)
+            if ok:
+                break
+            active_prompt = (
                 "[schema:tool_loop_v2]\n"
                 + schema_doc
                 + f"\nYour JSON failed validation: {err}. Fix it and re-emit ONLY valid JSON.\n\n"
                 + json.dumps(payload, indent=2)[:2000]
             )
-            raw2 = session.send(prompt=repair, stream=False)
-            payload2 = _extract_json_object(raw2 or "")
-            if payload2 is not None:
-                payload = payload2
-            ok, err = _validate_tool_loop_v2_payload(payload)
-            if not ok:
-                history.append(f"[schema_error] {err}")
-                last_payload = payload
-                continue
+            payload = None
+
+        if payload is None or not ok:
+            history.append(f"[schema_error] {err or 'Model did not return valid JSON.'}")
+            last_payload = payload
+            continue
 
         last_payload = payload
         final = (payload.get("final") or "").strip()
         needs_terminal = bool(payload.get("needs_terminal"))
         cmd_items = payload.get("commands") or []
         chk_items = payload.get("checks") or []
+        output_request = payload.get("output_request") or []
 
         commands: list[dict] = []
         for item in cmd_items:
@@ -1210,6 +1465,22 @@ def _run_tool_loop_v2(
             c = _coerce_command_item(item)
             if c:
                 checks.append(c)
+
+        if output_request:
+            delivered = 0
+            for req in output_request:
+                key = str(req.get("key") or "").strip()
+                idx = int(req.get("chunk_index") or 0)
+                chunks = output_cache.get(key) or []
+                if 0 <= idx < len(chunks):
+                    history.append(f"[output_chunk] key={key} index={idx} total={len(chunks)}\n{chunks[idx]}")
+                    delivered += 1
+                else:
+                    history.append(f"[output_chunk_missing] key={key} index={idx} total={len(chunks)}")
+            if delivered:
+                history.append("[next] output chunks delivered; propose next commands or finalize.")
+            prev_step_failed = False
+            continue
 
         if final and not commands and not checks and not needs_terminal:
             return final
@@ -1244,11 +1515,17 @@ def _run_tool_loop_v2(
                 log_prefix=f"step{step}_cmd{i}",
             )
 
+            output_text = res.get("output") or ""
             tail = res.get("tail") or ""
             head = res.get("head") or ""
             log_path = res.get("log_path") or ""
             exit_code = res.get("exit_code", 1)
             timed_out = bool(res.get("timed_out"))
+            chunk_key = f"step{step}_cmd{i}"
+            chunks = _chunk_output(output_text)
+            if chunks:
+                output_cache[chunk_key] = chunks
+                output_cursor.setdefault(chunk_key, 0)
 
             history.append(
                 "\n".join(
@@ -1258,6 +1535,7 @@ def _run_tool_loop_v2(
                         f"command: {cmd.get('command')}",
                         f"cwd: {cwd}",
                         f"log: {log_path}",
+                        f"chunk_key: {chunk_key} chunks_total: {len(chunks)}",
                         f"head:\n{head}",
                         f"tail:\n{tail}",
                     ]
@@ -1266,6 +1544,12 @@ def _run_tool_loop_v2(
 
             if timed_out or exit_code != 0:
                 step_failed = True
+                last_error = f"exit={exit_code} timeout={timed_out}"
+                if chunks:
+                    idx = output_cursor.get(chunk_key, 0)
+                    if idx < len(chunks):
+                        history.append(f"[output_chunk] key={chunk_key} index={idx} total={len(chunks)}\n{chunks[idx]}")
+                        output_cursor[chunk_key] = idx + 1
                 break
 
         if not step_failed and checks:
@@ -1288,11 +1572,17 @@ def _run_tool_loop_v2(
                     timeout_s=timeout_s,
                     log_prefix=f"step{step}_chk{j}",
                 )
+                output_text = res.get("output") or ""
                 tail = res.get("tail") or ""
                 head = res.get("head") or ""
                 log_path = res.get("log_path") or ""
                 exit_code = res.get("exit_code", 1)
                 timed_out = bool(res.get("timed_out"))
+                chunk_key = f"step{step}_chk{j}"
+                chunks = _chunk_output(output_text)
+                if chunks:
+                    output_cache[chunk_key] = chunks
+                    output_cursor.setdefault(chunk_key, 0)
                 history.append(
                     "\n".join(
                         [
@@ -1301,6 +1591,7 @@ def _run_tool_loop_v2(
                             f"command: {chk.get('command')}",
                             f"cwd: {cwd}",
                             f"log: {log_path}",
+                            f"chunk_key: {chunk_key} chunks_total: {len(chunks)}",
                             f"head:\n{head}",
                             f"tail:\n{tail}",
                         ]
@@ -1308,14 +1599,23 @@ def _run_tool_loop_v2(
                 )
                 if timed_out or exit_code != 0:
                     step_failed = True
+                    last_error = f"exit={exit_code} timeout={timed_out}"
+                    if chunks:
+                        idx = output_cursor.get(chunk_key, 0)
+                        if idx < len(chunks):
+                            history.append(f"[output_chunk] key={chunk_key} index={idx} total={len(chunks)}\n{chunks[idx]}")
+                            output_cursor[chunk_key] = idx + 1
                     break
 
         if final and not step_failed:
             return final
 
         if step_failed:
+            failure_count += 1
+            prev_step_failed = True
             history.append("[next] previous step failed; propose adjusted commands and re-verify.")
         else:
+            prev_step_failed = False
             history.append("[next] commands ran; propose next batch or finalize if complete.")
 
     tail = "\n\n".join(history[-3:]) if history else ""
@@ -2819,53 +3119,24 @@ def _run_scientific_loop(
     stream_callback,
     usage_tracker,
 ) -> str:
-    # Observe: fixed inspection bundle (empirical evidence)
-    bundle = []
-    for cmd in [
-        "git status -sb",
-        "git log -1 --oneline",
-        "rg -n \"TODO|FIXME|HACK\" -S",
-        "Get-ChildItem -Name" if os.name == "nt" else "ls -1",
-    ]:
-        normalized = _normalize_command(cmd, workdir)
-        code, stdout, stderr = run_command(normalized, cwd=workdir)
-        bundle.append(
-            f"$ {normalized}\n(exit {code})\n{(stdout or '').strip()}\n{(stderr or '').strip()}"
-        )
-    evidence = "\n\n".join(bundle)
-
-    analysis_prompt = (
+    scientific_prompt = (
+        "[scientific_mode]\n"
         "Use the scientific method. Do not speculate. "
-        "Use ONLY the provided empirical evidence. "
-        "Return ONLY JSON with keys:\n"
-        "observations (list of strings),\n"
-        "hypotheses (list of strings),\n"
-        "tests (list of strings),\n"
-        "findings (list of {severity, claim, evidence_cmd, evidence_excerpt, files}),\n"
-        "conclusion (string),\n"
-        "next_steps (list of strings).\n"
-        "Every finding must cite evidence_cmd and evidence_excerpt from the bundle.\n\n"
-        f"User request:\n{prompt}\n\n"
-        f"Evidence bundle:\n{evidence}\n"
+        "If you need evidence, gather it via terminal commands in commands[]. "
+        "Always verify with checks[]. "
+        "Return JSON per the tool_loop_v2 schema.\n\n"
+        f"User request:\n{prompt}\n"
     )
-    usage_tracker.add_input(analysis_prompt)
-    response = _call_with_timeout(
-        session._safe_send,
-        timeout_s=_model_timeout_s(),
-        kwargs={
-            "prompt": analysis_prompt,
-            "stream": stream,
-            "images": images,
-            "evidence_bundle": evidence,
-            "stream_callback": stream_callback,
-        },
+    return _run_tool_loop_v2(
+        session,
+        scientific_prompt,
+        workdir,
+        run_command,
+        images=images,
+        stream=stream,
+        stream_callback=stream_callback,
+        usage_tracker=usage_tracker,
     )
-    if response is None:
-        return "Scientific analysis timed out; retry with a smaller evidence bundle."
-    commands, final = _extract_commands(response)
-    if final:
-        return final
-    return response
 
 
 def _extract_commands(text: str) -> Tuple[List[str], str]:
@@ -2970,7 +3241,14 @@ def _safe_json(text: str):
     for candidate in _extract_json_candidates(text):
         try:
             parsed = _json.loads(candidate)
-            if isinstance(parsed, dict) and ("file_ops" in parsed or "commands" in parsed):
+            if isinstance(parsed, dict) and (
+                "final" in parsed
+                or "commands" in parsed
+                or "needs_terminal" in parsed
+                or "checks" in parsed
+                or "status_updates" in parsed
+                or "conclusion" in parsed
+            ):
                 return parsed
             preferred = parsed
         except Exception:
@@ -2981,7 +3259,14 @@ def _safe_json(text: str):
         end = text.rfind("}")
         if start != -1 and end > start:
             parsed = _json.loads(text[start : end + 1])
-            if isinstance(parsed, dict) and ("file_ops" in parsed or "commands" in parsed):
+            if isinstance(parsed, dict) and (
+                "final" in parsed
+                or "commands" in parsed
+                or "needs_terminal" in parsed
+                or "checks" in parsed
+                or "status_updates" in parsed
+                or "conclusion" in parsed
+            ):
                 return parsed
             preferred = preferred or parsed
     except Exception:
@@ -3315,16 +3600,13 @@ def _render_json_response(text: str) -> str:
             if commands:
                 lines.append("\nCommands:")
                 for cmd in commands:
-                    lines.append(f"- {cmd}")
-            ops = payload.get("file_ops") or payload.get("actions") or []
-            if ops:
-                lines.append("\nFile ops:")
-                for op in ops:
-                    if not isinstance(op, dict):
-                        continue
-                    path = op.get("path") or ""
-                    action = op.get("action") or "write"
-                    lines.append(f"- {action}: {path}")
+                    if isinstance(cmd, dict):
+                        cmd_text = cmd.get("command") or ""
+                        purpose = cmd.get("purpose") or ""
+                        label = f"{purpose}: {cmd_text}" if purpose else cmd_text
+                        lines.append(f"- {label}".strip())
+                    else:
+                        lines.append(f"- {cmd}")
         final = str(payload.get("final") or "").strip()
         if final:
             lines.append("\n" + final if lines else final)
@@ -3332,23 +3614,20 @@ def _render_json_response(text: str) -> str:
     if "final" in payload:
         return str(payload.get("final") or "")
     # Tool-loop JSON without final should not be printed verbatim.
-    if "commands" in payload or "file_ops" in payload or "actions" in payload:
+    if "commands" in payload:
         if os.getenv("C0D3R_SHOW_MODEL_ACTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}:
             lines = []
             commands = payload.get("commands") or []
             if commands:
                 lines.append("Commands:")
                 for cmd in commands:
-                    lines.append(f"- {cmd}")
-            ops = payload.get("file_ops") or payload.get("actions") or []
-            if ops:
-                lines.append("\nFile ops:")
-                for op in ops:
-                    if not isinstance(op, dict):
-                        continue
-                    path = op.get("path") or ""
-                    action = op.get("action") or "write"
-                    lines.append(f"- {action}: {path}")
+                    if isinstance(cmd, dict):
+                        cmd_text = cmd.get("command") or ""
+                        purpose = cmd.get("purpose") or ""
+                        label = f"{purpose}: {cmd_text}" if purpose else cmd_text
+                        lines.append(f"- {label}".strip())
+                    else:
+                        lines.append(f"- {cmd}")
             return "\n".join([l for l in lines if l]).strip()
         return ""
     if "conclusion" in payload:
@@ -3371,6 +3650,64 @@ def _render_json_response(text: str) -> str:
                 lines.append(f"- {step}")
         return "\n".join([l for l in lines if l]).strip()
     return ""
+
+
+def _universal_response_schema() -> str:
+    return (
+        "Return ONLY JSON with keys: status_updates (list of short strings), "
+        "needs_terminal (bool), commands (list), checks (list), output_request (list), final (string). "
+        "commands/checks entries must be objects with {purpose, shell, cwd, timeout_s, command}. "
+        "If no terminal actions are needed, set needs_terminal=false and commands/checks to [] and output_request to []. "
+        "No markdown or extra text."
+    )
+
+
+def _validate_universal_payload(payload: dict) -> tuple[bool, str]:
+    if not isinstance(payload, dict):
+        return False, "payload is not an object"
+    if "final" not in payload:
+        return False, "missing key: final"
+    if "needs_terminal" not in payload or not isinstance(payload.get("needs_terminal"), bool):
+        return False, "missing or invalid key: needs_terminal"
+    if "commands" not in payload or not isinstance(payload.get("commands"), list):
+        return False, "missing or invalid key: commands"
+    if "checks" not in payload or not isinstance(payload.get("checks"), list):
+        return False, "missing or invalid key: checks"
+    output_request = payload.get("output_request")
+    if output_request is not None and not isinstance(output_request, list):
+        return False, "output_request must be a list"
+    return True, ""
+
+
+def _ensure_json_response(session: C0d3rSession, prompt: str, response: str, *, max_attempts: int = 3) -> str:
+    payload = _safe_json(response)
+    if isinstance(payload, dict):
+        ok, _ = _validate_universal_payload(payload)
+        if ok:
+            return response
+    max_attempts = min(10, int(os.getenv("C0D3R_JSON_MAX_ATTEMPTS", str(max_attempts)) or str(max_attempts)))
+    system = _universal_response_schema()
+    attempt = 0
+    last = response
+    while attempt < max_attempts:
+        attempt += 1
+        repair_prompt = (
+            system
+            + "\nYour previous response was not valid JSON. Re-emit ONLY valid JSON matching the schema.\n\n"
+            + (last or "")[:2000]
+            + "\n\nUser request:\n"
+            + prompt
+        )
+        try:
+            last = session.send(prompt=repair_prompt, stream=False)
+        except Exception:
+            break
+        payload = _safe_json(last)
+        if isinstance(payload, dict):
+            ok, _ = _validate_universal_payload(payload)
+            if ok:
+                return last
+    return response
 
 
 def _extract_plaintext_response(text: str) -> str:
@@ -3607,12 +3944,12 @@ def _validate_action_schema(text: str) -> bool:
     if not isinstance(payload, dict):
         return False
     cmds = payload.get("commands")
-    ops = payload.get("file_ops") or payload.get("actions")
-    if cmds is None and ops is None:
+    needs_terminal = payload.get("needs_terminal")
+    if cmds is None:
         return False
     if cmds is not None and not isinstance(cmds, list):
         return False
-    if ops is not None and not isinstance(ops, list):
+    if needs_terminal is not None and not isinstance(needs_terminal, bool):
         return False
     return True
 
@@ -4005,20 +4342,18 @@ def _critical_thinking_checkpoint(session: C0d3rSession, prompt: str, history: L
 
 
 def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) -> str:
-    # If response is only text and task is actionable, re-ask for commands/file_ops.
+    # If response is only text and task is actionable, re-ask for commands.
     if not response:
         return response
     if _validate_action_schema(response):
         return response
     if _extract_commands(response)[0]:
         return response
-    if _extract_file_ops_from_text(response):
-        return response
     if "schema_validation_failed" in response:
         system = (
-            "Return ONLY valid JSON with keys: commands (list of strings), final (string or empty), "
-            "file_ops (list of {path, action, content}). No extra text. "
-            "Actions can be write|append|delete|mkdir|patch|replace|move|copy."
+            "Return ONLY valid JSON with keys: needs_terminal (bool), commands (list), checks (list), final (string or empty). "
+            "commands/checks entries must be objects with {purpose, shell, cwd, timeout_s, command}. "
+            "No extra text."
         )
         try:
             raw = session.send(prompt=prompt, stream=False, system=system)
@@ -4026,14 +4361,12 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         except Exception:
             return response
     if _looks_like_code(response):
-        # Force file targets for code output.
+        # Force command-based file writes for code output.
         system = (
-            "You returned code without file targets. Return ONLY JSON with keys: "
-            "commands (list of strings), final (string or empty), "
-            "file_ops (list of {path, action, content}). "
-            "Actions can be write|append|delete|mkdir|patch|replace|move|copy. "
-            "If you output code, it MUST be in file_ops with explicit paths. "
-            "Include sources (APA format list) for any write/append/patch/replace."
+            "You returned code without terminal commands. Return ONLY JSON with keys: "
+            "needs_terminal (bool), commands (list), checks (list), final (string or empty). "
+            "Use shell commands to create/update files (e.g., PowerShell Set-Content / Add-Content, bash cat > file). "
+            "No file_ops. No extra text."
         )
         try:
             raw = session.send(prompt=prompt, stream=False, system=system)
@@ -4041,11 +4374,9 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         except Exception:
             return response
     system = (
-        "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
-        "file_ops (list of {path, action, content}). "
-        "Actions can be write|append|delete|mkdir|patch|replace|move|copy. "
-        "Include sources (APA format list) for any write/append/patch/replace. "
-        "You MUST provide commands or file_ops for actionable tasks."
+        "Return ONLY JSON with keys: needs_terminal (bool), commands (list), checks (list), final (string or empty). "
+        "commands/checks entries must be objects with {purpose, shell, cwd, timeout_s, command}. "
+        "No file_ops. You MUST provide commands for actionable tasks."
     )
     try:
         raw = session.send(prompt=prompt, stream=False, system=system)
@@ -4063,16 +4394,14 @@ def _ensure_actionable_response(
     max_retries: int = 2,
 ) -> str:
     """
-    Ensure actionable tasks produce commands or file_ops.
-    If code appears without file targets, force file_ops.
+    Ensure actionable tasks produce commands.
+    If code appears without terminal commands, force command-based output.
     """
     attempt = 0
     while True:
         if _validate_action_schema(response):
             return response
         if _extract_commands(response)[0]:
-            return response
-        if _extract_file_ops_from_text(response):
             return response
         if not actionable:
             return response
@@ -4777,13 +5106,22 @@ def _run_repl(
             context = f"{probe_block}\n{context}" if context else probe_block
         except Exception:
             pass
+        env_block = _environment_context_block(workdir)
+        if env_block:
+            context = f"{env_block}\n{context}" if context else env_block
+        summary_text = _load_rolling_summary()
+        if summary_text and "[rolling_summary]" not in context:
+            context = f"[rolling_summary]\n{summary_text}\n{context}" if context else f"[rolling_summary]\n{summary_text}"
+            key_points = _key_points_block(summary_text)
+            if key_points:
+                context = f"{key_points}\n{context}" if context else key_points
         # Normalize user prompt (strip injected context if any).
         user_prompt = user_prompt_inlined or _strip_context_block(prompt)
         simple_task = _is_simple_file_task(user_prompt)
         # Existing project gate: scan context before edits (parallelized).
         scan_future = None
         scan_executor = None
-        if _is_existing_project(workdir) and not _is_workspace_root(workdir) and not _is_projects_root(workdir) and not qa_or_convo and not simple_task:
+        if _auto_context_commands_enabled() and _is_existing_project(workdir) and not _is_workspace_root(workdir) and not _is_projects_root(workdir) and not qa_or_convo and not simple_task:
             scan_path = _context_scan_path(workdir)
             if not scan_path.exists() or not _scan_is_fresh(workdir, run_command, max_age_minutes=10):
                 _emit_live("context: scanning existing project before edits")
@@ -4807,16 +5145,17 @@ def _run_repl(
                     scan_executor.shutdown(wait=True)
         system = (
             "Role: You are a senior software engineer. The user is a project manager. "
-            "Return ONLY JSON with keys: status_updates (list of short strings) and final (string). "
             "Provide brief, concrete status updates before the final response. "
-            "Avoid private chain-of-thought; summarize reasoning at a high level."
+            "Avoid private chain-of-thought; summarize reasoning at a high level. "
+            + _universal_response_schema()
         )
-        full_prompt = f"{context}\n\nUser:\n{user_prompt}"
+        intent = (
+            "Respond to the user request. If terminal actions are required, set needs_terminal=true and provide commands/checks. "
+            "Otherwise set needs_terminal=false and keep commands/checks empty."
+        )
+        full_prompt = f"{context}\n\n[objective]\n{user_prompt}\n\n[intent]\n{intent}\n\nUser:\n{user_prompt}"
         if force_direct:
-            system = (
-                "Answer directly in plain text. "
-                "Be concise, accurate, and follow the user's requested format."
-            )
+            system = _universal_response_schema()
         usage.add_input(full_prompt)
         print("[status] Planning...")
         print("[status] Executing...")
@@ -4908,8 +5247,9 @@ def _run_repl(
                     convo_prompt = f"{convo_prompt}{matrix_hint}"
                 if qa_or_convo:
                     system = (
-                        "Answer directly in plain text. Use any provided [file_contents] blocks; "
-                        "do NOT request filesystem access. Follow the user's requested format."
+                        "Use any provided [file_contents] blocks; do NOT request filesystem access. "
+                        "Set needs_terminal=false and keep commands/checks empty. "
+                        + _universal_response_schema()
                     )
                 convo_timeout = float(os.getenv("C0D3R_CONVO_TIMEOUT_S", "20") or "20")
                 if qa_or_convo:
@@ -4936,6 +5276,8 @@ def _run_repl(
                 _emit_live("repl: direct model call complete")
         finally:
             controller.stop()
+        if mode == "direct":
+            response = _ensure_json_response(session, user_prompt, response or "")
         if mode == "direct" and _is_actionable_prompt(prompt) and not force_direct:
             response = _enforce_actionability(session, full_prompt, response or "")
         rendered = _render_json_response(response)
@@ -4957,61 +5299,9 @@ def _run_repl(
             usage.add_output(response or "")
             if header:
                 header.update()
-        # Apply file ops from any mode (direct/scientific/tool-loop) if present.
-        file_ops = _extract_file_ops_from_text(response or "")
-        if _requires_new_projects_dir(user_prompt) and file_ops:
-            file_ops, dropped = _strip_runtime_ops(file_ops)
-            if dropped:
-                _emit_live(f"executor: dropped {dropped} runtime-only file ops for new project")
-        if file_ops:
-            _emit_live(f"executor: applying {len(file_ops)} file ops from response")
-            base_root = _ensure_project_root(user_prompt, workdir) if _requires_new_projects_dir(user_prompt) else workdir
-            if _requires_new_projects_dir(user_prompt) and base_root is None:
-                base_root = (workdir / _slugify_project_name(user_prompt)).resolve()
-            _trace_event({
-                "event": "repl.file_ops",
-                "count": len(file_ops),
-                "base_root": str(base_root),
-                "prompt_preview": user_prompt[:200],
-            })
-            if _requires_new_projects_dir(user_prompt):
-                _ensure_root_dir(Path(base_root) if base_root else None)
-            applied = _apply_file_ops(file_ops, workdir, base_root=base_root)
-            for path in applied:
-                _emit_live(f"executor: wrote {path}")
-            if not applied:
-                _emit_live("executor: file_ops provided but none applied (validation/paths)")
-                if _LAST_FILE_OPS_ERRORS:
-                    _emit_live("executor: last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
-                tail = _tail_executor_log()
-                if tail:
-                    _emit_live("executor.log tail:\n" + tail)
-            if _microtest_enabled() and applied:
-                py_targets = [p for p in applied if str(p).endswith(".py") and "/tests/" not in str(p).replace("\\", "/")]
-                if py_targets:
-                    _emit_live(f"microtests: running on {len(py_targets)} files")
-                    ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
-                    if not ok:
-                        _emit_live("microtests: failed; attempting remediation")
-                        fix_prompt = (
-                            "Microtests failed. Provide file_ops or commands to fix errors, then re-run microtests. "
-                            "Return ONLY JSON with commands and file_ops.\n"
-                            f"Errors:\n{output}"
-                        )
-                        response = session.send(prompt=fix_prompt, stream=False)
-                        response = _enforce_actionability(session, fix_prompt, response or "")
-                        retry_ops = _extract_file_ops_from_text(response or "")
-                        if retry_ops:
-                            _apply_file_ops(retry_ops, workdir)
-                        commands, _ = _extract_commands(response)
-                        for cmd in commands[:5]:
-                            if cmd:
-                                run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
-                        ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
-                        if not ok:
-                            _emit_live("microtests: still failing after remediation")
-            if applied:
-                _update_system_map(workdir)
+        # File ops are ignored in commands-only mode.
+        if _extract_file_ops_from_text(response or ""):
+            _emit_live("executor: file_ops ignored (commands-only mode). Use terminal commands instead.")
         # update budget usage
         try:
             from services.bedrock_pricing import estimate_cost
