@@ -18,6 +18,7 @@ class MemoryEntry:
     context: str = ""
     workdir: str = ""
     model_id: str = ""
+    session_id: str = ""
 
 
 class ConversationMemory:
@@ -33,6 +34,7 @@ class ConversationMemory:
         context: str | None = None,
         workdir: str | None = None,
         model_id: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         with self.path.open("a", encoding="utf-8") as fh:
@@ -45,6 +47,7 @@ class ConversationMemory:
                         "context": context or "",
                         "workdir": workdir or "",
                         "model_id": model_id or "",
+                        "session_id": session_id or "",
                     }
                 )
                 + "\n"
@@ -57,12 +60,13 @@ class ConversationMemory:
                         "ts": ts,
                         "workdir": workdir or "",
                         "model_id": model_id or "",
+                        "session_id": session_id or "",
                     }
                 )
                 + "\n"
             )
 
-    def load(self, limit: int = 40) -> List[MemoryEntry]:
+    def load(self, limit: int = 40, *, session_id: str | None = None) -> List[MemoryEntry]:
         if not self.path.exists():
             return []
         lines = self.path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -70,14 +74,26 @@ class ConversationMemory:
         for line in lines[-limit:]:
             try:
                 payload = json.loads(line)
+                entry = MemoryEntry(
+                    role=payload.get("role", ""),
+                    content=payload.get("content", ""),
+                    ts=payload.get("ts", ""),
+                    context=payload.get("context", ""),
+                    workdir=payload.get("workdir", ""),
+                    model_id=payload.get("model_id", ""),
+                    session_id=payload.get("session_id", ""),
+                )
+                if session_id and entry.session_id != session_id:
+                    continue
                 entries.append(
                     MemoryEntry(
-                        role=payload.get("role", ""),
-                        content=payload.get("content", ""),
-                        ts=payload.get("ts", ""),
-                        context=payload.get("context", ""),
-                        workdir=payload.get("workdir", ""),
-                        model_id=payload.get("model_id", ""),
+                        role=entry.role,
+                        content=entry.content,
+                        ts=entry.ts,
+                        context=entry.context,
+                        workdir=entry.workdir,
+                        model_id=entry.model_id,
+                        session_id=entry.session_id,
                     )
                 )
             except Exception:
@@ -100,6 +116,7 @@ class ConversationMemory:
                         context=payload.get("context", ""),
                         workdir=payload.get("workdir", ""),
                         model_id=payload.get("model_id", ""),
+                        session_id=payload.get("session_id", ""),
                     )
                 )
             except Exception:
@@ -117,7 +134,14 @@ class ConversationMemory:
             return summary_text, key_points
         return str(summary or ""), []
 
-    def build_context(self, summary, *, max_chars: int = 12000, context_limit: int = 1400) -> str:
+    def build_context(
+        self,
+        summary,
+        *,
+        max_chars: int = 12000,
+        context_limit: int = 1400,
+        session_id: str | None = None,
+    ) -> str:
         summary_text, key_points = self._unpack_summary(summary)
         parts: List[str] = []
         if summary_text.strip():
@@ -131,7 +155,7 @@ class ConversationMemory:
         if used >= budget:
             return "\n\n".join(parts)[:budget]
 
-        history = self.load(limit=200)
+        history = self.load(limit=200, session_id=session_id)
         if not history:
             return "\n\n".join(parts)
 

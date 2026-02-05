@@ -774,7 +774,7 @@ def _environment_context_block(workdir: Path) -> str:
     return "\n".join(lines)
 
 
-def _load_summary_bundle() -> dict:
+def _load_summary_bundle(session_id: str | None = None) -> dict:
     summary_json = _runtime_path("summary.json")
     summary_txt = _runtime_path("summary.txt")
     def _trim_200_words(text: str) -> str:
@@ -786,6 +786,12 @@ def _load_summary_bundle() -> dict:
     if summary_json.exists():
         try:
             payload = json.loads(summary_json.read_text(encoding="utf-8", errors="ignore"))
+            stored_session = str(payload.get("session_id") or "").strip()
+            strict = os.getenv("C0D3R_SUMMARY_SESSION_STRICT", "1").strip().lower() not in {"0", "false", "no", "off"}
+            if session_id and stored_session and stored_session != session_id:
+                return {"summary": "", "key_points": []}
+            if session_id and not stored_session and strict:
+                return {"summary": "", "key_points": []}
             summary = str(payload.get("summary") or "").strip()
             summary = _trim_200_words(summary)
             points = payload.get("key_points") or []
@@ -806,7 +812,7 @@ def _load_summary_bundle() -> dict:
     return {"summary": summary, "key_points": points}
 
 
-def _save_summary_bundle(bundle: dict) -> None:
+def _save_summary_bundle(bundle: dict, *, session_id: str | None = None) -> None:
     summary_json = _runtime_path("summary.json")
     summary_txt = _runtime_path("summary.txt")
     summary_json.parent.mkdir(parents=True, exist_ok=True)
@@ -820,7 +826,7 @@ def _save_summary_bundle(bundle: dict) -> None:
     points = [str(p).strip() for p in points if str(p).strip()]
     if len(points) > 10:
         points = points[:10]
-    payload = {"summary": summary, "key_points": points}
+    payload = {"summary": summary, "key_points": points, "session_id": session_id or ""}
     try:
         summary_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception:
@@ -831,8 +837,8 @@ def _save_summary_bundle(bundle: dict) -> None:
         pass
 
 
-def _load_rolling_summary(max_chars: int = 2000) -> str:
-    bundle = _load_summary_bundle()
+def _load_rolling_summary(max_chars: int = 2000, *, session_id: str | None = None) -> str:
+    bundle = _load_summary_bundle(session_id=session_id)
     summary = str(bundle.get("summary") or "").strip()
     if not summary:
         return ""
@@ -910,11 +916,27 @@ def _detect_recall_trigger(prompt: str) -> bool:
     triggers = (
         "remember", "recall", "do you remember", "when we were",
         "that time", "earlier", "previous", "last time", "before",
+        "last asked", "last question", "what did i last", "what was the last",
     )
     return any(t in lower for t in triggers)
 
 
-def _decide_long_term_recall(session: "C0d3rSession", prompt: str, summary_bundle: dict) -> tuple[bool, str]:
+def _is_recent_recall(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    recent_markers = ("last asked", "last question", "what did i last", "what was the last", "previous question")
+    if any(m in lower for m in recent_markers):
+        return True
+    if "last" in lower and "ask" in lower:
+        return True
+    return False
+
+
+def _decide_long_term_recall(
+    session: "C0d3rSession",
+    prompt: str,
+    summary_bundle: dict,
+    recent_snippet: str,
+) -> tuple[bool, str]:
     if os.getenv("C0D3R_LTM_MODEL", "1").strip().lower() in {"0", "false", "no", "off"}:
         return False, ""
     summary_text = str(summary_bundle.get("summary") or "").strip()
@@ -927,6 +949,7 @@ def _decide_long_term_recall(session: "C0d3rSession", prompt: str, summary_bundl
     prompt_block = (
         f"Short-term summary (<=200 words):\n{summary_text}\n\n"
         f"Key points:\n{key_points}\n\n"
+        f"Recent transcript snippet:\n{recent_snippet}\n\n"
         f"User prompt:\n{prompt}\n"
     )
     try:
@@ -943,15 +966,19 @@ def _decide_long_term_recall(session: "C0d3rSession", prompt: str, summary_bundl
     return needs, query
 
 
-def _maybe_long_term_recall(session, memory, prompt: str, summary_bundle: dict) -> list[str]:
+def _maybe_long_term_recall(session, memory, prompt: str, summary_bundle: dict, *, session_id: str | None = None) -> list[str]:
     recall_trigger = _detect_recall_trigger(prompt)
+    if _is_recent_recall(prompt):
+        return []
     short_hit = _short_term_matches(prompt, summary_bundle)
+    recent_entries = memory.load(limit=12, session_id=session_id)
+    recent_snippet = "\n".join(f"{e.role}: {e.content[:200]}" for e in recent_entries)
     if not recall_trigger and short_hit:
         return []
     needs_long_term = recall_trigger or not short_hit
     query = prompt
     if needs_long_term:
-        model_needs, model_query = _decide_long_term_recall(session, prompt, summary_bundle)
+        model_needs, model_query = _decide_long_term_recall(session, prompt, summary_bundle, recent_snippet)
         if model_query:
             query = model_query
         if not model_needs and not recall_trigger and short_hit:
@@ -1628,7 +1655,8 @@ def _run_tool_loop_v2(
     prev_step_failed = False
     output_cache: dict[str, list[str]] = {}
     output_cursor: dict[str, int] = {}
-    summary_bundle = _load_summary_bundle()
+    session_id = getattr(session, "session_id", "") if session else ""
+    summary_bundle = _load_summary_bundle(session_id=session_id)
     rolling_summary = str(summary_bundle.get("summary") or "").strip()
     key_points_block = _key_points_block(summary_bundle.get("key_points") or rolling_summary) if rolling_summary or summary_bundle.get("key_points") else ""
     user_notes: list[str] = []
@@ -4135,7 +4163,8 @@ def _run_repl(
     from services.conversation_memory import ConversationMemory
 
     memory = ConversationMemory(_runtime_path("conversation.jsonl"))
-    summary_bundle = _load_summary_bundle()
+    session_id = getattr(session, "session_id", "") if session else ""
+    summary_bundle = _load_summary_bundle(session_id=session_id)
     pending = initial_prompt
     single_shot = initial_prompt is not None and not sys.stdin.isatty()
     plan = plan or {}
@@ -4215,7 +4244,7 @@ def _run_repl(
         system_context_block = ""
         if not minimal:
             max_chars = int(os.getenv("C0D3R_CONTEXT_CHAR_BUDGET", "12000") or "12000")
-            context = memory.build_context(summary_bundle, max_chars=max_chars)
+            context = memory.build_context(summary_bundle, max_chars=max_chars, session_id=session_id)
         try:
             from services.system_probe import system_probe_context
             probe_block = system_probe_context(workdir)
@@ -4244,7 +4273,7 @@ def _run_repl(
                 except Exception:
                     scan_future = None
         if not minimal:
-            recall_hits = _maybe_long_term_recall(session, memory, user_prompt, summary_bundle)
+            recall_hits = _maybe_long_term_recall(session, memory, user_prompt, summary_bundle, session_id=session_id)
             if recall_hits:
                 context = context + "\n\n[long_term_recall]\n" + "\n".join(recall_hits)
         if scan_future:
@@ -4392,16 +4421,17 @@ def _run_repl(
             else:
                 return 0
         if not minimal and sys.stdin.isatty() and initial_prompt is None:
-            assistant_text = rendered or _extract_plaintext_response(response) or response
+            assistant_text = _extract_plaintext_response(response) or rendered or response
             memory.append(
                 user_prompt,
                 assistant_text,
                 context=system_context_block,
                 workdir=str(workdir),
                 model_id=usage.model_id,
+                session_id=session_id,
             )
             summary_bundle = memory.update_summary(summary_bundle, user_prompt, assistant_text, session)
-            _save_summary_bundle(summary_bundle)
+            _save_summary_bundle(summary_bundle, session_id=session_id)
         if oneshot:
             return 0
 
