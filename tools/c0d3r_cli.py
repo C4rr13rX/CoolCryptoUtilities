@@ -168,6 +168,8 @@ class TerminalUI:
         self._use_textual = False
         self._use_rich = False
         self._use_prompt_toolkit = False
+        self.backend = "none"
+        self.backend_error = ""
         self._textual_app = None
         self._textual_thread: threading.Thread | None = None
         self._live = None
@@ -214,6 +216,10 @@ class TerminalUI:
                             self._header.update(self.ui.header.render_text())
                         except Exception:
                             pass
+                        try:
+                            self.set_focus(self._footer)
+                        except Exception:
+                            pass
                         self.set_interval(0.5, self._refresh_header)
 
                     def _refresh_header(self) -> None:
@@ -246,9 +252,11 @@ class TerminalUI:
                 self._use_textual = True
                 self._use_prompt_toolkit = False
                 self._use_rich = False
+                self.backend = "textual"
                 return
-            except Exception:
+            except Exception as exc:
                 self._use_textual = False
+                self.backend_error = f"textual failed: {exc}"
                 backend = ""
         if backend in {"", "prompt_toolkit"}:
             try:
@@ -304,9 +312,12 @@ class TerminalUI:
                 self._pt_input = input_box
                 self._use_prompt_toolkit = True
                 self._use_rich = False
+                self.backend = "prompt_toolkit"
                 return
-            except Exception:
+            except Exception as exc:
                 self._use_prompt_toolkit = False
+                if not self.backend_error:
+                    self.backend_error = f"prompt_toolkit failed: {exc}"
         if backend in {"", "rich"}:
             try:
                 from rich.console import Console
@@ -322,8 +333,11 @@ class TerminalUI:
                 )
                 self._live = Live(self._layout, console=self._console, refresh_per_second=8, transient=False)
                 self._use_rich = True
+                self.backend = "rich"
             except Exception:
                 self._use_rich = False
+                if not self.backend_error:
+                    self.backend_error = "no TUI backend available"
 
     def start(self) -> None:
         self._running = True
@@ -341,6 +355,12 @@ class TerminalUI:
         self._render_thread = threading.Thread(target=self._render_loop, daemon=True)
         self._render_thread.start()
         self.render()
+        try:
+            _emit_live(f"tui: backend={self.backend}")
+            if self.backend_error and self.backend != "textual":
+                _emit_live(f"tui: backend_error={self.backend_error}")
+        except Exception:
+            pass
 
     def stop(self) -> None:
         self._running = False
