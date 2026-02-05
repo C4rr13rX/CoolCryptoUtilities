@@ -11,6 +11,7 @@ import queue
 import subprocess
 import urllib.request
 import hashlib
+import shutil
 from pathlib import Path
 from typing import List, Tuple
 import json
@@ -425,6 +426,9 @@ def main(argv: List[str] | None = None) -> int:
     os.environ.setdefault("PYTHONWARNINGS", "ignore")
     # Default to full verbosity unless user disables it.
     os.environ.setdefault("C0D3R_VERBOSE_MODEL_OUTPUT", "1")
+    # Defaults tuned for "executor_v2": model decides terminal commands; python file_ops are opt-in.
+    os.environ.setdefault("C0D3R_EXECUTOR_V2", "1")
+    os.environ.setdefault("C0D3R_ENABLE_FILE_OPS", "0")
     os.environ.setdefault("C0D3R_BEDROCK_LIVE", "1")
     os.environ.setdefault("C0D3R_BEDROCK_STREAM", "1")
     from services.env_loader import EnvLoader
@@ -815,6 +819,510 @@ def _decide_simple_task(session: C0d3rSession, prompt: str) -> bool:
         return False
 
 
+
+# ----------------------------
+# Tool loop v2 (model-driven executor)
+# ----------------------------
+
+def _tool_loop_v2_enabled() -> bool:
+    """Enable the simplified, model-driven executor loop.
+
+    v2 disables direct python file_ops writes by default and expects the model
+    to express *all* filesystem changes as terminal commands.
+    """
+    return os.getenv("C0D3R_EXECUTOR_V2", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _file_ops_enabled() -> bool:
+    return os.getenv("C0D3R_ENABLE_FILE_OPS", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ui_write(line: str) -> None:
+    """Write a line to the interactive UI if present, else stdout."""
+    try:
+        if _UI_MANAGER:
+            _UI_MANAGER.write_line(line.rstrip("\n"))
+            return
+    except Exception:
+        pass
+    print(line, end="" if line.endswith("\n") else "\n")
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
+def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
+    """Wrap a command string for the requested shell in a cross-platform way."""
+    shell = (shell or "auto").strip().lower()
+    is_windows = os.name == "nt" or sys.platform.startswith("win")
+    if shell == "auto":
+        shell = "powershell" if is_windows else "bash"
+    if shell in {"pwsh", "powershell"}:
+        exe = "pwsh" if shutil.which("pwsh") else "powershell"
+        return [exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
+    if shell == "cmd":
+        return ["cmd", "/c", command]
+    if shell in {"bash", "sh"}:
+        exe = "bash" if shell == "bash" else "sh"
+        return [exe, "-lc", command]
+    if shell == "python":
+        return [sys.executable, "-c", command]
+    if is_windows:
+        return ["cmd", "/c", command]
+    return ["bash", "-lc", command]
+
+
+def _stream_subprocess(
+    *,
+    command: str,
+    cwd: Path,
+    shell: str = "auto",
+    timeout_s: float | None = None,
+    log_prefix: str = "cmd",
+) -> dict:
+    """Run a command with streamed output + capture."""
+    cwd = Path(cwd).resolve()
+    timeout_s = float(timeout_s) if timeout_s is not None else float(os.getenv("C0D3R_CMD_TIMEOUT_S", "180") or "180")
+    out_dir = _runtime_path("command_outputs")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Deterministic directory change helper.
+    if command.strip().lower().startswith("::cd "):
+        new_dir = command.split(" ", 1)[1].strip().strip('"').strip("'")
+        target = (cwd / new_dir).resolve() if not Path(new_dir).is_absolute() else Path(new_dir).resolve()
+        ok = target.exists() and target.is_dir()
+        msg = f"[cd] {'OK' if ok else 'FAIL'} -> {target}"
+        _ui_write(msg + "\n")
+        return {
+            "exit_code": 0 if ok else 1,
+            "duration_s": 0.0,
+            "output": msg,
+            "head": msg,
+            "tail": msg,
+            "log_path": "",
+            "timed_out": False,
+            "cwd_after": str(target) if ok else str(cwd),
+        }
+
+    args = _wrap_command_for_shell(command, shell)
+    started = time.time()
+    timed_out = False
+    q: "queue.Queue[str]" = queue.Queue()
+    lines: list[str] = []
+
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    digest = hashlib.sha256((str(cwd) + "\n" + shell + "\n" + command).encode("utf-8", errors="ignore")).hexdigest()[:12]
+    log_path = out_dir / f"{log_prefix}_{stamp}_{digest}.log"
+
+    def _reader_thread(proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                q.put(line)
+        except Exception as e:
+            q.put(f"[stream-error] {e}\n")
+        finally:
+            q.put("")  # sentinel
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+    except Exception as e:
+        msg = f"[exec-error] {type(e).__name__}: {e}"
+        _ui_write(msg + "\n")
+        return {
+            "exit_code": 1,
+            "duration_s": 0.0,
+            "output": msg,
+            "head": msg,
+            "tail": msg,
+            "log_path": "",
+            "timed_out": False,
+        }
+
+    t = threading.Thread(target=_reader_thread, args=(proc,), daemon=True)
+    t.start()
+
+    with log_path.open("w", encoding="utf-8", errors="ignore") as lf:
+        while True:
+            if timeout_s and (time.time() - started) > timeout_s and proc.poll() is None:
+                timed_out = True
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                item = q.get(timeout=0.1)
+            except Exception:
+                item = None
+            if item is None:
+                if proc.poll() is not None and not t.is_alive():
+                    break
+                continue
+            if item == "":
+                if proc.poll() is not None:
+                    break
+                continue
+            lines.append(item)
+            lf.write(item)
+            lf.flush()
+            _ui_write(item)
+
+    try:
+        exit_code = int(proc.wait(timeout=5))
+    except Exception:
+        exit_code = int(proc.poll() or 1)
+
+    duration_s = time.time() - started
+    output = "".join(lines)
+    split = output.splitlines()
+    head = "\n".join(split[:20])
+    tail = "\n".join(split[-20:]) if split else ""
+
+    return {
+        "exit_code": exit_code,
+        "duration_s": duration_s,
+        "output": output,
+        "head": head,
+        "tail": tail,
+        "log_path": str(log_path),
+        "timed_out": timed_out,
+    }
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """Best-effort extraction of the first JSON object from a string."""
+    if not text:
+        return None
+    text = text.strip()
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        pass
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I | re.M)
+    if fenced != text:
+        try:
+            obj = json.loads(fenced)
+            return obj if isinstance(obj, dict) else None
+        except Exception:
+            pass
+    start = fenced.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(fenced)):
+        ch = fenced[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                chunk = fenced[start : i + 1]
+                try:
+                    obj = json.loads(chunk)
+                    return obj if isinstance(obj, dict) else None
+                except Exception:
+                    return None
+    return None
+
+
+def _coerce_command_item(item) -> dict | None:
+    if item is None:
+        return None
+    if isinstance(item, str):
+        cmd = item.strip()
+        if not cmd:
+            return None
+        return {"command": cmd, "shell": "auto", "cwd": ".", "timeout_s": None, "purpose": ""}
+    if isinstance(item, dict):
+        cmd = (item.get("command") or item.get("cmd") or item.get("run") or "").strip()
+        if not cmd:
+            return None
+        return {
+            "command": cmd,
+            "shell": (item.get("shell") or item.get("terminal") or item.get("executor") or "auto"),
+            "cwd": item.get("cwd") or ".",
+            "timeout_s": item.get("timeout_s") if item.get("timeout_s") is not None else item.get("timeout") if item.get("timeout") is not None else None,
+            "purpose": item.get("purpose") or item.get("why") or "",
+        }
+    return None
+
+
+def _validate_tool_loop_v2_payload(payload: dict) -> tuple[bool, str]:
+    if not isinstance(payload, dict):
+        return False, "payload is not an object"
+    if "final" not in payload:
+        return False, "missing key: final"
+    if "commands" not in payload:
+        return False, "missing key: commands"
+    commands = payload.get("commands")
+    if commands is None:
+        payload["commands"] = []
+        commands = payload["commands"]
+    if not isinstance(commands, list):
+        return False, "commands must be a list"
+    checks = payload.get("checks")
+    if checks is None:
+        payload["checks"] = []
+    elif not isinstance(checks, list):
+        return False, "checks must be a list"
+    needs_terminal = payload.get("needs_terminal")
+    if needs_terminal is None:
+        payload["needs_terminal"] = bool(commands)
+    elif not isinstance(needs_terminal, bool):
+        return False, "needs_terminal must be boolean"
+    if payload["needs_terminal"] and not commands and not (payload.get("final") or "").strip():
+        return False, "needs_terminal=true but no commands and empty final"
+    return True, ""
+
+
+def _run_tool_loop_v2(
+    session: C0d3rSession,
+    prompt: str,
+    workdir: Path,
+    run_command,  # signature compatibility; v2 executes via subprocess directly
+    *,
+    images: List[str] | None,
+    stream: bool,
+    stream_callback,
+    usage_tracker,
+) -> str:
+    # Preserve the pre-built rolling context (system probe + rolling summary + key points) if present.
+    context_block = ""
+    if "User request:" in prompt:
+        context_block = prompt.split("User request:", 1)[0].strip()
+    elif "User:\n" in prompt:
+        context_block = prompt.split("User:\n", 1)[0].strip()
+    base_request = _tool_loop_base_request(prompt)
+    max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "10") or "10")
+    max_commands_per_step = int(os.getenv("C0D3R_TOOL_MAX_CMDS", "12") or "12")
+    history: list[str] = []
+    last_payload: dict | None = None
+    current_cwd = Path(workdir).resolve()
+
+    def _history_block() -> str:
+        if not history:
+            return ""
+        return "\n\n[recent]\n" + "\n\n".join(history[-6:])
+
+    schema_doc = (
+        "Return ONLY JSON (no markdown) using this schema:\n"
+        "{\n"
+        "  \"needs_terminal\": true|false,\n"
+        "  \"commands\": [\n"
+        "    { \"purpose\": string, \"shell\": \"auto\"|\"powershell\"|\"cmd\"|\"bash\"|\"sh\"|\"python\", \"cwd\": string, \"timeout_s\": number|null, \"command\": string }\n"
+        "  ],\n"
+        "  \"checks\": [ same shape as commands ],\n"
+        "  \"final\": string\n"
+        "}\n"
+        "Rules:\n"
+        "- If you need to read/write/update/delete/unzip files, you MUST do it via terminal commands in commands[].\n"
+        "- Prefer idempotent commands. Avoid creating helper scripts unless absolutely required by the task.\n"
+        "- Always include verification in checks[] (tests, grep, ls, python -m ...), and interpret failures to produce the next command batch.\n"
+        "- If done, set needs_terminal=false, commands=[], checks=[] and put the user-facing answer in final.\n"
+    )
+
+    for step in range(1, max_steps + 1):
+        usage_tracker.set_status("planning", f"executor_v2 step {step}/{max_steps}")
+        _emit_live(f"tool_loop_v2: step {step}/{max_steps} (cwd={current_cwd})")
+
+        sys_info = ""
+        try:
+            from services.system_probe import system_probe_context
+            sys_info = system_probe_context(current_cwd)
+        except Exception:
+            sys_info = f"[system]\nos={os.name} platform={sys.platform} cwd={current_cwd}"
+
+        last_json = ""
+        if last_payload:
+            try:
+                last_json = json.dumps(last_payload, indent=2)[:2000]
+            except Exception:
+                last_json = ""
+
+        tool_prompt = (
+            "[schema:tool_loop_v2]\n"
+            + schema_doc
+            + "\n"
+            + sys_info
+            + ("\n\n[context]\n" + context_block[:6000] if context_block else "")
+            + "\n\n[task]\n"
+            + base_request
+            + (_history_block())
+            + ("\n\n[last_payload]\n" + last_json if last_json else "")
+        )
+
+        raw = session.send(prompt=tool_prompt, stream=False)
+        payload = _extract_json_object(raw or "")
+        if payload is None:
+            repair = (
+                "[schema:tool_loop_v2]\n"
+                + schema_doc
+                + "\nYour previous response was not valid JSON. Re-emit ONLY valid JSON matching the schema.\n\n"
+                + (raw or "")[:2000]
+            )
+            raw2 = session.send(prompt=repair, stream=False)
+            payload = _extract_json_object(raw2 or "")
+        if payload is None:
+            history.append("[parse_error] Model did not return JSON. Provide valid JSON next.")
+            continue
+
+        ok, err = _validate_tool_loop_v2_payload(payload)
+        if not ok:
+            repair = (
+                "[schema:tool_loop_v2]\n"
+                + schema_doc
+                + f"\nYour JSON failed validation: {err}. Fix it and re-emit ONLY valid JSON.\n\n"
+                + json.dumps(payload, indent=2)[:2000]
+            )
+            raw2 = session.send(prompt=repair, stream=False)
+            payload2 = _extract_json_object(raw2 or "")
+            if payload2 is not None:
+                payload = payload2
+            ok, err = _validate_tool_loop_v2_payload(payload)
+            if not ok:
+                history.append(f"[schema_error] {err}")
+                last_payload = payload
+                continue
+
+        last_payload = payload
+        final = (payload.get("final") or "").strip()
+        needs_terminal = bool(payload.get("needs_terminal"))
+        cmd_items = payload.get("commands") or []
+        chk_items = payload.get("checks") or []
+
+        commands: list[dict] = []
+        for item in cmd_items:
+            c = _coerce_command_item(item)
+            if c:
+                commands.append(c)
+        checks: list[dict] = []
+        for item in chk_items:
+            c = _coerce_command_item(item)
+            if c:
+                checks.append(c)
+
+        if final and not commands and not checks and not needs_terminal:
+            return final
+        if final and not commands and not checks and needs_terminal:
+            return final
+
+        if not commands and not checks:
+            history.append("[no_commands] Model returned no commands and no checks. Ask for concrete commands next.")
+            continue
+
+        usage_tracker.set_status("executing", f"executor_v2 running {len(commands)} cmd(s)")
+        step_failed = False
+        ran_any = False
+
+        for i, cmd in enumerate(commands[:max_commands_per_step], start=1):
+            ran_any = True
+            purpose = (cmd.get("purpose") or "").strip()
+            shell = (cmd.get("shell") or "auto").strip()
+            cwd_s = (cmd.get("cwd") or ".").strip()
+            timeout_s = cmd.get("timeout_s")
+            try:
+                cwd = (current_cwd / cwd_s).resolve() if not Path(cwd_s).is_absolute() else Path(cwd_s).resolve()
+            except Exception:
+                cwd = current_cwd
+
+            _ui_write(f"\n[cmd {i}/{min(len(commands), max_commands_per_step)}] {purpose}\n$ {cmd.get('command')}\n")
+            res = _stream_subprocess(
+                command=str(cmd.get("command") or ""),
+                cwd=cwd,
+                shell=shell,
+                timeout_s=timeout_s,
+                log_prefix=f"step{step}_cmd{i}",
+            )
+
+            tail = res.get("tail") or ""
+            head = res.get("head") or ""
+            log_path = res.get("log_path") or ""
+            exit_code = res.get("exit_code", 1)
+            timed_out = bool(res.get("timed_out"))
+
+            history.append(
+                "\n".join(
+                    [
+                        f"[cmd_result] step={step} idx={i} exit={exit_code} timeout={timed_out}",
+                        f"purpose: {purpose}",
+                        f"command: {cmd.get('command')}",
+                        f"cwd: {cwd}",
+                        f"log: {log_path}",
+                        f"head:\n{head}",
+                        f"tail:\n{tail}",
+                    ]
+                )[:4000]
+            )
+
+            if timed_out or exit_code != 0:
+                step_failed = True
+                break
+
+        if not step_failed and checks:
+            usage_tracker.set_status("executing", f"executor_v2 checks ({len(checks)} cmd)")
+            for j, chk in enumerate(checks[:max_commands_per_step], start=1):
+                purpose = (chk.get("purpose") or "check").strip()
+                shell = (chk.get("shell") or "auto").strip()
+                cwd_s = (chk.get("cwd") or ".").strip()
+                timeout_s = chk.get("timeout_s")
+                try:
+                    cwd = (current_cwd / cwd_s).resolve() if not Path(cwd_s).is_absolute() else Path(cwd_s).resolve()
+                except Exception:
+                    cwd = current_cwd
+
+                _ui_write(f"\n[check {j}/{min(len(checks), max_commands_per_step)}] {purpose}\n$ {chk.get('command')}\n")
+                res = _stream_subprocess(
+                    command=str(chk.get('command') or ""),
+                    cwd=cwd,
+                    shell=shell,
+                    timeout_s=timeout_s,
+                    log_prefix=f"step{step}_chk{j}",
+                )
+                tail = res.get("tail") or ""
+                head = res.get("head") or ""
+                log_path = res.get("log_path") or ""
+                exit_code = res.get("exit_code", 1)
+                timed_out = bool(res.get("timed_out"))
+                history.append(
+                    "\n".join(
+                        [
+                            f"[check_result] step={step} idx={j} exit={exit_code} timeout={timed_out}",
+                            f"purpose: {purpose}",
+                            f"command: {chk.get('command')}",
+                            f"cwd: {cwd}",
+                            f"log: {log_path}",
+                            f"head:\n{head}",
+                            f"tail:\n{tail}",
+                        ]
+                    )[:4000]
+                )
+                if timed_out or exit_code != 0:
+                    step_failed = True
+                    break
+
+        if final and not step_failed:
+            return final
+
+        if step_failed:
+            history.append("[next] previous step failed; propose adjusted commands and re-verify.")
+        else:
+            history.append("[next] commands ran; propose next batch or finalize if complete.")
+
+    tail = "\n\n".join(history[-3:]) if history else ""
+    return "I couldn't complete the task within the execution budget.\nLast signals:\n" + tail[-2500:]
+
+
+
 def _run_tool_loop(
     session: C0d3rSession,
     prompt: str,
@@ -826,6 +1334,18 @@ def _run_tool_loop(
     stream_callback,
     usage_tracker,
 ) -> str:
+    if _tool_loop_v2_enabled():
+        return _run_tool_loop_v2(
+            session,
+            prompt,
+            workdir,
+            run_command,
+            images=images,
+            stream=stream,
+            stream_callback=stream_callback,
+            usage_tracker=usage_tracker,
+        )
+
     original_workdir = workdir
     wants_new_project = False
     wrote_project = False
@@ -1002,7 +1522,7 @@ def _run_tool_loop(
                 + (f"Target folder: {local_target} (exists={str(local_target_exists).lower()}). "
                    "If the target does not exist, you MUST include an extraction command to create it.\n"
                    if local_target else "")
-                "If extraction yields a single nested folder, enter it and treat it as the project root.\n"
+                + "If extraction yields a single nested folder, enter it and treat it as the project root.\n"
                 if local_task
                 else ""
             )
@@ -1274,6 +1794,9 @@ def _run_tool_loop(
             max_retries=int(os.getenv("C0D3R_ACTION_RETRIES", "2")),
         )
         file_ops = _extract_file_ops_from_text(response or "")
+        if file_ops and not _file_ops_enabled():
+            _emit_live(f"executor: ignoring {len(file_ops)} file ops (C0D3R_ENABLE_FILE_OPS=0). Use terminal commands instead.")
+            file_ops = []
         if simple_task and not file_ops and not commands:
             if local_task:
                 _emit_live("local_task: forcing commands for filesystem request")
@@ -3443,14 +3966,17 @@ def _readme_present_and_nonempty(root: Path) -> bool:
                 if candidate.read_text(encoding="utf-8", errors="ignore").strip():
                     return True
         return False
+    except Exception:
+        return False
 
 
 def _has_extract_command(commands: list[str]) -> bool:
-    for cmd in commands or []:
-        lower = cmd.lower()
-        if "expand-archive" in lower or "unzip" in lower or "tar " in lower or "7z " in lower:
-            return True
-    return False
+    try:
+        for cmd in commands or []:
+            lower = (cmd or "").lower()
+            if "expand-archive" in lower or "unzip" in lower or "tar " in lower or "7z " in lower:
+                return True
+        return False
     except Exception:
         return False
 
