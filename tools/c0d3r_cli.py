@@ -783,11 +783,11 @@ def _load_summary_bundle(session_id: str | None = None) -> dict:
             return " ".join(words[:200])
         return text
 
+    strict = os.getenv("C0D3R_SUMMARY_SESSION_STRICT", "1").strip().lower() not in {"0", "false", "no", "off"}
     if summary_json.exists():
         try:
             payload = json.loads(summary_json.read_text(encoding="utf-8", errors="ignore"))
             stored_session = str(payload.get("session_id") or "").strip()
-            strict = os.getenv("C0D3R_SUMMARY_SESSION_STRICT", "1").strip().lower() not in {"0", "false", "no", "off"}
             if session_id and stored_session and stored_session != session_id:
                 return {"summary": "", "key_points": []}
             if session_id and not stored_session and strict:
@@ -801,6 +801,8 @@ def _load_summary_bundle(session_id: str | None = None) -> dict:
             return {"summary": summary, "key_points": points}
         except Exception:
             pass
+    if session_id and strict:
+        return {"summary": "", "key_points": []}
     summary = ""
     if summary_txt.exists():
         try:
@@ -911,14 +913,38 @@ def _short_term_matches(prompt: str, summary_bundle: dict) -> bool:
     return len(hits) >= 1
 
 
-def _detect_recall_trigger(prompt: str) -> bool:
+_RECALL_CUES = (
+    # English
+    "remember", "recall", "do you remember", "when we were", "that time",
+    "earlier", "previous", "last time", "before", "last asked", "last question",
+    "what did i last", "what was the last", "context", "conversation",
+    # Spanish/Portuguese
+    "recuerdas", "recuerdo", "anterior", "antes", "último", "ultim", "conversación",
+    "lembra", "lembrar", "anterior", "antes", "último", "conversa",
+    # French
+    "souviens", "souvenir", "rappelle", "rappel", "précédent", "dernier", "avant",
+    # German
+    "erinnerst", "erinnerung", "vorher", "letzte", "zuvor",
+    # Italian
+    "ricordi", "ricordo", "precedente", "ultimo", "prima",
+)
+
+
+def _recall_cue_score(prompt: str) -> float:
     lower = (prompt or "").lower()
-    triggers = (
-        "remember", "recall", "do you remember", "when we were",
-        "that time", "earlier", "previous", "last time", "before",
-        "last asked", "last question", "what did i last", "what was the last",
-    )
-    return any(t in lower for t in triggers)
+    score = 0.0
+    for cue in _RECALL_CUES:
+        if cue in lower:
+            score += 1.0
+    if "?" in (prompt or ""):
+        score += 0.25
+    if any(w in lower for w in ("talk", "discuss", "spoke", "spoke about", "said", "asked")):
+        score += 0.25
+    return score
+
+
+def _detect_recall_trigger(prompt: str) -> bool:
+    return _recall_cue_score(prompt) >= 1.0
 
 
 def _is_recent_recall(prompt: str) -> bool:
@@ -931,20 +957,56 @@ def _is_recent_recall(prompt: str) -> bool:
     return False
 
 
-def _decide_long_term_recall(
+def _is_short_term_summary_request(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    markers = (
+        "what have we spoken about",
+        "what have we talked about",
+        "what did we talk about",
+        "what have we discussed",
+        "conversation so far",
+        "so far",
+        "summarize the conversation",
+        "recap what we discussed",
+        "what are we working on",
+        "what is this about",
+    )
+    return any(m in lower for m in markers)
+
+
+def _decide_recall_scope(
     session: "C0d3rSession",
     prompt: str,
     summary_bundle: dict,
     recent_snippet: str,
-) -> tuple[bool, str]:
-    if os.getenv("C0D3R_LTM_MODEL", "1").strip().lower() in {"0", "false", "no", "off"}:
-        return False, ""
+) -> tuple[str, str]:
+    """
+    Decide whether to use no recall, short-term only, or long-term search.
+    Returns (scope, query) where scope is one of: none | short | long.
+    """
     summary_text = str(summary_bundle.get("summary") or "").strip()
     key_points = summary_bundle.get("key_points") or []
+    cue_score = _recall_cue_score(prompt)
+    short_hit = _short_term_matches(prompt, summary_bundle)
+
+    # Heuristic fast-paths (avoid extra model calls).
+    if _is_recent_recall(prompt):
+        return "short", ""
+    if _is_short_term_summary_request(prompt):
+        return "short", ""
+    if cue_score < 0.75 and short_hit:
+        return "short", ""
+    if cue_score < 0.75 and not short_hit:
+        return "none", ""
+
+    if os.getenv("C0D3R_LTM_MODEL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        # heuristic fallback
+        return ("long", prompt.strip()) if (cue_score >= 1.0 and not short_hit) else ("short", "")
+
     system = (
-        "Return ONLY JSON with keys: needs_long_term (bool) and query (string). "
-        "Set needs_long_term=true only when the user is asking to recall a past conversation detail not present in the short summary. "
-        "If true, provide a concise search query."
+        "Return ONLY JSON with keys: scope (\"none\"|\"short\"|\"long\") and query (string). "
+        "Choose short if the short-term summary or recent transcript likely contains the answer. "
+        "Choose long only if the answer is likely from older history."
     )
     prompt_block = (
         f"Short-term summary (<=200 words):\n{summary_text}\n\n"
@@ -955,34 +1017,33 @@ def _decide_long_term_recall(
     try:
         raw = session.send(prompt_block, stream=False, system=system)
     except Exception:
-        return False, ""
+        return ("long", prompt.strip()) if (cue_score >= 1.0 and not short_hit) else ("short", "")
     payload = _safe_json(raw or "")
     if not isinstance(payload, dict):
-        return False, ""
-    needs = bool(payload.get("needs_long_term"))
+        return ("long", prompt.strip()) if (cue_score >= 1.0 and not short_hit) else ("short", "")
+    scope = str(payload.get("scope") or "").strip().lower()
+    if scope not in {"none", "short", "long"}:
+        scope = "short" if short_hit else "long"
     query = str(payload.get("query") or "").strip()
     if not query:
         query = prompt.strip()
-    return needs, query
+    return scope, query
 
 
 def _maybe_long_term_recall(session, memory, prompt: str, summary_bundle: dict, *, session_id: str | None = None) -> list[str]:
     recall_trigger = _detect_recall_trigger(prompt)
     if _is_recent_recall(prompt):
         return []
+    if _is_short_term_summary_request(prompt):
+        return []
     short_hit = _short_term_matches(prompt, summary_bundle)
     recent_entries = memory.load(limit=12, session_id=session_id)
     recent_snippet = "\n".join(f"{e.role}: {e.content[:200]}" for e in recent_entries)
     if not recall_trigger and short_hit:
         return []
-    needs_long_term = recall_trigger or not short_hit
-    query = prompt
-    if needs_long_term:
-        model_needs, model_query = _decide_long_term_recall(session, prompt, summary_bundle, recent_snippet)
-        if model_query:
-            query = model_query
-        if not model_needs and not recall_trigger and short_hit:
-            return []
+    scope, query = _decide_recall_scope(session, prompt, summary_bundle, recent_snippet)
+    if scope != "long":
+        return []
     hits = memory.search_long_term(query, limit=5)
     if not hits and recall_trigger:
         hits = memory.search_long_term(prompt, limit=5)
@@ -4244,7 +4305,23 @@ def _run_repl(
         system_context_block = ""
         if not minimal:
             max_chars = int(os.getenv("C0D3R_CONTEXT_CHAR_BUDGET", "12000") or "12000")
-            context = memory.build_context(summary_bundle, max_chars=max_chars, session_id=session_id)
+            per_turn_limit = int(os.getenv("C0D3R_CONTEXT_PER_TURN_LIMIT", "4000") or "4000")
+            context = memory.build_context(
+                summary_bundle,
+                max_chars=max_chars,
+                context_limit=per_turn_limit,
+                session_id=session_id,
+            )
+            last_user = memory.last_user(session_id=session_id)
+            if last_user and last_user.content:
+                context = f"[last_user]\n{last_user.content}\n\n{context}" if context else f"[last_user]\n{last_user.content}"
+            last_exchange = memory.last_exchange(session_id=session_id)
+            if last_exchange:
+                exchange_lines = ["[last_exchange]"]
+                for entry in last_exchange:
+                    exchange_lines.append(f"{entry.role}: {entry.content}")
+                exchange_block = "\n".join(exchange_lines)
+                context = f"{exchange_block}\n\n{context}" if context else exchange_block
         try:
             from services.system_probe import system_probe_context
             probe_block = system_probe_context(workdir)
@@ -4420,7 +4497,7 @@ def _run_repl(
                 header.budget_enabled = False
             else:
                 return 0
-        if not minimal and sys.stdin.isatty() and initial_prompt is None:
+        if not minimal and initial_prompt is None:
             assistant_text = _extract_plaintext_response(response) or rendered or response
             memory.append(
                 user_prompt,

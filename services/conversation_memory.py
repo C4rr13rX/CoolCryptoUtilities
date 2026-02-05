@@ -69,6 +69,7 @@ class ConversationMemory:
     def load(self, limit: int = 40, *, session_id: str | None = None) -> List[MemoryEntry]:
         if not self.path.exists():
             return []
+        session_key = str(session_id) if session_id is not None else ""
         lines = self.path.read_text(encoding="utf-8", errors="ignore").splitlines()
         entries: List[MemoryEntry] = []
         for line in lines[-limit:]:
@@ -83,7 +84,7 @@ class ConversationMemory:
                     model_id=payload.get("model_id", ""),
                     session_id=payload.get("session_id", ""),
                 )
-                if session_id and entry.session_id != session_id:
+                if session_key and str(entry.session_id) != session_key:
                     continue
                 entries.append(
                     MemoryEntry(
@@ -189,6 +190,25 @@ class ConversationMemory:
             transcript_lines.append("\n\n".join(transcript_body))
             parts.append("\n".join(transcript_lines))
         return "\n\n".join(parts)
+
+    def last_user(self, *, session_id: str | None = None) -> Optional[MemoryEntry]:
+        history = self.load(limit=200, session_id=session_id)
+        for entry in reversed(history):
+            if entry.role == "user" and entry.content:
+                return entry
+        return None
+
+    def last_exchange(self, *, session_id: str | None = None) -> List[MemoryEntry]:
+        history = self.load(limit=200, session_id=session_id)
+        if not history:
+            return []
+        # Return the last user+assistant pair if possible.
+        tail: List[MemoryEntry] = []
+        for entry in reversed(history):
+            tail.append(entry)
+            if len(tail) >= 2:
+                break
+        return list(reversed(tail))
 
     def search(self, query: str, limit: int = 5) -> List[str]:
         return self.search_long_term(query, limit=limit)
