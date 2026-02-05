@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import re
 import os
+import getpass
 import sys
 import time
 import datetime
@@ -46,6 +47,10 @@ _LAST_FILE_OPS_WRITTEN: list[str] = []
 _MATRIX_SEED_VERSION = "2026-02-04"
 _TECH_MATRIX_DIR = _runtime_path("tech_matrix")
 _FINAL_STYLE = os.getenv("C0D3R_FINAL_STYLE", "bold yellow")
+_DEFAULT_SECRET_CATEGORY = "default"
+_DJANGO_USER_FILE = _runtime_path("django_user.json")
+_MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE)
+_MNEMONIC_PHRASE = re.compile(r"\b(?:[a-zA-Z]{3,}\s+){11,23}[a-zA-Z]{3,}\b")
 
 
 def _ensure_root_dir(root: Path | None) -> None:
@@ -851,8 +856,9 @@ def _environment_context_block(workdir: Path) -> str:
         lines.append(f"- network_available: {probe.network_available}")
     except Exception:
         pass
-    lines.append("- local_tools: datalab meta commands available")
+    lines.append("- local_tools: datalab + wallet meta commands available")
     lines.append("- datalab.meta: ::datalab_tables | ::datalab_query {json} | ::datalab_news {json} | ::datalab_web {json}")
+    lines.append("- wallet.meta: ::wallet_login | ::wallet_logout | ::wallet_actions | ::wallet_lookup {json} | ::wallet_send {json} | ::wallet_swap {json} | ::wallet_bridge {json}")
     return "\n".join(lines)
 
 
@@ -3978,6 +3984,191 @@ def _ensure_django_ready() -> bool:
         return False
 
 
+def _prompt_local_input(prompt: str, *, secret: bool = False) -> str:
+    if _UI_MANAGER:
+        try:
+            _ui_write(prompt)
+            return _UI_MANAGER.read_input("")
+        except Exception:
+            pass
+    if secret:
+        try:
+            return getpass.getpass(prompt)
+        except Exception:
+            return input(prompt)
+    return input(prompt)
+
+
+def _load_django_user_session():
+    if not _ensure_django_ready():
+        return None
+    path = _DJANGO_USER_FILE
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        return None
+    user_id = payload.get("user_id")
+    username = payload.get("username")
+    try:
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        if user_id:
+            return User.objects.filter(id=user_id).first()
+        if username:
+            return User.objects.filter(username=username).first()
+    except Exception:
+        return None
+    return None
+
+
+def _save_django_user_session(user) -> None:
+    try:
+        payload = {
+            "user_id": getattr(user, "id", None),
+            "username": getattr(user, "get_username", lambda: None)(),
+            "logged_in_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        _DJANGO_USER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _DJANGO_USER_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _clear_django_user_session() -> None:
+    try:
+        if _DJANGO_USER_FILE.exists():
+            _DJANGO_USER_FILE.unlink()
+    except Exception:
+        pass
+
+
+def _require_django_user():
+    if not _ensure_django_ready():
+        return None, "django not ready"
+    user = _load_django_user_session()
+    if not user:
+        return None, "no user logged in (run ::wallet_login)"
+    return user, ""
+
+
+def _validate_mnemonic(text: str) -> bool:
+    words = re.findall(r"[a-zA-Z]{3,}", text or "")
+    return 12 <= len(words) <= 24
+
+
+def _store_mnemonic_for_user(user, mnemonic: str) -> bool:
+    if not user or not mnemonic:
+        return False
+    if not _ensure_django_ready():
+        return False
+    try:
+        from django.db import transaction
+        from securevault.models import SecureSetting
+        from services.secure_settings import encrypt_secret
+    except Exception:
+        return False
+    try:
+        with transaction.atomic():
+            setting, _ = SecureSetting.objects.get_or_create(
+                user=user,
+                name="MNEMONIC",
+                category=_DEFAULT_SECRET_CATEGORY,
+                defaults={"is_secret": True},
+            )
+            setting.is_secret = True
+            payload = encrypt_secret(mnemonic.strip())
+            setting.value_plain = None
+            setting.ciphertext = payload["ciphertext"]
+            setting.encapsulated_key = payload["encapsulated_key"]
+            setting.nonce = payload["nonce"]
+            setting.save()
+        return True
+    except Exception:
+        return False
+
+
+def _has_mnemonic(user) -> bool:
+    if not user or not _ensure_django_ready():
+        return False
+    try:
+        from securevault.models import SecureSetting
+        return SecureSetting.objects.filter(
+            user=user, name="MNEMONIC", category=_DEFAULT_SECRET_CATEGORY
+        ).exists()
+    except Exception:
+        return False
+
+
+def _ensure_mnemonic_for_user(user) -> Tuple[bool, str]:
+    if not user:
+        return False, "user not logged in"
+    if _has_mnemonic(user):
+        return True, ""
+    for attempt in range(3):
+        mnemonic = _prompt_local_input("Enter wallet mnemonic (12-24 words): ", secret=True).strip()
+        if not mnemonic:
+            return False, "mnemonic required"
+        if not _validate_mnemonic(mnemonic):
+            _ui_write("Mnemonic format not recognized. Please try again.")
+            continue
+        stored = _store_mnemonic_for_user(user, mnemonic)
+        if stored:
+            return True, ""
+        return False, "failed to store mnemonic"
+    return False, "mnemonic validation failed"
+
+
+def _scrub_mnemonic_from_prompt(prompt: str) -> Tuple[str, bool]:
+    if not prompt or not _MNEMONIC_PHRASE.search(prompt):
+        return prompt, False
+    match = _MNEMONIC_PHRASE.search(prompt)
+    if not match:
+        return prompt, False
+    phrase = " ".join(match.group(0).split())
+    words_total = len(re.findall(r"[a-zA-Z]{3,}", prompt))
+    phrase_words = len(re.findall(r"[a-zA-Z]{3,}", phrase))
+    triggered = _MNEMONIC_TRIGGER.search(prompt) is not None
+    if not triggered and words_total > phrase_words + 2:
+        return prompt, False
+    scrubbed = prompt.replace(match.group(0), "[mnemonic redacted]")
+    user, _ = _require_django_user()
+    if user and _validate_mnemonic(phrase):
+        if _store_mnemonic_for_user(user, phrase):
+            _ui_write("Mnemonic captured and stored securely.")
+            return scrubbed, True
+    _ui_write("Mnemonic detected but no login or storage failed. Run ::wallet_login and try again.")
+    return scrubbed, False
+
+
+def _estimate_usd_value(chain: str, token: str, amount: str) -> Tuple[float | None, str | None]:
+    try:
+        qty = float(amount)
+    except Exception:
+        return None, None
+    try:
+        from services.usd_valuation import UsdValuation
+    except Exception:
+        return None, None
+    symbol = token if token and not str(token).lower().startswith("0x") else None
+    try:
+        resolver = UsdValuation()
+        resolution = resolver.resolve_price(str(chain), str(token), symbol)
+        if not resolution or not resolution.usd:
+            return None, None
+        return qty * float(resolution.usd), resolution.source
+    except Exception:
+        return None, None
+
+
+def _prompt_confirmation(lines: list[str]) -> bool:
+    for line in lines:
+        _ui_write(line)
+    response = _prompt_local_input("Type YES to confirm: ").strip().lower()
+    return response == "yes"
+
+
 def _seed_base_matrix_django() -> None:
     if not _ensure_django_ready():
         return
@@ -4433,15 +4624,16 @@ def _run_repl(
             if _UI_MANAGER:
                 _UI_MANAGER.stop()
             return 0
+        if not prompt.strip():
+            continue
+        user_prompt = _strip_context_block(prompt)
+        user_prompt, _ = _scrub_mnemonic_from_prompt(user_prompt)
         _emit_live(f"repl: prompt received (len={len(prompt)})")
         _trace_event({
             "event": "repl.prompt",
             "workdir": str(workdir),
-            "prompt_preview": _strip_context_block(prompt)[:200],
+            "prompt_preview": user_prompt[:200],
         })
-        if not prompt.strip():
-            continue
-        user_prompt = _strip_context_block(prompt)
         _maybe_set_style_from_prompt(user_prompt)
         inlined = _inline_file_references(user_prompt)
         user_prompt_inlined = inlined or user_prompt
@@ -5314,6 +5506,187 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
                 return proc.returncode, proc.stdout, proc.stderr, None
             except Exception as exc:
                 return 1, "", str(exc), None
+    if action in {"wallet_login", "django_login"}:
+        if not _ensure_django_ready():
+            return 1, "", "django not ready", None
+        username = _prompt_local_input("Username: ").strip()
+        password = _prompt_local_input("Password: ", secret=True)
+        if not username or not password:
+            return 1, "", "missing credentials", None
+        try:
+            from django.contrib.auth import authenticate
+            user = authenticate(username=username, password=password)
+        except Exception as exc:
+            return 1, "", f"login error: {exc}", None
+        if not user or not getattr(user, "is_active", True):
+            return 1, "", "login failed", None
+        _save_django_user_session(user)
+        return 0, "login ok", "", None
+    if action == "wallet_logout":
+        _clear_django_user_session()
+        return 0, "logged out", "", None
+    if action == "wallet_actions":
+        try:
+            from services.wallet_actions import list_wallet_actions
+            payload = {"actions": list_wallet_actions()}
+            return 0, json.dumps(payload, indent=2), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
+    if action == "wallet_lookup":
+        try:
+            payload = _parse_payload()
+            if not isinstance(payload, dict):
+                return 1, "", "wallet_lookup payload must be a JSON object", None
+            name = str(payload.get("name") or payload.get("q") or "").strip()
+            if not name:
+                return 1, "", "wallet_lookup requires name", None
+            user, err = _require_django_user()
+            if not user:
+                return 1, "", err, None
+            from addressbook.models import AddressBookEntry
+            exact = bool(payload.get("exact", False))
+            limit = int(payload.get("limit") or 10)
+            queryset = AddressBookEntry.objects.filter(user=user)
+            queryset = queryset.filter(name__iexact=name) if exact else queryset.filter(name__icontains=name)
+            results = []
+            for entry in queryset.order_by("name", "address")[: max(1, min(limit, 50))]:
+                results.append(
+                    {
+                        "id": entry.id,
+                        "name": entry.name,
+                        "address": entry.address,
+                        "chain": entry.chain,
+                        "image": entry.image.url if entry.image else "",
+                    }
+                )
+            return 0, json.dumps({"count": queryset.count(), "results": results}, indent=2), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
+    if action in {"wallet_send", "wallet_swap", "wallet_bridge"}:
+        try:
+            payload = _parse_payload()
+            if not isinstance(payload, dict):
+                return 1, "", "wallet action payload must be a JSON object", None
+            user, err = _require_django_user()
+            if not user:
+                return 1, "", err, None
+            action_payload: dict = {}
+            if action == "wallet_send":
+                chain = str(payload.get("chain") or "").strip()
+                token = str(payload.get("token") or "").strip()
+                amount = str(payload.get("amount") or payload.get("qty") or "").strip()
+                to_addr = str(payload.get("to") or payload.get("address") or "").strip()
+                to_name = str(payload.get("to_name") or payload.get("recipient") or payload.get("name") or "").strip()
+                if not to_addr and to_name:
+                    from addressbook.models import AddressBookEntry
+                    matches = list(AddressBookEntry.objects.filter(user=user, name__iexact=to_name))
+                    if not matches:
+                        matches = list(AddressBookEntry.objects.filter(user=user, name__icontains=to_name)[:5])
+                    if len(matches) == 1:
+                        entry = matches[0]
+                        to_addr = entry.address
+                        if not chain and entry.chain:
+                            chain = entry.chain
+                        to_name = entry.name
+                    elif len(matches) > 1:
+                        _ui_write("Multiple address book matches found:")
+                        for idx, entry in enumerate(matches, start=1):
+                            _ui_write(f"{idx}. {entry.name} [{entry.chain}] {entry.address}")
+                        choice = _prompt_local_input("Select number (blank to cancel): ").strip()
+                        if not choice:
+                            return 1, "", "cancelled", None
+                        try:
+                            entry = matches[int(choice) - 1]
+                        except Exception:
+                            return 1, "", "invalid selection", None
+                        to_addr = entry.address
+                        if not chain and entry.chain:
+                            chain = entry.chain
+                        to_name = entry.name
+                if not all([chain, token, amount, to_addr]):
+                    return 1, "", "wallet_send requires chain, token, amount, and to/recipient", None
+                usd_val, usd_source = _estimate_usd_value(chain, token, amount)
+                summary = [
+                    "[wallet] confirm send",
+                    f"- recipient: {to_name or '(unspecified)'} {to_addr}",
+                    f"- chain: {chain}",
+                    f"- token: {token}",
+                    f"- amount: {amount}",
+                    f"- est_usd: ${usd_val:,.2f} ({usd_source})" if usd_val is not None else "- est_usd: unknown",
+                ]
+                if not _prompt_confirmation(summary):
+                    return 1, "", "cancelled", None
+                ok, msg = _ensure_mnemonic_for_user(user)
+                if not ok:
+                    return 1, "", msg, None
+                action_payload = {"chain": chain, "token": token, "to": to_addr, "amount": amount}
+            elif action == "wallet_swap":
+                chain = str(payload.get("chain") or "").strip()
+                sell = str(payload.get("sell_token") or payload.get("sell") or "").strip()
+                buy = str(payload.get("buy_token") or payload.get("buy") or "").strip()
+                amount = str(payload.get("amount") or payload.get("sell_amount") or "").strip()
+                if not all([chain, sell, buy, amount]):
+                    return 1, "", "wallet_swap requires chain, sell_token, buy_token, amount", None
+                usd_val, usd_source = _estimate_usd_value(chain, sell, amount)
+                summary = [
+                    "[wallet] confirm swap",
+                    f"- chain: {chain}",
+                    f"- sell: {amount} {sell}",
+                    f"- buy: {buy}",
+                    f"- est_usd: ${usd_val:,.2f} ({usd_source})" if usd_val is not None else "- est_usd: unknown",
+                ]
+                if not _prompt_confirmation(summary):
+                    return 1, "", "cancelled", None
+                ok, msg = _ensure_mnemonic_for_user(user)
+                if not ok:
+                    return 1, "", msg, None
+                action_payload = {"chain": chain, "sell_token": sell, "buy_token": buy, "amount": amount}
+            elif action == "wallet_bridge":
+                src = str(payload.get("source_chain") or payload.get("from_chain") or "").strip()
+                dst = str(payload.get("destination_chain") or payload.get("to_chain") or "").strip()
+                token = str(payload.get("token") or "").strip()
+                amount = str(payload.get("amount") or "").strip()
+                dst_token = str(payload.get("destination_token") or payload.get("to_token") or "").strip()
+                if not all([src, dst, token, amount]):
+                    return 1, "", "wallet_bridge requires source_chain, destination_chain, token, amount", None
+                usd_val, usd_source = _estimate_usd_value(src, token, amount)
+                summary = [
+                    "[wallet] confirm bridge",
+                    f"- source: {src}",
+                    f"- destination: {dst}",
+                    f"- token: {token}",
+                    f"- amount: {amount}",
+                    f"- destination_token: {dst_token or token}",
+                    f"- est_usd: ${usd_val:,.2f} ({usd_source})" if usd_val is not None else "- est_usd: unknown",
+                ]
+                if not _prompt_confirmation(summary):
+                    return 1, "", "cancelled", None
+                ok, msg = _ensure_mnemonic_for_user(user)
+                if not ok:
+                    return 1, "", msg, None
+                action_payload = {
+                    "source_chain": src,
+                    "destination_chain": dst,
+                    "token": token,
+                    "amount": amount,
+                }
+                if dst_token:
+                    action_payload["destination_token"] = dst_token
+            from services.wallet_runner import wallet_runner
+            action_name = action.replace("wallet_", "")
+            wallet_runner.run(action_name, action_payload, user=user)
+            if payload.get("wait"):
+                timeout = float(payload.get("timeout_s") or 120)
+                start = time.time()
+                while time.time() - start < timeout:
+                    status = wallet_runner.status()
+                    if not status.get("running"):
+                        return 0, json.dumps(status, indent=2), "", None
+                    time.sleep(1.0)
+                return 1, "", "timeout waiting for wallet action", None
+            return 0, json.dumps(wallet_runner.status(), indent=2), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
     if action in {"datalab_tables", "datalab_list"}:
         try:
             from services.data_lab_tools import list_tables, summarize_payload

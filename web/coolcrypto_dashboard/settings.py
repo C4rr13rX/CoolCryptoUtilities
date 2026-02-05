@@ -119,6 +119,7 @@ INSTALLED_APPS = [
     "guardianpanel.apps.GuardianPanelConfig",
     "securevault.apps.SecureVaultConfig",
     "walletpanel.apps.WalletPanelConfig",
+    "addressbook.apps.AddressbookConfig",
     "integrations.apps.IntegrationsConfig",
     "branddozer.apps.BranddozerConfig",
     "u53rxr080t.apps.U53rxr080tConfig",
@@ -221,6 +222,8 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "collected_static"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = REPO_ROOT / "storage" / "media"
 
 STATICFILES_DIRS = [
     BASE_DIR / "static",
