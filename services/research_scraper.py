@@ -19,6 +19,7 @@ import requests
 
 from services.research_sources import allowed_domains, allowed_domains_for_query
 from services import research_ranker
+from services.web_search import is_safe_url
 
 
 USER_AGENT = "BrandDozerResearchBot/1.0 (+https://example.invalid/research)"
@@ -82,12 +83,26 @@ class DuckDuckGoScraper:
         domains = allowed_domains_for_query(query, max_sources=12)
         return self.search(query, max_results=max_results, domains=domains)
 
-    def fetch_text(self, url: str, timeout: int = 15) -> str:
+    def fetch_text(self, url: str, timeout: int = 15, max_bytes: int = 200_000) -> str:
+        if not is_safe_url(url):
+            raise ValueError("unsafe url blocked")
         self._polite_delay()
-        resp = self.session.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
+        resp = self.session.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout, stream=True)
         resp.raise_for_status()
-        resp.encoding = resp.encoding or "utf-8"
-        return resp.text
+        content_length = resp.headers.get("Content-Length")
+        if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+            raise ValueError("content too large")
+        chunks = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=8192):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= max_bytes:
+                break
+        payload = b"".join(chunks)
+        return payload.decode(resp.encoding or "utf-8", errors="replace")
 
     def fetch_document(self, url: str, timeout: int = 15, max_chars: int = 200_000) -> DocumentPayload:
         """

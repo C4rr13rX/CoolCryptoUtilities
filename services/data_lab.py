@@ -402,3 +402,72 @@ def fetch_news(
 ) -> Dict[str, Any]:
     result = collect_news_for_terms(tokens=tokens, start=start, end=end, query=query, max_pages=max_pages)
     return result
+
+
+def list_db_tables() -> Dict[str, Any]:
+    from services.data_lab_tools import list_tables
+
+    return list_tables()
+
+
+def query_db_table(
+    table: str,
+    *,
+    filters: Optional[Dict[str, Any]] = None,
+    limit: int = 50,
+    order_by: Optional[str] = None,
+    order: str = "desc",
+    columns: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    from services.data_lab_tools import query_table
+
+    return query_table(
+        table,
+        filters=filters,
+        limit=limit,
+        order_by=order_by,
+        order=order,
+        columns=columns,
+    )
+
+
+def fetch_news_summary(
+    *,
+    tokens: Sequence[str],
+    start: datetime,
+    end: datetime,
+    query: Optional[str] = None,
+    max_pages: Optional[int] = None,
+    max_items: int = 40,
+) -> Dict[str, Any]:
+    from services.data_lab_tools import fetch_news_with_summary
+
+    return fetch_news_with_summary(
+        tokens=tokens,
+        start=start,
+        end=end,
+        query=query,
+        max_pages=max_pages,
+        max_items=max_items,
+    )
+
+
+def search_web_and_summarize(
+    *,
+    query: str,
+    max_results: int = 5,
+    max_bytes: int = 200_000,
+    max_chars: int = 12_000,
+    summary_sentences: int = 3,
+    domains: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    from services.data_lab_tools import search_web
+
+    return search_web(
+        query=query,
+        max_results=max_results,
+        max_bytes=max_bytes,
+        max_chars=max_chars,
+        summary_sentences=summary_sentences,
+        domains=domains,
+    )

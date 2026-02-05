@@ -6,6 +6,7 @@ import re
 import os
 import sys
 import time
+import datetime
 import threading
 import queue
 import subprocess
@@ -44,6 +45,7 @@ _LAST_FILE_OPS_ERRORS: list[str] = []
 _LAST_FILE_OPS_WRITTEN: list[str] = []
 _MATRIX_SEED_VERSION = "2026-02-04"
 _TECH_MATRIX_DIR = _runtime_path("tech_matrix")
+_FINAL_STYLE = os.getenv("C0D3R_FINAL_STYLE", "bold yellow")
 
 
 def _ensure_root_dir(root: Path | None) -> None:
@@ -179,6 +181,7 @@ class TerminalUI:
         self._pt_header = None
         self._pt_output = None
         self._pt_input = None
+        self.final_style = _FINAL_STYLE
         self._init_tui()
 
     def _init_tui(self) -> None:
@@ -239,6 +242,10 @@ class TerminalUI:
                     def push_line(self, line: str) -> None:
                         if self._body:
                             self._body.write(line)
+
+                    def push_renderable(self, renderable) -> None:
+                        if self._body:
+                            self._body.write(renderable)
 
                     def set_header_text(self, text: str) -> None:
                         if self._header:
@@ -436,6 +443,10 @@ class TerminalUI:
             self.footer = text
         self.render()
 
+    def set_final_style(self, style: str) -> None:
+        if style:
+            self.final_style = style
+
     def write_line(self, line: str) -> None:
         if self._use_textual and self._textual_app:
             try:
@@ -469,6 +480,36 @@ class TerminalUI:
             self.render()
             if ch.strip() and delay_s:
                 time.sleep(delay_s)
+
+    def write_final(self, text: str) -> None:
+        if text is None:
+            return
+        lines = str(text).splitlines()
+        if self._use_textual and self._textual_app:
+            try:
+                from rich.text import Text
+                style = self.final_style or "bold yellow"
+                # Add two blank lines before and after.
+                self._textual_app.call_from_thread(self._textual_app.push_line, "")
+                self._textual_app.call_from_thread(self._textual_app.push_line, "")
+                if lines:
+                    for idx, line in enumerate(lines):
+                        self._textual_app.call_from_thread(self._textual_app.push_renderable, Text(line, style=style))
+                else:
+                    self._textual_app.call_from_thread(self._textual_app.push_renderable, Text("", style=style))
+                self._textual_app.call_from_thread(self._textual_app.push_line, "")
+                self._textual_app.call_from_thread(self._textual_app.push_line, "")
+                return
+            except Exception:
+                pass
+        # Fallback: ANSI bold yellow if possible
+        ansi = "\x1b[1;33m"
+        reset = "\x1b[0m"
+        decorated = "\n\n" + "\n".join(lines) + "\n\n"
+        try:
+            self.write_line(ansi + decorated + reset)
+        except Exception:
+            self.write_line(decorated)
 
     def render(self, force: bool = False) -> None:
         now = time.time()
@@ -746,6 +787,34 @@ def _detect_tools() -> Dict[str, str]:
     return found
 
 
+def _system_time_info() -> dict:
+    try:
+        now = datetime.datetime.now().astimezone()
+        return {
+            "local_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "timezone": now.tzname() or "",
+            "utc_offset": now.strftime("%z") or "",
+        }
+    except Exception:
+        return {}
+
+
+def _weather_summary() -> str:
+    if os.getenv("C0D3R_WEATHER", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return ""
+    url = os.getenv("C0D3R_WEATHER_URL", "https://wttr.in/?format=1").strip()
+    if not url:
+        return ""
+    timeout_s = float(os.getenv("C0D3R_WEATHER_TIMEOUT_S", "1.0") or "1.0")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "c0d3r/1.0"})
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            text = resp.read().decode("utf-8", errors="ignore").strip()
+        return text[:200] if text else ""
+    except Exception:
+        return ""
+
+
 def _environment_context_block(workdir: Path) -> str:
     lines = ["[environment]"]
     lines.append(f"- platform: {sys.platform}")
@@ -760,6 +829,17 @@ def _environment_context_block(workdir: Path) -> str:
     tools = _detect_tools()
     for name, path in tools.items():
         lines.append(f"- tool.{name}: {path or 'missing'}")
+    time_info = _system_time_info()
+    if time_info:
+        if time_info.get("local_time"):
+            lines.append(f"- local_time: {time_info['local_time']}")
+        if time_info.get("timezone"):
+            lines.append(f"- timezone: {time_info['timezone']}")
+        if time_info.get("utc_offset"):
+            lines.append(f"- utc_offset: {time_info['utc_offset']}")
+    weather = _weather_summary()
+    if weather:
+        lines.append(f"- weather: {weather}")
     try:
         from services.system_probe import collect_system_probe
 
@@ -771,12 +851,19 @@ def _environment_context_block(workdir: Path) -> str:
         lines.append(f"- network_available: {probe.network_available}")
     except Exception:
         pass
+    lines.append("- local_tools: datalab meta commands available")
+    lines.append("- datalab.meta: ::datalab_tables | ::datalab_query {json} | ::datalab_news {json} | ::datalab_web {json}")
     return "\n".join(lines)
 
 
+def _summary_paths(session_id: str | None = None) -> tuple[Path, Path]:
+    if session_id:
+        return (_runtime_path(f"summary_{session_id}.json"), _runtime_path(f"summary_{session_id}.txt"))
+    return (_runtime_path("summary.json"), _runtime_path("summary.txt"))
+
+
 def _load_summary_bundle(session_id: str | None = None) -> dict:
-    summary_json = _runtime_path("summary.json")
-    summary_txt = _runtime_path("summary.txt")
+    summary_json, summary_txt = _summary_paths(session_id)
     def _trim_200_words(text: str) -> str:
         words = text.split()
         if len(words) > 200:
@@ -815,8 +902,7 @@ def _load_summary_bundle(session_id: str | None = None) -> dict:
 
 
 def _save_summary_bundle(bundle: dict, *, session_id: str | None = None) -> None:
-    summary_json = _runtime_path("summary.json")
-    summary_txt = _runtime_path("summary.txt")
+    summary_json, summary_txt = _summary_paths(session_id)
     summary_json.parent.mkdir(parents=True, exist_ok=True)
     summary = str(bundle.get("summary") or "").strip()
     words = summary.split()
@@ -1030,7 +1116,15 @@ def _decide_recall_scope(
     return scope, query
 
 
-def _maybe_long_term_recall(session, memory, prompt: str, summary_bundle: dict, *, session_id: str | None = None) -> list[str]:
+def _maybe_long_term_recall(
+    session,
+    memory,
+    prompt: str,
+    summary_bundle: dict,
+    *,
+    session_id: str | None = None,
+    memory_long=None,
+) -> list[str]:
     recall_trigger = _detect_recall_trigger(prompt)
     if _is_recent_recall(prompt):
         return []
@@ -1044,9 +1138,10 @@ def _maybe_long_term_recall(session, memory, prompt: str, summary_bundle: dict, 
     scope, query = _decide_recall_scope(session, prompt, summary_bundle, recent_snippet)
     if scope != "long":
         return []
-    hits = memory.search_long_term(query, limit=5)
+    mem_long = memory_long or memory
+    hits = mem_long.search_long_term(query, limit=5)
     if not hits and recall_trigger:
-        hits = memory.search_long_term(prompt, limit=5)
+        hits = mem_long.search_long_term(prompt, limit=5)
     return hits
 
 
@@ -1342,6 +1437,21 @@ def _ui_write(line: str) -> None:
         pass
 
 
+def _ui_write_final(text: str) -> None:
+    if _UI_MANAGER:
+        _UI_MANAGER.write_final(text)
+        return
+    if text is None:
+        return
+    ansi = "\x1b[1;33m"
+    reset = "\x1b[0m"
+    decorated = "\n\n" + str(text) + "\n\n"
+    try:
+        print(ansi + decorated + reset)
+    except Exception:
+        print(decorated)
+
+
 def _chunk_output(text: str, *, lines_per_chunk: int = 200, max_chunks: int = 20) -> List[str]:
     if not text:
         return []
@@ -1464,22 +1574,27 @@ def _stream_subprocess(
     out_dir = _runtime_path("command_outputs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Deterministic directory change helper.
-    if command.strip().lower().startswith("::cd "):
-        new_dir = command.split(" ", 1)[1].strip().strip('"').strip("'")
-        target = (cwd / new_dir).resolve() if not Path(new_dir).is_absolute() else Path(new_dir).resolve()
-        ok = target.exists() and target.is_dir()
-        msg = f"[cd] {'OK' if ok else 'FAIL'} -> {target}"
-        _ui_write(msg + "\n")
+    cmd_stripped = command.strip()
+    if cmd_stripped.startswith("::"):
+        started = time.time()
+        code, stdout, stderr, new_cwd = _execute_meta_command(cmd_stripped, cwd)
+        output = stdout or ""
+        if stderr:
+            output = output + ("\n" if output else "") + stderr
+        if output:
+            _ui_write(output + ("\n" if not output.endswith("\n") else ""))
+        split = output.splitlines()
+        head = "\n".join(split[:20])
+        tail = "\n".join(split[-20:]) if split else ""
         return {
-            "exit_code": 0 if ok else 1,
-            "duration_s": 0.0,
-            "output": msg,
-            "head": msg,
-            "tail": msg,
+            "exit_code": code,
+            "duration_s": time.time() - started,
+            "output": output,
+            "head": head,
+            "tail": tail,
             "log_path": "",
             "timed_out": False,
-            "cwd_after": str(target) if ok else str(cwd),
+            "cwd_after": str(new_cwd or cwd),
         }
 
     args = _wrap_command_for_shell(command, shell)
@@ -1757,6 +1872,7 @@ def _run_tool_loop_v2(
         "  ],\n"
         "  \"checks\": [ same shape as commands ],\n"
         "  \"output_request\": [ { \"key\": string, \"chunk_index\": number } ],\n"
+        "  \"ui_actions\": [ { \"action\": string, \"value\": string } ],\n"
         "  \"final\": string\n"
         "}\n"
         "Rules:\n"
@@ -1765,6 +1881,8 @@ def _run_tool_loop_v2(
         "- Prefer idempotent commands. Avoid creating helper scripts unless absolutely required by the task.\n"
         "- Always include verification in checks[] (tests, grep, ls, python -m ...), and interpret failures to produce the next command batch.\n"
         "- If you need more output context, use output_request with a key and chunk_index; do not include commands/checks in that response.\n"
+        "- Meta commands starting with :: are allowed for local tools (e.g., ::datalab_news {...}).\n"
+        "- ui_actions is optional; use it to set UI preferences such as final response style (action: set_final_style, value: \"bold yellow\").\n"
         "- If done, set needs_terminal=false, commands=[], checks=[], output_request=[] and put the user-facing answer in final.\n"
     )
 
@@ -1868,6 +1986,7 @@ def _run_tool_loop_v2(
         cmd_items = payload.get("commands") or []
         chk_items = payload.get("checks") or []
         output_request = payload.get("output_request") or []
+        _apply_ui_actions(payload)
 
         commands: list[dict] = []
         for item in cmd_items:
@@ -2825,6 +2944,67 @@ def _format_payload_lines(payload: dict, *, show_final: bool = True, show_comman
             _add("next", item)
 
     return lines
+
+
+def _set_final_style(style: str) -> None:
+    global _FINAL_STYLE
+    if not style:
+        return
+    _FINAL_STYLE = style
+    if _UI_MANAGER:
+        _UI_MANAGER.set_final_style(style)
+
+
+def _parse_color_from_text(text: str) -> str:
+    if not text:
+        return ""
+    lower = text.lower()
+    colors = {
+        "yellow": "yellow",
+        "gold": "yellow",
+        "amber": "yellow",
+        "orange": "yellow",
+        "red": "red",
+        "green": "green",
+        "blue": "blue",
+        "cyan": "cyan",
+        "magenta": "magenta",
+        "purple": "magenta",
+        "white": "white",
+    }
+    for key, val in colors.items():
+        if key in lower:
+            return val
+    return ""
+
+
+def _maybe_set_style_from_prompt(prompt: str) -> None:
+    if not prompt:
+        return
+    lower = prompt.lower()
+    if "final" not in lower or ("color" not in lower and "colour" not in lower and "style" not in lower):
+        return
+    color = _parse_color_from_text(prompt)
+    bold = "bold" in lower or "bright" in lower
+    if color:
+        style = f"{'bold ' if bold else ''}{color}".strip()
+        _set_final_style(style)
+
+
+def _apply_ui_actions(payload: dict) -> None:
+    if not isinstance(payload, dict):
+        return
+    actions = payload.get("ui_actions") or []
+    if not isinstance(actions, list):
+        return
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        name = str(action.get("action") or "").strip().lower()
+        if name in {"set_final_style", "final_style"}:
+            style = str(action.get("value") or action.get("style") or "").strip()
+            if style:
+                _set_final_style(style)
 
 
 def _render_json_response(text: str) -> str:
@@ -4223,8 +4403,10 @@ def _run_repl(
 ) -> int:
     from services.conversation_memory import ConversationMemory
 
-    memory = ConversationMemory(_runtime_path("conversation.jsonl"))
     session_id = getattr(session, "session_id", "") if session else ""
+    session_path = _runtime_path(f"conversation_{session_id}.jsonl") if session_id else _runtime_path("conversation.jsonl")
+    memory = ConversationMemory(session_path)
+    memory_long = ConversationMemory(_runtime_path("conversation_global.jsonl"))
     summary_bundle = _load_summary_bundle(session_id=session_id)
     pending = initial_prompt
     single_shot = initial_prompt is not None and not sys.stdin.isatty()
@@ -4260,6 +4442,7 @@ def _run_repl(
         if not prompt.strip():
             continue
         user_prompt = _strip_context_block(prompt)
+        _maybe_set_style_from_prompt(user_prompt)
         inlined = _inline_file_references(user_prompt)
         user_prompt_inlined = inlined or user_prompt
         force_direct = False
@@ -4350,7 +4533,14 @@ def _run_repl(
                 except Exception:
                     scan_future = None
         if not minimal:
-            recall_hits = _maybe_long_term_recall(session, memory, user_prompt, summary_bundle, session_id=session_id)
+            recall_hits = _maybe_long_term_recall(
+                session,
+                memory,
+                user_prompt,
+                summary_bundle,
+                session_id=session_id,
+                memory_long=memory_long,
+            )
             if recall_hits:
                 context = context + "\n\n[long_term_recall]\n" + "\n".join(recall_hits)
         if scan_future:
@@ -4481,7 +4671,7 @@ def _run_repl(
                 response = session.send(continuation, stream=False, system=system)
                 rendered = _render_json_response(response) or response
         if rendered:
-            _typewriter_print(rendered, usage, header=header, controller=controller)
+            _ui_write_final(rendered)
         sys.stdout.write("\n")
         sys.stdout.flush()
         if budget.exceeded():
@@ -4500,6 +4690,14 @@ def _run_repl(
         if not minimal and initial_prompt is None:
             assistant_text = _extract_plaintext_response(response) or rendered or response
             memory.append(
+                user_prompt,
+                assistant_text,
+                context=system_context_block,
+                workdir=str(workdir),
+                model_id=usage.model_id,
+                session_id=session_id,
+            )
+            memory_long.append(
                 user_prompt,
                 assistant_text,
                 context=system_context_block,
@@ -5015,6 +5213,20 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
     if len(parts) < 2:
         return 1, "", "invalid meta command", None
     action = parts[0][2:]
+    def _parse_payload() -> dict:
+        raw = cmd[len(f"::{action}") :].strip()
+        if not raw:
+            return {}
+        if raw.startswith("@"):
+            path = Path(raw[1:]).expanduser()
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise ValueError(f"failed to read payload: {exc}") from exc
+        try:
+            return json.loads(raw)
+        except Exception as exc:
+            raise ValueError(f"invalid json payload: {exc}") from exc
     if action == "sleep":
         try:
             seconds = float(parts[1])
@@ -5102,6 +5314,78 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
                 return proc.returncode, proc.stdout, proc.stderr, None
             except Exception as exc:
                 return 1, "", str(exc), None
+    if action in {"datalab_tables", "datalab_list"}:
+        try:
+            from services.data_lab_tools import list_tables, summarize_payload
+            payload = list_tables()
+            return 0, summarize_payload(payload), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
+    if action in {"datalab_query", "datalab_db"}:
+        try:
+            payload = _parse_payload()
+            if not isinstance(payload, dict):
+                return 1, "", "datalab_query payload must be a JSON object", None
+            table = str(payload.get("table") or "").strip()
+            if not table:
+                return 1, "", "datalab_query requires table", None
+            from services.data_lab_tools import query_table, summarize_payload
+            result = query_table(
+                table,
+                filters=payload.get("filters"),
+                limit=payload.get("limit", 50),
+                order_by=payload.get("order_by"),
+                order=payload.get("order", "desc"),
+                columns=payload.get("columns"),
+            )
+            return 0, summarize_payload(result), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
+    if action == "datalab_news":
+        try:
+            payload = _parse_payload()
+            if not isinstance(payload, dict):
+                return 1, "", "datalab_news payload must be a JSON object", None
+            tokens = payload.get("tokens") or []
+            query = payload.get("query")
+            if not tokens and not query:
+                return 1, "", "datalab_news requires tokens or query", None
+            if not tokens and query:
+                tokens = [tok for tok in re.split(r"[ ,;/]+", str(query).upper()) if tok]
+            start = payload.get("start") or (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)).isoformat()
+            end = payload.get("end") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+            from services.data_lab_tools import fetch_news_with_summary, summarize_payload
+            result = fetch_news_with_summary(
+                tokens=tokens,
+                start=start,
+                end=end,
+                query=query,
+                max_pages=payload.get("max_pages"),
+                max_items=payload.get("max_items", 40),
+            )
+            return 0, summarize_payload(result), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
+    if action == "datalab_web":
+        try:
+            payload = _parse_payload()
+            if not isinstance(payload, dict):
+                return 1, "", "datalab_web payload must be a JSON object", None
+            query = str(payload.get("query") or "").strip()
+            if not query:
+                return 1, "", "datalab_web requires query", None
+            from services.data_lab_tools import search_web, summarize_payload
+            result = search_web(
+                query=query,
+                max_results=payload.get("max_results", 5),
+                max_bytes=payload.get("max_bytes", 200000),
+                max_chars=payload.get("max_chars", 12000),
+                summary_sentences=payload.get("summary_sentences", 3),
+                domains=payload.get("domains"),
+            )
+            return 0, summarize_payload(result), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
         if action == "textbook_list":
             script = scripts_dir / "list-textbooks.py"
             try:

@@ -11,7 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from services.research_sources import allowed_domains_for_query
-from services.web_search import WebSearch
+from services.web_search import WebSearch, is_safe_url
 
 
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 Firefox/125.0"
@@ -82,12 +82,11 @@ class WebResearcher:
         return texts
 
     def fetch_text(self, url: str, *, max_bytes: int = 200_000) -> str:
+        if not is_safe_url(url):
+            raise ValueError("unsafe url blocked")
         self._polite_delay()
-        resp = self.session.get(url, timeout=self.timeout, stream=True)
-        resp.raise_for_status()
-        content = resp.content[:max_bytes]
-        encoding = resp.encoding or resp.apparent_encoding or "utf-8"
-        html_text = content.decode(encoding, errors="replace")
+        content = self.search.fetch_bytes(url, max_bytes=max_bytes)
+        html_text = content.decode("utf-8", errors="replace")
         return self._strip_html(html_text)
 
     def crawl(self, start_url: str, *, policy: Optional[CrawlPolicy] = None) -> List[Tuple[str, str]]:
@@ -119,6 +118,8 @@ class WebResearcher:
         return results
 
     def _fetch_links(self, url: str) -> Tuple[str, List[str]]:
+        if not is_safe_url(url):
+            raise ValueError("unsafe url blocked")
         self._polite_delay()
         resp = self.session.get(url, timeout=self.timeout)
         resp.raise_for_status()
@@ -137,6 +138,8 @@ class WebResearcher:
         return text, links
 
     def _allowed(self, url: str, allowed: Set[str], policy: CrawlPolicy) -> bool:
+        if not is_safe_url(url):
+            return False
         parsed = urlparse(url)
         if parsed.netloc and parsed.netloc not in allowed:
             return False

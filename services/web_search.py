@@ -7,6 +7,7 @@ import random
 import re
 import time
 from dataclasses import dataclass
+import ipaddress
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import List
@@ -50,6 +51,28 @@ class SearchResult:
     snippet: str
 
 
+def is_safe_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = parsed.hostname or ""
+    if not host:
+        return False
+    lowered = host.lower()
+    if lowered in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or lowered.endswith(".local"):
+        return False
+    try:
+        ip = ipaddress.ip_address(lowered)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    except ValueError:
+        pass
+    return True
+
+
 class WebSearch:
     """
     Lightweight web search + fetch helper intended for Codex sessions.
@@ -65,6 +88,21 @@ class WebSearch:
                 "Accept-Language": "en-US,en;q=0.9",
             }
         )
+        try:
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+
+            retry = Retry(
+                total=2,
+                backoff_factor=0.3,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET", "HEAD"],
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
+        except Exception:
+            pass
         self._min_delay = 0.1
         self._max_delay = 0.5
         self._brave_key = (os.getenv("BRAVE_API_KEY") or os.getenv("BRAVE_SEARCH_API_KEY") or "").strip()
@@ -192,14 +230,40 @@ class WebSearch:
         return results
 
     def fetch_text(self, url: str, *, max_bytes: int = MAX_FETCH_BYTES) -> str:
-        _research_log(f"fetch: {url}")
+        if not is_safe_url(url):
+            raise ValueError("unsafe url blocked")
         self._polite_delay()
-        resp = self.session.get(url, timeout=self.timeout, stream=True)
-        resp.raise_for_status()
-        content = resp.content[:max_bytes]
-        encoding = resp.encoding or resp.apparent_encoding or "utf-8"
-        text = content.decode(encoding, errors="replace")
+        content = self.fetch_bytes(url, max_bytes=max_bytes)
+        text = content.decode("utf-8", errors="replace")
         return self._strip_html(text)
+
+    def fetch_bytes(self, url: str, *, max_bytes: int = MAX_FETCH_BYTES) -> bytes:
+        if not is_safe_url(url):
+            raise ValueError("unsafe url blocked")
+        _research_log(f"fetch-bytes: {url}")
+        self._polite_delay()
+        timeout = (min(6.0, self.timeout), self.timeout)
+        with self.session.get(url, timeout=timeout, stream=True) as resp:
+            resp.raise_for_status()
+            content_type = (resp.headers.get("Content-Type") or "").lower()
+            if content_type and not any(
+                token in content_type
+                for token in ("text/html", "text/plain", "application/xhtml+xml", "application/xml")
+            ):
+                raise ValueError(f"unsupported content type: {content_type}")
+            length = resp.headers.get("Content-Length")
+            if length and length.isdigit() and int(length) > max_bytes:
+                raise ValueError("content too large")
+            chunks = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= max_bytes:
+                    break
+            return b"".join(chunks)
 
     # ------------------------------------------------------------------
     # helpers
@@ -378,6 +442,8 @@ class WebSearch:
             cleaned_url = self._clean_url(result.url)
             if not cleaned_url.startswith(("http://", "https://")):
                 continue
+            if not is_safe_url(cleaned_url):
+                continue
             if cleaned_url in seen:
                 continue
             seen.add(cleaned_url)
@@ -395,4 +461,4 @@ class WebSearch:
         return " ".join(text.split())
 
 
-__all__ = ["WebSearch", "SearchResult"]
+__all__ = ["WebSearch", "SearchResult", "is_safe_url"]

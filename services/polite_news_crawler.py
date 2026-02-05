@@ -157,6 +157,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "politeness": {"min_delay_sec": 0.5, "max_delay_sec": 4.0},
     "wordpress": {"pages_per_term": 3, "per_page": 40},
     "max_pages": 400,
+    "max_body_bytes": 2_000_000,
     "allowed_statuses": [200, 304],
     "cache_dir": Path("storage/news_cache"),
     "db_path": Path("storage/news_cache/polite_crawler.sqlite3"),
@@ -1158,6 +1159,8 @@ class PoliteCryptoCrawler:
         backoff = 1.5
         body_bytes: Optional[bytes] = None
         response_status: Optional[int] = None
+        content_type = ""
+        max_body = int(self.cfg.get("max_body_bytes", 2_000_000) or 2_000_000)
         etag = None
         last_modified = None
         while attempt <= self.cfg["max_retries"]:
@@ -1165,6 +1168,19 @@ class PoliteCryptoCrawler:
                 async with async_timeout.timeout(self.cfg["timeout_sec"] + attempt * 2):
                     async with session.get(url, headers=headers, allow_redirects=True) as resp:
                         response_status = resp.status
+                        content_type = resp.headers.get("Content-Type", "") or ""
+                        length_header = resp.headers.get("Content-Length", "")
+                        if length_header and length_header.isdigit() and int(length_header) > max_body:
+                            self.store.mark_result(
+                                url,
+                                status=resp.status,
+                                etag=None,
+                                last_modified=None,
+                                sha256=None,
+                                size_bytes=int(length_header),
+                                error="content_too_large",
+                            )
+                            return None
                         if resp.status in (429, 503):
                             retry_after = resp.headers.get("Retry-After")
                             sleep_time = float(retry_after) if retry_after and retry_after.isdigit() else min(30, backoff * (attempt + 1))
@@ -1209,13 +1225,10 @@ class PoliteCryptoCrawler:
             self.store.mark_result(url, status=response_status, etag=None, last_modified=None, sha256=None, size_bytes=None, error="retries_exhausted")
             return None
 
-        content_type = ""
-        try:
-            content_type = session._default_headers.get("Content-Type", "")
-        except Exception:
-            content_type = ""
-
-        if content_type and "text/html" not in content_type.lower():
+        lowered_type = (content_type or "").lower()
+        if lowered_type and not any(
+            token in lowered_type for token in ("text/html", "application/xhtml+xml", "text/plain", "application/xml")
+        ):
             self.store.mark_result(url, status=response_status, etag=etag, last_modified=last_modified, sha256=None, size_bytes=len(body_bytes), error="unsupported_content_type")
             return None
 
