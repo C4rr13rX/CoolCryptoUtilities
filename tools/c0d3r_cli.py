@@ -774,22 +774,80 @@ def _environment_context_block(workdir: Path) -> str:
     return "\n".join(lines)
 
 
-def _load_rolling_summary(max_chars: int = 2000) -> str:
-    path = _runtime_path("summary.txt")
-    if not path.exists():
-        return ""
+def _load_summary_bundle() -> dict:
+    summary_json = _runtime_path("summary.json")
+    summary_txt = _runtime_path("summary.txt")
+    def _trim_200_words(text: str) -> str:
+        words = text.split()
+        if len(words) > 200:
+            return " ".join(words[:200])
+        return text
+
+    if summary_json.exists():
+        try:
+            payload = json.loads(summary_json.read_text(encoding="utf-8", errors="ignore"))
+            summary = str(payload.get("summary") or "").strip()
+            summary = _trim_200_words(summary)
+            points = payload.get("key_points") or []
+            if not isinstance(points, list):
+                points = []
+            points = [str(p).strip() for p in points if str(p).strip()]
+            return {"summary": summary, "key_points": points}
+        except Exception:
+            pass
+    summary = ""
+    if summary_txt.exists():
+        try:
+            summary = summary_txt.read_text(encoding="utf-8", errors="ignore").strip()
+        except Exception:
+            summary = ""
+    summary = _trim_200_words(summary)
+    points = _extract_key_points(summary, limit=10)
+    return {"summary": summary, "key_points": points}
+
+
+def _save_summary_bundle(bundle: dict) -> None:
+    summary_json = _runtime_path("summary.json")
+    summary_txt = _runtime_path("summary.txt")
+    summary_json.parent.mkdir(parents=True, exist_ok=True)
+    summary = str(bundle.get("summary") or "").strip()
+    words = summary.split()
+    if len(words) > 200:
+        summary = " ".join(words[:200])
+    points = bundle.get("key_points") or []
+    if not isinstance(points, list):
+        points = []
+    points = [str(p).strip() for p in points if str(p).strip()]
+    if len(points) > 10:
+        points = points[:10]
+    payload = {"summary": summary, "key_points": points}
     try:
-        summary = path.read_text(encoding="utf-8", errors="ignore").strip()
+        summary_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except Exception:
-        return ""
-    if not summary:
-        return ""
-    return summary[:max_chars]
+        pass
+    try:
+        summary_txt.write_text(summary, encoding="utf-8")
+    except Exception:
+        pass
 
 
-def _extract_key_points(summary: str, limit: int = 6) -> List[str]:
+def _load_rolling_summary(max_chars: int = 2000) -> str:
+    bundle = _load_summary_bundle()
+    summary = str(bundle.get("summary") or "").strip()
     if not summary:
+        return ""
+    if max_chars and len(summary) > max_chars:
+        return summary[:max_chars]
+    return summary
+
+
+def _extract_key_points(summary_or_points, limit: int = 6) -> List[str]:
+    if not summary_or_points:
         return []
+    if isinstance(summary_or_points, list):
+        points = [str(p).strip() for p in summary_or_points if str(p).strip()]
+        return points[:limit]
+    summary = str(summary_or_points or "")
     points = []
     for line in summary.splitlines():
         raw = line.strip()
@@ -809,14 +867,99 @@ def _extract_key_points(summary: str, limit: int = 6) -> List[str]:
     return points[:limit]
 
 
-def _key_points_block(summary: str) -> str:
-    points = _extract_key_points(summary)
+def _key_points_block(summary_or_points) -> str:
+    points = _extract_key_points(summary_or_points, limit=10)
     if not points:
         return ""
     lines = ["[key_points]"]
     for item in points:
         lines.append(f"- {item}")
     return "\n".join(lines)
+
+
+_STOPWORDS = {
+    "the", "and", "for", "are", "but", "not", "you", "your", "with", "that", "this", "from",
+    "have", "has", "had", "was", "were", "what", "when", "where", "which", "who", "why",
+    "how", "about", "into", "over", "under", "then", "than", "them", "they", "their", "ours",
+    "can", "could", "should", "would", "will", "just", "like", "been", "did", "does", "doing",
+    "it's", "im", "i'm", "we", "our", "us", "me", "my", "mine", "yours",
+}
+
+
+def _keyword_set(text: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9]{3,}", (text or "").lower())
+    return {t for t in tokens if t not in _STOPWORDS}
+
+
+def _short_term_matches(prompt: str, summary_bundle: dict) -> bool:
+    summary_text = str(summary_bundle.get("summary") or "")
+    key_points = summary_bundle.get("key_points") or []
+    hay = f"{summary_text}\n" + "\n".join(str(p) for p in key_points)
+    if not hay.strip():
+        return False
+    prompt_keys = _keyword_set(prompt)
+    if not prompt_keys:
+        return False
+    hay_l = hay.lower()
+    hits = [k for k in prompt_keys if k in hay_l]
+    return len(hits) >= 1
+
+
+def _detect_recall_trigger(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    triggers = (
+        "remember", "recall", "do you remember", "when we were",
+        "that time", "earlier", "previous", "last time", "before",
+    )
+    return any(t in lower for t in triggers)
+
+
+def _decide_long_term_recall(session: "C0d3rSession", prompt: str, summary_bundle: dict) -> tuple[bool, str]:
+    if os.getenv("C0D3R_LTM_MODEL", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return False, ""
+    summary_text = str(summary_bundle.get("summary") or "").strip()
+    key_points = summary_bundle.get("key_points") or []
+    system = (
+        "Return ONLY JSON with keys: needs_long_term (bool) and query (string). "
+        "Set needs_long_term=true only when the user is asking to recall a past conversation detail not present in the short summary. "
+        "If true, provide a concise search query."
+    )
+    prompt_block = (
+        f"Short-term summary (<=200 words):\n{summary_text}\n\n"
+        f"Key points:\n{key_points}\n\n"
+        f"User prompt:\n{prompt}\n"
+    )
+    try:
+        raw = session.send(prompt_block, stream=False, system=system)
+    except Exception:
+        return False, ""
+    payload = _safe_json(raw or "")
+    if not isinstance(payload, dict):
+        return False, ""
+    needs = bool(payload.get("needs_long_term"))
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        query = prompt.strip()
+    return needs, query
+
+
+def _maybe_long_term_recall(session, memory, prompt: str, summary_bundle: dict) -> list[str]:
+    recall_trigger = _detect_recall_trigger(prompt)
+    short_hit = _short_term_matches(prompt, summary_bundle)
+    if not recall_trigger and short_hit:
+        return []
+    needs_long_term = recall_trigger or not short_hit
+    query = prompt
+    if needs_long_term:
+        model_needs, model_query = _decide_long_term_recall(session, prompt, summary_bundle)
+        if model_query:
+            query = model_query
+        if not model_needs and not recall_trigger and short_hit:
+            return []
+    hits = memory.search_long_term(query, limit=5)
+    if not hits and recall_trigger:
+        hits = memory.search_long_term(prompt, limit=5)
+    return hits
 
 
 def _build_context_block(workdir: Path, run_command) -> str:
@@ -830,10 +973,11 @@ def _build_context_block(workdir: Path, run_command) -> str:
     except Exception:
         pass
     lines.append(_environment_context_block(workdir))
-    summary = _load_rolling_summary()
+    bundle = _load_summary_bundle()
+    summary = str(bundle.get("summary") or "").strip()
     if summary:
         lines.append("[rolling_summary]\n" + summary)
-        key_points = _key_points_block(summary)
+        key_points = _key_points_block(bundle.get("key_points") or summary)
         if key_points:
             lines.append(key_points)
     if _auto_context_commands_enabled():
@@ -1484,8 +1628,9 @@ def _run_tool_loop_v2(
     prev_step_failed = False
     output_cache: dict[str, list[str]] = {}
     output_cursor: dict[str, int] = {}
-    rolling_summary = _load_rolling_summary()
-    key_points_block = _key_points_block(rolling_summary) if rolling_summary else ""
+    summary_bundle = _load_summary_bundle()
+    rolling_summary = str(summary_bundle.get("summary") or "").strip()
+    key_points_block = _key_points_block(summary_bundle.get("key_points") or rolling_summary) if rolling_summary or summary_bundle.get("key_points") else ""
     user_notes: list[str] = []
 
     def _capture_user_notes(reason: str = "") -> bool:
@@ -3990,8 +4135,7 @@ def _run_repl(
     from services.conversation_memory import ConversationMemory
 
     memory = ConversationMemory(_runtime_path("conversation.jsonl"))
-    summary_path = _runtime_path("summary.txt")
-    summary = summary_path.read_text(encoding="utf-8", errors="ignore") if summary_path.exists() else ""
+    summary_bundle = _load_summary_bundle()
     pending = initial_prompt
     single_shot = initial_prompt is not None and not sys.stdin.isatty()
     plan = plan or {}
@@ -4068,23 +4212,21 @@ def _run_repl(
             continue
 
         context = ""
+        system_context_block = ""
         if not minimal:
-            context = memory.build_context(summary)
+            max_chars = int(os.getenv("C0D3R_CONTEXT_CHAR_BUDGET", "12000") or "12000")
+            context = memory.build_context(summary_bundle, max_chars=max_chars)
         try:
             from services.system_probe import system_probe_context
             probe_block = system_probe_context(workdir)
-            context = f"{probe_block}\n{context}" if context else probe_block
+            system_context_block = probe_block
         except Exception:
             pass
         env_block = _environment_context_block(workdir)
         if env_block:
-            context = f"{env_block}\n{context}" if context else env_block
-        summary_text = _load_rolling_summary()
-        if summary_text and "[rolling_summary]" not in context:
-            context = f"[rolling_summary]\n{summary_text}\n{context}" if context else f"[rolling_summary]\n{summary_text}"
-            key_points = _key_points_block(summary_text)
-            if key_points:
-                context = f"{key_points}\n{context}" if context else key_points
+            system_context_block = f"{system_context_block}\n{env_block}" if system_context_block else env_block
+        if system_context_block:
+            context = f"{system_context_block}\n{context}" if context else system_context_block
         # Normalize user prompt (strip injected context if any).
         user_prompt = user_prompt_inlined or _strip_context_block(prompt)
         simple_task = _is_simple_file_task(user_prompt)
@@ -4102,9 +4244,9 @@ def _run_repl(
                 except Exception:
                     scan_future = None
         if not minimal:
-            recall_hits = memory.search_if_referenced(user_prompt, limit=5)
+            recall_hits = _maybe_long_term_recall(session, memory, user_prompt, summary_bundle)
             if recall_hits:
-                context = context + "\n\n[recall]\n" + "\n".join(recall_hits)
+                context = context + "\n\n[long_term_recall]\n" + "\n".join(recall_hits)
         if scan_future:
             try:
                 scan = scan_future.result()
@@ -4250,10 +4392,16 @@ def _run_repl(
             else:
                 return 0
         if not minimal and sys.stdin.isatty() and initial_prompt is None:
-            memory.append(user_prompt, response)
-            summary = memory.update_summary(summary, user_prompt, response, session)
-            summary_path.parent.mkdir(parents=True, exist_ok=True)
-            summary_path.write_text(summary, encoding="utf-8")
+            assistant_text = rendered or _extract_plaintext_response(response) or response
+            memory.append(
+                user_prompt,
+                assistant_text,
+                context=system_context_block,
+                workdir=str(workdir),
+                model_id=usage.model_id,
+            )
+            summary_bundle = memory.update_summary(summary_bundle, user_prompt, assistant_text, session)
+            _save_summary_bundle(summary_bundle)
         if oneshot:
             return 0
 
