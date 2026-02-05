@@ -163,8 +163,13 @@ class TerminalUI:
         self._dirty = False
         self._last_render = 0.0
         self._min_render_interval = 1.0 / 30.0
+        self._header_refresh_s = float(os.getenv("C0D3R_HEADER_REFRESH_S", "0.5") or "0.5")
+        self._last_header_refresh = 0.0
+        self._use_textual = False
         self._use_rich = False
         self._use_prompt_toolkit = False
+        self._textual_app = None
+        self._textual_thread: threading.Thread | None = None
         self._live = None
         self._console = None
         self._layout = None
@@ -175,87 +180,162 @@ class TerminalUI:
         self._init_tui()
 
     def _init_tui(self) -> None:
-        try:
-            from prompt_toolkit.application import Application
-            from prompt_toolkit.layout import Layout, HSplit, Window
-            from prompt_toolkit.widgets import TextArea
-            from prompt_toolkit.formatted_text import FormattedText
-            from prompt_toolkit.key_binding import KeyBindings
+        backend = os.getenv("C0D3R_TUI_BACKEND", "textual").strip().lower()
+        if backend in {"", "textual"}:
+            try:
+                from textual.app import App, ComposeResult
+                from textual.widgets import Static, Input, RichLog
 
-            kb = KeyBindings()
+                class C0d3rTextualApp(App):
+                    BINDINGS = [("ctrl+c", "quit", "Quit")]
+                    CSS = """
+                    #header { height:5; }
+                    #body { height:1fr; }
+                    #footer { height:3; }
+                    """
 
-            header = TextArea(
-                height=4,
-                text=self.header.render_text(),
-                style="class:header",
-                focusable=False,
-                read_only=True,
-            )
-            output = TextArea(
-                text="",
-                focusable=False,
-                read_only=True,
-                scrollbar=True,
-                wrap_lines=False,
-            )
-            input_box = TextArea(
-                height=1,
-                prompt=f"[{self.workdir}]> ",
-                multiline=False,
-                wrap_lines=False,
-            )
+                    def __init__(self, ui: "TerminalUI") -> None:
+                        super().__init__()
+                        self.ui = ui
+                        self._header = None
+                        self._body = None
+                        self._footer = None
 
-            @kb.add("enter")
-            def _(event) -> None:
-                text = input_box.text
-                input_box.text = ""
-                if text is not None:
-                    self._input_queue.put(text)
+                    def compose(self) -> ComposeResult:
+                        yield Static(id="header")
+                        yield RichLog(id="body", wrap=False, markup=False, highlight=False)
+                        yield Input(id="footer", placeholder="Type instructions and press Enter")
 
-            root = HSplit(
-                [
-                    header,
-                    Window(height=1, char="-"),
-                    output,
-                    Window(height=1, char="-"),
-                    input_box,
-                ]
-            )
-            layout = Layout(root, focused_element=input_box)
-            self._pt_app = Application(layout=layout, key_bindings=kb, full_screen=True)
-            self._pt_header = header
-            self._pt_output = output
-            self._pt_input = input_box
-            self._use_prompt_toolkit = True
-            self._use_rich = False
-            return
-        except Exception:
-            self._use_prompt_toolkit = False
-        try:
-            from rich.console import Console
-            from rich.live import Live
-            from rich.layout import Layout
-            from rich.panel import Panel
-            self._console = Console()
-            self._layout = Layout()
-            self._layout.split_column(
-                Layout(name="header", size=5),
-                Layout(name="body", ratio=1),
-                Layout(name="footer", size=3),
-            )
-            self._live = Live(self._layout, console=self._console, refresh_per_second=8, transient=False)
-            self._use_rich = True
-        except Exception:
-            self._use_rich = False
+                    def on_mount(self) -> None:
+                        self._header = self.query_one("#header", Static)
+                        self._body = self.query_one("#body", RichLog)
+                        self._footer = self.query_one("#footer", Input)
+                        try:
+                            self._header.update(self.ui.header.render_text())
+                        except Exception:
+                            pass
+                        self.set_interval(0.5, self._refresh_header)
+
+                    def _refresh_header(self) -> None:
+                        if self._header:
+                            try:
+                                self._header.update(self.ui.header.render_text())
+                            except Exception:
+                                pass
+
+                    def on_input_submitted(self, event: Input.Submitted) -> None:
+                        text = event.value
+                        if self._footer:
+                            self._footer.value = ""
+                        if text is not None:
+                            self.ui._input_queue.put(text)
+
+                    def push_line(self, line: str) -> None:
+                        if self._body:
+                            self._body.write(line)
+
+                    def set_header_text(self, text: str) -> None:
+                        if self._header:
+                            self._header.update(text)
+
+                    def set_footer_hint(self, text: str) -> None:
+                        if self._footer:
+                            self._footer.placeholder = text or "Type instructions and press Enter"
+
+                self._textual_app = C0d3rTextualApp(self)
+                self._use_textual = True
+                self._use_prompt_toolkit = False
+                self._use_rich = False
+                return
+            except Exception:
+                self._use_textual = False
+                backend = ""
+        if backend in {"", "prompt_toolkit"}:
+            try:
+                from prompt_toolkit.application import Application
+                from prompt_toolkit.layout import Layout, HSplit, Window
+                from prompt_toolkit.widgets import TextArea
+                from prompt_toolkit.formatted_text import FormattedText
+                from prompt_toolkit.key_binding import KeyBindings
+
+                kb = KeyBindings()
+
+                header = TextArea(
+                    height=4,
+                    text=self.header.render_text(),
+                    style="class:header",
+                    focusable=False,
+                    read_only=True,
+                )
+                output = TextArea(
+                    text="",
+                    focusable=False,
+                    read_only=True,
+                    scrollbar=True,
+                    wrap_lines=False,
+                )
+                input_box = TextArea(
+                    height=1,
+                    prompt=f"[{self.workdir}]> ",
+                    multiline=False,
+                    wrap_lines=False,
+                )
+
+                @kb.add("enter")
+                def _(event) -> None:
+                    text = input_box.text
+                    input_box.text = ""
+                    if text is not None:
+                        self._input_queue.put(text)
+
+                root = HSplit(
+                    [
+                        header,
+                        Window(height=1, char="-"),
+                        output,
+                        Window(height=1, char="-"),
+                        input_box,
+                    ]
+                )
+                layout = Layout(root, focused_element=input_box)
+                self._pt_app = Application(layout=layout, key_bindings=kb, full_screen=True)
+                self._pt_header = header
+                self._pt_output = output
+                self._pt_input = input_box
+                self._use_prompt_toolkit = True
+                self._use_rich = False
+                return
+            except Exception:
+                self._use_prompt_toolkit = False
+        if backend in {"", "rich"}:
+            try:
+                from rich.console import Console
+                from rich.live import Live
+                from rich.layout import Layout
+                from rich.panel import Panel
+                self._console = Console()
+                self._layout = Layout()
+                self._layout.split_column(
+                    Layout(name="header", size=5),
+                    Layout(name="body", ratio=1),
+                    Layout(name="footer", size=3),
+                )
+                self._live = Live(self._layout, console=self._console, refresh_per_second=8, transient=False)
+                self._use_rich = True
+            except Exception:
+                self._use_rich = False
 
     def start(self) -> None:
         self._running = True
-        if self._use_prompt_toolkit and self._pt_app:
+        if self._use_textual and self._textual_app:
+            self._textual_thread = threading.Thread(target=self._textual_app.run, daemon=True)
+            self._textual_thread.start()
+        elif self._use_prompt_toolkit and self._pt_app:
             self._prompt_thread = threading.Thread(target=self._pt_app.run, daemon=True)
             self._prompt_thread.start()
         elif self._use_rich and self._live:
             self._live.start()
-        if not self._use_prompt_toolkit:
+        if not self._use_prompt_toolkit and not self._use_textual:
             self._prompt_thread = threading.Thread(target=self._input_loop, daemon=True)
             self._prompt_thread.start()
         self._render_thread = threading.Thread(target=self._render_loop, daemon=True)
@@ -266,6 +346,11 @@ class TerminalUI:
         self._running = False
         if self._use_rich and self._live:
             self._live.stop()
+        if self._use_textual and self._textual_app:
+            try:
+                self._textual_app.exit()
+            except Exception:
+                pass
         if self._use_prompt_toolkit and self._pt_app:
             try:
                 self._pt_app.exit()
@@ -275,6 +360,10 @@ class TerminalUI:
 
     def _render_loop(self) -> None:
         while self._running:
+            now = time.time()
+            if (now - self._last_header_refresh) >= self._header_refresh_s:
+                self._dirty = True
+                self._last_header_refresh = now
             self._render_event.wait(0.05)
             self._render_event.clear()
             if self._dirty:
@@ -303,6 +392,15 @@ class TerminalUI:
         # Block until input is available.
         return self._input_queue.get()
 
+    def drain_input(self, max_items: int = 50) -> list[str]:
+        items: list[str] = []
+        for _ in range(max_items):
+            try:
+                items.append(self._input_queue.get_nowait())
+            except queue.Empty:
+                break
+        return items
+
     def set_header(self, text: str) -> None:
         with self._lock:
             self.header_text = text
@@ -319,12 +417,24 @@ class TerminalUI:
         self.render()
 
     def write_line(self, line: str) -> None:
+        if self._use_textual and self._textual_app:
+            try:
+                self._textual_app.call_from_thread(self._textual_app.push_line, line)
+                return
+            except Exception:
+                pass
         with self._lock:
             self.lines.append(line)
             self._dirty = True
         self.render()
 
     def write_text(self, text: str, *, delay_s: float = 0.0, controller=None) -> None:
+        if self._use_textual and self._textual_app:
+            for line in text.splitlines():
+                if controller and controller.interrupted:
+                    return
+                self.write_line(line)
+            return
         for ch in text:
             if controller and controller.interrupted:
                 return
@@ -347,7 +457,33 @@ class TerminalUI:
             return
         header_text = getattr(self, "header_text", self.header.render_text())
         body_text = "\n".join(self.lines)
-        footer_text = self.footer or "input queued" if not self._input_queue.empty() else ""
+        queued = 0
+        try:
+            queued = self._input_queue.qsize()
+        except Exception:
+            queued = 0
+        footer_text = self.footer or (f"queued: {queued}" if queued else "ready")
+        if self.status:
+            footer_text = f"{footer_text} | {self.status}".strip()
+        if self._use_textual and self._textual_app:
+            try:
+                self._textual_app.call_from_thread(self._textual_app.set_header_text, header_text)
+                self._textual_app.call_from_thread(self._textual_app.set_footer_hint, footer_text)
+                pending: list[str] = []
+                with self._lock:
+                    if self.lines:
+                        pending = list(self.lines)
+                        self.lines.clear()
+                if pending:
+                    def _push_pending() -> None:
+                        for line in pending:
+                            self._textual_app.push_line(line)
+                    self._textual_app.call_from_thread(_push_pending)
+            except Exception:
+                pass
+            self._last_render = now
+            self._dirty = False
+            return
         if self._use_prompt_toolkit and self._pt_app:
             if self._pt_header:
                 self._pt_header.text = header_text
@@ -357,6 +493,11 @@ class TerminalUI:
                     self._pt_output.buffer.cursor_position = len(self._pt_output.text)
                 except Exception:
                     pass
+            if self._pt_input:
+                prompt = f"[{self.workdir}]> "
+                if queued:
+                    prompt = f"[{self.workdir}] (queued:{queued})> "
+                self._pt_input.prompt = prompt
             if self._pt_app:
                 try:
                     self._pt_app.invalidate()
@@ -528,39 +669,18 @@ def main(argv: List[str] | None = None) -> int:
             _UI_MANAGER = None
     header.render()
     _emit_live("boot: header rendered")
-    if os.getenv("C0D3R_SKIP_PRICING", "").strip().lower() in {"1", "true", "yes", "on"}:
-        _emit_live("pricing: skipped by C0D3R_SKIP_PRICING")
-    else:
-        _refresh_pricing_cache(session, header, session.get_model_id())
-    math_block = ""
-    # Lightweight plan + screener to decide minimal tooling.
-    plan = _plan_execution(session, base_request)
-    screen = _screen_tools(session, base_request)
-    if isinstance(screen, dict) and screen:
-        # Merge screener decisions with planner.
-        for key in ("mode", "do_math", "do_research", "do_tool_loop", "model_override"):
-            if key in screen and screen.get(key) is not None:
-                plan[key] = screen.get(key)
-    if plan.get("model_override"):
-        session._c0d3r.model_id = str(plan.get("model_override"))
-    do_math = bool(plan.get("do_math", settings.get("math_grounding", True)))
-    do_research = bool(plan.get("do_research", not os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1","true","yes","on"}))
-    if do_math and not _requires_rigorous_constraints(base_request):
-        do_math = False
-    if _is_qa_prompt(base_request) or _is_conversation_prompt(base_request):
-        do_math = False
-    # Long-form tech descriptions: build tech matrix + outline before tool loop.
+    os.environ.setdefault("C0D3R_SKIP_PRICING", "1")
+    _emit_live("pricing: skipped by default (commands-only mode)")
+    # Commands-only execution: no planner/screener/matrix or math grounding.
+    plan = {
+        "mode": "tool_loop",
+        "do_math": False,
+        "do_research": False,
+        "do_tool_loop": True,
+        "model_override": "",
+    }
+    do_research = False
     tech_matrix = None
-    if _is_longform_request(base_request):
-        _emit_live("longform: building tech matrix + outline")
-        tech_matrix = _build_tech_matrix(session, base_request)
-    if os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
-        do_research = False
-    if do_math:
-        _emit_live("boot: math grounding")
-        math_block = _math_grounding_block(session, prompt, workdir)
-    if math_block:
-        prompt = f"{math_block}\n\n{prompt}"
     _emit_live("boot: enter repl")
     return _run_repl(
         session,
@@ -951,6 +1071,10 @@ def _file_ops_enabled() -> bool:
     return False
 
 
+def _commands_only_enabled() -> bool:
+    return os.getenv("C0D3R_COMMANDS_ONLY", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _ui_write(line: str) -> None:
     """Write a line to the interactive UI if present, else stdout."""
     try:
@@ -1263,6 +1387,11 @@ def _validate_tool_loop_v2_payload(payload: dict) -> tuple[bool, str]:
         return False, "payload is not an object"
     if "final" not in payload:
         return False, "missing key: final"
+    status_updates = payload.get("status_updates")
+    if status_updates is None:
+        return False, "missing key: status_updates"
+    if not isinstance(status_updates, list):
+        return False, "status_updates must be a list"
     if "needs_terminal" not in payload:
         return False, "missing key: needs_terminal"
     if "commands" not in payload:
@@ -1275,8 +1404,8 @@ def _validate_tool_loop_v2_payload(payload: dict) -> tuple[bool, str]:
         return False, "commands must be a list"
     checks = payload.get("checks")
     if checks is None:
-        payload["checks"] = []
-    elif not isinstance(checks, list):
+        return False, "missing key: checks"
+    if not isinstance(checks, list):
         return False, "checks must be a list"
     needs_terminal = payload.get("needs_terminal")
     if not isinstance(needs_terminal, bool):
@@ -1285,23 +1414,24 @@ def _validate_tool_loop_v2_payload(payload: dict) -> tuple[bool, str]:
         return False, "needs_terminal must be true when commands are provided"
     if payload["needs_terminal"] and not commands and not (payload.get("final") or "").strip():
         return False, "needs_terminal=true but no commands and empty final"
+    if "output_request" not in payload:
+        return False, "missing key: output_request"
     output_request = payload.get("output_request")
-    if output_request is not None:
-        if not isinstance(output_request, list):
-            return False, "output_request must be a list"
-        for item in output_request:
-            if not isinstance(item, dict):
-                return False, "output_request items must be objects"
-            key = item.get("key")
-            idx = item.get("chunk_index")
-            if not isinstance(key, str) or not key.strip():
-                return False, "output_request.key must be a non-empty string"
-            if not isinstance(idx, int) or idx < 0:
-                return False, "output_request.chunk_index must be a non-negative integer"
-        if payload.get("needs_terminal") is True:
-            return False, "output_request requires needs_terminal=false"
-        if commands or (payload.get("checks") or []):
-            return False, "output_request must be used without commands/checks"
+    if not isinstance(output_request, list):
+        return False, "output_request must be a list"
+    for item in output_request:
+        if not isinstance(item, dict):
+            return False, "output_request items must be objects"
+        key = item.get("key")
+        idx = item.get("chunk_index")
+        if not isinstance(key, str) or not key.strip():
+            return False, "output_request.key must be a non-empty string"
+        if not isinstance(idx, int) or idx < 0:
+            return False, "output_request.chunk_index must be a non-negative integer"
+    if output_request and payload.get("needs_terminal") is True:
+        return False, "output_request requires needs_terminal=false"
+    if output_request and (commands or (payload.get("checks") or [])):
+        return False, "output_request must be used without commands/checks"
     return True, ""
 
 
@@ -1336,6 +1466,27 @@ def _run_tool_loop_v2(
     output_cursor: dict[str, int] = {}
     rolling_summary = _load_rolling_summary()
     key_points_block = _key_points_block(rolling_summary) if rolling_summary else ""
+    user_notes: list[str] = []
+
+    def _capture_user_notes(reason: str = "") -> bool:
+        if not _UI_MANAGER or not hasattr(_UI_MANAGER, "drain_input"):
+            return False
+        try:
+            notes = _UI_MANAGER.drain_input()
+        except Exception:
+            notes = []
+        if not notes:
+            return False
+        for note in notes:
+            cleaned = str(note).strip()
+            if not cleaned:
+                continue
+            user_notes.append(cleaned)
+            history.append(f"[user_note] {cleaned}")
+            _ui_write(f"note: {cleaned}\n")
+        if reason:
+            history.append(f"[user_note_context] {reason}")
+        return True
 
     def _history_block() -> str:
         if not history:
@@ -1345,6 +1496,7 @@ def _run_tool_loop_v2(
     schema_doc = (
         "Return ONLY JSON (no markdown) using this schema:\n"
         "{\n"
+        "  \"status_updates\": [string],\n"
         "  \"needs_terminal\": true|false,\n"
         "  \"commands\": [\n"
         "    { \"purpose\": string, \"shell\": \"auto\"|\"powershell\"|\"cmd\"|\"bash\"|\"sh\"|\"python\", \"cwd\": string, \"timeout_s\": number|null, \"command\": string }\n"
@@ -1354,6 +1506,7 @@ def _run_tool_loop_v2(
         "  \"final\": string\n"
         "}\n"
         "Rules:\n"
+        "- status_updates must be a list (can be empty). Keep items short.\n"
         "- All filesystem/OS actions MUST be expressed as terminal commands in commands[]. No file_ops.\n"
         "- Prefer idempotent commands. Avoid creating helper scripts unless absolutely required by the task.\n"
         "- Always include verification in checks[] (tests, grep, ls, python -m ...), and interpret failures to produce the next command batch.\n"
@@ -1364,6 +1517,7 @@ def _run_tool_loop_v2(
     for step in range(1, max_steps + 1):
         usage_tracker.set_status("planning", f"executor_v2 step {step}/{max_steps}")
         _emit_live(f"tool_loop_v2: step {step}/{max_steps} (cwd={current_cwd})")
+        _capture_user_notes("before planning")
 
         sys_info = ""
         try:
@@ -1376,6 +1530,9 @@ def _run_tool_loop_v2(
         objective = base_request.strip()
         intent = _intent_for_step(step, step_failed=prev_step_failed, last_error=last_error)
         summary_block = f"[rolling_summary]\n{rolling_summary}" if rolling_summary else ""
+        notes_block = ""
+        if user_notes:
+            notes_block = "[user_notes]\n" + "\n".join(f"- {note}" for note in user_notes[-6:])
 
         last_json = ""
         if last_payload:
@@ -1392,6 +1549,7 @@ def _run_tool_loop_v2(
             + ("\n\n" + env_block if env_block else "")
             + ("\n\n" + summary_block if summary_block else "")
             + ("\n\n" + key_points_block if key_points_block else "")
+            + ("\n\n" + notes_block if notes_block else "")
             + "\n\n[objective]\n"
             + objective
             + "\n\n[intent]\n"
@@ -1422,7 +1580,9 @@ def _run_tool_loop_v2(
         active_prompt = tool_prompt
         while attempt < max_json_attempts:
             attempt += 1
+            usage_tracker.add_input(active_prompt)
             raw = _send_with_model_override(session, prompt=active_prompt, model_id=selected_model, stream=False)
+            usage_tracker.add_output(raw or "")
             payload = _extract_json_object(raw or "")
             if payload is None:
                 active_prompt = (
@@ -1466,6 +1626,12 @@ def _run_tool_loop_v2(
             if c:
                 checks.append(c)
 
+        show_final_now = not commands and not checks and not needs_terminal
+        payload_lines = _format_payload_lines(payload, show_final=show_final_now)
+        if payload_lines:
+            for line in payload_lines:
+                _ui_write(line + "\n")
+
         if output_request:
             delivered = 0
             for req in output_request:
@@ -1494,6 +1660,7 @@ def _run_tool_loop_v2(
         usage_tracker.set_status("executing", f"executor_v2 running {len(commands)} cmd(s)")
         step_failed = False
         ran_any = False
+        user_interrupted = False
 
         for i, cmd in enumerate(commands[:max_commands_per_step], start=1):
             ran_any = True
@@ -1551,8 +1718,11 @@ def _run_tool_loop_v2(
                         history.append(f"[output_chunk] key={chunk_key} index={idx} total={len(chunks)}\n{chunks[idx]}")
                         output_cursor[chunk_key] = idx + 1
                 break
+            if _capture_user_notes("during command execution"):
+                user_interrupted = True
+                break
 
-        if not step_failed and checks:
+        if not step_failed and not user_interrupted and checks:
             usage_tracker.set_status("executing", f"executor_v2 checks ({len(checks)} cmd)")
             for j, chk in enumerate(checks[:max_commands_per_step], start=1):
                 purpose = (chk.get("purpose") or "check").strip()
@@ -1606,6 +1776,14 @@ def _run_tool_loop_v2(
                             history.append(f"[output_chunk] key={chunk_key} index={idx} total={len(chunks)}\n{chunks[idx]}")
                             output_cursor[chunk_key] = idx + 1
                     break
+                if _capture_user_notes("during checks"):
+                    user_interrupted = True
+                    break
+
+        if user_interrupted:
+            prev_step_failed = False
+            history.append("[next] user note received; replan before more commands.")
+            continue
 
         if final and not step_failed:
             return final
@@ -1634,1262 +1812,17 @@ def _run_tool_loop(
     stream_callback,
     usage_tracker,
 ) -> str:
-    if _tool_loop_v2_enabled():
-        return _run_tool_loop_v2(
-            session,
-            prompt,
-            workdir,
-            run_command,
-            images=images,
-            stream=stream,
-            stream_callback=stream_callback,
-            usage_tracker=usage_tracker,
-        )
-
-    original_workdir = workdir
-    wants_new_project = False
-    wrote_project = False
-    max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "4"))
-    full_completion = _requires_full_completion(prompt)
-    unlimited = full_completion and os.getenv("C0D3R_FULL_UNLIMITED", "1").strip().lower() not in {"0", "false", "no", "off"}
-    if full_completion and not unlimited:
-        max_steps = max(max_steps, int(os.getenv("C0D3R_FULL_STEPS", "8")))
-    history: List[str] = []
-    gap_score = 0
-    last_error = ""
-    log_path = _runtime_path("tool_loop.log")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    base_snapshot = _snapshot_projects_dir(prompt)
-    created_dirs: List[str] = []
-    known_projects: List[Path] = []
-    success = False
-    any_success = False
-    tests_ran = False
-    tests_ok = False
-    base_request = _tool_loop_base_request(prompt)
-    local_task = _is_local_task(base_request)
-    local_target = _extract_target_folder_name(base_request) if local_task else ""
-    local_ready = False
-    wants_new_project = _decide_new_project(session, base_request, workdir)
-    if wants_new_project and _is_existing_project(workdir) and not _is_workspace_root(workdir):
-        wants_new_project = False
-    simple_task = False if wants_new_project else _decide_simple_task(session, base_request)
-    scaffold_task = _is_scaffold_task(base_request)
-    if simple_task or scaffold_task:
-        full_completion = False
-    require_tests = _requires_tests(prompt)
-    if local_task:
-        require_tests = False
-    allow_new_root_dirs = wants_new_project or _prompt_allows_new_dirs(prompt)
-    require_benchmark = _requires_benchmark(prompt)
-    actionable = _is_actionable_prompt(base_request) or _requires_commands_for_task(prompt) or wants_new_project
-    consecutive_no_progress = 0
-    test_failures = 0
-    model_timeouts = 0
-    unbounded_resolved = False
-    behavior_log: list[dict] = []
-    step = 0
-    no_command_count = 0
-    petals = PetalManager()
-    project_root_for_ops = None
-    if wants_new_project:
-        project_name = _decide_project_name(session, base_request, workdir)
-        candidate = (workdir / project_name).resolve()
-        suffix = 1
-        while candidate.exists():
-            suffix += 1
-            candidate = (workdir / f"{project_name}{suffix}").resolve()
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            candidate = (workdir / _slugify_project_name(base_request)).resolve()
-            candidate.mkdir(parents=True, exist_ok=True)
-        project_root_for_ops = candidate
-        # Execute commands in the new project root by default (except local unzip tasks).
-        if not _is_local_task(base_request):
-            try:
-                workdir = project_root_for_ops
-                os.chdir(workdir)
-            except Exception:
-                workdir = project_root_for_ops
-    if require_tests:
-        test_root = project_root_for_ops or workdir
-        if _is_workspace_root(test_root) or not _looks_like_project_root(test_root):
-            require_tests = False
-    if wants_new_project:
-        _emit_live(f"tool_loop: new-project mode -> root={project_root_for_ops or workdir}")
-    scaffold_done = False
-    while True:
-        step += 1
-        if not unlimited and step > max_steps:
-            break
-        commands: list[str] = []
-        usage_tracker.set_status("planning", f"step {step+1}/{max_steps}")
-        _emit_live(f"tool_loop step {step+1}/{max_steps}: preparing model prompt")
-        _capture_behavior_snapshot(
-            behavior_log,
-            step=step,
-            no_progress=consecutive_no_progress,
-            test_failures=test_failures,
-            model_timeouts=model_timeouts,
-            note="prepare_prompt",
-        )
-        research_tasks: list[tuple[str, callable]] = []
-        # local_task/local_target/local_ready are initialized once per tool loop
-        if local_task:
-            simple_task = True
-        if not local_task and wants_new_project:
-            if any(k in base_request.lower() for k in ("unzip", "extract")):
-                local_task = True
-        disable_pr = os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}
-        if wants_new_project:
-            disable_pr = True
-        if local_task:
-            disable_pr = True
-        if gap_score >= 2 and not (simple_task or scaffold_task) and not disable_pr:
-            _emit_live("tool_loop: gap score high; running targeted research")
-            research_tasks.append(("gap_score", lambda: _pre_research(session, prompt)))
-        # Apply dynamic petals via capability mapping (no hardwired petals).
-        petal_effects = {}
-        if not (simple_task or scaffold_task):
-            constraint_list = petals.state.get("constraints") or []
-            petal_plan = _petal_action_plan(session, constraint_list, prompt)
-            petal_effects = _apply_petal_plan(petal_plan) if petal_plan else {}
-        if petal_effects and not (simple_task or scaffold_task) and not disable_pr:
-            research_queries = petal_effects.get("research_queries") or []
-            if research_queries:
-                _emit_live(f"petal: research queries -> {len(research_queries)}")
-                for rq in research_queries[:3]:
-                    research_tasks.append((f"petal:{rq[:60]}", lambda rq=rq: _pre_research(session, rq)))
-            if petal_effects.get("pause_for_input") and sys.stdin.isatty():
-                _emit_live("petal: pause_for_user_input")
-                print("\n[pause] Petal requested input. Add note and press Enter:")
-                note = input("> ").strip()
-                if note:
-                    history.append(f"[petal note]\n{note}")
-        # Matrix query for gaps/hits (skip for simple tasks)
-        if not (simple_task or scaffold_task) and not disable_pr and not local_task:
-            matrix_info = _query_unbounded_matrix(prompt)
-            if matrix_info:
-                history.append(f"[matrix] hits={matrix_info.get('hits')} missing={matrix_info.get('missing')}")
-                if matrix_info.get("missing"):
-                    _emit_live("matrix: missing items; targeted research")
-                    for item in matrix_info["missing"][:3]:
-                        research_tasks.append((f"matrix:{item[:60]}", lambda item=item: _pre_research(session, item)))
-        if research_tasks and not local_task:
-            _emit_live(f"research: running {len(research_tasks)} tasks in parallel")
-            for label, note in _run_parallel_tasks(research_tasks, max_workers=3):
-                if note:
-                    tag = "research"
-                    if label.startswith("petal:"):
-                        tag = "petal research"
-                    elif label.startswith("matrix:"):
-                        tag = "matrix research"
-                    history.append(f"[{tag}]\n{note[:2000]}")
-                    _append_research_notes(note)
-        enforce_progress = consecutive_no_progress >= 2 and full_completion
-        if petal_effects.get("force_file_edits"):
-            enforce_progress = True
-        force_tests = bool(petal_effects.get("force_tests")) if petal_effects else False
-        target_root = project_root_for_ops or workdir
-        if simple_task or scaffold_task:
-            history_block = ""
-        else:
-            history_block = ("\n\nRecent outputs:\n" + "\n".join(history[-6:])) if history else ""
-        code_memory = _load_code_memory_summary()
-        if code_memory and not simple_task:
-            history_block = history_block + "\n\n" + code_memory
-        local_target_exists = False
-        if local_task and local_target:
-            try:
-                local_target_exists = (original_workdir / local_target).exists()
-            except Exception:
-                local_target_exists = False
-        tool_prompt = (
-            "[schema:tool_loop]\n"
-            "You can run local shell commands to inspect the repo and validate work. "
-            "Return ONLY JSON with keys: commands (list of strings), file_ops (list), and final (string or empty). "
-            "You MAY also include checks (list of verification commands) to run after commands. "
-            "If you are done, set final to your response and commands to []. "
-            "Always create minimal unit tests with representative sample (foo) data and run them "
-            "after each file write, and again before declaring success. "
-            "Do not finalize until tests pass.\n"
-            + (
-                "This is a local filesystem task. Prefer concrete shell commands "
-                "(e.g., Expand-Archive, Get-ChildItem, Get-Content) to perform the work. "
-                "Do NOT create helper scripts; use commands. "
-                "Use file_ops only for final file content updates like README.md.\n"
-                + (f"Target folder: {local_target} (exists={str(local_target_exists).lower()}). "
-                   "If the target does not exist, you MUST include an extraction command to create it.\n"
-                   if local_target else "")
-                + "If extraction yields a single nested folder, enter it and treat it as the project root.\n"
-                if local_task
-                else ""
-            )
-            + (
-                "This request requires rigorous mathematical/engineering constraints. "
-                "Use explicit assumptions, invariants, and verification steps. "
-                "Prioritize research, formal reasoning, and validation before coding. "
-                "Do NOT shortcut with stubs or placeholders.\n"
-                if _requires_rigorous_constraints(prompt)
-                else ""
-            )
-            + (
-                ""
-                if simple_task
-                else "Create and maintain a checklist of requirements in your reasoning. "
-                "Before finalizing, explicitly verify each checklist item is complete. "
-                "If incomplete, keep working and iterate. "
-                "It is OK to loop across tasks if they depend on each other.\n"
-                "Create and update these files inside the target project root under .c0d3r/:\n"
-                "- .c0d3r/plan.md (expanded plan)\n"
-                "- .c0d3r/checklist.md (requirements checklist + verification notes)\n"
-                "- .c0d3r/bibliography.md (APA citations for any research/software used)\n"
-                "Do not finalize until these files exist and are updated.\n"
-                "If any errors or missing knowledge are detected, perform targeted research and "
-                "record source->decision->code in .c0d3r/checklist.md before continuing.\n"
-                "If code/data is derived from research, add APA-formatted citations in code comments "
-                "and append them to .c0d3r/bibliography.md.\n"
-                "If third-party libraries or datasets are added, record license obligations in "
-                ".c0d3r/bibliography.md and include required license files/notices in the repo.\n"
-            )
-            + (
-                "The request includes 'outperforms' or 'novel' claims. "
-                "You must create a benchmark script that compares your solver to a baseline "
-                "on the same generated dataset, and write results to .c0d3r/benchmarks.json "
-                "including keys: generated_by, baseline, candidate, dataset, metrics. "
-                "Do not finalize without that file.\n"
-                if require_benchmark
-                else ""
-            )
-            + ("You must modify at least one project file this step; runtime-only edits are not allowed.\n" if enforce_progress else "")
-            + f"Work inside the current project root: {target_root}. "
-            "If the user asked for a new project, you MUST create a new folder and place all files inside it. "
-            "Prefer modifying existing files in the target project and running its tests.\n"
-            + "Meta commands available:\n"
-            "- ::bg <command> (run long-lived command in background, returns pid)\n"
-            "- ::wait_http <url> <seconds> (poll until HTTP 200 or timeout)\n"
-            "- ::sleep <seconds>\n"
-            "- ::kill <pid>\n"
-            "- ::cd <path> (change working directory for subsequent commands)\n"
-            "- ::textbook_deps (npm install for textbook pipeline)\n"
-            "- ::textbook_fetch [path] (download LibreTexts PDFs into textbooks/)\n"
-            "- ::textbook_segment [path] (extract/segment text from PDFs)\n"
-            "- ::textbook_build_dataset [path] (build segments.ndjson)\n"
-            "- ::textbook_build_tiles [path] (build tiles.ndjson)\n"
-            "- ::textbook_fix_pages [path] (repair pages.json counts)\n"
-            "- ::textbook_verify_pages [path] (verify processed page counts)\n"
-            "- ::textbook_reprocess [path] (reprocess incomplete books; Windows-only)\n"
-            "- ::textbook_import [path] (import manifest into Django DB + citations)\n"
-            "- ::textbook_ocr [path] (OCR page PNGs -> Django DB)\n"
-            "- ::textbook_list (list textbooks from DB)\n"
-            "- ::textbook_prepare_qa [path] (generate QA candidates)\n"
-            "- ::textbook_import_qa [path] (import QA candidates into DB)\n"
-            "- ::textbook_knowledge [path] (build knowledge docs + queue items)\n"
-            "Be concise and execution-focused. Always execute commands before returning final.\n"
-            "Choose commands dynamically based on the task and environment.\n"
-            f"Step {step + 1}/{max_steps}.\n"
-            f"Request:\n{base_request}\n"
-            + history_block
-            + (f"\n\n[gap_score]\n{gap_score}\n[last_error]\n{last_error}" if gap_score or last_error else "")
-        )
-        if model_timeouts >= 2:
-            tool_prompt = (
-            "Return ONLY JSON with keys: commands (list of strings), file_ops (list), and final (string or empty). "
-                "Provide 2-6 concrete shell commands. Do not return an empty list.\n"
-                f"Request:\n{base_request}\n"
-            )
-        _trace_event({
-            "event": "tool_loop.prompt",
-            "step": step,
-            "wants_new_project": wants_new_project,
-            "simple_task": simple_task,
-            "scaffold_task": scaffold_task,
-            "actionable": actionable,
-            "project_root": str(project_root_for_ops or workdir),
-            "prompt_preview": base_request[:200],
-        })
-        usage_tracker.add_input(tool_prompt)
-        _emit_live("tool_loop: calling model for commands")
-        _diag_log("tool_loop: model call start")
-        # Apply petal overrides (model/timeout/microtests)
-        saved_model_id = getattr(session._c0d3r, "model_id", "")
-        saved_timeout = os.getenv("C0D3R_MODEL_TIMEOUT_S")
-        if petal_effects.get("model_override"):
-            session._c0d3r.model_id = str(petal_effects["model_override"])
-            _emit_live(f"petal: switch_model -> {session._c0d3r.model_id}")
-        if petal_effects.get("timeout_override") is not None:
-            os.environ["C0D3R_MODEL_TIMEOUT_S"] = str(petal_effects["timeout_override"])
-            _emit_live(f"petal: adjust_timeout_s -> {petal_effects['timeout_override']}")
-        if petal_effects.get("enforce_microtests"):
-            os.environ["C0D3R_MICROTESTS"] = "1"
-            _emit_live("petal: enforce_microtests")
-        def _timeout_reroute(note: str) -> tuple[str, list[str]]:
-            """
-            Failure-aware reroute: use research + constrained command generator.
-            Returns (response_text, injected_history).
-            """
-            injected: list[str] = []
-            _emit_live(f"tool_loop: reroute on timeout ({note}) -> research + diagnostics")
-            # 1) Targeted research based on last_error + base_request.
-            try:
-                research_note = _pre_research(session, base_request)
-                if research_note:
-                    injected.append("[reroute-research]\n" + research_note[:2000])
-            except Exception:
-                pass
-            # 2) Constrained command generator using research + last error.
-            reroute_prompt = (
-                "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
-                "file_ops (list of {path, action, content}). "
-                "Use the research and last error below to choose the next actionable steps. "
-                "Provide 2-6 concrete shell commands OR file_ops. Do NOT return empty commands/file_ops.\n"
-                f"Request:\n{base_request}\n\n"
-                + ("\n\n[reroute_context]\n" + "\n".join(injected) if injected else "")
-                + (f"\n\n[last_error]\n{last_error}" if last_error else "")
-            )
-            try:
-                response = session.send(prompt=reroute_prompt, stream=False)
-                return response or "", injected
-            except Exception:
-                return "", injected
-        if _requires_rigorous_constraints(prompt):
-            command_model = os.getenv("C0D3R_COMMAND_MODEL", "mistral.mistral-large-3-675b-instruct")
-            saved_model = getattr(session._c0d3r, "model_id", "")
-            saved_multi = getattr(session._c0d3r, "multi_model", True)
-            saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
-            saved_profile = getattr(session._c0d3r, "inference_profile", "")
-            try:
-                session._c0d3r.model_id = command_model
-                session._c0d3r.multi_model = False
-                session._c0d3r.rigorous_mode = False
-                session._c0d3r.inference_profile = ""
-                response = _call_with_timeout(
-                    session._safe_send,
-                    timeout_s=_model_timeout_s(),
-                    kwargs={"prompt": tool_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-                )
-            finally:
-                session._c0d3r.model_id = saved_model
-                session._c0d3r.multi_model = saved_multi
-                session._c0d3r.rigorous_mode = saved_rigorous
-                session._c0d3r.inference_profile = saved_profile
-        else:
-            response = _call_with_timeout(
-                session._safe_send,
-                timeout_s=_model_timeout_s(),
-                kwargs={"prompt": tool_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-            )
-        if response is None:
-            _emit_live("tool_loop: model call timed out")
-            _diag_log("tool_loop: model call timeout")
-            timeout_val = _model_timeout_s()
-            if timeout_val is None:
-                last_error = "model call returned no response (timeouts disabled)"
-            else:
-                last_error = f"model call timed out after {timeout_val}s"
-            model_timeouts += 1
-            if model_timeouts >= 3:
-                fallback_model = os.getenv("C0D3R_TOOL_FALLBACK_MODEL", "mistral.mistral-large-3-675b-instruct")
-                try:
-                    session._c0d3r.rigorous_mode = False
-                    session._c0d3r.model_id = fallback_model
-                    _emit_live(f"tool_loop: switching to fallback model {fallback_model}")
-                except Exception:
-                    pass
-            history.append("note: model call timed out; rerouting to research+diagnostics path")
-            reroute, injected = _timeout_reroute("primary")
-            if injected:
-                history.extend(injected[-3:])
-            if reroute:
-                response = reroute
-            else:
-                _emit_live("tool_loop: timeout reroute failed; requesting file_ops")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    for path in forced:
-                        history.append(f"forced write: {path}")
-                    wrote_project = True
-                continue
-            mini_prompt = (
-                "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
-                "file_ops (list of {path, action, content}). "
-                "Focus on executing the request with minimal steps.\n"
-                f"Request:\n{prompt}\n"
-            )
-            if _requires_rigorous_constraints(prompt):
-                command_model = os.getenv("C0D3R_COMMAND_MODEL", "mistral.mistral-large-3-675b-instruct")
-                saved_model = getattr(session._c0d3r, "model_id", "")
-                saved_multi = getattr(session._c0d3r, "multi_model", True)
-                saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
-                saved_profile = getattr(session._c0d3r, "inference_profile", "")
-                try:
-                    session._c0d3r.model_id = command_model
-                    session._c0d3r.multi_model = False
-                    session._c0d3r.rigorous_mode = False
-                    session._c0d3r.inference_profile = ""
-                    response = _call_with_timeout(
-                        session._safe_send,
-                        timeout_s=max(10.0, _model_timeout_value() / 2),
-                        kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-                    )
-                finally:
-                    session._c0d3r.model_id = saved_model
-                    session._c0d3r.multi_model = saved_multi
-                    session._c0d3r.rigorous_mode = saved_rigorous
-                    session._c0d3r.inference_profile = saved_profile
-            else:
-                response = _call_with_timeout(
-                    session._safe_send,
-                    timeout_s=max(10.0, _model_timeout_value() / 2),
-                    kwargs={"prompt": mini_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-                )
-            if response is None:
-                _emit_live("tool_loop: minimal prompt timed out")
-                _diag_log("tool_loop: minimal prompt timeout")
-                last_error = "model call timed out (minimal prompt)"
-                model_timeouts += 1
-                if model_timeouts >= 5:
-                    _emit_live("tool_loop: repeated timeouts; backing off for 3s")
-                    time.sleep(3.0)
-                # Reroute again before continuing.
-                reroute, injected = _timeout_reroute("minimal")
-                if injected:
-                    history.extend(injected[-3:])
-                if reroute:
-                    response = reroute
-                else:
-                    continue
-        # Restore petal overrides
-        session._c0d3r.model_id = saved_model_id
-        if saved_timeout is None:
-            os.environ.pop("C0D3R_MODEL_TIMEOUT_S", None)
-        else:
-            os.environ["C0D3R_MODEL_TIMEOUT_S"] = saved_timeout
-        _diag_log("tool_loop: model call complete")
-        if response and "schema_validation_failed" in response:
-            # Only force file ops when the task is actionable (needs file/command work).
-            if _is_actionable_prompt(base_request) or _requires_commands_for_task(prompt):
-                _emit_live("tool_loop: schema validation failed; forcing file_ops retry")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    for path in forced:
-                        history.append(f"forced write: {path}")
-                    wrote_project = True
-        # Force file_ops if petal demands it
-        if petal_effects.get("force_file_ops"):
-            response = _enforce_actionability(
-                session,
-                "Return ONLY JSON with file_ops; do not include commands.",
-                response or "",
-            )
-        else:
-            response = _enforce_actionability(session, tool_prompt, response or "")
-        actionable = _is_actionable_prompt(base_request) or _requires_commands_for_task(prompt) or wants_new_project
-        response = _ensure_actionable_response(
-            session,
-            tool_prompt,
-            response or "",
-            actionable=actionable,
-            max_retries=int(os.getenv("C0D3R_ACTION_RETRIES", "2")),
-        )
-        file_ops = _extract_file_ops_from_text(response or "")
-        if file_ops and not _file_ops_enabled():
-            _emit_live(f"executor: ignoring {len(file_ops)} file ops (C0D3R_ENABLE_FILE_OPS=0). Use terminal commands instead.")
-            file_ops = []
-        if simple_task and not file_ops and not commands:
-            if local_task:
-                _emit_live("local_task: forcing commands for filesystem request")
-                forced_cmds = _force_commands(session, prompt)
-                if forced_cmds:
-                    commands = forced_cmds
-                else:
-                    consecutive_no_progress += 1
-                    history.append("error: local task yielded no commands; retrying")
-                    continue
-            else:
-                _emit_live("simple_task: forcing file_ops for file/folder request")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    for path in forced:
-                        history.append(f"forced write: {path}")
-                    wrote_project = True
-                    return "Success: file ops applied."
-        if wants_new_project and file_ops:
-            file_ops, dropped = _strip_runtime_ops(file_ops)
-            if dropped:
-                _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
-        if local_task and file_ops and not local_ready:
-            history.append("note: extraction not confirmed; delaying README file_ops")
-            consecutive_no_progress += 1
-            continue
-        if file_ops:
-            if simple_task:
-                os.environ["C0D3R_ALLOW_FULL_REPLACE"] = "1"
-            if simple_task:
-                for op in file_ops:
-                    if isinstance(op, dict) and "allow_full_replace" not in op:
-                        op["allow_full_replace"] = True
-            _emit_live(f"tool_loop: applying {len(file_ops)} file ops from model response")
-            _trace_event({
-                "event": "file_ops.apply",
-                "count": len(file_ops),
-                "base_root": str(project_root_for_ops or workdir),
-                "prompt": base_request[:200],
-            })
-            _ensure_root_dir(project_root_for_ops)
-            applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
-            if not applied and _LAST_FILE_OPS_ERRORS:
-                _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
-                tail = _tail_executor_log()
-                if tail:
-                    _emit_live("executor.log tail:\n" + tail)
-            if not applied:
-                history.append("error: file_ops rejected (paths/validation). Retrying with strict paths.")
-                strict_prompt = (
-                    "Your file_ops were rejected (invalid paths or missing allow_full_replace). "
-                    "Return ONLY JSON with file_ops using relative paths within the project root "
-                    f"({project_root_for_ops or workdir}). If overwriting, set allow_full_replace=true. "
-                    "Do NOT reference runtime/ paths."
-                )
-                retry = session.send(prompt=strict_prompt, stream=False)
-                retry = _enforce_actionability(session, strict_prompt, retry or "")
-                retry_ops = _extract_file_ops_from_text(retry or "")
-                if retry_ops:
-                    applied = _apply_file_ops(retry_ops, workdir, base_root=project_root_for_ops or workdir)
-            if not applied and project_root_for_ops and _file_ops_only_runtime(file_ops, project_root_for_ops):
-                _emit_live("tool_loop: file_ops runtime-only; refusing scaffold (model must supply project paths)")
-            for path in applied:
-                history.append(f"model file write: {path}")
-            wrote_project = wrote_project or bool(applied)
-            if _microtest_enabled() and applied:
-                py_targets = [p for p in applied if str(p).endswith(".py") and "/tests/" not in str(p).replace("\\", "/")]
-                if py_targets:
-                    _emit_live(f"microtests: running on {len(py_targets)} files")
-                    ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
-                    if not ok:
-                        history.append("error: microtests failed; fixing before continuing")
-                        fix_prompt = (
-                            "Microtests failed. Provide file_ops or commands to fix the errors, "
-                            "then re-run microtests. Return ONLY JSON with commands and file_ops.\n"
-                            f"Errors:\n{output}"
-                        )
-                        response = session.send(prompt=fix_prompt, stream=False)
-                        response = _enforce_actionability(session, fix_prompt, response or "")
-                        retry_ops = _extract_file_ops_from_text(response or "")
-                        if retry_ops:
-                            _apply_file_ops(retry_ops, workdir)
-                        commands, _ = _extract_commands(response)
-                        for cmd in commands[:5]:
-                            if cmd:
-                                run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
-                        ok, output = _run_microtests_for_paths(workdir, run_command, py_targets)
-                        if not ok:
-                            history.append("error: microtests still failing after remediation")
-                            test_failures += 1
-            if simple_task and wrote_project:
-                success = True
-                break
-        elif _looks_like_code(response or ""):
-            _emit_live("tool_loop: code detected without file targets; rejecting and requesting file_ops")
-            history.append("error: code output without file targets; re-requesting with file_ops")
-            repair_prompt = (
-                "You produced code without file paths. Return ONLY JSON with key file_ops "
-                "(list of {path, action, content}) so the code can be written to disk. "
-                "Do not include prose.\n"
-                f"Original response:\n{response}"
-            )
-            response = session.send(repair_prompt, stream=False)
-            file_ops = _extract_file_ops_from_text(response or "")
-            if wants_new_project and file_ops:
-                file_ops, dropped = _strip_runtime_ops(file_ops)
-                if dropped:
-                    _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
-            if file_ops:
-                if local_task and not local_ready:
-                    history.append("note: local task not ready; skipping file_ops until extraction is confirmed")
-                else:
-                    _emit_live(f"tool_loop: applying {len(file_ops)} file ops after repair")
-                    _ensure_root_dir(project_root_for_ops)
-                    applied = _apply_file_ops(file_ops, workdir, base_root=project_root_for_ops or workdir)
-                    if not applied and _LAST_FILE_OPS_ERRORS:
-                        _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
-                    if not applied and _LAST_FILE_OPS_ERRORS:
-                        _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
-                    for path in applied:
-                        history.append(f"model file write: {path}")
-                    wrote_project = wrote_project or bool(applied)
-        # If still nothing applied but response has JSON, try coercing file ops again.
-        if not wrote_project and _safe_json(response):
-            extra_ops = _extract_file_ops_from_text(response or "")
-            if wants_new_project and extra_ops:
-                extra_ops, dropped = _strip_runtime_ops(extra_ops)
-                if dropped:
-                    _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
-            if extra_ops:
-                if local_task and not local_ready:
-                    history.append("note: local task not ready; skipping coerced file_ops")
-                else:
-                    _emit_live(f"tool_loop: applying {len(extra_ops)} coerced file ops")
-                    _ensure_root_dir(project_root_for_ops)
-                    applied = _apply_file_ops(extra_ops, workdir, base_root=project_root_for_ops or workdir)
-                    if not applied and _LAST_FILE_OPS_ERRORS:
-                        _emit_live("tool_loop: file_ops applied=0; last errors:\n" + "\n".join(_LAST_FILE_OPS_ERRORS[-5:]))
-                    for path in applied:
-                        history.append(f"model file write: {path}")
-                    wrote_project = wrote_project or bool(applied)
-        commands, final = _extract_commands(response)
-        if local_task and not commands:
-            _emit_live("local_task: forcing commands")
-            forced_cmds = _force_commands(session, prompt)
-            if forced_cmds:
-                commands = forced_cmds
-        if local_task and not commands:
-            history.append("error: local task requires executable commands; retrying")
-            consecutive_no_progress += 1
-            continue
-        if local_task and local_target and not local_ready:
-            try:
-                target_path = (original_workdir / local_target).resolve()
-            except Exception:
-                target_path = None
-            if target_path is not None and not target_path.exists():
-                if not commands or _commands_only_inspection(commands) or not _has_extract_command(commands):
-                    _emit_live("local_task: target missing; forcing extract commands")
-                    forced_cmds = _force_local_extract_commands(session, prompt, local_target)
-                    if forced_cmds:
-                        commands = forced_cmds
-                    else:
-                        history.append("error: failed to obtain extract commands; retrying")
-                        consecutive_no_progress += 1
-                        continue
-        if local_task and file_ops and not _file_ops_allowed_for_local_task(file_ops):
-            history.append("error: local task file_ops must be README-only; retrying")
-            consecutive_no_progress += 1
-            continue
-        checks = _extract_checks(response or "")
-        _emit_live(f"tool_loop: model returned {len(commands)} commands, final={'yes' if final else 'no'}")
-        if _commands_only_inspection(commands):
-            consecutive_no_progress += 1
-            _emit_live("tool_loop: inspection-only commands; requesting actionable steps")
-            history.append("note: commands were inspection-only; provide file_ops or actionable commands")
-            if consecutive_no_progress >= 2:
-                history.append("note: enforcing file edits due to repeated inspection-only commands")
-            continue
-        if actionable and not commands and not file_ops:
-            history.append("error: actionable response without commands/file_ops; retrying")
-            consecutive_no_progress += 1
-            if consecutive_no_progress >= 1:
-                history.append("note: forcing file_ops due to no actionable output")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    for path in forced:
-                        history.append(f"forced write: {path}")
-                    wrote_project = True
-                continue
-        if _commands_only_runtime(commands):
-            _emit_live("tool_loop: runtime-only commands detected; requesting actionable project commands")
-        if checks:
-            _emit_live(f"tool_loop: running {len(checks)} verification commands")
-            for chk in checks[:6]:
-                if chk:
-                    run_command(_normalize_command(chk, workdir), cwd=workdir, timeout_s=_command_timeout_s(chk))
-        if not commands and not file_ops and wants_new_project:
-            _emit_live("tool_loop: no commands for new project; requesting file_ops")
-            forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-            if forced:
-                for path in forced:
-                    history.append(f"forced write: {path}")
-                wrote_project = True
-        if final and not commands:
-            if _requires_commands_for_task(prompt) and not (success or any_success):
-                history.append("note: commands required for this task; no final allowed without verified success")
-                continue
-            if local_task:
-                target_root = project_root_for_ops or workdir
-                if not _readme_present_and_nonempty(target_root):
-                    history.append("note: README missing for local task; generate README before finalizing")
-                    continue
-            # require explicit completion signal
-            if "complete" not in final.lower():
-                history.append("note: final must state completion and checklist verified")
-                continue
-            if full_completion and not _plan_and_checklist_present():
-                history.append("note: plan/checklist files missing; create .c0d3r/plan.md and .c0d3r/checklist.md")
-                continue
-            if full_completion and not _plan_is_substantial(project_root_for_ops or workdir):
-                history.append("note: plan.md is empty/insufficient; expand it before finalizing")
-                continue
-            if full_completion and not _checklist_has_mapping():
-                history.append("note: checklist must include source->decision->code mapping")
-                continue
-            if full_completion and not _checklist_is_complete():
-                history.append("note: checklist has unchecked items; finish all requirements before finalizing")
-                continue
-            if full_completion and require_benchmark and not _benchmark_evidence_present():
-                history.append("note: benchmark evidence missing; create .c0d3r/benchmarks.json before finalizing")
-                continue
-            if full_completion and require_tests and not _tests_passed_recently():
-                history.append("note: recent tests did not pass; re-run tests and fix failures before finalizing")
-                continue
-            if full_completion and _disallow_placeholder_code(workdir):
-                history.append("note: placeholder implementation detected; implement real logic before finalizing")
-                continue
-        if full_completion and _has_empty_tests(workdir):
-            history.append("note: empty test files detected; add real tests before finalizing")
-            continue
-        if full_completion and _requires_rigorous_constraints(prompt) and not _unbounded_math_ready():
-            history.append("note: missing equations/research links; unbounded resolver must populate them")
-            continue
-        if full_completion and _requires_rigorous_constraints(prompt) and not _equation_graph_ready():
-            history.append("note: equation graph is empty; ingestion must populate it before finalizing")
-            continue
-        if final and not commands:
-            return final
-            if step == 1 and not file_ops:
-                _emit_live("tool_loop: forcing file_ops on first step")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    wrote_project = True
-                    return "Success: initial file ops applied."
-            no_command_count += 1
-            if full_completion and not local_task:
-                history.append("note: no commands returned; running research to fill gaps")
-                _emit_live("tool_loop: no commands; triggering research")
-                research_note = _pre_research(session, prompt)
-                if research_note:
-                    history.append("[research]\n" + research_note[:2000])
-                _emit_live("tool_loop: requesting command generator due to empty commands")
-                alt_model = os.getenv("C0D3R_COMMAND_MODEL", "anthropic.claude-opus-4-20250514-v1:0")
-                saved_model = getattr(session._c0d3r, "model_id", "")
-                saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
-                try:
-                    session._c0d3r.rigorous_mode = False
-                    resolver = getattr(session._c0d3r, "_resolve_profile_cached", None)
-                    resolved_model = resolver(alt_model) if callable(resolver) else alt_model
-                    session._c0d3r.model_id = resolved_model
-                    saved_profile = getattr(session._c0d3r, "inference_profile", "")
-                    session._c0d3r.inference_profile = ""
-                    base_request = _strip_context_block(prompt)
-                    emergency_prompt = (
-                        "Return ONLY JSON with keys: commands (list of strings), file_ops (list), and final (string or empty). "
-                        "Provide 2-5 concrete shell commands OR file_ops to make progress on the task. "
-                        "Do NOT return an empty commands list.\n"
-                        f"CWD: {workdir}\n"
-                        f"Request:\n{base_request}\n"
-                    )
-                    try:
-                        raw = session._c0d3r._invoke_model(resolved_model, emergency_prompt, images=images)
-                    except Exception:
-                        raw = ""
-                    if raw:
-                        commands, final = _extract_commands(raw)
-                        _save_empty_commands_response(raw)
-                finally:
-                    session._c0d3r.model_id = saved_model
-                    session._c0d3r.rigorous_mode = saved_rigorous
-                    try:
-                        session._c0d3r.inference_profile = saved_profile
-                    except Exception:
-                        pass
-                if not commands:
-                    if simple_task:
-                        _emit_live("tool_loop: simple task with empty commands; forcing file_ops")
-                        forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                        if forced:
-                            wrote_project = True
-                            return "Success: file ops applied."
-                    _emit_live("tool_loop: command generator still empty; requesting file_ops")
-                    forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                    if forced:
-                        wrote_project = True
-                        return "Success: file ops applied."
-                    commands = []
-                    final = ""
-            else:
-                return response
-        if commands:
-            no_command_count = 0
-            if no_command_count >= 2:
-                _emit_live("tool_loop: no commands twice; switching to command-generator model")
-            alt_model = os.getenv("C0D3R_COMMAND_MODEL", "anthropic.claude-opus-4-20250514-v1:0")
-            saved_model = getattr(session._c0d3r, "model_id", "")
-            saved_rigorous = getattr(session._c0d3r, "rigorous_mode", False)
-            try:
-                session._c0d3r.rigorous_mode = False
-                session._c0d3r.model_id = alt_model
-                emergency_prompt = (
-                    "Return ONLY JSON with keys: commands (list of strings), final (string or empty), "
-                    "file_ops (list of {path, action, content}). "
-                    "Provide 2-5 concrete shell commands OR file_ops to make progress on the task. "
-                    "Do NOT return empty commands and file_ops.\n"
-                    f"Request:\n{prompt}\n"
-                )
-                response = _call_with_timeout(
-                    session._safe_send,
-                    timeout_s=max(20.0, _model_timeout_value()),
-                    kwargs={"prompt": emergency_prompt, "stream": stream, "images": images, "stream_callback": stream_callback},
-                )
-                if response:
-                    commands, final = _extract_commands(response)
-            finally:
-                session._c0d3r.model_id = saved_model
-                session._c0d3r.rigorous_mode = saved_rigorous
-            if not commands:
-                _emit_live("tool_loop: command-generator still empty; requesting file_ops")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    wrote_project = True
-                    return "Success: file ops applied."
-                commands = []
-                final = ""
-        prompt_sig = _prompt_signature(prompt)
-        checkpoint = _critical_thinking_checkpoint(session, prompt, history)
-        if checkpoint:
-            try:
-                path = _runtime_path("critical_thinking.jsonl")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps({"ts": time.time(), **checkpoint}) + "\n")
-            except Exception:
-                pass
-            # Keep a rolling plan checklist
-            plan_steps = checkpoint.get("plan_steps") or []
-            if plan_steps:
-                try:
-                    plan_path = _runtime_path("plan.json")
-                    plan_path.parent.mkdir(parents=True, exist_ok=True)
-                    plan_payload = {"updated": time.strftime("%Y-%m-%d %H:%M:%S"), "steps": plan_steps}
-                    plan_path.write_text(json.dumps(plan_payload, indent=2), encoding="utf-8")
-                except Exception:
-                    pass
-                # Apply dynamic plan reordering from petals if provided.
-                if petal_effects and petal_effects.get("reorder_steps"):
-                    order = [s for s in petal_effects.get("reorder_steps") if s]
-                    if order:
-                        _emit_live("petal: applying dynamic step order")
-                        plan_steps = order + [s for s in plan_steps if s not in order]
-                # Add extra plan steps if requested by petals.
-                if petal_effects and petal_effects.get("add_plan_steps"):
-                    extras = [s for s in petal_effects.get("add_plan_steps") if s]
-                    if extras:
-                        _emit_live("petal: adding plan steps")
-                        plan_steps = list(plan_steps) + extras
-            state = _load_plan_state()
-            if not state or state.get("steps") != plan_steps or state.get("prompt_sig") != prompt_sig:
-                state = _init_plan_state(plan_steps, workdir, run_command, prompt_sig)
-                _save_plan_state(state)
-            needs_code = bool(checkpoint.get("needs_code_changes"))
-            if needs_code and not commands:
-                _emit_live("critical: needs code changes; forcing file ops")
-                forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-                if forced:
-                    for path in forced:
-                        history.append(f"forced write: {path}")
-                    wrote_project = True
-        plan_state = _load_plan_state()
-        if plan_state and plan_state.get("prompt_sig") != prompt_sig:
-            plan_state = {}
-        if plan_state and plan_state.get("status") == "in_progress" and not simple_task:
-            steps = plan_state.get("steps") or []
-            idx = int(plan_state.get("current_index") or 0)
-            if idx < len(steps):
-                current_step = steps[idx]
-                _emit_live(f"plan: enforcing step {idx+1}/{len(steps)} -> {current_step}")
-                prompt = f"[plan step]\n{current_step}\n\n{prompt}"
-        if wants_new_project:
-            decision = _framework_decision(session, prompt, workdir)
-            if decision:
-                try:
-                    path = _runtime_path("framework_decision.json")
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(json.dumps(decision, indent=2), encoding="utf-8")
-                except Exception:
-                    pass
-                scaffold_cmds = decision.get("scaffold_commands") or []
-                if scaffold_cmds:
-                    _emit_live(f"framework: scaffold via {decision.get('framework')}")
-                    commands = list(scaffold_cmds) + (commands or [])
-        if commands and _commands_only_runtime(commands):
-            history.append("note: commands only touch .c0d3r; must operate on project files too")
-            _emit_live("tool_loop: commands only touched runtime; requesting project commands")
-        written_files: set[str] = set()
-        defer_tests = os.getenv("C0D3R_DEFER_TESTS", "1").strip().lower() not in {"0", "false", "no", "off"}
-        if force_tests:
-            require_tests = True
-            defer_tests = False
-        pending_test_targets: List[Path | None] = []
-        cmd_limit = 20 if local_task else 8
-        for cmd in commands[:cmd_limit]:
-            usage_tracker.set_status("executing", cmd)
-            raw_cmd = cmd
-            cmd = _normalize_command(cmd, workdir)
-            if cmd != raw_cmd:
-                _emit_live(f"exec: {cmd} (normalized)")
-            else:
-                _emit_live(f"exec: {cmd}")
-            if _command_outside_root(
-                cmd,
-                workdir,
-                allow_projects=bool(
-                    wants_new_project or local_task or _is_workspace_root(workdir)
-                ),
-            ):
-                history.append("error: command targets path outside project root; blocked")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: outside project root")
-                consecutive_no_progress += 1
-                continue
-            if cmd.lower().startswith("cd ") and ("&&" in cmd or ";" in cmd):
-                split_token = "&&" if "&&" in cmd else ";"
-                cd_part, _, remainder = cmd.partition(split_token)
-                cd_part = cd_part.strip()
-                remainder = remainder.strip()
-                cd_cmd = "::cd " + cd_part[3:].strip()
-                code, stdout, stderr, new_cwd = _execute_meta_command(cd_cmd, workdir)
-                if new_cwd:
-                    workdir = new_cwd
-                _append_tool_log(log_path, cd_cmd, code, stdout, stderr)
-                if remainder and code == 0:
-                    handled, code, stdout, stderr = _execute_file_command(remainder, workdir)
-                    if not handled:
-                        code, stdout, stderr = run_command(remainder, cwd=workdir, timeout_s=_command_timeout_s(remainder))
-                    _append_tool_log(log_path, remainder, code, stdout, stderr)
-                elif remainder and code != 0:
-                    _emit_live("exec: cd failed; skipping chained command")
-                continue
-            if cmd.lower().startswith("cd "):
-                cmd = "::cd " + cmd[3:].strip()
-            if os.name == "nt" and ("<<" in cmd or cmd.strip().lower().startswith("cat ")):
-                history.append("note: bash heredoc/cat redirection blocked on Windows; use echo/set-content")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: heredoc not supported")
-                continue
-            if ("mkdir" in cmd.lower() or "new-item" in cmd.lower()) and created_dirs:
-                history.append("note: directory already created; do not create more directories")
-                _append_tool_log(log_path, cmd, 1, "", "mkdir blocked; reuse existing directory")
-                continue
-            if (("mkdir" in cmd.lower() or "new-item -itemtype directory" in cmd.lower()) and
-                not allow_new_root_dirs and _mkdir_targets_root(cmd, workdir)):
-                history.append("note: creating new top-level directories is blocked; use existing project folders")
-                _append_tool_log(log_path, cmd, 1, "", "mkdir blocked at repo root")
-                continue
-            if _is_type_nul(cmd) and not _is_runtime_command(cmd):
-                history.append("note: type nul file resets are blocked; write real content instead")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: type nul > file")
-                continue
-            if _is_benchmark_echo(cmd):
-                history.append("note: benchmarks.json must be generated by running a benchmark script, not echo")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: echo > benchmarks.json")
-                continue
-            if _requires_rigorous_constraints(prompt) and cmd.lower().strip().startswith("touch ") and "tests" in cmd.lower():
-                history.append("note: empty test file creation blocked; write real tests instead")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: touch test file")
-                continue
-            if _requires_rigorous_constraints(prompt) and cmd.lower().strip().startswith("touch ") and ".py" in cmd.lower():
-                history.append("note: empty source file creation blocked; write real code instead")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: touch sat source")
-                continue
-            if "pip install" in cmd.lower() and ("sat" in prompt.lower()) and ("django" in cmd.lower()):
-                history.append("note: pip install for Django packages blocked for SAT task; use confcutdir for tests")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: unrelated pip install")
-                continue
-            if "pytest" in cmd.lower() and _requires_rigorous_constraints(prompt):
-                history.append("note: pytest command from model blocked; c0d3r runs targeted tests with confcutdir")
-                _append_tool_log(log_path, cmd, 1, "", "blocked: pytest command")
-                continue
-            if _is_write_command(cmd):
-                target_path = _infer_written_path(cmd, workdir)
-                if target_path:
-                    key = str(target_path.resolve())
-                    if key in written_files:
-                        history.append("note: repeated writes to the same file in one step are blocked")
-                        _append_tool_log(log_path, cmd, 1, "", "blocked: repeated write same file")
-                        continue
-                    written_files.add(key)
-            if _is_pip_install(cmd) and not _requires_pip_install(prompt):
-                history.append("note: pip install skipped; not required for skeleton setup")
-                _append_tool_log(log_path, cmd, 1, "", "pip install skipped")
-                continue
-            if ("npm install" in cmd or "ionic serve" in cmd) and not (workdir / "package.json").exists():
-                history.append("note: package.json missing; project not created yet")
-                _append_tool_log(log_path, cmd, 1, "", "blocked; package.json missing")
-                continue
-            if cmd.startswith("::"):
-                code, stdout, stderr, new_cwd = _execute_meta_command(cmd, workdir)
-                if new_cwd:
-                    workdir = new_cwd
-                _append_tool_log(log_path, cmd, code, stdout, stderr)
-            else:
-                handled, code, stdout, stderr = _execute_file_command(cmd, workdir)
-                if handled:
-                    _append_tool_log(log_path, cmd, code, stdout, stderr)
-                else:
-                    normalized = _normalize_command(cmd, workdir)
-                    if not normalized.strip():
-                        history.append("note: command skipped (no-op after normalization)")
-                        continue
-                    handled, code, stdout, stderr = _execute_file_command(normalized, workdir)
-                    if handled:
-                        _append_tool_log(log_path, normalized, code, stdout, stderr)
-                    else:
-                        code, stdout, stderr = run_command(normalized, cwd=workdir, timeout_s=_command_timeout_s(normalized))
-                        _append_tool_log(log_path, normalized, code, stdout, stderr)
-            if code != 0 and (stderr or stdout):
-                err_blob = stderr if stderr.strip() else stdout
-                remediated, _, _, _ = _attempt_auto_fix(cmd, err_blob, workdir, run_command, log_path)
-                if remediated:
-                    # Re-run the original command after remediation.
-                    rerun_cmd = _normalize_command(cmd, workdir)
-                    code, stdout, stderr = run_command(rerun_cmd, cwd=workdir, timeout_s=_command_timeout_s(rerun_cmd))
-                    _append_tool_log(log_path, rerun_cmd, code, stdout, stderr)
-            _emit_live(f"exec result: exit={code}")
-            if stdout.strip():
-                _emit_live(f"stdout: {stdout.strip()[:800]}")
-            if stderr.strip():
-                _emit_live(f"stderr: {stderr.strip()[:800]}")
-            if local_task and local_target and not local_ready:
-                try:
-                    target_path = (original_workdir / local_target).resolve()
-                    if target_path.exists() and target_path.is_dir():
-                        local_ready = True
-                        if workdir != target_path:
-                            workdir = target_path
-                            _emit_live(f"exec: entered target folder -> {workdir}")
-                        if project_root_for_ops is None:
-                            project_root_for_ops = target_path
-                            _emit_live(f"exec: set project root -> {project_root_for_ops}")
-                except Exception:
-                    pass
-            if local_task and stdout.strip():
-                try:
-                    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-                    if len(lines) == 1:
-                        candidate = (workdir / lines[0]).resolve()
-                        if candidate.exists() and candidate.is_dir():
-                            workdir = candidate
-                            _emit_live(f"exec: auto-entered nested folder -> {workdir}")
-                except Exception:
-                    pass
-            _append_evidence(cmd, code, stdout, stderr)
-            if stderr.strip():
-                last_error = stderr.strip()[:1200]
-                gap_score = max(gap_score, _gap_score(stderr))
-            if require_tests and _is_write_command(cmd):
-                target = _infer_written_path(cmd, workdir)
-                if _should_test_write(target):
-                    if not _is_runtime_path(target):
-                        wrote_project = True
-                    if defer_tests:
-                        pending_test_targets.append(target)
-                    else:
-                        _emit_live(f"post-write: running targeted tests for {target or 'project'}")
-                        tests_ran, tests_ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path, target=target)
-                        if not tests_ok:
-                            history.append("error: tests failed after write; fix and re-run before continuing")
-                            continue
-            snippet = f"$ {cmd}\n(exit {code})\n{stdout.strip()}\n{stderr.strip()}".strip()
-            history.append(snippet[:4000])
-            if (workdir / "package.json").exists() and workdir not in known_projects:
-                known_projects.append(workdir)
-            if base_snapshot and wants_new_project:
-                new_dirs = _diff_projects_dir(base_snapshot)
-                if new_dirs:
-                    created_dirs = new_dirs
-            if cmd.startswith("::wait_http") and code == 0 and known_projects:
-                success = True
-                any_success = True
-                if require_tests:
-                    tests_ran, tests_ok = _run_tests_for_project(known_projects[-1], run_command, usage_tracker, log_path)
-                    if not tests_ok:
-                        history.append("error: tests failed; fix and re-run tests before finalizing")
-                        success = False
-                        continue
-                return f"Success: ionic serve reachable; project at {known_projects[-1]}"
-            if _requires_skeleton(prompt):
-                skeleton = _find_skeleton_root(workdir)
-                if skeleton:
-                    success = True
-                    any_success = True
-                    if require_tests:
-                        tests_ran, tests_ok = _run_tests_for_project(Path(skeleton), run_command, usage_tracker, log_path)
-                        if not tests_ok:
-                            history.append("error: tests failed; fix and re-run tests before finalizing")
-                            success = False
-                            continue
-        # Ensure local tasks produce a README summary once extraction is ready.
-        if local_task and local_ready:
-            target_root = project_root_for_ops or workdir
-            if not _readme_present_and_nonempty(target_root):
-                _emit_live("local_task: README missing; forcing README file_ops")
-                forced_paths = _force_readme_ops(session, prompt, workdir, base_root=target_root)
-                if forced_paths:
-                    wrote_project = True
-                else:
-                    history.append("error: README generation failed; retrying with commands")
-                    consecutive_no_progress += 1
-                    continue
-                    return f"Success: skeleton created at {skeleton}"
-            if code != 0:
-                history.append("error: previous command failed; analyze stderr and retry with correction")
-            else:
-                any_success = True
-            if _is_write_command(cmd) and not _is_runtime_command(cmd):
-                wrote_project = True
-        if full_completion and not wrote_project:
-            history.append("note: no project files were written this step; continue with concrete file edits")
-            consecutive_no_progress += 1
-        if consecutive_no_progress >= 2 and not wrote_project:
-            _emit_live("no-progress: forcing file edits via file_ops")
-            forced = _force_file_ops(session, prompt, workdir, base_root=project_root_for_ops or workdir)
-            if forced:
-                for path in forced:
-                    history.append(f"forced write: {path}")
-                wrote_project = True
-                consecutive_no_progress = 0
-                if require_tests:
-                    for path in forced:
-                        _emit_live(f"post-write: running targeted tests for {path}")
-                        _run_tests_for_project(workdir, run_command, usage_tracker, log_path, target=path)
-        else:
-            consecutive_no_progress = 0
-        # Repository mutation audit
-        if full_completion:
-            before = _snapshot_git(workdir, run_command)
-            if not _require_repo_change(before, workdir, run_command):
-                history.append("error: no repo mutations detected; forcing new edits")
-                strict_prompt = (
-                    "No repository changes were detected. Provide commands or file_ops that create or "
-                    "update actual project files. Return ONLY JSON with keys: commands, final, file_ops."
-                )
-                response = session.send(prompt=strict_prompt, stream=False)
-                response = _enforce_actionability(session, strict_prompt, response or "")
-                file_ops = _extract_file_ops_from_text(response or "")
-                if wants_new_project and file_ops:
-                    file_ops, dropped = _strip_runtime_ops(file_ops)
-                    if dropped:
-                        _emit_live(f"tool_loop: dropped {dropped} runtime-only file ops for new project")
-                if file_ops:
-                    _apply_file_ops(file_ops, workdir)
-                commands, _ = _extract_commands(response)
-                for cmd in commands[:5]:
-                    if cmd:
-                        run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
-                # Re-check repo state
-                if not _require_repo_change(before, workdir, run_command):
-                    history.append("error: still no repo mutations after forced edits")
-                    continue
-        if require_tests and defer_tests and pending_test_targets:
-            unique_targets: List[Path | None] = []
-            for target in pending_test_targets:
-                if target not in unique_targets:
-                    unique_targets.append(target)
-            for target in unique_targets:
-                _emit_live(f"post-write: running targeted tests for {target or 'project'}")
-                tests_ran, tests_ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path, target=target)
-                if not tests_ok:
-                    history.append("error: tests failed after write; fix and re-run before continuing")
-                    test_failures += 1
-                    break
-        # Enforce test creation for new Python files
-        if wrote_project:
-            new_py = [p for p in written_files if p.endswith(".py") and "\\tests\\" not in p and "/tests/" not in p]
-            if new_py and not tests_ran:
-                history.append("error: new Python files without tests; create tests before continuing")
-                fix_prompt = (
-                    "You created new Python files without tests. Provide file_ops to add tests under tests/ "
-                    "and commands to run them. Return ONLY JSON with commands and file_ops."
-                )
-                response = session.send(prompt=fix_prompt, stream=False)
-                response = _enforce_actionability(session, fix_prompt, response or "")
-                file_ops = _extract_file_ops_from_text(response or "")
-                if file_ops:
-                    _apply_file_ops(file_ops, workdir)
-                commands, _ = _extract_commands(response)
-                for cmd in commands[:5]:
-                    if cmd:
-                        run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
-                tests_ran, tests_ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path)
-                if not tests_ok:
-                    history.append("error: tests failed after adding tests")
-                    test_failures += 1
-        if test_failures:
-            _emit_live("tests: failure detected; enforcing remediation before continuing")
-            fix_prompt = (
-                "Tests failed. Provide commands or file_ops to fix the failures, then re-run tests. "
-                "Return ONLY JSON with keys: commands, final, file_ops."
-            )
-            response = session.send(prompt=fix_prompt, stream=False)
-            response = _enforce_actionability(session, fix_prompt, response or "")
-            file_ops = _extract_file_ops_from_text(response or "")
-            if file_ops:
-                _apply_file_ops(file_ops, workdir)
-            commands, _ = _extract_commands(response)
-            for cmd in commands[:5]:
-                if cmd:
-                    run_command(_normalize_command(cmd, workdir), cwd=workdir, timeout_s=_command_timeout_s(cmd))
-            # Re-run tests after remediation
-            _emit_live("tests: re-running after remediation")
-            _, tests_ok = _run_tests_for_project(workdir, run_command, usage_tracker, log_path)
-            if not tests_ok:
-                history.append("error: tests still failing after remediation")
-                continue
-            test_failures = 0
-        # If loop appears stuck, disable active petals generically.
-        if consecutive_no_progress >= 3 or test_failures >= 2 or model_timeouts >= 3:
-            for name, active in (petals.state.get("active") or {}).items():
-                if active:
-                    petals.disable(name, "loop detected: no progress or timeouts")
-                    _emit_live(f"petal: disabled {name} (loop detected)")
-        if not (simple_task or scaffold_task):
-            if _unbounded_trigger(consecutive_no_progress, test_failures, model_timeouts) and not unbounded_resolved:
-                _emit_live("unbounded: detected spiral; building bounded objective matrix")
-                unbounded_payload = _enforce_unbounded_matrix(session, prompt)
-                if unbounded_payload:
-                    unbounded_resolved = True
-                    history.append("[unbounded]\n" + unbounded_payload.get("bounded_task", "").strip())
-                    _append_unbounded_matrix(unbounded_payload)
-                    prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
-                    _apply_behavior_insights(unbounded_payload, behavior_log)
-            if _requires_rigorous_constraints(prompt) and not _unbounded_math_ready():
-                _emit_live("unbounded: required matrix not complete; forcing resolver")
-                unbounded_payload = _enforce_unbounded_matrix(session, prompt)
-                if unbounded_payload:
-                    unbounded_resolved = True
-                    prompt = _apply_unbounded_constraints(prompt, unbounded_payload)
-        if full_completion:
-            _append_verification_snapshot(workdir, run_command, history)
-            _update_system_map(workdir)
-            ok = _run_quality_checks(workdir, run_command, usage_tracker, log_path)
-            if not ok:
-                history.append("error: quality/security checks failed; fix and re-run")
-                continue
-            if not _spec_validator():
-                history.append("error: spec validator failed (checklist incomplete or missing verification)")
-                continue
-        # Enforce plan verification gate.
-        if plan_state and plan_state.get("status") == "in_progress":
-            steps = plan_state.get("steps") or []
-            idx = int(plan_state.get("current_index") or 0)
-            if idx < len(steps):
-                current_step = steps[idx]
-                if _verify_step(current_step, workdir, run_command, usage_tracker, log_path):
-                    plan_state["current_index"] = idx + 1
-                    plan_state["snapshot"] = _snapshot_git(workdir, run_command)
-                    if plan_state["current_index"] >= len(steps):
-                        plan_state["status"] = "complete"
-                    _save_plan_state(plan_state)
-                else:
-                    history.append("error: plan verification failed; must fix before advancing")
-                    continue
-        # post-check: if prompt asks for new dir under Projects, ensure one exists
-        if base_snapshot and wants_new_project:
-            new_dirs = _diff_projects_dir(base_snapshot)
-            if not new_dirs:
-                history.append("error: no new project directory detected under C:/Users/Adam/Projects")
-                consecutive_no_progress += 1
-                if project_root_for_ops:
-                    _emit_live("tool_loop: missing project dir; requesting model to scaffold with commands")
-                continue
-    return history[-1] if history else "No output."
+    # Legacy v1 tool loop is disabled; always use v2 commands-only executor.
+    return _run_tool_loop_v2(
+        session,
+        prompt,
+        workdir,
+        run_command,
+        images=images,
+        stream=stream,
+        stream_callback=stream_callback,
+        usage_tracker=usage_tracker,
+    )
 
 
 def _normalize_command(cmd: str, workdir: Path) -> str:
@@ -3568,6 +2501,8 @@ def _typewriter_callback(usage, header=None, controller=None):
 def _typewriter_print(text: str, usage, header=None, controller=None) -> None:
     cb = _typewriter_callback(usage, header=header, controller=controller)
     cb(text)
+    if _UI_MANAGER:
+        return
     if text and not text.endswith("\n"):
         sys.stdout.write("\n")
         sys.stdout.flush()
@@ -3587,69 +2522,64 @@ def _save_empty_commands_response(text: str) -> None:
         pass
 
 
+def _format_payload_lines(payload: dict, *, show_final: bool = True, show_commands: Optional[bool] = None) -> list[str]:
+    lines: list[str] = []
+
+    def _add(label: str, message) -> None:
+        if message is None:
+            return
+        msg = str(message).strip()
+        if msg:
+            lines.append(f"{label}: {msg}")
+
+    status_updates = payload.get("status_updates") or []
+    if isinstance(status_updates, list):
+        for item in status_updates:
+            _add("status", item)
+
+    if show_commands is None:
+        show_commands = os.getenv("C0D3R_SHOW_MODEL_ACTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if show_commands:
+        commands = payload.get("commands") or []
+        if isinstance(commands, list):
+            for cmd in commands:
+                if isinstance(cmd, dict):
+                    label = (cmd.get("purpose") or "command").strip() or "command"
+                    _add(label, cmd.get("command") or "")
+                else:
+                    _add("command", cmd)
+        checks = payload.get("checks") or []
+        if isinstance(checks, list):
+            for chk in checks:
+                if isinstance(chk, dict):
+                    label = (chk.get("purpose") or "check").strip() or "check"
+                    _add(label, chk.get("command") or "")
+                else:
+                    _add("check", chk)
+
+    if show_final:
+        _add("final", payload.get("final"))
+
+    if "conclusion" in payload:
+        _add("conclusion", payload.get("conclusion"))
+        for item in payload.get("observations") or []:
+            _add("observation", item)
+        for item in payload.get("findings") or []:
+            claim = item.get("claim") if isinstance(item, dict) else item
+            _add("finding", claim)
+        for item in payload.get("next_steps") or []:
+            _add("next", item)
+
+    return lines
+
+
 def _render_json_response(text: str) -> str:
     payload = _safe_json(text)
     if not isinstance(payload, dict):
         return ""
-    if "status_updates" in payload:
-        lines = []
-        for item in payload.get("status_updates") or []:
-            lines.append(f"[working] {item}")
-        if os.getenv("C0D3R_SHOW_MODEL_ACTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}:
-            commands = payload.get("commands") or []
-            if commands:
-                lines.append("\nCommands:")
-                for cmd in commands:
-                    if isinstance(cmd, dict):
-                        cmd_text = cmd.get("command") or ""
-                        purpose = cmd.get("purpose") or ""
-                        label = f"{purpose}: {cmd_text}" if purpose else cmd_text
-                        lines.append(f"- {label}".strip())
-                    else:
-                        lines.append(f"- {cmd}")
-        final = str(payload.get("final") or "").strip()
-        if final:
-            lines.append("\n" + final if lines else final)
-        return "\n".join(lines).strip()
-    if "final" in payload:
-        return str(payload.get("final") or "")
-    # Tool-loop JSON without final should not be printed verbatim.
-    if "commands" in payload:
-        if os.getenv("C0D3R_SHOW_MODEL_ACTIONS", "1").strip().lower() not in {"0", "false", "no", "off"}:
-            lines = []
-            commands = payload.get("commands") or []
-            if commands:
-                lines.append("Commands:")
-                for cmd in commands:
-                    if isinstance(cmd, dict):
-                        cmd_text = cmd.get("command") or ""
-                        purpose = cmd.get("purpose") or ""
-                        label = f"{purpose}: {cmd_text}" if purpose else cmd_text
-                        lines.append(f"- {label}".strip())
-                    else:
-                        lines.append(f"- {cmd}")
-            return "\n".join([l for l in lines if l]).strip()
-        return ""
-    if "conclusion" in payload:
-        lines = []
-        if payload.get("observations"):
-            lines.append("Observations:")
-            for item in payload.get("observations") or []:
-                lines.append(f"- {item}")
-        if payload.get("findings"):
-            lines.append("\nFindings:")
-            for item in payload.get("findings") or []:
-                claim = item.get("claim") if isinstance(item, dict) else item
-                lines.append(f"- {claim}")
-        lines.append("\nConclusion:")
-        lines.append(str(payload.get("conclusion") or "").strip())
-        steps = payload.get("next_steps") or []
-        if steps:
-            lines.append("\nNext steps:")
-            for step in steps:
-                lines.append(f"- {step}")
-        return "\n".join([l for l in lines if l]).strip()
-    return ""
+    show_final = True
+    lines = _format_payload_lines(payload, show_final=show_final)
+    return "\n".join(lines).strip()
 
 
 def _universal_response_schema() -> str:
@@ -3665,6 +2595,9 @@ def _universal_response_schema() -> str:
 def _validate_universal_payload(payload: dict) -> tuple[bool, str]:
     if not isinstance(payload, dict):
         return False, "payload is not an object"
+    status_updates = payload.get("status_updates")
+    if status_updates is None or not isinstance(status_updates, list):
+        return False, "missing or invalid key: status_updates"
     if "final" not in payload:
         return False, "missing key: final"
     if "needs_terminal" not in payload or not isinstance(payload.get("needs_terminal"), bool):
@@ -3673,9 +2606,8 @@ def _validate_universal_payload(payload: dict) -> tuple[bool, str]:
         return False, "missing or invalid key: commands"
     if "checks" not in payload or not isinstance(payload.get("checks"), list):
         return False, "missing or invalid key: checks"
-    output_request = payload.get("output_request")
-    if output_request is not None and not isinstance(output_request, list):
-        return False, "output_request must be a list"
+    if "output_request" not in payload or not isinstance(payload.get("output_request"), list):
+        return False, "missing or invalid key: output_request"
     return True, ""
 
 
@@ -3858,6 +2790,8 @@ def _format_numbered_answers(answers: dict[int, str]) -> str:
 
 
 def _extract_file_ops_from_text(text: str) -> list[dict]:
+    if _commands_only_enabled():
+        return []
     # Prefer any JSON block that includes file_ops.
     for candidate in _extract_json_candidates(text):
         try:
@@ -3943,19 +2877,29 @@ def _validate_action_schema(text: str) -> bool:
     payload = _safe_json(text)
     if not isinstance(payload, dict):
         return False
+    status_updates = payload.get("status_updates")
+    if status_updates is None or not isinstance(status_updates, list):
+        return False
     cmds = payload.get("commands")
     needs_terminal = payload.get("needs_terminal")
+    output_request = payload.get("output_request")
     if cmds is None:
         return False
     if cmds is not None and not isinstance(cmds, list):
         return False
     if needs_terminal is not None and not isinstance(needs_terminal, bool):
         return False
+    if output_request is None or not isinstance(output_request, list):
+        return False
     return True
 
 
 def _apply_file_ops(ops: list, workdir: Path, *, base_root: Path | None = None) -> list[Path]:
     global _LAST_FILE_OPS_ERRORS, _LAST_FILE_OPS_WRITTEN
+    if _commands_only_enabled():
+        _LAST_FILE_OPS_ERRORS = ["file_ops disabled: commands-only mode"]
+        _LAST_FILE_OPS_WRITTEN = []
+        return []
     executor = FileExecutor(base_root or workdir)
     if os.getenv("C0D3R_ALLOW_FULL_REPLACE", "").strip().lower() in {"1", "true", "yes", "on"}:
         for op in ops or []:
@@ -4202,6 +3146,8 @@ class FileExecutor:
 
 
 def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path, *, base_root: Path | None = None) -> list[Path]:
+    if _commands_only_enabled():
+        return []
     system = (
         "Return ONLY JSON with key: file_ops (list). "
         "Each item: {\"path\": \"relative/path\", \"action\": \"write|append\", \"content\": \"...\"}. "
@@ -4227,6 +3173,8 @@ def _force_file_ops(session: C0d3rSession, prompt: str, workdir: Path, *, base_r
 
 
 def _force_readme_ops(session: C0d3rSession, prompt: str, workdir: Path, *, base_root: Path | None = None) -> list[Path]:
+    if _commands_only_enabled():
+        return []
     system = (
         "Return ONLY JSON with key: file_ops (list). "
         "Each item: {\"path\": \"README.md\", \"action\": \"write\", \"content\": \"...\"}. "
@@ -4351,9 +3299,10 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         return response
     if "schema_validation_failed" in response:
         system = (
-            "Return ONLY valid JSON with keys: needs_terminal (bool), commands (list), checks (list), final (string or empty). "
+            "Return ONLY valid JSON with keys: status_updates (list), needs_terminal (bool), "
+            "commands (list), checks (list), output_request (list), final (string or empty). "
             "commands/checks entries must be objects with {purpose, shell, cwd, timeout_s, command}. "
-            "No extra text."
+            "Set output_request=[] when not asking for output chunks. No extra text."
         )
         try:
             raw = session.send(prompt=prompt, stream=False, system=system)
@@ -4364,7 +3313,7 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         # Force command-based file writes for code output.
         system = (
             "You returned code without terminal commands. Return ONLY JSON with keys: "
-            "needs_terminal (bool), commands (list), checks (list), final (string or empty). "
+            "status_updates (list), needs_terminal (bool), commands (list), checks (list), output_request (list), final (string or empty). "
             "Use shell commands to create/update files (e.g., PowerShell Set-Content / Add-Content, bash cat > file). "
             "No file_ops. No extra text."
         )
@@ -4374,9 +3323,10 @@ def _enforce_actionability(session: C0d3rSession, prompt: str, response: str) ->
         except Exception:
             return response
     system = (
-        "Return ONLY JSON with keys: needs_terminal (bool), commands (list), checks (list), final (string or empty). "
+        "Return ONLY JSON with keys: status_updates (list), needs_terminal (bool), "
+        "commands (list), checks (list), output_request (list), final (string or empty). "
         "commands/checks entries must be objects with {purpose, shell, cwd, timeout_s, command}. "
-        "No file_ops. You MUST provide commands for actionable tasks."
+        "Set output_request=[] when not asking for output chunks. No file_ops. You MUST provide commands for actionable tasks."
     )
     try:
         raw = session.send(prompt=prompt, stream=False, system=system)
@@ -5161,16 +4111,7 @@ def _run_repl(
         print("[status] Executing...")
         _emit_live("repl: starting request")
         usage.set_status("planning", "routing + research")
-        if force_direct or qa_or_convo:
-            mode = "direct"
-        elif simple_task:
-            mode = "tool_loop"
-        elif os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"} and _is_actionable_prompt(user_prompt) and not qa_or_convo:
-            mode = "tool_loop"
-        else:
-            mode = _decide_mode(session, user_prompt, default_scientific=scientific, default_tool_loop=tool_loop)
-            if _is_actionable_prompt(user_prompt) and not qa_or_convo:
-                mode = "tool_loop"
+        mode = "tool_loop"
         _trace_event({
             "event": "repl.mode",
             "mode": mode,
@@ -5219,67 +4160,15 @@ def _run_repl(
         if allow_interrupt:
             controller.start()
         try:
-            if mode == "scientific":
-                usage.set_status("executing", "scientific analysis")
-                _emit_live("repl: scientific loop starting")
-                response = _run_scientific_loop(
-                    session, full_prompt, workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
-                )
-                _emit_live("repl: scientific loop complete")
-            elif mode == "tool_loop":
-                usage.set_status("executing", "local commands")
-                _emit_live("repl: tool loop starting")
-                response = _run_tool_loop(
-                    session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
-                    workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
-                )
-                _emit_live("repl: tool loop complete")
-            else:
-                usage.set_status("executing", "direct response")
-                _emit_live("repl: direct model call starting")
-                convo_prompt = full_prompt
-                matrix_hint = ""
-                if _is_conversation_prompt(user_prompt):
-                    matrix_info = _query_unbounded_matrix(user_prompt)
-                    if matrix_info:
-                        matrix_hint = f"\n\n[matrix_hits]\n{json.dumps(matrix_info.get('hits') or [], indent=2)}"
-                if matrix_hint:
-                    convo_prompt = f"{convo_prompt}{matrix_hint}"
-                if qa_or_convo:
-                    system = (
-                        "Use any provided [file_contents] blocks; do NOT request filesystem access. "
-                        "Set needs_terminal=false and keep commands/checks empty. "
-                        + _universal_response_schema()
-                    )
-                convo_timeout = float(os.getenv("C0D3R_CONVO_TIMEOUT_S", "20") or "20")
-                if qa_or_convo:
-                    convo_timeout = max(convo_timeout, float(os.getenv("C0D3R_QA_TIMEOUT_S", "180") or "180"))
-                response = _call_with_timeout(
-                    session._safe_send,
-                    timeout_s=convo_timeout if qa_or_convo or _is_conversation_prompt(user_prompt) else _model_timeout_s(),
-                    kwargs={"prompt": convo_prompt, "stream": False, "system": system},
-                )
-                if response is None and _is_conversation_prompt(user_prompt):
-                    response = "{\"status_updates\": [\"Still looking into sources and integrating insights.\"], \"final\": \"I’m still investigating this. Want me to keep digging or focus on a specific sub-question?\"}"
-                if response is None:
-                    _emit_live("repl: direct mode timed out; rerouting to tool loop")
-                    response = _run_tool_loop(
-                        session,
-                        full_prompt,
-                        workdir,
-                        run_command,
-                        images=None,
-                        stream=False,
-                        stream_callback=None,
-                        usage_tracker=usage,
-                    )
-                _emit_live("repl: direct model call complete")
+            usage.set_status("executing", "local commands")
+            _emit_live("repl: tool loop starting")
+            response = _run_tool_loop(
+                session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
+                workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
+            )
+            _emit_live("repl: tool loop complete")
         finally:
             controller.stop()
-        if mode == "direct":
-            response = _ensure_json_response(session, user_prompt, response or "")
-        if mode == "direct" and _is_actionable_prompt(prompt) and not force_direct:
-            response = _enforce_actionability(session, full_prompt, response or "")
         rendered = _render_json_response(response)
         if not rendered and _looks_like_json(response or ""):
             # Avoid dumping raw JSON to the UI; keep output clean.
@@ -5347,6 +4236,7 @@ def _run_repl(
             summary_path.write_text(summary, encoding="utf-8")
         if oneshot:
             return 0
+
 
 
 def _read_input(workdir: Path) -> str:
@@ -7549,6 +6439,8 @@ def _execute_file_command(cmd: str, workdir: Path) -> Tuple[bool, int, str, str]
     """
     Handle common file/dir commands locally to avoid PowerShell quoting pitfalls.
     """
+    if _commands_only_enabled():
+        return False, 0, "", ""
     lower = cmd.strip().lower()
     # mkdir / New-Item
     if lower.startswith("new-item -itemtype directory") or lower.startswith("mkdir "):
