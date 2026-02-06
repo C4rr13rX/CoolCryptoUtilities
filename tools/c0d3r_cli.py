@@ -47,6 +47,7 @@ _LAST_FILE_OPS_WRITTEN: list[str] = []
 _MATRIX_SEED_VERSION = "2026-02-04"
 _TECH_MATRIX_DIR = _runtime_path("tech_matrix")
 _FINAL_STYLE = os.getenv("C0D3R_FINAL_STYLE", "bold yellow")
+_USER_STYLE = os.getenv("C0D3R_USER_STYLE", "bright_yellow")
 _DEFAULT_SECRET_CATEGORY = "default"
 _DJANGO_USER_FILE = _runtime_path("django_user.json")
 _MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE)
@@ -541,6 +542,30 @@ class TerminalUI:
             if ch.strip() and delay_s:
                 time.sleep(delay_s)
 
+    def write_user(self, text: str) -> None:
+        if text is None:
+            return
+        lines = str(text).splitlines() or [""]
+        prefix = "User: "
+        if self._use_textual and self._textual_app:
+            try:
+                from rich.text import Text
+                style = _USER_STYLE or "bright_yellow"
+                for idx, line in enumerate(lines):
+                    label = prefix if idx == 0 else " " * len(prefix)
+                    self._textual_app.call_from_thread(
+                        self._textual_app.push_renderable,
+                        Text(f"{label}{line}", style=style),
+                    )
+                return
+            except Exception:
+                pass
+        ansi = "\x1b[93m"
+        reset = "\x1b[0m"
+        for idx, line in enumerate(lines):
+            label = prefix if idx == 0 else " " * len(prefix)
+            self.write_line(f"{ansi}{label}{line}{reset}")
+
     def write_final(self, text: str) -> None:
         if text is None:
             return
@@ -908,7 +933,7 @@ def _weather_summary() -> str:
 
 
 def _environment_context_block(workdir: Path) -> str:
-    lines = ["[environment]"]
+    lines = ["Environment:"]
     lines.append(f"- platform: {sys.platform}")
     lines.append(f"- os_name: {os.name}")
     lines.append(f"- cwd: {workdir}")
@@ -1059,7 +1084,7 @@ def _key_points_block(summary_or_points) -> str:
     points = _extract_key_points(summary_or_points, limit=10)
     if not points:
         return ""
-    lines = ["[key_points]"]
+    lines = ["Key points:"]
     for item in points:
         lines.append(f"- {item}")
     return "\n".join(lines)
@@ -1097,7 +1122,10 @@ _RECALL_CUES = (
     # English
     "remember", "recall", "do you remember", "when we were", "that time",
     "earlier", "previous", "last time", "before", "last asked", "last question",
-    "what did i last", "what was the last", "context", "conversation",
+    "last thing", "last spoke", "last talked", "last discussed",
+    "what did i last", "what was the last", "what we last", "what did we last",
+    "what we just", "what did we just",
+    "context", "conversation",
     # Spanish/Portuguese
     "recuerdas", "recuerdo", "anterior", "antes", "último", "ultim", "conversación",
     "lembra", "lembrar", "anterior", "antes", "último", "conversa",
@@ -1129,7 +1157,22 @@ def _detect_recall_trigger(prompt: str) -> bool:
 
 def _is_recent_recall(prompt: str) -> bool:
     lower = (prompt or "").lower()
-    recent_markers = ("last asked", "last question", "what did i last", "what was the last", "previous question")
+    recent_markers = (
+        "last asked",
+        "last question",
+        "what did i last",
+        "what was the last",
+        "previous question",
+        "what we last spoke",
+        "what we last talked",
+        "what we last discussed",
+        "what we just spoke",
+        "what we just talked",
+        "what we just discussed",
+        "last thing we spoke",
+        "last thing we talked",
+        "last thing we discussed",
+    )
     if any(m in lower for m in recent_markers):
         return True
     if "last" in lower and "ask" in lower:
@@ -1143,6 +1186,15 @@ def _is_short_term_summary_request(prompt: str) -> bool:
         "what have we spoken about",
         "what have we talked about",
         "what did we talk about",
+        "what did we just talk about",
+        "what did we just discuss",
+        "what did we just speak about",
+        "what did we last talk about",
+        "what did we last speak about",
+        "what did we last discuss",
+        "what we last spoke about",
+        "what we last talked about",
+        "what we last discussed",
         "what have we discussed",
         "conversation so far",
         "so far",
@@ -1178,6 +1230,11 @@ def _decide_recall_scope(
         return "short", ""
     if cue_score < 0.75 and not short_hit:
         return "none", ""
+
+    # If the user explicitly signals earlier/remembering and short-term doesn't match, force long-term search.
+    lower = (prompt or "").lower()
+    if cue_score >= 1.0 and not short_hit and any(tok in lower for tok in ("earlier", "remember", "previous", "last time", "before")):
+        return "long", prompt.strip()
 
     if os.getenv("C0D3R_LTM_MODEL", "1").strip().lower() in {"0", "false", "no", "off"}:
         # heuristic fallback
@@ -1232,8 +1289,32 @@ def _maybe_long_term_recall(
     scope, query = _decide_recall_scope(session, prompt, summary_bundle, recent_snippet)
     if scope != "long":
         return []
+    # Prefer session-scoped memory first, then fall back to global memory.
     mem_long = memory_long or memory
-    hits = mem_long.search_long_term(query, limit=5)
+    hits = memory.search_long_term(query, limit=5)
+    # Filter hits to ensure they contain salient query keywords.
+    keywords = _keyword_set(prompt)
+    noise = {
+        "earlier", "remember", "previous", "conversation", "last", "time",
+        "talked", "spoke", "discussed", "about", "just", "recent",
+    }
+    keywords = {k for k in keywords if k not in noise}
+    if keywords and hits:
+        filtered = []
+        for hit in hits:
+            lower = hit.lower()
+            if any(k in lower for k in keywords):
+                filtered.append(hit)
+        hits = filtered
+    if not hits and mem_long is not memory:
+        hits = mem_long.search_long_term(query, limit=5)
+        if keywords and hits:
+            filtered = []
+            for hit in hits:
+                lower = hit.lower()
+                if any(k in lower for k in keywords):
+                    filtered.append(hit)
+            hits = filtered
     if not hits and recall_trigger:
         hits = mem_long.search_long_term(prompt, limit=5)
     return hits
@@ -1241,7 +1322,7 @@ def _maybe_long_term_recall(
 
 def _build_context_block(workdir: Path, run_command, *, session_id: str | None = None) -> str:
     lines = [
-        "[context]",
+        "Context:",
         f"- cwd: {workdir}",
         f"- os: {os.name}",
     ]
@@ -1255,7 +1336,7 @@ def _build_context_block(workdir: Path, run_command, *, session_id: str | None =
     bundle = _load_summary_bundle(session_id=session_id) if session_id else {"summary": "", "key_points": []}
     summary = str(bundle.get("summary") or "").strip()
     if summary:
-        lines.append("[rolling_summary]\n" + summary)
+        lines.append("Rolling summary:\n" + summary)
         key_points = _key_points_block(bundle.get("key_points") or summary)
         if key_points:
             lines.append(key_points)
@@ -1622,6 +1703,24 @@ def _ui_write(line: str) -> None:
         sys.stdout.flush()
     except Exception:
         pass
+
+
+def _ui_write_user(text: str) -> None:
+    if _UI_MANAGER:
+        _UI_MANAGER.write_user(text)
+        return
+    if text is None:
+        return
+    ansi = "\x1b[93m"
+    reset = "\x1b[0m"
+    lines = str(text).splitlines() or [""]
+    prefix = "User: "
+    for idx, line in enumerate(lines):
+        label = prefix if idx == 0 else " " * len(prefix)
+        try:
+            print(f"{ansi}{label}{line}{reset}")
+        except Exception:
+            print(f"{label}{line}")
 
 
 def _ui_write_final(text: str) -> None:
@@ -2002,11 +2101,13 @@ def _run_tool_loop_v2(
     usage_tracker,
 ) -> str:
     # Preserve the pre-built rolling context (system probe + rolling summary + key points) if present.
-    context_block = ""
-    if "User request:" in prompt:
-        context_block = prompt.split("User request:", 1)[0].strip()
-    elif "User:\n" in prompt:
-        context_block = prompt.split("User:\n", 1)[0].strip()
+        context_block = ""
+        if "User request:" in prompt:
+            context_block = prompt.split("User request:", 1)[0].strip()
+        elif "Latest user question:" in prompt:
+            context_block = prompt.split("Latest user question:", 1)[0].strip()
+        elif "User:\n" in prompt:
+            context_block = prompt.split("User:\n", 1)[0].strip()
     base_request = _tool_loop_base_request(prompt)
     max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "10") or "10")
     max_commands_per_step = int(os.getenv("C0D3R_TOOL_MAX_CMDS", "12") or "12")
@@ -2039,16 +2140,16 @@ def _run_tool_loop_v2(
             if not cleaned:
                 continue
             user_notes.append(cleaned)
-            history.append(f"[user_note] {cleaned}")
+            history.append(f"User note: {cleaned}")
             _ui_write(f"note: {cleaned}\n")
         if reason:
-            history.append(f"[user_note_context] {reason}")
+            history.append(f"User note context: {reason}")
         return True
 
     def _history_block() -> str:
         if not history:
             return ""
-        return "\n\n[recent]\n" + "\n\n".join(history[-6:])
+        return "\n\nRecent history:\n" + "\n\n".join(history[-6:])
 
     schema_doc = (
         "Return ONLY JSON (no markdown) using this schema:\n"
@@ -2084,18 +2185,18 @@ def _run_tool_loop_v2(
             from services.system_probe import system_probe_context
             sys_info = system_probe_context(current_cwd)
         except Exception:
-            sys_info = f"[system]\nos={os.name} platform={sys.platform} cwd={current_cwd}"
+            sys_info = f"System info:\nos={os.name} platform={sys.platform} cwd={current_cwd}"
 
         env_block = _environment_context_block(current_cwd)
         objective = base_request.strip()
         intent = _intent_for_step(step, step_failed=prev_step_failed, last_error=last_error)
-        summary_block = f"[rolling_summary]\n{rolling_summary}" if rolling_summary else ""
+        summary_block = f"Rolling summary:\n{rolling_summary}" if rolling_summary else ""
         notes_block = ""
         if user_notes:
-            notes_block = "[user_notes]\n" + "\n".join(f"- {note}" for note in user_notes[-6:])
+            notes_block = "User notes:\n" + "\n".join(f"- {note}" for note in user_notes[-6:])
         docs_block = ""
         if documents:
-            docs_block = "[documents_attached]\n" + "\n".join(f"- {doc}" for doc in documents)
+            docs_block = "Attached documents:\n" + "\n".join(f"- {doc}" for doc in documents)
 
         last_json = ""
         if last_payload:
@@ -2105,7 +2206,7 @@ def _run_tool_loop_v2(
                 last_json = ""
 
         tool_prompt = (
-            "[schema:tool_loop_v2]\n"
+            "Schema: tool_loop_v2\n"
             + schema_doc
             + "\n"
             + sys_info
@@ -2114,15 +2215,15 @@ def _run_tool_loop_v2(
             + ("\n\n" + key_points_block if key_points_block else "")
             + ("\n\n" + notes_block if notes_block else "")
             + ("\n\n" + docs_block if docs_block else "")
-            + "\n\n[objective]\n"
+            + "\n\nObjective:\n"
             + objective
-            + "\n\n[intent]\n"
+            + "\n\nIntent:\n"
             + intent
-            + ("\n\n[context]\n" + context_block[:6000] if context_block else "")
-            + "\n\n[task]\n"
+            + ("\n\nContext:\n" + context_block[:6000] if context_block else "")
+            + "\n\nTask:\n"
             + base_request
             + (_history_block())
-            + ("\n\n[last_payload]\n" + last_json if last_json else "")
+            + ("\n\nLast payload:\n" + last_json if last_json else "")
         )
 
         selected_model = _select_model_for_step(
@@ -2165,7 +2266,7 @@ def _run_tool_loop_v2(
             payload = _extract_json_object(raw or "")
             if payload is None:
                 active_prompt = (
-                    "[schema:tool_loop_v2]\n"
+                    "Schema: tool_loop_v2\n"
                     + schema_doc
                     + "\nYour previous response was not valid JSON. Re-emit ONLY valid JSON matching the schema.\n\n"
                     + (raw or "")[:2000]
@@ -2175,7 +2276,7 @@ def _run_tool_loop_v2(
             if ok:
                 break
             active_prompt = (
-                "[schema:tool_loop_v2]\n"
+                "Schema: tool_loop_v2\n"
                 + schema_doc
                 + f"\nYour JSON failed validation: {err}. Fix it and re-emit ONLY valid JSON.\n\n"
                 + json.dumps(payload, indent=2)[:2000]
@@ -2183,7 +2284,7 @@ def _run_tool_loop_v2(
             payload = None
 
         if payload is None or not ok:
-            history.append(f"[schema_error] {err or 'Model did not return valid JSON.'}")
+            history.append(f"Schema error: {err or 'Model did not return valid JSON.'}")
             last_payload = payload
             continue
 
@@ -2846,6 +2947,9 @@ def _strip_context_block(prompt: str) -> str:
     if not prompt:
         return ""
     marker = "User request:"
+    if marker in prompt:
+        return prompt.split(marker, 1)[-1].strip()
+    marker = "Latest user question:"
     if marker in prompt:
         return prompt.split(marker, 1)[-1].strip()
     if "User:\n" in prompt:
@@ -4858,6 +4962,7 @@ def _run_repl(
         user_prompt = _strip_context_block(prompt)
         user_prompt, _ = _scrub_mnemonic_from_prompt(user_prompt)
         _emit_live(f"repl: prompt received (len={len(prompt)})")
+        _ui_write_user(user_prompt)
         _trace_event({
             "event": "repl.prompt",
             "workdir": str(workdir),
@@ -4920,14 +5025,30 @@ def _run_repl(
             )
             last_user = memory.last_user(session_id=session_id)
             if last_user and last_user.content:
-                context = f"[last_user]\n{last_user.content}\n\n{context}" if context else f"[last_user]\n{last_user.content}"
+                context = f"Last user message:\n{last_user.content}\n\n{context}" if context else f"Last user message:\n{last_user.content}"
             last_exchange = memory.last_exchange(session_id=session_id)
             if last_exchange:
-                exchange_lines = ["[last_exchange]"]
+                exchange_lines = ["Last exchange (most recent):"]
                 for entry in last_exchange:
-                    exchange_lines.append(f"{entry.role}: {entry.content}")
+                    role = (entry.role or "").strip() or "unknown"
+                    exchange_lines.append(f"{role.capitalize()}: {entry.content}")
                 exchange_block = "\n".join(exchange_lines)
                 context = f"{exchange_block}\n\n{context}" if context else exchange_block
+        # If the user is asking about recency/recall, add an explicit hint block
+        # to bias the model toward the most recent exchange.
+        if _detect_recall_trigger(user_prompt) or _is_recent_recall(user_prompt) or _is_short_term_summary_request(user_prompt):
+            hint_lines = ["Recall hint:", "Use the most recent exchange below to answer recency questions."]
+            last_user = memory.last_user(session_id=session_id)
+            if last_user and last_user.content:
+                hint_lines.append(f"Recent user: {last_user.content}")
+            last_exchange = memory.last_exchange(session_id=session_id)
+            if last_exchange:
+                hint_lines.append("Recent exchange:")
+                for entry in last_exchange:
+                    role = (entry.role or "").strip() or "unknown"
+                    hint_lines.append(f"- {role.capitalize()}: {entry.content}")
+            hint_block = "\n".join(hint_lines)
+            context = f"{hint_block}\n\n{context}" if context else hint_block
         try:
             from services.system_probe import system_probe_context
             probe_block = system_probe_context(workdir)
@@ -4965,12 +5086,12 @@ def _run_repl(
                 memory_long=memory_long,
             )
             if recall_hits:
-                context = context + "\n\n[long_term_recall]\n" + "\n".join(recall_hits)
+                context = context + "\n\nLong-term recall:\n" + "\n".join(recall_hits)
         if scan_future:
             try:
                 scan = scan_future.result()
                 if scan:
-                    context = context + "\n\n[project_scan]\n" + json.dumps(scan, indent=2)
+                    context = context + "\n\nProject scan:\n" + json.dumps(scan, indent=2)
             finally:
                 if scan_executor:
                     scan_executor.shutdown(wait=True)
@@ -4984,7 +5105,22 @@ def _run_repl(
             "Respond to the user request. If terminal actions are required, set needs_terminal=true and provide commands/checks. "
             "Otherwise set needs_terminal=false and keep commands/checks empty."
         )
-        full_prompt = f"{context}\n\n[objective]\n{user_prompt}\n\n[intent]\n{intent}\n\nUser:\n{user_prompt}"
+        if _is_recent_recall(user_prompt):
+            intent = (
+                "The user is asking about the most recent exchange. Use the Recall hint / Last exchange blocks to answer precisely. "
+                "Do not claim you lack history if a recent exchange is present."
+            )
+        elif _detect_recall_trigger(user_prompt):
+            intent = (
+                "The user is asking about earlier conversation. Use Long-term recall, Rolling summary, and Conversation transcript "
+                "to answer. If those blocks contain the topic, answer directly; otherwise say you couldn't find it."
+            )
+        full_prompt = (
+            f"{context}\n\n"
+            f"Latest user question:\n{user_prompt}\n\n"
+            f"Intent:\n{intent}\n\n"
+            f"Conversation (latest turn):\nUser: {user_prompt}"
+        )
         if force_direct:
             system = _universal_response_schema()
         usage.add_input(full_prompt)
@@ -5037,7 +5173,7 @@ def _run_repl(
         if tech_matrix and mode != "direct":
             outline = tech_matrix.get("outline") or {}
             matrix_context = json.dumps(outline, indent=2)[:6000]
-            full_prompt = f"{full_prompt}\n\n[longform_outline]\n{matrix_context}"
+            full_prompt = f"{full_prompt}\n\nLongform outline:\n{matrix_context}"
         if allow_interrupt:
             controller.start()
         try:

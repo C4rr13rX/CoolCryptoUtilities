@@ -44,6 +44,36 @@ def _emit_bedrock_live(message: str) -> None:
         pass
 
 
+def _bedrock_retry_settings() -> tuple[int, float]:
+    try:
+        attempts = int(os.getenv("C0D3R_BEDROCK_RETRIES", "3") or "3")
+    except Exception:
+        attempts = 3
+    try:
+        backoff_s = float(os.getenv("C0D3R_BEDROCK_RETRY_BACKOFF_S", "5") or "5")
+    except Exception:
+        backoff_s = 5.0
+    attempts = max(1, attempts)
+    backoff_s = max(0.0, backoff_s)
+    return attempts, backoff_s
+
+
+def _is_retryable_bedrock_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}"
+    retry_markers = (
+        "EndpointConnectionError",
+        "NameResolutionError",
+        "ReadTimeoutError",
+        "ConnectTimeoutError",
+        "ConnectionClosedError",
+        "Could not connect to the endpoint URL",
+        "timed out",
+        "Temporary failure in name resolution",
+        "getaddrinfo failed",
+    )
+    return any(marker in text for marker in retry_markers)
+
+
 def _typewriter_output(text: str) -> None:
     try:
         delay_ms = float(os.getenv("C0D3R_TYPEWRITER_MS", "8") or "8")
@@ -834,8 +864,22 @@ class C0d3r:
                     f"profile={self.profile or 'default'}"
                 )
                 try:
-                    result = self._runtime.converse(model_id=effective_model_id, payload=payload)
-                    return _extract_converse_text(result)
+                    attempts, backoff_s = _bedrock_retry_settings()
+                    last_exc: Exception | None = None
+                    for attempt in range(attempts):
+                        try:
+                            result = self._runtime.converse(model_id=effective_model_id, payload=payload)
+                            return _extract_converse_text(result)
+                        except Exception as exc:
+                            last_exc = exc
+                            if not _is_retryable_bedrock_error(exc) or attempt == attempts - 1:
+                                raise
+                            _emit_bedrock_live(
+                                f"bedrock: converse retry {attempt+1}/{attempts} after error {type(exc).__name__}"
+                            )
+                            time.sleep(backoff_s * (attempt + 1))
+                    if last_exc:
+                        raise last_exc
                 except Exception as exc:
                     _emit_bedrock_live(f"bedrock: converse error model={effective_model_id} err={exc} -> fallback to invoke")
             else:
@@ -934,7 +978,23 @@ class C0d3r:
                     pass
                 result = json.loads("".join(chunks)) if chunks else {}
             else:
-                result = self._runtime.invoke(model_id=effective_model_id, payload=payload)
+                attempts, backoff_s = _bedrock_retry_settings()
+                last_exc: Exception | None = None
+                result = None
+                for attempt in range(attempts):
+                    try:
+                        result = self._runtime.invoke(model_id=effective_model_id, payload=payload)
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                        if not _is_retryable_bedrock_error(exc) or attempt == attempts - 1:
+                            raise
+                        _emit_bedrock_live(
+                            f"bedrock: invoke retry {attempt+1}/{attempts} after error {type(exc).__name__}"
+                        )
+                        time.sleep(backoff_s * (attempt + 1))
+                if result is None and last_exc is not None:
+                    raise last_exc
         except Exception as exc:
             stop.set()
             if self.inference_profile or "inference profile" not in str(exc).lower():

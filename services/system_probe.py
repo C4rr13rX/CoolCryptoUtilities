@@ -24,7 +24,7 @@ class SystemProbe:
     network_available: bool
 
     def to_context_block(self) -> str:
-        lines = ["[system_probe]"]
+        lines = ["System probe:"]
         for key, value in asdict(self).items():
             lines.append(f"- {key}: {value}")
         return "\n".join(lines)

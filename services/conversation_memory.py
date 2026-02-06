@@ -147,10 +147,10 @@ class ConversationMemory:
         summary_text, key_points = self._unpack_summary(summary)
         parts: List[str] = []
         if summary_text.strip():
-            parts.append("[rolling_summary]\n" + summary_text.strip())
+            parts.append("Rolling summary:\n" + summary_text.strip())
         if key_points:
             points = key_points[:10]
-            parts.append("[key_points]\n" + "\n".join(f"- {p}" for p in points))
+            parts.append("Key points:\n" + "\n".join(f"- {p}" for p in points))
 
         budget = max(2000, int(max_chars))
         used = len("\n\n".join(parts))
@@ -162,14 +162,16 @@ class ConversationMemory:
             return "\n\n".join(parts)
 
         blocks: List[str] = []
+        include_ctx = os.getenv("C0D3R_TRANSCRIPT_INCLUDE_CONTEXT", "1").strip().lower() in {"1", "true", "yes", "on"}
         for entry in history:
-            header = f"[{entry.ts or 'unknown'}] {entry.role}:"
+            role = (entry.role or "").strip() or "unknown"
+            header = f"{entry.ts or 'unknown'} {role.capitalize()}:"
             lines = [header]
-            if entry.role == "user" and entry.context:
+            if include_ctx and entry.role == "user" and entry.context:
                 ctx = entry.context.strip()
                 if context_limit and len(ctx) > context_limit:
                     ctx = ctx[:context_limit].rstrip() + "..."
-                lines.append("[context]")
+                lines.append("Context:")
                 lines.append(ctx)
             content = (entry.content or "").strip()
             if content:
@@ -177,7 +179,7 @@ class ConversationMemory:
             blocks.append("\n".join(lines))
 
         transcript_lines: List[str] = []
-        transcript_lines.append("[recent_transcript]")
+        transcript_lines.append("Conversation transcript (most recent last):")
         transcript_body: List[str] = []
         size = len("\n".join(transcript_lines))
         for block in reversed(blocks):
@@ -224,6 +226,7 @@ class ConversationMemory:
         if not query_l:
             return []
 
+        keywords = [t for t in re.findall(r"[a-z0-9]{3,}", query_l) if t not in {"the", "and", "for", "are", "but", "not", "you", "your", "with", "that", "this", "from", "have", "has", "had", "was", "were", "what", "when", "where", "which", "who", "why", "how", "about", "into", "over", "under", "then", "than", "them", "they", "their", "ours", "can", "could", "should", "would", "will", "just", "like", "been", "did", "does", "doing", "it's", "im", "i'm", "we", "our", "us", "me", "my", "mine", "yours"}]
         scored: List[tuple[float, int]] = []
         for idx, entry in enumerate(entries):
             blob = f"{entry.content}\n{entry.context}".lower()
@@ -231,6 +234,10 @@ class ConversationMemory:
                 score = 1.0
             else:
                 score = SequenceMatcher(None, query_l, blob).ratio()
+                if keywords:
+                    hits = sum(1 for kw in keywords if kw in blob)
+                    if hits:
+                        score = max(score, hits / max(1, len(keywords)))
             if score < 0.2:
                 continue
             scored.append((score, idx))
@@ -243,14 +250,15 @@ class ConversationMemory:
                 continue
             start = max(0, idx - window)
             end = min(len(entries), idx + window + 1)
-            snippet_lines: List[str] = [f"[match score={score:.2f}]"]
+            snippet_lines: List[str] = [f"Match score: {score:.2f}"]
             for j in range(start, end):
                 used_indices.add(j)
                 e = entries[j]
-                header = f"[{e.ts or 'unknown'}] {e.role}:"
+                role = (e.role or "").strip() or "unknown"
+                header = f"{e.ts or 'unknown'} {role.capitalize()}:"
                 snippet_lines.append(header)
                 if e.role == "user" and e.context:
-                    snippet_lines.append("[context]")
+                    snippet_lines.append("Context:")
                     snippet_lines.append((e.context or "").strip())
                 snippet_lines.append((e.content or "").strip())
             results.append("\n".join([ln for ln in snippet_lines if ln]))
