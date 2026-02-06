@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+import os
 from typing import Iterable, List, Optional, Tuple
 
 from django.db import transaction
@@ -45,6 +46,9 @@ def ingest_equations(
     discipline_tags: Optional[List[str]] = None,
     citation: str = "",
     raw_excerpt: str = "",
+    citations: Optional[List[str]] = None,
+    tool_used: str = "",
+    captured_at=None,
 ) -> List[Equation]:
     extracted = extract_equations(text)
     if not extracted:
@@ -65,10 +69,19 @@ def ingest_equations(
                 variables=eq.variables,
                 disciplines=discipline_tags,
                 source=source,
+                citations=citations or ([citation] if citation else []),
+                tool_used=tool_used or "",
+                captured_at=captured_at,
             )
             created.append(eq_model)
             for symbol in eq.variables:
                 EquationVariable.objects.get_or_create(symbol=symbol, dimension="")
+        try:
+            from services.graph_store import sync_graph_from_django
+            if os.getenv("C0D3R_GRAPH_SYNC_ON_WRITE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+                sync_graph_from_django()
+        except Exception:
+            pass
         return created
 
 

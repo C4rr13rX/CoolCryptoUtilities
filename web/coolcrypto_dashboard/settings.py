@@ -224,6 +224,8 @@ STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "collected_static"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = REPO_ROOT / "storage" / "media"
+GRAPH_DB_VENDOR = os.getenv("GRAPH_DB_VENDOR", "kuzu")
+GRAPH_DB_DIR = Path(os.getenv("GRAPH_DB_DIR", REPO_ROOT / "storage" / "graph" / "kuzu")).resolve()
 
 STATICFILES_DIRS = [
     BASE_DIR / "static",

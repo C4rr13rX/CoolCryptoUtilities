@@ -34,6 +34,25 @@ c0d3r is meant to accelerate scientific and engineering progress by:
 - **Audit-friendly logging**: captures command transcripts, exit codes, and relevant output slices (e.g., last N lines) for traceability.
 - **Filesystem safety policies**: supports guardrails such as project-root-only mutation and path normalization when strict mode is configured.
 
+### Turing Test + Memory Verification
+This repo includes a **modernized Turing-style rubric** and a repeatable obstacle harness that probes STM/LTM recall, multi-turn consistency, and tool-use behavior.
+- Rubric: `runtime/c0d3r/turing_rubric.md` and `runtime/c0d3r/turing_rubric.json`
+- Harness: `runtime/c0d3r/obstacle_course.ps1`
+- Logs: `runtime/c0d3r/obstacle_logs/` and `runtime/c0d3r/turing_eval.json`
+
+Run the harness (Windows):
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\c0d3r\obstacle_course.ps1
+```
+Optional retries:
+- `C0D3R_TURING_MAX_ATTEMPTS=3`
+
+### Graph Store (Second DB)
+The equation matrix is stored in Django’s primary DB **and** mirrored into an embedded graph database for efficient traversal and query.
+- Default graph engine: **Kùzu** (MIT-licensed, embedded, open-source)
+- Storage path: `storage/graph/kuzu` (override with `GRAPH_DB_DIR`)
+- Sync control: `C0D3R_GRAPH_SYNC_ON_WRITE=1` (disable with `0`)
+
 ### Architecture summary (engineering view)
 c0d3r implements a multi-stage control loop:
 1) **Context synthesis**: scans repo structure and probes the environment (OS, toolchain, runtime).

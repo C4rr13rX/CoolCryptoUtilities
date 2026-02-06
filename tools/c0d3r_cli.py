@@ -612,6 +612,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scientific", action="store_true", help="Enable scientific-method analysis mode.")
     parser.add_argument("--no-scientific", action="store_true", help="Disable scientific-method analysis mode.")
     parser.add_argument("--matrix-query", dest="matrix_query", help="Query the equation matrix and exit.")
+    parser.add_argument("--scripted", dest="scripted", help="Path to a newline-delimited scripted prompt file.")
     return parser
 
 
@@ -625,7 +626,15 @@ def main(argv: List[str] | None = None) -> int:
         pass
     _emit_live("boot: start")
     prompt = " ".join(args.prompt).strip()
-    if not prompt:
+    scripted_prompts: list[str] | None = None
+    if args.scripted:
+        try:
+            path = Path(args.scripted).expanduser()
+            raw_lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            scripted_prompts = [line.strip() for line in raw_lines if line.strip() and not line.strip().startswith("#")]
+        except Exception:
+            scripted_prompts = []
+    if not prompt and not scripted_prompts:
         prompt = sys.stdin.read().strip()
     _emit_live(f"boot: prompt loaded (len={len(prompt)})")
     # Silence noisy startup warnings for CLI usage.
@@ -719,6 +728,10 @@ def main(argv: List[str] | None = None) -> int:
         workdir=str(workdir),
         **settings,
     )
+    try:
+        os.environ["C0D3R_SESSION_ID"] = str(session.session_id)
+    except Exception:
+        pass
     usage = UsageTracker(model_id=session.get_model_id())
     header = HeaderRenderer(usage)
     # Initialize terminal UI if available.
@@ -748,6 +761,11 @@ def main(argv: List[str] | None = None) -> int:
     do_research = False
     tech_matrix = None
     _emit_live("boot: enter repl")
+    initial_prompt = prompt or None
+    if scripted_prompts:
+        if initial_prompt:
+            scripted_prompts.insert(0, initial_prompt)
+        initial_prompt = None
     return _run_repl(
         session,
         usage,
@@ -755,7 +773,8 @@ def main(argv: List[str] | None = None) -> int:
         run_command,
         scientific=scientific if plan.get("mode") != "tool_loop" else False,
         tool_loop=tool_loop if plan.get("do_tool_loop", True) else False,
-        initial_prompt=prompt or None,
+        initial_prompt=initial_prompt,
+        scripted_prompts=scripted_prompts,
         header=header,
         pre_research_enabled=do_research,
         tech_matrix=tech_matrix,
@@ -1151,7 +1170,7 @@ def _maybe_long_term_recall(
     return hits
 
 
-def _build_context_block(workdir: Path, run_command) -> str:
+def _build_context_block(workdir: Path, run_command, *, session_id: str | None = None) -> str:
     lines = [
         "[context]",
         f"- cwd: {workdir}",
@@ -1162,7 +1181,9 @@ def _build_context_block(workdir: Path, run_command) -> str:
     except Exception:
         pass
     lines.append(_environment_context_block(workdir))
-    bundle = _load_summary_bundle()
+    env_session = os.getenv("C0D3R_SESSION_ID")
+    session_id = session_id or (env_session.strip() if env_session else None)
+    bundle = _load_summary_bundle(session_id=session_id) if session_id else {"summary": "", "key_points": []}
     summary = str(bundle.get("summary") or "").strip()
     if summary:
         lines.append("[rolling_summary]\n" + summary)
@@ -4174,6 +4195,7 @@ def _seed_base_matrix_django() -> None:
         return
     try:
         from core.models import Equation, EquationDiscipline, EquationSource
+        from django.utils import timezone
         if Equation.objects.filter(domains__contains=["ClassicalMechanics"]).exists():
             return
         base = [
@@ -4207,6 +4229,9 @@ def _seed_base_matrix_django() -> None:
                     "disciplines": [domain],
                     "confidence": 0.95,
                     "source": source,
+                    "citations": [source.citation] if source and source.citation else [],
+                    "tool_used": "seed_base_matrix",
+                    "captured_at": timezone.now(),
                     "assumptions": [],
                     "constraints": [],
                 },
@@ -4350,6 +4375,17 @@ def _matrix_search(query: str, limit: int = 12) -> dict:
         return {"hits": [], "missing": []}
     _seed_base_matrix_django()
     try:
+        try:
+            from services.graph_store import search_graph_equations
+            graph_hits = search_graph_equations(query, limit=limit)
+            if graph_hits:
+                missing = []
+                tokens = [t for t in re.findall(r"[a-zA-Z_]{3,}", query.lower()) if t not in {"that","this","with","from","into","then"}]
+                if tokens:
+                    missing = [t for t in set(tokens[:10]) if not any(t in str(h["equation"]).lower() for h in graph_hits)]
+                return {"hits": graph_hits, "missing": missing}
+        except Exception:
+            pass
         from core.models import Equation
         q = query.strip()
         tokens = [t for t in re.findall(r"[a-zA-Z_]{3,}", q.lower()) if t not in {"that","this","with","from","into","then"}]
@@ -4587,6 +4623,7 @@ def _run_repl(
     scientific: bool,
     tool_loop: bool,
     initial_prompt: str | None = None,
+    scripted_prompts: list[str] | None = None,
     header: "HeaderRenderer | None" = None,
     pre_research_enabled: bool = True,
     tech_matrix: dict | None = None,
@@ -4600,7 +4637,8 @@ def _run_repl(
     memory_long = ConversationMemory(_runtime_path("conversation_global.jsonl"))
     summary_bundle = _load_summary_bundle(session_id=session_id)
     pending = initial_prompt
-    single_shot = initial_prompt is not None and not sys.stdin.isatty()
+    scripted_mode = scripted_prompts is not None
+    single_shot = initial_prompt is not None and not sys.stdin.isatty() and not scripted_mode
     plan = plan or {}
     oneshot = os.getenv("C0D3R_ONESHOT", "").strip().lower() in {"1", "true", "yes", "on"}
     minimal = oneshot or os.getenv("C0D3R_MINIMAL_CONTEXT", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -4614,6 +4652,8 @@ def _run_repl(
     if os.getenv("C0D3R_DISABLE_PRERESEARCH", "").strip().lower() in {"1", "true", "yes", "on"}:
         pre_research_enabled = False
     while True:
+        if scripted_mode and pending is None and scripted_prompts:
+            pending = scripted_prompts.pop(0)
         try:
             header.freeze()
             prompt = pending if pending is not None else _read_input(workdir)
@@ -4900,6 +4940,8 @@ def _run_repl(
             summary_bundle = memory.update_summary(summary_bundle, user_prompt, assistant_text, session)
             _save_summary_bundle(summary_bundle, session_id=session_id)
         if oneshot:
+            return 0
+        if scripted_mode and not scripted_prompts:
             return 0
 
 
@@ -6801,6 +6843,7 @@ def _write_matrix_db(record: dict) -> None:
                     "tags": ["research"],
                 },
             )
+        from django.utils import timezone
         created_eqs: list[Equation] = []
         for eq in equations:
             if not eq:
@@ -6811,6 +6854,9 @@ def _write_matrix_db(record: dict) -> None:
                 "disciplines": disciplines,
                 "confidence": 0.6,
                 "source": source,
+                "citations": authoritative_links,
+                "tool_used": "c0d3r_unbounded_matrix",
+                "captured_at": timezone.now(),
             }
             obj, _ = Equation.objects.get_or_create(text=str(eq), defaults=defaults)
             created_eqs.append(obj)
@@ -6824,6 +6870,12 @@ def _write_matrix_db(record: dict) -> None:
                 to_equation=created_eqs[idx + 1],
                 defaults={"relation_type": "bridges", "notes": "auto-linked from unbounded record"},
             )
+        try:
+            from services.graph_store import sync_graph_from_django
+            if os.getenv("C0D3R_GRAPH_SYNC_ON_WRITE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+                sync_graph_from_django()
+        except Exception:
+            pass
     except Exception:
         return
 

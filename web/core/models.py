@@ -340,6 +340,9 @@ class Equation(models.Model):
     domains = models.JSONField(default=list)
     disciplines = models.JSONField(default=list)
     confidence = models.FloatField(default=0.5)
+    citations = models.JSONField(default=list)
+    tool_used = models.CharField(max_length=128, blank=True, default="")
+    captured_at = models.DateTimeField(null=True, blank=True)
     source = models.ForeignKey(EquationSource, null=True, blank=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
 
