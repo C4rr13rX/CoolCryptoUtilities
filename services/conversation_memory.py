@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from difflib import SequenceMatcher
 from dataclasses import dataclass
@@ -281,7 +282,13 @@ class ConversationMemory:
             f"New exchange:\nUser: {user_text}\nAssistant: {assistant_text}\n"
         )
         try:
-            response = session.send(prompt, stream=False, system=system)
+            fast = os.getenv("C0D3R_SUMMARY_FAST", "1").strip().lower() not in {"0", "false", "no", "off"}
+            if fast and hasattr(session, "_c0d3r"):
+                model_id = session._c0d3r._model_for_stage("executor")
+                built = session._c0d3r._build_prompt("executor", prompt, system=system)
+                response = session._c0d3r._invoke_model(model_id, built)
+            else:
+                response = session.send(prompt, stream=False, system=system)
         except Exception:
             return {"summary": summary_text, "key_points": key_points}
 

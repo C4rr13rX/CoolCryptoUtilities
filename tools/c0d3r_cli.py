@@ -771,7 +771,7 @@ def main(argv: List[str] | None = None) -> int:
         context_block = f"{probe_block}\n{context_block}"
     else:
         context_block = probe_block
-    if context_block:
+    if context_block and prompt:
         prompt = f"{context_block}\n\nUser request:\n{prompt}"
     base_request = _strip_context_block(prompt)
     settings = dict(settings)
