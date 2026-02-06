@@ -52,6 +52,8 @@ _DJANGO_USER_FILE = _runtime_path("django_user.json")
 _MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE)
 _MNEMONIC_PHRASE = re.compile(r"\b(?:[a-zA-Z]{3,}\s+){11,23}[a-zA-Z]{3,}\b")
 _DOCUMENT_EXTENSIONS = {".pdf", ".csv", ".doc", ".docx", ".xls", ".xlsx", ".html", ".txt", ".md"}
+_ANIMATION_LOCK = threading.Lock()
+_ANIMATION_STATE: dict[str, object | None] = {"stop": None, "thread": None, "kind": None}
 
 
 def _ensure_root_dir(root: Path | None) -> None:
@@ -153,6 +155,58 @@ def _animate_matrix(duration_s: float = 1.2) -> None:
         _emit_status_line(f"matrix {frames[idx % len(frames)]} {sym}")
         idx += 1
         time.sleep(0.15)
+
+
+def _run_status_animation(kind: str, stop_event: threading.Event) -> None:
+    if not _UI_MANAGER:
+        return
+    if kind == "research":
+        frames = ["📖", "📖", "📖", "📚", "📖", "📚", "📖"]
+        prefix = "research"
+        suffixes = ["flipping pages..."] * len(frames)
+    else:
+        frames = ["⚡→○", "○→⚡", "○↔⚡", "⚡↔○", "○⇄⚡", "⚡⇄○"]
+        prefix = "matrix"
+        symbols = ["∑", "∫", "π", "λ", "ψ", "Ω"]
+        suffixes = symbols
+    idx = 0
+    while not stop_event.is_set():
+        frame = frames[idx % len(frames)]
+        suffix = suffixes[idx % len(suffixes)]
+        _emit_status_line(f"{prefix} {frame} {suffix}")
+        idx += 1
+        stop_event.wait(0.15)
+    with _ANIMATION_LOCK:
+        if _ANIMATION_STATE.get("stop") is stop_event:
+            _emit_status_line("")
+            _ANIMATION_STATE["stop"] = None
+            _ANIMATION_STATE["thread"] = None
+            _ANIMATION_STATE["kind"] = None
+
+
+def _start_status_animation(kind: str) -> threading.Event | None:
+    if not _UI_MANAGER:
+        return None
+    stop_event = threading.Event()
+    with _ANIMATION_LOCK:
+        prior = _ANIMATION_STATE.get("stop")
+        if isinstance(prior, threading.Event):
+            prior.set()
+        t = threading.Thread(target=_run_status_animation, args=(kind, stop_event), daemon=True)
+        _ANIMATION_STATE["stop"] = stop_event
+        _ANIMATION_STATE["thread"] = t
+        _ANIMATION_STATE["kind"] = kind
+        t.start()
+    return stop_event
+
+
+def _stop_status_animation(stop_event: threading.Event | None) -> None:
+    if not stop_event:
+        return
+    try:
+        stop_event.set()
+    except Exception:
+        pass
 
 
 class TerminalUI:
@@ -4551,11 +4605,14 @@ def _matrix_search(query: str, limit: int = 12) -> dict:
 def _query_unbounded_matrix(prompt: str) -> dict:
     if not prompt:
         return {}
-    _animate_matrix(0.8)
-    result = _matrix_search(prompt)
-    if result.get("hits"):
+    anim = _start_status_animation("matrix")
+    try:
+        result = _matrix_search(prompt)
+        if result.get("hits"):
+            return result
         return result
-    return result
+    finally:
+        _stop_status_animation(anim)
 
 
 def _petal_action_plan(session: C0d3rSession, constraints: list[dict], prompt: str) -> dict:
@@ -5466,7 +5523,7 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
     try:
         _emit_live("pre_research: model call starting")
         _emit_live("pre_research: looking into sources")
-        _animate_research(0.8)
+        anim = _start_status_animation("research")
         stop = threading.Event()
         def _heartbeat():
             tick = 0
@@ -5482,6 +5539,7 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
             kwargs={"prompt": research_prompt, "stream": False, "research_override": True},
         )
         stop.set()
+        _stop_status_animation(anim)
         if response:
             _append_bibliography_from_text(response)
             _persist_research_knowledge(prompt, response)
@@ -5491,6 +5549,7 @@ def _pre_research(session: C0d3rSession, prompt: str) -> str:
             stop.set()
         except Exception:
             pass
+        _stop_status_animation(locals().get("anim"))
         # Reroute: fall back to direct web research if model times out.
         try:
             _emit_live("pre_research: timeout; rerouting to direct web research")
@@ -6601,64 +6660,68 @@ def _unbounded_trigger(no_progress: int, test_failures: int, model_timeouts: int
 
 
 def _enforce_unbounded_matrix(session: C0d3rSession, prompt: str) -> dict | None:
-    payload = _resolve_unbounded_request(session, prompt)
-    if not payload:
-        return None
-    # Contradiction detection across equations (duplicate LHS with different RHS).
+    anim = _start_status_animation("matrix")
     try:
-        lhs_map = {}
-        conflict = False
-        for eq in payload.get("equations") or []:
-            if "=" not in eq:
-                continue
-            left, right = eq.split("=", 1)
-            left_key = left.strip()
-            prev = lhs_map.get(left_key)
-            if prev and prev.strip() != right.strip():
-                conflict = True
-                break
-            lhs_map[left_key] = right
-        if conflict:
-            payload["equations"] = []
-    except Exception:
-        pass
-    # Validate equations are computable via sympy where possible
-    try:
-        import sympy as _sp
+        payload = _resolve_unbounded_request(session, prompt)
+        if not payload:
+            return None
+        # Contradiction detection across equations (duplicate LHS with different RHS).
+        try:
+            lhs_map = {}
+            conflict = False
+            for eq in payload.get("equations") or []:
+                if "=" not in eq:
+                    continue
+                left, right = eq.split("=", 1)
+                left_key = left.strip()
+                prev = lhs_map.get(left_key)
+                if prev and prev.strip() != right.strip():
+                    conflict = True
+                    break
+                lhs_map[left_key] = right
+            if conflict:
+                payload["equations"] = []
+        except Exception:
+            pass
+        # Validate equations are computable via sympy where possible
+        try:
+            import sympy as _sp
 
-        valid = 0
-        for eq in payload.get("equations") or []:
-            try:
-                if "=" in eq:
-                    left, right = eq.split("=", 1)
-                    _sp.Eq(_sp.sympify(left), _sp.sympify(right))
-                else:
-                    _sp.sympify(eq)
-                valid += 1
-            except Exception:
-                continue
-        if valid == 0:
-            payload["equations"] = []
-    except Exception:
-        pass
-    # Validate unit consistency if provided.
-    try:
-        eq_units = payload.get("equation_units") or {}
-        if isinstance(eq_units, dict):
-            for eq, units in eq_units.items():
-                if not isinstance(units, dict):
-                    payload["equations"] = []
-                    break
-                lhs = units.get("lhs_units")
-                rhs = units.get("rhs_units")
-                if lhs is None or rhs is None or str(lhs) != str(rhs):
-                    payload["equations"] = []
-                    break
-    except Exception:
-        pass
-    _append_unbounded_matrix(payload)
-    _persist_unbounded_payload(payload)
-    return payload
+            valid = 0
+            for eq in payload.get("equations") or []:
+                try:
+                    if "=" in eq:
+                        left, right = eq.split("=", 1)
+                        _sp.Eq(_sp.sympify(left), _sp.sympify(right))
+                    else:
+                        _sp.sympify(eq)
+                    valid += 1
+                except Exception:
+                    continue
+            if valid == 0:
+                payload["equations"] = []
+        except Exception:
+            pass
+        # Validate unit consistency if provided.
+        try:
+            eq_units = payload.get("equation_units") or {}
+            if isinstance(eq_units, dict):
+                for eq, units in eq_units.items():
+                    if not isinstance(units, dict):
+                        payload["equations"] = []
+                        break
+                    lhs = units.get("lhs_units")
+                    rhs = units.get("rhs_units")
+                    if lhs is None or rhs is None or str(lhs) != str(rhs):
+                        payload["equations"] = []
+                        break
+        except Exception:
+            pass
+        _append_unbounded_matrix(payload)
+        _persist_unbounded_payload(payload)
+        return payload
+    finally:
+        _stop_status_animation(anim)
 
 
 def _load_unbounded_matrix_context(max_chars: int = 6000) -> str:
@@ -7743,6 +7806,8 @@ class UsageTracker:
         self.output_tokens = 0.0
         self.status = "idle"
         self.last_action = ""
+        self._status_anim = None
+        self._status_anim_kind = ""
 
     def add_input(self, text: str) -> None:
         self.input_chars += len(text or "")
@@ -7756,6 +7821,19 @@ class UsageTracker:
         self.status = status
         if action:
             self.last_action = action
+        if status == "research":
+            if self._status_anim_kind != "research":
+                self._status_anim = _start_status_animation("research")
+                self._status_anim_kind = "research"
+        elif status == "matrix":
+            if self._status_anim_kind != "matrix":
+                self._status_anim = _start_status_animation("matrix")
+                self._status_anim_kind = "matrix"
+        else:
+            if self._status_anim:
+                _stop_status_animation(self._status_anim)
+                self._status_anim = None
+                self._status_anim_kind = ""
 
 
 class BudgetTracker:
