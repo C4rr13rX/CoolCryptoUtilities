@@ -686,6 +686,11 @@ def main(argv: List[str] | None = None) -> int:
     _emit_live("boot: resolve workdir")
     workdir = Path(args.workdir or os.getcwd()).resolve()
     os.environ.setdefault("C0D3R_ROOT_CWD", str(workdir))
+    resolved_images = _resolve_image_paths(args.image, workdir)
+    if args.image and not resolved_images:
+        _emit_live("boot: image paths provided but none resolved")
+    elif resolved_images:
+        _emit_live(f"boot: images loaded ({len(resolved_images)})")
     if _requires_rigorous_constraints(prompt):
         settings["rigorous_mode"] = True
     scientific = args.scientific or (os.getenv("C0D3R_SCIENTIFIC_MODE", "1").strip().lower() not in {"0", "false", "no", "off"})
@@ -775,6 +780,7 @@ def main(argv: List[str] | None = None) -> int:
         tool_loop=tool_loop if plan.get("do_tool_loop", True) else False,
         initial_prompt=initial_prompt,
         scripted_prompts=scripted_prompts,
+        images=resolved_images,
         header=header,
         pre_research_enabled=do_research,
         tech_matrix=tech_matrix,
@@ -1228,6 +1234,24 @@ def _build_context_block(workdir: Path, run_command, *, session_id: str | None =
                 lines.append("top-level files:")
                 lines.append("\n".join(stdout.strip().splitlines()[:80]))
     return "\n".join(lines)
+
+
+def _resolve_image_paths(paths: list[str] | None, workdir: Path) -> list[str]:
+    if not paths:
+        return []
+    resolved: list[str] = []
+    for raw in paths:
+        if not raw:
+            continue
+        try:
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = (workdir / candidate).resolve()
+            if candidate.exists() and candidate.is_file():
+                resolved.append(str(candidate))
+        except Exception:
+            continue
+    return resolved
 
 
 def _context_scan_path(workdir: Path) -> Path:
@@ -1980,7 +2004,17 @@ def _run_tool_loop_v2(
         while attempt < max_json_attempts:
             attempt += 1
             usage_tracker.add_input(active_prompt)
-            raw = _send_with_model_override(session, prompt=active_prompt, model_id=selected_model, stream=False)
+            images_for_step = None
+            if images:
+                if step == 1 or os.getenv("C0D3R_IMAGES_EVERY_STEP", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                    images_for_step = images
+            raw = _send_with_model_override(
+                session,
+                prompt=active_prompt,
+                model_id=selected_model,
+                stream=False,
+                images=images_for_step,
+            )
             usage_tracker.add_output(raw or "")
             payload = _extract_json_object(raw or "")
             if payload is None:
@@ -4624,6 +4658,7 @@ def _run_repl(
     tool_loop: bool,
     initial_prompt: str | None = None,
     scripted_prompts: list[str] | None = None,
+    images: list[str] | None = None,
     header: "HeaderRenderer | None" = None,
     pre_research_enabled: bool = True,
     tech_matrix: dict | None = None,
@@ -4854,7 +4889,7 @@ def _run_repl(
             _emit_live("repl: tool loop starting")
             response = _run_tool_loop(
                 session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
-                workdir, run_command, images=None, stream=False, stream_callback=None, usage_tracker=usage
+                workdir, run_command, images=images, stream=False, stream_callback=None, usage_tracker=usage
             )
             _emit_live("repl: tool loop complete")
         finally:
