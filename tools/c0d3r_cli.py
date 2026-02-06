@@ -51,6 +51,7 @@ _DEFAULT_SECRET_CATEGORY = "default"
 _DJANGO_USER_FILE = _runtime_path("django_user.json")
 _MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE)
 _MNEMONIC_PHRASE = re.compile(r"\b(?:[a-zA-Z]{3,}\s+){11,23}[a-zA-Z]{3,}\b")
+_DOCUMENT_EXTENSIONS = {".pdf", ".csv", ".doc", ".docx", ".xls", ".xlsx", ".html", ".txt", ".md"}
 
 
 def _ensure_root_dir(root: Path | None) -> None:
@@ -605,6 +606,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--region", help="AWS region (default: from env or us-east-1).")
     parser.add_argument("--research", action="store_true", help="Enable web research + synthesis.")
     parser.add_argument("--image", action="append", help="Image path(s) for multimodal review.")
+    parser.add_argument("--doc", "--document", dest="documents", action="append", help="Document path(s) for Bedrock document analysis.")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming output.")
     parser.add_argument("--tool-loop", action="store_true", help="Enable local command execution loop.")
     parser.add_argument("--no-tools", action="store_true", help="Disable local command execution loop.")
@@ -691,6 +693,11 @@ def main(argv: List[str] | None = None) -> int:
         _emit_live("boot: image paths provided but none resolved")
     elif resolved_images:
         _emit_live(f"boot: images loaded ({len(resolved_images)})")
+    resolved_documents = _resolve_document_paths(args.documents, workdir)
+    if args.documents and not resolved_documents:
+        _emit_live("boot: document paths provided but none resolved")
+    elif resolved_documents:
+        _emit_live(f"boot: documents loaded ({len(resolved_documents)})")
     if _requires_rigorous_constraints(prompt):
         settings["rigorous_mode"] = True
     scientific = args.scientific or (os.getenv("C0D3R_SCIENTIFIC_MODE", "1").strip().lower() not in {"0", "false", "no", "off"})
@@ -781,6 +788,7 @@ def main(argv: List[str] | None = None) -> int:
         initial_prompt=initial_prompt,
         scripted_prompts=scripted_prompts,
         images=resolved_images,
+        documents=resolved_documents,
         header=header,
         pre_research_enabled=do_research,
         tech_matrix=tech_matrix,
@@ -884,6 +892,7 @@ def _environment_context_block(workdir: Path) -> str:
     lines.append("- local_tools: datalab + wallet meta commands available")
     lines.append("- datalab.meta: ::datalab_tables | ::datalab_query {json} | ::datalab_news {json} | ::datalab_web {json}")
     lines.append("- wallet.meta: ::wallet_login | ::wallet_logout | ::wallet_actions | ::wallet_lookup {json} | ::wallet_send {json} | ::wallet_swap {json} | ::wallet_bridge {json}")
+    lines.append("- documents: auto-attach supported files (pdf/csv/doc/docx/xls/xlsx/html/txt/md) when referenced or via --doc")
     return "\n".join(lines)
 
 
@@ -1252,6 +1261,79 @@ def _resolve_image_paths(paths: list[str] | None, workdir: Path) -> list[str]:
         except Exception:
             continue
     return resolved
+
+
+def _is_supported_document(path: Path) -> bool:
+    try:
+        return path.suffix.lower() in _DOCUMENT_EXTENSIONS
+    except Exception:
+        return False
+
+
+def _resolve_document_paths(paths: list[str] | None, workdir: Path) -> list[str]:
+    if not paths:
+        return []
+    resolved: list[str] = []
+    for raw in paths:
+        if not raw:
+            continue
+        try:
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = (workdir / candidate).resolve()
+            if candidate.exists() and candidate.is_file() and _is_supported_document(candidate):
+                resolved.append(str(candidate))
+        except Exception:
+            continue
+    return resolved
+
+
+def _doc_auto_enabled() -> bool:
+    return os.getenv("C0D3R_DOC_AUTO", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _auto_document_paths(prompt: str, workdir: Path) -> list[str]:
+    if not prompt or not _doc_auto_enabled():
+        return []
+    tokens = re.split(r"\s+", prompt)
+    found: list[str] = []
+    for token in tokens:
+        cleaned = token.strip().strip("\"'").rstrip(").,;")
+        if not cleaned:
+            continue
+        if cleaned.lower().startswith("file:"):
+            cleaned = cleaned[5:].strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if not any(lowered.endswith(ext) for ext in _DOCUMENT_EXTENSIONS):
+            continue
+        try:
+            candidate = Path(cleaned).expanduser()
+            if not candidate.is_absolute():
+                candidate = (workdir / candidate).resolve()
+            if candidate.exists() and candidate.is_file() and _is_supported_document(candidate):
+                found.append(str(candidate))
+        except Exception:
+            continue
+    return found
+
+
+def _merge_document_paths(primary: list[str] | None, extra: list[str] | None) -> list[str]:
+    max_files = int(os.getenv("C0D3R_DOC_MAX_FILES", "5") or "5")
+    merged: list[str] = []
+    seen: set[str] = set()
+    for item in (primary or []) + (extra or []):
+        if not item:
+            continue
+        norm = str(item)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        merged.append(norm)
+        if len(merged) >= max_files:
+            break
+    return merged
 
 
 def _context_scan_path(workdir: Path) -> Path:
@@ -1860,6 +1942,7 @@ def _run_tool_loop_v2(
     run_command,  # signature compatibility; v2 executes via subprocess directly
     *,
     images: List[str] | None,
+    documents: List[str] | None,
     stream: bool,
     stream_callback,
     usage_tracker,
@@ -1956,6 +2039,9 @@ def _run_tool_loop_v2(
         notes_block = ""
         if user_notes:
             notes_block = "[user_notes]\n" + "\n".join(f"- {note}" for note in user_notes[-6:])
+        docs_block = ""
+        if documents:
+            docs_block = "[documents_attached]\n" + "\n".join(f"- {doc}" for doc in documents)
 
         last_json = ""
         if last_payload:
@@ -1973,6 +2059,7 @@ def _run_tool_loop_v2(
             + ("\n\n" + summary_block if summary_block else "")
             + ("\n\n" + key_points_block if key_points_block else "")
             + ("\n\n" + notes_block if notes_block else "")
+            + ("\n\n" + docs_block if docs_block else "")
             + "\n\n[objective]\n"
             + objective
             + "\n\n[intent]\n"
@@ -2008,12 +2095,17 @@ def _run_tool_loop_v2(
             if images:
                 if step == 1 or os.getenv("C0D3R_IMAGES_EVERY_STEP", "0").strip().lower() in {"1", "true", "yes", "on"}:
                     images_for_step = images
+            docs_for_step = None
+            if documents:
+                if step == 1 or os.getenv("C0D3R_DOCS_EVERY_STEP", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                    docs_for_step = documents
             raw = _send_with_model_override(
                 session,
                 prompt=active_prompt,
                 model_id=selected_model,
                 stream=False,
                 images=images_for_step,
+                documents=docs_for_step,
             )
             usage_tracker.add_output(raw or "")
             payload = _extract_json_object(raw or "")
@@ -2242,6 +2334,7 @@ def _run_tool_loop(
     run_command,
     *,
     images: List[str] | None,
+    documents: List[str] | None,
     stream: bool,
     stream_callback,
     usage_tracker,
@@ -2253,6 +2346,7 @@ def _run_tool_loop(
         workdir,
         run_command,
         images=images,
+        documents=documents,
         stream=stream,
         stream_callback=stream_callback,
         usage_tracker=usage_tracker,
@@ -2482,6 +2576,7 @@ def _run_scientific_loop(
     run_command,
     *,
     images: List[str] | None,
+    documents: List[str] | None,
     stream: bool,
     stream_callback,
     usage_tracker,
@@ -2500,6 +2595,7 @@ def _run_scientific_loop(
         workdir,
         run_command,
         images=images,
+        documents=documents,
         stream=stream,
         stream_callback=stream_callback,
         usage_tracker=usage_tracker,
@@ -4659,6 +4755,7 @@ def _run_repl(
     initial_prompt: str | None = None,
     scripted_prompts: list[str] | None = None,
     images: list[str] | None = None,
+    documents: list[str] | None = None,
     header: "HeaderRenderer | None" = None,
     pre_research_enabled: bool = True,
     tech_matrix: dict | None = None,
@@ -4712,6 +4809,8 @@ def _run_repl(
         _maybe_set_style_from_prompt(user_prompt)
         inlined = _inline_file_references(user_prompt)
         user_prompt_inlined = inlined or user_prompt
+        auto_docs = _auto_document_paths(user_prompt, workdir)
+        documents_for_prompt = _merge_document_paths(documents, auto_docs)
         force_direct = False
         qa_or_convo = _is_qa_prompt(user_prompt_inlined) or _is_conversation_prompt(user_prompt_inlined)
         if inlined:
@@ -4889,7 +4988,13 @@ def _run_repl(
             _emit_live("repl: tool loop starting")
             response = _run_tool_loop(
                 session, f"{full_prompt}\n\n[research]\n{research_summary}" if research_summary else full_prompt,
-                workdir, run_command, images=images, stream=False, stream_callback=None, usage_tracker=usage
+                workdir,
+                run_command,
+                images=images,
+                documents=documents_for_prompt,
+                stream=False,
+                stream_callback=None,
+                usage_tracker=usage,
             )
             _emit_live("repl: tool loop complete")
         finally:
@@ -6018,6 +6123,9 @@ def _inline_file_references(prompt: str) -> str:
             except Exception:
                 continue
             if not candidate.exists() or not candidate.is_file():
+                continue
+            if _is_supported_document(candidate):
+                # Avoid inlining binary/large documents; use document attachments instead.
                 continue
             try:
                 text = candidate.read_text(encoding="utf-8", errors="ignore")

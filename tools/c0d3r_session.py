@@ -300,6 +300,10 @@ class BedrockClient:
             text = data.decode("utf-8", errors="ignore")
             yield text
 
+    def converse(self, *, model_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = self.client.converse(modelId=model_id, **payload)
+        return response
+
 
 class C0d3r:
     def __init__(self, settings: Dict[str, Any]) -> None:
@@ -405,6 +409,7 @@ class C0d3r:
         system: Optional[str] = None,
         research: bool = False,
         images: Optional[Sequence[str]] = None,
+        documents: Optional[Sequence[str]] = None,
         evidence_bundle: Optional[str] = None,
     ) -> str:
         _emit_bedrock_live("bedrock: generate start")
@@ -417,6 +422,7 @@ class C0d3r:
                 self._model_for_stage("executor"),
                 self._build_prompt("executor", prompt, system=system),
                 images=images,
+                documents=documents,
             )
             output = self._enforce_schema(
                 output,
@@ -425,6 +431,7 @@ class C0d3r:
                 plan=None,
                 research=None,
                 images=images,
+                documents=documents,
                 evidence_bundle=evidence_bundle,
             )
             return output.strip()
@@ -437,6 +444,7 @@ class C0d3r:
                 self._model_for_stage("synthesizer"),
                 self._build_prompt("synthesizer", prompt, system=system, research=research_payload),
                 images=images,
+                documents=documents,
             )
         if evidence_bundle and _requires_evidence(prompt):
             prompt = f"{prompt}\n\nEvidence bundle:\n{evidence_bundle}"
@@ -444,6 +452,7 @@ class C0d3r:
             self._model_for_stage("planner"),
             self._build_prompt("planner", prompt, system=system, research=synthesis or research_payload),
             images=images,
+            documents=documents,
         )
         if self.consensus_k > 1:
             drafts = []
@@ -453,6 +462,7 @@ class C0d3r:
                         self._model_for_stage("executor"),
                         self._build_prompt("executor", prompt, system=system, plan=plan, research=synthesis or research_payload),
                         images=images,
+                        documents=documents,
                     )
                 )
             output = self._select_best_candidate(
@@ -462,12 +472,14 @@ class C0d3r:
                 plan=plan,
                 research=synthesis or research_payload,
                 images=images,
+                documents=documents,
             )
         else:
             output = self._invoke_model(
                 self._model_for_stage("executor"),
                 self._build_prompt("executor", prompt, system=system, plan=plan, research=synthesis or research_payload),
                 images=images,
+                documents=documents,
             )
         output = self._enforce_schema(
             output,
@@ -476,6 +488,7 @@ class C0d3r:
             plan=plan,
             research=synthesis or research_payload,
             images=images,
+            documents=documents,
             evidence_bundle=evidence_bundle,
         )
         for _ in range(max(0, self.max_revisions)):
@@ -483,6 +496,7 @@ class C0d3r:
                 self._model_for_stage("reviewer"),
                 self._build_prompt("reviewer", prompt, system=system, plan=plan, draft=output, research=synthesis or research_payload),
                 images=images,
+                documents=documents,
             )
             score, feedback = self._parse_review(review)
             if score >= self.min_score:
@@ -499,6 +513,7 @@ class C0d3r:
                     research=synthesis or research_payload,
                 ),
                 images=images,
+                documents=documents,
             )
             output = self._enforce_schema(
                 output,
@@ -507,6 +522,7 @@ class C0d3r:
                 plan=plan,
                 research=synthesis or research_payload,
                 images=images,
+                documents=documents,
                 evidence_bundle=evidence_bundle,
             )
         return output.strip()
@@ -684,6 +700,7 @@ class C0d3r:
         plan: Optional[str],
         research: Optional[str],
         images: Optional[Sequence[str]],
+        documents: Optional[Sequence[str]],
         evidence_bundle: Optional[str],
     ) -> str:
         """
@@ -728,6 +745,7 @@ class C0d3r:
                     research=research,
                 ),
                 images=images,
+                documents=documents,
             )
             if _requires_evidence(prompt) and _looks_like_json(corrected):
                 corrected = _inject_evidence_hash(corrected, evidence_bundle or "")
@@ -765,6 +783,7 @@ class C0d3r:
         plan: Optional[str],
         research: Optional[str],
         images: Optional[Sequence[str]],
+        documents: Optional[Sequence[str]],
     ) -> str:
         if not drafts:
             return ""
@@ -781,14 +800,46 @@ class C0d3r:
                 self._model_for_stage("reviewer"),
                 self._build_prompt("reviewer", prompt, system=system, plan=plan, draft=best, research=research),
                 images=images,
+                documents=documents,
             )
             score, _ = self._parse_review(review)
             if score >= self.min_score:
                 return best
         return best
 
-    def _invoke_model(self, model_id: str, prompt: str, *, images: Optional[Sequence[str]] = None) -> str:
+    def _invoke_model(
+        self,
+        model_id: str,
+        prompt: str,
+        *,
+        images: Optional[Sequence[str]] = None,
+        documents: Optional[Sequence[str]] = None,
+    ) -> str:
         effective_model_id = self.inference_profile or model_id
+        doc_blocks = _load_documents(documents)
+        if doc_blocks:
+            if _doc_models_allow(effective_model_id):
+                image_blocks = _load_images_converse(images)
+                payload = _build_converse_payload(
+                    prompt=prompt,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    image_blocks=image_blocks,
+                    document_blocks=doc_blocks,
+                )
+                _emit_bedrock_live(
+                    f"bedrock: converse start model={effective_model_id} prompt_len={len(prompt)} "
+                    f"docs={len(doc_blocks)} images={len(image_blocks)} region={self.region} "
+                    f"profile={self.profile or 'default'}"
+                )
+                try:
+                    result = self._runtime.converse(model_id=effective_model_id, payload=payload)
+                    return _extract_converse_text(result)
+                except Exception as exc:
+                    _emit_bedrock_live(f"bedrock: converse error model={effective_model_id} err={exc} -> fallback to invoke")
+            else:
+                _emit_bedrock_live(f"bedrock: documents skipped for model={effective_model_id} (not in allowlist)")
         payload = _build_bedrock_payload(
             model_id=effective_model_id,
             prompt=prompt,
@@ -1145,6 +1196,7 @@ class C0d3rSession:
         verbose: Optional[bool] = None,
         stream_callback: Optional[Callable[[str], None]] = None,
         images: Optional[Sequence[str]] = None,
+        documents: Optional[Sequence[str]] = None,
         evidence_bundle: Optional[str] = None,
         research_override: Optional[bool] = None,
     ) -> str:
@@ -1184,6 +1236,7 @@ class C0d3rSession:
             system=system,
             research=self.settings.get("research", False) if research_override is None else bool(research_override),
             images=images_list if images_list else None,
+            documents=list(documents) if documents else None,
             evidence_bundle=evidence_bundle,
         )
         _diag("send:complete")
@@ -1605,6 +1658,36 @@ def _build_bedrock_payload(
     }
 
 
+def _build_converse_payload(
+    *,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    top_p: float,
+    image_blocks: Optional[Sequence[Dict[str, Any]]] = None,
+    document_blocks: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    content: List[Dict[str, Any]] = []
+    content.append({"text": prompt or " "})
+    for block in image_blocks or []:
+        content.append({"image": block})
+    for block in document_blocks or []:
+        content.append({"document": block})
+    return {
+        "messages": [
+            {
+                "role": "user",
+                "content": content,
+            }
+        ],
+        "inferenceConfig": {
+            "maxTokens": max_tokens,
+            "temperature": temperature,
+            "topP": top_p,
+        },
+    }
+
+
 def _extract_text(model_id: str, payload: Dict[str, Any]) -> str:
     lower = model_id.lower()
     if "anthropic" in lower or "claude" in lower:
@@ -1633,6 +1716,35 @@ def _extract_text(model_id: str, payload: Dict[str, Any]) -> str:
         if results:
             return str(results[0].get("outputText") or "")
     return str(payload.get("outputText") or payload.get("generation") or payload.get("completion") or "")
+
+
+def _extract_converse_text(payload: Dict[str, Any]) -> str:
+    try:
+        output = payload.get("output") or {}
+        message = output.get("message") or {}
+        content = message.get("content") or []
+        if isinstance(content, list):
+            pieces = []
+            for block in content:
+                if isinstance(block, dict) and "text" in block:
+                    pieces.append(str(block.get("text") or ""))
+            if pieces:
+                return "".join(pieces).strip()
+    except Exception:
+        pass
+    return str(payload.get("outputText") or "")
+
+
+def _doc_models_allow(model_id: str) -> bool:
+    raw = os.getenv("C0D3R_DOC_MODELS", "").strip()
+    if not raw:
+        return True
+    lower = model_id.lower()
+    for needle in raw.split(","):
+        token = needle.strip().lower()
+        if token and token in lower:
+            return True
+    return False
 
 
 def _load_images(images: Optional[Sequence[str]]) -> List[Dict[str, Any]]:
@@ -1664,6 +1776,54 @@ def _load_images(images: Optional[Sequence[str]]) -> List[Dict[str, Any]]:
     return loaded
 
 
+def _load_images_converse(images: Optional[Sequence[str]]) -> List[Dict[str, Any]]:
+    if not images:
+        return []
+    loaded: List[Dict[str, Any]] = []
+    for path in images[:6]:
+        if not path:
+            continue
+        img_path = Path(str(path)).expanduser()
+        if not img_path.exists() or not img_path.is_file():
+            continue
+        try:
+            data = img_path.read_bytes()
+        except Exception:
+            continue
+        if len(data) > 2_000_000:
+            continue
+        fmt = _guess_image_format(img_path)
+        if not fmt:
+            continue
+        loaded.append({"format": fmt, "source": {"bytes": data}})
+    return loaded
+
+
+def _load_documents(documents: Optional[Sequence[str]]) -> List[Dict[str, Any]]:
+    if not documents:
+        return []
+    loaded: List[Dict[str, Any]] = []
+    max_files = int(os.getenv("C0D3R_DOC_MAX_FILES", "5") or "5")
+    max_bytes = int(os.getenv("C0D3R_DOC_MAX_BYTES", "4500000") or "4500000")
+    for path in documents[:max_files]:
+        if not path:
+            continue
+        doc_path = Path(str(path)).expanduser()
+        if not doc_path.exists() or not doc_path.is_file():
+            continue
+        fmt = _guess_document_format(doc_path)
+        if not fmt:
+            continue
+        try:
+            data = doc_path.read_bytes()
+        except Exception:
+            continue
+        if max_bytes and len(data) > max_bytes:
+            continue
+        loaded.append({"format": fmt, "name": doc_path.name, "source": {"bytes": data}})
+    return loaded
+
+
 def _guess_media_type(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".png"}:
@@ -1674,6 +1834,26 @@ def _guess_media_type(path: Path) -> str:
         return "image/gif"
     if suffix in {".webp"}:
         return "image/webp"
+    return ""
+
+
+def _guess_image_format(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        return "png"
+    if suffix in {".jpg", ".jpeg"}:
+        return "jpeg"
+    if suffix == ".gif":
+        return "gif"
+    if suffix == ".webp":
+        return "webp"
+    return ""
+
+
+def _guess_document_format(path: Path) -> str:
+    suffix = path.suffix.lower().lstrip(".")
+    if suffix in {"pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"}:
+        return suffix
     return ""
 
 
