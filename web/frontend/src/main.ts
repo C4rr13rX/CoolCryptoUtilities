@@ -76,14 +76,44 @@ if (mountEl) {
     addressbook: '/addressbook',
     c0d3r: '/c0d3r',
   };
+  const normalizePath = (path: string) => {
+    if (!path) return '/';
+    if (path.length > 1 && path.endsWith('/')) {
+      return path.replace(/\/+$/, '') || '/';
+    }
+    return path;
+  };
+  const currentPath = normalizePath(window.location.pathname || '/');
   const initialPath = targetRoutes[initialRoute] || '/';
+  const resolved = router.resolve(currentPath);
+  const bootPath = resolved.matched.length ? currentPath : initialPath;
+
+  const reloadKey = 'ccu:router-reload';
+  const isChunkError = (error: unknown) => {
+    const message = String((error as Error)?.message || error || '');
+    return /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed/i.test(
+      message
+    );
+  };
+  router.onError((error) => {
+    if (isChunkError(error)) {
+      if (!sessionStorage.getItem(reloadKey)) {
+        sessionStorage.setItem(reloadKey, String(Date.now()));
+        window.location.reload();
+        return;
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.error('Router navigation error', error);
+  });
 
   router.afterEach((to) => {
+    sessionStorage.removeItem(reloadKey);
     const title = (to.meta?.title as string) || 'R3V3N!R Control Tower';
     document.title = title;
   });
 
-  router.replace(initialPath).finally(() => {
+  router.replace(bootPath).finally(() => {
     app.mount(mountEl);
     if (fallbackContainer) {
       fallbackContainer.remove();
