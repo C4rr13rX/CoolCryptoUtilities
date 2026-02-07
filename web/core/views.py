@@ -135,13 +135,33 @@ class DashboardContextMixin:
 
     def _base_context(self, initial_route: str) -> Dict[str, Any]:
         use_vite = settings.DEBUG and os.getenv("DJANGO_USE_VITE_DEV", "0").lower() in {"1", "true", "yes", "on"}
+        asset_version = self._asset_version()
         return {
             "debug": settings.DEBUG,
             "vite_dev_server": os.getenv("VITE_DEV_SERVER", "http://localhost:5173"),
             "serve_vite": use_vite,
             "initial_route": initial_route,
+            "asset_version": asset_version,
             "fallback_snapshot": self._dashboard_snapshot(),
         }
+
+    def _asset_version(self) -> str:
+        """
+        Return a cache-busting version for frontend assets based on the newest build.
+        This prevents stale JS/CSS from sticking around after deployments.
+        """
+        candidates = [
+            ROOT / "web" / "collected_static" / "assets" / "main.js",
+            ROOT / "web" / "frontend" / "dist" / "assets" / "main.js",
+            ROOT / "web" / "static" / "assets" / "main.js",
+        ]
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    return str(int(candidate.stat().st_mtime))
+            except Exception:
+                continue
+        return str(int(time.time()))
 
 
 class LandingView(DashboardContextMixin, TemplateView):

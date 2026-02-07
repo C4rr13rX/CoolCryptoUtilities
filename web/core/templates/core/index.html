@@ -10,7 +10,7 @@
     {% if serve_vite %}
       <script type="module">
         const DEV_ORIGIN = "{{ vite_dev_server }}";
-        const FALLBACK = "{% static 'assets/main.js' %}";
+        const FALLBACK = "{% static 'assets/main.js' %}?v={{ asset_version }}";
         (async () => {
           try {
             await import(`${DEV_ORIGIN}/@vite/client`);
@@ -22,9 +22,9 @@
         })();
       </script>
     {% else %}
-      <script type="module" src="{% static 'assets/main.js' %}"></script>
+      <script type="module" src="{% static 'assets/main.js' %}?v={{ asset_version }}"></script>
     {% endif %}
-    <link rel="stylesheet" href="{% static 'assets/main.css' %}" />
+    <link rel="stylesheet" href="{% static 'assets/main.css' %}?v={{ asset_version }}" />
     <style>
       :root {
         color-scheme: dark;
