@@ -303,6 +303,7 @@
         <div
           id="app"
           data-initial-route="{{ initial_route }}"
+          data-initial-path="{{ request.path }}"
           data-fallback-id="fallback-data"
         ></div>
         {{ fallback_snapshot|json_script:"fallback-data" }}

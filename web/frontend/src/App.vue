@@ -11,7 +11,7 @@
         <RouterLink
           v-for="item in navItems"
           :key="item.route"
-          :to="item.path"
+          :to="{ name: item.route }"
           class="nav-link"
           :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
           @click="handleNavClick"
@@ -203,23 +203,23 @@ const pipelineSummary = computed(() => {
 });
 
 const navItems = computed(() => [
-  { route: 'dashboard', label: 'Overview', icon: 'overview', path: '/', intent: streamIntent.value },
-  { route: 'organism', label: 'Organism', icon: 'organism', path: '/organism', intent: pipelineIntent.value },
-  { route: 'pipeline', label: 'Pipeline', icon: 'pipeline', path: '/pipeline', intent: pipelineIntent.value },
-  { route: 'streams', label: 'Streams', icon: 'streams', path: '/streams', intent: streamIntent.value },
-  { route: 'telemetry', label: 'Telemetry', icon: 'activity', path: '/telemetry', intent: feedbackIntent.value },
-  { route: 'wallet', label: 'Wallet', icon: 'wallet', path: '/wallet', intent: consoleIntent.value },
-  { route: 'c0d3r', label: 'c0d3r', icon: 'terminal', path: '/c0d3r', intent: consoleIntent.value },
-  { route: 'addressbook', label: 'Address Book', icon: 'link', path: '/addressbook', intent: advisoryIntent.value },
-  { route: 'advisories', label: 'Advisories', icon: 'shield', path: '/advisories', intent: advisoryIntent.value },
-  { route: 'datalab', label: 'Data Lab', icon: 'datalab', path: '/datalab', intent: pipelineIntent.value },
-  { route: 'lab', label: 'Model Lab', icon: 'lab', path: '/lab', intent: pipelineIntent.value },
-  { route: 'guardian', label: 'Guardian', icon: 'guardian', path: '/guardian', intent: pipelineIntent.value },
-  { route: 'codegraph', label: 'Code Graph', icon: 'activity', path: '/codegraph', intent: pipelineIntent.value },
-  { route: 'integrations', label: 'API Integrations', icon: 'link', path: '/integrations', intent: pipelineIntent.value },
-  { route: 'settings', label: 'Settings', icon: 'settings', path: '/settings', intent: pipelineIntent.value },
-  { route: 'u53rxr080t', label: 'U53R xR080T', icon: 'radar', path: '/u53rxr080t', intent: pipelineIntent.value },
-  { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', path: '/branddozer', intent: pipelineIntent.value },
+  { route: 'dashboard', label: 'Overview', icon: 'overview', intent: streamIntent.value },
+  { route: 'organism', label: 'Organism', icon: 'organism', intent: pipelineIntent.value },
+  { route: 'pipeline', label: 'Pipeline', icon: 'pipeline', intent: pipelineIntent.value },
+  { route: 'streams', label: 'Streams', icon: 'streams', intent: streamIntent.value },
+  { route: 'telemetry', label: 'Telemetry', icon: 'activity', intent: feedbackIntent.value },
+  { route: 'wallet', label: 'Wallet', icon: 'wallet', intent: consoleIntent.value },
+  { route: 'c0d3r', label: 'c0d3r', icon: 'terminal', intent: consoleIntent.value },
+  { route: 'addressbook', label: 'Address Book', icon: 'link', intent: advisoryIntent.value },
+  { route: 'advisories', label: 'Advisories', icon: 'shield', intent: advisoryIntent.value },
+  { route: 'datalab', label: 'Data Lab', icon: 'datalab', intent: pipelineIntent.value },
+  { route: 'lab', label: 'Model Lab', icon: 'lab', intent: pipelineIntent.value },
+  { route: 'guardian', label: 'Guardian', icon: 'guardian', intent: pipelineIntent.value },
+  { route: 'codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
+  { route: 'integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
+  { route: 'settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
+  { route: 'u53rxr080t', label: 'U53R xR080T', icon: 'radar', intent: pipelineIntent.value },
+  { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', intent: pipelineIntent.value },
 ]);
 
 const isActive = (name: string) => route.name === name;
