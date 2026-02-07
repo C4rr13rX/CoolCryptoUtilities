@@ -60,7 +60,7 @@
       <section class="content__body">
         <div class="content__viewport">
           <RouterView v-slot="{ Component }">
-            <Transition name="glitch" mode="out-in">
+            <Transition name="glitch" mode="in-out">
               <component :is="Component" :key="route.fullPath" />
             </Transition>
           </RouterView>
@@ -218,7 +218,7 @@ const navItems = computed(() => [
   { route: 'codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
   { route: 'integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
-  { route: 'u53rxr080t', label: 'U53R xR080T', icon: 'radar', intent: pipelineIntent.value },
+  { route: 'u53rxr080t', label: 'U53RxR080T', icon: 'radar', intent: pipelineIntent.value },
   { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', intent: pipelineIntent.value },
 ]);
 

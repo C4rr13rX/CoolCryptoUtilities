@@ -13,6 +13,7 @@ const mountEl = document.getElementById('app');
 
 if (mountEl) {
   const initialRoute = mountEl.dataset.initialRoute || 'dashboard';
+  const initialPathAttr = mountEl.dataset.initialPath || '';
   const fallbackId = mountEl.dataset.fallbackId;
   const fallbackContainer = document.getElementById('fallback-dashboard');
   let fallbackSnapshot: Record<string, any> | null = null;
@@ -83,10 +84,15 @@ if (mountEl) {
     }
     return path;
   };
+  const resolveIfMatch = (path: string) => {
+    if (!path) return '';
+    const resolved = router.resolve(path);
+    return resolved.matched.length ? path : '';
+  };
   const currentPath = normalizePath(window.location.pathname || '/');
+  const requestedPath = normalizePath(initialPathAttr || '');
   const initialPath = targetRoutes[initialRoute] || '/';
-  const resolved = router.resolve(currentPath);
-  const bootPath = resolved.matched.length ? currentPath : initialPath;
+  const bootPath = resolveIfMatch(requestedPath) || resolveIfMatch(currentPath) || initialPath;
 
   const reloadKey = 'ccu:router-reload';
   const isChunkError = (error: unknown) => {
