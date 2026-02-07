@@ -12,21 +12,15 @@
           v-for="item in navItems"
           :key="item.route"
           :to="{ name: item.route }"
-          custom
-          v-slot="{ href, navigate }"
+          class="nav-link"
+          :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
+          @click="handleNavClick"
         >
-          <a
-            :href="href"
-            class="nav-link"
-            :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
-            @click="(event) => safeNavigate(event, navigate, href)"
-          >
-            <span class="icon">
-              <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
-            </span>
-            <span class="label">{{ item.label }}</span>
-            <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
-          </a>
+          <span class="icon">
+            <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
+          </span>
+          <span class="label">{{ item.label }}</span>
+          <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
         </RouterLink>
       </nav>
       <footer class="sidebar__foot">
@@ -135,20 +129,6 @@ const closeSidebar = () => {
 const handleNavClick = () => {
   if (window.matchMedia('(max-width: 959px)').matches) {
     closeSidebar();
-  }
-};
-
-const safeNavigate = async (
-  event: MouseEvent,
-  navigate: (event?: MouseEvent) => void | Promise<void>,
-  href: string,
-) => {
-  event.preventDefault();
-  handleNavClick();
-  try {
-    await navigate(event);
-  } catch (error) {
-    window.location.assign(href);
   }
 };
 
