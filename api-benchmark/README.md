@@ -1,51 +1,58 @@
-# REST API Benchmark Suite
+# REST API Benchmark Tool
 
-Minimal tools for benchmarking REST API latency and throughput.
+Minimal Python tool to benchmark REST API latency and throughput.
 
-## Quick Start
+## Setup
 
 ```bash
-# Install dependencies
-pip install requests
-
-# Test latency (default: 100 requests)
-python latency_test.py
-python latency_test.py https://api.example.com/endpoint 50
-
-# Test throughput (default: 10 concurrent, 100 total)
-python throughput_test.py
-python throughput_test.py https://api.example.com/endpoint 20 200
+pip install -r requirements.txt
 ```
 
-## Output Metrics
+## Usage
 
-### Latency Test
-- Average, min, max response times
-- Median and 95th percentile
+```bash
+python benchmark.py
+```
+
+You will be prompted for:
+- API base URL (e.g., https://api.example.com)
+- Endpoints to test (comma-separated, or use defaults)
+
+## Metrics Collected
+
+### Latency Metrics
+- Average latency (ms)
+- Min/Max latency (ms) 
+- 95th percentile latency (ms)
+- Successful request count
+
+### Throughput Metrics
+- Requests per second (RPS)
+- Total requests completed
 - Error count
+- Test duration
+- Concurrent users
 
-### Throughput Test
-- Requests per second
-- Total duration
-- Success/error rates
-- Concurrent connection performance
+## Configuration
 
-## Example Results
+Default settings:
+- Latency test: 100 sequential requests
+- Throughput test: 10 concurrent users for 30 seconds
+- Request timeout: 10s (latency), 5s (throughput)
 
-```json
-{
-  "avg_ms": 863.30,
-  "min_ms": 638.17,
-  "max_ms": 3901.82,
-  "median_ms": 730.37,
-  "p95_ms": 1647.43,
-  "errors": 0
-}
+## Output
+
+Results are saved to `benchmark_results.json` with timestamp and detailed metrics.
+
+## Example Output
+
 ```
+Starting benchmark for https://api.example.com
+Timestamp: 2026-02-06T22:58:35
 
-## Customization
-
-- Modify request headers, methods, or payloads in the scripts
-- Adjust timeout values for slow APIs
-- Add authentication as needed
-- Export results to CSV/JSON for analysis
+Testing endpoint: /health
+  Running latency test...
+  Running throughput test...
+  Latency - Avg: 45.23ms, P95: 78.91ms
+  Throughput - RPS: 156.78, Errors: 0
+```

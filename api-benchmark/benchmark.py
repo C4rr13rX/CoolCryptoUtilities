@@ -6,131 +6,111 @@ import json
 from datetime import datetime
 
 class APIBenchmark:
-    def __init__(self, base_url):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url, endpoints=None):
+        self.base_url = base_url.rstrip('/')
+        self.endpoints = endpoints or ['/health', '/api/v1/status']
         self.results = {}
     
-    def measure_latency(self, endpoint="/", num_requests=50):
-        """Measure average response latency"""
+    def measure_latency(self, endpoint, num_requests=100):
+        """Measure average latency for sequential requests"""
         url = f"{self.base_url}{endpoint}"
         latencies = []
         
-        print(f"Testing latency: {url} ({num_requests} requests)")
-        
-        for i in range(num_requests):
+        for _ in range(num_requests):
             start = time.perf_counter()
             try:
                 response = requests.get(url, timeout=10)
                 end = time.perf_counter()
-                latencies.append((end - start) * 1000)
+                latencies.append((end - start) * 1000)  # Convert to ms
             except Exception as e:
                 print(f"Request failed: {e}")
+                continue
         
-        if latencies:
-            return {
-                "avg_ms": round(statistics.mean(latencies), 2),
-                "min_ms": round(min(latencies), 2),
-                "max_ms": round(max(latencies), 2),
-                "p95_ms": round(statistics.quantiles(latencies, n=20)[18], 2) if len(latencies) >= 20 else None,
-                "success_rate": len(latencies) / num_requests
-            }
-        return None
+        return {
+            'avg_latency_ms': statistics.mean(latencies),
+            'min_latency_ms': min(latencies),
+            'max_latency_ms': max(latencies),
+            'p95_latency_ms': statistics.quantiles(latencies, n=20)[18],
+            'successful_requests': len(latencies)
+        }
     
-    def measure_throughput(self, endpoint="/", duration_seconds=30, max_workers=10):
-        """Measure requests per second under load"""
+    def measure_throughput(self, endpoint, concurrent_users=10, duration_seconds=30):
+        """Measure throughput with concurrent requests"""
         url = f"{self.base_url}{endpoint}"
         start_time = time.time()
         end_time = start_time + duration_seconds
-        completed_requests = 0
+        request_count = 0
         errors = 0
         
-        print(f"Testing throughput: {url} ({duration_seconds}s, {max_workers} workers)")
-        
         def make_request():
-            try:
-                response = requests.get(url, timeout=10)
-                return response.status_code
-            except:
-                return None
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = []
-            
+            nonlocal request_count, errors
             while time.time() < end_time:
-                if len(futures) < max_workers:
-                    future = executor.submit(make_request)
-                    futures.append(future)
-                
-                # Check completed futures
-                done_futures = [f for f in futures if f.done()]
-                for future in done_futures:
-                    result = future.result()
-                    if result:
-                        completed_requests += 1
-                    else:
-                        errors += 1
-                    futures.remove(future)
-                
-                time.sleep(0.01)
-            
-            # Wait for remaining futures
-            for future in futures:
-                result = future.result()
-                if result:
-                    completed_requests += 1
-                else:
+                try:
+                    response = requests.get(url, timeout=5)
+                    request_count += 1
+                except:
                     errors += 1
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrent_users) as executor:
+            futures = [executor.submit(make_request) for _ in range(concurrent_users)]
+            concurrent.futures.wait(futures)
         
         actual_duration = time.time() - start_time
         return {
-            "requests_per_second": round(completed_requests / actual_duration, 2),
-            "total_requests": completed_requests,
-            "errors": errors,
-            "duration_seconds": round(actual_duration, 2)
+            'requests_per_second': request_count / actual_duration,
+            'total_requests': request_count,
+            'errors': errors,
+            'duration_seconds': actual_duration,
+            'concurrent_users': concurrent_users
         }
     
-    def run_benchmark(self, endpoint="/"):
+    def run_benchmark(self, latency_requests=100, throughput_users=10, throughput_duration=30):
         """Run complete benchmark suite"""
-        print(f"Starting benchmark for {self.base_url}{endpoint}")
-        print("=" * 50)
+        print(f"Starting benchmark for {self.base_url}")
+        print(f"Timestamp: {datetime.now().isoformat()}")
         
-        # Test latency
-        latency_results = self.measure_latency(endpoint)
+        for endpoint in self.endpoints:
+            print(f"\nTesting endpoint: {endpoint}")
+            
+            # Latency test
+            print("  Running latency test...")
+            latency_results = self.measure_latency(endpoint, latency_requests)
+            
+            # Throughput test
+            print("  Running throughput test...")
+            throughput_results = self.measure_throughput(endpoint, throughput_users, throughput_duration)
+            
+            self.results[endpoint] = {
+                'latency': latency_results,
+                'throughput': throughput_results
+            }
+            
+            # Print results
+            print(f"  Latency - Avg: {latency_results['avg_latency_ms']:.2f}ms, P95: {latency_results['p95_latency_ms']:.2f}ms")
+            print(f"  Throughput - RPS: {throughput_results['requests_per_second']:.2f}, Errors: {throughput_results['errors']}")
         
-        # Test throughput
-        throughput_results = self.measure_throughput(endpoint)
-        
-        results = {
-            "timestamp": datetime.now().isoformat(),
-            "endpoint": f"{self.base_url}{endpoint}",
-            "latency": latency_results,
-            "throughput": throughput_results
-        }
-        
-        # Save results
-        with open(f"benchmark_results_{int(time.time())}.json", "w") as f:
-            json.dump(results, f, indent=2)
-        
-        # Print summary
-        print("\nBenchmark Results:")
-        print(f"Average Latency: {latency_results["avg_ms"]}ms")
-        print(f"95th Percentile: {latency_results["p95_ms"]}ms")
-        print(f"Throughput: {throughput_results["requests_per_second"]} req/s")
-        print(f"Success Rate: {latency_results["success_rate"] * 100:.1f}%")
-        
-        return results
+        return self.results
+    
+    def save_results(self, filename='benchmark_results.json'):
+        """Save results to JSON file"""
+        with open(filename, 'w') as f:
+            json.dump({
+                'timestamp': datetime.now().isoformat(),
+                'base_url': self.base_url,
+                'results': self.results
+            }, f, indent=2)
+        print(f"Results saved to {filename}")
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     # Example usage
-    import sys
+    api_url = input("Enter API base URL (e.g., https://api.example.com): ")
+    endpoints = input("Enter endpoints to test (comma-separated, or press Enter for defaults): ").strip()
     
-    if len(sys.argv) < 2:
-        print("Usage: python benchmark.py <api_url> [endpoint]")
-        print("Example: python benchmark.py https://api.example.com /health")
-        sys.exit(1)
+    if endpoints:
+        endpoints = [ep.strip() for ep in endpoints.split(',')]
+    else:
+        endpoints = None
     
-    api_url = sys.argv[1]
-    endpoint = sys.argv[2] if len(sys.argv) > 2 else "/"
-    
-    benchmark = APIBenchmark(api_url)
-    benchmark.run_benchmark(endpoint)
+    benchmark = APIBenchmark(api_url, endpoints)
+    results = benchmark.run_benchmark()
+    benchmark.save_results()
