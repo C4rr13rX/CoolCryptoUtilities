@@ -1,0 +1,15 @@
+# Example benchmark configurations
+# Copy and modify these commands for your testing needs
+
+# Quick health check
+python benchmark.py https://api.example.com --endpoints /health --latency-requests 10 --throughput-duration 10
+
+# Comprehensive API test
+python benchmark.py https://api.example.com --endpoints /health /api/v1/users /api/v1/data /api/v1/search --latency-requests 100 --throughput-duration 30
+
+# Load test simulation
+python benchmark.py https://api.example.com --latency-requests 500 --throughput-duration 120
+
+# Public API examples
+python benchmark.py https://httpbin.org --endpoints /status/200 /json /uuid --latency-requests 50 --throughput-duration 15
+python benchmark.py https://jsonplaceholder.typicode.com --endpoints /posts/1 /users/1 /comments/1 --latency-requests 25 --throughput-duration 10

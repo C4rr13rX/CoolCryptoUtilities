@@ -1859,6 +1859,41 @@ def _load_images_converse(images: Optional[Sequence[str]]) -> List[Dict[str, Any
     return loaded
 
 
+def _sanitize_bedrock_document_name(name: str) -> str:
+    """
+    Bedrock Converse enforces a restrictive filename charset for documents:
+    alphanumeric, whitespace, hyphens, parentheses, and square brackets.
+    It also disallows multiple consecutive whitespace characters.
+    """
+    raw = str(name or "").strip()
+    if not raw:
+        return "document"
+    p = Path(raw)
+    base = p.stem or raw
+    ext = p.suffix.lstrip(".")
+
+    # Normalize common separators for readability.
+    base = base.replace("_", "-").replace(".", "-")
+    ext = ext.replace("_", "-").replace(".", "-")
+
+    # Keep only allowed characters.
+    base = re.sub(r"[^0-9A-Za-z\\s\\-\\(\\)\\[\\]]+", " ", base)
+    base = re.sub(r"\\s{2,}", " ", base).strip()
+    if not base:
+        base = "document"
+
+    if ext:
+        ext = re.sub(r"[^0-9A-Za-z\\s\\-\\(\\)\\[\\]]+", " ", ext)
+        ext = re.sub(r"\\s{2,}", " ", ext).strip()
+        if ext:
+            base = f"{base} ({ext})"
+
+    # Keep it reasonably short to avoid service-side limits.
+    if len(base) > 80:
+        base = base[:80].rstrip()
+    return base
+
+
 def _load_documents(documents: Optional[Sequence[str]]) -> List[Dict[str, Any]]:
     if not documents:
         return []
@@ -1880,7 +1915,7 @@ def _load_documents(documents: Optional[Sequence[str]]) -> List[Dict[str, Any]]:
             continue
         if max_bytes and len(data) > max_bytes:
             continue
-        loaded.append({"format": fmt, "name": doc_path.name, "source": {"bytes": data}})
+        loaded.append({"format": fmt, "name": _sanitize_bedrock_document_name(doc_path.name), "source": {"bytes": data}})
     return loaded
 
 
