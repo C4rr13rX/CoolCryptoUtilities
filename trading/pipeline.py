@@ -443,7 +443,13 @@ class TrainingPipeline:
             return "robust"
         return choice
 
-    def _evaluate_active_model(self, eval_ds, targets: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    def _evaluate_active_model(
+        self,
+        eval_ds,
+        targets: Dict[str, Any],
+        *,
+        sample_meta: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, float]]:
         """
         Score the currently active model on the same dataset so we only promote
         candidates that clearly beat the incumbent.
@@ -452,7 +458,7 @@ class TrainingPipeline:
         if active is None:
             return None
         try:
-            return self._evaluate_candidate(active, eval_ds, targets)
+            return self._evaluate_candidate(active, eval_ds, targets, sample_meta=sample_meta)
         except Exception:
             return None
 
@@ -672,10 +678,24 @@ class TrainingPipeline:
             )
         input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
         output_order = list(MODEL_OUTPUT_ORDER)
-        input_tensors = tuple(inputs[name] for name in input_order)
-        target_tensors = tuple(targets[name] for name in output_order)
-        weight_tensors = tuple(
-            tf.convert_to_tensor(sample_weights.get(name, np.ones(targets[name].shape[0], dtype=np.float32)), dtype=tf.float32)
+        sample_count = int(np.asarray(next(iter(targets.values()))).shape[0]) if targets else 0
+        train_idx, eval_idx, cutoff_ts, holdout = self._compute_holdout_split(
+            sample_count=sample_count,
+            sample_meta=self._last_sample_meta,
+        )
+        eval_sample_meta = self._subset_sample_meta(self._last_sample_meta, eval_idx)
+        eval_targets: Dict[str, Any] = {name: self._slice_tensorlike(value, eval_idx) for name, value in targets.items()}
+
+        train_input_tensors = tuple(self._slice_tensorlike(inputs[name], train_idx) for name in input_order)
+        train_target_tensors = tuple(self._slice_tensorlike(targets[name], train_idx) for name in output_order)
+        train_weight_tensors = tuple(
+            tf.convert_to_tensor(
+                self._slice_tensorlike(
+                    sample_weights.get(name, np.ones(targets[name].shape[0], dtype=np.float32)),
+                    train_idx,
+                ),
+                dtype=tf.float32,
+            )
             for name in output_order
         )
         try:
@@ -683,7 +703,7 @@ class TrainingPipeline:
         except Exception:
             batch_size = 16
         train_ds = (
-            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors, weight_tensors))
+            tf.data.Dataset.from_tensor_slices((train_input_tensors, train_target_tensors, train_weight_tensors))
             .batch(batch_size)
             .prefetch(tf.data.AUTOTUNE)
         )
@@ -702,21 +722,35 @@ class TrainingPipeline:
         )
 
         raw_score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
+        eval_input_tensors = tuple(self._slice_tensorlike(inputs[name], eval_idx) for name in input_order)
+        eval_target_tensors = tuple(self._slice_tensorlike(targets[name], eval_idx) for name in output_order)
         eval_ds = (
-            tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
+            tf.data.Dataset.from_tensor_slices((eval_input_tensors, eval_target_tensors))
             .batch(batch_size)
             .prefetch(tf.data.AUTOTUNE)
         )
         eval_start = time.perf_counter()
-        evaluation = self._evaluate_candidate(model, eval_ds, targets)
+        if holdout is not None:
+            self.metrics.record(
+                MetricStage.TRAINING,
+                {
+                    "holdout_fraction": float(holdout),
+                    "holdout_train_samples": float(train_idx.size),
+                    "holdout_eval_samples": float(eval_idx.size),
+                    "holdout_cutoff_ts": float(cutoff_ts or 0),
+                },
+                category="dataset_holdout",
+                meta={"iteration": self.iteration},
+            )
+        evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
         focus_history = self._apply_focus_adaptation(model, focus_assets)
         if focus_history is not None:
-            evaluation = self._evaluate_candidate(model, eval_ds, targets)
+            evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
             evaluation.update(focus_history)
         if evaluation.get("best_f1", 1.0) < 0.6:
             burst_rerun = self._burst_replay(model, inputs, targets, sample_weights, evaluation)
             if burst_rerun:
-                evaluation = self._evaluate_candidate(model, eval_ds, targets)
+                evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
                 evaluation.update(burst_rerun)
         if evaluation.get("best_threshold") is not None:
             self.decision_threshold = float(evaluation["best_threshold"])
@@ -819,7 +853,7 @@ class TrainingPipeline:
 
         promote = composite_score >= self.promotion_threshold
         gating_reason: Optional[str] = None
-        active_eval = self._evaluate_active_model(eval_ds, targets)
+        active_eval = self._evaluate_active_model(eval_ds, eval_targets, sample_meta=eval_sample_meta)
         if promote:
             if not evaluation:
                 gating_reason = "no evaluation metrics available"
@@ -1183,9 +1217,15 @@ class TrainingPipeline:
                 meta=dataset_meta,
             )
             self._maybe_trigger_news_top_up(news_coverage, focus_assets)
-            inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
-            inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
-            inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
+            try:
+                inputs["headline_text"] = tf.convert_to_tensor(inputs["headline_text"], dtype=tf.string)
+                inputs["full_text"] = tf.convert_to_tensor(inputs["full_text"], dtype=tf.string)
+                inputs["asset_id_input"] = tf.convert_to_tensor(inputs["asset_id_input"], dtype=tf.int32)
+            except ModuleNotFoundError:
+                # Allow dataset inspection / lab tooling to run without TensorFlow installed.
+                pass
+            except Exception:
+                pass
             price_dir_true = targets["price_dir"].reshape(-1)
             positive_mask = price_dir_true > 0.5
             pos_ratio = float(np.mean(positive_mask)) if price_dir_true.size else 0.0
@@ -1493,23 +1533,35 @@ class TrainingPipeline:
         )
         if inputs is None or targets is None:
             raise RuntimeError("Unable to build preview dataset.")
-        model = self.ensure_active_model()
-        input_names = getattr(model, "input_names", None) or [tensor.name.split(":")[0] for tensor in model.inputs]
-        eval_inputs = [inputs[name] for name in input_names]
-        predictions = model.predict(eval_inputs, batch_size=batch_size, verbose=0)
-        if isinstance(predictions, list):
-            pred_map = {name: np.asarray(array) for name, array in zip(model.output_names, predictions)}
-        elif isinstance(predictions, dict):
-            pred_map = {name: np.asarray(array) for name, array in predictions.items()}
-        else:
-            raise RuntimeError("Unexpected prediction structure from model.")
+        fallback_reason = None
+        pred_map: Dict[str, np.ndarray] = {}
+        try:
+            model = self.ensure_active_model()
+            input_names = getattr(model, "input_names", None) or [tensor.name.split(":")[0] for tensor in model.inputs]
+            eval_inputs = [inputs[name] for name in input_names]
+            predictions = model.predict(eval_inputs, batch_size=batch_size, verbose=0)
+            if isinstance(predictions, list):
+                pred_map = {name: np.asarray(array) for name, array in zip(model.output_names, predictions)}
+            elif isinstance(predictions, dict):
+                pred_map = {name: np.asarray(array) for name, array in predictions.items()}
+            else:
+                raise RuntimeError("Unexpected prediction structure from model.")
+        except Exception as exc:
+            # Lightweight fallback for hosts without TensorFlow (or without a usable model).
+            fallback_reason = str(exc)
+            sample_count = int(np.asarray(targets["price_dir"]).reshape(-1).size)
+            pred_map = {
+                "price_dir": np.full((sample_count,), 0.5, dtype=np.float32),
+                "price_mu": np.zeros((sample_count,), dtype=np.float32),
+                "net_margin": np.zeros((sample_count,), dtype=np.float32),
+            }
 
         dir_true = np.asarray(targets["price_dir"]).reshape(-1)
         dir_pred = pred_map["price_dir"].reshape(-1)
         mu_true = np.asarray(targets["price_mu"]).reshape(-1)
-        mu_pred = pred_map["price_mu"].reshape(-1)
+        mu_pred = np.asarray(pred_map.get("price_mu", np.zeros_like(mu_true))).reshape(-1)
         margin_true = np.asarray(targets["net_margin"]).reshape(-1)
-        margin_pred = pred_map["net_margin"].reshape(-1)
+        margin_pred = np.asarray(pred_map.get("net_margin", np.zeros_like(margin_true))).reshape(-1)
 
         metrics: Dict[str, float] = {}
         metrics["dir_accuracy"] = float(np.mean((dir_pred >= 0.5) == (dir_true >= 0.5))) if dir_true.size else 0.0
@@ -1583,6 +1635,9 @@ class TrainingPipeline:
                 "dataset": self._last_dataset_meta,
             },
         }
+        if fallback_reason:
+            preview["meta"]["model_fallback"] = True
+            preview["meta"]["model_fallback_reason"] = fallback_reason[:500]
         if include_news:
             try:
                 preview["news"] = self.lab_collect_news(file_paths)
@@ -1656,6 +1711,87 @@ class TrainingPipeline:
             else:
                 meta_copy[key] = value
         return meta_copy
+
+    def _slice_tensorlike(self, value: Any, indices: np.ndarray) -> Any:
+        if isinstance(value, np.ndarray):
+            return value[indices]
+        if isinstance(value, (list, tuple)):
+            return [value[int(i)] for i in indices.tolist()]
+        try:
+            return tf.gather(value, indices, axis=0)
+        except Exception:
+            return np.asarray(value)[indices]
+
+    def _subset_sample_meta(self, meta: Optional[Dict[str, Any]], indices: np.ndarray) -> Dict[str, Any]:
+        if not isinstance(meta, dict) or not meta:
+            return {}
+        idx_list = indices.tolist()
+        subset: Dict[str, Any] = {}
+        for key, value in meta.items():
+            if not isinstance(value, list):
+                subset[key] = value
+                continue
+            if key == "records":
+                records: List[Dict[str, Any]] = []
+                for idx in idx_list:
+                    if 0 <= int(idx) < len(value) and isinstance(value[int(idx)], dict):
+                        records.append(dict(value[int(idx)]))
+                subset[key] = records
+            else:
+                subset[key] = [value[int(idx)] for idx in idx_list if 0 <= int(idx) < len(value)]
+        return subset
+
+    def _compute_holdout_split(
+        self,
+        *,
+        sample_count: int,
+        sample_meta: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, Optional[int], Optional[float]]:
+        if sample_count <= 1:
+            idx = np.arange(sample_count, dtype=np.int64)
+            return idx, idx, None, None
+        if os.getenv("TRAIN_DISABLE_HOLDOUT", "0").lower() in {"1", "true", "yes", "on"}:
+            idx = np.arange(sample_count, dtype=np.int64)
+            return idx, idx, None, None
+        try:
+            holdout = float(os.getenv("TRAIN_EVAL_HOLDOUT", "0.15"))
+        except Exception:
+            holdout = 0.15
+        holdout = float(np.clip(holdout, 0.05, 0.5))
+        try:
+            min_eval = int(os.getenv("TRAIN_EVAL_MIN_SAMPLES", "128"))
+        except Exception:
+            min_eval = 128
+        k = max(int(round(sample_count * holdout)), max(1, min_eval))
+        k = min(k, max(1, sample_count - 1))
+
+        timestamps = None
+        if isinstance(sample_meta, dict):
+            timestamps = sample_meta.get("timestamps")
+        if not isinstance(timestamps, list) or len(timestamps) < sample_count:
+            order = np.arange(sample_count, dtype=np.int64)
+            return order[:-k], order[-k:], None, holdout
+        try:
+            ts_arr = np.asarray(timestamps[:sample_count], dtype=np.float64)
+        except Exception:
+            order = np.arange(sample_count, dtype=np.int64)
+            return order[:-k], order[-k:], None, holdout
+
+        order = np.argsort(ts_arr, kind="mergesort")
+        cutoff_time = float(ts_arr[int(order[-k])])
+        train_idx = order[ts_arr[order] < cutoff_time]
+        eval_idx = order[ts_arr[order] >= cutoff_time]
+        if train_idx.size == 0 or eval_idx.size == 0:
+            eval_idx = order[-k:]
+            train_idx = order[:-k]
+            cutoff_time = float(ts_arr[int(eval_idx[0])]) if eval_idx.size else float("nan")
+        cutoff_ts = int(cutoff_time) if cutoff_time == cutoff_time else None
+        return (
+            train_idx.astype(np.int64),
+            eval_idx.astype(np.int64),
+            cutoff_ts,
+            holdout,
+        )
 
     def _compute_lookahead_median(self, meta: Optional[Dict[str, Any]] = None) -> Optional[int]:
         meta = meta or self._last_sample_meta or {}
@@ -2146,7 +2282,12 @@ class TrainingPipeline:
         )
 
     def _evaluate_candidate(
-        self, model: tf.keras.Model, dataset: tf.data.Dataset, targets: Dict[str, Any]
+        self,
+        model: tf.keras.Model,
+        dataset: tf.data.Dataset,
+        targets: Dict[str, Any],
+        *,
+        sample_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, float]:
         try:
             predictions = model.predict(dataset, verbose=0)
@@ -2266,7 +2407,7 @@ class TrainingPipeline:
         summary["payoff_ratio"] = payoff_ratio
         summary["kelly_fraction"] = kelly
 
-        confusion_report = self._build_confusion_report(price_dir_scores, thresholds)
+        confusion_report = self._build_confusion_report(price_dir_scores, thresholds, sample_meta=sample_meta)
         if confusion_report:
             summary["confusion_matrices"] = confusion_report
             anchor_label, anchor_payload = self._select_confusion_anchor(confusion_report)
@@ -2360,8 +2501,10 @@ class TrainingPipeline:
         self,
         price_dir_scores: np.ndarray,
         thresholds: Sequence[float],
+        *,
+        sample_meta: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Dict[str, Any]]:
-        meta = self.data_loader.last_sample_meta()
+        meta = sample_meta if isinstance(sample_meta, dict) and sample_meta else self.data_loader.last_sample_meta()
         records = meta.get("records") or []
         if not records:
             return {}
@@ -3552,14 +3695,23 @@ class TrainingPipeline:
                 return False
             input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
             target_order = list(MODEL_OUTPUT_ORDER)
-            input_tensors = tuple(inputs[name] for name in input_order)
-            target_tensors = tuple(targets[name] for name in target_order)
+            sample_count_int = int(np.asarray(next(iter(targets.values()))).shape[0]) if targets else 0
+            _, eval_idx, _, _ = self._compute_holdout_split(
+                sample_count=sample_count_int,
+                sample_meta=self._last_sample_meta,
+            )
+            if int(eval_idx.size) < min_samples and not force:
+                return False
+            eval_sample_meta = self._subset_sample_meta(self._last_sample_meta, eval_idx)
+            eval_targets: Dict[str, Any] = {name: self._slice_tensorlike(value, eval_idx) for name, value in targets.items()}
+            input_tensors = tuple(self._slice_tensorlike(inputs[name], eval_idx) for name in input_order)
+            target_tensors = tuple(self._slice_tensorlike(targets[name], eval_idx) for name in target_order)
             eval_ds = (
                 tf.data.Dataset.from_tensor_slices((input_tensors, target_tensors))
                 .batch(32)
                 .prefetch(tf.data.AUTOTUNE)
             )
-            evaluation = self._evaluate_candidate(model, eval_ds, targets)
+            evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
             confusion = evaluation.get("confusion_matrices")
             if confusion:
                 self._persist_confusion_report(confusion)

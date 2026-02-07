@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-import tensorflow as tf
+try:
+    import tensorflow as tf  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    tf = None  # type: ignore
 
 from cache import CacheBalances, CacheTransfers
 from db import TradingDatabase, get_db
@@ -49,6 +52,17 @@ try:
     from router_wallet import UltraSwapBridge  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     UltraSwapBridge = None  # type: ignore
+
+
+WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
+    "ethereum": "WETH",
+    "arbitrum": "WETH",
+    "optimism": "WETH",
+    "base": "WETH",
+    "polygon": "WMATIC",
+    "bsc": "WBNB",
+    "avalanche": "WAVAX",
+}
 
 
 class TradingBot:
@@ -371,6 +385,10 @@ class TradingBot:
             self._last_gas_refill_signature = None
         if not hasattr(self, "_last_gas_refill_ts"):
             self._last_gas_refill_ts = 0.0
+        if not hasattr(self, "_bus_actions_inflight"):
+            self._bus_actions_inflight = False
+        if not hasattr(self, "_last_bus_actions_run_ts"):
+            self._last_bus_actions_run_ts = 0.0
         self._sync_checkpoint_ratio(equilibrium_ready=getattr(self, "_nash_equilibrium_reached", False))
         if not hasattr(self, "_timeline_path"):
             self._timeline_path = Path(os.getenv("ORGANISM_TIMELINE_PATH", "runtime/organism_timeline.json"))
@@ -406,6 +424,44 @@ class TradingBot:
             return token_map.get(symbol_u)
         except Exception:
             return None
+
+    def _live_trades_dry_run(self) -> bool:
+        if os.getenv("EXECUTE_LIVE_TRADES", "0").lower() in {"1", "true", "yes", "on"}:
+            return False
+        return os.getenv("LIVE_TRADES_DRY_RUN", "1").lower() in {"1", "true", "yes", "on"}
+
+    def _live_trade_slippage_bps(self) -> int:
+        raw = os.getenv("LIVE_TRADE_SLIPPAGE_BPS", os.getenv("SCHEDULER_SLIPPAGE_BPS", "75"))
+        try:
+            return max(5, int(raw or 75))
+        except Exception:
+            return 75
+
+    def _resolve_live_trade_asset(self, chain: str, symbol: str) -> Tuple[str, Optional[str]]:
+        """
+        Resolve (portfolio_symbol, swap_token) for live swaps. For native coins,
+        prefer wrapped-native ERC-20 addresses (e.g. WETH) so local DEX fallbacks
+        can be used when 0x is unavailable.
+        """
+        chain_l = chain.lower()
+        symbol_u = str(symbol or "").upper()
+        if not symbol_u:
+            return symbol_u, None
+        native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
+        if symbol_u == native_symbol or symbol_u == "NATIVE":
+            wrapped_sym = WRAPPED_NATIVE_SYMBOL.get(chain_l)
+            if wrapped_sym:
+                wrapped_addr = self._resolve_token_address(chain_l, wrapped_sym)
+                if wrapped_addr:
+                    return wrapped_sym, wrapped_addr
+            return native_symbol, "native"
+        token = self._resolve_token_address(chain_l, symbol_u)
+        if token:
+            return symbol_u, token
+        raw = str(symbol or "").strip()
+        if raw.lower().startswith("0x") and len(raw) >= 42:
+            return symbol_u, raw
+        return symbol_u, None
 
     def _get_quote_balance(self, chain: str, symbol: str) -> float:
         key = self._token_key(chain, symbol)
@@ -1059,6 +1115,256 @@ class TradingBot:
             pass
         self._sync_checkpoint_ratio()
 
+    def _bus_actions_enabled(self) -> bool:
+        return os.getenv("ENABLE_BUS_ACTIONS", "0").lower() in {"1", "true", "yes", "on"}
+
+    def _bus_actions_dry_run(self) -> bool:
+        return os.getenv("BUS_ACTIONS_DRY_RUN", "1").lower() in {"1", "true", "yes", "on"}
+
+    def _bus_actions_cooldown(self) -> float:
+        try:
+            return max(5.0, float(os.getenv("BUS_ACTIONS_COOLDOWN_SEC", "900")))
+        except Exception:
+            return 900.0
+
+    def _maybe_schedule_bus_actions(self, *, plan_snapshot: Dict[str, Any]) -> None:
+        if not self._bus_actions or not self._bus_actions_enabled():
+            return
+        if getattr(self, "_bus_actions_inflight", False):
+            return
+        now = time.time()
+        cooldown = self._bus_actions_cooldown()
+        if now - float(getattr(self, "_last_bus_actions_run_ts", 0.0)) < cooldown:
+            return
+        self._bus_actions_inflight = True
+        self._last_bus_actions_run_ts = now
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._bus_actions_inflight = False
+            return
+        loop.create_task(self._run_bus_actions(actions=list(self._bus_actions), plan_snapshot=dict(plan_snapshot)))
+
+    async def _run_bus_actions(self, *, actions: List[Dict[str, Any]], plan_snapshot: Dict[str, Any]) -> None:
+        started = time.time()
+        dry_run = self._bus_actions_dry_run()
+        result: Dict[str, Any] = {}
+        try:
+            await self._run_wallet_sync(reason="pre-bus-actions")
+            result = await asyncio.to_thread(
+                self._execute_bus_actions_sync,
+                actions=actions,
+                plan_snapshot=plan_snapshot,
+                dry_run=dry_run,
+            )
+            if not dry_run and result.get("ok"):
+                await self._run_wallet_sync(reason="post-bus-actions")
+            try:
+                self.apply_transition_plan(self.pipeline.ghost_live_transition_plan())
+            except Exception:
+                pass
+            self.metrics.feedback(
+                "bus_scheduler",
+                severity=FeedbackSeverity.INFO if result.get("ok") else FeedbackSeverity.WARNING,
+                label="bus_actions_run",
+                details={"dry_run": dry_run, "result": result, "duration_sec": time.time() - started},
+            )
+        except Exception as exc:
+            try:
+                self.metrics.feedback(
+                    "bus_scheduler",
+                    severity=FeedbackSeverity.WARNING,
+                    label="bus_actions_failed",
+                    details={"error": str(exc), "duration_sec": time.time() - started},
+                )
+            except Exception:
+                pass
+        finally:
+            self._bus_actions_inflight = False
+
+    def _execute_bus_actions_sync(
+        self,
+        *,
+        actions: List[Dict[str, Any]],
+        plan_snapshot: Dict[str, Any],
+        dry_run: bool,
+    ) -> Dict[str, Any]:
+        wallet_state = plan_snapshot.get("wallet_state") if isinstance(plan_snapshot, dict) else None
+        focus_chain = self.primary_chain
+        if isinstance(wallet_state, dict) and wallet_state.get("focus_chain"):
+            focus_chain = str(wallet_state.get("focus_chain") or focus_chain).lower()
+        focus_chain = (focus_chain or self.primary_chain).lower()
+
+        try:
+            token_map = core_tokens_for_chain(focus_chain)
+        except Exception:
+            token_map = {}
+        stable_candidates = ["USDC", "USDT", "DAI", "USDBC", "USDC.E", "USDCe"]
+        stable_symbol = next((sym for sym in stable_candidates if token_map.get(sym)), None)
+        stable_addr = token_map.get(stable_symbol) if stable_symbol else None
+        if not stable_symbol or not stable_addr:
+            return {"ok": False, "reason": "stable_token_unavailable", "chain": focus_chain}
+
+        slippage = int(os.getenv("BUS_ACTIONS_SLIPPAGE_BPS", os.getenv("SCHEDULER_SLIPPAGE_BPS", "75")))
+
+        swapper = None
+        if not dry_run:
+            if self._bridge is None:
+                self._bridge = self._init_bridge()
+            if self._bridge is None:
+                return {"ok": False, "reason": "bridge_unavailable", "dry_run": dry_run}
+            try:
+                from services.swap_service import SwapService  # type: ignore
+            except Exception as exc:
+                return {"ok": False, "reason": f"swap_service_unavailable:{exc}", "dry_run": dry_run}
+            swapper = SwapService(self._bridge)
+
+        try:
+            self.portfolio.refresh(force=True)
+        except Exception:
+            pass
+
+        native_symbol = NATIVE_SYMBOL.get(focus_chain, "ETH")
+        native_balance = float(self.portfolio.get_native_balance(focus_chain))
+        native_usd = float(wallet_state.get("native_usd", 0.0)) if isinstance(wallet_state, dict) else 0.0
+        native_price_usd = float(native_usd / max(native_balance, 1e-9)) if native_usd > 0 and native_balance > 0 else float(
+            os.getenv("FALLBACK_NATIVE_PRICE_USD", str(FALLBACK_NATIVE_PRICE))
+        )
+
+        executed: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        for action in actions:
+            name = str(action.get("action") or "")
+            if name in {"freeze_live", "pause_live"}:
+                skipped.append({"action": name, "reason": "gate_only"})
+                continue
+
+            if name == "swap_stable_to_native":
+                target_usd = float(action.get("target_usd", 0.0) or 0.0)
+                available_stable = float(self.portfolio.get_quantity(stable_symbol, chain=focus_chain))
+                amount = max(0.0, min(target_usd, available_stable))
+                if amount <= 0.0:
+                    skipped.append({"action": name, "reason": "insufficient_stable"})
+                    continue
+                op = {"action": name, "chain": focus_chain, "sell": stable_symbol, "buy": "native", "amount": amount}
+                if dry_run:
+                    executed.append({**op, "dry_run": True})
+                else:
+                    swapper.swap(chain=focus_chain, sell=stable_addr, buy="native", amount_human=f"{amount:.6f}", slippage_bps=slippage)
+                    executed.append({**op, "dry_run": False})
+                continue
+
+            if name == "swap_native_to_stable":
+                target_usd = float(action.get("target_usd", 0.0) or 0.0)
+                reserve_native = float(os.getenv("BUS_NATIVE_RESERVE", "0.005") or 0.0)
+                sellable_native = max(0.0, native_balance - max(0.0, reserve_native))
+                amount_native = 0.0
+                if native_price_usd > 0 and target_usd > 0:
+                    amount_native = min(sellable_native, target_usd / native_price_usd)
+                if amount_native <= 0.0:
+                    skipped.append({"action": name, "reason": "insufficient_native"})
+                    continue
+                op = {
+                    "action": name,
+                    "chain": focus_chain,
+                    "sell": "native",
+                    "buy": stable_symbol,
+                    "amount_native": amount_native,
+                    "target_usd": target_usd,
+                }
+                if dry_run:
+                    executed.append({**op, "dry_run": True})
+                else:
+                    swapper.swap(chain=focus_chain, sell="native", buy=stable_addr, amount_human=f"{amount_native:.6f}", slippage_bps=slippage)
+                    executed.append({**op, "dry_run": False})
+                continue
+
+            if name == "swap_to_stable":
+                target_usd = float(action.get("target_usd", 0.0) or 0.0)
+                remaining = max(0.0, target_usd)
+                if remaining <= 0.0:
+                    skipped.append({"action": name, "reason": "no_target"})
+                    continue
+                holdings = [
+                    holding
+                    for (chain, sym), holding in self.portfolio.holdings.items()
+                    if chain == focus_chain
+                    and sym not in self.stable_tokens
+                    and sym not in {native_symbol, "ETH", "MATIC"}
+                    and holding.usd > 0
+                    and holding.quantity > 0
+                    and holding.token
+                ]
+                holdings.sort(key=lambda h: float(h.usd), reverse=True)
+                if not holdings:
+                    skipped.append({"action": name, "reason": "no_assets"})
+                    continue
+                for holding in holdings:
+                    if remaining <= 0:
+                        break
+                    price_usd = float(holding.usd / max(holding.quantity, 1e-9))
+                    if price_usd <= 0:
+                        continue
+                    sell_usd = min(float(holding.usd), remaining)
+                    sell_qty = min(float(holding.quantity), sell_usd / price_usd)
+                    if sell_qty <= 0:
+                        continue
+                    op = {
+                        "action": name,
+                        "chain": focus_chain,
+                        "sell_symbol": holding.symbol,
+                        "sell_token": holding.token,
+                        "buy": stable_symbol,
+                        "sell_qty": sell_qty,
+                        "sell_usd": sell_usd,
+                    }
+                    if dry_run:
+                        executed.append({**op, "dry_run": True})
+                    else:
+                        swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{sell_qty:.6f}", slippage_bps=slippage)
+                        executed.append({**op, "dry_run": False})
+                    remaining = max(0.0, remaining - sell_usd)
+                continue
+
+            if name == "consolidate_fragments":
+                dust = action.get("dust_tokens") or []
+                if not isinstance(dust, list) or not dust:
+                    skipped.append({"action": name, "reason": "no_dust_tokens"})
+                    continue
+                for symbol in dust:
+                    sym_u = str(symbol or "").upper()
+                    if not sym_u:
+                        continue
+                    holding = self.portfolio.holdings.get((focus_chain, sym_u))
+                    if not holding or holding.usd <= 0 or holding.quantity <= 0 or not holding.token:
+                        continue
+                    op = {
+                        "action": name,
+                        "chain": focus_chain,
+                        "sell_symbol": holding.symbol,
+                        "sell_token": holding.token,
+                        "buy": stable_symbol,
+                        "sell_qty": float(holding.quantity),
+                        "sell_usd": float(holding.usd),
+                    }
+                    if dry_run:
+                        executed.append({**op, "dry_run": True})
+                    else:
+                        swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{float(holding.quantity):.6f}", slippage_bps=slippage)
+                        executed.append({**op, "dry_run": False})
+                continue
+
+            skipped.append({"action": name, "reason": "unsupported"})
+
+        return {
+            "ok": True,
+            "dry_run": dry_run,
+            "chain": focus_chain,
+            "stable_symbol": stable_symbol,
+            "executed": executed,
+            "skipped": skipped,
+        }
+
     def _handle_gas_starvation(self, chain: str, native_balance: float) -> None:
         chain_name = str(chain or "").lower()
         native_symbol = NATIVE_SYMBOL.get(chain_name, str(chain).upper())
@@ -1173,7 +1479,7 @@ class TradingBot:
             self._live_transition_state = {"enabled": self.live_trading_enabled, "reason": "auto_promote_disabled"}
             return
         try:
-            self.apply_transition_plan(self.pipeline.transition_plan())
+            self.apply_transition_plan(self.pipeline.ghost_live_transition_plan())
         except Exception:
             pass
         plan_snapshot = getattr(self, "_transition_plan", {}) or {}
@@ -1202,6 +1508,7 @@ class TradingBot:
             }
             return
         if plan_flags.get("bus_actions_pending"):
+            self._maybe_schedule_bus_actions(plan_snapshot=plan_snapshot)
             self._live_transition_state = {
                 **(readiness or {}),
                 "enabled": False,
@@ -2092,6 +2399,13 @@ class TradingBot:
             return decision
         gas_required = self._estimate_gas_cost(chain_name, route)
         use_sim = not self.live_trading_enabled
+        base_balance_symbol = base_token
+        quote_balance_symbol = quote_token
+        base_swap_token: Optional[str] = None
+        quote_swap_token: Optional[str] = None
+        if not use_sim:
+            base_balance_symbol, base_swap_token = self._resolve_live_trade_asset(chain_name, base_token)
+            quote_balance_symbol, quote_swap_token = self._resolve_live_trade_asset(chain_name, quote_token)
         if use_sim:
             available_quote = self._get_quote_balance(chain_name, quote_token)
             available_base = float(pos.get("size", 0.0)) if pos else 0.0
@@ -2100,8 +2414,8 @@ class TradingBot:
                 gas_required,
             )
         else:
-            available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
-            available_base = self.portfolio.get_quantity(base_token, chain=chain_name)
+            available_quote = self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name)
+            available_base = self.portfolio.get_quantity(base_balance_symbol, chain=chain_name)
             native_balance = self.portfolio.get_native_balance(chain_name)
 
         trade_size = max(min(volume * self.max_trade_share, volume), 0.0)
@@ -2166,7 +2480,7 @@ class TradingBot:
                         )
                         await self._run_wallet_sync(reason="post-gas-rebalance")
                         native_balance = self.portfolio.get_native_balance(chain_name)
-                        available_quote = self.portfolio.get_quantity(quote_token, chain=chain_name)
+                        available_quote = self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name)
                         if native_balance >= gas_required:
                             strategy = None
                 if native_balance < gas_required:
@@ -2315,6 +2629,259 @@ class TradingBot:
                 return decision
             self._ghost_trade_counter += 1
             trade_id = f"{symbol}-{self._ghost_trade_counter}"
+            entry_reason = reason or (directive.reason if directive else "model")
+
+            if self.live_trading_enabled:
+                if self._live_trades_dry_run():
+                    decision.update(
+                        {
+                            "action": "enter",
+                            "status": "live-dry-run-entry",
+                            "size": trade_size,
+                            "entry_price": price,
+                            "route": route,
+                            "reason": entry_reason,
+                            "target_price": directive.target_price if directive else price * 1.05,
+                            "horizon": directive.horizon if directive else None,
+                            "trade_id": trade_id,
+                            "entry_ts": sample_ts,
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="entry_dry_run",
+                        details={"symbol": symbol, "trade_id": trade_id, "reason": entry_reason},
+                    )
+                    return decision
+
+                if base_swap_token is None or quote_swap_token is None:
+                    decision.update(
+                        {
+                            "action": "enter",
+                            "status": "live-entry-blocked",
+                            "reason": "token_unresolved",
+                            "trade_id": trade_id,
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="entry_blocked",
+                        details={
+                            "symbol": symbol,
+                            "trade_id": trade_id,
+                            "base_symbol": base_balance_symbol,
+                            "quote_symbol": quote_balance_symbol,
+                        },
+                    )
+                    return decision
+
+                if self._bridge is None:
+                    self._bridge = self._init_bridge()
+                if self._bridge is None:
+                    decision.update(
+                        {
+                            "action": "enter",
+                            "status": "live-entry-blocked",
+                            "reason": "bridge_unavailable",
+                            "trade_id": trade_id,
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    return decision
+
+                try:
+                    from services.swap_service import SwapService  # type: ignore
+                except Exception as exc:
+                    decision.update(
+                        {
+                            "action": "enter",
+                            "status": "live-entry-blocked",
+                            "reason": f"swap_service_unavailable:{exc}",
+                            "trade_id": trade_id,
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    return decision
+
+                slippage = self._live_trade_slippage_bps()
+                quote_spend_target = max(0.0, trade_size * price)
+                if quote_spend_target <= 0.0:
+                    return decision
+
+                pre_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
+                pre_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
+                pre_native = float(self.portfolio.get_native_balance(chain_name))
+
+                swapper = SwapService(self._bridge)
+                await asyncio.to_thread(
+                    swapper.swap,
+                    chain=chain_name,
+                    sell=quote_swap_token,
+                    buy=base_swap_token,
+                    amount_human=f"{quote_spend_target:.6f}",
+                    slippage_bps=slippage,
+                )
+                await self._run_wallet_sync(reason="post-live-entry")
+
+                post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
+                post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
+                post_native = float(self.portfolio.get_native_balance(chain_name))
+
+                quote_spent = max(0.0, pre_quote - post_quote)
+                base_received = max(0.0, post_base - pre_base)
+                gas_spent_native = max(0.0, pre_native - post_native)
+
+                if quote_spent <= 0.0 or base_received <= 0.0:
+                    decision.update(
+                        {
+                            "action": "enter",
+                            "status": "live-entry-failed",
+                            "reason": "no_fill_detected",
+                            "trade_id": trade_id,
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                            "quote_spent": quote_spent,
+                            "base_received": base_received,
+                            "gas_spent_native": gas_spent_native,
+                        }
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.CRITICAL,
+                        label="entry_failed",
+                        details={
+                            "symbol": symbol,
+                            "trade_id": trade_id,
+                            "quote_spent": quote_spent,
+                            "base_received": base_received,
+                        },
+                    )
+                    return decision
+
+                executed_entry_price = quote_spent / max(base_received, 1e-9)
+                self.positions[symbol] = {
+                    "entry_price": executed_entry_price,
+                    "size": base_received,
+                    "ts": sample_ts,
+                    "entry_ts": sample_ts,
+                    "trade_id": trade_id,
+                    "route": route,
+                    "bus_index": 0,
+                    "target_price": directive.target_price if directive else None,
+                    "brain_snapshot": brain_payload,
+                    "expected_margin": margin,
+                    "expected_margin_after_fees": margin - fees,
+                    "entry_confidence": exit_conf_val,
+                    "direction_prob": direction_prob,
+                    "quote_spent": quote_spent,
+                    "gas_spent_native": gas_spent_native,
+                    "base_symbol": base_balance_symbol,
+                    "quote_symbol": quote_balance_symbol,
+                }
+                if brain.get("fingerprint"):
+                    try:
+                        self.positions[symbol]["fingerprint"] = list(brain.get("fingerprint") or [])
+                    except Exception:
+                        self.positions[symbol]["fingerprint"] = []
+
+                decision.update(
+                    {
+                        "action": "enter",
+                        "status": "live-entry",
+                        "size": base_received,
+                        "entry_price": executed_entry_price,
+                        "route": route,
+                        "reason": entry_reason,
+                        "target_price": directive.target_price if directive else price * 1.05,
+                        "horizon": directive.horizon if directive else None,
+                        "trade_id": trade_id,
+                        "entry_ts": sample_ts,
+                        "wallet": "live",
+                        "session_id": self.ghost_session_id,
+                        "executed": True,
+                        "quote_spent": quote_spent,
+                        "gas_spent_native": gas_spent_native,
+                    }
+                )
+                if isinstance(decision.get("brain"), dict):
+                    decision["brain"]["entry_trade_id"] = trade_id
+
+                exposure_delta = base_received * price
+                self.active_exposure[symbol] = self.active_exposure.get(symbol, 0.0) + exposure_delta
+                self._tune_allocation(symbol, positive=True, negative=False)
+
+                entry_metrics = {
+                    "direction_prob": direction_prob,
+                    "exit_confidence": exit_conf_val,
+                    "expected_margin": margin,
+                    "trade_size_requested": trade_size,
+                    "trade_size_executed": base_received,
+                    "quote_spent": quote_spent,
+                    "volume": volume,
+                    "route_length": len(route),
+                }
+                self.metrics.record(
+                    MetricStage.LIVE_TRADING,
+                    entry_metrics,
+                    category="entry",
+                    meta={
+                        "symbol": symbol,
+                        "trade_id": trade_id,
+                        "reason": entry_reason,
+                        "price": price,
+                    },
+                )
+                self.metrics.feedback(
+                    "live_trading",
+                    severity=FeedbackSeverity.INFO,
+                    label="entry",
+                    details={
+                        "symbol": symbol,
+                        "trade_id": trade_id,
+                        "entry_price": executed_entry_price,
+                        "base_received": base_received,
+                        "quote_spent": quote_spent,
+                        "route": route,
+                    },
+                )
+                print(
+                    "[live] enter %s size=%.6f price=%.4f dir=%.3f margin=%.6f (%s)"
+                    % (symbol, base_received, executed_entry_price, direction_prob, margin, entry_reason)
+                )
+                try:
+                    self.record_fill(
+                        symbol=symbol,
+                        chain=chain_name,
+                        expected_amount=float(trade_size),
+                        executed_amount=float(base_received),
+                        expected_price=float(price),
+                        executed_price=float(executed_entry_price),
+                        extra={
+                            "mode": "live_entry",
+                            "trade_id": trade_id,
+                            "quote_spent": float(quote_spent),
+                            "gas_spent_native": float(gas_spent_native),
+                            "slippage_bps": slippage,
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
+            # ghost / paper entry
             self.positions[symbol] = {
                 "entry_price": price,
                 "size": trade_size,
@@ -2326,6 +2893,7 @@ class TradingBot:
                 "target_price": directive.target_price if directive else None,
                 "brain_snapshot": brain_payload,
                 "expected_margin": margin,
+                "expected_margin_after_fees": margin - fees,
                 "entry_confidence": exit_conf_val,
                 "direction_prob": direction_prob,
             }
@@ -2337,16 +2905,16 @@ class TradingBot:
             decision.update(
                 {
                     "action": "enter",
-                    "status": f"{'live' if self.live_trading_enabled else 'ghost'}-entry",
+                    "status": "ghost-entry",
                     "size": trade_size,
                     "entry_price": price,
                     "route": route,
-                    "reason": reason or (directive.reason if directive else "model"),
+                    "reason": entry_reason,
                     "target_price": directive.target_price if directive else price * 1.05,
                     "horizon": directive.horizon if directive else None,
                     "trade_id": trade_id,
                     "entry_ts": sample_ts,
-                    "wallet": "live" if self.live_trading_enabled else "ghost",
+                    "wallet": "ghost",
                     "session_id": self.ghost_session_id,
                 }
             )
@@ -2388,18 +2956,32 @@ class TradingBot:
             )
             print(
                 "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
-                % (symbol, trade_size, price, direction_prob, margin, decision["reason"])
+                % (symbol, trade_size, price, direction_prob, margin, entry_reason)
             )
-            if not self.live_trading_enabled:
-                quote_spent = trade_size * price
-                self._adjust_quote_balance(chain_name, quote_token, -quote_spent)
-                self._consume_sim_gas(chain_name, gas_required)
+            quote_spent = trade_size * price
+            self._adjust_quote_balance(chain_name, quote_token, -quote_spent)
+            self._consume_sim_gas(chain_name, gas_required)
+            try:
+                self.record_fill(
+                    symbol=symbol,
+                    chain=chain_name,
+                    expected_amount=float(trade_size),
+                    executed_amount=float(trade_size),
+                    expected_price=float(price),
+                    executed_price=float(price),
+                    extra={"mode": "ghost_entry", "trade_id": trade_id, "fee_rate": float(fees)},
+                )
+            except Exception:
+                pass
             return decision
 
         if should_exit and pos is not None:
             await self._run_wallet_sync(reason="pre-exit")
             held_size = float(pos["size"])
-            exit_size = min(held_size, trade_size, available_base)
+            exit_target = held_size
+            if directive and directive.action == "exit" and directive.size > 0:
+                exit_target = min(exit_target, float(directive.size))
+            exit_size = min(exit_target, available_base)
             if exit_size <= 0.0:
                 self.metrics.feedback(
                     "trading",
@@ -2412,15 +2994,182 @@ class TradingBot:
                     },
                 )
                 return decision
-            profit = (price - pos["entry_price"]) * exit_size
+            trade_stage = MetricStage.LIVE_TRADING if self.live_trading_enabled else MetricStage.GHOST_TRADING
+            feedback_channel = "live_trading" if self.live_trading_enabled else "ghost_trading"
+            log_prefix = "[live]" if self.live_trading_enabled else "[ghost]"
+
+            entry_price = float(pos.get("entry_price", 0.0))
+            total_quote_spent = float(pos.get("quote_spent", entry_price * held_size))
+            total_gas_native = float(pos.get("gas_spent_native", 0.0) or 0.0)
+
+            exit_price_effective = price
+            base_sold = exit_size
+            quote_received = 0.0
+            cost_portion = 0.0
+            gas_spent_native_exit = 0.0
+            native_price_usd = 0.0
+            fee_cost = 0.0
+
+            if self.live_trading_enabled:
+                entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
+                if (sample_ts - entry_ts_gate) < max_hold_sec:
+                    est_notional = max(exit_size * entry_price, 1e-9)
+                    est_gross_profit = (price - entry_price) * exit_size
+                    est_fee_cost = max(est_notional * fees, 0.0)
+                    est_profit = est_gross_profit - est_fee_cost
+                    if est_profit <= 0.0:
+                        decision.update({"status": "hold-negative", "reason": reason or "hold"})
+                        return decision
+                if self._live_trades_dry_run():
+                    decision.update(
+                        {
+                            "action": "exit",
+                            "status": "live-dry-run-exit",
+                            "exit_reason": reason,
+                            "size": exit_size,
+                            "entry_price": entry_price,
+                            "exit_price": price,
+                            "trade_id": pos.get("trade_id"),
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="exit_dry_run",
+                        details={"symbol": symbol, "size": exit_size, "reason": reason},
+                    )
+                    return decision
+
+                if base_swap_token is None or quote_swap_token is None:
+                    decision.update(
+                        {
+                            "action": "exit",
+                            "status": "live-exit-blocked",
+                            "reason": "token_unresolved",
+                            "trade_id": pos.get("trade_id"),
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="exit_blocked",
+                        details={"symbol": symbol, "base_symbol": base_balance_symbol, "quote_symbol": quote_balance_symbol},
+                    )
+                    return decision
+
+                if self._bridge is None:
+                    self._bridge = self._init_bridge()
+                if self._bridge is None:
+                    decision.update(
+                        {
+                            "action": "exit",
+                            "status": "live-exit-blocked",
+                            "reason": "bridge_unavailable",
+                            "trade_id": pos.get("trade_id"),
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    return decision
+
+                try:
+                    from services.swap_service import SwapService  # type: ignore
+                except Exception as exc:
+                    decision.update(
+                        {
+                            "action": "exit",
+                            "status": "live-exit-blocked",
+                            "reason": f"swap_service_unavailable:{exc}",
+                            "trade_id": pos.get("trade_id"),
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                        }
+                    )
+                    return decision
+
+                slippage = self._live_trade_slippage_bps()
+                pre_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
+                pre_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
+                pre_native = float(self.portfolio.get_native_balance(chain_name))
+
+                swapper = SwapService(self._bridge)
+                await asyncio.to_thread(
+                    swapper.swap,
+                    chain=chain_name,
+                    sell=base_swap_token,
+                    buy=quote_swap_token,
+                    amount_human=f"{exit_size:.6f}",
+                    slippage_bps=slippage,
+                )
+                await self._run_wallet_sync(reason="post-live-exit")
+
+                post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
+                post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
+                post_native = float(self.portfolio.get_native_balance(chain_name))
+
+                base_sold = max(0.0, pre_base - post_base)
+                quote_received = max(0.0, post_quote - pre_quote)
+                gas_spent_native_exit = max(0.0, pre_native - post_native)
+
+                if base_sold <= 0.0 or quote_received <= 0.0:
+                    decision.update(
+                        {
+                            "action": "exit",
+                            "status": "live-exit-failed",
+                            "reason": "no_fill_detected",
+                            "trade_id": pos.get("trade_id"),
+                            "wallet": "live",
+                            "session_id": self.ghost_session_id,
+                            "executed": False,
+                            "quote_received": quote_received,
+                            "base_sold": base_sold,
+                            "gas_spent_native": gas_spent_native_exit,
+                        }
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.CRITICAL,
+                        label="exit_failed",
+                        details={"symbol": symbol, "quote_received": quote_received, "base_sold": base_sold},
+                    )
+                    return decision
+
+                exit_price_effective = quote_received / max(base_sold, 1e-9)
+
+                allocation_ratio = min(1.0, base_sold / max(held_size, 1e-9))
+                cost_portion = total_quote_spent * allocation_ratio
+                gas_portion_native = total_gas_native * allocation_ratio
+                total_gas_native_realized = gas_portion_native + gas_spent_native_exit
+                native_price_usd = self._estimate_native_price(chain_name, route, price, symbol)
+                fee_cost = total_gas_native_realized * native_price_usd
+
+                total_quote_spent = max(0.0, total_quote_spent - cost_portion)
+                total_gas_native = max(0.0, total_gas_native - gas_portion_native)
+
+                notional = max(cost_portion, 1e-9)
+                gross_profit = quote_received - cost_portion
+                profit = gross_profit - fee_cost
+                exit_size = base_sold
+            else:
+                notional = max(exit_size * entry_price, 1e-9)
+                gross_profit = (price - entry_price) * exit_size
+                fee_cost = max(notional * fees, 0.0)
+                profit = gross_profit - fee_cost
             self.total_trades += 1
             if profit > 0:
                 self.wins += 1
             checkpoint = 0.0
             next_stop = route[1] if len(route) > 1 else None
-            notional = max(exit_size * pos["entry_price"], 1e-9)
             realized_margin = profit / notional if notional else 0.0
-            predicted_margin = float(pos.get("expected_margin", margin))
+            predicted_margin = float(pos.get("expected_margin_after_fees", pos.get("expected_margin", margin - fees)))
             entry_confidence = float(pos.get("entry_confidence", exit_conf_val))
             self.equilibrium.observe(
                 predicted_margin=predicted_margin,
@@ -2441,6 +3190,8 @@ class TradingBot:
                 min_batch_override = self._savings_min_batch_for_chain(chain_name)
                 if checkpoint >= fee_guard:
                     self.stable_bank += checkpoint
+                    if not self.live_trading_enabled:
+                        self._adjust_quote_balance(chain_name, quote_token, -checkpoint)
                     profit -= checkpoint
                     savings_event = self.savings.record_allocation(
                         amount=checkpoint,
@@ -2480,7 +3231,7 @@ class TradingBot:
                     savings_slot["skipped"] = skip_payload
                     self._log_savings_skip(skip_payload)
                     checkpoint = 0.0
-            elif profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
+            elif (not self.live_trading_enabled) and profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
                 decision.update({"status": "hold-negative", "reason": reason or "hold"})
                 return decision
             self.total_profit += profit
@@ -2498,7 +3249,7 @@ class TradingBot:
                         try:
                             self.swarm_selector.update(str(horizon), profit, sample_ts)
                             self.metrics.record(
-                                MetricStage.GHOST_TRADING,
+                                trade_stage,
                                 {
                                     "swarm_profit": profit,
                                     "swarm_score": self.swarm_selector.best()[1],
@@ -2530,19 +3281,29 @@ class TradingBot:
                         sample_ts,
                         duration=duration_sec,
                     )
-                    strength = float(np.tanh(profit / max(abs(pos["entry_price"]), 1e-6)))
+                    strength = float(np.tanh(profit / max(abs(entry_price), 1e-6)))
                     self.graph.reinforce(symbol, f"{symbol}:pnl", sample_ts, strength)
                 except Exception:
                     pass
-            del self.positions[symbol]
+            remaining_size = max(0.0, held_size - exit_size)
+            if remaining_size <= 1e-6:
+                del self.positions[symbol]
+            else:
+                pos["size"] = remaining_size
+                if self.live_trading_enabled:
+                    pos["quote_spent"] = total_quote_spent
+                    pos["gas_spent_native"] = total_gas_native
+                    if remaining_size > 0.0 and total_quote_spent > 0.0:
+                        pos["entry_price"] = total_quote_spent / remaining_size
+                self.positions[symbol] = pos
             decision.update(
                 {
                     "action": "exit",
                     "status": f"{'live' if self.live_trading_enabled else 'ghost'}-exit",
                     "exit_reason": reason,
                     "size": exit_size,
-                    "entry_price": pos["entry_price"],
-                    "exit_price": price,
+                    "entry_price": entry_price,
+                    "exit_price": exit_price_effective,
                     "profit": profit,
                     "checkpoint": checkpoint,
                     "stable_token": stable_target,
@@ -2559,6 +3320,7 @@ class TradingBot:
                     "session_id": self.ghost_session_id,
                     "equilibrium_score": equilibrium_score,
                     "nash_equilibrium": equilibrium_ready,
+                    "remaining_size": remaining_size,
                 }
             )
             if isinstance(decision.get("brain"), dict):
@@ -2576,13 +3338,13 @@ class TradingBot:
                 "bank_balance": self.stable_bank,
                 "total_profit": self.total_profit,
                 "win_rate": self.wins / max(1, self.total_trades),
-                "exit_price": price,
-                "entry_price": pos["entry_price"],
+                "exit_price": exit_price_effective,
+                "entry_price": entry_price,
                 "equilibrium_score": equilibrium_score,
                 "nash_equilibrium": equilibrium_ready,
             }
             self.metrics.record(
-                MetricStage.GHOST_TRADING,
+                trade_stage,
                 exit_metrics,
                 category="exit",
                 meta={
@@ -2596,7 +3358,7 @@ class TradingBot:
             if profit <= 0 or reason in {"negative_margin", "confidence_drop", "timed-exit"}:
                 severity = FeedbackSeverity.CRITICAL if profit < 0 else FeedbackSeverity.WARNING
             self.metrics.feedback(
-                "ghost_trading",
+                feedback_channel,
                 severity=severity,
                 label=f"exit_{reason}",
                 details={
@@ -2610,15 +3372,58 @@ class TradingBot:
                 },
             )
             print(
-                "[ghost] exit %s size=%.4f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
-                % (symbol, exit_size, price, profit, self.stable_bank, reason or "exit")
+                "%s exit %s size=%.6f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
+                % (log_prefix, symbol, exit_size, exit_price_effective, profit, checkpoint, self.stable_bank, reason or "exit")
             )
+            if self.live_trading_enabled:
+                try:
+                    self.record_fill(
+                        symbol=symbol,
+                        chain=chain_name,
+                        expected_amount=float(exit_target),
+                        executed_amount=float(exit_size),
+                        expected_price=float(price),
+                        executed_price=float(exit_price_effective),
+                        extra={
+                            "mode": "live_exit",
+                            "trade_id": trade_id,
+                            "quote_received": float(quote_received),
+                            "cost_portion": float(cost_portion),
+                            "gas_spent_native": float(gas_spent_native_exit),
+                            "gas_price_usd": float(native_price_usd),
+                            "fee_cost_usd": float(fee_cost),
+                            "gross_profit": float(gross_profit),
+                            "profit": float(profit),
+                            "remaining_size": float(remaining_size),
+                        },
+                    )
+                except Exception:
+                    pass
             if not self.live_trading_enabled:
-                quote_gain = exit_size * price
+                quote_gain = exit_size * price - fee_cost
                 self._adjust_quote_balance(chain_name, quote_token, quote_gain)
                 self._consume_sim_gas(chain_name, gas_required)
                 self.sim_native_balances[chain_name] = max(self.sim_native_balances.get(chain_name, 0.5), 0.5)
                 self._check_sim_restart()
+                try:
+                    self.record_fill(
+                        symbol=symbol,
+                        chain=chain_name,
+                        expected_amount=float(exit_size),
+                        executed_amount=float(exit_size),
+                        expected_price=float(price),
+                        executed_price=float(price),
+                        extra={
+                            "mode": "ghost_exit",
+                            "trade_id": trade_id,
+                            "fee_rate": float(fees),
+                            "fee_cost": float(fee_cost),
+                            "gross_profit": float(gross_profit),
+                            "profit": float(profit),
+                        },
+                    )
+                except Exception:
+                    pass
             self._maybe_promote_to_live()
             if profit > 0 and decision.get("wallet", "ghost") == "live":
                 strategy = self._plan_gas_replenishment(
@@ -3439,36 +4244,59 @@ class TradingBot:
         for sym, pos in ghost.get("positions", {}).items():
             if not isinstance(pos, dict):
                 continue
-            entry_ts_val = float(pos.get("entry_ts", pos.get("ts", time.time())))
-            fingerprint_val = pos.get("fingerprint")
-            if isinstance(fingerprint_val, np.ndarray):
-                fingerprint_list = fingerprint_val.tolist()
-            elif isinstance(fingerprint_val, list):
-                fingerprint_list = fingerprint_val
+            payload = dict(pos)
+            payload["entry_price"] = float(payload.get("entry_price", 0.0))
+            payload["size"] = float(payload.get("size", 0.0))
+            payload["ts"] = float(payload.get("ts", time.time()))
+            payload["entry_ts"] = float(payload.get("entry_ts", payload["ts"]))
+            payload["bus_index"] = int(payload.get("bus_index", 0))
+            route_val = payload.get("route")
+            if isinstance(route_val, list):
+                payload["route"] = [str(tok).upper() for tok in route_val if tok]
             else:
-                fingerprint_list = []
-            positions[str(sym)] = {
-                "entry_price": float(pos.get("entry_price", 0.0)),
-                "size": float(pos.get("size", 0.0)),
-                "ts": float(pos.get("ts", time.time())),
-                "entry_ts": entry_ts_val,
-                "route": list(pos.get("route", [])),
-                "bus_index": int(pos.get("bus_index", 0)),
-                "trade_id": pos.get("trade_id"),
-                "target_price": pos.get("target_price"),
-                "fingerprint": fingerprint_list,
-                "brain_snapshot": pos.get("brain_snapshot"),
-            }
+                payload["route"] = []
+            fingerprint_val = payload.get("fingerprint")
+            if isinstance(fingerprint_val, np.ndarray):
+                payload["fingerprint"] = fingerprint_val.tolist()
+            elif isinstance(fingerprint_val, list):
+                payload["fingerprint"] = fingerprint_val
+            else:
+                payload["fingerprint"] = []
+            for key in ("quote_spent", "gas_spent_native"):
+                if key in payload:
+                    try:
+                        payload[key] = float(payload.get(key) or 0.0)
+                    except Exception:
+                        payload[key] = 0.0
+            positions[str(sym)] = payload
         self.positions = positions
         routes = ghost.get("routes")
         if isinstance(routes, dict):
             self.bus_routes = {sym: list(tokens) for sym, tokens in routes.items()}
         sim_quotes = ghost.get("sim_quote_balances")
         if isinstance(sim_quotes, dict):
-            self.sim_quote_balances = {
-                (str(key[0]).lower(), str(key[1]).upper()) if isinstance(key, (list, tuple)) and len(key) == 2 else (self.primary_chain.lower(), str(key).upper()): float(value)
-                for key, value in sim_quotes.items()
-            }
+            balances: Dict[Tuple[str, str], float] = {}
+            for key, value in sim_quotes.items():
+                chain_l = self.primary_chain.lower()
+                sym_u = ""
+                if isinstance(key, (list, tuple)) and len(key) == 2:
+                    chain_l = str(key[0]).lower()
+                    sym_u = str(key[1]).upper()
+                else:
+                    key_str = str(key)
+                    if ":" in key_str:
+                        chain_part, sym_part = key_str.split(":", 1)
+                        chain_l = chain_part.strip().lower() or chain_l
+                        sym_u = sym_part.strip().upper()
+                    else:
+                        sym_u = key_str.strip().upper()
+                if not sym_u:
+                    continue
+                try:
+                    balances[(chain_l, sym_u)] = float(value)
+                except Exception:
+                    continue
+            self.sim_quote_balances = balances
         sim_native = ghost.get("sim_native_balances")
         if isinstance(sim_native, dict):
             self.sim_native_balances = {str(chain).lower(): float(value) for chain, value in sim_native.items()}

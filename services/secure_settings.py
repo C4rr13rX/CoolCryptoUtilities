@@ -10,7 +10,10 @@ from typing import Dict, Optional
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from django.conf import settings as django_settings
 from django.contrib.auth import get_user_model
-from kyber_py import kyber
+try:
+    from kyber_py import kyber  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    kyber = None  # type: ignore
 
 try:
     import django
@@ -25,7 +28,8 @@ except Exception:
     SecureSetting = None  # type: ignore
 
 PLACEHOLDER_PATTERN = re.compile(r"\${([A-Z0-9_]+)}")
-_KYBER = kyber.Kyber512
+_KYBER = kyber.Kyber512 if kyber is not None else None
+_FALLBACK_MARKER = b"fallback-v1"
 _KEY_LOCK = threading.Lock()
 _LEGACY_ENV_CACHE: Optional[Dict[str, str]] = None
 _LEGACY_ENV_PATH: Optional[Path] = None
@@ -54,8 +58,14 @@ def _key_paths() -> tuple[Path, Path, Path]:
     base = _key_dir()
     return base, base / "kyber_public.bin", base / "kyber_private.bin"
 
+def _fallback_key_path() -> Path:
+    base = _key_dir()
+    return base / "aes_master.bin"
+
 
 def _ensure_keys() -> None:
+    if _KYBER is None:
+        raise RuntimeError("kyber_py not installed; Kyber key material unavailable.")
     key_dir, public_path, private_path = _key_paths()
     key_dir.mkdir(parents=True, exist_ok=True)
     if public_path.exists() and private_path.exists():
@@ -66,6 +76,21 @@ def _ensure_keys() -> None:
         public_key, private_key = _KYBER.keygen()
         public_path.write_bytes(public_key)
         private_path.write_bytes(private_key)
+
+def _ensure_fallback_key() -> None:
+    key_dir = _key_dir()
+    key_dir.mkdir(parents=True, exist_ok=True)
+    path = _fallback_key_path()
+    if path.exists():
+        return
+    with _KEY_LOCK:
+        if path.exists():
+            return
+        path.write_bytes(os.urandom(32))
+
+def _load_fallback_key() -> bytes:
+    _ensure_fallback_key()
+    return _fallback_key_path().read_bytes()
 
 
 def _load_public_key() -> bytes:
@@ -83,14 +108,20 @@ def _load_private_key() -> bytes:
 def encrypt_secret(value: str) -> Dict[str, bytes]:
     if value is None:
         raise ValueError("value must be provided for secret settings")
-    public_key = _load_public_key()
-    shared_key, capsule = _KYBER.encaps(public_key)
-    aes_key = hashlib.sha256(shared_key).digest()
+    if _KYBER is not None:
+        public_key = _load_public_key()
+        shared_key, capsule = _KYBER.encaps(public_key)
+        aes_key = hashlib.sha256(shared_key).digest()
+        marker = capsule
+    else:
+        master = _load_fallback_key()
+        aes_key = hashlib.sha256(master).digest()
+        marker = _FALLBACK_MARKER
     aesgcm = AESGCM(aes_key)
     nonce = os.urandom(12)
     ciphertext = aesgcm.encrypt(nonce, value.encode("utf-8"), None)
     return {
-        "encapsulated_key": capsule,
+        "encapsulated_key": marker,
         "ciphertext": ciphertext,
         "nonce": nonce,
     }
@@ -99,17 +130,31 @@ def encrypt_secret(value: str) -> Dict[str, bytes]:
 def decrypt_secret(encapsulated_key: bytes, ciphertext: bytes, nonce: bytes) -> str:
     if not (encapsulated_key and ciphertext and nonce):
         raise ValueError("encrypted payload incomplete")
-    private_key = _load_private_key()
-    shared_key = _KYBER.decaps(private_key, encapsulated_key)
-    aes_key = hashlib.sha256(shared_key).digest()
+    if encapsulated_key.startswith(_FALLBACK_MARKER):
+        master = _load_fallback_key()
+        aes_key = hashlib.sha256(master).digest()
+    else:
+        if _KYBER is None:
+            raise RuntimeError("kyber_py not installed; cannot decrypt Kyber-protected secret.")
+        private_key = _load_private_key()
+        shared_key = _KYBER.decaps(private_key, encapsulated_key)
+        aes_key = hashlib.sha256(shared_key).digest()
     aesgcm = AESGCM(aes_key)
     plaintext = aesgcm.decrypt(nonce, ciphertext, None)
     return plaintext.decode("utf-8")
 
 
 def rotate_keys() -> None:
-    key_dir, public_path, private_path = _key_paths()
     with _KEY_LOCK:
+        if _KYBER is None:
+            path = _fallback_key_path()
+            try:
+                if path.exists():
+                    path.unlink()
+            finally:
+                _ensure_fallback_key()
+            return
+        key_dir, public_path, private_path = _key_paths()
         for path in (public_path, private_path):
             if path.exists():
                 path.unlink()

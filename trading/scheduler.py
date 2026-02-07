@@ -555,6 +555,24 @@ class BusScheduler:
         while state.samples and state.samples[0][0] < cutoff:
             state.samples.popleft()
 
+    def _bias(self, state: RouteState, window: int = 24) -> float:
+        """
+        Proxy for "implied spread" using recent price jitter.
+        We don't have bid/ask, so we use median absolute return as a conservative noise floor.
+        """
+        if not state.samples:
+            return 0.0
+        recent = list(state.samples)[-max(3, int(window) + 1) :]
+        prices = np.asarray([float(sample[1]) for sample in recent if float(sample[1]) > 0], dtype=np.float64)
+        if prices.size < 3:
+            return 0.0
+        rets = np.diff(prices) / np.maximum(prices[:-1], 1e-9)
+        abs_rets = np.abs(rets)
+        if abs_rets.size == 0:
+            return 0.0
+        noise = float(np.median(abs_rets))
+        return float(np.clip(noise * 2.0, 0.0, 0.25))
+
     def _forecast(self, state: RouteState) -> List[HorizonSignal]:
         if len(state.samples) < 12:
             return []
