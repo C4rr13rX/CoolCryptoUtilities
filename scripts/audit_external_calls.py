@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "docs" / "free_api_dependency_matrix.md"
+BACKLOG = ROOT / "docs" / "free_api_replacement_backlog.md"
 
 SKIP_DIRS = {
     ".git",
@@ -28,6 +29,7 @@ SKIP_DIRS = {
 FILE_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".yml", ".yaml", ".env"}
 
 URL_RE = re.compile(r"https?://[A-Za-z0-9\.\-_/:%\?#&=]+")
+HOST_RE = re.compile(r"^https?://([^/]+)/?")
 SDK_HINTS = [
     "boto3",
     "openai",
@@ -119,6 +121,35 @@ def main():
                 locations = ", ".join(sorted(sdk_map[hint]))
                 f.write(f"- `{hint}`\n")
                 f.write(f"  - locations: {locations}\n")
+
+    # Build a backlog of external hosts to triage.
+    host_map = {}
+    for url, locations in url_map.items():
+        match = HOST_RE.match(url)
+        if not match:
+            continue
+        host = match.group(1).lower()
+        if host == ".":
+            continue
+        if not re.search(r"[a-z0-9]", host):
+            continue
+        if host.startswith("127.0.0.1") or host.startswith("localhost"):
+            continue
+        if host.endswith(".test"):
+            continue
+        host_map.setdefault(host, {"urls": set(), "locations": set()})
+        host_map[host]["urls"].add(url)
+        host_map[host]["locations"].update(locations)
+
+    with BACKLOG.open("w", encoding="utf-8") as f:
+        f.write("# Free API Replacement Backlog\n\n")
+        f.write("Auto-generated host list. Fill in category, replacement plan, and status.\n\n")
+        f.write("| Host | Example URL | Locations | Category | Replacement | Status |\n")
+        f.write("| --- | --- | --- | --- | --- | --- |\n")
+        for host in sorted(host_map.keys()):
+            example = sorted(host_map[host]["urls"])[0]
+            locations = ", ".join(sorted(host_map[host]["locations"]))
+            f.write(f"| `{host}` | `{example}` | `{locations}` |  |  |  |\n")
 
 
 if __name__ == "__main__":
