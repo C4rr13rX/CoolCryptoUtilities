@@ -110,29 +110,79 @@ class Command(BaseCommand):
             self.stdout.write(self.style.HTTP_INFO(f"$ {' '.join(resolved)}"))
             subprocess.run(resolved, cwd=cwd, check=True)
 
+        def ensure_python_deps():
+            req_main = project_root / "requirements.txt"
+            req_legacy = project_root / "requirements_legacy.txt"
+            self.stdout.write(self.style.MIGRATE_HEADING("[1/7] Python dependencies"))
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "--version"],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            except Exception:
+                run([sys.executable, "-m", "ensurepip", "--upgrade"])
+            try:
+                run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        "--disable-pip-version-check",
+                        "-r",
+                        str(req_main),
+                    ],
+                    cwd=str(project_root),
+                )
+            except subprocess.CalledProcessError:
+                if req_legacy.exists():
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "Primary requirements failed, retrying with requirements_legacy.txt"
+                        )
+                    )
+                    run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "--disable-pip-version-check",
+                            "-r",
+                            str(req_legacy),
+                        ],
+                        cwd=str(project_root),
+                    )
+                else:
+                    raise
+
         # Respect disable flags before Django finishes loading apps that auto-start services.
         if options.get("guardian_off"):
             os.environ["GUARDIAN_AUTO_DISABLED"] = "1"
         if options.get("production_off"):
             os.environ["PRODUCTION_AUTO_DISABLED"] = "1"
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[1/6] Frontend build"))
+        ensure_python_deps()
+
+        self.stdout.write(self.style.MIGRATE_HEADING("[2/7] Frontend build"))
         if not options["noinstall"]:
             run(["npm", "install"], cwd=str(frontend_dir))
         run(["npm", "run", "build"], cwd=str(frontend_dir))
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[2/6] Make migrations"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[3/7] Make migrations"))
         call_command("makemigrations")
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[3/6] Apply migrations"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[4/7] Apply migrations"))
         call_command("migrate")
 
-        self.stdout.write(self.style.MIGRATE_HEADING("[4/6] Collect static"))
+        self.stdout.write(self.style.MIGRATE_HEADING("[5/7] Collect static"))
         call_command("collectstatic", interactive=False)
 
         worker_process = None
         if not options.get("branddozer_worker_off") and os.environ.get("BRANDDOZER_WORKER_DISABLED") != "1":
-            self.stdout.write(self.style.MIGRATE_HEADING("[5/6] Start BrandDozer worker"))
+            self.stdout.write(self.style.MIGRATE_HEADING("[6/7] Start BrandDozer worker"))
             worker_env = os.environ.copy()
             worker_env.setdefault("SECURE_VAULT_KEY_DIR", str(project_root / "storage" / "secure_vault"))
             worker_process = subprocess.Popen(
@@ -142,9 +192,9 @@ class Command(BaseCommand):
             )
 
         if options.get("no_runserver"):
-            self.stdout.write(self.style.MIGRATE_HEADING("[6/6] Runserver skipped"))
+            self.stdout.write(self.style.MIGRATE_HEADING("[7/7] Runserver skipped"))
         else:
-            self.stdout.write(self.style.MIGRATE_HEADING("[6/6] Runserver"))
+            self.stdout.write(self.style.MIGRATE_HEADING("[7/7] Runserver"))
             runserver_args = options.get("runserver_args") or []
             if all(arg != "--noreload" for arg in runserver_args):
                 runserver_args.append("--noreload")
