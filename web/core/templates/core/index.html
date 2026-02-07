@@ -30,14 +30,16 @@
         color-scheme: dark;
         --accent-1: #060a11;
         --accent-2: #0d1a2b;
-        --accent-3: #7fb0ff;
+        --accent-3: #b6ccff;
         --accent-ok: #34d399;
         --accent-warn: #f6b143;
         --accent-err: #ff5a5f;
-        --bg: radial-gradient(circle at 18% 16%, rgba(15, 25, 40, 0.92), rgba(6, 9, 15, 0.98));
-        --panel-bg: rgba(8, 14, 22, 0.92);
-        --panel-border: rgba(127, 176, 255, 0.2);
-        font-family: "Roboto", "Segoe UI", "Helvetica", sans-serif;
+        --bg: radial-gradient(circle at 16% 16%, rgba(12, 18, 32, 0.95), rgba(3, 5, 10, 0.98));
+        --panel-bg: rgba(5, 9, 16, 0.9);
+        --panel-border: rgba(165, 194, 255, 0.22);
+        font-family: "Hackout", "Segoe UI", "Helvetica", sans-serif;
+        --font-title: "EscapeArtist", "Hackout", "Segoe UI", sans-serif;
+        --font-body: "Hackout", "Segoe UI", "Helvetica", sans-serif;
       }
       * {
         box-sizing: border-box;
@@ -60,7 +62,8 @@
         height: 100%;
         z-index: 0;
         pointer-events: none;
-        opacity: 0.9;
+        opacity: 0.95;
+        mix-blend-mode: screen;
       }
       .splash-overlay {
         position: fixed;
@@ -392,6 +395,8 @@
         let height = 0;
         let dpr = Math.min(window.devicePixelRatio || 1, 2);
         let nodes = [];
+        let stars = [];
+        let backgroundGradient = null;
         const mouse = { x: null, y: null };
 
         const initNodes = () => {
@@ -405,6 +410,29 @@
           }));
         };
 
+        const initStars = () => {
+          const count = Math.min(120, Math.max(60, Math.floor((width * height) / 18000)));
+          stars = Array.from({ length: count }).map(() => ({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            r: 0.6 + Math.random() * 1.4,
+            a: 0.25 + Math.random() * 0.6,
+            tw: 0.003 + Math.random() * 0.008,
+            vy: 0.05 + Math.random() * 0.18,
+            vx: (Math.random() - 0.5) * 0.04,
+          }));
+        };
+
+        const buildGradient = () => {
+          const radius = Math.max(width, height) * 0.9;
+          const gradient = ctx.createRadialGradient(width * 0.2, height * 0.15, 0, width * 0.4, height * 0.3, radius);
+          gradient.addColorStop(0, 'rgba(10, 16, 30, 0.9)');
+          gradient.addColorStop(0.4, 'rgba(18, 20, 38, 0.78)');
+          gradient.addColorStop(0.7, 'rgba(20, 10, 32, 0.7)');
+          gradient.addColorStop(1, 'rgba(2, 4, 8, 0.95)');
+          backgroundGradient = gradient;
+        };
+
         const resize = () => {
           width = window.innerWidth;
           height = window.innerHeight;
@@ -414,13 +442,32 @@
           canvas.style.width = `${width}px`;
           canvas.style.height = `${height}px`;
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          buildGradient();
           initNodes();
+          initStars();
         };
 
         const step = () => {
           ctx.clearRect(0, 0, width, height);
-          ctx.fillStyle = 'rgba(5, 10, 18, 0.45)';
+          ctx.fillStyle = backgroundGradient || 'rgba(4, 8, 16, 0.6)';
           ctx.fillRect(0, 0, width, height);
+
+          for (const star of stars) {
+            star.a += (Math.random() - 0.5) * star.tw;
+            const alpha = Math.max(0.15, Math.min(0.85, star.a));
+            ctx.fillStyle = `rgba(220, 230, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+            ctx.fill();
+            star.y += star.vy;
+            star.x += star.vx;
+            if (star.y > height + 10) {
+              star.y = -10;
+              star.x = Math.random() * width;
+            }
+            if (star.x < -10) star.x = width + 10;
+            if (star.x > width + 10) star.x = -10;
+          }
 
           const connectDist = Math.max(120, Math.min(180, Math.min(width, height) * 0.18));
           const influence = 160;
@@ -455,7 +502,7 @@
               const dist = Math.hypot(dx, dy);
               if (dist < connectDist) {
                 const alpha = 1 - dist / connectDist;
-                ctx.strokeStyle = `rgba(111, 167, 255, ${0.18 * alpha})`;
+                ctx.strokeStyle = `rgba(200, 215, 235, ${0.28 * alpha})`;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(a.x, a.y);
@@ -466,7 +513,7 @@
           }
 
           for (const node of nodes) {
-            ctx.fillStyle = 'rgba(127, 176, 255, 0.8)';
+            ctx.fillStyle = 'rgba(175, 195, 215, 0.82)';
             ctx.beginPath();
             ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
             ctx.fill();

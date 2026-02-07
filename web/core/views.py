@@ -317,6 +317,14 @@ class BrandDozerSoloView(BaseSecureView):
     initial_route = "branddozer_solo"
 
 
+class AudioLabPageView(BaseSecureView):
+    initial_route = "audiolab"
+
+
+class U53RxRobotPageView(BaseSecureView):
+    initial_route = "u53rxr080t"
+
+
 class SpaRouteView(BaseSecureView):
     """
     Catch-all view so refreshing /<route> stays inside the SPA shell.
@@ -324,7 +332,8 @@ class SpaRouteView(BaseSecureView):
     """
 
     def dispatch(self, request, *args, **kwargs):
-        slug = kwargs.get("route") or "dashboard"
+        raw_slug = kwargs.get("route") or "dashboard"
+        slug = str(raw_slug).lower()
         allowed = {
             "dashboard",
             "organism",
@@ -344,10 +353,13 @@ class SpaRouteView(BaseSecureView):
             "c0d3r",
             "u53rxr080t",
             "branddozer_solo",
+            "audiolab",
         }
         if slug not in allowed:
             return redirect("core:dashboard")
         self.initial_route = slug
+        if slug != raw_slug:
+            return redirect(f"/{slug}")
         return super().dispatch(request, *args, **kwargs)
 
 

@@ -17,6 +17,7 @@ import BrandDozerView from '@/views/BrandDozerView.vue';
 import U53RxRobotView from '@/views/U53RxRobotView.vue';
 import AddressBookView from '@/views/AddressBookView.vue';
 import C0d3rView from '@/views/C0d3rView.vue';
+import AudioLabView from '@/views/AudioLabView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -112,6 +113,12 @@ const routes: RouteRecordRaw[] = [
     path: '/u53rxr080t',
     name: 'u53rxr080t',
     component: U53RxRobotView,
+  },
+  {
+    path: '/audiolab',
+    name: 'audiolab',
+    component: AudioLabView,
+    meta: { title: 'Audio Lab' },
   },
 ];
 

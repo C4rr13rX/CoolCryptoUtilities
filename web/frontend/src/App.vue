@@ -73,6 +73,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import StatusIndicator from '@/components/StatusIndicator.vue';
 import HackerIcon from '@/components/HackerIcon.vue';
+import { ambientAudio } from '@/audio/ambient';
 import { useDashboardStore } from '@/stores/dashboard';
 
 const store = useDashboardStore();
@@ -84,16 +85,24 @@ const glitchActive = ref(false);
 let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
 let glitchTimer: number | undefined;
+let pointerHandler: ((event: PointerEvent) => void) | undefined;
 
 onMounted(() => {
   refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
   consoleTimer = window.setInterval(() => store.refreshConsole(), 5000);
+  pointerHandler = () => {
+    ambientAudio.triggerChord();
+  };
+  window.addEventListener('pointerdown', pointerHandler, { passive: true });
 });
 
 onBeforeUnmount(() => {
   if (refreshTimer) window.clearInterval(refreshTimer);
   if (consoleTimer) window.clearInterval(consoleTimer);
   if (glitchTimer) window.clearTimeout(glitchTimer);
+  if (pointerHandler) {
+    window.removeEventListener('pointerdown', pointerHandler);
+  }
 });
 
 const triggerGlitch = () => {
@@ -106,7 +115,7 @@ const triggerGlitch = () => {
     glitchActive.value = true;
     glitchTimer = window.setTimeout(() => {
       glitchActive.value = false;
-    }, 700);
+    }, 240);
   });
 };
 
@@ -234,6 +243,7 @@ const navItems = computed(() => [
   { route: 'codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
   { route: 'integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
+  { route: 'audiolab', label: 'Audio Lab', icon: 'radar', intent: pipelineIntent.value },
   { route: 'u53rxr080t', label: 'U53RxR080T', icon: 'radar', intent: pipelineIntent.value },
   { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', intent: pipelineIntent.value },
 ]);
@@ -323,9 +333,10 @@ const totalProfitDisplay = computed(() =>
   padding: 0.8rem 0.9rem;
   border-radius: 12px;
   text-decoration: none;
-  color: rgba(207, 225, 255, 0.82);
-  background: rgba(12, 26, 45, 0.6);
-  transition: background 0.2s ease, color 0.2s ease;
+  color: rgba(225, 236, 255, 0.88);
+  background: rgba(6, 12, 22, 0.72);
+  border: 1px solid rgba(120, 160, 230, 0.14);
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .nav-link .label {
@@ -368,9 +379,9 @@ const totalProfitDisplay = computed(() =>
 }
 
 .nav-link.active {
-  background: rgba(45, 117, 196, 0.25);
-  color: #fefefe;
-  border: 1px solid rgba(127, 176, 255, 0.4);
+  background: rgba(90, 166, 255, 0.2);
+  color: #ffffff;
+  border: 1px solid rgba(165, 200, 255, 0.45);
 }
 
 .sidebar__foot {
@@ -473,11 +484,11 @@ const totalProfitDisplay = computed(() =>
   display: flex;
   flex-direction: column;
   align-self: stretch;
-  background: rgba(6, 14, 26, 0.92);
-  border: 1px solid rgba(79, 168, 255, 0.18);
+  background: rgba(3, 6, 12, 0.82);
+  border: 1px solid rgba(140, 190, 255, 0.2);
   border-radius: 18px;
   padding: 1.5rem;
-  box-shadow: 0 28px 56px rgba(3, 12, 25, 0.45);
+  box-shadow: 0 28px 56px rgba(2, 8, 18, 0.6);
   overflow: hidden;
 }
 

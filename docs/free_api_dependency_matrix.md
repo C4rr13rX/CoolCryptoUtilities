@@ -1,0 +1,1223 @@
+# Free API Dependency Matrix (Auto-Scan)
+
+This is an automated scan of outbound URLs and SDK hints. Manual review required.
+
+## URL References
+
+- `http://.`
+  - locations: web\coolcrypto_dashboard\settings.py
+- `http://127.0.0.1`
+  - locations: web\coolcrypto_dashboard\settings.py
+- `http://127.0.0.1:`
+  - locations: get_news.py
+- `http://127.0.0.1:36279`
+  - locations: web\static\u53rxr080t\extension\background.js, web\static\u53rxr080t\extension\options.js
+- `http://127.0.0.1:8000`
+  - locations: services\branddozer_delivery.py, services\branddozer_ui.py, web\frontend\vite.config.ts, web\static\u53rxr080t\extension\background.js, web\static\u53rxr080t\extension\options.js
+- `http://127.0.0.1:8000/`
+  - locations: web\static\u53rxr080t\extension\manifest.json
+- `http://batch.test/`
+  - locations: tests\test_news_ingestor.py
+- `http://batch.test/feed`
+  - locations: tests\test_news_ingestor.py
+- `http://config.test/post`
+  - locations: tests\test_news_ingestor.py
+- `http://config.test/rss`
+  - locations: tests\test_news_ingestor.py
+- `http://example.com/feed`
+  - locations: tests\test_news_ingestor.py
+- `http://example.com/post`
+  - locations: tests\test_news_ingestor.py
+- `http://localhost`
+  - locations: web\coolcrypto_dashboard\settings.py
+- `http://localhost:5173`
+  - locations: web\core\views.py
+- `http://localhost:8000`
+  - locations: .github\workflows\paved-road.yml
+- `http://localhost:PORT`
+  - locations: get_news.py
+- `http://purl.org/rss/1.0/modules/content/`
+  - locations: trading\data_loader.py
+- `http://www.w3.org/2005/Atom`
+  - locations: services\polite_news_crawler.py
+- `https://127.0.0.1`
+  - locations: web\coolcrypto_dashboard\settings.py
+- `https://1rpc.io/base`
+  - locations: balances.py, router_wallet.py
+- `https://1rpc.io/eth`
+  - locations: balances.py, router_wallet.py
+- `https://99bitcoins.com`
+  - locations: services\polite_news_crawler.py
+- `https://99bitcoins.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://allowed.com`
+  - locations: tests\test_research_scraper.py
+- `https://allowed.com/doc`
+  - locations: tests\test_research_scraper.py
+- `https://allowed.com/doc1`
+  - locations: tests\test_research_scraper.py
+- `https://ambcrypto.com`
+  - locations: services\polite_news_crawler.py
+- `https://ambcrypto.com/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://api.0x.org`
+  - locations: router_wallet.py, services\providers\zerox_v2.py, tools\zerox_permit2_quote.py
+- `https://api.0x.org/swap/v1/price`
+  - locations: router_wallet.py
+- `https://api.0x.org/swap/v1/prices`
+  - locations: services\api_integrations.py
+- `https://api.1inch.dev/swap/v6.0/`
+  - locations: router_wallet.py
+- `https://api.avax.network/ext/bc/C/rpc`
+  - locations: router_wallet.py
+- `https://api.binance.com/api/v3/ticker/24hr?symbol=`
+  - locations: trading\data_stream.py
+- `https://api.coincap.io/v2/assets`
+  - locations: services\public_api_clients.py
+- `https://api.coingecko.com/api/v3/coins/markets`
+  - locations: services\public_api_clients.py
+- `https://api.coingecko.com/api/v3/simple/price?ids=`
+  - locations: trading\data_stream.py
+- `https://api.coinlore.net/api/tickers/`
+  - locations: services\public_api_clients.py
+- `https://api.coinpaprika.com`
+  - locations: services\public_api_clients.py
+- `https://api.coinpaprika.com/v1/tickers`
+  - locations: services\public_api_clients.py
+- `https://api.covalenthq.com/v1`
+  - locations: services\providers\covalent.py
+- `https://api.crossref.org`
+  - locations: services\research_sources.py
+- `https://api.crossref.org/works`
+  - locations: services\web_research.py
+- `https://api.datacite.org`
+  - locations: services\research_sources.py
+- `https://api.datacite.org/works`
+  - locations: services\web_research.py
+- `https://api.dexscreener.com/latest/dex/search?q=`
+  - locations: trading\selector.py
+- `https://api.dexscreener.com/latest/dex/tokens`
+  - locations: services\discovery\trending_fetcher.py
+- `https://api.example.com`
+  - locations: api-benchmark\benchmark.py
+- `https://api.exchange.coinbase.com/products/`
+  - locations: trading\data_stream.py
+- `https://api.fda.gov`
+  - locations: services\research_sources.py
+- `https://api.figshare.com`
+  - locations: services\research_sources.py
+- `https://api.g.alchemy.com/prices/v1/`
+  - locations: balances.py
+- `https://api.github.com`
+  - locations: services\branddozer_github.py
+- `https://api.gopluslabs.io`
+  - locations: filter_scams.py
+- `https://api.gopluslabs.io/api/v1/token_security/1`
+  - locations: services\api_integrations.py
+- `https://api.gopluslabs.io/api/v1/token_security/10`
+  - locations: services\discovery\security_checks.py
+- `https://api.kucoin.com/api/v1/market/orderbook/level1?symbol=`
+  - locations: trading\data_stream.py
+- `https://api.open-meteo.com`
+  - locations: services\research_sources.py
+- `https://api.openai.com/v1/models`
+  - locations: services\api_integrations.py
+- `https://api.openalex.org/works`
+  - locations: services\web_research.py
+- `https://api.opentopodata.org`
+  - locations: services\research_sources.py
+- `https://api.search.brave.com/res/v1/web/search`
+  - locations: services\web_search.py
+- `https://api.semanticscholar.org`
+  - locations: services\research_sources.py
+- `https://api.semanticscholar.org/graph/v1/paper/search`
+  - locations: services\web_research.py
+- `https://api.tidesandcurrents.noaa.gov`
+  - locations: services\research_sources.py
+- `https://api.weather.gov`
+  - locations: services\research_sources.py
+- `https://api.worldbank.org`
+  - locations: services\research_sources.py
+- `https://app.infura.io/`
+  - locations: services\api_integrations.py
+- `https://arb1.arbitrum.io/rpc`
+  - locations: balances.py, download2000.py, router_wallet.py
+- `https://arbiscan.io/tx/`
+  - locations: services\cli_utils.py, wallet_cli.py
+- `https://arbitrum-mainnet.infura.io/v3/`
+  - locations: balances.py
+- `https://arbitrum.api.0x.org`
+  - locations: router_wallet.py
+- `https://arbitrum.drpc.org`
+  - locations: balances.py, router_wallet.py
+- `https://arweave-search.goldsky.com/graphql`
+  - locations: arweave_news.py
+- `https://arweave.net`
+  - locations: arweave_news.py
+- `https://arweave.net/`
+  - locations: arweave_news.py, services\wallet_state.py
+- `https://arweave.net/graphql`
+  - locations: arweave_news.py
+- `https://arxiv.org`
+  - locations: services\research_sources.py
+- `https://avalanche-c-chain-rpc.publicnode.com`
+  - locations: router_wallet.py
+- `https://avalanche.drpc.org`
+  - locations: router_wallet.py
+- `https://aws.amazon.com/bedrock/pricing/`
+  - locations: services\bedrock_pricing.py
+- `https://bankless.ghost.io/rss/`
+  - locations: services\polite_news_crawler.py
+- `https://bar.com/page`
+  - locations: tests\test_research_scraper.py
+- `https://base-rpc.publicnode.com`
+  - locations: balances.py, router_wallet.py
+- `https://base.api.0x.org`
+  - locations: router_wallet.py
+- `https://base.drpc.org`
+  - locations: balances.py, router_wallet.py
+- `https://basescan.org/tx/`
+  - locations: services\cli_utils.py, wallet_cli.py
+- `https://beincrypto.com`
+  - locations: services\polite_news_crawler.py
+- `https://beincrypto.com/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://bitcoinist.com`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinist.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinmagazine`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinmagazine.com/sitemap.xml`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinmagazine.com/sitemap_index.xml`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinmagazine.com/sitemaps/sitemap.xml`
+  - locations: services\polite_news_crawler.py
+- `https://bitcointalk.org/index.php?board=1.0`
+  - locations: services\polite_news_crawler.py
+- `https://bitcointalk.org/index.php?board=67.0`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinwarrior.net`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinwarrior.net/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://bitcoinworld.co.in/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://blockchainreporter.net/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://blocked.com/doc2`
+  - locations: tests\test_research_scraper.py
+- `https://blockonomi.com`
+  - locations: services\polite_news_crawler.py
+- `https://blockonomi.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://blockworks.co`
+  - locations: services\polite_news_crawler.py
+- `https://blockworks.co/feed`
+  - locations: services\news_ingestor.py
+- `https://blockworks.co/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://blog.bitfinex.com`
+  - locations: services\polite_news_crawler.py
+- `https://blog.bitfinex.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://blog.chain.link/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://blog.chainalysis.com/feed`
+  - locations: config\ethical_news_sources.json, services\news_ingestor.py
+- `https://blog.chainalysis.com/rss/`
+  - locations: services\polite_news_crawler.py
+- `https://blog.coinbase.com/feed`
+  - locations: services\polite_news_crawler.py
+- `https://blog.ethereum.org/en/feed.xml`
+  - locations: services\news_ingestor.py, services\polite_news_crawler.py
+- `https://blog.kraken.com`
+  - locations: services\polite_news_crawler.py
+- `https://blog.kraken.com/feed`
+  - locations: services\polite_news_crawler.py
+- `https://blog.kraken.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://blogs.worldbank.org/feed`
+  - locations: config\ethical_news_sources.json, services\news_ingestor.py
+- `https://bsc-dataseed.binance.org`
+  - locations: router_wallet.py
+- `https://bsc.news`
+  - locations: services\polite_news_crawler.py
+- `https://bsc.news/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://bsc.publicnode.com`
+  - locations: router_wallet.py
+- `https://bscrpc.com`
+  - locations: router_wallet.py
+- `https://btcmanager.com`
+  - locations: services\polite_news_crawler.py
+- `https://btcmanager.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://bulkdata.uspto.gov`
+  - locations: services\research_sources.py
+- `https://certification.oshwa.org`
+  - locations: services\research_sources.py
+- `https://chaosbook.org`
+  - locations: services\research_sources.py
+- `https://clinicaltrials.gov`
+  - locations: services\research_sources.py
+- `https://coinchapter.com`
+  - locations: services\polite_news_crawler.py
+- `https://coinchapter.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coincheckup.com/blog`
+  - locations: services\polite_news_crawler.py
+- `https://coincheckup.com/blog/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coincodex.com/rss/news/`
+  - locations: services\polite_news_crawler.py
+- `https://coincu.com`
+  - locations: services\polite_news_crawler.py
+- `https://coincu.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coinedition.com`
+  - locations: services\polite_news_crawler.py
+- `https://coinedition.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coinfomania.com`
+  - locations: services\polite_news_crawler.py
+- `https://coinfomania.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coinjournal.net`
+  - locations: services\polite_news_crawler.py
+- `https://coinmarketcal.com/en/news/feed`
+  - locations: services\polite_news_crawler.py
+- `https://coinmarketcap.com/alexandria/rss`
+  - locations: services\polite_news_crawler.py
+- `https://coinmarketcap.com/community/articles/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coinpedia.org`
+  - locations: services\polite_news_crawler.py
+- `https://coinpedia.org/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://coinquora.com`
+  - locations: services\polite_news_crawler.py
+- `https://coinquora.com/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://coinstatics.com`
+  - locations: services\polite_news_crawler.py
+- `https://coinstatics.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://cointelegraph.com/rss`
+  - locations: services\news_ingestor.py, trading\data_loader.py
+- `https://consensys.net/blog`
+  - locations: services\polite_news_crawler.py
+- `https://consensys.net/blog/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://crypto-economy.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://crypto.news`
+  - locations: services\polite_news_crawler.py
+- `https://crypto.news/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://cryptobriefing.com/feed`
+  - locations: services\polite_news_crawler.py
+- `https://cryptodaily.co.uk`
+  - locations: services\polite_news_crawler.py
+- `https://cryptodaily.co.uk/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://cryptoglobe.com`
+  - locations: services\polite_news_crawler.py
+- `https://cryptoglobe.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://cryptomode.com`
+  - locations: services\polite_news_crawler.py
+- `https://cryptomode.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://cryptonewsland.com`
+  - locations: services\polite_news_crawler.py
+- `https://cryptonewsland.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://cryptopanic.com/api/v1/posts/`
+  - locations: services\api_integrations.py, services\news_archive.py, trading\data_loader.py
+- `https://cryptopanic.com/developers/api/`
+  - locations: services\api_integrations.py
+- `https://cryptopanic.com/news/`
+  - locations: services\news_archive.py, trading\data_loader.py
+- `https://cryptopolitan.com`
+  - locations: services\polite_news_crawler.py
+- `https://cryptopolitan.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://cryptopotato.com`
+  - locations: services\polite_news_crawler.py
+- `https://cryptopotato.com/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://cryptoslate.com`
+  - locations: services\polite_news_crawler.py
+- `https://cryptoslate.com/feed`
+  - locations: services\polite_news_crawler.py
+- `https://cryptoticker.io`
+  - locations: services\polite_news_crawler.py
+- `https://cryptoticker.io/en/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://dailycoin.com`
+  - locations: services\polite_news_crawler.py
+- `https://dailycoin.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://dailyhodl.com`
+  - locations: services\polite_news_crawler.py
+- `https://dailyhodl.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://dashboard.0x.org/`
+  - locations: services\api_integrations.py
+- `https://dashboard.alchemy.com/`
+  - locations: services\api_integrations.py
+- `https://data.cdc.gov`
+  - locations: services\research_sources.py
+- `https://data.gov`
+  - locations: services\research_sources.py
+- `https://data.nist.gov`
+  - locations: services\research_sources.py
+- `https://data.un.org`
+  - locations: services\research_sources.py
+- `https://datadryad.org`
+  - locations: services\research_sources.py
+- `https://datatracker.ietf.org`
+  - locations: services\research_sources.py
+- `https://dataverse.harvard.edu`
+  - locations: services\research_sources.py
+- `https://decrypt.co/feed`
+  - locations: services\news_ingestor.py, services\polite_news_crawler.py, trading\data_loader.py
+- `https://developers.li.fi/`
+  - locations: services\api_integrations.py
+- `https://dlmf.nist.gov`
+  - locations: services\research_sources.py
+- `https://doaj.org`
+  - locations: services\research_sources.py
+- `https://docs.0x.org/`
+  - locations: router_wallet.py
+- `https://docs.coincap.io/`
+  - locations: services\public_api_clients.py
+- `https://doi.org/`
+  - locations: services\web_research.py
+- `https://donate.quasar.dev`
+  - locations: web\frontend\package-lock.json
+- `https://duckduckgo.com/html/`
+  - locations: services\research_scraper.py
+- `https://duckduckgo.com/html/?q=`
+  - locations: services\web_search.py
+- `https://earthquake.usgs.gov`
+  - locations: services\research_sources.py
+- `https://ec.europa.eu/eurostat`
+  - locations: services\research_sources.py
+- `https://echo.epa.gov`
+  - locations: services\research_sources.py
+- `https://en.cryptonomist.ch`
+  - locations: services\polite_news_crawler.py
+- `https://en.cryptonomist.ch/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://en.wikipedia.org/w/api.php`
+  - locations: services\web_search.py
+- `https://envirofacts.epa.gov`
+  - locations: services\research_sources.py
+- `https://eth-mainnet.g.alchemy.com/v2/`
+  - locations: services\api_integrations.py
+- `https://eth.drpc.org`
+  - locations: balances.py, router_wallet.py
+- `https://eth.llamarpc.com`
+  - locations: balances.py, download2000.py, router_wallet.py
+- `https://ethereumworldnews.com`
+  - locations: services\polite_news_crawler.py
+- `https://ethereumworldnews.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://etherscan.io/tx/`
+  - locations: services\cli_utils.py, wallet_cli.py
+- `https://europepmc.org`
+  - locations: services\research_sources.py
+- `https://eutils.ncbi.nlm.nih.gov`
+  - locations: services\research_sources.py
+- `https://eutils.ncbi.nlm.nih.gov/entrez/eutils`
+  - locations: services\web_research.py
+- `https://example.com`
+  - locations: tests\test_research_scraper.py
+- `https://example.com/`
+  - locations: web\securevault\tests.py
+- `https://example.com/abc123`
+  - locations: web\securevault\tests.py
+- `https://example.com/page`
+  - locations: tests\test_research_scraper.py
+- `https://example.invalid/research`
+  - locations: services\research_scraper.py
+- `https://feross.org/support`
+  - locations: web\frontend\package-lock.json
+- `https://finbold.com`
+  - locations: services\polite_news_crawler.py
+- `https://finbold.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://foo.org`
+  - locations: tests\test_research_scraper.py
+- `https://forkast.news`
+  - locations: services\polite_news_crawler.py
+- `https://forkast.news/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://gateway.thegraph.com/api/`
+  - locations: make2000index.py, services\api_integrations.py
+- `https://genome.ucsc.edu`
+  - locations: services\research_sources.py
+- `https://ghoapi.azureedge.net`
+  - locations: services\research_sources.py
+- `https://github.com/`
+  - locations: services\branddozer_github.py, web\branddozer\views.py
+- `https://github.com/chalk/ansi-regex?sponsor=1`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/chalk/ansi-styles?sponsor=1`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/chalk/strip-ansi?sponsor=1`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/chalk/wrap-ansi?sponsor=1`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/fb55/entities?sponsor=1`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/security-advisories.atom`
+  - locations: services\news_ingestor.py
+- `https://github.com/sponsors/RubenVerborgh`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/SuperchupuDev`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/ai`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/antfu`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/antonk52`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/feross`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/isaacs`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/jonschlinkert`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/ljharb`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/posva`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/rawify`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/sponsors/sindresorhus`
+  - locations: web\frontend\package-lock.json
+- `https://github.com/vitejs/vite?sponsor=1`
+  - locations: web\frontend\package-lock.json
+- `https://gitlab.com/kicad`
+  - locations: services\research_sources.py
+- `https://gopluslabs.io/`
+  - locations: services\api_integrations.py
+- `https://gtexportal.org`
+  - locations: services\research_sources.py
+- `https://home.treasury.gov/news/press-releases/rss`
+  - locations: services\news_ingestor.py
+- `https://httpbin.org/get`
+  - locations: api-benchmark\results\benchmark_20260206_213347.json, api-benchmark\run_benchmark.py
+- `https://huggingface.co/datasets/SahandNZ/cryptonews-articles-with-price-momentum-labels/resolve/main/`
+  - locations: get_news.py
+- `https://inspirehep.net`
+  - locations: services\research_sources.py
+- `https://ipfs.io/ipfs/`
+  - locations: services\wallet_state.py
+- `https://journals.plos.org`
+  - locations: services\research_sources.py
+- `https://jsonplaceholder.typicode.com`
+  - locations: api-benchmark\api_benchmark.py, api-benchmark\config.json
+- `https://li.quest/v1`
+  - locations: router_wallet.py
+- `https://li.quest/v1/status`
+  - locations: services\api_integrations.py
+- `https://lite.duckduckgo.com/lite/?q=`
+  - locations: services\web_search.py
+- `https://localhost`
+  - locations: web\coolcrypto_dashboard\settings.py
+- `https://mainnet.base.org`
+  - locations: balances.py, download2000.py, router_wallet.py
+- `https://mainnet.era.zksync.io`
+  - locations: router_wallet.py
+- `https://mainnet.infura.io/v3/`
+  - locations: balances.py, services\api_integrations.py
+- `https://mainnet.optimism.io`
+  - locations: balances.py, download2000.py, router_wallet.py
+- `https://messari.io/rss`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://min-api.cryptocompare.com/data/v2/news/`
+  - locations: trading\data_loader.py
+- `https://mirror.example.com/api`
+  - locations: tests\test_data_stream.py
+- `https://news.bitcoin.com`
+  - locations: services\polite_news_crawler.py
+- `https://news.bitcoin.com/feed/`
+  - locations: trading\data_loader.py
+- `https://newsbtc.com`
+  - locations: services\polite_news_crawler.py
+- `https://newsbtc.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://newsletter.thedefiant.io/feed`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://ntrs.nasa.gov`
+  - locations: services\research_sources.py
+- `https://nulltx.com`
+  - locations: services\polite_news_crawler.py
+- `https://nulltx.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://oeis.org`
+  - locations: services\research_sources.py
+- `https://open-api.openocean.finance/v4/`
+  - locations: router_wallet.py
+- `https://openalex.org`
+  - locations: services\research_sources.py
+- `https://opencitations.net`
+  - locations: services\research_sources.py
+- `https://opencollective.com/browserslist`
+  - locations: web\frontend\package-lock.json
+- `https://opencollective.com/parcel`
+  - locations: web\frontend\package-lock.json
+- `https://opencollective.com/postcss/`
+  - locations: web\frontend\package-lock.json
+- `https://opendata.cern.ch`
+  - locations: services\research_sources.py
+- `https://openei.org`
+  - locations: services\research_sources.py
+- `https://openneuro.org`
+  - locations: services\research_sources.py
+- `https://opensource.ieee.org`
+  - locations: services\research_sources.py
+- `https://optimism-mainnet.infura.io/v3/`
+  - locations: balances.py
+- `https://optimism.api.0x.org`
+  - locations: router_wallet.py
+- `https://optimism.drpc.org`
+  - locations: balances.py, router_wallet.py
+- `https://optimistic.etherscan.io/tx/`
+  - locations: services\cli_utils.py, wallet_cli.py
+- `https://osti.gov`
+  - locations: services\research_sources.py
+- `https://overpass-api.de`
+  - locations: services\research_sources.py
+- `https://paladinsec.co/assets/audits/20221030_Paladin_Camelot_Final_Report.pdf`
+  - locations: services\providers\zerox_v2.py
+- `https://paulmillr.com/funding/`
+  - locations: web\frontend\package-lock.json
+- `https://pdg.lbl.gov`
+  - locations: services\research_sources.py
+- `https://physics.nist.gov/cgi-bin/cuu/Value`
+  - locations: services\web_research.py
+- `https://physionet.org`
+  - locations: services\research_sources.py
+- `https://platform.openai.com/api-keys`
+  - locations: services\api_integrations.py
+- `https://polygon-mainnet.infura.io/v3/`
+  - locations: balances.py
+- `https://polygon-rpc.com`
+  - locations: balances.py, download2000.py, router_wallet.py
+- `https://polygon.api.0x.org`
+  - locations: router_wallet.py
+- `https://polygon.drpc.org`
+  - locations: balances.py, router_wallet.py
+- `https://polygonscan.com/tx/`
+  - locations: services\cli_utils.py, wallet_cli.py
+- `https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonBedrock/current/index.json`
+  - locations: services\bedrock_pricing.py
+- `https://protos.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://pubchem.ncbi.nlm.nih.gov`
+  - locations: services\research_sources.py
+- `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/`
+  - locations: services\web_research.py
+- `https://pubmed.ncbi.nlm.nih.gov`
+  - locations: services\research_sources.py
+- `https://registry.npmjs.org/`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/ansi-regex/-/ansi-regex-5.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.2.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/ansi-styles/-/ansi-styles-4.3.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/ansi-styles/-/ansi-styles-6.2.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/any-promise/-/any-promise-1.3.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/anymatch/-/anymatch-3.1.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/arg/-/arg-5.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/autoprefixer/-/autoprefixer-10.4.21.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/axios/-/axios-1.13.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.8.24.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/binary-extensions/-/binary-extensions-2.3.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/braces/-/braces-3.0.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/browserslist/-/browserslist-4.27.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/camelcase-css/-/camelcase-css-2.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001753.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/chokidar/-/chokidar-3.6.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/chokidar/-/chokidar-4.0.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/color-convert/-/color-convert-2.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/color-name/-/color-name-1.1.4.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/commander/-/commander-4.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/cssesc/-/cssesc-3.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/csstype/-/csstype-3.1.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/detect-libc/-/detect-libc-1.0.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/didyoumean/-/didyoumean-1.2.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/dlv/-/dlv-1.1.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/eastasianwidth/-/eastasianwidth-0.2.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.244.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/emoji-regex/-/emoji-regex-8.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/emoji-regex/-/emoji-regex-9.2.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/entities/-/entities-4.5.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/es-set-tostringtag/-/es-set-tostringtag-2.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/esbuild/-/esbuild-0.25.12.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/estree-walker/-/estree-walker-2.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fast-glob/-/fast-glob-3.3.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fastq/-/fastq-1.19.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fill-range/-/fill-range-7.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/follow-redirects/-/follow-redirects-1.15.11.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/foreground-child/-/foreground-child-3.3.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/form-data/-/form-data-4.0.4.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fraction.js/-/fraction.js-4.3.7.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fsevents/-/fsevents-2.3.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/glob-parent/-/glob-parent-5.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/glob/-/glob-10.5.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/has-tostringtag/-/has-tostringtag-1.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/immutable/-/immutable-5.1.4.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/is-binary-path/-/is-binary-path-2.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/is-core-module/-/is-core-module-2.16.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-3.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/jackspeak/-/jackspeak-3.4.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/jiti/-/jiti-1.21.7.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/lilconfig/-/lilconfig-3.1.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/lines-and-columns/-/lines-and-columns-1.2.4.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/lru-cache/-/lru-cache-10.4.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/merge2/-/merge2-1.4.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/micromatch/-/micromatch-4.0.8.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/minimatch/-/minimatch-9.0.5.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/minipass/-/minipass-7.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/mz/-/mz-2.7.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/node-addon-api/-/node-addon-api-7.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/node-releases/-/node-releases-2.0.27.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/normalize-path/-/normalize-path-3.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/normalize-range/-/normalize-range-0.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/object-assign/-/object-assign-4.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/object-hash/-/object-hash-3.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/package-json-from-dist/-/package-json-from-dist-1.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/path-parse/-/path-parse-1.0.7.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/path-scurry/-/path-scurry-1.11.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/picomatch/-/picomatch-2.3.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/picomatch/-/picomatch-4.0.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/pify/-/pify-2.3.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/pinia/-/pinia-2.3.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/pirates/-/pirates-4.0.7.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/playwright-core/-/playwright-core-1.57.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/playwright/-/playwright-1.57.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss-import/-/postcss-import-15.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss-js/-/postcss-js-4.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss-load-config/-/postcss-load-config-6.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss-nested/-/postcss-nested-6.2.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss-selector-parser/-/postcss-selector-parser-6.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss-value-parser/-/postcss-value-parser-4.2.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/postcss/-/postcss-8.5.6.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/proxy-from-env/-/proxy-from-env-1.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/quasar/-/quasar-2.18.6.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/queue-microtask/-/queue-microtask-1.2.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/read-cache/-/read-cache-1.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/readdirp/-/readdirp-3.6.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/readdirp/-/readdirp-4.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/resolve/-/resolve-1.22.11.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/reusify/-/reusify-1.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/rollup/-/rollup-4.52.5.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/run-parallel/-/run-parallel-1.2.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/sass/-/sass-1.97.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/signal-exit/-/signal-exit-4.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/string-width/-/string-width-4.2.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/string-width/-/string-width-5.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/strip-ansi/-/strip-ansi-6.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/strip-ansi/-/strip-ansi-7.1.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/sucrase/-/sucrase-3.35.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/supports-preserve-symlinks-flag/-/supports-preserve-symlinks-flag-1.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/tailwindcss/-/tailwindcss-3.4.18.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/thenify-all/-/thenify-all-1.6.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/thenify/-/thenify-3.3.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/three/-/three-0.170.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.15.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/ts-interface-checker/-/ts-interface-checker-0.1.13.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.1.4.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/util-deprecate/-/util-deprecate-1.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/vite/-/vite-6.4.1.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/vue-demi/-/vue-demi-0.14.10.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/vue-router/-/vue-router-4.6.3.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/vue/-/vue-3.5.22.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/which/-/which-2.0.2.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-7.0.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-8.1.0.tgz`
+  - locations: web\frontend\package-lock.json
+- `https://rfc-editor.org`
+  - locations: services\research_sources.py
+- `https://rpc.ankr.com/`
+  - locations: download2000.py
+- `https://rpc.ankr.com/eth`
+  - locations: balances.py, router_wallet.py
+- `https://rpc.ankr.com/multichain/`
+  - locations: services\api_integrations.py
+- `https://rpc.flashbots.net`
+  - locations: balances.py, router_wallet.py
+- `https://simbad.u-strasbg.fr`
+  - locations: services\research_sources.py
+- `https://stackoverflow.com`
+  - locations: services\research_sources.py
+- `https://thecoinrepublic.com`
+  - locations: services\polite_news_crawler.py
+- `https://thecoinrepublic.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://thecryptobasic.com`
+  - locations: services\polite_news_crawler.py
+- `https://thecryptobasic.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://thedefiant.io/feed`
+  - locations: services\news_ingestor.py
+- `https://thegraph.com/studio/`
+  - locations: services\api_integrations.py
+- `https://thenewscrypto.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://tidelift.com/funding/github/npm/autoprefixer`
+  - locations: web\frontend\package-lock.json
+- `https://tidelift.com/funding/github/npm/browserslist`
+  - locations: web\frontend\package-lock.json
+- `https://tidelift.com/funding/github/npm/caniuse-lite`
+  - locations: web\frontend\package-lock.json
+- `https://tidelift.com/funding/github/npm/postcss`
+  - locations: web\frontend\package-lock.json
+- `https://tokenhell.com`
+  - locations: services\polite_news_crawler.py
+- `https://tokenhell.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://u.today`
+  - locations: services\polite_news_crawler.py
+- `https://u.today/rss`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://ui.adsabs.harvard.edu`
+  - locations: services\research_sources.py
+- `https://vizier.cds.unistra.fr`
+  - locations: services\research_sources.py
+- `https://waterservices.usgs.gov`
+  - locations: services\research_sources.py
+- `https://webbook.nist.gov`
+  - locations: services\research_sources.py
+- `https://wttr.in/?format=1`
+  - locations: tools\c0d3r_cli.py
+- `https://www.altcoinbuzz.io`
+  - locations: services\polite_news_crawler.py
+- `https://www.altcoinbuzz.io/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://www.ankr.com/docs/`
+  - locations: services\api_integrations.py
+- `https://www.binance.com/en/blog/rss`
+  - locations: services\polite_news_crawler.py
+- `https://www.biorxiv.org`
+  - locations: services\research_sources.py
+- `https://www.bis.org/rss/press.xml`
+  - locations: services\news_ingestor.py
+- `https://www.bitstamp.net/api/v2/ticker/`
+  - locations: trading\data_stream.py
+- `https://www.bitstamp.net/blog`
+  - locations: services\polite_news_crawler.py
+- `https://www.bitstamp.net/blog/rss/`
+  - locations: services\polite_news_crawler.py
+- `https://www.blockchain.news`
+  - locations: services\polite_news_crawler.py
+- `https://www.blockchain.news/rss`
+  - locations: services\polite_news_crawler.py
+- `https://www.btctimes.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.chaindebrief.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.chaindebrief.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.coinbold.io`
+  - locations: services\polite_news_crawler.py
+- `https://www.coinbold.io/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.coinbureau.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.coinbureau.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.coindesk.com/arc/outboundfeeds/rss/`
+  - locations: services\news_ingestor.py, trading\data_loader.py
+- `https://www.coingape.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.coingape.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.coingecko.com/api/documentations/v3`
+  - locations: services\public_api_clients.py
+- `https://www.coingecko.com/rss/news.xml`
+  - locations: services\polite_news_crawler.py
+- `https://www.coininsider.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.coininsider.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.coinlore.com/cryptocurrency-data-api`
+  - locations: services\public_api_clients.py
+- `https://www.coinspeaker.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.coinspeaker.com/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://www.complexityexplorer.org`
+  - locations: services\research_sources.py
+- `https://www.crypto-news-flash.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.crypto-news-flash.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptonews.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptonews.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptonewsz.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptonewsz.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptoninjas.net`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptoninjas.net/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://www.cryptotimes.io`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptotimes.io/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptovibes.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.cryptovibes.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.dlnews.com/feed/`
+  - locations: config\ethical_news_sources.json, services\polite_news_crawler.py
+- `https://www.ebi.ac.uk`
+  - locations: services\research_sources.py
+- `https://www.ecb.europa.eu/rss/press.html`
+  - locations: services\news_ingestor.py
+- `https://www.ensembl.org`
+  - locations: services\research_sources.py
+- `https://www.federalreserve.gov/feeds/press_all.xml`
+  - locations: config\ethical_news_sources.json, services\news_ingestor.py
+- `https://www.financemagnates.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.financemagnates.com/cryptocurrency/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.fsb.org/feed/press/`
+  - locations: config\ethical_news_sources.json, services\news_ingestor.py
+- `https://www.fxstreet.com/rss/cryptocurrencies`
+  - locations: services\polite_news_crawler.py
+- `https://www.gemini.com/blog/rss`
+  - locations: services\polite_news_crawler.py
+- `https://www.hydroshare.org`
+  - locations: services\research_sources.py
+- `https://www.imf.org/external/pubs/ft/fandd/fintech/rss.xml`
+  - locations: services\news_ingestor.py
+- `https://www.ledgerinsights.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.ledgerinsights.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.livebitcoinnews.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.livebitcoinnews.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.materialscloud.org`
+  - locations: services\research_sources.py
+- `https://www.medrxiv.org`
+  - locations: services\research_sources.py
+- `https://www.metzdowd.com/pipermail/cryptography/`
+  - locations: services\polite_news_crawler.py
+- `https://www.ncbi.nlm.nih.gov`
+  - locations: services\research_sources.py
+- `https://www.ncbi.nlm.nih.gov/pmc`
+  - locations: services\research_sources.py
+- `https://www.nftplazas.com`
+  - locations: services\polite_news_crawler.py
+- `https://www.nftplazas.com/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.nist.gov`
+  - locations: services\research_sources.py
+- `https://www.okx.com/api/v5/market/ticker?instId=`
+  - locations: trading\data_stream.py
+- `https://www.okx.com/rss/blog`
+  - locations: services\polite_news_crawler.py
+- `https://www.openml.org`
+  - locations: services\research_sources.py
+- `https://www.patreon.com/feross`
+  - locations: web\frontend\package-lock.json
+- `https://www.proteinatlas.org`
+  - locations: services\research_sources.py
+- `https://www.rcsb.org`
+  - locations: services\research_sources.py
+- `https://www.santafe.edu`
+  - locations: services\research_sources.py
+- `https://www.santafe.edu/research`
+  - locations: tests\test_research_ranker.py
+- `https://www.sciencebase.gov`
+  - locations: services\research_sources.py
+- `https://www.securities.io`
+  - locations: services\polite_news_crawler.py
+- `https://www.securities.io/feed/`
+  - locations: services\polite_news_crawler.py
+- `https://www.theblock.co/rss`
+  - locations: services\polite_news_crawler.py
+- `https://www.uniprot.org`
+  - locations: services\research_sources.py
+- `https://www.w3.org`
+  - locations: services\research_sources.py
+- `https://zenodo.org`
+  - locations: services\research_sources.py
+- `https://zksync.drpc.org`
+  - locations: router_wallet.py
+- `https://zycrypto.com`
+  - locations: services\polite_news_crawler.py
+- `https://zycrypto.com/feed/`
+  - locations: services\polite_news_crawler.py
+
+## SDK / Library Hints
+
+- `aiohttp`
+  - locations: api-benchmark\throughput_benchmark.py, api-benchmark\throughput_test.py, arweave_news.py, scripts\audit_external_calls.py, services\framework_catalog.py, services\onchain_feed.py, services\polite_news_crawler.py, tests\test_data_stream.py, trading\data_stream.py
+- `algoliasearch`
+  - locations: scripts\audit_external_calls.py
+- `amplitude`
+  - locations: backlog_organism_visualization_v3.json, scripts\audit_external_calls.py
+- `anthropic`
+  - locations: config\c0d3r_benchmark_models.json, scripts\audit_external_calls.py, scripts\c0d3r_general_benchmark.py, scripts\c0d3r_research_benchmark.py, tools\c0d3r_session.py, tools\run_model_benchmarks.py
+- `azure`
+  - locations: scripts\audit_external_calls.py, services\research_sources.py
+- `boto3`
+  - locations: scripts\audit_external_calls.py, services\session_storage.py, tools\c0d3r_session.py
+- `cohere`
+  - locations: scripts\audit_external_calls.py, tools\c0d3r_session.py
+- `datadog`
+  - locations: scripts\audit_external_calls.py
+- `elasticsearch`
+  - locations: scripts\audit_external_calls.py
+- `feedparser`
+  - locations: scripts\audit_external_calls.py, services\news_ingestor.py
+- `google.cloud`
+  - locations: scripts\audit_external_calls.py
+- `googleapiclient`
+  - locations: scripts\audit_external_calls.py
+- `httpx`
+  - locations: scripts\audit_external_calls.py
+- `newrelic`
+  - locations: scripts\audit_external_calls.py
+- `openai`
+  - locations: config\c0d3r_benchmark_models.json, scripts\audit_external_calls.py, services\api_integrations.py, services\branddozer_ai.py, tools\c0d3r_cli.py, tools\c0d3r_session.py, tools\run_model_benchmarks.py, web\u53rxr080t\views.py
+- `opensearch`
+  - locations: scripts\audit_external_calls.py, services\web_search.py
+- `pinecone`
+  - locations: scripts\audit_external_calls.py
+- `posthog`
+  - locations: scripts\audit_external_calls.py
+- `praw`
+  - locations: scripts\audit_external_calls.py
+- `pusher`
+  - locations: scripts\audit_external_calls.py
+- `qdrant_client`
+  - locations: scripts\audit_external_calls.py
+- `redis`
+  - locations: scripts\audit_external_calls.py
+- `requests`
+  - locations: api-benchmark\api_benchmark.py, api-benchmark\benchmark.py, api-benchmark\benchmark_results.json, api-benchmark\config.json, api-benchmark\latency_benchmark.py, api-benchmark\latency_test.py, api-benchmark\results\benchmark_20260206_213347.json, api-benchmark\throughput_benchmark.py, balances.py, filter_scams.py, make2000index.py, router_wallet.py, scripts\audit_external_calls.py, services\api_integrations.py, services\branddozer_delivery.py, services\branddozer_github.py, services\discovery\security_checks.py, services\discovery\trending_fetcher.py, services\news_archive.py, services\news_ingestor.py, services\polite_news_crawler.py, services\providers\covalent.py, services\public_api_clients.py, services\research_scraper.py, services\wallet_state.py, services\web_research.py, services\web_search.py, tests\test_data_loader.py, tests\test_news_ingestor.py, tests\test_public_api_clients.py, tools\c0d3r_cli.py, trading\data_loader.py, trading\selector.py, web\branddozer\migrations\0002_delivery_system.py, web\branddozer\models.py
+- `sendgrid`
+  - locations: scripts\audit_external_calls.py
+- `sentry`
+  - locations: scripts\audit_external_calls.py
+- `slack_sdk`
+  - locations: scripts\audit_external_calls.py
+- `stripe`
+  - locations: scripts\audit_external_calls.py
+- `telegram`
+  - locations: scripts\audit_external_calls.py
+- `tweepy`
+  - locations: scripts\audit_external_calls.py
+- `twilio`
+  - locations: scripts\audit_external_calls.py
+- `urllib`
+  - locations: get_news.py, scripts\audit_external_calls.py, services\bedrock_pricing.py, services\branddozer_delivery.py, services\branddozer_github.py, services\branddozer_ui.py, services\polite_news_crawler.py, services\providers\zerox_v2.py, services\research_ranker.py, services\research_scraper.py, services\web_research.py, services\web_search.py, tools\c0d3r_cli.py, tools\zerox_permit2_quote.py, trading\data_stream.py, trading\selector.py, web\branddozer\views.py
+- `weaviate`
+  - locations: scripts\audit_external_calls.py
+- `websockets`
+  - locations: scripts\audit_external_calls.py

@@ -76,6 +76,7 @@ if (mountEl) {
     u53rxr080t: '/u53rxr080t',
     addressbook: '/addressbook',
     c0d3r: '/c0d3r',
+    audiolab: '/audiolab',
   };
   const normalizePath = (path: string) => {
     if (!path) return '/';
@@ -87,7 +88,13 @@ if (mountEl) {
   const resolveIfMatch = (path: string) => {
     if (!path) return '';
     const resolved = router.resolve(path);
-    return resolved.matched.length ? path : '';
+    if (resolved.matched.length) return path;
+    const lowered = path.toLowerCase();
+    if (lowered !== path) {
+      const loweredResolved = router.resolve(lowered);
+      if (loweredResolved.matched.length) return lowered;
+    }
+    return '';
   };
   const currentPath = normalizePath(window.location.pathname || '/');
   const requestedPath = normalizePath(initialPathAttr || '');

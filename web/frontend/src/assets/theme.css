@@ -1,37 +1,92 @@
+@font-face {
+  font-family: 'EscapeArtist';
+  src: url('/static/assets/escape-artist-font/EscapeArtist-7Oo5V.otf') format('opentype');
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'EscapeArtist';
+  src: url('/static/assets/escape-artist-font/EscapeArtistBold-ovy4B.otf') format('opentype');
+  font-display: swap;
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Hackout';
+  src: url('/static/assets/h-hackout-font/Hackout-Eaw5j.otf') format('opentype');
+  font-display: swap;
+  font-weight: 400;
+  font-style: normal;
+}
+
 :root {
-  font-family: 'Roboto', 'Segoe UI', sans-serif;
-  color: #eef3ff;
-  background-color: #080d14;
+  font-family: 'Hackout', 'Segoe UI', sans-serif;
+  color: #f6f9ff;
+  background-color: #02050b;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  --surface: rgba(10, 16, 26, 0.9);
-  --surface-strong: rgba(12, 20, 32, 0.95);
-  --border: rgba(127, 176, 255, 0.22);
-  --accent: #2d75c4;
-  --accent-soft: rgba(45, 117, 196, 0.25);
-  --accent-3: #7fb0ff;
-  --accent-ok: #34d399;
-  --accent-warn: #f6b143;
-  --accent-err: #ff5a5f;
-  --positive: #34d399;
-  --warning: #f6b143;
-  --negative: #ff5a5f;
-  --text-muted: rgba(231, 238, 255, 0.65);
-  --q-primary: #2d75c4;
-  --q-secondary: #0d1a2b;
-  --q-accent: #7fb0ff;
-  --q-dark: #080d14;
-  --q-dark-page: #060a11;
-  --q-positive: #34d399;
-  --q-warning: #f6b143;
-  --q-negative: #ff5a5f;
-  --q-info: #9db9ff;
+  --font-title: 'EscapeArtist', 'Hackout', 'Segoe UI', sans-serif;
+  --font-body: 'Hackout', 'Segoe UI', sans-serif;
+  --surface: rgba(6, 10, 18, 0.78);
+  --surface-strong: rgba(4, 8, 14, 0.92);
+  --border: rgba(165, 194, 255, 0.28);
+  --accent: #5aa6ff;
+  --accent-soft: rgba(90, 166, 255, 0.2);
+  --accent-3: #b6ccff;
+  --accent-ok: #42e6c6;
+  --accent-warn: #f7c76a;
+  --accent-err: #ff6b7f;
+  --positive: #42e6c6;
+  --warning: #f7c76a;
+  --negative: #ff6b7f;
+  --text-muted: rgba(220, 230, 255, 0.7);
+  --q-primary: #5aa6ff;
+  --q-secondary: #0b1424;
+  --q-accent: #b6ccff;
+  --q-dark: #02050b;
+  --q-dark-page: #010309;
+  --q-positive: #42e6c6;
+  --q-warning: #f7c76a;
+  --q-negative: #ff6b7f;
+  --q-info: #a9c2ff;
 }
 
 * {
   box-sizing: border-box;
   border-radius: 0 !important;
+}
+
+body,
+input,
+select,
+textarea,
+button {
+  font-family: var(--font-body);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.title,
+.subtitle,
+.sidebar,
+.sidebar__nav,
+.nav-link .label,
+.sidebar__stats .label,
+.header-metrics strong,
+.view-header h1,
+.view-header h2,
+.panel h2,
+.panel h3,
+.panel h4 {
+  font-family: var(--font-title);
 }
 
 html,
@@ -47,7 +102,11 @@ body {
 body {
   min-height: 100vh;
   overflow-y: scroll;
-  background: radial-gradient(circle at 20% 10%, rgba(13, 24, 40, 0.7), rgba(6, 9, 15, 0.98));
+  background:
+    radial-gradient(circle at 15% 10%, rgba(90, 166, 255, 0.16), transparent 45%),
+    radial-gradient(circle at 80% 18%, rgba(194, 122, 255, 0.12), transparent 50%),
+    radial-gradient(circle at 35% 90%, rgba(255, 120, 190, 0.1), transparent 52%),
+    #02050b;
 }
 
 #app {
@@ -65,8 +124,11 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 12% 18%, rgba(45, 117, 196, 0.18), transparent 55%),
-              radial-gradient(circle at 88% 12%, rgba(127, 176, 255, 0.12), transparent 60%);
+  background:
+    radial-gradient(circle at 10% 20%, rgba(102, 140, 255, 0.2), transparent 55%),
+    radial-gradient(circle at 82% 16%, rgba(176, 110, 255, 0.18), transparent 58%),
+    radial-gradient(circle at 60% 80%, rgba(255, 140, 210, 0.12), transparent 60%),
+    radial-gradient(circle at 40% 60%, rgba(130, 210, 255, 0.12), transparent 60%);
   pointer-events: none;
   z-index: -1;
 }
@@ -170,6 +232,14 @@ main.dashboard-content {
 .status-light[data-level="error"] {
   border-color: rgba(255, 90, 95, 0.5);
   color: var(--negative);
+}
+
+.nav-led,
+.status-dots .dot,
+.progress-node .dot,
+.role-dot,
+.dot {
+  border-radius: 999px !important;
 }
 
 .console-output {
@@ -395,13 +465,13 @@ code {
 }
 
 .glitch-enter-active {
-  animation: glitch-in 520ms steps(2, end) both, glitch-blink 520ms steps(2, end) both;
+  animation: glitch-in 200ms steps(2, end) both, glitch-blink 200ms steps(2, end) both;
   will-change: transform, opacity, filter;
   image-rendering: pixelated;
 }
 
 .glitch-leave-active {
-  animation: glitch-out 220ms ease both;
+  animation: glitch-out 180ms ease both;
   will-change: transform, opacity, filter;
 }
 
@@ -428,11 +498,11 @@ code {
 .glitch-enter-active .link-card,
 .glitch-enter-active .nav-tile,
 .glitch-enter-active .kpi-card {
-  animation: glitch-flicker 520ms steps(2, end) both;
+  animation: glitch-flicker 200ms steps(2, end) both;
 }
 
 .glitch-pulse {
-  animation: glitch-in 520ms steps(2, end) both, glitch-blink 520ms steps(2, end) both;
+  animation: glitch-in 200ms steps(2, end) both, glitch-blink 200ms steps(2, end) both;
   will-change: transform, opacity, filter;
   image-rendering: pixelated;
 }
@@ -444,7 +514,7 @@ code {
 .glitch-pulse .link-card,
 .glitch-pulse .nav-tile,
 .glitch-pulse .kpi-card {
-  animation: glitch-flicker 520ms steps(2, end) both;
+  animation: glitch-flicker 200ms steps(2, end) both;
 }
 
 @media (max-width: 960px) {
