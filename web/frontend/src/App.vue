@@ -12,15 +12,21 @@
           v-for="item in navItems"
           :key="item.route"
           :to="{ name: item.route }"
-          class="nav-link"
-          :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
-          @click="handleNavClick"
+          custom
+          v-slot="{ href, navigate }"
         >
-          <span class="icon">
-            <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
-          </span>
-          <span class="label">{{ item.label }}</span>
-          <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
+          <a
+            :href="href"
+            class="nav-link"
+            :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
+            @click="(event) => safeNavigate(event, navigate, href)"
+          >
+            <span class="icon">
+              <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
+            </span>
+            <span class="label">{{ item.label }}</span>
+            <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
+          </a>
         </RouterLink>
       </nav>
       <footer class="sidebar__foot">
@@ -57,12 +63,10 @@
           <span v-if="store.loading" class="loading-pill">Refreshing…</span>
         </div>
       </header>
-      <section class="content__body">
+      <section class="content__body" :class="{ 'glitch-pulse': glitchActive }">
         <div class="content__viewport">
           <RouterView v-slot="{ Component }">
-            <Transition name="glitch" mode="in-out">
-              <component :is="Component" :key="route.fullPath" />
-            </Transition>
+            <component :is="Component" :key="route.fullPath" />
           </RouterView>
         </div>
       </section>
@@ -81,9 +85,11 @@ const store = useDashboardStore();
 const route = useRoute();
 const sidebarOpen = ref(false);
 const isSolo = computed(() => route.meta?.layout === 'solo');
+const glitchActive = ref(false);
 
 let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
+let glitchTimer: number | undefined;
 
 onMounted(() => {
   refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
@@ -93,12 +99,28 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (refreshTimer) window.clearInterval(refreshTimer);
   if (consoleTimer) window.clearInterval(consoleTimer);
+  if (glitchTimer) window.clearTimeout(glitchTimer);
 });
+
+const triggerGlitch = () => {
+  if (glitchTimer) {
+    window.clearTimeout(glitchTimer);
+    glitchTimer = undefined;
+  }
+  glitchActive.value = false;
+  window.requestAnimationFrame(() => {
+    glitchActive.value = true;
+    glitchTimer = window.setTimeout(() => {
+      glitchActive.value = false;
+    }, 700);
+  });
+};
 
 watch(
   () => route.fullPath,
   () => {
     closeSidebar();
+    triggerGlitch();
   }
 );
 
@@ -113,6 +135,20 @@ const closeSidebar = () => {
 const handleNavClick = () => {
   if (window.matchMedia('(max-width: 959px)').matches) {
     closeSidebar();
+  }
+};
+
+const safeNavigate = async (
+  event: MouseEvent,
+  navigate: (event?: MouseEvent) => void | Promise<void>,
+  href: string,
+) => {
+  event.preventDefault();
+  handleNavClick();
+  try {
+    await navigate(event);
+  } catch (error) {
+    window.location.assign(href);
   }
 };
 

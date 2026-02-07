@@ -431,6 +431,22 @@ code {
   animation: glitch-flicker 520ms steps(2, end) both;
 }
 
+.glitch-pulse {
+  animation: glitch-in 520ms steps(2, end) both, glitch-blink 520ms steps(2, end) both;
+  will-change: transform, opacity, filter;
+  image-rendering: pixelated;
+}
+
+.glitch-pulse .panel,
+.glitch-pulse .card,
+.glitch-pulse .entry-card,
+.glitch-pulse .status-card,
+.glitch-pulse .link-card,
+.glitch-pulse .nav-tile,
+.glitch-pulse .kpi-card {
+  animation: glitch-flicker 520ms steps(2, end) both;
+}
+
 @media (max-width: 960px) {
   .dashboard-shell {
     grid-template-columns: 1fr;

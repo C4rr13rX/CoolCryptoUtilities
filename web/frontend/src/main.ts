@@ -92,7 +92,13 @@ if (mountEl) {
   const currentPath = normalizePath(window.location.pathname || '/');
   const requestedPath = normalizePath(initialPathAttr || '');
   const initialPath = targetRoutes[initialRoute] || '/';
-  const bootPath = resolveIfMatch(requestedPath) || resolveIfMatch(currentPath) || initialPath;
+  const lastRouteKey = 'ccu:last-route';
+  const storedPath = normalizePath(sessionStorage.getItem(lastRouteKey) || '');
+  const bootPath =
+    resolveIfMatch(requestedPath) ||
+    resolveIfMatch(currentPath) ||
+    resolveIfMatch(storedPath) ||
+    initialPath;
 
   const reloadKey = 'ccu:router-reload';
   const isChunkError = (error: unknown) => {
@@ -114,6 +120,9 @@ if (mountEl) {
   });
 
   router.afterEach((to) => {
+    if (to.fullPath) {
+      sessionStorage.setItem(lastRouteKey, to.fullPath);
+    }
     sessionStorage.removeItem(reloadKey);
     const title = (to.meta?.title as string) || 'R3V3N!R Control Tower';
     document.title = title;
