@@ -92,6 +92,7 @@ These scripts install deps, use SQLite by default, add repo CLIs to PATH, migrat
 - Windows PowerShell: `scripts\quickstart.ps1`
 - Windows CMD: `scripts\quickstart.cmd`
 - macOS / Linux: `bash scripts/quickstart.sh`
+Legacy/older OS fallback: if full deps fail, the scripts fall back to `requirements_legacy.txt` and then a minimal Django set to get the web UI running.
 
 ## Quick start (Windows)
 ```powershell

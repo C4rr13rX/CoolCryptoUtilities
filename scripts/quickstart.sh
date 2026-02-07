@@ -12,7 +12,7 @@ if command -v python3 >/dev/null 2>&1; then
 elif command -v python >/dev/null 2>&1; then
   PY=python
 else
-  echo "Python not found. Install Python 3.11+ first." >&2
+  echo "Python not found. Install Python 3.8+ first." >&2
   exit 1
 fi
 
@@ -30,10 +30,24 @@ if [ ! -d .venv ]; then
 fi
 
 VENV_PY=".venv/bin/python"
-$VENV_PY -m pip install -U pip
-$VENV_PY -m pip install -r requirements.txt
+$VENV_PY -m pip install -U pip setuptools wheel || true
+
+INSTALL_OK=0
+for req in requirements.txt requirements_legacy.txt; do
+  if [ -f "$req" ]; then
+    echo "[quickstart] Installing deps from $req"
+    if $VENV_PY -m pip install -r "$req"; then
+      INSTALL_OK=1
+      break
+    fi
+  fi
+done
+if [ "$INSTALL_OK" -eq 0 ]; then
+  echo "[quickstart] Falling back to core Django deps"
+  $VENV_PY -m pip install "Django>=4.2" "djangorestframework>=3.14.0" "channels>=4.0.0" requests
+fi
 if [ -f requirements_textbooks.txt ]; then
-  $VENV_PY -m pip install -r requirements_textbooks.txt
+  $VENV_PY -m pip install -r requirements_textbooks.txt || true
 fi
 
 export DJANGO_DB_VENDOR=sqlite

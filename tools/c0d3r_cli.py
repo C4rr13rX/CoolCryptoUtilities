@@ -1481,10 +1481,15 @@ def _build_context_block(workdir: Path, run_command, *, session_id: str | None =
         tasks = []
         tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
         tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
-        if os.name == "nt":
-            tasks.append(("ls", lambda: run_command("Get-ChildItem -Name", cwd=workdir)))
-        else:
-            tasks.append(("ls", lambda: run_command("ls -1", cwd=workdir)))
+        def _ls_cmd() -> str:
+            if os.name == "nt":
+                if shutil.which("pwsh") or shutil.which("powershell"):
+                    return "Get-ChildItem -Name"
+                return f'{sys.executable} -c "import os;print(\'\\n\'.join(os.listdir(\'.\')))"'
+            if shutil.which("ls"):
+                return "ls -1"
+            return f'{sys.executable} -c "import os;print(\'\\n\'.join(os.listdir(\'.\')))"'
+        tasks.append(("ls", lambda: run_command(_ls_cmd(), cwd=workdir)))
         results = _run_parallel_tasks([(name, fn) for name, fn in tasks], max_workers=3)
         result_map = {name: res for name, res in results}
         if "git_status" in result_map:

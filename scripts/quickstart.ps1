@@ -16,7 +16,7 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
 } elseif (Get-Command python -ErrorAction SilentlyContinue) {
   $pyExe = "python"
 } else {
-  Write-Host "Python not found. Install Python 3.11+ first." -ForegroundColor Red
+  Write-Host "Python not found. Install Python 3.8+ first." -ForegroundColor Red
   exit 1
 }
 
@@ -34,10 +34,22 @@ if (-not (Test-Path ".venv")) {
 }
 
 $venvPy = Join-Path (Resolve-Path ".venv") "Scripts\python.exe"
-& $venvPy -m pip install -U pip
-& $venvPy -m pip install -r requirements.txt
+& $venvPy -m pip install -U pip setuptools wheel | Out-Null
+Write-Host "[quickstart] Installing Python deps" -ForegroundColor Yellow
+$installed = $false
+foreach ($req in @("requirements.txt", "requirements_legacy.txt")) {
+  if (Test-Path $req) {
+    Write-Host "[quickstart] Using $req" -ForegroundColor Yellow
+    & $venvPy -m pip install -r $req
+    if ($LASTEXITCODE -eq 0) { $installed = $true; break }
+  }
+}
+if (-not $installed) {
+  Write-Host "[quickstart] Falling back to core Django deps" -ForegroundColor Yellow
+  & $venvPy -m pip install "Django>=4.2" "djangorestframework>=3.14.0" "channels>=4.0.0" requests
+}
 if (Test-Path "requirements_textbooks.txt") {
-  & $venvPy -m pip install -r requirements_textbooks.txt
+  & $venvPy -m pip install -r requirements_textbooks.txt | Out-Null
 }
 
 $env:DJANGO_DB_VENDOR = "sqlite"

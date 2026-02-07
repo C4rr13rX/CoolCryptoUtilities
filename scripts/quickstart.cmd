@@ -11,7 +11,7 @@ if not defined PY_EXE (
   where python >nul 2>nul && set PY_EXE=python && set PY_ARGS=
 )
 if not defined PY_EXE (
-  echo Python not found. Install Python 3.11+ first.
+  echo Python not found. Install Python 3.8+ first.
   exit /b 1
 )
 
@@ -30,8 +30,23 @@ if not exist ".venv" (
 )
 
 set VENV_PY=%REPO_ROOT%\.venv\Scripts\python.exe
-"%VENV_PY%" -m pip install -U pip
-"%VENV_PY%" -m pip install -r requirements.txt
+"%VENV_PY%" -m pip install -U pip setuptools wheel
+set INSTALLED=0
+for %%R in (requirements.txt requirements_legacy.txt) do (
+  if exist %%R (
+    echo [quickstart] Using %%R
+    "%VENV_PY%" -m pip install -r %%R
+    if not errorlevel 1 (
+      set INSTALLED=1
+      goto after_install
+    )
+  )
+)
+:after_install
+if "%INSTALLED%"=="0" (
+  echo [quickstart] Falling back to core Django deps
+  "%VENV_PY%" -m pip install "Django>=4.2" "djangorestframework>=3.14.0" "channels>=4.0.0" requests
+)
 if exist requirements_textbooks.txt (
   "%VENV_PY%" -m pip install -r requirements_textbooks.txt
 )
