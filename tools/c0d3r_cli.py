@@ -2101,13 +2101,13 @@ def _run_tool_loop_v2(
     usage_tracker,
 ) -> str:
     # Preserve the pre-built rolling context (system probe + rolling summary + key points) if present.
-        context_block = ""
-        if "User request:" in prompt:
-            context_block = prompt.split("User request:", 1)[0].strip()
-        elif "Latest user question:" in prompt:
-            context_block = prompt.split("Latest user question:", 1)[0].strip()
-        elif "User:\n" in prompt:
-            context_block = prompt.split("User:\n", 1)[0].strip()
+    context_block = ""
+    if "User request:" in prompt:
+        context_block = prompt.split("User request:", 1)[0].strip()
+    elif "Latest user question:" in prompt:
+        context_block = prompt.split("Latest user question:", 1)[0].strip()
+    elif "User:\n" in prompt:
+        context_block = prompt.split("User:\n", 1)[0].strip()
     base_request = _tool_loop_base_request(prompt)
     max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "10") or "10")
     max_commands_per_step = int(os.getenv("C0D3R_TOOL_MAX_CMDS", "12") or "12")
