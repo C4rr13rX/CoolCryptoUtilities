@@ -38,6 +38,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
   min-height: 100%;
   width: 100%;
   overflow-x: hidden;
@@ -51,6 +52,7 @@ body {
 
 #app {
   min-height: 100%;
+  width: 100%;
   display: flex;
 }
 
@@ -265,6 +267,23 @@ code {
 .dashboard-shell {
   max-width: 100%;
   min-width: 0;
+}
+
+.app-layout,
+.content,
+.content__body,
+.content__viewport {
+  width: 100%;
+}
+
+.content__viewport {
+  align-items: stretch;
+}
+
+.content__viewport > * {
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
 }
 
 .content__body,

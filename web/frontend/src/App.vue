@@ -378,6 +378,7 @@ const totalProfitDisplay = computed(() =>
 .content {
   flex: 1 1 0;
   min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   min-height: 100%;
@@ -449,6 +450,7 @@ const totalProfitDisplay = computed(() =>
   min-height: 0;
   display: flex;
   flex-direction: column;
+  align-self: stretch;
   background: rgba(6, 14, 26, 0.92);
   border: 1px solid rgba(79, 168, 255, 0.18);
   border-radius: 18px;
@@ -463,6 +465,7 @@ const totalProfitDisplay = computed(() =>
   min-height: 0;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   overflow-y: auto;
   padding-right: 0.25rem;
 }
@@ -471,6 +474,8 @@ const totalProfitDisplay = computed(() =>
   flex: 1 1 auto;
   width: 100%;
   min-height: 0;
+  max-width: 100%;
+  align-self: stretch;
 }
 
 @media (max-width: 959px) {
