@@ -31,7 +31,7 @@ from typing import Iterable, List, Optional, Sequence
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
+from dotenv_fallback import load_dotenv
 
 
 ISO_DATE = "%Y-%m-%d"

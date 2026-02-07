@@ -1,0 +1,17 @@
+{
+  "base_url": "https://jsonplaceholder.typicode.com",
+  "endpoints": [
+    {
+      "path": "/posts/1",
+      "method": "GET"
+    },
+    {
+      "path": "/posts",
+      "method": "POST",
+      "data": {"title": "test", "body": "test", "userId": 1}
+    }
+  ],
+  "concurrent_users": [1, 5, 10],
+  "requests_per_user": 50,
+  "timeout": 30
+}

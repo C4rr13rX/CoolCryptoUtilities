@@ -47,7 +47,7 @@ _LAST_FILE_OPS_WRITTEN: list[str] = []
 _MATRIX_SEED_VERSION = "2026-02-04"
 _TECH_MATRIX_DIR = _runtime_path("tech_matrix")
 _FINAL_STYLE = os.getenv("C0D3R_FINAL_STYLE", "bold yellow")
-_USER_STYLE = os.getenv("C0D3R_USER_STYLE", "bright_yellow")
+_USER_STYLE = os.getenv("C0D3R_USER_STYLE", "yellow")
 _DEFAULT_SECRET_CATEGORY = "default"
 _DJANGO_USER_FILE = _runtime_path("django_user.json")
 _MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE)
@@ -1115,7 +1115,10 @@ def _short_term_matches(prompt: str, summary_bundle: dict) -> bool:
         return False
     hay_l = hay.lower()
     hits = [k for k in prompt_keys if k in hay_l]
-    return len(hits) >= 1
+    # Require stronger evidence than a single overlapping token to avoid
+    # skipping LTM when the answer isn't actually present in STM.
+    min_hits = 1 if len(prompt_keys) <= 2 else 2
+    return len(hits) >= min_hits
 
 
 _RECALL_CUES = (
@@ -1125,6 +1128,8 @@ _RECALL_CUES = (
     "last thing", "last spoke", "last talked", "last discussed",
     "what did i last", "what was the last", "what we last", "what did we last",
     "what we just", "what did we just",
+    "what i just", "what did i just", "what did i just ask", "what did i just say",
+    "what i just asked", "what i just asked you", "what did i just ask you",
     "context", "conversation",
     # Spanish/Portuguese
     "recuerdas", "recuerdo", "anterior", "antes", "último", "ultim", "conversación",
@@ -1162,6 +1167,11 @@ def _is_recent_recall(prompt: str) -> bool:
         "last question",
         "what did i last",
         "what was the last",
+        "what did i just ask",
+        "what did i just ask you",
+        "what i just asked",
+        "what i just asked you",
+        "what did i just say",
         "previous question",
         "what we last spoke",
         "what we last talked",
@@ -1176,6 +1186,8 @@ def _is_recent_recall(prompt: str) -> bool:
     if any(m in lower for m in recent_markers):
         return True
     if "last" in lower and "ask" in lower:
+        return True
+    if "just" in lower and "ask" in lower:
         return True
     return False
 
@@ -1206,6 +1218,34 @@ def _is_short_term_summary_request(prompt: str) -> bool:
     return any(m in lower for m in markers)
 
 
+def _needs_memory_lookup(prompt: str) -> bool:
+    """
+    Detect prompts that implicitly reference earlier conversation facts even
+    without explicit "remember/recall" wording.
+    """
+    lower = (prompt or "").lower()
+    cues = (
+        "that note",
+        "this note",
+        "the note",
+        "that phrase",
+        "the key phrase",
+        "key phrase",
+        "that deadline",
+        "the deadline",
+        "what deadline",
+        "associated with",
+        "we associated",
+        "we associate",
+        "we set",
+        "we agreed",
+        "as we discussed",
+        "as we said",
+        "as mentioned",
+    )
+    return any(cue in lower for cue in cues)
+
+
 def _decide_recall_scope(
     session: "C0d3rSession",
     prompt: str,
@@ -1220,16 +1260,19 @@ def _decide_recall_scope(
     key_points = summary_bundle.get("key_points") or []
     cue_score = _recall_cue_score(prompt)
     short_hit = _short_term_matches(prompt, summary_bundle)
+    memory_ref = _needs_memory_lookup(prompt)
 
     # Heuristic fast-paths (avoid extra model calls).
     if _is_recent_recall(prompt):
         return "short", ""
     if _is_short_term_summary_request(prompt):
         return "short", ""
+    if memory_ref and not short_hit:
+        return "long", prompt.strip()
     if cue_score < 0.75 and short_hit:
-        return "short", ""
+        return ("short", "") if not memory_ref else ("long", prompt.strip())
     if cue_score < 0.75 and not short_hit:
-        return "none", ""
+        return ("none", "") if not memory_ref else ("long", prompt.strip())
 
     # If the user explicitly signals earlier/remembering and short-term doesn't match, force long-term search.
     lower = (prompt or "").lower()
@@ -1276,6 +1319,53 @@ def _maybe_long_term_recall(
     session_id: str | None = None,
     memory_long=None,
 ) -> list[str]:
+    def _compact_hit(hit: str, *, max_chars: int = 1800) -> str:
+        if not hit:
+            return ""
+        lines = hit.splitlines()
+        kept: list[str] = []
+        skipping_ctx = False
+        ts_header = re.compile(r"^\\d{4}-\\d{2}-\\d{2} ")
+        for line in lines:
+            stripped = line.strip()
+            if stripped in {"Context:", "System context:"}:
+                skipping_ctx = True
+                continue
+            if skipping_ctx:
+                # Resume when we hit a new timestamped entry or the score header.
+                if ts_header.match(stripped) or stripped.startswith("Match score:"):
+                    skipping_ctx = False
+                else:
+                    continue
+            kept.append(line)
+        compacted = "\n".join(kept).strip()
+        if len(compacted) > max_chars:
+            return compacted[:max_chars].rstrip() + "..."
+        return compacted
+
+    def _query_variants(base_query: str) -> list[str]:
+        lower = (prompt or "").lower()
+        noise = {
+            "earlier", "remember", "recall", "previous", "conversation", "last", "time",
+            "talked", "spoke", "discussed", "about", "just", "recent",
+            "asked", "question", "tell", "repeat",
+            "note", "unique", "key", "phrase", "deadline",
+        }
+        core = [k for k in sorted(_keyword_set(prompt)) if k not in noise]
+        condensed = " ".join(core[:10]).strip()
+        variants: list[str] = []
+        for q in (condensed, base_query.strip(), prompt.strip()):
+            q = (q or "").strip()
+            if q and q not in variants:
+                variants.append(q)
+        # Heuristic: "key phrase" prompts often need entries that *state* the phrase.
+        if "key phrase" in lower and condensed:
+            variants.insert(0, f"{condensed} key phrase is")
+        if "deadline" in lower and condensed:
+            variants.insert(0, f"{condensed} deadline is")
+        # Keep list bounded.
+        return variants[:5]
+
     recall_trigger = _detect_recall_trigger(prompt)
     if _is_recent_recall(prompt):
         return []
@@ -1284,14 +1374,27 @@ def _maybe_long_term_recall(
     short_hit = _short_term_matches(prompt, summary_bundle)
     recent_entries = memory.load(limit=12, session_id=session_id)
     recent_snippet = "\n".join(f"{e.role}: {e.content[:200]}" for e in recent_entries)
-    if not recall_trigger and short_hit:
+    if not recall_trigger and short_hit and not _needs_memory_lookup(prompt):
         return []
     scope, query = _decide_recall_scope(session, prompt, summary_bundle, recent_snippet)
     if scope != "long":
         return []
     # Prefer session-scoped memory first, then fall back to global memory.
     mem_long = memory_long or memory
-    hits = memory.search_long_term(query, limit=5)
+    variants = _query_variants(query or prompt)
+
+    raw_hits: list[str] = []
+    for q in variants:
+        try:
+            raw_hits.extend(memory.search_long_term(q, limit=5))
+        except Exception:
+            pass
+        if mem_long is not memory:
+            try:
+                raw_hits.extend(mem_long.search_long_term(q, limit=5))
+            except Exception:
+                pass
+
     # Filter hits to ensure they contain salient query keywords.
     keywords = _keyword_set(prompt)
     noise = {
@@ -1299,25 +1402,49 @@ def _maybe_long_term_recall(
         "talked", "spoke", "discussed", "about", "just", "recent",
     }
     keywords = {k for k in keywords if k not in noise}
-    if keywords and hits:
-        filtered = []
-        for hit in hits:
-            lower = hit.lower()
-            if any(k in lower for k in keywords):
-                filtered.append(hit)
-        hits = filtered
-    if not hits and mem_long is not memory:
-        hits = mem_long.search_long_term(query, limit=5)
-        if keywords and hits:
-            filtered = []
-            for hit in hits:
-                lower = hit.lower()
-                if any(k in lower for k in keywords):
-                    filtered.append(hit)
-            hits = filtered
-    if not hits and recall_trigger:
-        hits = mem_long.search_long_term(prompt, limit=5)
-    return hits
+
+    seen: set[str] = set()
+    hits: list[str] = []
+    for hit in raw_hits:
+        compact = _compact_hit(hit)
+        if not compact:
+            continue
+        key = re.sub(r"\\s+", " ", compact).strip().lower()
+        if key in seen:
+            continue
+        if keywords and not any(k in key for k in keywords):
+            continue
+        seen.add(key)
+        hits.append(compact)
+        if len(hits) >= 8:
+            break
+
+    def _rank(h: str) -> tuple[int, float]:
+        lower = h.lower()
+        bonus = 0
+        if " assistant:" in lower or "\nassistant:" in lower:
+            bonus += 2
+        if "key phrase is" in lower:
+            bonus += 2
+        if "deadline is" in lower:
+            bonus += 1
+        # Prefer snippets that contain an explicit phrase (quoted or ALL CAPS),
+        # since many "remember X" prompts ask for a specific token/phrase.
+        if re.search(r"\"[^\"]{4,80}\"", h):
+            bonus += 2
+        if re.search(r"\b[A-Z]{3,}(?:\s+[A-Z]{3,})+\b", h):
+            bonus += 2
+        score = 0.0
+        m = re.search(r"Match score:\\s*([0-9]*\\.?[0-9]+)", h)
+        if m:
+            try:
+                score = float(m.group(1))
+            except Exception:
+                score = 0.0
+        return bonus, score
+
+    hits.sort(key=_rank, reverse=True)
+    return hits[:5]
 
 
 def _build_context_block(workdir: Path, run_command, *, session_id: str | None = None) -> str:
@@ -1711,7 +1838,7 @@ def _ui_write_user(text: str) -> None:
         return
     if text is None:
         return
-    ansi = "\x1b[93m"
+    ansi = "\x1b[33m"
     reset = "\x1b[0m"
     lines = str(text).splitlines() or [""]
     prefix = "User: "
@@ -5023,32 +5150,6 @@ def _run_repl(
                 context_limit=per_turn_limit,
                 session_id=session_id,
             )
-            last_user = memory.last_user(session_id=session_id)
-            if last_user and last_user.content:
-                context = f"Last user message:\n{last_user.content}\n\n{context}" if context else f"Last user message:\n{last_user.content}"
-            last_exchange = memory.last_exchange(session_id=session_id)
-            if last_exchange:
-                exchange_lines = ["Last exchange (most recent):"]
-                for entry in last_exchange:
-                    role = (entry.role or "").strip() or "unknown"
-                    exchange_lines.append(f"{role.capitalize()}: {entry.content}")
-                exchange_block = "\n".join(exchange_lines)
-                context = f"{exchange_block}\n\n{context}" if context else exchange_block
-        # If the user is asking about recency/recall, add an explicit hint block
-        # to bias the model toward the most recent exchange.
-        if _detect_recall_trigger(user_prompt) or _is_recent_recall(user_prompt) or _is_short_term_summary_request(user_prompt):
-            hint_lines = ["Recall hint:", "Use the most recent exchange below to answer recency questions."]
-            last_user = memory.last_user(session_id=session_id)
-            if last_user and last_user.content:
-                hint_lines.append(f"Recent user: {last_user.content}")
-            last_exchange = memory.last_exchange(session_id=session_id)
-            if last_exchange:
-                hint_lines.append("Recent exchange:")
-                for entry in last_exchange:
-                    role = (entry.role or "").strip() or "unknown"
-                    hint_lines.append(f"- {role.capitalize()}: {entry.content}")
-            hint_block = "\n".join(hint_lines)
-            context = f"{hint_block}\n\n{context}" if context else hint_block
         try:
             from services.system_probe import system_probe_context
             probe_block = system_probe_context(workdir)
@@ -5107,12 +5208,13 @@ def _run_repl(
         )
         if _is_recent_recall(user_prompt):
             intent = (
-                "The user is asking about the most recent exchange. Use the Recall hint / Last exchange blocks to answer precisely. "
-                "Do not claim you lack history if a recent exchange is present."
+                "The user is asking about the most recent exchange. Use the Transcript and short-term memory blocks to answer precisely. "
+                "When asked what the user just/last asked, return the immediately preceding user question (not the current recall question). "
+                "Do not claim you lack history if a recent exchange is present in the context."
             )
         elif _detect_recall_trigger(user_prompt):
             intent = (
-                "The user is asking about earlier conversation. Use Long-term recall, Rolling summary, and Conversation transcript "
+                "The user is asking about earlier conversation. Use Long-term recall, Rolling summary, and Transcript "
                 "to answer. If those blocks contain the topic, answer directly; otherwise say you couldn't find it."
             )
         full_prompt = (
@@ -5252,7 +5354,7 @@ def _run_repl(
                 header.budget_enabled = False
             else:
                 return 0
-        if not minimal and initial_prompt is None:
+        if not minimal:
             assistant_text = _extract_plaintext_response(response) or rendered or response
             memory.append(
                 user_prompt,
@@ -6100,17 +6202,35 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
             query = payload.get("query")
             if not tokens and not query:
                 return 1, "", "datalab_news requires tokens or query", None
-            if not tokens and query:
-                tokens = [tok for tok in re.split(r"[ ,;/]+", str(query).upper()) if tok]
             start = payload.get("start") or (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=3)).isoformat()
             end = payload.get("end") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+            # If the caller didn't provide explicit tokens, treat this as general web research.
+            # This keeps the tool responsive for non-crypto queries and avoids expensive crawls.
+            if not tokens and query:
+                from services.data_lab_tools import search_web, summarize_payload
+                result = search_web(
+                    query=str(query),
+                    max_results=payload.get("max_results", 5),
+                    max_bytes=payload.get("max_bytes", 200000),
+                    max_chars=payload.get("max_chars", 12000),
+                    summary_sentences=payload.get("summary_sentences", 3),
+                    domains=payload.get("domains"),
+                )
+                return 0, summarize_payload(result), "", None
+
             from services.data_lab_tools import fetch_news_with_summary, summarize_payload
+            max_pages = payload.get("max_pages")
+            if max_pages is None:
+                try:
+                    max_pages = int(os.getenv("C0D3R_DATALAB_NEWS_MAX_PAGES", "30") or "30")
+                except Exception:
+                    max_pages = 30
             result = fetch_news_with_summary(
                 tokens=tokens,
                 start=start,
                 end=end,
                 query=query,
-                max_pages=payload.get("max_pages"),
+                max_pages=max_pages,
                 max_items=payload.get("max_items", 40),
             )
             return 0, summarize_payload(result), "", None

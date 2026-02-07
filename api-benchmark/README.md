@@ -1,80 +1,51 @@
-# REST API Benchmark Tool
+# REST API Benchmark Suite
 
-A minimal Python tool for benchmarking REST API latency and throughput.
+Minimal tools for benchmarking REST API latency and throughput.
 
-## Features
-
-- **Latency Testing**: Measures average, P95, min, and max response times
-- **Throughput Testing**: Measures requests per second and success rates
-- **Concurrent Testing**: Uses thread pools for realistic load simulation
-- **JSON Output**: Saves detailed results for analysis
-- **Flexible Configuration**: Customizable endpoints, request counts, and test duration
-
-## Installation
+## Quick Start
 
 ```bash
+# Install dependencies
 pip install requests
+
+# Test latency (default: 100 requests)
+python latency_test.py
+python latency_test.py https://api.example.com/endpoint 50
+
+# Test throughput (default: 10 concurrent, 100 total)
+python throughput_test.py
+python throughput_test.py https://api.example.com/endpoint 20 200
 ```
 
-## Usage
+## Output Metrics
 
-### Basic Usage
-```bash
-python benchmark.py https://api.example.com
-```
+### Latency Test
+- Average, min, max response times
+- Median and 95th percentile
+- Error count
 
-### Custom Endpoints
-```bash
-python benchmark.py https://api.example.com --endpoints /health /api/v1/users /api/v1/data
-```
-
-### Quick Test (5 requests, 5 seconds)
-```bash
-python benchmark.py https://httpbin.org --endpoints /status/200 --latency-requests 5 --throughput-duration 5
-```
-
-### Production Load Test
-```bash
-python benchmark.py https://api.example.com --latency-requests 1000 --throughput-duration 60
-```
-
-## Output
-
-The tool provides:
-- Console output with real-time results
-- JSON file (`benchmark_results.json`) with detailed metrics
-- Timestamp and configuration details
-
-## Metrics Explained
-
-- **Latency**: Response time in milliseconds
-  - Avg: Average response time
-  - P95: 95th percentile (95% of requests faster than this)
-  - Min/Max: Fastest and slowest requests
-
-- **Throughput**: Request handling capacity
-  - RPS: Requests per second
-  - Success Rate: Percentage of successful requests
-
-## Best Practices
-
-1. **Start Small**: Begin with low request counts to avoid overwhelming the API
-2. **Monitor Resources**: Watch CPU and network usage during tests
-3. **Test Realistic Scenarios**: Use actual endpoints your application calls
-4. **Consider Rate Limits**: Respect API rate limiting policies
-5. **Multiple Runs**: Run tests multiple times for consistent results
+### Throughput Test
+- Requests per second
+- Total duration
+- Success/error rates
+- Concurrent connection performance
 
 ## Example Results
 
+```json
+{
+  "avg_ms": 863.30,
+  "min_ms": 638.17,
+  "max_ms": 3901.82,
+  "median_ms": 730.37,
+  "p95_ms": 1647.43,
+  "errors": 0
+}
 ```
-Starting benchmark for https://httpbin.org
-Timestamp: 2026-02-06T20:17:28.898669
 
-Testing endpoint: /status/200
-  Running latency test...
-  Running throughput test...
-  Latency - Avg: 1007.34ms, P95: 1467.10ms
-  Throughput - RPS: 4.73, Success Rate: 100.00%
+## Customization
 
-Results saved to benchmark_results.json
-```
+- Modify request headers, methods, or payloads in the scripts
+- Adjust timeout values for slow APIs
+- Add authentication as needed
+- Export results to CSV/JSON for analysis

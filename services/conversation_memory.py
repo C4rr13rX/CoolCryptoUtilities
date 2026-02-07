@@ -8,7 +8,6 @@ from dataclasses import dataclass
 import time
 from typing import List, Optional, Dict, Any
 from pathlib import Path
-from typing import List
 
 
 @dataclass
@@ -162,16 +161,17 @@ class ConversationMemory:
             return "\n\n".join(parts)
 
         blocks: List[str] = []
-        include_ctx = os.getenv("C0D3R_TRANSCRIPT_INCLUDE_CONTEXT", "1").strip().lower() in {"1", "true", "yes", "on"}
+        include_ctx = os.getenv("C0D3R_TRANSCRIPT_INCLUDE_CONTEXT", "0").strip().lower() in {"1", "true", "yes", "on"}
         for entry in history:
-            role = (entry.role or "").strip() or "unknown"
-            header = f"{entry.ts or 'unknown'} {role.capitalize()}:"
+            role = (entry.role or "").strip().lower() or "unknown"
+            speaker = "Assistant" if role == "assistant" else ("User" if role == "user" else role.capitalize())
+            header = f"{speaker}:"
             lines = [header]
-            if include_ctx and entry.role == "user" and entry.context:
+            if include_ctx and role == "user" and entry.context:
                 ctx = entry.context.strip()
                 if context_limit and len(ctx) > context_limit:
                     ctx = ctx[:context_limit].rstrip() + "..."
-                lines.append("Context:")
+                lines.append("System context:")
                 lines.append(ctx)
             content = (entry.content or "").strip()
             if content:
@@ -179,7 +179,7 @@ class ConversationMemory:
             blocks.append("\n".join(lines))
 
         transcript_lines: List[str] = []
-        transcript_lines.append("Conversation transcript (most recent last):")
+        transcript_lines.append("Transcript (most recent last):")
         transcript_body: List[str] = []
         size = len("\n".join(transcript_lines))
         for block in reversed(blocks):

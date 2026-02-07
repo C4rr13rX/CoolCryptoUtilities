@@ -83,10 +83,12 @@ def find_dotenv(usecwd: bool = False) -> str:
 def dotenv_values(path: str | os.PathLike[str], stream=None) -> Dict[str, str]:
     if not _dotenv_enabled():
         return {}
-    return _real_dotenv_values(dotenv_path=path, stream=stream)
+    # Use positional args so this works for both python-dotenv and the fallback shim.
+    return _real_dotenv_values(path, stream=stream)
 
 
 def load_dotenv(path: str | os.PathLike[str] | None = None, override: bool = False) -> bool:
     if not _dotenv_enabled():
         return False
-    return _real_load_dotenv(dotenv_path=path, override=override)
+    # Use positional args so this works for both python-dotenv and the fallback shim.
+    return _real_load_dotenv(path, override=override)

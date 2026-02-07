@@ -1,0 +1,18 @@
+{
+  "url": "https://httpbin.org/get",
+  "timestamp": "20260206_213347",
+  "latency": {
+    "avg_ms": 796.8090780024067,
+    "min_ms": 617.318400007207,
+    "max_ms": 1549.9557000002824,
+    "p95_ms": 1299.1583999828435
+  },
+  "throughput": {
+    "total_requests": 1000,
+    "successful_requests": 999,
+    "failed_requests": 1,
+    "duration_s": 5.086151199997403,
+    "requests_per_second": 196.61232249652952,
+    "success_rate": 99.9
+  }
+}
