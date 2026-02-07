@@ -34,6 +34,20 @@ HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("6m", 180 * 24 * 60 * 60),
 ]
 
+def _env_float(name: str, default: float, *, min_value: Optional[float] = None, max_value: Optional[float] = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    if min_value is not None:
+        value = max(float(min_value), value)
+    if max_value is not None:
+        value = min(float(max_value), value)
+    return float(value)
+
 
 def _is_test_env() -> bool:
     if os.getenv("PYTEST_CURRENT_TEST") or os.getenv("PYTEST_RUNNING"):
@@ -106,6 +120,7 @@ class TradeDirective:
     confidence: float
     expected_return: float
     reason: str
+    tier: str = "T0"
 
     def to_dict(self) -> Dict[str, float]:
         payload = asdict(self)
@@ -123,6 +138,7 @@ class RouteState:
     quote_token: str
     samples: Deque[Tuple[float, float, float]] = field(default_factory=lambda: deque(maxlen=720))
     last_directive: Optional[TradeDirective] = None
+    last_shadow_directive: Optional[TradeDirective] = None
     last_update: float = 0.0
     last_signature: Optional[Tuple[float, float]] = None
     cached_signals: Optional[List[HorizonSignal]] = None
@@ -267,7 +283,7 @@ class BusScheduler:
     ) -> None:
         self.db = db or get_db()
         self.horizons = list(horizons) if horizons is not None else HORIZON_DEFAULTS
-        self.min_profit = min_profit
+        self.min_profit = _env_float("SCHEDULER_MIN_PROFIT", min_profit, min_value=0.0, max_value=0.5)
         self.fee_buffer = fee_buffer
         self.tax_buffer = tax_buffer
         self.history_limit_sec = history_limit_sec
@@ -291,6 +307,55 @@ class BusScheduler:
         self._metrics_collector = MetricsCollector(self.db)
         self._prefill_enabled = bool(prefill and not _is_test_env())
 
+    def _threshold_env(
+        self,
+        base: str,
+        *,
+        bucket: Optional[str],
+        live_trading: bool,
+        default: float,
+        min_value: Optional[float] = None,
+        max_value: Optional[float] = None,
+        prefix: str = "",
+    ) -> float:
+        mode = "LIVE" if live_trading else "GHOST"
+        keys: List[str] = []
+        if bucket:
+            keys.append(f"{base}_{bucket.upper()}_{mode}")
+        keys.append(f"{base}_{mode}")
+        if bucket:
+            keys.append(f"{base}_{bucket.upper()}")
+        keys.append(base)
+        prefixed = []
+        if prefix:
+            prefixed = [f"{prefix}{key}" for key in keys]
+        for key in prefixed + keys:
+            raw = os.getenv(key)
+            if raw is None or raw == "":
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if min_value is not None:
+                value = max(float(min_value), value)
+            if max_value is not None:
+                value = min(float(max_value), value)
+            return float(value)
+        return float(default)
+
+    def _tier_for_seconds(self, seconds: int) -> str:
+        bucket = self._bucket_for_seconds(seconds)
+        default = {"short": "T0", "mid": "T1", "long": "T2"}.get(bucket, "T0")
+        override = os.getenv(f"TIER_{bucket.upper()}_LABEL")
+        if override:
+            return str(override).strip() or default
+        return default
+
+    def _tier_risk_multiplier(self, tier: str) -> float:
+        key = f"TIER_{tier.upper()}_RISK_MULTIPLIER"
+        return _env_float(key, 1.0, min_value=0.05, max_value=2.0)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -303,6 +368,7 @@ class BusScheduler:
         *,
         base_allocation: Optional[Dict[str, float]] = None,
         risk_budget: float = 1.0,
+        live_trading: bool = False,
     ) -> Optional[TradeDirective]:
         """Update internal state with the latest sample and return a directive."""
         state = self._update_state(sample)
@@ -342,6 +408,23 @@ class BusScheduler:
             "risk_budget": risk_budget,
             "direction_prob": direction_prob,
         }
+
+        money_button = self._money_button_candidate(
+            state,
+            last_price=last_price,
+            last_volume=last_volume,
+            portfolio=portfolio,
+            chain_name=chain_name,
+            fee_rate=fee_rate,
+            direction_prob=direction_prob,
+            confidence=confidence,
+            net_margin=net_margin,
+            base_allocation=base_allocation,
+            risk_budget=risk_budget,
+            live_trading=live_trading,
+        )
+        if money_button:
+            candidates.append(money_button)
         # Pause if recent data is too sparse
         if len(state.samples) < 12:
             return None
@@ -380,23 +463,58 @@ class BusScheduler:
         if available_quote > 0:
             long_quality = self.accuracy.quality(best_long.label)
             weight = self._horizon_weight(best_long.label, best_long.seconds)
+            bucket = self._bucket_for_seconds(best_long.seconds)
+            tier = self._tier_for_seconds(best_long.seconds)
+            min_profit_floor = self._threshold_env(
+                "SCHEDULER_MIN_PROFIT",
+                bucket=bucket,
+                live_trading=live_trading,
+                default=self.min_profit,
+                min_value=0.0,
+                max_value=0.5,
+            )
+            min_dir_prob = self._threshold_env(
+                "SCHEDULER_MIN_DIRECTION_PROB",
+                bucket=bucket,
+                live_trading=live_trading,
+                default=0.6,
+                min_value=0.0,
+                max_value=1.0,
+            )
+            min_confidence = self._threshold_env(
+                "SCHEDULER_MIN_CONFIDENCE",
+                bucket=bucket,
+                live_trading=live_trading,
+                default=0.6,
+                min_value=0.0,
+                max_value=1.0,
+            )
+            min_net_margin = self._threshold_env(
+                "SCHEDULER_MIN_NET_MARGIN",
+                bucket=bucket,
+                live_trading=live_trading,
+                default=min_profit_floor,
+                min_value=0.0,
+                max_value=1.0,
+            )
             expected = best_long.expected_return * long_quality * weight
             expected -= fee_rate
-            risk_factor = min(1.0, max(expected - self.min_profit, 0.0) * 5.0)
+            risk_factor = min(1.0, max(expected - min_profit_floor, 0.0) * 5.0)
             allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
-            max_allocation = max(allocation * risk_budget, 0.0)
+            effective_risk_budget = risk_budget * self._tier_risk_multiplier(tier)
+            max_allocation = max(allocation * effective_risk_budget, 0.0)
             if (
-                expected > self.min_profit
-                and direction_prob >= 0.6
-                and confidence >= 0.6
-                and (net_margin >= self.min_profit)
+                expected > min_profit_floor
+                and direction_prob >= min_dir_prob
+                and confidence >= min_confidence
+                and (net_margin >= min_net_margin)
             ):
                 size_quote = available_quote * min(0.35, max(0.08, risk_factor * 0.25))
                 if max_allocation > 0:
                     size_quote = min(size_quote, max_allocation)
                 size_base = size_quote / max(last_price, 1e-9)
                 if size_base > 0:
-                    target_price = last_price * (1.0 + max(expected - fee_rate, self.min_profit))
+                    target_price = last_price * (1.0 + max(expected - fee_rate, min_profit_floor))
                     directive = TradeDirective(
                         action="enter",
                         symbol=state.symbol,
@@ -408,6 +526,7 @@ class BusScheduler:
                         confidence=confidence,
                         expected_return=float(expected),
                         reason=f"forecast {best_long.label} {expected:.2%} w/ dir={direction_prob:.2f}",
+                        tier=tier,
                     )
                     candidates.append(
                         {
@@ -429,7 +548,33 @@ class BusScheduler:
             short_quality = self.accuracy.quality(best_short.label)
             weight = self._horizon_weight(best_short.label, best_short.seconds)
             expected = best_short.expected_return * short_quality * weight - fee_rate
-            if expected < -self.min_profit or direction_prob <= 0.4 or net_margin < 0:
+            exit_tier = self._tier_for_seconds(best_short.seconds)
+            exit_bucket = self._bucket_for_seconds(best_short.seconds)
+            exit_loss_floor = self._threshold_env(
+                "SCHEDULER_EXIT_LOSS_THRESHOLD",
+                bucket=exit_bucket,
+                live_trading=live_trading,
+                default=self.min_profit,
+                min_value=0.0,
+                max_value=0.5,
+            )
+            exit_dir_floor = self._threshold_env(
+                "SCHEDULER_EXIT_DIR_PROB_FLOOR",
+                bucket=exit_bucket,
+                live_trading=live_trading,
+                default=0.4,
+                min_value=0.0,
+                max_value=1.0,
+            )
+            exit_net_margin_floor = self._threshold_env(
+                "SCHEDULER_EXIT_NET_MARGIN_FLOOR",
+                bucket=exit_bucket,
+                live_trading=live_trading,
+                default=0.0,
+                min_value=-1.0,
+                max_value=1.0,
+            )
+            if expected < -exit_loss_floor or direction_prob <= exit_dir_floor or net_margin < exit_net_margin_floor:
                 size_base = available_base * 0.5
                 if size_base > 0:
                     target_price = last_price * (1.0 + expected + fee_rate)
@@ -444,6 +589,7 @@ class BusScheduler:
                         confidence=confidence,
                         expected_return=float(expected),
                         reason=f"drawdown {best_short.label} {expected:.2%}",
+                        tier=exit_tier,
                     )
                     candidates.append(
                         {
@@ -740,6 +886,205 @@ class BusScheduler:
             horizon_scale = min(1.0, signal.seconds / (12 * 3600))  # emphasize <= 12h windows
             signal.expected_return += direction * bias_strength * (0.5 + 0.5 * horizon_scale)
         return signals
+
+    def _money_button_candidate(
+        self,
+        state: RouteState,
+        *,
+        last_price: float,
+        last_volume: float,
+        portfolio: PortfolioState,
+        chain_name: str,
+        fee_rate: float,
+        direction_prob: float,
+        confidence: float,
+        net_margin: float,
+        base_allocation: Optional[Dict[str, float]],
+        risk_budget: float,
+        live_trading: bool,
+    ) -> Optional[Dict[str, Any]]:
+        enabled = os.getenv("MONEY_BUTTON_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return None
+        if live_trading and os.getenv("MONEY_BUTTON_ALLOW_LIVE", "0").lower() not in {"1", "true", "yes", "on"}:
+            return None
+        if last_price <= 0:
+            return None
+
+        require_opportunity = os.getenv("MONEY_BUTTON_REQUIRE_OPPORTUNITY", "1").lower() in {"1", "true", "yes", "on"}
+        opportunity = self._opportunity_bias.get(state.symbol)
+        if require_opportunity and (not opportunity or opportunity.kind != "buy-low"):
+            return None
+
+        try:
+            lookback_sec = float(os.getenv("MONEY_BUTTON_LOOKBACK_SEC", str(2 * 3600)))
+        except Exception:
+            lookback_sec = float(2 * 3600)
+        lookback_sec = max(600.0, min(24 * 3600.0, lookback_sec))
+
+        try:
+            min_drawdown = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.02"))
+        except Exception:
+            min_drawdown = 0.02
+        try:
+            max_drawdown = float(os.getenv("MONEY_BUTTON_MAX_DRAWDOWN", "0.05"))
+        except Exception:
+            max_drawdown = 0.05
+        min_drawdown = max(0.0, min(min_drawdown, 0.25))
+        max_drawdown = max(min_drawdown, min(max_drawdown, 0.35))
+
+        try:
+            min_net_return = float(os.getenv("MONEY_BUTTON_MIN_NET_RETURN", "0.005"))
+        except Exception:
+            min_net_return = 0.005
+        min_net_return = max(0.0, min(min_net_return, 0.25))
+
+        try:
+            min_dir_prob = float(os.getenv("MONEY_BUTTON_MIN_DIR_PROB", "0.52"))
+        except Exception:
+            min_dir_prob = 0.52
+        try:
+            min_exit_conf = float(os.getenv("MONEY_BUTTON_MIN_EXIT_CONF", "0.52"))
+        except Exception:
+            min_exit_conf = 0.52
+        if live_trading:
+            try:
+                min_dir_prob = float(os.getenv("MONEY_BUTTON_MIN_DIR_PROB_LIVE", str(min_dir_prob)))
+            except Exception:
+                pass
+            try:
+                min_exit_conf = float(os.getenv("MONEY_BUTTON_MIN_EXIT_CONF_LIVE", str(min_exit_conf)))
+            except Exception:
+                pass
+        min_dir_prob = max(0.0, min(min_dir_prob, 1.0))
+        min_exit_conf = max(0.0, min(min_exit_conf, 1.0))
+        if direction_prob < min_dir_prob or confidence < min_exit_conf:
+            return None
+
+        try:
+            min_model_net_margin = float(os.getenv("MONEY_BUTTON_MIN_MODEL_NET_MARGIN", "0.0"))
+        except Exception:
+            min_model_net_margin = 0.0
+        if net_margin < min_model_net_margin:
+            return None
+
+        cutoff = state.samples[-1][0] - lookback_sec if state.samples else 0.0
+        recent_prices = [float(price) for ts, price, _ in state.samples if ts >= cutoff and float(price) > 0.0]
+        if len(recent_prices) < 8:
+            return None
+        peak = max(recent_prices)
+        if peak <= 0.0:
+            return None
+        drawdown = (last_price - peak) / peak
+        # We want a controlled dip (e.g., 2-5%) that often mean-reverts.
+        if drawdown > -min_drawdown or drawdown < -max_drawdown:
+            return None
+
+        median_price = float(np.median(np.asarray(recent_prices, dtype=np.float64)))
+        # Conservative reversion target: median is harder to "fake" than mean.
+        reversion_target = max(median_price, last_price)
+        reversion_target = min(reversion_target, peak)
+        expected_return = (reversion_target - last_price) / max(last_price, 1e-9)
+        if expected_return <= 0.0:
+            return None
+
+        net_expected = expected_return - fee_rate
+        if net_expected < min_net_return:
+            return None
+
+        # Require the immediate trend to be not-too-negative (avoid catching knives).
+        try:
+            slope_window_sec = float(os.getenv("MONEY_BUTTON_SLOPE_WINDOW_SEC", "1800"))
+        except Exception:
+            slope_window_sec = 1800.0
+        slope_window_sec = max(300.0, min(4 * 3600.0, slope_window_sec))
+        slope_cutoff = state.samples[-1][0] - slope_window_sec if state.samples else 0.0
+        slope_samples = [(ts, price) for ts, price, _ in state.samples if ts >= slope_cutoff and price > 0]
+        if len(slope_samples) >= 6:
+            times = np.array([row[0] for row in slope_samples], dtype=float)
+            prices = np.array([row[1] for row in slope_samples], dtype=float)
+            rel_minutes = (times - times[-1]) / 60.0
+            safe_prices = np.clip(prices, a_min=1e-9, a_max=1e9)
+            log_prices = np.log(safe_prices)
+            slope = 0.0
+            try:
+                if not np.allclose(rel_minutes, rel_minutes[0]):
+                    with np.errstate(all="ignore"):
+                        slope, _ = np.polyfit(rel_minutes, log_prices, 1)
+            except Exception:
+                slope = 0.0
+            try:
+                slope_floor = float(os.getenv("MONEY_BUTTON_SLOPE_FLOOR", "-0.00025"))
+            except Exception:
+                slope_floor = -0.00025
+            if slope < slope_floor:
+                return None
+
+        try:
+            reversion_fraction = float(os.getenv("MONEY_BUTTON_REVERSION_FRACTION", "0.55"))
+        except Exception:
+            reversion_fraction = 0.55
+        reversion_fraction = max(0.1, min(reversion_fraction, 1.0))
+        take_profit_return = max(fee_rate + min_net_return, abs(drawdown) * reversion_fraction)
+        take_profit_return = min(take_profit_return, expected_return)
+        if take_profit_return - fee_rate < min_net_return:
+            return None
+        target_price = last_price * (1.0 + take_profit_return)
+
+        available_quote = float(portfolio.get_quantity(state.quote_token, chain=chain_name))
+        if available_quote <= 0.0:
+            return None
+
+        try:
+            max_quote_frac = float(os.getenv("MONEY_BUTTON_MAX_QUOTE_FRAC", "0.12"))
+        except Exception:
+            max_quote_frac = 0.12
+        try:
+            min_quote_frac = float(os.getenv("MONEY_BUTTON_MIN_QUOTE_FRAC", "0.03"))
+        except Exception:
+            min_quote_frac = 0.03
+        max_quote_frac = max(0.01, min(max_quote_frac, 0.5))
+        min_quote_frac = max(0.0, min(min_quote_frac, max_quote_frac))
+
+        # Size smaller than the standard scheduler to reduce regret while scouting the edge.
+        tier = "T0"
+        tier_risk = self._tier_risk_multiplier(tier)
+        size_quote = available_quote * max(min_quote_frac, min(max_quote_frac, 0.06 + min(0.08, net_expected * 2.0)))
+        allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
+        max_allocation = max(float(allocation) * float(risk_budget) * float(tier_risk), 0.0)
+        if max_allocation > 0:
+            size_quote = min(size_quote, max_allocation)
+        size_base = size_quote / max(last_price, 1e-9)
+        if size_base <= 0.0:
+            return None
+
+        directive = TradeDirective(
+            action="enter",
+            symbol=state.symbol,
+            base_token=state.base_token,
+            quote_token=state.quote_token,
+            size=float(size_base),
+            target_price=float(target_price),
+            horizon=os.getenv("MONEY_BUTTON_HORIZON", "30m"),
+            confidence=float(max(0.0, min(1.0, 0.5 + min(0.35, net_expected * 8.0)))),
+            expected_return=float(net_expected),
+            reason=f"money_button dip {drawdown:.2%} -> target {take_profit_return:.2%}",
+            tier=tier,
+        )
+        return {
+            "directive": directive,
+            "score": float(net_expected),
+            "meta": {
+                "confidence": float(directive.confidence),
+                "direction_prob": float(direction_prob),
+                "risk_factor": float(min(1.0, max(net_expected / max(min_net_return, 1e-9), 0.0))),
+                "horizon_weight": 1.0,
+                "quality": 1.0,
+                "risk_penalty": float(fee_rate),
+                "drawdown": float(drawdown),
+                "target_return": float(take_profit_return),
+            },
+        }
 
     def filter_metrics(self) -> List[Dict[str, Any]]:
         """

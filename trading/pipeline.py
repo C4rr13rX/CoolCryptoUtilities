@@ -463,6 +463,75 @@ class TrainingPipeline:
         except Exception:
             return None
 
+    def _shadow_eval_summary(
+        self,
+        candidate_eval: Optional[Dict[str, float]],
+        active_eval: Optional[Dict[str, float]],
+    ) -> Optional[Dict[str, Any]]:
+        if not candidate_eval or not active_eval:
+            return None
+
+        def _pick(eval_data: Dict[str, float], primary: str, fallback: str) -> float:
+            if primary in eval_data:
+                return self._safe_float(eval_data.get(primary, 0.0))
+            return self._safe_float(eval_data.get(fallback, 0.0))
+
+        cand = {
+            "dir_accuracy": self._safe_float(candidate_eval.get("dir_accuracy", 0.0)),
+            "win_rate": _pick(candidate_eval, "ghost_win_rate_best", "ghost_win_rate"),
+            "profit_factor": _pick(candidate_eval, "best_profit_factor", "profit_factor"),
+            "realized_margin": _pick(candidate_eval, "ghost_realized_margin_best", "ghost_realized_margin"),
+        }
+        active = {
+            "dir_accuracy": self._safe_float(active_eval.get("dir_accuracy", 0.0)),
+            "win_rate": _pick(active_eval, "ghost_win_rate_best", "ghost_win_rate"),
+            "profit_factor": _pick(active_eval, "best_profit_factor", "profit_factor"),
+            "realized_margin": _pick(active_eval, "ghost_realized_margin_best", "ghost_realized_margin"),
+        }
+        deltas = {k: cand[k] - active[k] for k in cand.keys()}
+
+        min_pf_delta = self._safe_float(os.getenv("SHADOW_MIN_PROFIT_FACTOR_DELTA", "0.0"))
+        min_wr_delta = self._safe_float(os.getenv("SHADOW_MIN_WIN_RATE_DELTA", "0.0"))
+        min_acc_delta = self._safe_float(os.getenv("SHADOW_MIN_DIR_ACC_DELTA", "0.0"))
+        min_margin_delta = self._safe_float(os.getenv("SHADOW_MIN_REALIZED_MARGIN_DELTA", "0.0"))
+
+        comparisons = {
+            "profit_factor": deltas["profit_factor"] >= min_pf_delta,
+            "win_rate": deltas["win_rate"] >= min_wr_delta,
+            "dir_accuracy": deltas["dir_accuracy"] >= min_acc_delta,
+            "realized_margin": deltas["realized_margin"] >= min_margin_delta,
+        }
+        beats_active = all(comparisons.values())
+
+        return {
+            "candidate": cand,
+            "active": active,
+            "deltas": deltas,
+            "comparisons": comparisons,
+            "thresholds": {
+                "profit_factor": min_pf_delta,
+                "win_rate": min_wr_delta,
+                "dir_accuracy": min_acc_delta,
+                "realized_margin": min_margin_delta,
+            },
+            "beats_active": beats_active,
+        }
+
+    def _persist_shadow_eval(self, payload: Dict[str, Any]) -> None:
+        try:
+            path = Path("data/reports/shadow_eval.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            blob = {
+                **payload,
+                "iteration": int(self.iteration),
+                "updated_at": int(time.time()),
+            }
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            tmp_path.write_text(json.dumps(blob, indent=2), encoding="utf-8")
+            os.replace(tmp_path, path)
+        except Exception:
+            pass
+
     def _active_approval(self, candidate_eval: Dict[str, float], active_eval: Dict[str, float]) -> bool:
         if os.getenv("DISABLE_ACTIVE_APPROVAL", "0").lower() in {"1", "true", "yes", "on"}:
             return True
@@ -901,6 +970,24 @@ class TrainingPipeline:
             promote = composite_score >= self.promotion_threshold
             gating_reason: Optional[str] = None
             active_eval = self._evaluate_active_model(eval_ds, eval_targets, sample_meta=eval_sample_meta)
+            shadow_eval = self._shadow_eval_summary(evaluation, active_eval)
+            if shadow_eval:
+                try:
+                    self.metrics.record(
+                        MetricStage.TRAINING,
+                        {
+                            "delta_profit_factor": float(shadow_eval["deltas"].get("profit_factor", 0.0)),
+                            "delta_win_rate": float(shadow_eval["deltas"].get("win_rate", 0.0)),
+                            "delta_dir_accuracy": float(shadow_eval["deltas"].get("dir_accuracy", 0.0)),
+                            "delta_realized_margin": float(shadow_eval["deltas"].get("realized_margin", 0.0)),
+                            "beats_active": 1.0 if shadow_eval.get("beats_active") else 0.0,
+                        },
+                        category="shadow_eval",
+                        meta={"iteration": self.iteration, "shadow": shadow_eval},
+                    )
+                except Exception:
+                    pass
+                self._persist_shadow_eval(shadow_eval)
             if promote:
                 if not evaluation:
                     gating_reason = "no evaluation metrics available"
@@ -938,6 +1025,9 @@ class TrainingPipeline:
                         elif active_eval:
                             if not self._active_approval(evaluation, active_eval):
                                 gating_reason = "active model approval failed"
+                    if not gating_reason and shadow_eval and os.getenv("SHADOW_EVAL_REQUIRED", "0").lower() in {"1", "true", "yes", "on"}:
+                        if not shadow_eval.get("beats_active", False):
+                            gating_reason = "shadow_eval_underperform"
                     if not gating_reason:
                         if not ghost_ready:
                             gating_reason = f"ghost_validation:{ghost_reason or 'not_ready'}"
@@ -2965,6 +3055,22 @@ class TrainingPipeline:
             else:
                 current_loss_streak = 0
         wins = len(trades) - losses
+        win_rate_lb = 0.0
+        wilson_z = 1.96
+        try:
+            wilson_z = float(os.getenv("GHOST_WILSON_Z", str(wilson_z)))
+        except Exception:
+            wilson_z = 1.96
+        if wilson_z <= 0:
+            wilson_z = 1.96
+        if len(trades) > 0:
+            n = float(len(trades))
+            phat = float(wins) / n
+            z2 = float(wilson_z * wilson_z)
+            denom = 1.0 + (z2 / n)
+            center = phat + (z2 / (2.0 * n))
+            adj = wilson_z * math.sqrt(max(0.0, (phat * (1.0 - phat) + (z2 / (4.0 * n))) / n))
+            win_rate_lb = max(0.0, min(1.0, (center - adj) / denom))
         loss_rate = float(losses / max(1, len(trades)))
         cumulative = 0.0
         trough = 0.0
@@ -2996,8 +3102,31 @@ class TrainingPipeline:
             and not stale_samples
             and not concentration_block
         )
+        fast_track_enabled = (os.getenv("GHOST_FAST_TRACK_ENABLED", "0") or "0").lower() in {"1", "true", "yes", "on"}
+        fast_track_min_trades = int(os.getenv("GHOST_FAST_TRACK_MIN_TRADES", str(max(10, min_trades // 2))))
+        fast_track_min_trades = max(5, min(fast_track_min_trades, min_trades))
+        try:
+            fast_track_min_win_rate_lb = float(os.getenv("GHOST_FAST_TRACK_MIN_WIN_RATE_LB", str(min_win_rate)))
+        except Exception:
+            fast_track_min_win_rate_lb = float(min_win_rate)
+        fast_track_min_win_rate_lb = float(np.clip(fast_track_min_win_rate_lb, 0.0, 1.0))
+        fast_track_ready = bool(
+            len(trades) >= fast_track_min_trades
+            and win_rate_lb >= fast_track_min_win_rate_lb
+            and avg_profit >= min_margin
+            and profit_factor >= min_profit_factor
+            and tail_risk <= tail_guard
+            and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
+            and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
+            and (loss_streak_guard <= 0 or max_loss_streak <= loss_streak_guard)
+            and not stale_samples
+            and not concentration_block
+        )
         reason = ""
-        if not ready:
+        if not ready and fast_track_enabled and fast_track_ready:
+            ready = True
+            reason = "fast_track"
+        elif not ready:
             if stale_samples:
                 reason = "stale_ghost_book"
             elif len(trades) < min_trades:
@@ -3025,6 +3154,8 @@ class TrainingPipeline:
             "reason": reason,
             "samples": len(trades),
             "win_rate": win_rate,
+            "win_rate_lb": win_rate_lb,
+            "wilson_z": wilson_z,
             "avg_profit": avg_profit,
             "tail_risk": tail_risk,
             "tail_guardrail": tail_guard,
@@ -3049,6 +3180,10 @@ class TrainingPipeline:
             "health_score": health_score,
             "wins": wins,
             "losses": losses,
+            "fast_track_enabled": fast_track_enabled,
+            "fast_track_ready": fast_track_ready,
+            "fast_track_min_trades": fast_track_min_trades,
+            "fast_track_min_win_rate_lb": fast_track_min_win_rate_lb,
         }
 
     def _wallet_state(self) -> Dict[str, Any]:

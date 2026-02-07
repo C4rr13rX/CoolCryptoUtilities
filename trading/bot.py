@@ -1593,10 +1593,30 @@ class TradingBot:
             ghost_metrics = {}
         ghost_count = len(trades)
         ghost_win_rate = float(ghost_metrics.get("win_rate", 0.0))
+        ghost_wins = sum(1 for t in trades if float(getattr(t, "profit", 0.0)) > 0)
+        ghost_losses = max(0, ghost_count - ghost_wins)
+        ghost_win_rate_lb = 0.0
+        ghost_wilson_z = 1.96
+        try:
+            ghost_wilson_z = float(os.getenv("LIVE_GHOST_WILSON_Z", str(ghost_wilson_z)))
+        except Exception:
+            ghost_wilson_z = 1.96
+        if ghost_wilson_z <= 0:
+            ghost_wilson_z = 1.96
+        if ghost_count > 0:
+            n = float(ghost_count)
+            phat = float(ghost_wins) / n
+            z2 = float(ghost_wilson_z * ghost_wilson_z)
+            denom = 1.0 + (z2 / n)
+            center = phat + (z2 / (2.0 * n))
+            adj = ghost_wilson_z * math.sqrt(max(0.0, (phat * (1.0 - phat) + (z2 / (4.0 * n))) / n))
+            ghost_win_rate_lb = max(0.0, min(1.0, (center - adj) / denom))
         ghost_profit = float(sum(float(getattr(t, "profit", 0.0)) for t in trades))
+        use_wilson = (os.getenv("LIVE_GHOST_USE_WILSON", "0") or "0").lower() in {"1", "true", "yes", "on"}
+        ghost_gate_win_rate = ghost_win_rate_lb if use_wilson else ghost_win_rate
         if (
             ghost_count < effective_required_trades
-            or ghost_win_rate < effective_required_win_rate
+            or ghost_gate_win_rate < effective_required_win_rate
             or ghost_profit < effective_required_profit
         ):
             self._live_transition_state = {
@@ -1608,6 +1628,12 @@ class TradingBot:
                 "required_profit": effective_required_profit,
                 "ghost_trades": ghost_count,
                 "ghost_win_rate": ghost_win_rate,
+                "ghost_win_rate_lb": ghost_win_rate_lb,
+                "ghost_win_rate_gate": ghost_gate_win_rate,
+                "ghost_wins": ghost_wins,
+                "ghost_losses": ghost_losses,
+                "ghost_wilson_z": ghost_wilson_z,
+                "ghost_use_wilson": use_wilson,
                 "ghost_profit": ghost_profit,
                 "reason": "ghost_performance_gate",
             }
@@ -1649,6 +1675,12 @@ class TradingBot:
             "required_profit": effective_required_profit,
             "ghost_trades": ghost_count,
             "ghost_win_rate": ghost_win_rate,
+            "ghost_win_rate_lb": ghost_win_rate_lb,
+            "ghost_win_rate_gate": ghost_gate_win_rate,
+            "ghost_wins": ghost_wins,
+            "ghost_losses": ghost_losses,
+            "ghost_wilson_z": ghost_wilson_z,
+            "ghost_use_wilson": use_wilson,
             "ghost_profit": ghost_profit,
             "plan": plan,
         }
@@ -1668,6 +1700,12 @@ class TradingBot:
                 "plan": plan,
                 "ghost_trades": ghost_count,
                 "ghost_win_rate": ghost_win_rate,
+                "ghost_win_rate_lb": ghost_win_rate_lb,
+                "ghost_win_rate_gate": ghost_gate_win_rate,
+                "ghost_wins": ghost_wins,
+                "ghost_losses": ghost_losses,
+                "ghost_wilson_z": ghost_wilson_z,
+                "ghost_use_wilson": use_wilson,
                 "ghost_profit": ghost_profit,
             },
         )
@@ -2161,6 +2199,7 @@ class TradingBot:
                         self.portfolio,
                         base_allocation=allocation_map,
                         risk_budget=risk_budget,
+                        live_trading=self.live_trading_enabled,
                     )
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
