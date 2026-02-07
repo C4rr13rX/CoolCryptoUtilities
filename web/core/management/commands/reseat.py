@@ -12,6 +12,7 @@ from django.core.management import BaseCommand, call_command
 
 class Command(BaseCommand):
     help = "Build frontend, apply migrations, collect static, then runserver (in that order)."
+    requires_system_checks = []
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -49,6 +50,25 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         project_root = Path(__file__).resolve().parents[4]
         frontend_dir = project_root / "web" / "frontend"
+
+        def ensure_venv():
+            venv_root = project_root / ".venv"
+            if os.name == "nt":
+                venv_python = venv_root / "Scripts" / "python.exe"
+            else:
+                venv_python = venv_root / "bin" / "python"
+            try:
+                current = Path(sys.executable).resolve()
+            except Exception:
+                current = None
+            if venv_python.exists() and current and current != venv_python.resolve():
+                self.stdout.write(
+                    self.style.WARNING(f"Switching to venv python: {venv_python}")
+                )
+                os.execv(
+                    str(venv_python),
+                    [str(venv_python), *sys.argv],
+                )
 
         def resolve_cmd(cmd):
             if not cmd:
@@ -164,7 +184,9 @@ class Command(BaseCommand):
         if options.get("production_off"):
             os.environ["PRODUCTION_AUTO_DISABLED"] = "1"
 
+        ensure_venv()
         ensure_python_deps()
+        call_command("check")
 
         self.stdout.write(self.style.MIGRATE_HEADING("[2/7] Frontend build"))
         if not options["noinstall"]:
