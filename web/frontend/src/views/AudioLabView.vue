@@ -124,19 +124,74 @@
         and we can wire them into a local AI model pipeline next.
       </p>
     </section>
+
+    <section class="panel">
+      <header>
+        <h2>Section Chords</h2>
+        <p>Assign a motif to each section and click type. Each click will cycle its melody.</p>
+      </header>
+      <div class="sound-grid">
+        <label v-for="target in soundTargets" :key="target.id">
+          <span>{{ target.label }}</span>
+          <select v-model="soundMap[target.id]">
+            <option v-for="motif in motifOptions" :key="motif" :value="motif">{{ motif }}</option>
+          </select>
+        </label>
+      </div>
+      <div class="sound-actions">
+        <button class="btn ghost" type="button" @click="resetSoundMap">Reset Defaults</button>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { ambientAudio, DEFAULT_AMBIENT_SETTINGS, AmbientSettings } from '@/audio/ambient';
+import {
+  ambientAudio,
+  DEFAULT_AMBIENT_SETTINGS,
+  DEFAULT_SOUND_MAP,
+  MOTIF_NAMES,
+  AmbientSettings,
+  SoundMap,
+} from '@/audio/ambient';
 
 const enabled = ref(false);
 const settings = reactive<AmbientSettings>({ ...DEFAULT_AMBIENT_SETTINGS });
 const genre = ref('ambient');
 const midiFile = ref<File | null>(null);
 const detectedMidiKey = ref<{ root: string; mode: 'major' | 'minor' } | null>(null);
+const soundMap = reactive<SoundMap>({ ...DEFAULT_SOUND_MAP });
 const keyRoots = ['C', 'C#', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+const motifOptions = MOTIF_NAMES;
+
+const soundTargets = [
+  { id: 'section:dashboard', label: 'Overview' },
+  { id: 'section:organism', label: 'Organism' },
+  { id: 'section:pipeline', label: 'Pipeline' },
+  { id: 'section:streams', label: 'Streams' },
+  { id: 'section:telemetry', label: 'Telemetry' },
+  { id: 'section:wallet', label: 'Wallet' },
+  { id: 'section:c0d3r', label: 'c0d3r' },
+  { id: 'section:addressbook', label: 'Address Book' },
+  { id: 'section:advisories', label: 'Advisories' },
+  { id: 'section:datalab', label: 'Data Lab' },
+  { id: 'section:lab', label: 'Model Lab' },
+  { id: 'section:guardian', label: 'Guardian' },
+  { id: 'section:codegraph', label: 'Code Graph' },
+  { id: 'section:integrations', label: 'API Integrations' },
+  { id: 'section:settings', label: 'Settings' },
+  { id: 'section:audiolab', label: 'Audio Lab' },
+  { id: 'section:u53rxr080t', label: 'U53RxR080T' },
+  { id: 'section:branddozer', label: 'BrandDozer' },
+  { id: 'section:branddozer_solo', label: 'BrandDozer Solo' },
+  { id: 'action', label: 'Primary actions' },
+  { id: 'link', label: 'Links / Ghost buttons' },
+  { id: 'toggle', label: 'Toggles' },
+  { id: 'warning', label: 'Warning buttons' },
+  { id: 'danger', label: 'Danger buttons' },
+  { id: 'confirm', label: 'Confirm actions' },
+];
 
 const midiLabel = computed(() => (midiFile.value ? midiFile.value.name : 'none selected'));
 const keyLabel = computed(() => `${settings.keyRoot} ${settings.keyMode}`);
@@ -148,6 +203,7 @@ const loadState = () => {
       const data = JSON.parse(raw);
       Object.assign(settings, data.settings || {});
       if (typeof data.genre === 'string') genre.value = data.genre;
+      Object.assign(soundMap, data.soundMap || {});
       enabled.value = Boolean(data.enabled);
     }
   } catch {
@@ -160,6 +216,7 @@ const persistState = () => {
     'ccu:audio-settings',
     JSON.stringify({
       settings,
+      soundMap,
       genre: genre.value,
       enabled: enabled.value,
     })
@@ -180,6 +237,12 @@ const toggleAudio = async () => {
 
 const playChord = () => {
   ambientAudio.triggerChord();
+};
+
+const resetSoundMap = () => {
+  Object.assign(soundMap, DEFAULT_SOUND_MAP);
+  ambientAudio.setSoundMap(soundMap);
+  persistState();
 };
 
 const handleMidi = async (event: Event) => {
@@ -213,8 +276,18 @@ watch(
 
 watch(genre, () => persistState());
 
+watch(
+  () => ({ ...soundMap }),
+  () => {
+    persistState();
+    ambientAudio.setSoundMap(soundMap);
+  },
+  { deep: true }
+);
+
 onMounted(() => {
   loadState();
+  ambientAudio.setSoundMap(soundMap);
   if (enabled.value) {
     ambientAudio.enable(settings);
   }
@@ -344,5 +417,28 @@ const KEY_SIG_MINOR: Record<number, string> = {
 
 .note {
   margin-top: 1rem;
+}
+
+.sound-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem 1.5rem;
+  margin-top: 1.2rem;
+}
+
+.sound-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08rem;
+  color: var(--text-muted);
+}
+
+.sound-actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

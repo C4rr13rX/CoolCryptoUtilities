@@ -14,6 +14,7 @@
           :to="{ name: item.route }"
           class="nav-link"
           :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
+          :data-sound="`section:${item.route}`"
           @click="handleNavClick"
         >
           <span class="icon">
@@ -90,8 +91,9 @@ let pointerHandler: ((event: PointerEvent) => void) | undefined;
 onMounted(() => {
   refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
   consoleTimer = window.setInterval(() => store.refreshConsole(), 5000);
-  pointerHandler = () => {
-    ambientAudio.triggerChord();
+  pointerHandler = (event: PointerEvent) => {
+    const soundId = resolveSoundId(event.target as HTMLElement | null);
+    ambientAudio.triggerChord(soundId);
   };
   window.addEventListener('pointerdown', pointerHandler, { passive: true });
 });
@@ -149,6 +151,22 @@ watch(
     }
   }
 );
+
+const resolveSoundId = (target: HTMLElement | null) => {
+  const soundTarget = target?.closest('[data-sound]') as HTMLElement | null;
+  if (soundTarget?.dataset.sound) return soundTarget.dataset.sound;
+  const button = target?.closest('button');
+  if (button) {
+    if (button.classList.contains('danger')) return 'danger';
+    if (button.classList.contains('warning')) return 'warning';
+    if (button.classList.contains('ghost')) return 'link';
+    return 'action';
+  }
+  const anchor = target?.closest('a');
+  if (anchor) return 'link';
+  const name = route.name ? String(route.name) : '';
+  return name ? `section:${name}` : 'action';
+};
 
 const streamIntent = computed(() => {
   const keys = Object.keys(store.streams || {});

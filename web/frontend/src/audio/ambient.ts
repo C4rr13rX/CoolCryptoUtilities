@@ -13,6 +13,8 @@ export type AmbientSettings = {
   keyMode: 'major' | 'minor';
 };
 
+export type SoundMap = Record<string, string>;
+
 export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   baseFreq: 110,
   detuneHz: 6,
@@ -27,6 +29,159 @@ export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   keyRoot: 'C',
   keyMode: 'minor',
 };
+
+export const MOTIFS: Record<string, number[][]> = {
+  overview: [
+    [0, 4, 7, 11],
+    [2, 7, 11],
+    [0, 5, 9],
+  ],
+  organism: [
+    [0, 3, 7, 10],
+    [5, 8, 12],
+    [2, 7, 10],
+  ],
+  pipeline: [
+    [0, 5, 7, 10],
+    [0, 4, 9],
+    [2, 7, 12],
+  ],
+  streams: [
+    [0, 7, 12],
+    [0, 5, 9],
+    [0, 4, 7, 12],
+  ],
+  telemetry: [
+    [0, 3, 7],
+    [2, 5, 9],
+    [0, 3, 8],
+  ],
+  wallet: [
+    [0, 4, 7],
+    [0, 9, 12],
+    [2, 7, 11],
+  ],
+  c0d3r: [
+    [0, 7, 10],
+    [0, 3, 7, 10],
+    [2, 5, 9],
+  ],
+  addressbook: [
+    [0, 4, 9],
+    [0, 5, 9],
+    [2, 7, 11],
+  ],
+  advisories: [
+    [0, 3, 6, 9],
+    [0, 5, 8],
+    [2, 6, 9],
+  ],
+  datalab: [
+    [0, 4, 7, 10],
+    [2, 5, 9],
+    [0, 5, 10],
+  ],
+  lab: [
+    [0, 4, 8],
+    [0, 3, 7, 10],
+    [2, 6, 9],
+  ],
+  guardian: [
+    [0, 5, 10],
+    [0, 3, 7],
+    [2, 7, 10],
+  ],
+  codegraph: [
+    [0, 4, 9, 12],
+    [0, 7, 14],
+    [2, 5, 9],
+  ],
+  integrations: [
+    [0, 4, 7],
+    [2, 6, 9],
+    [0, 5, 9],
+  ],
+  settings: [
+    [0, 3, 7],
+    [0, 5, 8],
+    [2, 5, 9],
+  ],
+  audiolab: [
+    [0, 7, 12],
+    [0, 4, 9],
+    [0, 5, 10],
+  ],
+  u53rxr080t: [
+    [0, 3, 7, 10],
+    [2, 5, 9],
+    [0, 7, 10],
+  ],
+  branddozer: [
+    [0, 4, 7, 11],
+    [0, 3, 8],
+    [2, 7, 11],
+  ],
+  action: [
+    [0, 7],
+    [0, 4, 7],
+    [2, 7, 11],
+  ],
+  link: [
+    [0, 5, 9],
+    [0, 4, 7],
+    [2, 5, 9],
+  ],
+  toggle: [
+    [0, 5, 7],
+    [0, 3, 7],
+    [2, 7, 10],
+  ],
+  danger: [
+    [0, 3, 6],
+    [0, 6, 9],
+    [0, 3, 7],
+  ],
+  warning: [
+    [0, 4, 8],
+    [0, 5, 9],
+    [2, 6, 10],
+  ],
+  confirm: [
+    [0, 4, 7],
+    [0, 5, 9],
+    [2, 7, 11],
+  ],
+};
+
+export const DEFAULT_SOUND_MAP: SoundMap = {
+  'section:dashboard': 'overview',
+  'section:organism': 'organism',
+  'section:pipeline': 'pipeline',
+  'section:streams': 'streams',
+  'section:telemetry': 'telemetry',
+  'section:wallet': 'wallet',
+  'section:c0d3r': 'c0d3r',
+  'section:addressbook': 'addressbook',
+  'section:advisories': 'advisories',
+  'section:datalab': 'datalab',
+  'section:lab': 'lab',
+  'section:guardian': 'guardian',
+  'section:codegraph': 'codegraph',
+  'section:integrations': 'integrations',
+  'section:settings': 'settings',
+  'section:audiolab': 'audiolab',
+  'section:u53rxr080t': 'u53rxr080t',
+  'section:branddozer': 'branddozer',
+  'section:branddozer_solo': 'branddozer',
+  action: 'action',
+  link: 'link',
+  toggle: 'toggle',
+  warning: 'warning',
+  danger: 'danger',
+  confirm: 'confirm',
+};
+
+export const MOTIF_NAMES = Object.keys(MOTIFS).sort();
 
 const CHORDS: Record<string, number[][]> = {
   dream_minor: [
@@ -63,6 +218,8 @@ class AmbientAudio {
   private enabled = false;
   private settings: AmbientSettings = { ...DEFAULT_AMBIENT_SETTINGS };
   private lastChordAt = 0;
+  private soundMap: SoundMap = { ...DEFAULT_SOUND_MAP };
+  private motifCursor: Record<string, number> = {};
 
   isEnabled() {
     return this.enabled;
@@ -70,6 +227,14 @@ class AmbientAudio {
 
   getSettings() {
     return { ...this.settings };
+  }
+
+  getSoundMap() {
+    return { ...this.soundMap };
+  }
+
+  setSoundMap(map: SoundMap) {
+    this.soundMap = { ...DEFAULT_SOUND_MAP, ...(map || {}) };
   }
 
   async enable(settings?: Partial<AmbientSettings>) {
@@ -97,14 +262,13 @@ class AmbientAudio {
     this.syncParams();
   }
 
-  triggerChord() {
+  triggerChord(soundId?: string) {
     if (!this.enabled || !this.ctx || !this.master) return;
     const now = this.ctx.currentTime;
     if (now - this.lastChordAt < 0.15) return;
     this.lastChordAt = now;
 
-    const chordOptions = CHORDS[this.settings.chordPreset] || CHORDS.dream_minor;
-    const chord = chordOptions[Math.floor(Math.random() * chordOptions.length)];
+    const chord = this.pickChord(soundId);
     const keyOffset = keyToSemitone(this.settings.keyRoot);
     const gain = this.ctx.createGain();
     const decayTime = Math.max(0.4, this.settings.decay);
@@ -123,6 +287,20 @@ class AmbientAudio {
       osc.start(now);
       osc.stop(stopTime + 0.1);
     });
+  }
+
+  private pickChord(soundId?: string): number[] {
+    if (soundId) {
+      const mapped = this.soundMap[soundId] || soundId;
+      const motif = MOTIFS[mapped];
+      if (motif && motif.length) {
+        const index = this.motifCursor[mapped] ?? 0;
+        this.motifCursor[mapped] = (index + 1) % motif.length;
+        return motif[index];
+      }
+    }
+    const chordOptions = CHORDS[this.settings.chordPreset] || CHORDS.dream_minor;
+    return chordOptions[Math.floor(Math.random() * chordOptions.length)];
   }
 
   private ensureContext() {
