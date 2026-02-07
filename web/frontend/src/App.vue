@@ -59,7 +59,11 @@
       </header>
       <section class="content__body">
         <div class="content__viewport">
-          <RouterView />
+          <RouterView v-slot="{ Component }">
+            <Transition name="glitch" mode="out-in">
+              <component :is="Component" />
+            </Transition>
+          </RouterView>
         </div>
       </section>
     </main>
@@ -205,6 +209,8 @@ const navItems = computed(() => [
   { route: 'streams', label: 'Streams', icon: 'streams', path: '/streams', intent: streamIntent.value },
   { route: 'telemetry', label: 'Telemetry', icon: 'activity', path: '/telemetry', intent: feedbackIntent.value },
   { route: 'wallet', label: 'Wallet', icon: 'wallet', path: '/wallet', intent: consoleIntent.value },
+  { route: 'c0d3r', label: 'c0d3r', icon: 'terminal', path: '/c0d3r', intent: consoleIntent.value },
+  { route: 'addressbook', label: 'Address Book', icon: 'link', path: '/addressbook', intent: advisoryIntent.value },
   { route: 'advisories', label: 'Advisories', icon: 'shield', path: '/advisories', intent: advisoryIntent.value },
   { route: 'datalab', label: 'Data Lab', icon: 'datalab', path: '/datalab', intent: pipelineIntent.value },
   { route: 'lab', label: 'Model Lab', icon: 'lab', path: '/lab', intent: pipelineIntent.value },

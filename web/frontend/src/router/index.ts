@@ -15,6 +15,8 @@ import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 import BrandDozerView from '@/views/BrandDozerView.vue';
 import U53RxRobotView from '@/views/U53RxRobotView.vue';
+import AddressBookView from '@/views/AddressBookView.vue';
+import C0d3rView from '@/views/C0d3rView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -81,6 +83,18 @@ const routes: RouteRecordRaw[] = [
     path: '/settings',
     name: 'settings',
     component: SecureSettingsView,
+  },
+  {
+    path: '/addressbook',
+    name: 'addressbook',
+    component: AddressBookView,
+    meta: { title: 'Address Book' },
+  },
+  {
+    path: '/c0d3r',
+    name: 'c0d3r',
+    component: C0d3rView,
+    meta: { title: 'c0d3r' },
   },
   {
     path: '/branddozer',

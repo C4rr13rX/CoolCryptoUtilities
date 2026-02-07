@@ -73,6 +73,8 @@ if (mountEl) {
     branddozer: '/branddozer',
     branddozer_solo: '/branddozer/solo',
     u53rxr080t: '/u53rxr080t',
+    addressbook: '/addressbook',
+    c0d3r: '/c0d3r',
   };
   const initialPath = targetRoutes[initialRoute] || '/';
 

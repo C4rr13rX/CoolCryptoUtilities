@@ -315,6 +315,94 @@ code {
   border-collapse: collapse;
 }
 
+@keyframes glitch-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(-12px, 0, 0) skewX(2deg);
+    filter: blur(2px) contrast(1.2);
+  }
+  35% {
+    opacity: 0.65;
+    transform: translate3d(8px, -2px, 0) skewX(-2deg);
+    filter: blur(0.5px) saturate(1.1);
+  }
+  70% {
+    opacity: 0.9;
+    transform: translate3d(-4px, 1px, 0);
+    filter: none;
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: none;
+  }
+}
+
+@keyframes glitch-out {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(10px, 0, 0) skewX(-2deg);
+    filter: blur(2px);
+  }
+}
+
+@keyframes glitch-flicker {
+  0%,
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+  15% {
+    opacity: 0.85;
+    transform: translate3d(-2px, 0, 0);
+  }
+  35% {
+    opacity: 0.95;
+    transform: translate3d(2px, -1px, 0);
+  }
+  55% {
+    opacity: 0.9;
+    transform: translate3d(-1px, 1px, 0);
+  }
+}
+
+.glitch-enter-active {
+  animation: glitch-in 420ms ease both;
+}
+
+.glitch-leave-active {
+  animation: glitch-out 180ms ease both;
+}
+
+.glitch-enter-active .panel,
+.glitch-enter-active .card,
+.glitch-enter-active .entry-card,
+.glitch-enter-active .status-card,
+.glitch-enter-active .link-card,
+.glitch-enter-active .nav-tile,
+.glitch-enter-active .kpi-card {
+  animation: glitch-flicker 520ms ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glitch-enter-active,
+  .glitch-leave-active,
+  .glitch-enter-active .panel,
+  .glitch-enter-active .card,
+  .glitch-enter-active .entry-card,
+  .glitch-enter-active .status-card,
+  .glitch-enter-active .link-card,
+  .glitch-enter-active .nav-tile,
+  .glitch-enter-active .kpi-card {
+    animation: none !important;
+  }
+}
+
 @media (max-width: 960px) {
   .dashboard-shell {
     grid-template-columns: 1fr;

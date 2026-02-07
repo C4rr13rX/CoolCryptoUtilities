@@ -320,6 +320,74 @@ export async function fetchWalletState() {
   return data;
 }
 
+// ----------------------------- Address Book ---------------------------------
+export interface AddressBookEntry {
+  id: number;
+  name: string;
+  address: string;
+  chain?: string;
+  notes?: string;
+  image_url?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AddressBookEntryPayload {
+  name: string;
+  address: string;
+  chain?: string;
+  notes?: string;
+  image?: File | null;
+}
+
+function buildAddressBookForm(payload: AddressBookEntryPayload) {
+  const form = new FormData();
+  form.append('name', payload.name);
+  form.append('address', payload.address);
+  if (payload.chain) form.append('chain', payload.chain);
+  if (payload.notes) form.append('notes', payload.notes);
+  if (payload.image) form.append('image', payload.image);
+  return form;
+}
+
+export async function fetchAddressBookEntries() {
+  const { data } = await api.get('/addressbook/entries/');
+  return data as AddressBookEntry[];
+}
+
+export async function lookupAddressBookEntries(name: string, exact = false, limit = 20) {
+  const params: Record<string, string> = { name, exact: exact ? '1' : '0', limit: String(limit) };
+  const { data } = await api.get('/addressbook/lookup/', { params });
+  return data as { count: number; results: AddressBookEntry[] };
+}
+
+export async function createAddressBookEntry(payload: AddressBookEntryPayload) {
+  const form = buildAddressBookForm(payload);
+  const { data } = await api.post('/addressbook/entries/', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data as AddressBookEntry;
+}
+
+export async function updateAddressBookEntry(id: number, payload: AddressBookEntryPayload) {
+  const form = buildAddressBookForm(payload);
+  const { data } = await api.patch(`/addressbook/entries/${id}/`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data as AddressBookEntry;
+}
+
+export async function deleteAddressBookEntry(id: number) {
+  const { data } = await api.delete(`/addressbook/entries/${id}/`);
+  return data;
+}
+
+// ----------------------------- C0D3R ----------------------------------------
+export async function runC0d3rPrompt(payload: { prompt: string; research?: boolean; reset?: boolean }) {
+  const { data } = await api.post('/c0d3r/run/', payload, { timeout: 120000 });
+  return data as { output: string; model?: string; session_name?: string };
+}
+
 export async function fetchIntegrations() {
   const { data } = await api.get('/integrations/keys/');
   return data;

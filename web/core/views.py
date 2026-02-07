@@ -29,10 +29,13 @@ from db import get_db  # noqa: E402
 from opsconsole.manager import manager as console_manager
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
+from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E402
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
 SNAPSHOT_ROOT = Path("runtime/code_graph/snapshots")
+C0D3R_TRANSCRIPTS = Path("runtime/c0d3r/web")
+_C0D3R_SESSIONS: Dict[str, C0d3rSession] = {}
 
 def _load_report(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -235,6 +238,14 @@ class AdvisoriesPageView(BaseSecureView):
     initial_route = "advisories"
 
 
+class AddressBookPageView(BaseSecureView):
+    initial_route = "addressbook"
+
+
+class C0d3rPageView(BaseSecureView):
+    initial_route = "c0d3r"
+
+
 def guardian_failure_response(request, *args, **kwargs):
     view = GuardianFallbackView.as_view()
     response = view(request, *args, **kwargs)
@@ -281,6 +292,8 @@ class SpaRouteView(BaseSecureView):
             "integrations",
             "codegraph",
             "branddozer",
+            "addressbook",
+            "c0d3r",
         }
         if slug not in allowed:
             return redirect("core:dashboard")
@@ -379,6 +392,53 @@ class CodeGraphFilesView(LoginRequiredMixin, View):
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
         files = list_tracked_files()
         return JsonResponse({"files": files}, status=200)
+
+
+class C0d3rRunView(LoginRequiredMixin, View):
+    login_url = "core:index"
+    http_method_names = ["post"]
+
+    def post(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        try:
+            payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+        except Exception:
+            payload = {}
+        prompt = str(payload.get("prompt") or "").strip()
+        reset = bool(payload.get("reset"))
+        research = bool(payload.get("research"))
+        if not prompt and not reset:
+            return JsonResponse({"detail": "prompt is required"}, status=400)
+        key = f"user:{request.user.id}" if request.user.is_authenticated else f"session:{request.session.session_key}"
+        session = _C0D3R_SESSIONS.get(key)
+        if reset or session is None:
+            settings = c0d3r_default_settings()
+            C0D3R_TRANSCRIPTS.mkdir(parents=True, exist_ok=True)
+            session = C0d3rSession(
+                session_name=f"c0d3r-web-{request.user.id if request.user.is_authenticated else 'anon'}",
+                transcript_dir=C0D3R_TRANSCRIPTS,
+                stream_default=False,
+                workdir=ROOT,
+                **settings,
+            )
+            _C0D3R_SESSIONS[key] = session
+            if reset and not prompt:
+                return JsonResponse(
+                    {"output": "Session reset.", "model": "", "session_name": session.session_name},
+                    status=200,
+                )
+        try:
+            output = session.send(prompt, stream=False, verbose=False, research_override=research)
+        except Exception as exc:
+            return JsonResponse({"detail": f"c0d3r failed: {exc}"}, status=500)
+        model = ""
+        try:
+            model = session._c0d3r.ensure_model()
+        except Exception:
+            model = ""
+        return JsonResponse(
+            {"output": output, "model": model, "session_name": session.session_name},
+            status=200,
+        )
 
 
 def _tail_lines(path: Path, limit: int = 400) -> List[str]:
