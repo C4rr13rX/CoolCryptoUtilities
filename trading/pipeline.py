@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone, timedelta
@@ -473,6 +474,17 @@ class TrainingPipeline:
             return False
         if cand_fpr > max(0.0, active_fpr - self._active_fpr_buffer):
             return False
+        # Prefer candidates that produce meaningfully better profit factor than the incumbent.
+        # Default is 1.10 (10%) to avoid thrashing when gains are marginal.
+        try:
+            min_profit_ratio = float(os.getenv("ACTIVE_APPROVAL_PROFIT_FACTOR_RATIO", "1.10"))
+        except Exception:
+            min_profit_ratio = 1.10
+        if min_profit_ratio > 1.0:
+            cand_pf = self._safe_float(candidate_eval.get("best_profit_factor", candidate_eval.get("profit_factor", 0.0)))
+            active_pf = self._safe_float(active_eval.get("best_profit_factor", active_eval.get("profit_factor", 0.0)))
+            if active_pf > 0.0 and cand_pf > 0.0 and cand_pf < active_pf * min_profit_ratio:
+                return False
         return True
 
     # ------------------------------------------------------------------
@@ -538,6 +550,7 @@ class TrainingPipeline:
         template_choice = self._select_model_template(template_idx)
 
         pending_iteration = self.iteration + 1
+        exp_id: Optional[int] = None
 
         if self.is_paused():
             self.iteration = pending_iteration
@@ -550,464 +563,544 @@ class TrainingPipeline:
             }
 
         focus_assets, focus_stats = self._ghost_focus_assets()
-
-        news_items = getattr(self.data_loader, "news_items", []) or []
-        if news_items:
-            sentiment_counts: Dict[str, int] = {}
-            token_coverage: set[str] = set()
-            source_counts: Dict[str, int] = {}
-            for item in news_items:
-                sentiment = str(item.get("sentiment", "neutral")).lower()
-                sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
-                for token in item.get("tokens") or []:
-                    token_coverage.add(str(token).upper())
-                source = str(item.get("source") or "").strip()
-                if source:
-                    source_counts[source] = source_counts.get(source, 0) + 1
-            total_news = len(news_items)
-            news_metrics = {
-                "news_items_total": total_news,
-                "news_token_coverage": len(token_coverage),
-                "news_positive_ratio": sentiment_counts.get("positive", 0) / total_news,
-                "news_negative_ratio": sentiment_counts.get("negative", 0) / total_news,
-                "news_sources": len(source_counts),
-            }
-            self.metrics.record(
-                MetricStage.NEWS,
-                news_metrics,
-                category="training_news",
-                meta={
-                    "iteration": self.iteration,
-                    "unique_tokens": list(sorted(token_coverage))[:32],
-                    "sources": [
-                        name
-                        for name, _ in sorted(source_counts.items(), key=lambda item: item[1], reverse=True)[:12]
-                    ],
+        try:
+            exp_id = self.db.record_experiment(
+                "training_candidate",
+                "running",
+                params={
+                    "iteration": pending_iteration,
+                    "proposal": {
+                        "learning_rate": lr,
+                        "epochs": epochs,
+                        "template_idx": template_idx,
+                        "template": template_choice,
+                    },
+                    "focus_assets": list(focus_assets or []),
+                    "system_profile": dict(self.system_profile.__dict__),
                 },
             )
+        except Exception:
+            exp_id = None
 
-        prep_start = time.perf_counter()
-        result = self._prepare_dataset(batch_size=32, dataset_label="full")
-        inputs, targets, sample_weights = result
-        if inputs is None or targets is None or sample_weights is None:
-            self.iteration = pending_iteration
-            self._save_state()
-            print("[training] insufficient data for candidate training; skipping this cycle.")
-            return {"iteration": self.iteration, "status": "skipped", "score": None}
-        prep_duration = time.perf_counter() - prep_start
-        self.metrics.record(
-            MetricStage.TRAINING,
-            {
-                "dataset_seconds": prep_duration,
-                "positive_ratio": float(self._last_dataset_meta.get("positive_ratio", 0.0)),
-                "samples": float(self._last_dataset_meta.get("samples", 0)),
-            },
-            category="runtime_prep",
-            meta={"iteration": self.iteration},
-        )
-        self.metrics.feedback(
-            "preflight",
-            severity=FeedbackSeverity.INFO,
-            label="dataset_ready",
-            details={
-                "samples": self._last_dataset_meta.get("samples", 0),
-                "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
-            },
-        )
-        self._record_horizon_metrics()
-        self._preflight_checks(inputs, targets)
+        exp_finalized = False
 
-        self.iteration = pending_iteration
-        self._save_state()
-
-        if self.active_accuracy >= 0.99 and self._active_model is not None:
-            print("[training] active model already at ≥99% accuracy; pausing candidate search.")
-            return {
-                "iteration": self.iteration,
-                "status": "paused",
-                "score": self.active_accuracy,
-                "message": "active model at target accuracy",
-            }
-
-        loader_vocab = int(self.data_loader.asset_vocab_size)
-        required_vocab = int(max(loader_vocab, getattr(self, "_last_asset_vocab_requirement", loader_vocab)))
-        if required_vocab > loader_vocab:
-            log_message(
-                "training",
-                "expanding asset vocabulary for candidate model",
-                severity="info",
-                details={"required": required_vocab, "loader_vocab": loader_vocab},
-            )
-        md = _get_model_defs()
-        model, headline_vec, full_vec, losses, loss_weights = md.build_multimodal_model(
-            window_size=self.window_size,
-            tech_count=self.tech_count,
-            sent_seq_len=self.sent_seq_len,
-            asset_vocab_size=required_vocab,
-        )
-        self._adapt_vectorizers(headline_vec, full_vec)
+        def finalize_experiment(status: str, results: Dict[str, Any]) -> None:
+            nonlocal exp_finalized
+            if exp_id is None or exp_finalized:
+                return
+            try:
+                self.db.update_experiment(exp_id, status=status, results=results)
+            except Exception:
+                pass
+            exp_finalized = True
 
         try:
-            model.optimizer.learning_rate.assign(lr)
-        except Exception:
-            model.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
-                loss=losses,
-                loss_weights=loss_weights,
-                metrics={"price_dir": ["accuracy"]},
-            )
-
-        callbacks = [_get_model_defs().StateSaver()]
-        if os.getenv("TRAIN_EARLY_STOP", "1").lower() in {"1", "true", "yes", "on"}:
-            try:
-                patience = max(0, int(os.getenv("TRAIN_EARLY_STOP_PATIENCE", "1")))
-            except Exception:
-                patience = 1
-            try:
-                min_delta = max(0.0, float(os.getenv("TRAIN_EARLY_STOP_MIN_DELTA", "0.0005")))
-            except Exception:
-                min_delta = 0.0005
-            callbacks.append(
-                _load_tf().keras.callbacks.EarlyStopping(
-                    monitor="loss",
-                    patience=patience,
-                    min_delta=min_delta,
-                    restore_best_weights=True,
-                    verbose=0,
+            news_items = getattr(self.data_loader, "news_items", []) or []
+            if news_items:
+                sentiment_counts: Dict[str, int] = {}
+                token_coverage: set[str] = set()
+                source_counts: Dict[str, int] = {}
+                for item in news_items:
+                    sentiment = str(item.get("sentiment", "neutral")).lower()
+                    sentiment_counts[sentiment] = sentiment_counts.get(sentiment, 0) + 1
+                    for token in item.get("tokens") or []:
+                        token_coverage.add(str(token).upper())
+                    source = str(item.get("source") or "").strip()
+                    if source:
+                        source_counts[source] = source_counts.get(source, 0) + 1
+                total_news = len(news_items)
+                news_metrics = {
+                    "news_items_total": total_news,
+                    "news_token_coverage": len(token_coverage),
+                    "news_positive_ratio": sentiment_counts.get("positive", 0) / total_news,
+                    "news_negative_ratio": sentiment_counts.get("negative", 0) / total_news,
+                    "news_sources": len(source_counts),
+                }
+                self.metrics.record(
+                    MetricStage.NEWS,
+                    news_metrics,
+                    category="training_news",
+                    meta={
+                        "iteration": self.iteration,
+                        "unique_tokens": list(sorted(token_coverage))[:32],
+                        "sources": [
+                            name
+                            for name, _ in sorted(source_counts.items(), key=lambda item: item[1], reverse=True)[:12]
+                        ],
+                    },
                 )
-            )
-        input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
-        output_order = list(MODEL_OUTPUT_ORDER)
-        sample_count = int(np.asarray(next(iter(targets.values()))).shape[0]) if targets else 0
-        train_idx, eval_idx, cutoff_ts, holdout = self._compute_holdout_split(
-            sample_count=sample_count,
-            sample_meta=self._last_sample_meta,
-        )
-        eval_sample_meta = self._subset_sample_meta(self._last_sample_meta, eval_idx)
-        eval_targets: Dict[str, Any] = {name: self._slice_tensorlike(value, eval_idx) for name, value in targets.items()}
 
-        train_input_tensors = tuple(self._slice_tensorlike(inputs[name], train_idx) for name in input_order)
-        train_target_tensors = tuple(self._slice_tensorlike(targets[name], train_idx) for name in output_order)
-        train_weight_tensors = tuple(
-            tf.convert_to_tensor(
-                self._slice_tensorlike(
-                    sample_weights.get(name, np.ones(targets[name].shape[0], dtype=np.float32)),
-                    train_idx,
-                ),
-                dtype=tf.float32,
-            )
-            for name in output_order
-        )
-        try:
-            batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
-        except Exception:
-            batch_size = 16
-        train_ds = (
-            tf.data.Dataset.from_tensor_slices((train_input_tensors, train_target_tensors, train_weight_tensors))
-            .batch(batch_size)
-            .prefetch(tf.data.AUTOTUNE)
-        )
-        train_start = time.perf_counter()
-        if os.getenv("TRAIN_LIGHTWEIGHT", "0").lower() in {"1", "true", "yes", "on"}:
-            epochs = min(epochs, 2)
-        max_extra_epochs = int(os.getenv("TRAIN_MAX_EPOCHS_EXTRA", "1"))
-        epochs = min(epochs + max_extra_epochs, max(epochs, 3))
-        history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
-        train_duration = time.perf_counter() - train_start
-        self.metrics.record(
-            MetricStage.TRAINING,
-            {"train_seconds": train_duration, "epochs": float(epochs)},
-            category="runtime_train",
-            meta={"iteration": self.iteration},
-        )
-
-        raw_score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
-        eval_input_tensors = tuple(self._slice_tensorlike(inputs[name], eval_idx) for name in input_order)
-        eval_target_tensors = tuple(self._slice_tensorlike(targets[name], eval_idx) for name in output_order)
-        eval_ds = (
-            tf.data.Dataset.from_tensor_slices((eval_input_tensors, eval_target_tensors))
-            .batch(batch_size)
-            .prefetch(tf.data.AUTOTUNE)
-        )
-        eval_start = time.perf_counter()
-        if holdout is not None:
+            prep_start = time.perf_counter()
+            result = self._prepare_dataset(batch_size=32, dataset_label="full")
+            inputs, targets, sample_weights = result
+            if inputs is None or targets is None or sample_weights is None:
+                self.iteration = pending_iteration
+                self._save_state()
+                print("[training] insufficient data for candidate training; skipping this cycle.")
+                finalize_experiment("skipped", {"reason": "insufficient_data"})
+                return {"iteration": self.iteration, "status": "skipped", "score": None}
+            prep_duration = time.perf_counter() - prep_start
             self.metrics.record(
                 MetricStage.TRAINING,
                 {
-                    "holdout_fraction": float(holdout),
-                    "holdout_train_samples": float(train_idx.size),
-                    "holdout_eval_samples": float(eval_idx.size),
-                    "holdout_cutoff_ts": float(cutoff_ts or 0),
+                    "dataset_seconds": prep_duration,
+                    "positive_ratio": float(self._last_dataset_meta.get("positive_ratio", 0.0)),
+                    "samples": float(self._last_dataset_meta.get("samples", 0)),
                 },
-                category="dataset_holdout",
+                category="runtime_prep",
                 meta={"iteration": self.iteration},
             )
-        evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
-        focus_history = self._apply_focus_adaptation(model, focus_assets)
-        if focus_history is not None:
-            evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
-            evaluation.update(focus_history)
-        if evaluation.get("best_f1", 1.0) < 0.6:
-            burst_rerun = self._burst_replay(model, inputs, targets, sample_weights, evaluation)
-            if burst_rerun:
-                evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
-                evaluation.update(burst_rerun)
-        if evaluation.get("best_threshold") is not None:
-            self.decision_threshold = float(evaluation["best_threshold"])
-        eval_duration = time.perf_counter() - eval_start
-        self.metrics.record(
-            MetricStage.TRAINING,
-            {"eval_seconds": eval_duration},
-            category="runtime_eval",
-            meta={"iteration": self.iteration},
-        )
-        new_temperature = self._safe_float(evaluation.get("temperature", self.temperature_scale))
-        if new_temperature > 0:
-            new_temperature = float(np.clip(new_temperature, 0.25, 4.0))
-            self.temperature_scale = float(0.8 * self.temperature_scale + 0.2 * new_temperature)
-        if evaluation.get("calibration_scale") is not None and evaluation.get("calibration_offset") is not None:
-            new_scale = self._safe_float(evaluation.get("calibration_scale", self.calibration_scale))
-            new_offset = self._safe_float(evaluation.get("calibration_offset", self.calibration_offset))
-            new_scale = float(np.clip(new_scale, 0.3, 3.0))
-            new_offset = float(np.clip(new_offset, -3.0, 3.0))
-            self.calibration_scale = float(0.8 * self.calibration_scale + 0.2 * new_scale)
-            self.calibration_offset = float(0.8 * self.calibration_offset + 0.2 * new_offset)
-
-        signal_bundle = self._build_candidate_signals(evaluation, focus_stats)
-        composite_score = self.optimizer.update(
-            {"learning_rate": lr, "epochs": epochs},
-            raw_score,
-            signals=signal_bundle,
-        )
-
-        result = {
-            "iteration": self.iteration,
-            "version": None,
-            "score": composite_score,
-            "raw_score": raw_score,
-            "path": None,
-            "params": {"learning_rate": lr, "epochs": epochs, "template": template_choice},
-            "signals": signal_bundle,
-            "evaluation": evaluation,
-            "status": "trained",
-        }
-        evaluation_meta = {
-            "iteration": self.iteration,
-            "params": {"learning_rate": lr, "epochs": epochs, "template": template_choice},
-            "version": None,
-            "focus_assets": focus_assets,
-            "ghost_feedback": focus_stats,
-        }
-        ghost_gate = self._ghost_validation()
-        ghost_ready = bool(ghost_gate.get("ready", True))
-        ghost_tail_guard = float(
-            ghost_gate.get(
-                "tail_guardrail",
-                ghost_gate.get("tail_guard", float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.0"))),
+            self.metrics.feedback(
+                "preflight",
+                severity=FeedbackSeverity.INFO,
+                label="dataset_ready",
+                details={
+                    "samples": self._last_dataset_meta.get("samples", 0),
+                    "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
+                },
             )
-        )
-        ghost_tail_risk = float(ghost_gate.get("tail_risk", 0.0))
-        ghost_drawdown_guard = float(ghost_gate.get("drawdown_guardrail", 0.0))
-        ghost_drawdown = float(ghost_gate.get("max_drawdown", 0.0))
-        ghost_tail_block = ghost_tail_guard > 0 and ghost_tail_risk > ghost_tail_guard
-        ghost_drawdown_breach = ghost_drawdown_guard > 0 and ghost_drawdown > ghost_drawdown_guard
-        ghost_reason = str(ghost_gate.get("reason") or "")
-        evaluation_meta["ghost_validation"] = ghost_gate
-        training_metrics = {
-            "candidate_score": composite_score,
-            "dir_accuracy": self._safe_float(evaluation.get("dir_accuracy", 0.0)),
-            "price_dir_precision": self._safe_float(evaluation.get("precision", 0.0)),
-            "price_dir_recall": self._safe_float(evaluation.get("recall", 0.0)),
-            "price_dir_f1": self._safe_float(evaluation.get("f1_score", 0.0)),
-            "profit_factor": self._safe_float(evaluation.get("profit_factor", 0.0)),
-            "kelly_fraction": self._safe_float(evaluation.get("kelly_fraction", 0.0)),
-            "ghost_win_rate": self._safe_float(evaluation.get("ghost_win_rate", 0.0)),
-            "ghost_pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
-            "ghost_realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
-            "ghost_tail_risk": ghost_tail_risk,
-            "ghost_tail_guard": ghost_tail_guard,
-            "ghost_drawdown": ghost_drawdown,
-            "ghost_drawdown_guard": ghost_drawdown_guard,
-            "false_positive_rate": self._safe_float(evaluation.get("false_positive_rate", 0.0)),
-            "brier_score": self._safe_float(evaluation.get("brier_score", 0.0)),
-            "best_threshold": self._safe_float(evaluation.get("best_threshold", self.decision_threshold)),
-            "ghost_trades_best": self._safe_float(evaluation.get("ghost_trades_best", 0.0)),
-            "best_profit_factor": self._safe_float(evaluation.get("best_profit_factor", 0.0)),
-            "best_win_rate": self._safe_float(evaluation.get("ghost_win_rate_best", 0.0)),
-            "temperature": self._safe_float(evaluation.get("temperature", 1.0)),
-            "temperature_scale": float(self.temperature_scale),
-            "calibration_scale": self._safe_float(evaluation.get("calibration_scale", self.calibration_scale)),
-            "calibration_offset": self._safe_float(evaluation.get("calibration_offset", self.calibration_offset)),
-            "calibration_log_loss": self._safe_float(evaluation.get("calibration_log_loss", 0.0)),
-            "drift_alert": self._safe_float(evaluation.get("drift_alert", 0.0)),
-            "drift_stat": self._safe_float(evaluation.get("drift_stat", 0.0)),
-            "template": template_choice,
-        }
-        self.metrics.record(
-            MetricStage.TRAINING,
-            training_metrics,
-            category="candidate",
-            meta=evaluation_meta,
-        )
-        self._last_candidate_feedback = dict(evaluation)
+            self._record_horizon_metrics()
+            self._preflight_checks(inputs, targets)
 
-        promote = composite_score >= self.promotion_threshold
-        gating_reason: Optional[str] = None
-        active_eval = self._evaluate_active_model(eval_ds, eval_targets, sample_meta=eval_sample_meta)
-        if promote:
-            if not evaluation:
-                gating_reason = "no evaluation metrics available"
+            self.iteration = pending_iteration
+            self._save_state()
+
+            if self.active_accuracy >= 0.99 and self._active_model is not None:
+                print("[training] active model already at ≥99% accuracy; pausing candidate search.")
+                finalize_experiment("paused", {"reason": "active_at_target", "active_accuracy": float(self.active_accuracy)})
+                return {
+                    "iteration": self.iteration,
+                    "status": "paused",
+                    "score": self.active_accuracy,
+                    "message": "active model at target accuracy",
+                }
+
+            loader_vocab = int(self.data_loader.asset_vocab_size)
+            required_vocab = int(max(loader_vocab, getattr(self, "_last_asset_vocab_requirement", loader_vocab)))
+            if required_vocab > loader_vocab:
+                log_message(
+                    "training",
+                    "expanding asset vocabulary for candidate model",
+                    severity="info",
+                    details={"required": required_vocab, "loader_vocab": loader_vocab},
+                )
+            md = _get_model_defs()
+            model, headline_vec, full_vec, losses, loss_weights = md.build_multimodal_model(
+                window_size=self.window_size,
+                tech_count=self.tech_count,
+                sent_seq_len=self.sent_seq_len,
+                asset_vocab_size=required_vocab,
+                model_template=template_choice,
+            )
+            self._adapt_vectorizers(headline_vec, full_vec)
+
+            try:
+                model.optimizer.learning_rate.assign(lr)
+            except Exception:
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+                    loss=losses,
+                    loss_weights=loss_weights,
+                    metrics={"price_dir": ["accuracy"]},
+                )
+
+            callbacks = [_get_model_defs().StateSaver()]
+            if os.getenv("TRAIN_EARLY_STOP", "1").lower() in {"1", "true", "yes", "on"}:
+                try:
+                    patience = max(0, int(os.getenv("TRAIN_EARLY_STOP_PATIENCE", "1")))
+                except Exception:
+                    patience = 1
+                try:
+                    min_delta = max(0.0, float(os.getenv("TRAIN_EARLY_STOP_MIN_DELTA", "0.0005")))
+                except Exception:
+                    min_delta = 0.0005
+                callbacks.append(
+                    _load_tf().keras.callbacks.EarlyStopping(
+                        monitor="loss",
+                        patience=patience,
+                        min_delta=min_delta,
+                        restore_best_weights=True,
+                        verbose=0,
+                    )
+                )
+            input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+            output_order = list(MODEL_OUTPUT_ORDER)
+            sample_count = int(np.asarray(next(iter(targets.values()))).shape[0]) if targets else 0
+            train_idx, eval_idx, cutoff_ts, holdout = self._compute_holdout_split(
+                sample_count=sample_count,
+                sample_meta=self._last_sample_meta,
+            )
+            eval_sample_meta = self._subset_sample_meta(self._last_sample_meta, eval_idx)
+            eval_targets: Dict[str, Any] = {name: self._slice_tensorlike(value, eval_idx) for name, value in targets.items()}
+
+            train_input_tensors = tuple(self._slice_tensorlike(inputs[name], train_idx) for name in input_order)
+            train_target_tensors = tuple(self._slice_tensorlike(targets[name], train_idx) for name in output_order)
+            train_weight_tensors = tuple(
+                tf.convert_to_tensor(
+                    self._slice_tensorlike(
+                        sample_weights.get(name, np.ones(targets[name].shape[0], dtype=np.float32)),
+                        train_idx,
+                    ),
+                    dtype=tf.float32,
+                )
+                for name in output_order
+            )
+            try:
+                batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
+            except Exception:
+                batch_size = 16
+            train_ds = (
+                tf.data.Dataset.from_tensor_slices((train_input_tensors, train_target_tensors, train_weight_tensors))
+                .batch(batch_size)
+                .prefetch(tf.data.AUTOTUNE)
+            )
+            train_start = time.perf_counter()
+            if os.getenv("TRAIN_LIGHTWEIGHT", "0").lower() in {"1", "true", "yes", "on"}:
+                epochs = min(epochs, 2)
+            max_extra_epochs = int(os.getenv("TRAIN_MAX_EPOCHS_EXTRA", "1"))
+            epochs = min(epochs + max_extra_epochs, max(epochs, 3))
+            history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
+            train_duration = time.perf_counter() - train_start
+            self.metrics.record(
+                MetricStage.TRAINING,
+                {"train_seconds": train_duration, "epochs": float(epochs)},
+                category="runtime_train",
+                meta={"iteration": self.iteration},
+            )
+
+            raw_score = float(history.history.get("price_dir_accuracy", [0.0])[-1])
+            eval_input_tensors = tuple(self._slice_tensorlike(inputs[name], eval_idx) for name in input_order)
+            eval_target_tensors = tuple(self._slice_tensorlike(targets[name], eval_idx) for name in output_order)
+            eval_ds = (
+                tf.data.Dataset.from_tensor_slices((eval_input_tensors, eval_target_tensors))
+                .batch(batch_size)
+                .prefetch(tf.data.AUTOTUNE)
+            )
+            eval_start = time.perf_counter()
+            if holdout is not None:
+                self.metrics.record(
+                    MetricStage.TRAINING,
+                    {
+                        "holdout_fraction": float(holdout),
+                        "holdout_train_samples": float(train_idx.size),
+                        "holdout_eval_samples": float(eval_idx.size),
+                        "holdout_cutoff_ts": float(cutoff_ts or 0),
+                    },
+                    category="dataset_holdout",
+                    meta={"iteration": self.iteration},
+                )
+            evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
+            focus_history = self._apply_focus_adaptation(model, focus_assets)
+            if focus_history is not None:
+                evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
+                evaluation.update(focus_history)
+            if evaluation.get("best_f1", 1.0) < 0.6:
+                burst_rerun = self._burst_replay(model, inputs, targets, sample_weights, evaluation)
+                if burst_rerun:
+                    evaluation = self._evaluate_candidate(model, eval_ds, eval_targets, sample_meta=eval_sample_meta)
+                    evaluation.update(burst_rerun)
+            if evaluation.get("best_threshold") is not None:
+                self.decision_threshold = float(evaluation["best_threshold"])
+            eval_duration = time.perf_counter() - eval_start
+            self.metrics.record(
+                MetricStage.TRAINING,
+                {"eval_seconds": eval_duration},
+                category="runtime_eval",
+                meta={"iteration": self.iteration},
+            )
+            new_temperature = self._safe_float(evaluation.get("temperature", self.temperature_scale))
+            if new_temperature > 0:
+                new_temperature = float(np.clip(new_temperature, 0.25, 4.0))
+                self.temperature_scale = float(0.8 * self.temperature_scale + 0.2 * new_temperature)
+            if evaluation.get("calibration_scale") is not None and evaluation.get("calibration_offset") is not None:
+                new_scale = self._safe_float(evaluation.get("calibration_scale", self.calibration_scale))
+                new_offset = self._safe_float(evaluation.get("calibration_offset", self.calibration_offset))
+                new_scale = float(np.clip(new_scale, 0.3, 3.0))
+                new_offset = float(np.clip(new_offset, -3.0, 3.0))
+                self.calibration_scale = float(0.8 * self.calibration_scale + 0.2 * new_scale)
+                self.calibration_offset = float(0.8 * self.calibration_offset + 0.2 * new_offset)
+
+            signal_bundle = self._build_candidate_signals(evaluation, focus_stats)
+            composite_score = self.optimizer.update(
+                {"learning_rate": lr, "epochs": epochs, "template_idx": float(template_idx)},
+                raw_score,
+                signals=signal_bundle,
+            )
+
+            result = {
+                "iteration": self.iteration,
+                "version": None,
+                "score": composite_score,
+                "raw_score": raw_score,
+                "path": None,
+                "params": {"learning_rate": lr, "epochs": epochs, "template": template_choice},
+                "signals": signal_bundle,
+                "evaluation": evaluation,
+                "status": "trained",
+            }
+            evaluation_meta = {
+                "iteration": self.iteration,
+                "params": {"learning_rate": lr, "epochs": epochs, "template": template_choice},
+                "version": None,
+                "focus_assets": focus_assets,
+                "ghost_feedback": focus_stats,
+            }
+            ghost_gate = self._ghost_validation()
+            ghost_ready = bool(ghost_gate.get("ready", True))
+            ghost_tail_guard = float(
+                ghost_gate.get(
+                    "tail_guardrail",
+                    ghost_gate.get("tail_guard", float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.0"))),
+                )
+            )
+            ghost_tail_risk = float(ghost_gate.get("tail_risk", 0.0))
+            ghost_drawdown_guard = float(ghost_gate.get("drawdown_guardrail", 0.0))
+            ghost_drawdown = float(ghost_gate.get("max_drawdown", 0.0))
+            ghost_tail_block = ghost_tail_guard > 0 and ghost_tail_risk > ghost_tail_guard
+            ghost_drawdown_breach = ghost_drawdown_guard > 0 and ghost_drawdown > ghost_drawdown_guard
+            ghost_reason = str(ghost_gate.get("reason") or "")
+            evaluation_meta["ghost_validation"] = ghost_gate
+            training_metrics = {
+                "candidate_score": composite_score,
+                "dir_accuracy": self._safe_float(evaluation.get("dir_accuracy", 0.0)),
+                "price_dir_precision": self._safe_float(evaluation.get("precision", 0.0)),
+                "price_dir_recall": self._safe_float(evaluation.get("recall", 0.0)),
+                "price_dir_f1": self._safe_float(evaluation.get("f1_score", 0.0)),
+                "profit_factor": self._safe_float(evaluation.get("profit_factor", 0.0)),
+                "kelly_fraction": self._safe_float(evaluation.get("kelly_fraction", 0.0)),
+                "ghost_win_rate": self._safe_float(evaluation.get("ghost_win_rate", 0.0)),
+                "ghost_pred_margin": self._safe_float(evaluation.get("ghost_pred_margin", 0.0)),
+                "ghost_realized_margin": self._safe_float(evaluation.get("ghost_realized_margin", 0.0)),
+                "ghost_tail_risk": ghost_tail_risk,
+                "ghost_tail_guard": ghost_tail_guard,
+                "ghost_drawdown": ghost_drawdown,
+                "ghost_drawdown_guard": ghost_drawdown_guard,
+                "false_positive_rate": self._safe_float(evaluation.get("false_positive_rate", 0.0)),
+                "brier_score": self._safe_float(evaluation.get("brier_score", 0.0)),
+                "best_threshold": self._safe_float(evaluation.get("best_threshold", self.decision_threshold)),
+                "ghost_trades_best": self._safe_float(evaluation.get("ghost_trades_best", 0.0)),
+                "best_profit_factor": self._safe_float(evaluation.get("best_profit_factor", 0.0)),
+                "best_win_rate": self._safe_float(evaluation.get("ghost_win_rate_best", 0.0)),
+                "temperature": self._safe_float(evaluation.get("temperature", 1.0)),
+                "temperature_scale": float(self.temperature_scale),
+                "calibration_scale": self._safe_float(evaluation.get("calibration_scale", self.calibration_scale)),
+                "calibration_offset": self._safe_float(evaluation.get("calibration_offset", self.calibration_offset)),
+                "calibration_log_loss": self._safe_float(evaluation.get("calibration_log_loss", 0.0)),
+                "drift_alert": self._safe_float(evaluation.get("drift_alert", 0.0)),
+                "drift_stat": self._safe_float(evaluation.get("drift_stat", 0.0)),
+                "template": template_choice,
+            }
+            self.metrics.record(
+                MetricStage.TRAINING,
+                training_metrics,
+                category="candidate",
+                meta=evaluation_meta,
+            )
+            self._last_candidate_feedback = dict(evaluation)
+
+            promote = composite_score >= self.promotion_threshold
+            gating_reason: Optional[str] = None
+            active_eval = self._evaluate_active_model(eval_ds, eval_targets, sample_meta=eval_sample_meta)
+            if promote:
+                if not evaluation:
+                    gating_reason = "no evaluation metrics available"
+                else:
+                    ghost_trades = int(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0)))
+                    positive_ratio = float(self._last_dataset_meta.get("positive_ratio", 0.0))
+                    effective_min_trades = self.min_ghost_trades
+                    if ghost_trades > 0 and positive_ratio < self.target_positive_floor:
+                        effective_min_trades = max(5, min(self.min_ghost_trades, ghost_trades))
+                    if ghost_trades < effective_min_trades:
+                        gating_reason = (
+                            f"ghost trades {ghost_trades} below minimum {effective_min_trades}"
+                        )
+                    else:
+                        fp_rate = float(evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate", 0.0)))
+                        win_rate = float(evaluation.get("ghost_win_rate_best", evaluation.get("ghost_win_rate", 0.0)))
+                        realized_margin = float(evaluation.get("ghost_realized_margin_best", evaluation.get("ghost_realized_margin", 0.0)))
+                        if fp_rate > self.max_false_positive_rate:
+                            gating_reason = (
+                                f"false positive rate {fp_rate:.3f} exceeds limit {self.max_false_positive_rate:.3f}"
+                            )
+                        elif win_rate < self.min_ghost_win_rate:
+                            gating_reason = (
+                                f"ghost win rate {win_rate:.3f} below minimum {self.min_ghost_win_rate:.3f}"
+                            )
+                        elif realized_margin < self.min_realized_margin:
+                            gating_reason = (
+                                f"realized margin {realized_margin:.6f} below minimum {self.min_realized_margin:.6f}"
+                            )
+                        elif self.active_accuracy and evaluation.get("dir_accuracy", 0.0) < self.active_accuracy + 0.01:
+                            gating_reason = (
+                                "retaining existing live model (%.3f) to gather more data before replacement"
+                                % self.active_accuracy
+                            )
+                        elif active_eval:
+                            if not self._active_approval(evaluation, active_eval):
+                                gating_reason = "active model approval failed"
+                    if not gating_reason:
+                        if not ghost_ready:
+                            gating_reason = f"ghost_validation:{ghost_reason or 'not_ready'}"
+                        elif ghost_tail_block:
+                            gating_reason = "ghost_tail_risk"
+                        elif ghost_drawdown_breach:
+                            gating_reason = "ghost_drawdown_guardrail"
+            if gating_reason:
+                promote = False
+                log_message("training", f"promotion deferred: {gating_reason}. Continuing candidate search.", severity="warning")
+                self.metrics.feedback(
+                    "promotion",
+                    severity=FeedbackSeverity.WARNING,
+                    label="deferred",
+                    details={
+                        "iteration": self.iteration,
+                        "reason": gating_reason,
+                        "ghost_trades_best": evaluation.get("ghost_trades_best"),
+                        "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
+                        "ghost_ready": ghost_ready,
+                        "ghost_tail_risk": ghost_tail_risk,
+                        "ghost_tail_guard": ghost_tail_guard,
+                        "ghost_drawdown": ghost_drawdown,
+                        "ghost_drawdown_guard": ghost_drawdown_guard,
+                    },
+                )
+            if promote:
+                version = f"candidate-{int(time.time())}"
+                path = self.model_dir / f"{version}.keras"
+                model.save(path, include_optimizer=False)
+                self.db.register_model_version(
+                    version=version,
+                    metrics={"score": composite_score, "raw_score": raw_score},
+                    path=str(path),
+                    activate=False,
+                )
+                result["version"] = version
+                result["path"] = str(path)
+                evaluation_meta["version"] = version
+                result["active_version"] = self.promote_candidate(
+                    path,
+                    score=composite_score,
+                    metadata=result,
+                    evaluation=evaluation,
+                )
             else:
-                ghost_trades = int(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0)))
-                positive_ratio = float(self._last_dataset_meta.get("positive_ratio", 0.0))
-                effective_min_trades = self.min_ghost_trades
-                if ghost_trades > 0 and positive_ratio < self.target_positive_floor:
-                    effective_min_trades = max(5, min(self.min_ghost_trades, ghost_trades))
-                if ghost_trades < effective_min_trades:
-                    gating_reason = (
-                        f"ghost trades {ghost_trades} below minimum {effective_min_trades}"
+                self._print_ghost_summary(evaluation)
+                evaluation_data = evaluation or {}
+                if gating_reason:
+                    log_message(
+                        "training",
+                        "candidate gated despite passing score threshold",
+                        details={
+                            "score": float(composite_score),
+                            "threshold": float(self.promotion_threshold),
+                            "gating_reason": gating_reason,
+                            "ghost_trades": int(
+                                evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))
+                            ),
+                        },
+                    )
+                    self.metrics.record(
+                        MetricStage.TRAINING,
+                        {
+                            "ghost_trades_best": float(
+                                evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))
+                            ),
+                            "best_threshold": float(evaluation_data.get("best_threshold", self.decision_threshold)),
+                        },
+                        category="candidate_eval",
+                        meta={"iteration": self.iteration, "gating_reason": gating_reason},
+                    )
+                elif composite_score < self.promotion_threshold:
+                    log_message(
+                        "training",
+                        f"candidate score {composite_score:.3f} below promotion threshold {self.promotion_threshold:.3f}.",
                     )
                 else:
-                    fp_rate = float(evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate", 0.0)))
-                    win_rate = float(evaluation.get("ghost_win_rate_best", evaluation.get("ghost_win_rate", 0.0)))
-                    realized_margin = float(evaluation.get("ghost_realized_margin_best", evaluation.get("ghost_realized_margin", 0.0)))
-                    if fp_rate > self.max_false_positive_rate:
-                        gating_reason = (
-                            f"false positive rate {fp_rate:.3f} exceeds limit {self.max_false_positive_rate:.3f}"
-                        )
-                    elif win_rate < self.min_ghost_win_rate:
-                        gating_reason = (
-                            f"ghost win rate {win_rate:.3f} below minimum {self.min_ghost_win_rate:.3f}"
-                        )
-                    elif realized_margin < self.min_realized_margin:
-                        gating_reason = (
-                            f"realized margin {realized_margin:.6f} below minimum {self.min_realized_margin:.6f}"
-                        )
-                    elif self.active_accuracy and evaluation.get("dir_accuracy", 0.0) < self.active_accuracy + 0.01:
-                        gating_reason = (
-                            "retaining existing live model (%.3f) to gather more data before replacement"
-                            % self.active_accuracy
-                        )
-                    elif active_eval:
-                        if not self._active_approval(evaluation, active_eval):
-                            gating_reason = "active model approval failed"
-                if not gating_reason:
-                    if not ghost_ready:
-                        gating_reason = f"ghost_validation:{ghost_reason or 'not_ready'}"
-                    elif ghost_tail_block:
-                        gating_reason = "ghost_tail_risk"
-                    elif ghost_drawdown_breach:
-                        gating_reason = "ghost_drawdown_guardrail"
-        if gating_reason:
-            promote = False
-            log_message("training", f"promotion deferred: {gating_reason}. Continuing candidate search.", severity="warning")
-            self.metrics.feedback(
-                "promotion",
-                severity=FeedbackSeverity.WARNING,
-                label="deferred",
-                details={
-                    "iteration": self.iteration,
-                    "reason": gating_reason,
-                    "ghost_trades_best": evaluation.get("ghost_trades_best"),
-                    "positive_ratio": self._last_dataset_meta.get("positive_ratio", 0.0),
+                    log_message(
+                        "training",
+                        "candidate retained despite meeting score threshold",
+                        details={
+                            "score": float(composite_score),
+                            "threshold": float(self.promotion_threshold),
+                            "gating_reason": gating_reason or "criteria_not_met",
+                        },
+                    )
+                    self.metrics.record(
+                        MetricStage.TRAINING,
+                        {
+                            "ghost_trades_best": float(
+                                evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))
+                            ),
+                            "best_threshold": float(evaluation_data.get("best_threshold", self.decision_threshold)),
+                        },
+                        category="candidate_eval",
+                        meta={"iteration": self.iteration},
+                    )
+
+            if not promote:
+                summary_details = {
+                    "promote": False,
+                    "score": float(composite_score),
+                    "threshold": float(self.promotion_threshold),
+                    "gating_reason": gating_reason or "criteria_not_met",
+                    "ghost_trades": int(
+                        evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0)) if evaluation else 0
+                    ),
+                    "false_positive_rate": self._safe_float(
+                        evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate", 0.0))
+                        if evaluation
+                        else 0.0
+                    ),
+                    "win_rate": self._safe_float(
+                        evaluation.get("ghost_win_rate_best", evaluation.get("ghost_win_rate", 0.0)) if evaluation else 0.0
+                    ),
+                    "realized_margin": self._safe_float(
+                        evaluation.get("ghost_realized_margin_best", evaluation.get("ghost_realized_margin", 0.0))
+                        if evaluation
+                        else 0.0
+                    ),
+                    "active_accuracy": float(self.active_accuracy or 0.0),
                     "ghost_ready": ghost_ready,
                     "ghost_tail_risk": ghost_tail_risk,
                     "ghost_tail_guard": ghost_tail_guard,
                     "ghost_drawdown": ghost_drawdown,
                     "ghost_drawdown_guard": ghost_drawdown_guard,
+                }
+                log_message("training", "promotion decision", details=summary_details)
+                self._maybe_update_threshold_from_evaluation(evaluation, gating_reason)
+
+            exp_status = "promoted" if promote else ("deferred" if gating_reason else "completed")
+            finalize_experiment(
+                exp_status,
+                {
+                    "iteration": int(self.iteration),
+                    "score": float(composite_score),
+                    "raw_score": float(raw_score),
+                    "promote": bool(promote),
+                    "gating_reason": gating_reason,
+                    "proposal": {"learning_rate": float(lr), "epochs": int(epochs), "template": str(template_choice)},
+                    "evaluation": evaluation,
+                    "active_eval": active_eval,
+                    "ghost_validation": ghost_gate,
+                    "holdout": holdout,
+                    "holdout_cutoff_ts": cutoff_ts,
+                    "version": result.get("version"),
+                    "path": result.get("path"),
+                    "active_version": result.get("active_version"),
                 },
             )
-        if promote:
-            version = f"candidate-{int(time.time())}"
-            path = self.model_dir / f"{version}.keras"
-            model.save(path, include_optimizer=False)
-            self.db.register_model_version(
-                version=version,
-                metrics={"score": composite_score, "raw_score": raw_score},
-                path=str(path),
-                activate=False,
+            self._save_state()
+            return result
+        except Exception as exc:
+            finalize_experiment(
+                "failed",
+                {
+                    "iteration": int(self.iteration),
+                    "proposal": {"learning_rate": float(lr), "epochs": int(epochs), "template": str(template_choice)},
+                    "error": str(exc),
+                },
             )
-            result["version"] = version
-            result["path"] = str(path)
-            evaluation_meta["version"] = version
-            self.promote_candidate(path, score=composite_score, metadata=result, evaluation=evaluation)
-        else:
-            self._print_ghost_summary(evaluation)
-            evaluation_data = evaluation or {}
-            if gating_reason:
-                log_message(
-                    "training",
-                    "candidate gated despite passing score threshold",
-                    details={
-                        "score": float(composite_score),
-                        "threshold": float(self.promotion_threshold),
-                        "gating_reason": gating_reason,
-                        "ghost_trades": int(evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))),
-                    },
-                )
-                self.metrics.record(
-                    MetricStage.TRAINING,
-                    {
-                        "ghost_trades_best": float(evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))),
-                        "best_threshold": float(evaluation_data.get("best_threshold", self.decision_threshold)),
-                    },
-                    category="candidate_eval",
-                    meta={"iteration": self.iteration, "gating_reason": gating_reason},
-                )
-            elif composite_score < self.promotion_threshold:
-                log_message(
-                    "training",
-                    f"candidate score {composite_score:.3f} below promotion threshold {self.promotion_threshold:.3f}.",
-                )
-            else:
-                log_message(
-                    "training",
-                    "candidate retained despite meeting score threshold",
-                    details={
-                        "score": float(composite_score),
-                        "threshold": float(self.promotion_threshold),
-                        "gating_reason": gating_reason or "criteria_not_met",
-                    },
-                )
-                self.metrics.record(
-                    MetricStage.TRAINING,
-                    {
-                        "ghost_trades_best": float(evaluation_data.get("ghost_trades_best", evaluation_data.get("ghost_trades", 0))),
-                        "best_threshold": float(evaluation_data.get("best_threshold", self.decision_threshold)),
-                    },
-                    category="candidate_eval",
-                    meta={"iteration": self.iteration},
-                )
-
-        if not promote:
-            summary_details = {
-                "promote": False,
-                "score": float(composite_score),
-                "threshold": float(self.promotion_threshold),
-                "gating_reason": gating_reason or "criteria_not_met",
-                "ghost_trades": int(evaluation.get("ghost_trades_best", evaluation.get("ghost_trades", 0)) if evaluation else 0),
-                "false_positive_rate": self._safe_float(
-                    evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate", 0.0)) if evaluation else 0.0
-                ),
-                "win_rate": self._safe_float(
-                    evaluation.get("ghost_win_rate_best", evaluation.get("ghost_win_rate", 0.0)) if evaluation else 0.0
-                ),
-                "realized_margin": self._safe_float(
-                    evaluation.get("ghost_realized_margin_best", evaluation.get("ghost_realized_margin", 0.0))
-                    if evaluation
-                    else 0.0
-                ),
-                "active_accuracy": float(self.active_accuracy or 0.0),
-                "ghost_ready": ghost_ready,
-                "ghost_tail_risk": ghost_tail_risk,
-                "ghost_tail_guard": ghost_tail_guard,
-                "ghost_drawdown": ghost_drawdown,
-                "ghost_drawdown_guard": ghost_drawdown_guard,
-            }
-            log_message("training", "promotion decision", details=summary_details)
-            self._maybe_update_threshold_from_evaluation(evaluation, gating_reason)
-        self._save_state()
-        return result
+            raise
 
     def promote_candidate(
         self,
@@ -1016,14 +1109,34 @@ class TrainingPipeline:
         score: float,
         metadata: Optional[Dict[str, Any]] = None,
         evaluation: Optional[Dict[str, float]] = None,
-    ) -> None:
+    ) -> str:
+        ts = int(time.time())
+        version = f"active-{ts}"
         active_path = self.model_dir / "active_model.keras"
-        log_message("training", f"promoting candidate {path.name} (score={score:.3f}) to active deployment.")
-        tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False).save(active_path, include_optimizer=False)
-        self.db.register_model_version(
-            version=f"active-{int(time.time())}", metrics={"score": score}, path=str(active_path), activate=True
+        versioned_path = self.model_dir / f"{version}.keras"
+        tmp_path = self.model_dir / f"active_model.tmp-{ts}.keras"
+        log_message(
+            "training",
+            f"promoting candidate {path.name} (score={score:.3f}) to active deployment.",
+            details={"active_version": version},
         )
-        self._active_model = tf.keras.models.load_model(active_path, custom_objects=_custom_objects(), compile=False)
+        model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+        model.save(versioned_path, include_optimizer=False)
+        try:
+            shutil.copy2(versioned_path, tmp_path)
+            os.replace(tmp_path, active_path)
+        except Exception:
+            try:
+                model.save(active_path, include_optimizer=False)
+            except Exception:
+                pass
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+        self.db.register_model_version(version=version, metrics={"score": score}, path=str(versioned_path), activate=True)
+        self._active_model = model
         self.active_accuracy = float(evaluation.get("dir_accuracy", score)) if evaluation else score
         if evaluation and evaluation.get("best_threshold") is not None:
             new_threshold = float(evaluation["best_threshold"])
@@ -1035,6 +1148,9 @@ class TrainingPipeline:
             )
         if metadata:
             summary = metadata.copy()
+            summary["active_version"] = version
+            summary["active_path"] = str(active_path)
+            summary["versioned_path"] = str(versioned_path)
             if evaluation:
                 summary["evaluation"] = {k: self._safe_float(v) for k, v in evaluation.items()}
             self.db.log_trade(
@@ -1048,6 +1164,7 @@ class TrainingPipeline:
         if evaluation:
             self._print_ghost_summary(evaluation)
         self._save_state()
+        return version
 
     # ------------------------------------------------------------------
     # Dataset creation
