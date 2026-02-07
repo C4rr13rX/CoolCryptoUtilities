@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, os, sys, time, webbrowser, socket
+import argparse, os, sys, time, webbrowser, socket, shutil, subprocess
 import pandas as pd
 from urllib.parse import urlparse
 
@@ -35,11 +35,20 @@ def load_split(split: str) -> pd.DataFrame:
     return df
 
 def open_browser_wslsafe(url: str):
-    """Open Windows browser from WSL without UNC path issues."""
-    if sys.platform.startswith("linux") and os.path.exists("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"):
-        os.system(f'powershell.exe -NoProfile -Command Start-Process "{url}"')
-    else:
-        webbrowser.open(url)
+    """Open a browser cross-platform, with WSL fallback if needed."""
+    try:
+        if webbrowser.open(url):
+            return
+    except Exception:
+        pass
+    if sys.platform.startswith("linux"):
+        pwsh = shutil.which("pwsh") or shutil.which("powershell")
+        if pwsh:
+            try:
+                subprocess.run([pwsh, "-NoProfile", "-Command", f"Start-Process \"{url}\""], check=False)
+                return
+            except Exception:
+                pass
 
 def resolve_dtale_url(app, port: int) -> str:
     """Return a usable URL across D-Tale versions (attr vs method)."""

@@ -1633,14 +1633,19 @@ def _scan_project_context(workdir: Path, run_command) -> dict:
     root = workdir.resolve()
     files: list[str] = []
     git_snapshot = _snapshot_git(root, run_command)
-    # Prefer rg for speed.
+    # Prefer rg for speed; fall back to Python walk for cross-OS reliability.
     code, stdout, _ = run_command("rg --files", cwd=root)
     if code == 0 and stdout.strip():
         files = stdout.strip().splitlines()
     else:
-        code, stdout, _ = run_command("Get-ChildItem -Recurse -File | Select-Object -ExpandProperty FullName", cwd=root)
-        if code == 0 and stdout.strip():
-            files = [f.replace(str(root) + os.sep, "") for f in stdout.strip().splitlines()]
+        try:
+            for dirpath, _, filenames in os.walk(root):
+                rel_base = os.path.relpath(dirpath, root)
+                for name in filenames:
+                    rel_path = name if rel_base == "." else os.path.join(rel_base, name)
+                    files.append(rel_path)
+        except Exception:
+            files = []
     key_files = []
     for name in ("pyproject.toml", "requirements.txt", "package.json", "manage.py", "setup.cfg", "Pipfile"):
         if (root / name).exists():
@@ -1957,14 +1962,21 @@ def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
     shell = (shell or "auto").strip().lower()
     is_windows = os.name == "nt" or sys.platform.startswith("win")
     if shell == "auto":
-        shell = "powershell" if is_windows else "bash"
+        if is_windows:
+            shell = "pwsh" if shutil.which("pwsh") else ("powershell" if shutil.which("powershell") else "cmd")
+        else:
+            shell = "bash" if shutil.which("bash") else "sh"
     if shell in {"pwsh", "powershell"}:
         exe = "pwsh" if shutil.which("pwsh") else "powershell"
+        if not shutil.which(exe):
+            return ["cmd", "/c", command] if is_windows else ["sh", "-lc", command]
         return [exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]
     if shell == "cmd":
         return ["cmd", "/c", command]
     if shell in {"bash", "sh"}:
         exe = "bash" if shell == "bash" else "sh"
+        if not shutil.which(exe) and shell == "bash":
+            exe = "sh"
         return [exe, "-lc", command]
     if shell == "python":
         return [sys.executable, "-c", command]

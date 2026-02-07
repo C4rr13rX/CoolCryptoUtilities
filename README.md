@@ -83,9 +83,15 @@ setx C0D3R_MODEL global.anthropic.claude-sonnet-4-20250514-v1:0
 - **Public-good research**: faster iteration on tools for climate, health, education, and accessibility, with captured evidence for review and reuse.
 
 ## Requirements
-- Python 3.12 (3.11 usually works)
+- Python 3.8+ (3.11+ recommended)
 - Node.js 18+ (for frontend build)
 - npm
+
+## One-command quickstart (all OS)
+These scripts install deps, use SQLite by default, add repo CLIs to PATH, migrate, and start the server.
+- Windows PowerShell: `scripts\quickstart.ps1`
+- Windows CMD: `scripts\quickstart.cmd`
+- macOS / Linux: `bash scripts/quickstart.sh`
 
 ## Quick start (Windows)
 ```powershell

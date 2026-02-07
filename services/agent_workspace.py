@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -23,8 +24,19 @@ class WorkspaceContext:
 
 def detect_shell() -> str:
     if os.name == "nt":
-        return "powershell"
-    return os.getenv("SHELL") or "bash"
+        if shutil.which("pwsh"):
+            return "pwsh"
+        if shutil.which("powershell"):
+            return "powershell"
+        return "cmd"
+    shell = os.getenv("SHELL")
+    if shell and Path(shell).exists():
+        return shell
+    if shutil.which("bash"):
+        return "bash"
+    if shutil.which("sh"):
+        return "sh"
+    return shell or "bash"
 
 
 def build_context(root: Path, *, notes_name: str) -> WorkspaceContext:
@@ -91,9 +103,26 @@ def run_command(
     if not command:
         return 1, "", "empty command"
     if os.name == "nt":
-        cmd = ["powershell", "-NoProfile", "-Command", command] if allow_shell else shlex.split(command)
+        if allow_shell:
+            if shutil.which("pwsh"):
+                cmd = ["pwsh", "-NoProfile", "-Command", command]
+            elif shutil.which("powershell"):
+                cmd = ["powershell", "-NoProfile", "-Command", command]
+            else:
+                cmd = ["cmd", "/c", command]
+        else:
+            cmd = shlex.split(command)
     else:
-        cmd = ["bash", "-lc", command] if allow_shell else shlex.split(command)
+        if allow_shell:
+            shell = os.getenv("SHELL")
+            if shell and Path(shell).exists():
+                cmd = [shell, "-lc", command]
+            elif shutil.which("bash"):
+                cmd = ["bash", "-lc", command]
+            else:
+                cmd = ["sh", "-lc", command]
+        else:
+            cmd = shlex.split(command)
     proc = subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
