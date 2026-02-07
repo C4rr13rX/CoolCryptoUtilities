@@ -61,7 +61,7 @@
         <div class="content__viewport">
           <RouterView v-slot="{ Component }">
             <Transition name="glitch" mode="out-in">
-              <component :is="Component" />
+              <component :is="Component" :key="route.fullPath" />
             </Transition>
           </RouterView>
         </div>

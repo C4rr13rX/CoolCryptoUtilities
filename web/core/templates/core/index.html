@@ -118,6 +118,21 @@
         font-size: 0.85rem;
         opacity: 0.75;
       }
+      header.site-header .user-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .logout-btn {
+        background: rgba(111, 167, 255, 0.18);
+        border: 1px solid rgba(111, 167, 255, 0.35);
+        color: #e2e8f0;
+        padding: 0.4rem 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.14rem;
+        font-size: 0.7rem;
+        cursor: pointer;
+      }
       main.app-shell {
         flex: 1;
         display: flex;
@@ -179,6 +194,16 @@
         transform: translateY(-1px);
         box-shadow: 0 12px 30px rgba(111, 167, 255, 0.35);
       }
+      .auth-actions {
+        display: flex;
+        justify-content: center;
+      }
+      .secondary-link {
+        color: rgba(127, 176, 255, 0.85);
+        text-transform: uppercase;
+        letter-spacing: 0.12rem;
+        font-size: 0.75rem;
+      }
       .login-card .form-errors {
         color: var(--accent-err);
         font-size: 0.85rem;
@@ -237,7 +262,13 @@
           <h1>R3V3N!R • Crypto Trading AI Bot</h1>
         </div>
         {% if user.is_authenticated %}
-          <span class="user-chip">Logged in as {{ user.get_username }}</span>
+          <div class="user-actions">
+            <span class="user-chip">Logged in as {{ user.get_username }}</span>
+            <form method="post" action="{% url 'core:logout' %}">
+              {% csrf_token %}
+              <button type="submit" class="logout-btn">Log out</button>
+            </form>
+          </div>
         {% endif %}
       </header>
     {% endif %}
@@ -279,24 +310,55 @@
     {% else %}
       <main class="app-shell">
         <section class="login-wrapper">
-          <form method="post" class="login-card">
-            <h2>Authenticate</h2>
-            {% csrf_token %}
-            {% if auth_form.non_field_errors %}
-              <div class="form-errors">
-                {{ auth_form.non_field_errors }}
+          {% if auth_mode == "signup" %}
+            <form method="post" class="login-card">
+              <h2>Create Account</h2>
+              {% csrf_token %}
+              {% if signup_form.non_field_errors %}
+                <div class="form-errors">
+                  {{ signup_form.non_field_errors }}
+                </div>
+              {% endif %}
+              <label>
+                Username
+                {{ signup_form.username }}
+              </label>
+              <label>
+                Password
+                {{ signup_form.password1 }}
+              </label>
+              <label>
+                Confirm Password
+                {{ signup_form.password2 }}
+              </label>
+              <button type="submit">Create User</button>
+              <div class="auth-actions">
+                <a class="secondary-link" href="{% url 'core:index' %}">Back to login</a>
               </div>
-            {% endif %}
-            <label>
-              Username
-              {{ auth_form.username }}
-            </label>
-            <label>
-              Password
-              {{ auth_form.password }}
-            </label>
-            <button type="submit">Access R3V3N!R</button>
-          </form>
+            </form>
+          {% else %}
+            <form method="post" class="login-card">
+              <h2>Authenticate</h2>
+              {% csrf_token %}
+              {% if auth_form.non_field_errors %}
+                <div class="form-errors">
+                  {{ auth_form.non_field_errors }}
+                </div>
+              {% endif %}
+              <label>
+                Username
+                {{ auth_form.username }}
+              </label>
+              <label>
+                Password
+                {{ auth_form.password }}
+              </label>
+              <button type="submit">Access R3V3N!R</button>
+              <div class="auth-actions">
+                <a class="secondary-link" href="{% url 'core:signup' %}">Create a new user</a>
+              </div>
+            </form>
+          {% endif %}
         </section>
       </main>
     {% endif %}

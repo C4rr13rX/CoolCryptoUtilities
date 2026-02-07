@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.urls import path
+from django.contrib.auth import views as auth_views
 
 from . import views
 
@@ -8,6 +9,10 @@ app_name = "core"
 
 urlpatterns = [
     path("", views.LandingView.as_view(), name="index"),
+    path("signup/", views.SignupView.as_view(), name="signup"),
+    path("signup", views.SignupView.as_view()),
+    path("logout/", auth_views.LogoutView.as_view(next_page="core:index"), name="logout"),
+    path("logout", auth_views.LogoutView.as_view(next_page="core:index")),
     path("dashboard/", views.DashboardView.as_view(), name="dashboard"),
     path("dashboard", views.DashboardView.as_view()),
     path("organism/", views.OrganismView.as_view(), name="organism"),

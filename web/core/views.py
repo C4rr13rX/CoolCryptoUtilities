@@ -14,7 +14,7 @@ from typing import Any, Dict, List
 
 from django.conf import settings
 from django.contrib.auth import login
-from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
@@ -162,6 +162,8 @@ class LandingView(DashboardContextMixin, TemplateView):
         context = super().get_context_data(**kwargs)
         context.update(self._base_context(initial_route="dashboard"))
         context["auth_form"] = AuthenticationForm(self.request)
+        context["signup_form"] = UserCreationForm()
+        context["auth_mode"] = "login"
         return context
 
     def post(self, request: HttpRequest, *args, **kwargs) -> HttpResponse:
@@ -174,6 +176,32 @@ class LandingView(DashboardContextMixin, TemplateView):
             return self.render_to_response(context)
         context = self.get_context_data()
         context["auth_form"] = form
+        return self.render_to_response(context)
+
+
+class SignupView(DashboardContextMixin, TemplateView):
+    template_name = "core/index.html"
+
+    def get_context_data(self, **kwargs: Any) -> Dict[str, Any]:
+        context = super().get_context_data(**kwargs)
+        context.update(self._base_context(initial_route="dashboard"))
+        context["auth_form"] = AuthenticationForm(self.request)
+        context["signup_form"] = UserCreationForm()
+        context["auth_mode"] = "signup"
+        return context
+
+    def post(self, request: HttpRequest, *args, **kwargs) -> HttpResponse:
+        if request.user.is_authenticated:
+            return redirect("core:dashboard")
+        form = UserCreationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            context = self._base_context(initial_route="dashboard")
+            return self.render_to_response(context)
+        context = self.get_context_data()
+        context["signup_form"] = form
+        context["auth_mode"] = "signup"
         return self.render_to_response(context)
 
 
@@ -294,6 +322,8 @@ class SpaRouteView(BaseSecureView):
             "branddozer",
             "addressbook",
             "c0d3r",
+            "u53rxr080t",
+            "branddozer_solo",
         }
         if slug not in allowed:
             return redirect("core:dashboard")

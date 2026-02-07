@@ -200,7 +200,7 @@ class Command(BaseCommand):
         call_command("migrate")
 
         self.stdout.write(self.style.MIGRATE_HEADING("[5/7] Collect static"))
-        call_command("collectstatic", interactive=False)
+        call_command("collectstatic", interactive=False, clear=True)
 
         worker_process = None
         if not options.get("branddozer_worker_off") and os.environ.get("BRANDDOZER_WORKER_DISABLED") != "1":
