@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from django.conf import settings
 from django.http.request import split_domain_port, validate_host
+from django.urls import resolve
+from django.urls.exceptions import Resolver404
 
 
 class DynamicOriginMiddleware:
@@ -48,3 +50,36 @@ class DynamicOriginMiddleware:
                 updated = True
         if updated:
             settings.CSRF_TRUSTED_ORIGINS = trusted
+
+
+class ApiSlashFallbackMiddleware:
+    """
+    If an API request 404s without a trailing slash, retry internally with a slash.
+    This prevents accidental 404s on POST/PUT/PATCH/DELETE where Django won't
+    auto-redirect missing slashes.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if response.status_code != 404:
+            return response
+        if request.META.get("CCU_SLASH_FALLBACK"):
+            return response
+        path = request.path_info or ""
+        if not path or path.endswith("/"):
+            return response
+        if not path.startswith("/api/"):
+            return response
+        candidate = f"{path}/"
+        try:
+            resolve(candidate)
+        except Resolver404:
+            return response
+        request.META["CCU_SLASH_FALLBACK"] = "1"
+        request.path_info = candidate
+        request.path = candidate
+        request.META["PATH_INFO"] = candidate
+        return self.get_response(request)
