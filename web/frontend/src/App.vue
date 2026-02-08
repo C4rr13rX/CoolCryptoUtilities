@@ -11,9 +11,9 @@
         <RouterLink
           v-for="item in navItems"
           :key="item.route"
-          :to="{ name: item.route }"
+          :to="item.path"
           class="nav-link"
-          :class="[{ active: isActive(item.route) }, `intent-${item.intent}`]"
+          :class="[{ active: isActive(item.path) }, `intent-${item.intent}`]"
           :data-sound="`section:${item.route}`"
           @click="handleNavClick"
         >
@@ -294,29 +294,31 @@ const pipelineSummary = computed(() => {
 });
 
 const navItems = computed(() => [
-  { route: 'dashboard', label: 'Overview', icon: 'overview', intent: streamIntent.value },
-  { route: 'organism', label: 'Organism', icon: 'organism', intent: pipelineIntent.value },
-  { route: 'pipeline', label: 'Pipeline', icon: 'pipeline', intent: pipelineIntent.value },
-  { route: 'streams', label: 'Streams', icon: 'streams', intent: streamIntent.value },
-  { route: 'telemetry', label: 'Telemetry', icon: 'activity', intent: feedbackIntent.value },
-  { route: 'wallet', label: 'Wallet', icon: 'wallet', intent: consoleIntent.value },
-  { route: 'c0d3r', label: 'c0d3r', icon: 'terminal', intent: consoleIntent.value },
-  { route: 'investigations', label: 'Investigations', icon: 'shield', intent: advisoryIntent.value },
-  { route: 'addressbook', label: 'Address Book', icon: 'link', intent: advisoryIntent.value },
-  { route: 'advisories', label: 'Advisories', icon: 'shield', intent: advisoryIntent.value },
-  { route: 'datalab', label: 'Data Lab', icon: 'datalab', intent: pipelineIntent.value },
-  { route: 'lab', label: 'Model Lab', icon: 'lab', intent: pipelineIntent.value },
-  { route: 'guardian', label: 'Guardian', icon: 'guardian', intent: pipelineIntent.value },
-  { route: 'cron', label: 'Cron', icon: 'activity', intent: pipelineIntent.value },
-  { route: 'codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
-  { route: 'integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
-  { route: 'settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
-  { route: 'audiolab', label: 'Audio Lab', icon: 'radar', intent: pipelineIntent.value },
-  { route: 'u53rxr080t', label: 'U53RxR080T', icon: 'radar', intent: pipelineIntent.value },
-  { route: 'branddozer', label: 'Br∆nD D0z3r', icon: 'lab', intent: pipelineIntent.value },
+  { route: 'dashboard', path: '/', label: 'Overview', icon: 'overview', intent: streamIntent.value },
+  { route: 'organism', path: '/organism', label: 'Organism', icon: 'organism', intent: pipelineIntent.value },
+  { route: 'pipeline', path: '/pipeline', label: 'Pipeline', icon: 'pipeline', intent: pipelineIntent.value },
+  { route: 'streams', path: '/streams', label: 'Streams', icon: 'streams', intent: streamIntent.value },
+  { route: 'telemetry', path: '/telemetry', label: 'Telemetry', icon: 'activity', intent: feedbackIntent.value },
+  { route: 'wallet', path: '/wallet', label: 'Wallet', icon: 'wallet', intent: consoleIntent.value },
+  { route: 'c0d3r', path: '/c0d3r', label: 'c0d3r', icon: 'terminal', intent: consoleIntent.value },
+  { route: 'investigations', path: '/investigations', label: 'Investigations', icon: 'shield', intent: advisoryIntent.value },
+  { route: 'addressbook', path: '/addressbook', label: 'Address Book', icon: 'link', intent: advisoryIntent.value },
+  { route: 'advisories', path: '/advisories', label: 'Advisories', icon: 'shield', intent: advisoryIntent.value },
+  { route: 'datalab', path: '/datalab', label: 'Data Lab', icon: 'datalab', intent: pipelineIntent.value },
+  { route: 'lab', path: '/lab', label: 'Model Lab', icon: 'lab', intent: pipelineIntent.value },
+  { route: 'guardian', path: '/guardian', label: 'Guardian', icon: 'guardian', intent: pipelineIntent.value },
+  { route: 'cron', path: '/cron', label: 'Cron', icon: 'activity', intent: pipelineIntent.value },
+  { route: 'codegraph', path: '/codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
+  { route: 'integrations', path: '/integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
+  { route: 'settings', path: '/settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
+  { route: 'audiolab', path: '/audiolab', label: 'Audio Lab', icon: 'radar', intent: pipelineIntent.value },
+  { route: 'u53rxr080t', path: '/u53rxr080t', label: 'U53RxR080T', icon: 'radar', intent: pipelineIntent.value },
+  { route: 'branddozer', path: '/branddozer', label: 'Br∆nD D0z3r', icon: 'lab', intent: pipelineIntent.value },
 ]);
 
-const isActive = (name: string) => route.name === name;
+const normalizePath = (value: string) => (value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value);
+
+const isActive = (path: string) => normalizePath(route.path) === normalizePath(path);
 
 const currencyFormatter = new Intl.NumberFormat(undefined, {
   style: 'currency',
