@@ -226,12 +226,13 @@ def _load_legacy_env() -> Dict[str, str]:
 
 
 def get_settings_for_user(user) -> Dict[str, str]:
-    if SecureSetting is None:
+    model = _load_secure_setting_model()
+    if model is None:
         return {}
     if user is None:
         return {}
     try:
-        settings = SecureSetting.objects.filter(user=user)
+        settings = model.objects.filter(user=user)
     except Exception:
         return {}
     results: Dict[str, str] = {}
@@ -245,6 +246,29 @@ def get_settings_for_user(user) -> Dict[str, str]:
             value = setting.value_plain or ""
         results[setting.name] = value
     return _resolve_placeholders(results)
+
+
+def _ensure_django_ready() -> bool:
+    try:
+        if django_settings.configured and not django.apps.apps.ready:  # type: ignore[attr-defined]
+            django.setup()
+    except Exception:
+        return False
+    return bool(django_settings.configured and django.apps.apps.ready)  # type: ignore[attr-defined]
+
+
+def _load_secure_setting_model():
+    global SecureSetting
+    if SecureSetting is not None:
+        return SecureSetting
+    if not _ensure_django_ready():
+        return None
+    try:
+        from securevault.models import SecureSetting as Model
+    except Exception:
+        return None
+    SecureSetting = Model
+    return SecureSetting
 
 
 def _resolve_placeholders(values: Dict[str, str], max_passes: int = 10) -> Dict[str, str]:

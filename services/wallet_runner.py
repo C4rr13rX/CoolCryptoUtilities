@@ -21,6 +21,8 @@ def _default_python() -> str:
         return candidate
     virtual_env = os.getenv("VIRTUAL_ENV")
     if virtual_env:
+        if os.name == "nt":
+            return str(Path(virtual_env) / "Scripts" / "python.exe")
         return str(Path(virtual_env) / "bin" / "python")
     import sys
 
