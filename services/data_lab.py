@@ -261,6 +261,8 @@ class DataLabRunner:
 
     def _prepare_env(self, job_type: str, options: Dict[str, Any], *, user=None) -> Dict[str, str]:
         env = build_process_env(user)
+        env.setdefault("PYTHONUTF8", "1")
+        env.setdefault("PYTHONIOENCODING", "utf-8")
         chain = (options.get("chain") or "base").strip().lower()
         env["CHAIN_NAME"] = chain
         years_back = int(options.get("years_back") or 3)
