@@ -365,7 +365,7 @@ def prompt_chain() -> str:
     print("Available chains:", ", ".join(allowed))
     ch = _safe_input("Chain: ").strip().lower()
     if ch not in allowed:
-        print(f"❌ Unsupported chain. Allowed: {', '.join(allowed)}")
+        print(f"[ERROR] Unsupported chain. Allowed: {', '.join(allowed)}")
         return ""
     return ch
 
@@ -521,7 +521,7 @@ def bridge_flow(bridge: UltraSwapBridge | None, params: Dict[str, Any] | None = 
             wait=wait_flag,
         )
     except Exception as e:
-        print(f"❌ bridge error: {e!r}")
+        print(f"[ERROR] bridge error: {e!r}")
 
 
 def _automation_enabled() -> bool:
@@ -554,7 +554,7 @@ def menu():
         print("2) Refetch balances now (rebuild/refresh cache, parallel)")
         print("3) Refetch transactions now (incremental, parallel)")
         print("4) Send")
-        print("5) Swap (auto: 0x v2 → Camelot)")
+        print("5) Swap (auto: 0x v2 -> Camelot)")
         print("6) Bridge (LI.FI)")
         print("7) Start production manager")
         print("8) Stop production manager")

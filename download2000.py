@@ -189,15 +189,15 @@ def fetch_chunk(ev, b, e_b, sym, idx, total):
     for attempt, delay in enumerate(delays, start=1):
         try:
             logs = limited(ev.get_logs, from_block=b, to_block=e_b)
-            print(f"    [{idx+1}/{total}] 📦 {sym}: {len(logs)} logs [{b}→{e_b}]")
+            print(f"    [{idx+1}/{total}] [DATA] {sym}: {len(logs)} logs [{b}->{e_b}]")
             return logs
         except Exception as exc:
-            print(f"    ⚠️ fetch error for {sym}[{b}→{e_b}] (attempt {attempt}/{len(delays)}): {exc}")
+            print(f"    [WARN] fetch error for {sym}[{b}->{e_b}] (attempt {attempt}/{len(delays)}): {exc}")
             if attempt < len(delays):
                 sleep_sec = delay + random.uniform(0, 5)
                 time.sleep(sleep_sec)
             else:
-                print(f"    ❌ giving up on chunk [{b}→{e_b}] after {len(delays)} attempts, skipping")
+                print(f"    [ERROR] giving up on chunk [{b}->{e_b}] after {len(delays)} attempts, skipping")
                 return []
 
 def get_block_with_retry(block_number, retries=7):
@@ -235,11 +235,11 @@ def safe_decimals(addr: str):
     try:
         a = Web3.to_checksum_address(addr)
     except Exception:
-        print(f"   ❌ Invalid token address: {addr}")
+        print(f"   [ERROR] Invalid token address: {addr}")
         return None
 
     if not _has_code(a):
-        print(f"   ❌ No contract code at {a} (not an ERC-20).")
+        print(f"   [ERROR] No contract code at {a} (not an ERC-20).")
         return None
 
     try:
@@ -258,7 +258,7 @@ def safe_decimals(addr: str):
     except Exception:
         pass
 
-    print(f"   ❌ Could not read decimals() from {a}.")
+    print(f"   [ERROR] Could not read decimals() from {a}.")
     return None
 
 def parse_logs_no_ts(logs, dec0, dec1, granularity_seconds):
@@ -370,11 +370,11 @@ def main():
     assignment.setdefault("chain", chain)
 
     rpc_url = _rpc_for_chain(chain)
-    print(f"ℹ️ Chain: {chain} | RPC: {rpc_url}")
+    print(f"[INFO] Chain: {chain} | RPC: {rpc_url}")
 
     global web3
     web3 = Web3(Web3.HTTPProvider(rpc_url))
-    assert web3.is_connected(), f"❌ Could not connect to RPC at {rpc_url}"
+    assert web3.is_connected(), f"[ERROR] Could not connect to RPC at {rpc_url}"
 
     output_dir = Path(OUTPUT_DIR_ENV) if OUTPUT_DIR_ENV else Path("data") / "historical_ohlcv" / chain
     intermediate_dir = Path(INTERMEDIATE_DIR_ENV) if INTERMEDIATE_DIR_ENV else Path("data") / "intermediate" / chain
@@ -384,15 +384,15 @@ def main():
     start_ts = int((datetime.now(UTC) - timedelta(days=YEARS_BACK*365)).timestamp())
     start_blk = get_block_by_timestamp(start_ts)
     end_blk   = limited(lambda: web3.eth.block_number)
-    print(f"⏳ Scanning blocks {start_blk} → {end_blk}")
+    print(f"[SCAN] Scanning blocks {start_blk} -> {end_blk}")
 
     chunks_count = YEARS_BACK*365*24
     total_blocks = end_blk - start_blk
     CHUNK_SIZE_BLOCKS = max(1, total_blocks // chunks_count)
-    print(f"ℹ️ Dynamic CHUNK_SIZE set to {CHUNK_SIZE_BLOCKS} blocks")
+    print(f"[INFO] Dynamic CHUNK_SIZE set to {CHUNK_SIZE_BLOCKS} blocks")
 
     pairs = [(addr,meta) for addr,meta in assignment["pairs"].items() if not meta.get("completed",False)]
-    print(f"🚀 Will process {len(pairs)} pairs…")
+    print(f"[START] Will process {len(pairs)} pairs...")
 
     for addr, meta in pairs:
         sym = meta["symbol"]
@@ -410,7 +410,7 @@ def main():
         try:
             pair_addr = Web3.to_checksum_address(addr)
         except Exception as e:
-            print(f"   ❌ Invalid pair address for {sym}: {addr} ({e}). Skipping.")
+            print(f"   [ERROR] Invalid pair address for {sym}: {addr} ({e}). Skipping.")
             continue
 
         pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
@@ -420,20 +420,20 @@ def main():
             t0_raw = limited(pair.functions.token0().call)
             t1_raw = limited(pair.functions.token1().call)
         except Exception as e:
-            print(f"   ❌ {sym}: address {pair_addr} does not behave like a Uniswap V2-style pool: {e}. Skipping.")
+            print(f"   [ERROR] {sym}: address {pair_addr} does not behave like a Uniswap V2-style pool: {e}. Skipping.")
             continue
 
         try:
             t0 = Web3.to_checksum_address(t0_raw)
             t1 = Web3.to_checksum_address(t1_raw)
         except Exception as e:
-            print(f"   ❌ {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
+            print(f"   [ERROR] {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
             continue
 
         dec0 = safe_decimals(t0)
         dec1 = safe_decimals(t1)
         if dec0 is None or dec1 is None:
-            print(f"   ⚠️ Skipping {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
+            print(f"   [WARN] Skipping {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
             continue
 
         print(f"   tokens: {t0}(dec{dec0}) / {t1}(dec{dec1})")
@@ -449,7 +449,7 @@ def main():
                 chunk_idx += 1
                 continue
 
-            print(f"    ⏳ Fetching chunk {chunk_idx+1}/{total_chunks} [{b}→{e_b}] for {sym}")
+            print(f"    [SCAN] Fetching chunk {chunk_idx+1}/{total_chunks} [{b}->{e_b}] for {sym}")
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
             if logs:
                 log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
@@ -473,7 +473,7 @@ def main():
             b = e_b
             chunk_idx += 1
 
-        print("    ⏳ Merging intermediate data and fetching timestamps…")
+        print("    [SCAN] Merging intermediate data and fetching timestamps...")
         all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
         min_block_per_bar = {bar_slot: min(blocks) for bar_slot, blocks in min_block_per_bar.items() if blocks}
         bar_slot_to_ts = {}
@@ -487,7 +487,7 @@ def main():
                 except Exception as e:
                     print(f"      Failed to fetch timestamp for bar {bar_slot}: {e}")
 
-        print("    🛠 Aggregating OHLCV bars…")
+        print("    [AGG] Aggregating OHLCV bars...")
         bars = []
         for bar_slot, records in all_records_by_bar.items():
             ts = bar_slot_to_ts.get(bar_slot)
@@ -496,9 +496,9 @@ def main():
         bars.sort(key=lambda x: x["timestamp"])
         save_bars(out, bars)
         update_assignment(assignment, addr, completed=True)
-        print(f"    ✅ Pair {sym} complete and saved.")
+        print(f"    [DONE] Pair {sym} complete and saved.")
 
-    print("\n🎉 All pairs complete.")
+    print("\n[DONE] All pairs complete.")
 
 if __name__=="__main__":
     main()

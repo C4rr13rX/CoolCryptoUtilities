@@ -131,6 +131,30 @@
           <input v-model.number="settings.gateDepth" type="range" min="0" max="1" step="0.05" />
           <span class="value">{{ settings.gateDepth.toFixed(2) }}</span>
         </label>
+        <div class="gate-pattern">
+          <div class="gate-pattern-header">
+            <span>Gate Pattern (16th Notes)</span>
+            <button class="btn ghost" type="button" @click="resetGatePattern">
+              Reset Pattern
+            </button>
+          </div>
+          <div class="gate-grid">
+            <div v-for="(val, idx) in settings.gatePattern" :key="`gate-${idx}`" class="gate-cell">
+              <div class="gate-bar">
+                <span class="fill" :style="{ height: `${Math.round(val * 100)}%` }"></span>
+              </div>
+              <input
+                class="gate-slider"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                v-model.number="settings.gatePattern[idx]"
+              />
+              <span class="gate-label">{{ idx + 1 }}</span>
+            </div>
+          </div>
+        </div>
         <label>
           <span>Key Root</span>
           <select v-model="settings.keyRoot">
@@ -192,7 +216,10 @@ import {
 } from '@/audio/ambient';
 
 const enabled = ref(false);
-const settings = reactive<AmbientSettings>({ ...DEFAULT_AMBIENT_SETTINGS });
+const settings = reactive<AmbientSettings>({
+  ...DEFAULT_AMBIENT_SETTINGS,
+  gatePattern: DEFAULT_AMBIENT_SETTINGS.gatePattern.slice(),
+});
 const genre = ref('ambient');
 const midiFile = ref<File | null>(null);
 const detectedMidiKey = ref<{ root: string; mode: 'major' | 'minor' } | null>(null);
@@ -237,6 +264,7 @@ const loadState = () => {
     if (raw) {
       const data = JSON.parse(raw);
       Object.assign(settings, data.settings || {});
+      settings.gatePattern = normalizeGatePattern(settings.gatePattern);
       if (typeof data.genre === 'string') genre.value = data.genre;
       Object.assign(soundMap, data.soundMap || {});
       enabled.value = Boolean(data.enabled);
@@ -301,6 +329,10 @@ const handleMidi = async (event: Event) => {
 watch(
   () => ({ ...settings }),
   () => {
+    const normalized = normalizeGatePattern(settings.gatePattern);
+    if (!gatePatternEquals(normalized, settings.gatePattern)) {
+      settings.gatePattern = normalized;
+    }
     persistState();
     if (enabled.value) {
       ambientAudio.applySettings(settings);
@@ -327,6 +359,29 @@ onMounted(() => {
     ambientAudio.enable(settings);
   }
 });
+
+const normalizeGatePattern = (pattern?: number[]) => {
+  const base = Array.isArray(pattern) && pattern.length ? pattern : DEFAULT_AMBIENT_SETTINGS.gatePattern;
+  const cleaned = base.map((val) => Math.min(1, Math.max(0, Number(val) || 0)));
+  if (cleaned.length === 16) return cleaned;
+  const out: number[] = [];
+  for (let i = 0; i < 16; i += 1) {
+    out.push(cleaned[i % cleaned.length] ?? 0);
+  }
+  return out;
+};
+
+const gatePatternEquals = (left: number[], right: number[]) => {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+};
+
+const resetGatePattern = () => {
+  settings.gatePattern = DEFAULT_AMBIENT_SETTINGS.gatePattern.slice();
+};
 
 const parseMidiKey = (buffer: ArrayBuffer): { root: string; mode: 'major' | 'minor' } | null => {
   const bytes = new Uint8Array(buffer);
@@ -475,5 +530,64 @@ const KEY_SIG_MINOR: Record<number, string> = {
   margin-top: 1rem;
   display: flex;
   justify-content: flex-end;
+}
+
+.gate-pattern {
+  grid-column: 1 / -1;
+  background: rgba(10, 20, 36, 0.7);
+  border: 1px solid rgba(111, 167, 255, 0.18);
+  border-radius: 16px;
+  padding: 1rem;
+}
+
+.gate-pattern-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12rem;
+  color: var(--text-muted);
+}
+
+.gate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(42px, 1fr));
+  gap: 0.6rem;
+}
+
+.gate-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.gate-bar {
+  width: 100%;
+  height: 60px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(111, 167, 255, 0.2);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+
+.gate-bar .fill {
+  width: 100%;
+  background: linear-gradient(180deg, rgba(125, 179, 255, 0.9) 0%, rgba(45, 117, 196, 0.2) 100%);
+  transition: height 0.15s ease;
+}
+
+.gate-slider {
+  width: 100%;
+}
+
+.gate-label {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.6);
 }
 </style>

@@ -14,6 +14,7 @@ export type AmbientSettings = {
   gateEnabled: boolean;
   gateBpm: number;
   gateDepth: number;
+  gatePattern: number[];
   keyRoot: string;
   keyMode: 'major' | 'minor';
 };
@@ -35,7 +36,8 @@ export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   droneWaveform: 'sine',
   gateEnabled: false,
   gateBpm: 84,
-  gateDepth: 0.6,
+  gateDepth: 1,
+  gatePattern: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0.4, 1, 0, 1, 0.2, 1, 0],
   keyRoot: 'C',
   keyMode: 'minor',
 };
@@ -264,7 +266,7 @@ class AmbientAudio {
   }
 
   applySettings(settings: Partial<AmbientSettings>) {
-    this.settings = { ...this.settings, ...settings };
+    this.settings = normalizeSettings({ ...this.settings, ...settings });
     if (!this.enabled) {
       return;
     }
@@ -290,24 +292,10 @@ class AmbientAudio {
     let outputNode: AudioNode = gain;
     if (this.settings.gateEnabled) {
       const gateGain = this.ctx.createGain();
-      const gateOsc = this.ctx.createOscillator();
-      const gateDepth = clamp(this.settings.gateDepth, 0, 1);
-      const gateOffset = this.ctx.createConstantSource();
-      const gateDepthGain = this.ctx.createGain();
-      const gateHz = Math.max(1, (this.settings.gateBpm / 60) * 4);
-      gateOsc.type = 'square';
-      gateOsc.frequency.setValueAtTime(gateHz, now);
-      gateDepthGain.gain.setValueAtTime(gateDepth / 2, now);
-      gateOffset.offset.setValueAtTime(1 - gateDepth / 2, now);
-      gateOsc.connect(gateDepthGain).connect(gateGain.gain);
-      gateOffset.connect(gateGain.gain);
       gateGain.gain.setValueAtTime(1, now);
       gain.connect(gateGain);
       gateGain.connect(this.master);
-      gateOsc.start(now);
-      gateOffset.start(now);
-      gateOsc.stop(stopTime + 0.1);
-      gateOffset.stop(stopTime + 0.1);
+      this.scheduleGatePattern(gateGain.gain, now, stopTime);
       outputNode = gateGain;
     } else {
       gain.connect(this.master);
@@ -399,6 +387,30 @@ class AmbientAudio {
     const now = this.ctx.currentTime;
     this.master.gain.setTargetAtTime(0.0001, now, 0.2);
   }
+
+  private scheduleGatePattern(param: AudioParam, now: number, stopTime: number) {
+    const bpm = Math.max(30, this.settings.gateBpm);
+    const stepSeconds = 60 / bpm / 4;
+    const depth = clamp(this.settings.gateDepth, 0, 1);
+    const pattern = normalizeGatePattern(this.settings.gatePattern);
+    const steps = Math.max(1, Math.ceil((stopTime - now) / stepSeconds));
+    const ramp = Math.min(0.005, stepSeconds * 0.2);
+    let t = now;
+    let lastValue = 1;
+    for (let i = 0; i < steps; i += 1) {
+      const raw = clamp(pattern[i % pattern.length] ?? 1, 0, 1);
+      const value = (1 - depth) + depth * raw;
+      if (i === 0) {
+        param.setValueAtTime(value, t);
+      } else {
+        param.setValueAtTime(lastValue, t);
+        param.linearRampToValueAtTime(value, t + ramp);
+      }
+      lastValue = value;
+      t += stepSeconds;
+      if (t > stopTime) break;
+    }
+  }
 }
 
 export const ambientAudio = new AmbientAudio();
@@ -429,4 +441,24 @@ function keyToSemitone(root: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function normalizeGatePattern(pattern?: number[]): number[] {
+  if (!Array.isArray(pattern) || pattern.length === 0) {
+    return DEFAULT_AMBIENT_SETTINGS.gatePattern.slice();
+  }
+  const cleaned = pattern.map((value) => clamp(Number(value) || 0, 0, 1));
+  if (cleaned.length === 16) return cleaned;
+  const out: number[] = [];
+  for (let i = 0; i < 16; i += 1) {
+    out.push(cleaned[i % cleaned.length] ?? 0);
+  }
+  return out;
+}
+
+function normalizeSettings(settings: AmbientSettings): AmbientSettings {
+  return {
+    ...settings,
+    gatePattern: normalizeGatePattern(settings.gatePattern),
+  };
 }
