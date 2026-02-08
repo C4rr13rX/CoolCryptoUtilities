@@ -391,6 +391,14 @@ class BusScheduler:
         except Exception:
             min_native = 0.01
         min_native = max(0.0, min_native)
+        try:
+            gas_min_usd = os.getenv("GAS_ALERT_MIN_USD")
+            if gas_min_usd:
+                native_price = portfolio.get_native_price(chain_name)
+                if native_price and native_price > 0:
+                    min_native = max(min_native, float(gas_min_usd) / native_price)
+        except Exception:
+            pass
         # crude gas safety
         if native_balance < min_native:
             self._emit_gas_alert(chain_name, native_balance)

@@ -15,6 +15,7 @@ from services.wallet_actions import WALLET_ACTIONS
 from services.wallet_state import capture_wallet_state
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for, wei_to_eth
+from services.token_catalog import core_tokens_for_chain
 
 try:
     from services.process_names import set_process_name
@@ -87,11 +88,25 @@ def _resolve_from_address(payload: Dict[str, Any], bridge: UltraSwapBridge | Non
     return None
 
 
-def _token_decimals(w3: Web3, token: str) -> int:
+def _resolve_token_address(chain: str, token: str, w3: Web3) -> str:
+    token_raw = str(token or "").strip()
+    if not token_raw:
+        raise ValueError("Token is required.")
+    if token_raw.lower().startswith("0x") and len(token_raw) >= 42:
+        return w3.to_checksum_address(token_raw)
+    token_map = core_tokens_for_chain(chain)
+    addr = token_map.get(token_raw.upper())
+    if not addr:
+        raise ValueError(f"Unknown token symbol '{token_raw}' for chain '{chain}'.")
+    return w3.to_checksum_address(addr)
+
+
+def _token_decimals(w3: Web3, chain: str, token: str) -> int:
     if is_native(token):
         return 18
     try:
-        contract = w3.eth.contract(address=w3.to_checksum_address(token), abi=ERC20_ABI)
+        addr = _resolve_token_address(chain, token, w3)
+        contract = w3.eth.contract(address=addr, abi=ERC20_ABI)
         return int(contract.functions.decimals().call())
     except Exception:
         return 18
@@ -135,9 +150,9 @@ def _send_estimate(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
         value = int(to_base_units(amount, 18))
         gas = w3.eth.estimate_gas({"from": from_cs, "to": to_cs, "value": value, "data": "0x"})
     else:
-        dec = _token_decimals(w3, token)
+        dec = _token_decimals(w3, chain, token)
         value = int(to_base_units(amount, dec))
-        token_cs = w3.to_checksum_address(token)
+        token_cs = _resolve_token_address(chain, token, w3)
         contract = w3.eth.contract(address=token_cs, abi=ERC20_ABI)
         data = contract.encode_abi("transfer", args=[to_cs, value])
         gas = w3.eth.estimate_gas({"from": from_cs, "to": token_cs, "data": data, "value": 0})
@@ -173,18 +188,21 @@ def _swap_quote(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
         raise ValueError("from_address is required for swap_quote when no wallet secret is set.")
     w3 = _readonly_w3(chain)
     taker = w3.to_checksum_address(from_addr)
-    dec = _token_decimals(w3, sell)
+    dec = _token_decimals(w3, chain, sell)
     sell_raw = int(to_base_units(amount, dec))
     if sell_raw <= 0:
         raise ValueError("amount must be > 0")
+
+    sell_token = sell if is_native(sell) else _resolve_token_address(chain, sell, w3)
+    buy_token = buy if is_native(buy) else _resolve_token_address(chain, buy, w3)
 
     # Prefer 0x v2 if key is present
     try:
         zx = ZeroXV2AllowanceHolder()
         q0 = zx.quote(
             chain_id=int(w3.eth.chain_id),
-            sell_token=normalize_for_0x(sell),
-            buy_token=normalize_for_0x(buy),
+            sell_token=normalize_for_0x(sell_token),
+            buy_token=normalize_for_0x(buy_token),
             sell_amount=sell_raw,
             taker=taker,
             slippage_bps=slippage_bps,
@@ -204,7 +222,14 @@ def _swap_quote(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
         ("SushiV2", sushi),
     ):
         try:
-            q = provider.quote_and_build(chain, sell, buy, sell_raw, slippage_bps=slippage_bps, recipient=taker)
+            q = provider.quote_and_build(
+                chain,
+                sell_token,
+                buy_token,
+                sell_raw,
+                slippage_bps=slippage_bps,
+                recipient=taker,
+            )
             if "__error__" in (q or {}):
                 print(f"[swap_quote] {name} unavailable: {q['__error__']}")
                 continue
@@ -229,13 +254,19 @@ def _bridge_quote(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
         raise ValueError("from_address is required for bridge_quote when no wallet secret is set.")
 
     w3 = _readonly_w3(from_chain)
-    dec = _token_decimals(w3, token)
+    dec = _token_decimals(w3, from_chain, token)
     amount_raw = int(to_base_units(amount, dec))
     if amount_raw <= 0:
         raise ValueError("amount must be > 0")
 
-    from_token = normalize_for_0x(token) if is_native(token) else w3.to_checksum_address(token)
-    to_token = normalize_for_0x(dst_token) if is_native(dst_token) else w3.to_checksum_address(dst_token)
+    if is_native(token):
+        from_token = normalize_for_0x(token)
+    else:
+        from_token = _resolve_token_address(from_chain, token, w3)
+    if is_native(dst_token):
+        to_token = normalize_for_0x(dst_token)
+    else:
+        to_token = _resolve_token_address(to_chain, dst_token, w3)
     params = {
         "fromChain": CHAINS[from_chain]["id"],
         "toChain": CHAINS[to_chain]["id"],

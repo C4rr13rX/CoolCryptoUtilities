@@ -59,6 +59,8 @@ class PortfolioState:
         self._last_refresh: float = 0.0
         self.holdings: Dict[Tuple[str, str], TokenHolding] = {}
         self.native_balances: Dict[str, float] = {}
+        self.native_usd: Dict[str, float] = {}
+        self.native_prices: Dict[str, float] = {}
         self.wallet = (wallet or os.getenv("PRIMARY_WALLET") or "").lower()
         if not self.wallet:
             self.wallet = self._derive_wallet_from_mnemonic()
@@ -114,12 +116,14 @@ class PortfolioState:
 
         holdings: Dict[Tuple[str, str], TokenHolding] = {}
         native_balances: Dict[str, float] = {}
+        native_usd: Dict[str, float] = {}
 
         for chain in self.chains:
             rows = self.cache.load(wallet=self.wallet, chains=[chain], include_zero=False)
             chain_lower = chain.lower()
             native_symbol = NATIVE_SYMBOL.get(chain_lower, chain_upper := chain.upper())
             native_balance = 0.0
+            native_usd_total = 0.0
             for row in rows:
                 quantity = self._parse_quantity(row.get("quantity"))
                 usd = self._parse_usd(row.get("usd"))
@@ -129,6 +133,7 @@ class PortfolioState:
                     symbol = token_addr[:6] + "…" + token_addr[-4:]
                 if symbol in (native_symbol, "ETH", "MATIC"):
                     native_balance += quantity
+                    native_usd_total += usd
                 holdings[(chain_lower, symbol)] = TokenHolding(
                     token=token_addr,
                     symbol=symbol,
@@ -138,10 +143,17 @@ class PortfolioState:
                     raw=row,
                 )
             native_balances[chain_lower] = native_balance
+            native_usd[chain_lower] = native_usd_total
 
         holdings = self._filter_holdings(holdings)
         self.holdings = holdings
         self.native_balances = native_balances
+        self.native_usd = native_usd
+        self.native_prices = {
+            chain: (native_usd[chain] / native_balances[chain])
+            for chain in native_balances
+            if native_balances.get(chain, 0.0) > 0 and native_usd.get(chain, 0.0) > 0
+        }
         self._last_refresh = now
         self._next_refresh = now + self.refresh_interval
 
@@ -158,6 +170,12 @@ class PortfolioState:
 
     def get_native_balance(self, chain: str = "ethereum") -> float:
         return self.native_balances.get(chain.lower(), 0.0)
+
+    def get_native_usd(self, chain: str = "ethereum") -> float:
+        return self.native_usd.get(chain.lower(), 0.0)
+
+    def get_native_price(self, chain: str = "ethereum") -> Optional[float]:
+        return self.native_prices.get(chain.lower())
 
     def stable_liquidity(self, chain: str = "ethereum") -> float:
         chain_l = chain.lower()
