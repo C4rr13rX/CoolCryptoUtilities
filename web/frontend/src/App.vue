@@ -8,21 +8,21 @@
         </div>
       </div>
       <nav class="sidebar__nav">
-        <RouterLink
+        <button
           v-for="item in navItems"
           :key="item.route"
-          :to="item.path"
+          type="button"
           class="nav-link"
           :class="[{ active: isActive(item.path) }, `intent-${item.intent}`]"
           :data-sound="`section:${item.route}`"
-          @click="handleNavClick"
+          @click.stop.prevent="goTo(item.path)"
         >
           <span class="icon">
             <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
           </span>
           <span class="label">{{ item.label }}</span>
           <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
-        </RouterLink>
+        </button>
       </nav>
       <footer class="sidebar__foot">
         <div class="sidebar__stats">
@@ -71,7 +71,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue';
-import { RouterLink, RouterView, useRoute } from 'vue-router';
+import { RouterView, useRoute, useRouter } from 'vue-router';
 import StatusIndicator from '@/components/StatusIndicator.vue';
 import HackerIcon from '@/components/HackerIcon.vue';
 import { ambientAudio } from '@/audio/ambient';
@@ -82,6 +82,7 @@ import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
 const store = useDashboardStore();
 const uiSettings = useUiSettingsStore();
 const route = useRoute();
+const router = useRouter();
 const sidebarOpen = ref(false);
 const isSolo = computed(() => route.meta?.layout === 'solo');
 const glitchActive = ref(false);
@@ -189,6 +190,16 @@ const handleNavClick = () => {
   if (window.matchMedia('(max-width: 959px)').matches) {
     closeSidebar();
   }
+};
+
+const goTo = (path: string) => {
+  if (!path) return;
+  handleNavClick();
+  if (normalizePath(route.path) === normalizePath(path)) return;
+  router.push(path).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('Navigation failed', err);
+  });
 };
 
 watch(
@@ -407,6 +418,10 @@ const totalProfitDisplay = computed(() =>
   background: rgba(6, 12, 22, 0.72);
   border: 1px solid rgba(120, 160, 230, 0.14);
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
+  appearance: none;
+  width: 100%;
+  text-align: left;
 }
 
 .nav-link .label {

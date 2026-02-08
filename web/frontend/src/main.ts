@@ -103,13 +103,17 @@ if (mountEl) {
   const initialPath = targetRoutes[initialRoute] || '/';
   const lastRouteKey = 'ccu:last-route';
   const storedPath = normalizePath(sessionStorage.getItem(lastRouteKey) || '');
-  const bootPath =
-    resolveIfMatch(requestedPath) ||
-    resolveIfMatch(currentPath) ||
-    resolveIfMatch(storedPath) ||
-    initialPath;
-
   const reloadKey = 'ccu:router-reload';
+  const reloadRequested = sessionStorage.getItem(reloadKey);
+  const storedResolved = resolveIfMatch(storedPath);
+  const requestedResolved = resolveIfMatch(requestedPath);
+  const currentResolved = resolveIfMatch(currentPath);
+  const bootPath =
+    (reloadRequested && storedResolved) ||
+    requestedResolved ||
+    currentResolved ||
+    storedResolved ||
+    initialPath;
   const isChunkError = (error: unknown) => {
     const message = String((error as Error)?.message || error || '');
     return /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|Importing a module script failed/i.test(
@@ -120,9 +124,14 @@ if (mountEl) {
     if (isChunkError(error)) {
       if (!sessionStorage.getItem(reloadKey)) {
         sessionStorage.setItem(reloadKey, String(Date.now()));
-        window.location.reload();
+      }
+      const lastKnown = sessionStorage.getItem(lastRouteKey) || '';
+      if (lastKnown && lastKnown !== window.location.pathname) {
+        window.location.assign(lastKnown);
         return;
       }
+      window.location.reload();
+      return;
     }
     // eslint-disable-next-line no-console
     console.error('Router navigation error', error);
