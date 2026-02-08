@@ -19,6 +19,14 @@ def _default_python() -> str:
     candidate = os.getenv("PYTHON_BIN")
     if candidate:
         return candidate
+    repo_venv = REPO_ROOT / ".venv"
+    if repo_venv.exists():
+        if os.name == "nt":
+            venv_python = repo_venv / "Scripts" / "python.exe"
+        else:
+            venv_python = repo_venv / "bin" / "python"
+        if venv_python.exists():
+            return str(venv_python)
     virtual_env = os.getenv("VIRTUAL_ENV")
     if virtual_env:
         if os.name == "nt":

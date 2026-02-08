@@ -2,7 +2,6 @@
   <div class="app-layout" :class="{ solo: isSolo }">
     <aside v-if="!isSolo" ref="sidebarRef" class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar__brand">
-        <img class="brand-logo" src="/static/assets/main_logo.png" alt="R3V3N!R logo" />
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
           <small class="subtitle">Crypto Trading AI Bot</small>
@@ -633,15 +632,8 @@ const totalProfitDisplay = computed(() =>
   display: flex;
   align-items: center;
   gap: 0.85rem;
-  justify-content: space-between;
+  justify-content: flex-start;
   width: 100%;
-}
-
-.brand-logo {
-  width: 46px;
-  height: 46px;
-  object-fit: contain;
-  filter: drop-shadow(0 6px 18px rgba(90, 166, 255, 0.35));
 }
 
 .brand-copy {
