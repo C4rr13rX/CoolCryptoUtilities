@@ -128,6 +128,13 @@ if (mountEl) {
     console.error('Router navigation error', error);
   });
 
+  router.beforeEach((to) => {
+    if (to.fullPath) {
+      sessionStorage.setItem(lastRouteKey, to.fullPath);
+    }
+    return true;
+  });
+
   router.afterEach((to) => {
     if (to.fullPath) {
       sessionStorage.setItem(lastRouteKey, to.fullPath);
