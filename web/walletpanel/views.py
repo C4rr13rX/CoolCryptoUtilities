@@ -16,12 +16,43 @@ from services.wallet_state import load_wallet_state
 
 DEFAULT_CATEGORY = "default"
 
+def _snapshot_epoch(value: Any) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if not text:
+        return 0.0
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(text).timestamp()
+    except Exception:
+        try:
+            return float(text)
+        except Exception:
+            return 0.0
+
 
 class WalletActionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request: Request, *args, **kwargs) -> Response:
         status_payload = wallet_runner.status()
+        try:
+            snapshot = load_wallet_state()
+            updated_at = _snapshot_epoch(snapshot.get("updated_at") if isinstance(snapshot, dict) else None)
+            finished_at = float(status_payload.get("finished_at") or 0.0)
+            message = str(status_payload.get("message") or "")
+            if message.lower().startswith("failed") and updated_at and finished_at:
+                if updated_at > (finished_at + 5.0):
+                    status_payload["message"] = "completed"
+                    status_payload["returncode"] = 0
+        except Exception:
+            pass
         return Response(status_payload, status=status.HTTP_200_OK)
 
 

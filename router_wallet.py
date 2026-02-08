@@ -443,7 +443,11 @@ class UltraSwapBridge:
         env_key = ALCHEMY_ENV.get(chain, "")
         url = (os.getenv(env_key) or "").strip()
         if url:
-            return url
+            lowered = url.lower()
+            if "alchemy" in lowered or "/v2/" in lowered:
+                return url
+            # Ignore non-Alchemy RPCs accidentally placed in ALCHEMY_* vars.
+            return ""
         if ALCHEMY_API_KEY and chain in ALCHEMY_SLUGS:
             return f"https://{ALCHEMY_SLUGS[chain]}.g.alchemy.com/v2/{ALCHEMY_API_KEY}"
         return ""
