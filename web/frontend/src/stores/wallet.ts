@@ -109,9 +109,22 @@ export const useWalletStore = defineStore('wallet', {
       if (this.autoRefreshing) return;
       this.autoRefreshing = true;
       try {
-        await this.run('refresh_transfers');
-        await this.run('refresh_balances');
-        this.error = null;
+        let hadError = false;
+        try {
+          await this.run('refresh_transfers');
+        } catch (error) {
+          // Continue to balances even if transfers failed.
+          hadError = true;
+        }
+        try {
+          await this.run('refresh_balances');
+        } catch (error) {
+          // Keep the most recent error, but do not abort auto refresh.
+          hadError = true;
+        }
+        if (!hadError) {
+          this.error = null;
+        }
       } catch (error) {
         // error already captured by run; swallow to avoid loop
       } finally {

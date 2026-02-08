@@ -241,7 +241,18 @@ const workerSummary = computed(() => {
   if (wallet.running || wallet.autoRefreshing || wallet.status?.running) {
     return 'Updating…';
   }
-  return wallet.status?.message || 'Idle';
+  const status = wallet.status || {};
+  const message = String(status.message || 'idle');
+  const returncode = status.returncode;
+  if (message.toLowerCase().startsWith('failed') || (typeof returncode === 'number' && returncode !== 0)) {
+    const finishedAt = Number(status.finished_at || 0);
+    const snapshotAt = parseTimestamp(wallet.snapshot?.updated_at);
+    if (snapshotAt && finishedAt && snapshotAt > (finishedAt * 1000 + 5000)) {
+      return 'Updated (last run failed)';
+    }
+    return message;
+  }
+  return message === 'idle' ? 'Idle' : message;
 });
 
 const currentAction = computed(() => wallet.actions.find((action: any) => action.name === activeAction.value));
@@ -426,6 +437,16 @@ function formatValue(value: any) {
 function truncateHash(hash: string | undefined) {
   if (!hash) return 'unknown';
   return `${hash.slice(0, 6)}…${hash.slice(-4)}`;
+}
+
+function parseTimestamp(value: unknown): number {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 </script>
 

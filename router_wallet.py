@@ -160,8 +160,9 @@ CHAINS: Dict[str, Dict[str, Any]] = {
         "rpcs": (
             _env(os.getenv("ALCHEMY_BASE_URL"))
             + [
-                "https://mainnet.base.org",
                 "https://base-rpc.publicnode.com",
+                "https://base.publicnode.com",
+                "https://base.llamarpc.com",
                 "https://1rpc.io/base",
                 "https://base.drpc.org",
             ]
