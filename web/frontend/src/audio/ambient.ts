@@ -11,10 +11,14 @@ export type AmbientSettings = {
   chordPreset: string;
   chordWaveform: OscillatorType;
   droneWaveform: OscillatorType;
-  gateEnabled: boolean;
-  gateBpm: number;
-  gateDepth: number;
-  gatePattern: number[];
+  chordGateMode: 'off' | 'pattern';
+  chordGateBpm: number;
+  chordGateDepth: number;
+  chordGatePattern: number[];
+  droneGateMode: 'off' | 'pattern';
+  droneGateBpm: number;
+  droneGateDepth: number;
+  droneGatePattern: number[];
   keyRoot: string;
   keyMode: 'major' | 'minor';
 };
@@ -34,10 +38,14 @@ export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   chordPreset: 'dream_minor',
   chordWaveform: 'sine',
   droneWaveform: 'sine',
-  gateEnabled: false,
-  gateBpm: 84,
-  gateDepth: 1,
-  gatePattern: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0.4, 1, 0, 1, 0.2, 1, 0],
+  chordGateMode: 'off',
+  chordGateBpm: 84,
+  chordGateDepth: 1,
+  chordGatePattern: [1, 0, 1, 0, 1, 0, 1, 0, 1, 0.4, 1, 0, 1, 0.2, 1, 0],
+  droneGateMode: 'off',
+  droneGateBpm: 84,
+  droneGateDepth: 1,
+  droneGatePattern: [1, 0.2, 0.8, 0.2, 1, 0.3, 0.7, 0.2, 1, 0.4, 0.8, 0.2, 1, 0.3, 0.9, 0.2],
   keyRoot: 'C',
   keyMode: 'minor',
 };
@@ -221,6 +229,7 @@ const CHORDS: Record<string, number[][]> = {
 class AmbientAudio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private droneGate: GainNode | null = null;
   private leftOsc: OscillatorNode | null = null;
   private rightOsc: OscillatorNode | null = null;
   private leftPan: StereoPannerNode | null = null;
@@ -232,6 +241,7 @@ class AmbientAudio {
   private lastChordAt = 0;
   private soundMap: SoundMap = { ...DEFAULT_SOUND_MAP };
   private motifCursor: Record<string, number> = {};
+  private droneGateTimer: number | null = null;
 
   isEnabled() {
     return this.enabled;
@@ -262,6 +272,10 @@ class AmbientAudio {
 
   disable() {
     this.enabled = false;
+    if (this.droneGateTimer) {
+      window.clearTimeout(this.droneGateTimer);
+      this.droneGateTimer = null;
+    }
     this.fadeOut();
   }
 
@@ -290,12 +304,19 @@ class AmbientAudio {
     gain.gain.exponentialRampToValueAtTime(0.0001, now + decayTime);
 
     let outputNode: AudioNode = gain;
-    if (this.settings.gateEnabled) {
+    if (this.settings.chordGateMode === 'pattern') {
       const gateGain = this.ctx.createGain();
       gateGain.gain.setValueAtTime(1, now);
       gain.connect(gateGain);
       gateGain.connect(this.master);
-      this.scheduleGatePattern(gateGain.gain, now, stopTime);
+      this.scheduleGatePattern(
+        gateGain.gain,
+        now,
+        stopTime,
+        this.settings.chordGateBpm,
+        this.settings.chordGateDepth,
+        this.settings.chordGatePattern
+      );
       outputNode = gateGain;
     } else {
       gain.connect(this.master);
@@ -342,6 +363,12 @@ class AmbientAudio {
       this.master.connect(this.ctx.destination);
     }
 
+    if (!this.droneGate) {
+      this.droneGate = this.ctx.createGain();
+      this.droneGate.gain.setValueAtTime(1, this.ctx.currentTime);
+      this.droneGate.connect(this.master);
+    }
+
     if (!this.leftOsc || !this.rightOsc) {
       this.leftOsc = this.ctx.createOscillator();
       this.rightOsc = this.ctx.createOscillator();
@@ -353,8 +380,8 @@ class AmbientAudio {
       this.leftPan.pan.value = -0.4;
       this.rightPan.pan.value = 0.4;
 
-      this.leftOsc.connect(this.leftPan).connect(this.master);
-      this.rightOsc.connect(this.rightPan).connect(this.master);
+      this.leftOsc.connect(this.leftPan).connect(this.droneGate);
+      this.rightOsc.connect(this.rightPan).connect(this.droneGate);
       this.leftOsc.start();
       this.rightOsc.start();
     }
@@ -369,7 +396,9 @@ class AmbientAudio {
   }
 
   private syncParams() {
-    if (!this.ctx || !this.master || !this.leftOsc || !this.rightOsc || !this.lfo || !this.lfoGain) return;
+    if (!this.ctx || !this.master || !this.leftOsc || !this.rightOsc || !this.lfo || !this.lfoGain || !this.droneGate) {
+      return;
+    }
     const now = this.ctx.currentTime;
     const base = this.settings.baseFreq;
     const detune = this.settings.detuneHz;
@@ -380,6 +409,7 @@ class AmbientAudio {
     this.master.gain.setTargetAtTime(this.settings.gain, now, 0.12);
     this.lfo.frequency.setTargetAtTime(this.settings.lfoRate, now, 0.2);
     this.lfoGain.gain.setTargetAtTime(this.settings.lfoDepth, now, 0.2);
+    this.syncDroneGate();
   }
 
   private fadeOut() {
@@ -388,11 +418,18 @@ class AmbientAudio {
     this.master.gain.setTargetAtTime(0.0001, now, 0.2);
   }
 
-  private scheduleGatePattern(param: AudioParam, now: number, stopTime: number) {
-    const bpm = Math.max(30, this.settings.gateBpm);
+  private scheduleGatePattern(
+    param: AudioParam,
+    now: number,
+    stopTime: number,
+    bpmValue: number,
+    depthValue: number,
+    patternValue: number[]
+  ) {
+    const bpm = Math.max(30, bpmValue);
     const stepSeconds = 60 / bpm / 4;
-    const depth = clamp(this.settings.gateDepth, 0, 1);
-    const pattern = normalizeGatePattern(this.settings.gatePattern);
+    const depth = clamp(depthValue, 0, 1);
+    const pattern = normalizeGatePattern(patternValue);
     const steps = Math.max(1, Math.ceil((stopTime - now) / stepSeconds));
     const ramp = Math.min(0.005, stepSeconds * 0.2);
     let t = now;
@@ -410,6 +447,40 @@ class AmbientAudio {
       t += stepSeconds;
       if (t > stopTime) break;
     }
+  }
+
+  private syncDroneGate() {
+    if (!this.ctx || !this.droneGate) return;
+    if (this.droneGateTimer) {
+      window.clearTimeout(this.droneGateTimer);
+      this.droneGateTimer = null;
+    }
+    if (this.settings.droneGateMode !== 'pattern') {
+      this.droneGate.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.droneGate.gain.setTargetAtTime(1, this.ctx.currentTime, 0.05);
+      return;
+    }
+    this.scheduleDroneGateLoop();
+  }
+
+  private scheduleDroneGateLoop() {
+    if (!this.ctx || !this.droneGate) return;
+    const now = this.ctx.currentTime;
+    const bpm = Math.max(30, this.settings.droneGateBpm);
+    const stepSeconds = 60 / bpm / 4;
+    const steps = 64;
+    const stopTime = now + stepSeconds * steps;
+    this.droneGate.gain.cancelScheduledValues(now);
+    this.scheduleGatePattern(
+      this.droneGate.gain,
+      now,
+      stopTime,
+      this.settings.droneGateBpm,
+      this.settings.droneGateDepth,
+      this.settings.droneGatePattern
+    );
+    const loopMs = stepSeconds * steps * 1000 * 0.9;
+    this.droneGateTimer = window.setTimeout(() => this.scheduleDroneGateLoop(), Math.max(50, loopMs));
   }
 }
 
@@ -443,11 +514,12 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function normalizeGatePattern(pattern?: number[]): number[] {
-  if (!Array.isArray(pattern) || pattern.length === 0) {
-    return DEFAULT_AMBIENT_SETTINGS.gatePattern.slice();
-  }
-  const cleaned = pattern.map((value) => clamp(Number(value) || 0, 0, 1));
+function normalizeGatePattern(pattern?: number[], fallback?: number[]): number[] {
+  const base =
+    Array.isArray(pattern) && pattern.length
+      ? pattern
+      : fallback ?? DEFAULT_AMBIENT_SETTINGS.chordGatePattern;
+  const cleaned = base.map((value) => clamp(Number(value) || 0, 0, 1));
   if (cleaned.length === 16) return cleaned;
   const out: number[] = [];
   for (let i = 0; i < 16; i += 1) {
@@ -457,8 +529,27 @@ function normalizeGatePattern(pattern?: number[]): number[] {
 }
 
 function normalizeSettings(settings: AmbientSettings): AmbientSettings {
+  const legacy = settings as AmbientSettings & {
+    gateEnabled?: boolean;
+    gateBpm?: number;
+    gateDepth?: number;
+    gatePattern?: number[];
+  };
   return {
     ...settings,
-    gatePattern: normalizeGatePattern(settings.gatePattern),
+    chordGateMode: settings.chordGateMode ?? (legacy.gateEnabled ? 'pattern' : 'off'),
+    chordGateBpm: settings.chordGateBpm ?? legacy.gateBpm ?? DEFAULT_AMBIENT_SETTINGS.chordGateBpm,
+    chordGateDepth: settings.chordGateDepth ?? legacy.gateDepth ?? DEFAULT_AMBIENT_SETTINGS.chordGateDepth,
+    chordGatePattern: normalizeGatePattern(
+      settings.chordGatePattern ?? legacy.gatePattern,
+      DEFAULT_AMBIENT_SETTINGS.chordGatePattern
+    ),
+    droneGateMode: settings.droneGateMode ?? DEFAULT_AMBIENT_SETTINGS.droneGateMode,
+    droneGateBpm: settings.droneGateBpm ?? DEFAULT_AMBIENT_SETTINGS.droneGateBpm,
+    droneGateDepth: settings.droneGateDepth ?? DEFAULT_AMBIENT_SETTINGS.droneGateDepth,
+    droneGatePattern: normalizeGatePattern(
+      settings.droneGatePattern,
+      DEFAULT_AMBIENT_SETTINGS.droneGatePattern
+    ),
   };
 }

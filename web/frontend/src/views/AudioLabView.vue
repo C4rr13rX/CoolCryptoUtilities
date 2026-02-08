@@ -115,31 +115,31 @@
           </select>
         </label>
         <label>
-          <span>Gate (1/16 Note)</span>
-          <select v-model="settings.gateEnabled">
-            <option :value="false">off</option>
-            <option :value="true">on</option>
+          <span>Chord Gate Mode</span>
+          <select v-model="settings.chordGateMode">
+            <option value="off">off</option>
+            <option value="pattern">pattern (1/16)</option>
           </select>
         </label>
         <label>
-          <span>Gate BPM</span>
-          <input v-model.number="settings.gateBpm" type="range" min="40" max="160" step="1" />
-          <span class="value">{{ settings.gateBpm.toFixed(0) }}</span>
+          <span>Chord Gate BPM</span>
+          <input v-model.number="settings.chordGateBpm" type="range" min="40" max="160" step="1" />
+          <span class="value">{{ settings.chordGateBpm.toFixed(0) }}</span>
         </label>
         <label>
-          <span>Gate Depth</span>
-          <input v-model.number="settings.gateDepth" type="range" min="0" max="1" step="0.05" />
-          <span class="value">{{ settings.gateDepth.toFixed(2) }}</span>
+          <span>Chord Gate Depth</span>
+          <input v-model.number="settings.chordGateDepth" type="range" min="0" max="1" step="0.05" />
+          <span class="value">{{ settings.chordGateDepth.toFixed(2) }}</span>
         </label>
         <div class="gate-pattern">
           <div class="gate-pattern-header">
-            <span>Gate Pattern (16th Notes)</span>
-            <button class="btn ghost" type="button" @click="resetGatePattern">
+            <span>Chord Gate Pattern (16th Notes)</span>
+            <button class="btn ghost" type="button" @click="resetChordGatePattern">
               Reset Pattern
             </button>
           </div>
           <div class="gate-grid">
-            <div v-for="(val, idx) in settings.gatePattern" :key="`gate-${idx}`" class="gate-cell">
+            <div v-for="(val, idx) in settings.chordGatePattern" :key="`chord-gate-${idx}`" class="gate-cell">
               <div class="gate-bar">
                 <span class="fill" :style="{ height: `${Math.round(val * 100)}%` }"></span>
               </div>
@@ -149,7 +149,48 @@
                 min="0"
                 max="1"
                 step="0.01"
-                v-model.number="settings.gatePattern[idx]"
+                v-model.number="settings.chordGatePattern[idx]"
+              />
+              <span class="gate-label">{{ idx + 1 }}</span>
+            </div>
+          </div>
+        </div>
+        <label>
+          <span>Drone Gate Mode</span>
+          <select v-model="settings.droneGateMode">
+            <option value="off">off</option>
+            <option value="pattern">pattern (1/16)</option>
+          </select>
+        </label>
+        <label>
+          <span>Drone Gate BPM</span>
+          <input v-model.number="settings.droneGateBpm" type="range" min="40" max="160" step="1" />
+          <span class="value">{{ settings.droneGateBpm.toFixed(0) }}</span>
+        </label>
+        <label>
+          <span>Drone Gate Depth</span>
+          <input v-model.number="settings.droneGateDepth" type="range" min="0" max="1" step="0.05" />
+          <span class="value">{{ settings.droneGateDepth.toFixed(2) }}</span>
+        </label>
+        <div class="gate-pattern">
+          <div class="gate-pattern-header">
+            <span>Drone Gate Pattern (16th Notes)</span>
+            <button class="btn ghost" type="button" @click="resetDroneGatePattern">
+              Reset Pattern
+            </button>
+          </div>
+          <div class="gate-grid">
+            <div v-for="(val, idx) in settings.droneGatePattern" :key="`drone-gate-${idx}`" class="gate-cell">
+              <div class="gate-bar">
+                <span class="fill" :style="{ height: `${Math.round(val * 100)}%` }"></span>
+              </div>
+              <input
+                class="gate-slider"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                v-model.number="settings.droneGatePattern[idx]"
               />
               <span class="gate-label">{{ idx + 1 }}</span>
             </div>
@@ -218,7 +259,8 @@ import {
 const enabled = ref(false);
 const settings = reactive<AmbientSettings>({
   ...DEFAULT_AMBIENT_SETTINGS,
-  gatePattern: DEFAULT_AMBIENT_SETTINGS.gatePattern.slice(),
+  chordGatePattern: DEFAULT_AMBIENT_SETTINGS.chordGatePattern.slice(),
+  droneGatePattern: DEFAULT_AMBIENT_SETTINGS.droneGatePattern.slice(),
 });
 const genre = ref('ambient');
 const midiFile = ref<File | null>(null);
@@ -263,8 +305,28 @@ const loadState = () => {
     const raw = localStorage.getItem('ccu:audio-settings');
     if (raw) {
       const data = JSON.parse(raw);
-      Object.assign(settings, data.settings || {});
-      settings.gatePattern = normalizeGatePattern(settings.gatePattern);
+      const incoming = { ...(data.settings || {}) } as Record<string, any>;
+      if (incoming.chordGateMode === undefined && incoming.gateEnabled !== undefined) {
+        incoming.chordGateMode = incoming.gateEnabled ? 'pattern' : 'off';
+        if (incoming.chordGateBpm === undefined && typeof incoming.gateBpm === 'number') {
+          incoming.chordGateBpm = incoming.gateBpm;
+        }
+        if (incoming.chordGateDepth === undefined && typeof incoming.gateDepth === 'number') {
+          incoming.chordGateDepth = incoming.gateDepth;
+        }
+        if (incoming.chordGatePattern === undefined && Array.isArray(incoming.gatePattern)) {
+          incoming.chordGatePattern = incoming.gatePattern;
+        }
+      }
+      Object.assign(settings, incoming);
+      settings.chordGatePattern = normalizeGatePattern(
+        settings.chordGatePattern,
+        DEFAULT_AMBIENT_SETTINGS.chordGatePattern
+      );
+      settings.droneGatePattern = normalizeGatePattern(
+        settings.droneGatePattern,
+        DEFAULT_AMBIENT_SETTINGS.droneGatePattern
+      );
       if (typeof data.genre === 'string') genre.value = data.genre;
       Object.assign(soundMap, data.soundMap || {});
       enabled.value = Boolean(data.enabled);
@@ -329,9 +391,19 @@ const handleMidi = async (event: Event) => {
 watch(
   () => ({ ...settings }),
   () => {
-    const normalized = normalizeGatePattern(settings.gatePattern);
-    if (!gatePatternEquals(normalized, settings.gatePattern)) {
-      settings.gatePattern = normalized;
+    const chordNormalized = normalizeGatePattern(
+      settings.chordGatePattern,
+      DEFAULT_AMBIENT_SETTINGS.chordGatePattern
+    );
+    if (!gatePatternEquals(chordNormalized, settings.chordGatePattern)) {
+      settings.chordGatePattern = chordNormalized;
+    }
+    const droneNormalized = normalizeGatePattern(
+      settings.droneGatePattern,
+      DEFAULT_AMBIENT_SETTINGS.droneGatePattern
+    );
+    if (!gatePatternEquals(droneNormalized, settings.droneGatePattern)) {
+      settings.droneGatePattern = droneNormalized;
     }
     persistState();
     if (enabled.value) {
@@ -360,8 +432,11 @@ onMounted(() => {
   }
 });
 
-const normalizeGatePattern = (pattern?: number[]) => {
-  const base = Array.isArray(pattern) && pattern.length ? pattern : DEFAULT_AMBIENT_SETTINGS.gatePattern;
+const normalizeGatePattern = (pattern?: number[], fallback?: number[]) => {
+  const base =
+    Array.isArray(pattern) && pattern.length
+      ? pattern
+      : fallback ?? DEFAULT_AMBIENT_SETTINGS.chordGatePattern;
   const cleaned = base.map((val) => Math.min(1, Math.max(0, Number(val) || 0)));
   if (cleaned.length === 16) return cleaned;
   const out: number[] = [];
@@ -379,8 +454,12 @@ const gatePatternEquals = (left: number[], right: number[]) => {
   return true;
 };
 
-const resetGatePattern = () => {
-  settings.gatePattern = DEFAULT_AMBIENT_SETTINGS.gatePattern.slice();
+const resetChordGatePattern = () => {
+  settings.chordGatePattern = DEFAULT_AMBIENT_SETTINGS.chordGatePattern.slice();
+};
+
+const resetDroneGatePattern = () => {
+  settings.droneGatePattern = DEFAULT_AMBIENT_SETTINGS.droneGatePattern.slice();
 };
 
 const parseMidiKey = (buffer: ArrayBuffer): { root: string; mode: 'major' | 'minor' } | null => {
