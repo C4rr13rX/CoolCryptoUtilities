@@ -13,6 +13,7 @@ from securevault.models import SecureSetting
 from services.secure_settings import encrypt_secret, mask_value
 from services.wallet_runner import wallet_runner
 from services.wallet_state import load_wallet_state
+from .models import WalletNftPreference
 
 DEFAULT_CATEGORY = "default"
 
@@ -100,6 +101,80 @@ class WalletStateSnapshotView(APIView):
     def get(self, request: Request, *args, **kwargs) -> Response:
         snapshot = load_wallet_state()
         return Response(snapshot, status=status.HTTP_200_OK)
+
+
+def _normalize_nft_payload(item: Dict[str, Any]) -> Dict[str, str]:
+    chain = str(item.get("chain") or "").strip().lower()
+    contract = str(item.get("contract") or "").strip().lower()
+    token_id = str(item.get("token_id") or "").strip()
+    return {"chain": chain, "contract": contract, "token_id": token_id}
+
+
+class WalletNftPreferenceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        items = list(
+            WalletNftPreference.objects.filter(user=request.user, hidden=True).values(
+                "chain",
+                "contract",
+                "token_id",
+                "hidden",
+            )
+        )
+        return Response({"items": items, "count": len(items)}, status=status.HTTP_200_OK)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        payload = request.data or {}
+        raw_items = payload.get("items") or []
+        action = str(payload.get("action") or "").strip().lower()
+        hidden_flag = payload.get("hidden")
+        if action not in {"hide", "show"}:
+            if isinstance(hidden_flag, bool):
+                action = "hide" if hidden_flag else "show"
+        if action not in {"hide", "show"}:
+            return Response({"detail": "action must be 'hide' or 'show'"}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(raw_items, list) or not raw_items:
+            return Response({"detail": "items must be a non-empty list"}, status=status.HTTP_400_BAD_REQUEST)
+
+        normalized: list[Dict[str, str]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            cleaned = _normalize_nft_payload(item)
+            if not (cleaned["chain"] and cleaned["contract"] and cleaned["token_id"]):
+                continue
+            normalized.append(cleaned)
+        if not normalized:
+            return Response({"detail": "no valid items provided"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if action == "hide":
+            for entry in normalized:
+                WalletNftPreference.objects.update_or_create(
+                    user=request.user,
+                    chain=entry["chain"],
+                    contract=entry["contract"],
+                    token_id=entry["token_id"],
+                    defaults={"hidden": True},
+                )
+        else:
+            for entry in normalized:
+                WalletNftPreference.objects.filter(
+                    user=request.user,
+                    chain=entry["chain"],
+                    contract=entry["contract"],
+                    token_id=entry["token_id"],
+                ).delete()
+
+        items = list(
+            WalletNftPreference.objects.filter(user=request.user, hidden=True).values(
+                "chain",
+                "contract",
+                "token_id",
+                "hidden",
+            )
+        )
+        return Response({"items": items, "count": len(items)}, status=status.HTTP_200_OK)
 
 
 def _upsert_secret(user, name: str, value: str) -> None:

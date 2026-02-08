@@ -11,4 +11,5 @@ urlpatterns = [
     path("run/", views.WalletRunView.as_view(), name="run"),
     path("mnemonic/", views.WalletMnemonicView.as_view(), name="mnemonic"),
     path("state/", views.WalletStateSnapshotView.as_view(), name="state"),
+    path("nfts/preferences/", views.WalletNftPreferenceView.as_view(), name="nft-preferences"),
 ]

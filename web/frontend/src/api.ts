@@ -373,6 +373,26 @@ export async function fetchWalletState() {
   return data;
 }
 
+export interface WalletNftPreference {
+  chain: string;
+  contract: string;
+  token_id: string;
+  hidden: boolean;
+}
+
+export async function fetchWalletNftPreferences() {
+  const { data } = await api.get('/wallet/nfts/preferences/');
+  return data as { items: WalletNftPreference[]; count: number };
+}
+
+export async function updateWalletNftPreferences(payload: {
+  action: 'hide' | 'show';
+  items: Array<{ chain: string; contract: string; token_id: string }>;
+}) {
+  const { data } = await api.post('/wallet/nfts/preferences/', payload);
+  return data as { items: WalletNftPreference[]; count: number };
+}
+
 // ----------------------------- Address Book ---------------------------------
 export interface AddressBookEntry {
   id: number;

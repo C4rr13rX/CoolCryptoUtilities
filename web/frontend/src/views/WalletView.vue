@@ -130,14 +130,60 @@
     </section>
 
     <section class="panel nft-panel">
-      <header>
+      <header class="nft-header">
         <div>
           <h2>NFT Holdings</h2>
           <p class="caption">Resolved via major gateways (Alchemy / IPFS / Arweave)</p>
         </div>
+        <div class="nft-tabs">
+          <button
+            class="tab"
+            type="button"
+            :class="{ active: nftTab === 'shown' }"
+            @click="nftTab = 'shown'"
+          >
+            Shown ({{ shownNfts.length }})
+          </button>
+          <button
+            class="tab"
+            type="button"
+            :class="{ active: nftTab === 'hidden' }"
+            @click="nftTab = 'hidden'"
+          >
+            Hidden ({{ hiddenNfts.length }})
+          </button>
+        </div>
       </header>
-      <div class="nft-grid" v-if="wallet.nfts.length">
-        <article v-for="nft in wallet.nfts" :key="nft.contract + nft.token_id" class="nft-card">
+      <div class="nft-actions">
+        <button
+          v-if="nftTab === 'shown'"
+          class="btn ghost"
+          type="button"
+          :disabled="!shownSelectionCount"
+          @click="hideSelectedNfts"
+        >
+          Hide Selected
+        </button>
+        <button
+          v-else
+          class="btn ghost"
+          type="button"
+          :disabled="!hiddenSelectionCount"
+          @click="showSelectedNfts"
+        >
+          Show Selected
+        </button>
+      </div>
+      <div class="nft-grid" v-if="activeNfts.length">
+        <article v-for="nft in activeNfts" :key="nftKey(nft)" class="nft-card">
+          <label class="nft-select">
+            <input
+              type="checkbox"
+              :checked="isNftSelected(nft)"
+              @change="toggleNftSelection(nft)"
+            />
+            <span class="checkmark"></span>
+          </label>
           <div class="thumb" :class="{ placeholder: !nft.image }">
             <img v-if="nft.image" :src="nft.image" :alt="nft.title || 'NFT'" loading="lazy" />
             <span v-else>No image</span>
@@ -149,7 +195,9 @@
           </div>
         </article>
       </div>
-      <p v-else class="empty-text">No NFTs detected for this wallet.</p>
+      <p v-else class="empty-text">
+        {{ nftTab === 'shown' ? 'No NFTs shown yet.' : 'No hidden NFTs.' }}
+      </p>
     </section>
 
     <section class="panel console-panel">
@@ -214,6 +262,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { fetchWalletNftPreferences, updateWalletNftPreferences } from '@/api';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useWalletStore } from '@/stores/wallet';
 import AutomationConsoleStack from '@/components/AutomationConsoleStack.vue';
@@ -229,6 +278,10 @@ const consoleTimer = ref<number>();
 const consoleBusy = ref(false);
 const wizardOpen = ref(true);
 const wizardMnemonicInput = ref('');
+const nftTab = ref<'shown' | 'hidden'>('shown');
+const nftHidden = ref<Set<string>>(new Set());
+const nftSelectionShown = ref<Set<string>>(new Set());
+const nftSelectionHidden = ref<Set<string>>(new Set());
 
 const walletBalances = computed(() => wallet.balances);
 const transferEntries = computed(() => Object.entries(wallet.transfers || {}));
@@ -236,6 +289,11 @@ const consoleLines = computed(() => dashboard.consoleLogs || []);
 const guardianConsole = computed(() => dashboard.guardianLogs || []);
 const totalUsdDisplay = computed(() => currency(wallet.snapshot?.totals?.usd || 0));
 const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || 'Never');
+const shownNfts = computed(() => wallet.nfts.filter((nft: any) => !nftHidden.value.has(nftKey(nft))));
+const hiddenNfts = computed(() => wallet.nfts.filter((nft: any) => nftHidden.value.has(nftKey(nft))));
+const activeNfts = computed(() => (nftTab.value === 'shown' ? shownNfts.value : hiddenNfts.value));
+const shownSelectionCount = computed(() => nftSelectionShown.value.size);
+const hiddenSelectionCount = computed(() => nftSelectionHidden.value.size);
 
 const workerSummary = computed(() => {
   if (wallet.running || wallet.autoRefreshing || wallet.status?.running) {
@@ -379,6 +437,7 @@ onMounted(async () => {
     wallet.loadMnemonicPreview(),
     dashboard.refreshConsole(),
   ]);
+  await loadNftPreferences();
   wallet.autoRefresh();
   statusTimer.value = window.setInterval(() => wallet.refreshStatus(), 6000);
   consoleTimer.value = window.setInterval(() => dashboard.refreshConsole().catch(() => undefined), 10000);
@@ -410,6 +469,13 @@ watch(
     if (prev && !running) {
       wallet.fetchSnapshot();
     }
+  }
+);
+
+watch(
+  () => wallet.nfts,
+  () => {
+    pruneSelections();
   }
 );
 
@@ -447,6 +513,84 @@ function parseTimestamp(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function nftKey(nft: any): string {
+  const chain = String(nft?.chain || '').toLowerCase();
+  const contract = String(nft?.contract || '').toLowerCase();
+  const tokenId = String(nft?.token_id || '').trim();
+  return `${chain}:${contract}:${tokenId}`;
+}
+
+function selectionForTab(tab: 'shown' | 'hidden') {
+  return tab === 'shown' ? nftSelectionShown : nftSelectionHidden;
+}
+
+function isNftSelected(nft: any): boolean {
+  const set = selectionForTab(nftTab.value).value;
+  return set.has(nftKey(nft));
+}
+
+function toggleNftSelection(nft: any) {
+  const key = nftKey(nft);
+  const selectionRef = selectionForTab(nftTab.value);
+  const next = new Set(selectionRef.value);
+  if (next.has(key)) {
+    next.delete(key);
+  } else {
+    next.add(key);
+  }
+  selectionRef.value = next;
+}
+
+function pruneSelections() {
+  const valid = new Set(wallet.nfts.map((nft: any) => nftKey(nft)));
+  const prune = (selectionRef: typeof nftSelectionShown) => {
+    const next = new Set<string>();
+    selectionRef.value.forEach((key) => {
+      if (valid.has(key)) next.add(key);
+    });
+    selectionRef.value = next;
+  };
+  prune(nftSelectionShown);
+  prune(nftSelectionHidden);
+}
+
+async function loadNftPreferences() {
+  try {
+    const data = await fetchWalletNftPreferences();
+    const hiddenKeys = new Set((data.items || []).map((item) => nftKey(item)));
+    nftHidden.value = hiddenKeys;
+  } catch (error) {
+    // ignore preference failures for now
+  }
+}
+
+async function updateNftVisibility(action: 'hide' | 'show', items: any[]) {
+  if (!items.length) return;
+  const payload = items.map((nft) => ({
+    chain: String(nft.chain || '').toLowerCase(),
+    contract: String(nft.contract || '').toLowerCase(),
+    token_id: String(nft.token_id || ''),
+  }));
+  try {
+    const data = await updateWalletNftPreferences({ action, items: payload });
+    nftHidden.value = new Set((data.items || []).map((item) => nftKey(item)));
+  } catch (error) {
+    // ignore preference failures for now
+  }
+}
+
+async function hideSelectedNfts() {
+  const selected = shownNfts.value.filter((nft: any) => nftSelectionShown.value.has(nftKey(nft)));
+  await updateNftVisibility('hide', selected);
+  nftSelectionShown.value = new Set();
+}
+
+async function showSelectedNfts() {
+  const selected = hiddenNfts.value.filter((nft: any) => nftSelectionHidden.value.has(nftKey(nft)));
+  await updateNftVisibility('show', selected);
+  nftSelectionHidden.value = new Set();
 }
 </script>
 
@@ -610,11 +754,75 @@ function parseTimestamp(value: unknown): number {
   gap: 1rem;
 }
 
+.nft-header {
+  align-items: center;
+}
+
+.nft-tabs {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.nft-tabs .tab {
+  border-radius: 999px;
+  border: 1px solid rgba(111, 167, 255, 0.3);
+  background: transparent;
+  color: #f4f6fa;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.nft-tabs .tab.active {
+  background: rgba(45, 117, 196, 0.35);
+  border-color: rgba(45, 117, 196, 0.65);
+}
+
+.nft-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.8rem;
+}
+
 .nft-card {
   border: 1px solid rgba(111, 167, 255, 0.18);
   border-radius: 16px;
   overflow: hidden;
   background: rgba(7, 14, 25, 0.85);
+  position: relative;
+}
+
+.nft-select {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  z-index: 2;
+}
+
+.nft-select input {
+  opacity: 0;
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+
+.nft-select .checkmark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(111, 167, 255, 0.6);
+  background: rgba(7, 14, 25, 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nft-select input:checked + .checkmark {
+  background: rgba(69, 149, 245, 0.6);
+  border-color: rgba(99, 167, 255, 0.9);
 }
 
 .nft-card .thumb {

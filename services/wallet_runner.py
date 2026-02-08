@@ -15,9 +15,31 @@ from services.wallet_actions import list_wallet_actions
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _python_supports_web3(python_bin: str) -> bool:
+    if not python_bin:
+        return False
+    try:
+        path = Path(python_bin)
+        if not path.exists():
+            return False
+    except Exception:
+        return False
+    try:
+        proc = subprocess.run(
+            [python_bin, "-c", "import web3, eth_account"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
 def _default_python() -> str:
     candidate = os.getenv("PYTHON_BIN")
-    if candidate:
+    if candidate and _python_supports_web3(candidate):
         return candidate
     repo_venv = REPO_ROOT / ".venv"
     if repo_venv.exists():
@@ -25,13 +47,16 @@ def _default_python() -> str:
             venv_python = repo_venv / "Scripts" / "python.exe"
         else:
             venv_python = repo_venv / "bin" / "python"
-        if venv_python.exists():
+        if venv_python.exists() and _python_supports_web3(str(venv_python)):
             return str(venv_python)
     virtual_env = os.getenv("VIRTUAL_ENV")
     if virtual_env:
         if os.name == "nt":
-            return str(Path(virtual_env) / "Scripts" / "python.exe")
-        return str(Path(virtual_env) / "bin" / "python")
+            venv_python = Path(virtual_env) / "Scripts" / "python.exe"
+        else:
+            venv_python = Path(virtual_env) / "bin" / "python"
+        if _python_supports_web3(str(venv_python)):
+            return str(venv_python)
     import sys
 
     return sys.executable

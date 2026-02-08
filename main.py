@@ -12,7 +12,7 @@ from router_wallet import CHAINS, UltraSwapBridge, POA_MIDDLEWARE, ERC20_ABI
 from cache import CacheBalances, CacheTransfers
 from services.env_loader import EnvLoader
 from services.wallet_actions import WALLET_ACTIONS
-from services.wallet_state import capture_wallet_state
+from services.wallet_state import capture_wallet_state, load_wallet_state
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for, wei_to_eth
 from services.token_catalog import core_tokens_for_chain
@@ -56,8 +56,9 @@ def _update_wallet_snapshot(
     *,
     chains: Optional[Iterable[str]] = None,
     fast: bool = False,
+    wallet: Optional[str] = None,
 ) -> None:
-    if bridge is None:
+    if bridge is None and not wallet:
         return
     overrides: Dict[str, str | None] = {}
     if fast:
@@ -71,9 +72,32 @@ def _update_wallet_snapshot(
             overrides["WALLET_FAST_CHAINS"] = ",".join(str(ch).lower() for ch in chains if ch)
     try:
         with _temp_env(overrides):
-            capture_wallet_state(bridge=bridge, chains=chains)
+            capture_wallet_state(bridge=bridge, wallet=wallet, chains=chains)
     except Exception as exc:
         print(f"[wallet] snapshot update failed: {exc}")
+
+
+def _fallback_wallet_address() -> Optional[str]:
+    for key in ("WALLET_ADDRESS", "DEFAULT_WALLET_ADDRESS"):
+        val = os.getenv(key)
+        if val and val.strip():
+            return val.strip()
+    try:
+        snapshot = load_wallet_state()
+        if isinstance(snapshot, dict):
+            addr = snapshot.get("wallet")
+            if addr:
+                return str(addr)
+    except Exception:
+        return None
+    return None
+
+
+def _safe_run(label: str, fn) -> None:
+    try:
+        fn()
+    except Exception as exc:
+        print(f"[wallet] {label} failed: {exc}")
 
 # Load env before creating any services
 EnvLoader.load()
@@ -650,7 +674,19 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
     if action in {"balances"}:
         wallet_addr = payload.get("wallet_address") or (bridge.get_address() if bridge else None)
         show_balances(wallet_addr)
-        _update_wallet_snapshot(bridge, fast=True)
+        _update_wallet_snapshot(bridge, fast=True, wallet=wallet_addr)
+        return
+
+    if action in {"refresh_balances", "refresh_balances_full", "refresh_transfers"} and bridge is None:
+        chain_list = None
+        chains = payload.get("chains")
+        if isinstance(chains, list) and chains:
+            chain_list = [_normalize_chain(ch) for ch in chains]
+        wallet_addr = payload.get("wallet_address") or _fallback_wallet_address()
+        if not wallet_addr:
+            print("[wallet] No wallet address available for read-only refresh.")
+            return
+        _update_wallet_snapshot(None, chains=chain_list, wallet=wallet_addr, fast=(action == "refresh_balances"))
         return
 
     if bridge is None:
@@ -661,20 +697,26 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
         chain_list = None
         if isinstance(chains, list) and chains:
             chain_list = [_normalize_chain(ch) for ch in chains]
-        _update_wallet_snapshot(bridge, chains=chain_list, fast=True)
+        _safe_run("refresh_balances", lambda: _update_wallet_snapshot(bridge, chains=chain_list, fast=True))
         return
     if action == "refresh_balances_full":
         chains = payload.get("chains")
         if isinstance(chains, list) and chains:
-            refetch_balances_parallel(bridge, [_normalize_chain(ch) for ch in chains], force_refresh=True)
+            _safe_run(
+                "refresh_balances_full",
+                lambda: refetch_balances_parallel(bridge, [_normalize_chain(ch) for ch in chains], force_refresh=True),
+            )
         else:
-            refetch_balances_parallel(bridge, list(CHAINS), force_refresh=True)
+            _safe_run("refresh_balances_full", lambda: refetch_balances_parallel(bridge, list(CHAINS), force_refresh=True))
     elif action == "refresh_transfers":
         chains = payload.get("chains")
         if isinstance(chains, list) and chains:
-            refetch_transfers_parallel(bridge, [_normalize_chain(ch) for ch in chains])
+            _safe_run(
+                "refresh_transfers",
+                lambda: refetch_transfers_parallel(bridge, [_normalize_chain(ch) for ch in chains]),
+            )
         else:
-            refetch_transfers_parallel(bridge, list(CHAINS))
+            _safe_run("refresh_transfers", lambda: refetch_transfers_parallel(bridge, list(CHAINS)))
     elif action == "send":
         send_flow(bridge, payload)
     elif action == "swap":
@@ -700,6 +742,13 @@ if __name__ == "__main__":
             except json.JSONDecodeError as exc:
                 print(f"[wallet] Invalid payload JSON: {exc}")
                 sys.exit(2)
-        run_action(args.action, payload_data, stay_alive=args.stay_alive)
+        noncritical = {"balances", "refresh_balances", "refresh_balances_full", "refresh_transfers"}
+        try:
+            run_action(args.action, payload_data, stay_alive=args.stay_alive)
+        except Exception as exc:
+            print(f"[wallet] action failed: {exc}")
+            if args.action in noncritical:
+                sys.exit(0)
+            raise
     else:
         menu()
