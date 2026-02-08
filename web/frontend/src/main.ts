@@ -98,6 +98,16 @@ if (mountEl) {
     }
     return '';
   };
+  const coerceKnownRoute = (path: string) => {
+    const normalized = normalizePath(path);
+    const matched = resolveIfMatch(normalized);
+    if (matched) return matched;
+    const parts = normalized.split('/').filter(Boolean);
+    if (!parts.length) return '';
+    const head = parts[0].toLowerCase();
+    if (targetRoutes[head]) return targetRoutes[head];
+    return '';
+  };
   const currentPath = normalizePath(window.location.pathname || '/');
   const requestedPath = normalizePath(initialPathAttr || '');
   const initialPath = targetRoutes[initialRoute] || '/';
@@ -105,9 +115,9 @@ if (mountEl) {
   const storedPath = normalizePath(sessionStorage.getItem(lastRouteKey) || '');
   const reloadKey = 'ccu:router-reload';
   const reloadRequested = sessionStorage.getItem(reloadKey);
-  const storedResolved = resolveIfMatch(storedPath);
-  const requestedResolved = resolveIfMatch(requestedPath);
-  const currentResolved = resolveIfMatch(currentPath);
+  const storedResolved = coerceKnownRoute(storedPath);
+  const requestedResolved = coerceKnownRoute(requestedPath);
+  const currentResolved = coerceKnownRoute(currentPath);
   const bootPath =
     (reloadRequested && !currentResolved ? storedResolved : '') ||
     requestedResolved ||

@@ -48,6 +48,18 @@ def load_env_robust() -> None:
 
 load_env_robust()
 
+def _configure_io_encoding() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if not stream:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+_configure_io_encoding()
+
 # --- CONFIGURATION (read from environment; fall back to previous defaults) ---
 def _int_env(name: str, default: int) -> int:
     try:

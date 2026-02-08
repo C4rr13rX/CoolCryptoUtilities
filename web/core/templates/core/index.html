@@ -111,7 +111,7 @@
         justify-content: space-between;
         padding: 1.25rem 1.75rem;
         gap: 1.5rem;
-        background: linear-gradient(135deg, rgba(28, 32, 44, 0.92), rgba(9, 12, 18, 0.9));
+        background: #020101;
         box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
         position: sticky;
         top: 0;
@@ -283,7 +283,7 @@
     {% if initial_route != "branddozer_solo" %}
       <header class="site-header">
         <div class="brand">
-          <img src="{% static 'assets/logo.png' %}?v={{ asset_version }}" alt="R3V3N!R insignia" />
+          <img src="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" alt="R3V3N!R insignia" />
           <h1>R3V3N!R • Crypto Trading AI Bot</h1>
         </div>
         {% if user.is_authenticated %}

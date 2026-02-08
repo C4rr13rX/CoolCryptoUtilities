@@ -799,12 +799,13 @@ class C0d3rRunView(LoginRequiredMixin, View):
         session_id = payload.get("session_id")
         if not session_id and not reset and not prompt:
             return JsonResponse({"detail": "prompt is required"}, status=400)
+        session_obj = None
         if session_id:
             try:
                 session_obj = C0d3rWebSession.objects.get(id=session_id, user=request.user)
             except C0d3rWebSession.DoesNotExist:
-                return JsonResponse({"detail": "session not found"}, status=404)
-        else:
+                session_obj = None
+        if session_obj is None:
             session_obj = C0d3rWebSession.objects.create(
                 user=request.user,
                 title=f"Session {timezone.now().strftime('%Y-%m-%d %H:%M')}",
