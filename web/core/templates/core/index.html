@@ -6,7 +6,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% if initial_route == "branddozer_solo" %}BrandDozer{% else %}R3V3N!R Control Tower{% endif %}</title>
-    <link rel="icon" href="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" />
+    <link rel="icon" href="{% static 'assets/logo.png' %}?v={{ asset_version }}" />
     {% if serve_vite %}
       <script type="module">
         const DEV_ORIGIN = "{{ vite_dev_server }}";
@@ -272,12 +272,12 @@
     <canvas id="matrix-bg" aria-hidden="true"></canvas>
     <canvas id="starfield-bg" aria-hidden="true"></canvas>
     <div class="splash-overlay" id="splash-overlay">
-      <img class="splash-logo" src="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" alt="R3V3N!R logo" />
+      <img class="splash-logo" src="{% static 'assets/logo.png' %}?v={{ asset_version }}" alt="R3V3N!R logo" />
     </div>
     {% if initial_route != "branddozer_solo" %}
       <header class="site-header">
         <div class="brand">
-          <img src="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" alt="R3V3N!R insignia" />
+          <img src="{% static 'assets/logo.png' %}?v={{ asset_version }}" alt="R3V3N!R insignia" />
           <h1>R3V3N!R • Crypto Trading AI Bot</h1>
         </div>
         {% if user.is_authenticated %}

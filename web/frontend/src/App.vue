@@ -191,7 +191,7 @@ const setupSplashOverlay = () => {
   overlay.className = 'splash-overlay';
   const img = document.createElement('img');
   img.className = 'splash-logo';
-  img.src = '/static/assets/main_logo.png';
+  img.src = '/static/assets/logo.png';
   img.alt = 'R3V3N!R logo';
   overlay.appendChild(img);
   document.body.appendChild(overlay);
