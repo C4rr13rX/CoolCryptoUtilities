@@ -830,6 +830,8 @@ class C0d3rRunView(LoginRequiredMixin, View):
         if session is None:
             settings = c0d3r_default_settings()
             settings["research_report_enabled"] = False
+            for key in ("stream_default", "transcript_enabled", "event_store_enabled", "diagnostics_enabled"):
+                settings.pop(key, None)
             session = C0d3rSession(
                 session_name=f"c0d3r-web-{request.user.id}-{session_obj.id}",
                 transcript_dir=C0D3R_TRANSCRIPTS,

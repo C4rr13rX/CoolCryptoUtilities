@@ -44,8 +44,15 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
     ),
     "refresh_balances": WalletAction(
         name="refresh_balances",
-        label="Refresh Balances",
-        description="Rebuilds cached balances in parallel for all supported chains.",
+        label="Refresh Balances (Fast)",
+        description="Quick balance refresh using cached tokens + native balances.",
+        fields=[],
+        category="maintenance",
+    ),
+    "refresh_balances_full": WalletAction(
+        name="refresh_balances_full",
+        label="Refresh Balances (Full)",
+        description="Full rebuild across discovered tokens; slower but exhaustive.",
         fields=[],
         category="maintenance",
     ),

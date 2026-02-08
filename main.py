@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Iterable, Optional
 
 from web3 import Web3
 from router_wallet import CHAINS, UltraSwapBridge, POA_MIDDLEWARE, ERC20_ABI
@@ -26,11 +26,52 @@ except Exception:  # pragma: no cover - optional dependency missing
 set_process_name("Codex Session")
 
 
-def _update_wallet_snapshot(bridge: UltraSwapBridge | None) -> None:
+def _temp_env(overrides: Dict[str, str | None]):
+    class _EnvCtx:
+        def __init__(self, updates: Dict[str, str | None]):
+            self._updates = updates
+            self._originals: Dict[str, Optional[str]] = {}
+
+        def __enter__(self):
+            for key, value in self._updates.items():
+                self._originals[key] = os.environ.get(key)
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = str(value)
+
+        def __exit__(self, exc_type, exc, tb):
+            for key, value in self._originals.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+            return False
+
+    return _EnvCtx(overrides)
+
+
+def _update_wallet_snapshot(
+    bridge: UltraSwapBridge | None,
+    *,
+    chains: Optional[Iterable[str]] = None,
+    fast: bool = False,
+) -> None:
     if bridge is None:
         return
+    overrides: Dict[str, str | None] = {}
+    if fast:
+        overrides = {
+            "BALANCE_FAST_MAX_TOKENS": os.getenv("BALANCE_FAST_MAX_TOKENS") or "8",
+            "BALANCE_REFRESH_WORKERS": os.getenv("BALANCE_REFRESH_WORKERS") or "4",
+            "WALLET_FAST_TRANSFERS": os.getenv("WALLET_FAST_TRANSFERS") or "0",
+            "WALLET_FAST_TRANSFER_PAGES": os.getenv("WALLET_FAST_TRANSFER_PAGES") or "1",
+        }
+        if chains:
+            overrides["WALLET_FAST_CHAINS"] = ",".join(str(ch).lower() for ch in chains if ch)
     try:
-        capture_wallet_state(bridge=bridge)
+        with _temp_env(overrides):
+            capture_wallet_state(bridge=bridge, chains=chains)
     except Exception as exc:
         print(f"[wallet] snapshot update failed: {exc}")
 
@@ -609,13 +650,20 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
     if action in {"balances"}:
         wallet_addr = payload.get("wallet_address") or (bridge.get_address() if bridge else None)
         show_balances(wallet_addr)
-        _update_wallet_snapshot(bridge)
+        _update_wallet_snapshot(bridge, fast=True)
         return
 
     if bridge is None:
         raise ValueError("Signing wallet unavailable; set MNEMONIC or PRIVATE_KEY first.")
 
     if action == "refresh_balances":
+        chains = payload.get("chains")
+        chain_list = None
+        if isinstance(chains, list) and chains:
+            chain_list = [_normalize_chain(ch) for ch in chains]
+        _update_wallet_snapshot(bridge, chains=chain_list, fast=True)
+        return
+    if action == "refresh_balances_full":
         chains = payload.get("chains")
         if isinstance(chains, list) and chains:
             refetch_balances_parallel(bridge, [_normalize_chain(ch) for ch in chains], force_refresh=True)

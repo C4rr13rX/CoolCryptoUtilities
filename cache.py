@@ -415,6 +415,7 @@ class CacheBalances:
                     "symbol": (str(ent.get("symbol")).strip().upper() if ent.get("symbol") else None),
                     "name": ent.get("name"),
                     "updated_at": ent.get("updated_at") or _now_ts(),
+                    "stale": int(ent.get("stale") or 0),
                 }
             )
         if payload:

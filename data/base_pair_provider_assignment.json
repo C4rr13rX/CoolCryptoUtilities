@@ -1,7 +1,7 @@
 {
   "granularity_seconds": 300,
   "years_back": 3,
-  "start_date": "2023-02-09T01:43:22Z",
+  "start_date": "2023-02-09T05:05:00Z",
   "chain": "base",
   "pairs": {
     "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc": {

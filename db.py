@@ -718,10 +718,10 @@ class TradingDatabase:
                 """
                 INSERT INTO balances
                     (wallet, chain, token, balance_hex, asof_block, ts,
-                     decimals, quantity, usd_amount, symbol, name, updated_at)
+                     decimals, quantity, usd_amount, symbol, name, updated_at, stale)
                 VALUES
                     (:wallet, :chain, :token, :balance_hex, :asof_block, :ts,
-                     :decimals, :quantity, :usd_amount, :symbol, :name, :updated_at)
+                     :decimals, :quantity, :usd_amount, :symbol, :name, :updated_at, :stale)
                 ON CONFLICT(wallet, chain, token) DO UPDATE SET
                     balance_hex=excluded.balance_hex,
                     asof_block=excluded.asof_block,
@@ -729,6 +729,7 @@ class TradingDatabase:
                     decimals=excluded.decimals,
                     quantity=excluded.quantity,
                     usd_amount=excluded.usd_amount,
+                    stale=excluded.stale,
                     symbol=CASE WHEN excluded.symbol IS NOT NULL AND excluded.symbol!=''
                                 THEN excluded.symbol ELSE balances.symbol END,
                     name=CASE WHEN excluded.name IS NOT NULL AND excluded.name!=''
