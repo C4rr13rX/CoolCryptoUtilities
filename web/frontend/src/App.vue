@@ -2,6 +2,7 @@
   <div class="app-layout" :class="{ solo: isSolo }">
     <aside v-if="!isSolo" ref="sidebarRef" class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar__brand">
+        <img class="brand-logo" src="/static/assets/main_logo.png" alt="R3V3N!R logo" />
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
           <small class="subtitle">Crypto Trading AI Bot</small>
@@ -94,12 +95,16 @@ let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
 let glitchTimer: number | undefined;
 let pointerHandler: ((event: PointerEvent) => void) | undefined;
+let matrixCleanup: (() => void) | undefined;
+let starfieldCleanup: (() => void) | undefined;
 
 onMounted(() => {
   refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
   consoleTimer = window.setInterval(() => store.refreshConsole(), 5000);
   uiSettings.load();
   setupAutoScroll();
+  setupBackdropEffects();
+  setupSplashOverlay();
   pointerHandler = (event: PointerEvent) => {
     const soundId = resolveSoundId(event.target as HTMLElement | null);
     ambientAudio.triggerChord(soundId);
@@ -114,6 +119,8 @@ onBeforeUnmount(() => {
   if (pointerHandler) {
     window.removeEventListener('pointerdown', pointerHandler);
   }
+  if (matrixCleanup) matrixCleanup();
+  if (starfieldCleanup) starfieldCleanup();
   teardownAutoScroll();
 });
 
@@ -176,6 +183,252 @@ const setupAutoScroll = () => {
       );
     }
   });
+};
+
+const setupSplashOverlay = () => {
+  if (document.getElementById('splash-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'splash-overlay';
+  overlay.className = 'splash-overlay';
+  const img = document.createElement('img');
+  img.className = 'splash-logo';
+  img.src = '/static/assets/main_logo.png';
+  img.alt = 'R3V3N!R logo';
+  overlay.appendChild(img);
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => {
+    overlay.classList.add('fade-out');
+  });
+  overlay.addEventListener('transitionend', () => {
+    overlay.remove();
+  });
+};
+
+const setupBackdropEffects = () => {
+  if (!document.body || (window as any).__ccuMatrixActive) return;
+  const ensureCanvas = (id: string) => {
+    let canvas = document.getElementById(id) as HTMLCanvasElement | null;
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.id = id;
+      canvas.setAttribute('aria-hidden', 'true');
+      document.body.prepend(canvas);
+    }
+    return canvas;
+  };
+
+  matrixCleanup = runMatrixBackground(ensureCanvas('matrix-bg'));
+  starfieldCleanup = runStarfieldBackground(ensureCanvas('starfield-bg'));
+  (window as any).__ccuMatrixActive = true;
+  (window as any).__ccuStarfieldActive = true;
+};
+
+const runMatrixBackground = (canvas: HTMLCanvasElement) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return () => {};
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let width = 0;
+  let height = 0;
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let nodes: Array<{ x: number; y: number; vx: number; vy: number; radius: number }> = [];
+  let backgroundGradient: CanvasGradient | null = null;
+  const mouse = { x: null as number | null, y: null as number | null, dx: 0, dy: 0 };
+  let lastMouse = { x: null as number | null, y: null as number | null };
+  let rafId = 0;
+
+  const initNodes = () => {
+    const count = Math.min(140, Math.max(60, Math.floor((width * height) / 18000)));
+    nodes = Array.from({ length: count }).map(() => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: (Math.random() - 0.5) * 0.35,
+      radius: 1.2 + Math.random() * 1.6,
+    }));
+  };
+
+  const buildGradient = () => {
+    const radius = Math.max(width, height) * 0.9;
+    const gradient = ctx.createRadialGradient(width * 0.2, height * 0.15, 0, width * 0.4, height * 0.3, radius);
+    gradient.addColorStop(0, 'rgba(10, 16, 30, 0.9)');
+    gradient.addColorStop(0.4, 'rgba(18, 20, 38, 0.78)');
+    gradient.addColorStop(0.7, 'rgba(20, 10, 32, 0.7)');
+    gradient.addColorStop(1, 'rgba(2, 4, 8, 0.95)');
+    backgroundGradient = gradient;
+  };
+
+  const resize = () => {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildGradient();
+    initNodes();
+  };
+
+  const step = () => {
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = backgroundGradient || 'rgba(4, 8, 16, 0.6)';
+    ctx.fillRect(0, 0, width, height);
+
+    const connectDist = Math.max(120, Math.min(180, Math.min(width, height) * 0.18));
+    const influence = 160;
+
+    for (const node of nodes) {
+      if (mouse.x !== null && mouse.y !== null) {
+        const dx = node.x - mouse.x;
+        const dy = node.y - mouse.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < influence && dist > 0.1) {
+          const force = (1 - dist / influence) * 0.08;
+          node.vx += (dx / dist) * force;
+          node.vy += (dy / dist) * force;
+        }
+      }
+      const driftStrength = 0.06;
+      node.vx += mouse.dx * driftStrength;
+      node.vy += mouse.dy * driftStrength;
+      node.x += node.vx;
+      node.y += node.vy;
+      if (node.x < -20) node.x = width + 20;
+      if (node.x > width + 20) node.x = -20;
+      if (node.y < -20) node.y = height + 20;
+      if (node.y > height + 20) node.y = -20;
+    }
+
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i];
+        const b = nodes[j];
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < connectDist) {
+          const alpha = 1 - dist / connectDist;
+          ctx.strokeStyle = `rgba(205, 220, 235, ${0.24 * alpha})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    for (const node of nodes) {
+      ctx.fillStyle = 'rgba(185, 200, 215, 0.7)';
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (!prefersReduced) {
+      rafId = requestAnimationFrame(step);
+    }
+  };
+
+  const onMove = (event: MouseEvent) => {
+    if (lastMouse.x !== null && lastMouse.y !== null) {
+      mouse.dx = (event.clientX - lastMouse.x) * 0.004;
+      mouse.dy = (event.clientY - lastMouse.y) * 0.004;
+    }
+    mouse.x = event.clientX;
+    mouse.y = event.clientY;
+    lastMouse = { x: event.clientX, y: event.clientY };
+  };
+  const onLeave = () => {
+    mouse.x = null;
+    mouse.y = null;
+    mouse.dx = 0;
+    mouse.dy = 0;
+    lastMouse = { x: null, y: null };
+  };
+
+  window.addEventListener('mousemove', onMove, { passive: true });
+  window.addEventListener('mouseleave', onLeave, { passive: true });
+  window.addEventListener('resize', resize);
+
+  resize();
+  step();
+
+  return () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseleave', onLeave);
+    window.removeEventListener('resize', resize);
+    if (rafId) cancelAnimationFrame(rafId);
+  };
+};
+
+const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return () => {};
+  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let width = 0;
+  let height = 0;
+  let dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let stars: Array<{ x: number; y: number; r: number; phase: number; tw: number; a: number; vy: number; vx: number }> = [];
+  let rafId = 0;
+
+  const initStars = () => {
+    const count = Math.min(120, Math.max(40, Math.floor((width * height) / 50000)));
+    stars = Array.from({ length: count }).map(() => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      r: 0.6 + Math.random() * 1.2,
+      phase: Math.random() * Math.PI * 2,
+      tw: 0.004 + Math.random() * 0.012,
+      a: 0.18 + Math.random() * 0.35,
+      vy: 0.08 + Math.random() * 0.22,
+      vx: 0.04 + Math.random() * 0.14,
+    }));
+  };
+
+  const resize = () => {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    initStars();
+  };
+
+  const step = () => {
+    ctx.clearRect(0, 0, width, height);
+    for (const star of stars) {
+      star.phase += star.tw;
+      const twinkle = (Math.sin(star.phase) + 1) / 2;
+      const alpha = Math.max(0.05, Math.min(0.6, star.a * (0.35 + twinkle)));
+      ctx.fillStyle = `rgba(220, 235, 255, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+      ctx.fill();
+      star.x += star.vx;
+      star.y += star.vy;
+      if (star.y > height + 10 || star.x > width + 10) {
+        star.y = -10;
+        star.x = Math.random() * width * 0.6;
+      }
+    }
+    if (!prefersReduced) {
+      rafId = requestAnimationFrame(step);
+    }
+  };
+
+  window.addEventListener('resize', resize);
+  resize();
+  step();
+
+  return () => {
+    window.removeEventListener('resize', resize);
+    if (rafId) cancelAnimationFrame(rafId);
+  };
 };
 
 const toggleSidebar = () => {
@@ -378,8 +631,17 @@ const totalProfitDisplay = computed(() =>
 
 .sidebar__brand {
   display: flex;
+  align-items: center;
+  gap: 0.85rem;
   justify-content: space-between;
   width: 100%;
+}
+
+.brand-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 18px rgba(90, 166, 255, 0.35));
 }
 
 .brand-copy {

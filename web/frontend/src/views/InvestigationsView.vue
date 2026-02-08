@@ -26,6 +26,7 @@
           Create Project
         </button>
       </form>
+      <p v-if="projectError" class="error">{{ projectError }}</p>
     </section>
 
     <section class="panel workspace-panel">
@@ -139,6 +140,7 @@ const targets = ref<InvestigationTarget[]>([]);
 const evidence = ref<InvestigationEvidence[]>([]);
 const articles = ref<InvestigationArticle[]>([]);
 const loadingProjects = ref(false);
+const projectError = ref('');
 
 const newProjectName = ref('');
 const newProjectDesc = ref('');
@@ -191,15 +193,23 @@ const selectProject = async (projectId: number) => {
 
 const createProject = async () => {
   if (!newProjectName.value.trim()) return;
-  const data = await createInvestigationProject({
-    name: newProjectName.value.trim(),
-    description: newProjectDesc.value.trim(),
-  });
-  projects.value = [data.item, ...projects.value];
-  activeProjectId.value = data.item.id;
-  newProjectName.value = '';
-  newProjectDesc.value = '';
-  await loadWorkspace();
+  projectError.value = '';
+  loadingProjects.value = true;
+  try {
+    const data = await createInvestigationProject({
+      name: newProjectName.value.trim(),
+      description: newProjectDesc.value.trim(),
+    });
+    projects.value = [data.item, ...projects.value];
+    activeProjectId.value = data.item.id;
+    newProjectName.value = '';
+    newProjectDesc.value = '';
+    await loadWorkspace();
+  } catch (err: any) {
+    projectError.value = err?.response?.data?.detail || err?.message || 'Unable to create project.';
+  } finally {
+    loadingProjects.value = false;
+  }
 };
 
 const addTarget = async () => {

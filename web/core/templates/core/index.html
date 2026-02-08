@@ -89,7 +89,7 @@
         justify-content: center;
         background: rgba(2, 6, 12, 0.92);
         opacity: 1;
-        transition: opacity 0.6s ease;
+        transition: opacity 0.5s ease;
       }
       .splash-overlay.fade-out {
         opacity: 0;
@@ -392,7 +392,7 @@
           requestAnimationFrame(() => {
             setTimeout(() => {
               splash.classList.add('fade-out');
-            }, 450);
+            }, 0);
           });
           splash.addEventListener('transitionend', () => {
             splash.remove();
@@ -413,7 +413,8 @@
         let nodes = [];
         let stars = [];
         let backgroundGradient = null;
-        const mouse = { x: null, y: null };
+        const mouse = { x: null, y: null, dx: 0, dy: 0 };
+        let lastMouse = { x: null, y: null };
 
         const initNodes = () => {
           const count = Math.min(140, Math.max(60, Math.floor((width * height) / 18000)));
@@ -499,6 +500,9 @@
                 node.vy += (dy / dist) * force;
               }
             }
+            const driftStrength = 0.06;
+            node.vx += mouse.dx * driftStrength;
+            node.vy += mouse.dy * driftStrength;
 
             node.x += node.vx;
             node.y += node.vy;
@@ -541,17 +545,26 @@
         };
 
         window.addEventListener('mousemove', (event) => {
+          if (lastMouse.x !== null && lastMouse.y !== null) {
+            mouse.dx = (event.clientX - lastMouse.x) * 0.004;
+            mouse.dy = (event.clientY - lastMouse.y) * 0.004;
+          }
           mouse.x = event.clientX;
           mouse.y = event.clientY;
+          lastMouse = { x: event.clientX, y: event.clientY };
         });
         window.addEventListener('mouseleave', () => {
           mouse.x = null;
           mouse.y = null;
+          mouse.dx = 0;
+          mouse.dy = 0;
+          lastMouse = { x: null, y: null };
         });
         window.addEventListener('resize', resize);
 
         resize();
         step();
+        window.__ccuMatrixActive = true;
       })();
     </script>
     <script>
@@ -617,6 +630,7 @@
         window.addEventListener('resize', resize);
         resize();
         step();
+        window.__ccuStarfieldActive = true;
       })();
     </script>
   </body>

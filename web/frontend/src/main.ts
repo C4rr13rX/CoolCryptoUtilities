@@ -109,7 +109,7 @@ if (mountEl) {
   const requestedResolved = resolveIfMatch(requestedPath);
   const currentResolved = resolveIfMatch(currentPath);
   const bootPath =
-    (reloadRequested && storedResolved) ||
+    (reloadRequested && !currentResolved ? storedResolved : '') ||
     requestedResolved ||
     currentResolved ||
     storedResolved ||
