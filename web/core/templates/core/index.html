@@ -141,6 +141,12 @@
         align-items: center;
         gap: 0.75rem;
       }
+      header.site-header .user-stack {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0.4rem;
+      }
       .logout-btn {
         background: rgba(111, 167, 255, 0.18);
         border: 1px solid rgba(111, 167, 255, 0.35);
@@ -282,11 +288,13 @@
         </div>
         {% if user.is_authenticated %}
           <div class="user-actions">
-            <span class="user-chip">Logged in as {{ user.get_username }}</span>
-            <form method="post" action="{% url 'core:logout' %}">
-              {% csrf_token %}
-              <button type="submit" class="logout-btn">Log out</button>
-            </form>
+            <div class="user-stack">
+              <span class="user-chip">Logged in as {{ user.get_username }}</span>
+              <form method="post" action="{% url 'core:logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="logout-btn">Log out</button>
+              </form>
+            </div>
           </div>
         {% endif %}
       </header>

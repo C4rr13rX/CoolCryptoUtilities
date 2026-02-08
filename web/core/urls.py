@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from django.urls import path
+from django.urls import include, path
 from django.contrib.auth import views as auth_views
 
 from . import views
@@ -69,6 +69,8 @@ urlpatterns = [
     path("api/c0d3r/sessions/<int:session_id>", views.C0d3rSessionDetailView.as_view()),
     path("api/c0d3r/sessions/<int:session_id>/messages/", views.C0d3rMessageListView.as_view(), name="c0d3r-messages"),
     path("api/c0d3r/sessions/<int:session_id>/messages", views.C0d3rMessageListView.as_view()),
+    path("api/investigations/", include("investigations.urls")),
+    path("api/investigations", include("investigations.urls")),
     path("api/graph/equations/", views.EquationSearchView.as_view(), name="equation-search"),
     path("api/graph/equations", views.EquationSearchView.as_view()),
     path("advisories/", views.AdvisoriesPageView.as_view(), name="advisories"),

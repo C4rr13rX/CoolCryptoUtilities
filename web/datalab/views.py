@@ -13,7 +13,7 @@ from datalab.models import NewsSource, NewsSourceArticle
 from django.utils import timezone
 from services.data_lab import fetch_news, get_runner, list_datasets
 from services.custom_news_sources import fetch_source_articles
-from services.signal_scanner import WINDOW_OPTIONS, scan_price_signals
+from services.signal_scanner import DEFAULT_SCAN_CHAIN, WINDOW_OPTIONS, scan_price_signals
 from services.watchlists import load_watchlists, mutate_watchlist
 
 
@@ -119,6 +119,7 @@ class SignalListView(APIView):
 
         symbols = [str(entry.get("symbol") or "").upper() for entry in signals if entry.get("symbol")]
         risk_map: Dict[str, Dict[str, object]] = {}
+        token_map: Dict[str, DiscoveredToken] = {}
         if symbols:
             token_map = {
                 token.symbol.upper(): token
@@ -146,10 +147,18 @@ class SignalListView(APIView):
                 if risk:
                     risk_map[symbol] = risk
 
+        default_chain = (DEFAULT_SCAN_CHAIN or "base").lower()
         enriched: List[Dict[str, object]] = []
         for item in signals:
             symbol = str(item.get("symbol") or "").upper()
             entry = dict(item)
+            chain_value = str(entry.get("chain") or "").strip()
+            if not chain_value or chain_value.lower() == "public":
+                token = token_map.get(symbol)
+                if token and token.chain:
+                    entry["chain"] = token.chain
+                else:
+                    entry["chain"] = default_chain
             entry["watchlists"] = {
                 name: symbol in members for name, members in membership.items()
             }
