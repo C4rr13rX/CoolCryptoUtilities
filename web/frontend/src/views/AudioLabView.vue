@@ -97,6 +97,41 @@
           </select>
         </label>
         <label>
+          <span>Drone Waveform</span>
+          <select v-model="settings.droneWaveform">
+            <option value="sine">sine</option>
+            <option value="triangle">triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">sawtooth</option>
+          </select>
+        </label>
+        <label>
+          <span>Chord Waveform</span>
+          <select v-model="settings.chordWaveform">
+            <option value="sine">sine</option>
+            <option value="triangle">triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">sawtooth</option>
+          </select>
+        </label>
+        <label>
+          <span>Gate (1/16 Note)</span>
+          <select v-model="settings.gateEnabled">
+            <option :value="false">off</option>
+            <option :value="true">on</option>
+          </select>
+        </label>
+        <label>
+          <span>Gate BPM</span>
+          <input v-model.number="settings.gateBpm" type="range" min="40" max="160" step="1" />
+          <span class="value">{{ settings.gateBpm.toFixed(0) }}</span>
+        </label>
+        <label>
+          <span>Gate Depth</span>
+          <input v-model.number="settings.gateDepth" type="range" min="0" max="1" step="0.05" />
+          <span class="value">{{ settings.gateDepth.toFixed(2) }}</span>
+        </label>
+        <label>
           <span>Key Root</span>
           <select v-model="settings.keyRoot">
             <option v-for="note in keyRoots" :key="note" :value="note">{{ note }}</option>

@@ -121,6 +121,7 @@ class GraphStore:
                 row = result.get_next()
                 rows.append(
                     {
+                        "eq_id": row[0],
                         "equation": row[1],
                         "domain": row[2] or "",
                         "summary": "",

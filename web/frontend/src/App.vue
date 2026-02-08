@@ -1,6 +1,6 @@
 <template>
   <div class="app-layout" :class="{ solo: isSolo }">
-    <aside v-if="!isSolo" class="sidebar" :class="{ open: sidebarOpen }">
+    <aside v-if="!isSolo" ref="sidebarRef" class="sidebar" :class="{ open: sidebarOpen }">
       <div class="sidebar__brand">
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
@@ -59,7 +59,7 @@
         </div>
       </header>
       <section class="content__body" :class="{ 'glitch-pulse': glitchActive }">
-        <div class="content__viewport">
+        <div ref="contentRef" class="content__viewport">
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="route.fullPath" />
           </RouterView>
@@ -70,18 +70,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 import StatusIndicator from '@/components/StatusIndicator.vue';
 import HackerIcon from '@/components/HackerIcon.vue';
 import { ambientAudio } from '@/audio/ambient';
 import { useDashboardStore } from '@/stores/dashboard';
+import { useUiSettingsStore } from '@/stores/uiSettings';
+import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
 
 const store = useDashboardStore();
+const uiSettings = useUiSettingsStore();
 const route = useRoute();
 const sidebarOpen = ref(false);
 const isSolo = computed(() => route.meta?.layout === 'solo');
 const glitchActive = ref(false);
+const sidebarRef = ref<HTMLElement | null>(null);
+const contentRef = ref<HTMLElement | null>(null);
+let autoScrollCleanup: Array<() => void> = [];
 
 let refreshTimer: number | undefined;
 let consoleTimer: number | undefined;
@@ -91,6 +97,8 @@ let pointerHandler: ((event: PointerEvent) => void) | undefined;
 onMounted(() => {
   refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
   consoleTimer = window.setInterval(() => store.refreshConsole(), 5000);
+  uiSettings.load();
+  setupAutoScroll();
   pointerHandler = (event: PointerEvent) => {
     const soundId = resolveSoundId(event.target as HTMLElement | null);
     ambientAudio.triggerChord(soundId);
@@ -105,6 +113,7 @@ onBeforeUnmount(() => {
   if (pointerHandler) {
     window.removeEventListener('pointerdown', pointerHandler);
   }
+  teardownAutoScroll();
 });
 
 const triggerGlitch = () => {
@@ -128,6 +137,45 @@ watch(
     triggerGlitch();
   }
 );
+
+watch(
+  () => uiSettings.autoScrollEnabled,
+  () => {
+    setupAutoScroll();
+  }
+);
+
+const teardownAutoScroll = () => {
+  autoScrollCleanup.forEach((fn) => fn());
+  autoScrollCleanup = [];
+};
+
+const setupAutoScroll = () => {
+  teardownAutoScroll();
+  if (!uiSettings.autoScrollEnabled) return;
+  nextTick(() => {
+    if (sidebarRef.value) {
+      autoScrollCleanup.push(
+        attachEdgeAutoScroll(sidebarRef.value, {
+          edgePx: 28,
+          delayMs: 500,
+          maxSpeedPxPerSec: 520,
+          minSpeedPxPerSec: 140,
+        })
+      );
+    }
+    if (contentRef.value) {
+      autoScrollCleanup.push(
+        attachEdgeAutoScroll(contentRef.value, {
+          edgePx: 28,
+          delayMs: 500,
+          maxSpeedPxPerSec: 560,
+          minSpeedPxPerSec: 160,
+        })
+      );
+    }
+  });
+};
 
 const toggleSidebar = () => {
   sidebarOpen.value = !sidebarOpen.value;
@@ -253,11 +301,13 @@ const navItems = computed(() => [
   { route: 'telemetry', label: 'Telemetry', icon: 'activity', intent: feedbackIntent.value },
   { route: 'wallet', label: 'Wallet', icon: 'wallet', intent: consoleIntent.value },
   { route: 'c0d3r', label: 'c0d3r', icon: 'terminal', intent: consoleIntent.value },
+  { route: 'investigations', label: 'Investigations', icon: 'shield', intent: advisoryIntent.value },
   { route: 'addressbook', label: 'Address Book', icon: 'link', intent: advisoryIntent.value },
   { route: 'advisories', label: 'Advisories', icon: 'shield', intent: advisoryIntent.value },
   { route: 'datalab', label: 'Data Lab', icon: 'datalab', intent: pipelineIntent.value },
   { route: 'lab', label: 'Model Lab', icon: 'lab', intent: pipelineIntent.value },
   { route: 'guardian', label: 'Guardian', icon: 'guardian', intent: pipelineIntent.value },
+  { route: 'cron', label: 'Cron', icon: 'activity', intent: pipelineIntent.value },
   { route: 'codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
   { route: 'integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
   { route: 'settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
@@ -287,13 +337,13 @@ const totalProfitDisplay = computed(() =>
   min-height: 100%;
   width: 100%;
   display: flex;
-  background: radial-gradient(circle at 10% 0%, rgba(11, 28, 60, 0.4), rgba(3, 10, 22, 0.96));
+  background: transparent;
   max-width: 100vw;
   overflow-x: hidden;
 }
 
 .app-layout.solo {
-  background: radial-gradient(circle at 20% 0%, rgba(9, 24, 52, 0.5), rgba(2, 8, 16, 0.98));
+  background: transparent;
 }
 
 .sidebar {

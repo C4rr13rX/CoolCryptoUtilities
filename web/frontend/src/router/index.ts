@@ -18,6 +18,8 @@ import U53RxRobotView from '@/views/U53RxRobotView.vue';
 import AddressBookView from '@/views/AddressBookView.vue';
 import C0d3rView from '@/views/C0d3rView.vue';
 import AudioLabView from '@/views/AudioLabView.vue';
+import CronView from '@/views/CronView.vue';
+import InvestigationsView from '@/views/InvestigationsView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -119,6 +121,18 @@ const routes: RouteRecordRaw[] = [
     name: 'audiolab',
     component: AudioLabView,
     meta: { title: 'Audio Lab' },
+  },
+  {
+    path: '/cron',
+    name: 'cron',
+    component: CronView,
+    meta: { title: 'Cron' },
+  },
+  {
+    path: '/investigations',
+    name: 'investigations',
+    component: InvestigationsView,
+    meta: { title: 'Investigations' },
   },
 ];
 

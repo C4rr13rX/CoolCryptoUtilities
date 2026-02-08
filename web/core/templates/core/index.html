@@ -6,7 +6,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% if initial_route == "branddozer_solo" %}BrandDozer{% else %}R3V3N!R Control Tower{% endif %}</title>
-    <link rel="icon" href="{% static 'assets/logo.png' %}" />
+    <link rel="icon" href="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" />
     {% if serve_vite %}
       <script type="module">
         const DEV_ORIGIN = "{{ vite_dev_server }}";
@@ -34,7 +34,12 @@
         --accent-ok: #34d399;
         --accent-warn: #f6b143;
         --accent-err: #ff5a5f;
-        --bg: radial-gradient(circle at 16% 16%, rgba(12, 18, 32, 0.95), rgba(3, 5, 10, 0.98));
+        --bg:
+          radial-gradient(circle at 15% 12%, rgba(90, 166, 255, 0.22), transparent 46%),
+          radial-gradient(circle at 82% 18%, rgba(194, 122, 255, 0.2), transparent 52%),
+          radial-gradient(circle at 35% 85%, rgba(255, 120, 200, 0.18), transparent 55%),
+          radial-gradient(circle at 60% 55%, rgba(120, 210, 255, 0.14), transparent 60%),
+          #02050b;
         --panel-bg: rgba(5, 9, 16, 0.9);
         --panel-border: rgba(165, 194, 255, 0.22);
         font-family: "Hackout", "Segoe UI", "Helvetica", sans-serif;
@@ -47,7 +52,7 @@
       }
       body {
         margin: 0;
-        background: var(--bg), #050505;
+        background: var(--bg);
         color: #f2f2f4;
         min-height: 100vh;
         display: flex;
@@ -62,7 +67,17 @@
         height: 100%;
         z-index: 0;
         pointer-events: none;
-        opacity: 0.95;
+        opacity: 0.5;
+        mix-blend-mode: screen;
+      }
+      #starfield-bg {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 5;
+        pointer-events: none;
+        opacity: 0.35;
         mix-blend-mode: screen;
       }
       .splash-overlay {
@@ -74,7 +89,7 @@
         justify-content: center;
         background: rgba(2, 6, 12, 0.92);
         opacity: 1;
-        transition: opacity 0.5s ease;
+        transition: opacity 0.6s ease;
       }
       .splash-overlay.fade-out {
         opacity: 0;
@@ -255,13 +270,14 @@
   </head>
   <body>
     <canvas id="matrix-bg" aria-hidden="true"></canvas>
+    <canvas id="starfield-bg" aria-hidden="true"></canvas>
     <div class="splash-overlay" id="splash-overlay">
-      <img class="splash-logo" src="{% static 'assets/main_logo.png' %}" alt="R3V3N!R logo" />
+      <img class="splash-logo" src="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" alt="R3V3N!R logo" />
     </div>
     {% if initial_route != "branddozer_solo" %}
       <header class="site-header">
         <div class="brand">
-          <img src="{% static 'assets/main_logo.png' %}" alt="R3V3N!R insignia" />
+          <img src="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" alt="R3V3N!R insignia" />
           <h1>R3V3N!R • Crypto Trading AI Bot</h1>
         </div>
         {% if user.is_authenticated %}
@@ -376,7 +392,7 @@
           requestAnimationFrame(() => {
             setTimeout(() => {
               splash.classList.add('fade-out');
-            }, 50);
+            }, 450);
           });
           splash.addEventListener('transitionend', () => {
             splash.remove();
@@ -502,7 +518,7 @@
               const dist = Math.hypot(dx, dy);
               if (dist < connectDist) {
                 const alpha = 1 - dist / connectDist;
-                ctx.strokeStyle = `rgba(200, 215, 235, ${0.28 * alpha})`;
+                ctx.strokeStyle = `rgba(205, 220, 235, ${0.22 * alpha})`;
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(a.x, a.y);
@@ -513,7 +529,7 @@
           }
 
           for (const node of nodes) {
-            ctx.fillStyle = 'rgba(175, 195, 215, 0.82)';
+            ctx.fillStyle = 'rgba(185, 200, 215, 0.7)';
             ctx.beginPath();
             ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
             ctx.fill();
@@ -534,6 +550,71 @@
         });
         window.addEventListener('resize', resize);
 
+        resize();
+        step();
+      })();
+    </script>
+    <script>
+      (() => {
+        const canvas = document.getElementById('starfield-bg');
+        if (!canvas || !canvas.getContext) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        let width = 0;
+        let height = 0;
+        let dpr = Math.min(window.devicePixelRatio || 1, 2);
+        let stars = [];
+
+        const initStars = () => {
+          const count = Math.min(120, Math.max(40, Math.floor((width * height) / 50000)));
+          stars = Array.from({ length: count }).map(() => ({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            r: 0.6 + Math.random() * 1.2,
+            phase: Math.random() * Math.PI * 2,
+            tw: 0.004 + Math.random() * 0.012,
+            a: 0.18 + Math.random() * 0.35,
+            vy: 0.08 + Math.random() * 0.22,
+            vx: 0.04 + Math.random() * 0.14,
+          }));
+        };
+
+        const resize = () => {
+          width = window.innerWidth;
+          height = window.innerHeight;
+          dpr = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = width * dpr;
+          canvas.height = height * dpr;
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          initStars();
+        };
+
+        const step = () => {
+          ctx.clearRect(0, 0, width, height);
+          for (const star of stars) {
+            star.phase += star.tw;
+            const twinkle = (Math.sin(star.phase) + 1) / 2;
+            const alpha = Math.max(0.05, Math.min(0.6, star.a * (0.35 + twinkle)));
+            ctx.fillStyle = `rgba(220, 235, 255, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+            ctx.fill();
+            star.x += star.vx;
+            star.y += star.vy;
+            if (star.y > height + 10 || star.x > width + 10) {
+              star.y = -10;
+              star.x = Math.random() * width * 0.6;
+            }
+          }
+          if (!prefersReduced) {
+            requestAnimationFrame(step);
+          }
+        };
+
+        window.addEventListener('resize', resize);
         resize();
         step();
       })();

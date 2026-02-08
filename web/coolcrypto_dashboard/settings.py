@@ -117,12 +117,14 @@ INSTALLED_APPS = [
     "lab.apps.LabConfig",
     "datalab.apps.DatalabConfig",
     "guardianpanel.apps.GuardianPanelConfig",
+    "cronpanel.apps.CronPanelConfig",
     "securevault.apps.SecureVaultConfig",
     "walletpanel.apps.WalletPanelConfig",
     "addressbook.apps.AddressbookConfig",
     "integrations.apps.IntegrationsConfig",
     "branddozer.apps.BranddozerConfig",
     "u53rxr080t.apps.U53rxr080tConfig",
+    "investigations.apps.InvestigationsConfig",
 ]
 
 MIDDLEWARE = [

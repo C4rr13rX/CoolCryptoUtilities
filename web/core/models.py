@@ -521,3 +521,40 @@ class TechMatrixRecord(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - human readable
         return f"TechMatrix {self.pk}"
+
+
+class C0d3rWebSession(models.Model):
+    user = models.ForeignKey("auth.User", on_delete=models.CASCADE, related_name="c0d3r_sessions")
+    title = models.CharField(max_length=255, default="", blank=True)
+    summary = models.TextField(default="", blank=True)
+    key_points = models.JSONField(default=list, blank=True)
+    model_id = models.CharField(max_length=128, default="", blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    last_active = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "c0d3r_web_sessions"
+        indexes = [
+            models.Index(fields=["user", "last_active"]),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - human readable
+        label = self.title or f"Session {self.pk}"
+        return f"{label} ({self.user_id})"
+
+
+class C0d3rWebMessage(models.Model):
+    session = models.ForeignKey(C0d3rWebSession, on_delete=models.CASCADE, related_name="messages")
+    role = models.CharField(max_length=24)
+    content = models.TextField(default="", blank=True)
+    model_id = models.CharField(max_length=128, default="", blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "c0d3r_web_messages"
+        indexes = [
+            models.Index(fields=["session", "created_at"]),
+        ]

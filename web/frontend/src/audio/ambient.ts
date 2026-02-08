@@ -9,6 +9,11 @@ export type AmbientSettings = {
   chordGain: number;
   chordDuration: number;
   chordPreset: string;
+  chordWaveform: OscillatorType;
+  droneWaveform: OscillatorType;
+  gateEnabled: boolean;
+  gateBpm: number;
+  gateDepth: number;
   keyRoot: string;
   keyMode: 'major' | 'minor';
 };
@@ -26,6 +31,11 @@ export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   chordGain: 0.22,
   chordDuration: 3.2,
   chordPreset: 'dream_minor',
+  chordWaveform: 'sine',
+  droneWaveform: 'sine',
+  gateEnabled: false,
+  gateBpm: 84,
+  gateDepth: 0.6,
   keyRoot: 'C',
   keyMode: 'minor',
 };
@@ -276,14 +286,39 @@ class AmbientAudio {
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.linearRampToValueAtTime(this.settings.chordGain, now + this.settings.attack);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + decayTime);
-    gain.connect(this.master);
+
+    let outputNode: AudioNode = gain;
+    if (this.settings.gateEnabled) {
+      const gateGain = this.ctx.createGain();
+      const gateOsc = this.ctx.createOscillator();
+      const gateDepth = clamp(this.settings.gateDepth, 0, 1);
+      const gateOffset = this.ctx.createConstantSource();
+      const gateDepthGain = this.ctx.createGain();
+      const gateHz = Math.max(1, (this.settings.gateBpm / 60) * 4);
+      gateOsc.type = 'square';
+      gateOsc.frequency.setValueAtTime(gateHz, now);
+      gateDepthGain.gain.setValueAtTime(gateDepth / 2, now);
+      gateOffset.offset.setValueAtTime(1 - gateDepth / 2, now);
+      gateOsc.connect(gateDepthGain).connect(gateGain.gain);
+      gateOffset.connect(gateGain.gain);
+      gateGain.gain.setValueAtTime(1, now);
+      gain.connect(gateGain);
+      gateGain.connect(this.master);
+      gateOsc.start(now);
+      gateOffset.start(now);
+      gateOsc.stop(stopTime + 0.1);
+      gateOffset.stop(stopTime + 0.1);
+      outputNode = gateGain;
+    } else {
+      gain.connect(this.master);
+    }
 
     chord.forEach((interval) => {
       const osc = this.ctx!.createOscillator();
-      osc.type = 'sine';
+      osc.type = this.settings.chordWaveform || 'sine';
       const freq = this.settings.baseFreq * Math.pow(2, (interval + keyOffset) / 12);
       osc.frequency.setValueAtTime(freq, now);
-      osc.connect(gain);
+      osc.connect(outputNode);
       osc.start(now);
       osc.stop(stopTime + 0.1);
     });
@@ -322,8 +357,8 @@ class AmbientAudio {
     if (!this.leftOsc || !this.rightOsc) {
       this.leftOsc = this.ctx.createOscillator();
       this.rightOsc = this.ctx.createOscillator();
-      this.leftOsc.type = 'sine';
-      this.rightOsc.type = 'sine';
+      this.leftOsc.type = this.settings.droneWaveform || 'sine';
+      this.rightOsc.type = this.settings.droneWaveform || 'sine';
 
       this.leftPan = this.ctx.createStereoPanner();
       this.rightPan = this.ctx.createStereoPanner();
@@ -350,6 +385,8 @@ class AmbientAudio {
     const now = this.ctx.currentTime;
     const base = this.settings.baseFreq;
     const detune = this.settings.detuneHz;
+    this.leftOsc.type = this.settings.droneWaveform || 'sine';
+    this.rightOsc.type = this.settings.droneWaveform || 'sine';
     this.leftOsc.frequency.setTargetAtTime(Math.max(30, base - detune / 2), now, 0.08);
     this.rightOsc.frequency.setTargetAtTime(Math.max(30, base + detune / 2), now, 0.08);
     this.master.gain.setTargetAtTime(this.settings.gain, now, 0.12);
@@ -388,4 +425,8 @@ const KEY_MAP: Record<string, number> = {
 
 function keyToSemitone(root: string) {
   return KEY_MAP[root] ?? 0;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

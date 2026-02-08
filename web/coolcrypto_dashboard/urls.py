@@ -13,12 +13,14 @@ urlpatterns = [
     path("api/datalab/", include("datalab.urls")),
     path("api/lab/", include("lab.urls")),
     path("api/guardian/", include("guardianpanel.urls")),
+    path("api/cron/", include("cronpanel.urls")),
     path("api/secure/", include("securevault.urls")),
     path("api/wallet/", include("walletpanel.urls")),
     path("api/addressbook/", include("addressbook.urls")),
     path("api/integrations/", include("integrations.urls")),
     path("api/branddozer/", include("branddozer.urls")),
     path("api/u53rxr080t/", include("u53rxr080t.urls")),
+    path("api/investigations/", include("investigations.urls")),
     path("", include("core.urls")),
 ]
 

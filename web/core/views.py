@@ -7,6 +7,7 @@ import re
 import sys
 import time
 import math
+import platform
 from decimal import Decimal
 from datetime import datetime
 from pathlib import Path
@@ -16,8 +17,10 @@ from django.conf import settings
 from django.contrib.auth import login
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db.models import Q, Count
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
+from django.utils import timezone
 from django.views import View
 from django.views.generic import TemplateView
 
@@ -29,7 +32,9 @@ from db import get_db  # noqa: E402
 from opsconsole.manager import manager as console_manager
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
+from services.graph_store import search_graph_equations, graph_enabled  # noqa: E402
 from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E402
+from .models import C0d3rWebSession, C0d3rWebMessage
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
@@ -321,8 +326,16 @@ class AudioLabPageView(BaseSecureView):
     initial_route = "audiolab"
 
 
+class CronPageView(BaseSecureView):
+    initial_route = "cron"
+
+
 class U53RxRobotPageView(BaseSecureView):
     initial_route = "u53rxr080t"
+
+
+class InvestigationsPageView(BaseSecureView):
+    initial_route = "investigations"
 
 
 class SpaRouteView(BaseSecureView):
@@ -354,6 +367,8 @@ class SpaRouteView(BaseSecureView):
             "u53rxr080t",
             "branddozer_solo",
             "audiolab",
+            "cron",
+            "investigations",
         }
         if slug not in allowed:
             return redirect("core:dashboard")
@@ -456,6 +471,319 @@ class CodeGraphFilesView(LoginRequiredMixin, View):
         return JsonResponse({"files": files}, status=200)
 
 
+def _safe_int(value: Any, default: int, *, min_value: int | None = None, max_value: int | None = None) -> int:
+    try:
+        num = int(value)
+    except Exception:
+        num = default
+    if min_value is not None:
+        num = max(min_value, num)
+    if max_value is not None:
+        num = min(max_value, num)
+    return num
+
+
+def _serialize_c0d3r_session(session: C0d3rWebSession, message_count: int | None = None) -> Dict[str, Any]:
+    return {
+        "id": session.id,
+        "title": session.title or "",
+        "summary": session.summary or "",
+        "key_points": session.key_points or [],
+        "model_id": session.model_id or "",
+        "last_active": session.last_active.isoformat() if session.last_active else None,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "message_count": message_count,
+    }
+
+
+def _serialize_c0d3r_message(message: C0d3rWebMessage) -> Dict[str, Any]:
+    return {
+        "id": message.id,
+        "role": message.role,
+        "content": message.content or "",
+        "model_id": message.model_id or "",
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+        "metadata": message.metadata or {},
+    }
+
+
+def _collect_system_context(request: HttpRequest) -> str:
+    parts = [
+        f"Server time: {timezone.now().isoformat()}",
+        f"Server OS: {platform.system()} {platform.release()}",
+        f"Python: {platform.python_version()}",
+        f"Workspace: {ROOT}",
+    ]
+    if request.user and request.user.is_authenticated:
+        parts.append(f"User: {request.user.get_username()}")
+    return "\n".join(parts)
+
+
+def _long_term_hits(user, prompt: str, *, limit: int = 4) -> List[str]:
+    if not prompt:
+        return []
+    lower = prompt.lower()
+    triggers = ("remember", "recall", "last time", "previous", "earlier", "do you remember", "what did we")
+    if not any(t in lower for t in triggers):
+        return []
+    tokens = [tok for tok in re.findall(r"[a-z0-9]{4,}", lower) if tok not in {"remember", "recall", "previous", "earlier"}]
+    qs = C0d3rWebMessage.objects.filter(session__user=user)
+    if tokens:
+        token_q = Q()
+        for tok in tokens[:4]:
+            token_q |= Q(content__icontains=tok)
+        qs = qs.filter(token_q)
+    hits = qs.order_by("-created_at")[:limit]
+    snippets: List[str] = []
+    for hit in hits:
+        ts = hit.created_at.isoformat() if hit.created_at else ""
+        snippets.append(f"{ts} {hit.role.capitalize()}: {hit.content}")
+    return snippets
+
+
+def _build_c0d3r_context(
+    session: C0d3rWebSession,
+    *,
+    request: HttpRequest,
+    prompt: str,
+    max_chars: int = 12000,
+) -> str:
+    parts: List[str] = []
+    summary = (session.summary or "").strip()
+    if summary:
+        parts.append("Rolling summary:\n" + summary)
+    key_points = session.key_points or []
+    if key_points:
+        points = [str(p).strip() for p in key_points if str(p).strip()]
+        if points:
+            parts.append("Key points:\n" + "\n".join(f"- {p}" for p in points[:10]))
+    system_info = _collect_system_context(request)
+    if system_info:
+        parts.append("System info:\n" + system_info)
+
+    max_messages = _safe_int(os.getenv("C0D3R_WEB_CONTEXT_MESSAGES", "40"), 40, min_value=10, max_value=200)
+    history = list(
+        C0d3rWebMessage.objects.filter(session=session).order_by("-created_at")[:max_messages]
+    )
+    history.reverse()
+    transcript_blocks: List[str] = []
+    for entry in history:
+        role = (entry.role or "").strip().lower()
+        speaker = "Assistant" if role in {"assistant", "c0d3r"} else ("User" if role == "user" else role.capitalize())
+        content = (entry.content or "").strip()
+        if not content:
+            continue
+        transcript_blocks.append(f"{speaker}: {content}")
+
+    if transcript_blocks:
+        parts.append("Transcript (most recent last):\n" + "\n".join(transcript_blocks))
+
+    long_hits = _long_term_hits(request.user, prompt)
+    if long_hits:
+        parts.append("Long-term recall:\n" + "\n".join(long_hits))
+
+    combined = "\n\n".join([p for p in parts if p.strip()])
+    if len(combined) <= max_chars:
+        return combined
+    return combined[:max_chars].rstrip() + "..."
+
+
+def _update_c0d3r_summary(
+    session_obj: C0d3rWebSession,
+    *,
+    user_text: str,
+    assistant_text: str,
+    c0d3r_session: C0d3rSession,
+) -> None:
+    if os.getenv("C0D3R_WEB_SUMMARY_ENABLED", "1").lower() in {"0", "false", "no", "off"}:
+        return
+    summary_payload = {
+        "summary": session_obj.summary or "",
+        "key_points": session_obj.key_points or [],
+    }
+    system = (
+        "Return ONLY JSON with keys: summary (string, <=200 words), "
+        "key_points (list of 10 short strings). "
+        "Focus on the most important and most recent conversation facts."
+    )
+    prompt = (
+        f"Current summary (<=200 words):\n{summary_payload['summary']}\n\n"
+        f"Current key points:\n{summary_payload['key_points']}\n\n"
+        f"New exchange:\nUser: {user_text}\nAssistant: {assistant_text}\n"
+    )
+    try:
+        model_id = c0d3r_session._c0d3r._model_for_stage("executor")
+        built = c0d3r_session._c0d3r._build_prompt("executor", prompt, system=system)
+        response = c0d3r_session._c0d3r._invoke_model(model_id, built)
+        try:
+            payload = json.loads(response)
+        except Exception:
+            payload = {}
+            start = response.find("{")
+            end = response.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    payload = json.loads(response[start : end + 1])
+                except Exception:
+                    payload = {}
+    except Exception:
+        return
+    new_summary = str(payload.get("summary") or summary_payload["summary"]).strip()
+    words = new_summary.split()
+    if len(words) > 200:
+        new_summary = " ".join(words[:200])
+    new_points = payload.get("key_points") or summary_payload["key_points"]
+    if not isinstance(new_points, list):
+        new_points = summary_payload["key_points"]
+    new_points = [str(p).strip() for p in new_points if str(p).strip()]
+    if len(new_points) > 10:
+        new_points = new_points[:10]
+    session_obj.summary = new_summary
+    session_obj.key_points = new_points
+
+
+class C0d3rSessionListView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        sessions = (
+            C0d3rWebSession.objects.filter(user=request.user)
+            .annotate(message_count=Count("messages"))
+            .order_by("-last_active", "-updated_at")
+        )
+        payload = [_serialize_c0d3r_session(s, message_count=s.message_count) for s in sessions]
+        return JsonResponse({"items": payload, "count": len(payload)}, status=200)
+
+    def post(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        try:
+            payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+        except Exception:
+            payload = {}
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            title = f"Session {timezone.now().strftime('%Y-%m-%d %H:%M')}"
+        session = C0d3rWebSession.objects.create(
+            user=request.user,
+            title=title,
+            summary="",
+            key_points=[],
+            last_active=timezone.now(),
+        )
+        return JsonResponse({"item": _serialize_c0d3r_session(session, message_count=0)}, status=201)
+
+
+class C0d3rSessionDetailView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def post(self, request: HttpRequest, session_id: int, *args, **kwargs) -> JsonResponse:
+        try:
+            payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+        except Exception:
+            payload = {}
+        try:
+            session = C0d3rWebSession.objects.get(id=session_id, user=request.user)
+        except C0d3rWebSession.DoesNotExist:
+            return JsonResponse({"detail": "session not found"}, status=404)
+        title = payload.get("title")
+        if isinstance(title, str):
+            session.title = title.strip()
+        session.metadata = payload.get("metadata") or session.metadata
+        session.save(update_fields=["title", "metadata", "updated_at"])
+        return JsonResponse({"item": _serialize_c0d3r_session(session)}, status=200)
+
+    def delete(self, request: HttpRequest, session_id: int, *args, **kwargs) -> JsonResponse:
+        try:
+            session = C0d3rWebSession.objects.get(id=session_id, user=request.user)
+        except C0d3rWebSession.DoesNotExist:
+            return JsonResponse({"detail": "session not found"}, status=404)
+        session.delete()
+        return JsonResponse({"deleted": True}, status=200)
+
+
+class C0d3rMessageListView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, session_id: int, *args, **kwargs) -> JsonResponse:
+        try:
+            session = C0d3rWebSession.objects.get(id=session_id, user=request.user)
+        except C0d3rWebSession.DoesNotExist:
+            return JsonResponse({"detail": "session not found"}, status=404)
+        limit = _safe_int(request.GET.get("limit"), 200, min_value=1, max_value=500)
+        before = request.GET.get("before")
+        query = (request.GET.get("q") or "").strip()
+        qs = C0d3rWebMessage.objects.filter(session=session)
+        if before:
+            try:
+                before_dt = datetime.fromisoformat(str(before))
+                qs = qs.filter(created_at__lt=before_dt)
+            except Exception:
+                pass
+        if query:
+            qs = qs.filter(content__icontains=query)
+        messages = list(qs.order_by("-created_at")[:limit])
+        messages.reverse()
+        payload = [_serialize_c0d3r_message(m) for m in messages]
+        return JsonResponse({"items": payload, "count": len(payload)}, status=200)
+
+
+class EquationSearchView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        query = str(request.GET.get("q") or "").strip()
+        if not query:
+            return JsonResponse({"detail": "q is required", "items": []}, status=400)
+        limit = _safe_int(request.GET.get("limit"), 20, min_value=1, max_value=100)
+        items: List[Dict[str, Any]] = []
+        if graph_enabled():
+            try:
+                graph_hits = search_graph_equations(query, limit=limit)
+                eq_ids = [hit.get("eq_id") for hit in graph_hits if hit.get("eq_id")]
+                eq_map = {}
+                if eq_ids:
+                    from .models import Equation
+                    for eq in Equation.objects.filter(id__in=eq_ids):
+                        eq_map[str(eq.id)] = eq
+                for hit in graph_hits:
+                    eq_id = hit.get("eq_id")
+                    eq = eq_map.get(str(eq_id)) if eq_id else None
+                    items.append(
+                        {
+                            "id": eq_id or "",
+                            "text": hit.get("equation") or (eq.text if eq else ""),
+                            "latex": eq.latex if eq else "",
+                            "disciplines": eq.disciplines or eq.domains if eq else hit.get("domain") or "",
+                            "citations": eq.citations if eq else [],
+                            "tool_used": eq.tool_used if eq else "",
+                            "captured_at": eq.captured_at.isoformat() if eq and eq.captured_at else None,
+                            "origin": "kuzu",
+                        }
+                    )
+            except Exception:
+                items = []
+        if not items:
+            from .models import Equation
+            qs = (
+                Equation.objects.filter(Q(text__icontains=query) | Q(latex__icontains=query))
+                .order_by("-created_at")[:limit]
+            )
+            for eq in qs:
+                items.append(
+                    {
+                        "id": eq.id,
+                        "text": eq.text,
+                        "latex": eq.latex,
+                        "disciplines": eq.disciplines or eq.domains or [],
+                        "citations": eq.citations or [],
+                        "tool_used": eq.tool_used or "",
+                        "captured_at": eq.captured_at.isoformat() if eq.captured_at else None,
+                        "origin": "django",
+                    }
+                )
+        return JsonResponse({"items": items, "count": len(items)}, status=200)
+
+
 class C0d3rRunView(LoginRequiredMixin, View):
     login_url = "core:index"
     http_method_names = ["post"]
@@ -468,28 +796,55 @@ class C0d3rRunView(LoginRequiredMixin, View):
         prompt = str(payload.get("prompt") or "").strip()
         reset = bool(payload.get("reset"))
         research = bool(payload.get("research"))
-        if not prompt and not reset:
+        session_id = payload.get("session_id")
+        if not session_id and not reset and not prompt:
             return JsonResponse({"detail": "prompt is required"}, status=400)
-        key = f"user:{request.user.id}" if request.user.is_authenticated else f"session:{request.session.session_key}"
-        session = _C0D3R_SESSIONS.get(key)
-        if reset or session is None:
+        if session_id:
+            try:
+                session_obj = C0d3rWebSession.objects.get(id=session_id, user=request.user)
+            except C0d3rWebSession.DoesNotExist:
+                return JsonResponse({"detail": "session not found"}, status=404)
+        else:
+            session_obj = C0d3rWebSession.objects.create(
+                user=request.user,
+                title=f"Session {timezone.now().strftime('%Y-%m-%d %H:%M')}",
+                summary="",
+                key_points=[],
+                last_active=timezone.now(),
+            )
+        session_key = f"user:{request.user.id}:session:{session_obj.id}"
+        session = _C0D3R_SESSIONS.get(session_key)
+        if reset:
+            C0d3rWebMessage.objects.filter(session=session_obj).delete()
+            session_obj.summary = ""
+            session_obj.key_points = []
+            session_obj.last_active = timezone.now()
+            session_obj.save(update_fields=["summary", "key_points", "last_active", "updated_at"])
+            if session_key in _C0D3R_SESSIONS:
+                _C0D3R_SESSIONS.pop(session_key, None)
+            if not prompt:
+                return JsonResponse(
+                    {"output": "Session reset.", "model": "", "session_id": session_obj.id},
+                    status=200,
+                )
+        if session is None:
             settings = c0d3r_default_settings()
-            C0D3R_TRANSCRIPTS.mkdir(parents=True, exist_ok=True)
+            settings["research_report_enabled"] = False
             session = C0d3rSession(
-                session_name=f"c0d3r-web-{request.user.id if request.user.is_authenticated else 'anon'}",
+                session_name=f"c0d3r-web-{request.user.id}-{session_obj.id}",
                 transcript_dir=C0D3R_TRANSCRIPTS,
                 stream_default=False,
                 workdir=ROOT,
+                transcript_enabled=False,
+                event_store_enabled=False,
+                diagnostics_enabled=False,
                 **settings,
             )
-            _C0D3R_SESSIONS[key] = session
-            if reset and not prompt:
-                return JsonResponse(
-                    {"output": "Session reset.", "model": "", "session_name": session.session_name},
-                    status=200,
-                )
+            _C0D3R_SESSIONS[session_key] = session
+        context_chars = _safe_int(os.getenv("C0D3R_WEB_CONTEXT_CHARS", "12000"), 12000, min_value=2000, max_value=20000)
+        system_context = _build_c0d3r_context(session_obj, request=request, prompt=prompt, max_chars=context_chars)
         try:
-            output = session.send(prompt, stream=False, verbose=False, research_override=research)
+            output = session.send(prompt, stream=False, verbose=False, research_override=research, system=system_context)
         except Exception as exc:
             return JsonResponse({"detail": f"c0d3r failed: {exc}"}, status=500)
         model = ""
@@ -497,8 +852,24 @@ class C0d3rRunView(LoginRequiredMixin, View):
             model = session._c0d3r.ensure_model()
         except Exception:
             model = ""
+        C0d3rWebMessage.objects.create(
+            session=session_obj,
+            role="user",
+            content=prompt,
+            metadata={"research": research},
+        )
+        C0d3rWebMessage.objects.create(
+            session=session_obj,
+            role="c0d3r",
+            content=output,
+            model_id=model,
+        )
+        session_obj.model_id = model
+        session_obj.last_active = timezone.now()
+        _update_c0d3r_summary(session_obj, user_text=prompt, assistant_text=output, c0d3r_session=session)
+        session_obj.save(update_fields=["model_id", "last_active", "summary", "key_points", "updated_at"])
         return JsonResponse(
-            {"output": output, "model": model, "session_name": session.session_name},
+            {"output": output, "model": model, "session_id": session_obj.id},
             status=200,
         )
 

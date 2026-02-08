@@ -101,6 +101,20 @@ RPC_URL=https://..." />
       </form>
     </section>
 
+    <section class="panel">
+      <header>
+        <div>
+          <h2>Interface</h2>
+          <p>UI preferences stored locally for this browser.</p>
+        </div>
+      </header>
+      <label class="switch-row">
+        <input type="checkbox" v-model="uiSettings.autoScrollEnabled" @change="saveUiSettings" />
+        <span>Edge hover auto-scroll</span>
+      </label>
+      <p class="caption">Hold the cursor at the very top or bottom for 0.5s to scroll. Move to stop.</p>
+    </section>
+
     <div v-if="showCreate" class="modal-backdrop" @click.self="cancel">
       <div class="modal-card wide">
         <header>
@@ -186,9 +200,11 @@ RPC_URL=https://..." />
 <script setup lang="ts">
 import { reactive, ref, onMounted, computed, watch } from 'vue';
 import { useSecureSettingsStore } from '@/stores/secureSettings';
+import { useUiSettingsStore } from '@/stores/uiSettings';
 import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
 
 const store = useSecureSettingsStore();
+const uiSettings = useUiSettingsStore();
 const showCreate = ref(false);
 const editing = ref<number | null>(null);
 const confirmingClear = ref(false);
@@ -212,6 +228,7 @@ const importForm = reactive({
 
 onMounted(() => {
   refresh();
+  uiSettings.load();
 });
 
 type WizardStep = {
@@ -339,6 +356,10 @@ const groupedSettings = computed(() => {
     items,
   }));
 });
+
+const saveUiSettings = () => {
+  uiSettings.save();
+};
 
 const settingsByName = computed(() => {
   const map = new Map<string, any>();
@@ -601,6 +622,12 @@ function clearWizardStep(step: WizardStep) {
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
+}
+
+.caption {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .form-grid input,

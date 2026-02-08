@@ -359,11 +359,54 @@
       <p v-else-if="store.newsLoading" class="empty">Fetching news…</p>
       <p v-else class="empty">Select tokens and timeframe, then fetch to see headlines.</p>
     </section>
+
+    <section class="panel custom-news-panel">
+      <header>
+        <div>
+          <h2>Custom News Sources</h2>
+          <p>Register URL patterns and let c0d3r validate the extractor when needed.</p>
+        </div>
+        <button type="button" class="btn ghost" @click="loadNewsSources">
+          Refresh
+        </button>
+      </header>
+      <div class="source-grid">
+        <div v-for="src in newsSources" :key="src.id" class="source-card">
+          <div class="meta">{{ src.name }}</div>
+          <p class="muted">{{ src.base_url }}</p>
+          <p v-if="src.last_error" class="error">{{ src.last_error }}</p>
+          <div class="source-actions">
+            <button class="btn ghost" type="button" @click="testNewsSource(src.id)">Test</button>
+            <button class="btn ghost" type="button" @click="runNewsSource(src.id)">Run</button>
+          </div>
+        </div>
+        <div v-if="!newsSources.length" class="empty small">No custom sources yet.</div>
+      </div>
+      <form class="source-form" @submit.prevent="createNewsSource">
+        <input v-model="newSourceName" placeholder="Source name" />
+        <input v-model="newSourceUrl" placeholder="https://news.example.com" />
+        <textarea v-model="newSourceConfig" rows="3" placeholder='{"item_selector":"article","title_selector":"h2","link_selector":"a"}' />
+        <button type="submit" class="btn" :disabled="!newSourceName.trim() || !newSourceUrl.trim()">
+          Add Source
+        </button>
+      </form>
+      <div v-if="newsSourceTestResults.length" class="log-block">
+        <h3>Test Results</h3>
+        <pre>{{ JSON.stringify(newsSourceTestResults, null, 2) }}</pre>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import {
+  fetchDataLabNewsSources,
+  createDataLabNewsSource,
+  testDataLabNewsSource,
+  runDataLabNewsSource,
+  type DataLabNewsSource,
+} from '@/api';
 import { useDataLabStore } from '@/stores/dataLab';
 
 const store = useDataLabStore();
@@ -390,6 +433,11 @@ const defaultStart = new Date(now.getTime() - 6 * 3600 * 1000);
 const newsStart = ref(defaultStart.toISOString().slice(0, 16));
 const newsEnd = ref(now.toISOString().slice(0, 16));
 const newsQuery = ref('');
+const newsSources = ref<DataLabNewsSource[]>([]);
+const newSourceName = ref('');
+const newSourceUrl = ref('');
+const newSourceConfig = ref('');
+const newsSourceTestResults = ref<Record<string, any>[]>([]);
 
 const chains = ['base', 'ethereum', 'arbitrum', 'optimism', 'polygon'];
 type SignalDirection = 'bullish' | 'bearish' | 'all';
@@ -678,12 +726,48 @@ function formatEpoch(value: any) {
   return new Date(num * 1000).toLocaleString();
 }
 
+async function loadNewsSources() {
+  const data = await fetchDataLabNewsSources();
+  newsSources.value = data.items || [];
+}
+
+async function createNewsSource() {
+  let config = {};
+  if (newSourceConfig.value.trim()) {
+    try {
+      config = JSON.parse(newSourceConfig.value);
+    } catch {
+      config = {};
+    }
+  }
+  const data = await createDataLabNewsSource({
+    name: newSourceName.value.trim(),
+    base_url: newSourceUrl.value.trim(),
+    parser_config: config,
+  });
+  newsSources.value = [data.item, ...newsSources.value];
+  newSourceName.value = '';
+  newSourceUrl.value = '';
+  newSourceConfig.value = '';
+}
+
+async function testNewsSource(sourceId: number) {
+  const data = await testDataLabNewsSource(sourceId, { max_items: 6 });
+  newsSourceTestResults.value = data.items || [];
+}
+
+async function runNewsSource(sourceId: number) {
+  await runDataLabNewsSource(sourceId, { max_items: 12 });
+  await loadNewsSources();
+}
+
 onMounted(async () => {
   await refreshDatasets();
   await Promise.all([
     store.refreshJobStatus(),
     refreshSignals(),
     store.refreshWatchlists(),
+    loadNewsSources(),
   ]);
 });
 
@@ -774,6 +858,39 @@ watch(
   margin-top: 1.2rem;
   max-height: 240px;
   overflow: auto;
+}
+
+.custom-news-panel .source-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.custom-news-panel .source-card {
+  background: rgba(8, 14, 24, 0.7);
+  border: 1px solid rgba(127, 176, 255, 0.2);
+  padding: 0.8rem;
+}
+
+.custom-news-panel .source-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.custom-news-panel .source-form {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 520px;
+}
+
+.custom-news-panel textarea,
+.custom-news-panel input {
+  background: rgba(6, 12, 22, 0.9);
+  border: 1px solid rgba(127, 176, 255, 0.25);
+  color: inherit;
+  padding: 0.6rem 0.75rem;
 }
 
 .log-block pre {

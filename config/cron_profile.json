@@ -1,0 +1,60 @@
+{
+  "discovery": {
+    "also_add_to_ghost": true,
+    "chains": [
+      "base",
+      "ethereum",
+      "arbitrum",
+      "optimism",
+      "polygon"
+    ],
+    "limit": 40,
+    "max_age_hours": 36,
+    "max_tokens": 25,
+    "min_change_1h": -5,
+    "min_change_24h": -30,
+    "min_liquidity_usd": 25000,
+    "min_volume_usd": 50000,
+    "watchlist_target": "stream"
+  },
+  "downloads": {
+    "chains": [
+      "base",
+      "ethereum",
+      "arbitrum",
+      "optimism",
+      "polygon"
+    ],
+    "max_pairs": 256
+  },
+  "enabled": true,
+  "max_concurrent_tasks": 1,
+  "news": {
+    "lookback_hours": 72,
+    "max_pages": 2,
+    "max_tokens": 8
+  },
+  "profile_version": 1,
+  "tasks": [
+    {
+      "enabled": true,
+      "id": "weekly_bootstrap",
+      "interval_minutes": 10080,
+      "jitter_seconds": 300,
+      "label": "Weekly bootstrap",
+      "requires_mnemonic": false,
+      "steps": [
+        "discovery",
+        "watchlists",
+        "downloads",
+        "news",
+        "training"
+      ]
+    }
+  ],
+  "training": {
+    "batch_size": 16,
+    "enabled": true,
+    "epochs": 1
+  }
+}

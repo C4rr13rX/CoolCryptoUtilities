@@ -168,6 +168,10 @@ def c0d3r_default_settings() -> dict[str, Any]:
         "rigorous_mode": _env_bool("C0D3R_RIGOROUS_MODE", False),
         "rigorous_routes_path": os.getenv("C0D3R_RIGOROUS_ROUTES", "config/c0d3r_rigorous_routes.json"),
         "math_grounding": _env_bool("C0D3R_MATH_GROUNDING", True),
+        "transcript_enabled": _env_bool("C0D3R_TRANSCRIPT_ENABLED", True),
+        "event_store_enabled": _env_bool("C0D3R_EVENT_STORE_ENABLED", True),
+        "diagnostics_enabled": _env_bool("C0D3R_DIAGNOSTICS_ENABLED", True),
+        "research_report_enabled": _env_bool("C0D3R_RESEARCH_REPORT_ENABLED", True),
     }
     settings = _apply_file_config(settings)
     return settings
@@ -356,6 +360,7 @@ class C0d3r:
         self.rigorous_mode = bool(settings.get("rigorous_mode"))
         self.rigorous_routes_path = settings.get("rigorous_routes_path") or "config/c0d3r_rigorous_routes.json"
         self._rigorous_routes = self._load_rigorous_routes(self.rigorous_routes_path)
+        self.write_research_report = bool(settings.get("research_report_enabled", True))
         self.stream_callback: Optional[Callable[[str], None]] = None
         effort = str(settings.get("reasoning_effort") or "").strip().lower()
         if effort in {"extra_high", "xhigh", "xh"}:
@@ -1147,7 +1152,8 @@ class C0d3r:
                             continue
                         _emit_bedrock_live(f"research: fetched {res.url} ({elapsed:.1f}s)")
                         snippets.append(f"- {res.title} ({res.url})\n  {text[:800]}")
-            self._write_research_report(query, snippets)
+            if self.write_research_report:
+                self._write_research_report(query, snippets)
             return "\n".join(snippets)
         except Exception:
             return ""
@@ -1222,6 +1228,9 @@ class C0d3rSession:
         stream_default: bool = True,
         verbose_default: bool = False,
         workdir: str | Path | None = None,
+        transcript_enabled: bool = True,
+        event_store_enabled: bool = True,
+        diagnostics_enabled: bool = True,
         **settings: Any,
     ) -> None:
         self.session_name = session_name
@@ -1230,10 +1239,15 @@ class C0d3rSession:
         self.verbose_default = verbose_default
         self.workdir = Path(workdir).resolve() if workdir else None
         self._stream_callback: Optional[Callable[[str], None]] = None
+        self.transcript_enabled = bool(transcript_enabled)
+        self.event_store_enabled = bool(event_store_enabled)
+        self.diagnostics_enabled = bool(diagnostics_enabled)
 
         self.transcript_dir = Path(transcript_dir)
-        self.transcript_dir.mkdir(parents=True, exist_ok=True)
-        self.transcript_path = self.transcript_dir / f"{session_name}.log"
+        self.transcript_path = None
+        if self.transcript_enabled:
+            self.transcript_dir.mkdir(parents=True, exist_ok=True)
+            self.transcript_path = self.transcript_dir / f"{session_name}.log"
 
         defaults = c0d3r_default_settings()
         merged = {**defaults, **settings}
@@ -1242,10 +1256,13 @@ class C0d3rSession:
             self.stream_default = bool(merged.get("stream_default"))
         self.settings = merged
         self._c0d3r = C0d3r(merged)
-        self._store = SessionStore(default_session_config(), profile=merged.get("profile"))
-        self.session_id = self._store.next_session_id()
-        self._store.update_next_session_id(self.session_id + 1)
-        self._log_event("session_start", {"session_name": self.session_name})
+        self._store = None
+        self.session_id = 0
+        if self.event_store_enabled:
+            self._store = SessionStore(default_session_config(), profile=merged.get("profile"))
+            self.session_id = self._store.next_session_id()
+            self._store.update_next_session_id(self.session_id + 1)
+            self._log_event("session_start", {"session_name": self.session_name})
 
     def send(
         self,
@@ -1261,11 +1278,14 @@ class C0d3rSession:
         research_override: Optional[bool] = None,
     ) -> str:
         diag_path = Path("runtime/c0d3r/diagnostics.log")
-        try:
-            diag_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
+        if self.diagnostics_enabled:
+            try:
+                diag_path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
         def _diag(msg: str) -> None:
+            if not self.diagnostics_enabled:
+                return
             try:
                 ts = time.strftime("%Y-%m-%d %H:%M:%S")
                 with diag_path.open("a", encoding="utf-8") as fh:
@@ -1324,14 +1344,15 @@ class C0d3rSession:
         try:
             return self.send(*args, **kwargs)
         except Exception as exc:
-            try:
-                diag_path = Path("runtime/c0d3r/diagnostics.log")
-                diag_path.parent.mkdir(parents=True, exist_ok=True)
-                ts = time.strftime("%Y-%m-%d %H:%M:%S")
-                with diag_path.open("a", encoding="utf-8") as fh:
-                    fh.write(f"[{ts}] send:error {exc}\n")
-            except Exception:
-                pass
+            if self.diagnostics_enabled:
+                try:
+                    diag_path = Path("runtime/c0d3r/diagnostics.log")
+                    diag_path.parent.mkdir(parents=True, exist_ok=True)
+                    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                    with diag_path.open("a", encoding="utf-8") as fh:
+                        fh.write(f"[{ts}] send:error {exc}\n")
+                except Exception:
+                    pass
             raise
 
     def get_model_id(self) -> str:
@@ -1341,6 +1362,8 @@ class C0d3rSession:
             return self.settings.get("model") or ""
 
     def _append_transcript(self, prompt: str, response: str) -> None:
+        if not self.transcript_enabled or not self.transcript_path:
+            return
         divider = "=" * 80
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         with self.transcript_path.open("a", encoding="utf-8") as fh:
@@ -1350,6 +1373,8 @@ class C0d3rSession:
             )
 
     def _log_event(self, event_type: str, payload: dict) -> None:
+        if not self.event_store_enabled or not self._store:
+            return
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         record = {
             "timestamp": ts,

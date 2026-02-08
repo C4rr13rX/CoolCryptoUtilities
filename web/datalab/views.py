@@ -9,7 +9,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from discovery.models import DiscoveredToken, HoneypotCheck
+from datalab.models import NewsSource, NewsSourceArticle
+from django.utils import timezone
 from services.data_lab import fetch_news, get_runner, list_datasets
+from services.custom_news_sources import fetch_source_articles
 from services.signal_scanner import WINDOW_OPTIONS, scan_price_signals
 from services.watchlists import load_watchlists, mutate_watchlist
 
@@ -189,3 +192,102 @@ class WatchlistView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"watchlists": updated}, status=status.HTTP_200_OK)
+
+
+class NewsSourceListView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        sources = NewsSource.objects.order_by("-updated_at")
+        payload = [
+            {
+                "id": src.id,
+                "name": src.name,
+                "base_url": src.base_url,
+                "active": src.active,
+                "parser_config": src.parser_config or {},
+                "last_error": src.last_error or "",
+                "last_run_at": src.last_run_at.isoformat() if src.last_run_at else None,
+                "updated_at": src.updated_at.isoformat() if src.updated_at else None,
+            }
+            for src in sources
+        ]
+        return Response({"items": payload, "count": len(payload)}, status=status.HTTP_200_OK)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        payload = request.data or {}
+        name = str(payload.get("name") or "").strip()
+        base_url = str(payload.get("base_url") or "").strip()
+        if not name or not base_url:
+            return Response({"detail": "name and base_url are required"}, status=status.HTTP_400_BAD_REQUEST)
+        source = NewsSource.objects.create(
+            name=name,
+            base_url=base_url,
+            active=bool(payload.get("active", True)),
+            parser_config=payload.get("parser_config") or {},
+        )
+        return Response(
+            {
+                "item": {
+                    "id": source.id,
+                    "name": source.name,
+                    "base_url": source.base_url,
+                    "active": source.active,
+                    "parser_config": source.parser_config or {},
+                }
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class NewsSourceTestView(APIView):
+    def post(self, request: Request, source_id: int, *args, **kwargs) -> Response:
+        try:
+            source = NewsSource.objects.get(id=source_id)
+        except NewsSource.DoesNotExist:
+            return Response({"detail": "source not found"}, status=status.HTTP_404_NOT_FOUND)
+        payload = request.data or {}
+        max_items = int(payload.get("max_items", 6))
+        try:
+            items = fetch_source_articles(
+                source.base_url,
+                config=source.parser_config or {},
+                max_items=max_items,
+            )
+        except Exception as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"items": items, "count": len(items)}, status=status.HTTP_200_OK)
+
+
+class NewsSourceRunView(APIView):
+    def post(self, request: Request, source_id: int, *args, **kwargs) -> Response:
+        try:
+            source = NewsSource.objects.get(id=source_id)
+        except NewsSource.DoesNotExist:
+            return Response({"detail": "source not found"}, status=status.HTTP_404_NOT_FOUND)
+        payload = request.data or {}
+        max_items = int(payload.get("max_items", 12))
+        try:
+            items = fetch_source_articles(
+                source.base_url,
+                config=source.parser_config or {},
+                max_items=max_items,
+            )
+        except Exception as exc:
+            source.last_error = str(exc)
+            source.last_run_at = timezone.now()
+            source.save(update_fields=["last_error", "last_run_at", "updated_at"])
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        created = 0
+        for item in items:
+            NewsSourceArticle.objects.create(
+                source=source,
+                title=item.get("title") or "",
+                url=item.get("url") or "",
+                summary=item.get("summary") or "",
+                content=item.get("summary") or "",
+                metadata=item,
+            )
+            created += 1
+        source.last_error = ""
+        source.last_run_at = timezone.now()
+        source.save(update_fields=["last_error", "last_run_at", "updated_at"])
+        return Response({"saved": created, "count": len(items)}, status=status.HTTP_200_OK)

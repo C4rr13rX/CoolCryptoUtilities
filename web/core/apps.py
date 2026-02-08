@@ -16,6 +16,7 @@ class CoreConfig(AppConfig):
     verbose_name = "Dashboard Core"
     _guardian_started = False
     _streams_started = False
+    _cron_started = False
 
     def ready(self):
         if getattr(settings, "TESTING", False):
@@ -51,3 +52,21 @@ class CoreConfig(AppConfig):
                 CoreConfig._streams_started = True
             except Exception:
                 pass
+
+        if os.environ.get("CRON_AUTO_DISABLED") == "1":
+            return
+        if CoreConfig._cron_started:
+            return
+        CoreConfig._cron_started = True
+
+        def _cron_bootstrap():
+            try:
+                while not apps.ready:
+                    time.sleep(0.05)
+                from services.internal_cron import cron_supervisor
+
+                cron_supervisor.ensure_running()
+            except Exception:
+                CoreConfig._cron_started = False
+
+        threading.Thread(target=_cron_bootstrap, name="cron-bootstrap", daemon=True).start()

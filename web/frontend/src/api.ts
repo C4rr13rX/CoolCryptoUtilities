@@ -205,6 +205,37 @@ export async function fetchDataLabNews(payload: DataLabNewsPayload) {
   return data;
 }
 
+export interface DataLabNewsSource {
+  id: number;
+  name: string;
+  base_url: string;
+  active?: boolean;
+  parser_config?: Record<string, any>;
+  last_error?: string;
+  last_run_at?: string | null;
+  updated_at?: string | null;
+}
+
+export async function fetchDataLabNewsSources() {
+  const { data } = await api.get('/datalab/news/sources/');
+  return data as { items: DataLabNewsSource[]; count: number };
+}
+
+export async function createDataLabNewsSource(payload: Partial<DataLabNewsSource>) {
+  const { data } = await api.post('/datalab/news/sources/', payload);
+  return data as { item: DataLabNewsSource };
+}
+
+export async function testDataLabNewsSource(sourceId: number, payload?: { max_items?: number }) {
+  const { data } = await api.post(`/datalab/news/sources/${sourceId}/test/`, payload || {});
+  return data as { items: Array<Record<string, any>>; count: number };
+}
+
+export async function runDataLabNewsSource(sourceId: number, payload?: { max_items?: number }) {
+  const { data } = await api.post(`/datalab/news/sources/${sourceId}/run/`, payload || {});
+  return data as { saved: number; count: number };
+}
+
 export interface GuardianSettingsPayload {
   enabled?: boolean;
   default_prompt?: string;
@@ -228,6 +259,28 @@ export async function runGuardianJob(payload: { prompt?: string; save_default?: 
 
 export async function fetchGuardianLogs(limit = 200) {
   const { data } = await api.get('/guardian/logs/', { params: { limit } });
+  return data;
+}
+
+export async function fetchCronStatus() {
+  const { data } = await api.get('/cron/status/');
+  return data;
+}
+
+export async function updateCronProfile(profile: Record<string, any>) {
+  const { data } = await api.post('/cron/settings/', { profile });
+  return data;
+}
+
+export async function setCronEnabled(enabled: boolean) {
+  const { data } = await api.post('/cron/settings/', { enabled });
+  return data;
+}
+
+export async function runCronTask(task_id?: string) {
+  const payload: Record<string, any> = {};
+  if (task_id) payload.task_id = task_id;
+  const { data } = await api.post('/cron/run/', payload);
   return data;
 }
 
@@ -383,9 +436,60 @@ export async function deleteAddressBookEntry(id: number) {
 }
 
 // ----------------------------- C0D3R ----------------------------------------
-export async function runC0d3rPrompt(payload: { prompt: string; research?: boolean; reset?: boolean }) {
+export interface C0d3rSessionSummary {
+  id: number;
+  title: string;
+  summary: string;
+  key_points: string[];
+  model_id?: string;
+  last_active?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  message_count?: number | null;
+}
+
+export interface C0d3rMessage {
+  id: number;
+  role: 'user' | 'c0d3r' | 'assistant' | string;
+  content: string;
+  model_id?: string;
+  created_at?: string | null;
+  metadata?: Record<string, any>;
+}
+
+export async function fetchC0d3rSessions() {
+  const { data } = await api.get('/c0d3r/sessions/');
+  return data as { items: C0d3rSessionSummary[]; count: number };
+}
+
+export async function createC0d3rSession(title?: string) {
+  const { data } = await api.post('/c0d3r/sessions/', { title });
+  return data as { item: C0d3rSessionSummary };
+}
+
+export async function updateC0d3rSession(sessionId: number, payload: { title?: string; metadata?: Record<string, any> }) {
+  const { data } = await api.post(`/c0d3r/sessions/${sessionId}/`, payload);
+  return data as { item: C0d3rSessionSummary };
+}
+
+export async function deleteC0d3rSession(sessionId: number) {
+  const { data } = await api.delete(`/c0d3r/sessions/${sessionId}/`);
+  return data as { deleted: boolean };
+}
+
+export async function fetchC0d3rMessages(sessionId: number, params?: { limit?: number; before?: string; q?: string }) {
+  const { data } = await api.get(`/c0d3r/sessions/${sessionId}/messages/`, { params });
+  return data as { items: C0d3rMessage[]; count: number };
+}
+
+export async function runC0d3rPrompt(payload: {
+  prompt: string;
+  research?: boolean;
+  reset?: boolean;
+  session_id?: number;
+}) {
   const { data } = await api.post('/c0d3r/run/', payload, { timeout: 120000 });
-  return data as { output: string; model?: string; session_name?: string };
+  return data as { output: string; model?: string; session_id?: number };
 }
 
 export async function fetchIntegrations() {
@@ -422,6 +526,11 @@ export async function fetchCodeGraphFiles() {
 export async function uploadCodeGraphSnapshot(payload: { timestamp: string; node_id: string; image: string }) {
   const { data } = await api.post('/codegraph/snapshots/', payload);
   return data;
+}
+
+export async function searchEquationGraph(query: string, limit = 20) {
+  const { data } = await api.get('/graph/equations/', { params: { q: query, limit } });
+  return data as { items: Array<Record<string, any>>; count: number };
 }
 
 // ----------------------------- BrandDozer ------------------------------------
@@ -674,4 +783,138 @@ export async function fetchDataLabWatchlists() {
 export async function updateDataLabWatchlist(payload: DataLabWatchlistUpdatePayload) {
   const { data } = await api.post('/datalab/watchlists/', payload);
   return data;
+}
+
+// ----------------------------- Investigations -------------------------------
+export interface InvestigationProject {
+  id: number;
+  name: string;
+  description?: string;
+  status?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface InvestigationTarget {
+  id: number;
+  url: string;
+  requires_login?: boolean;
+  login_url?: string;
+  notes?: string;
+  crawl_policy?: Record<string, any>;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface InvestigationEvidence {
+  id: number;
+  url: string;
+  title?: string;
+  content?: string;
+  metadata?: Record<string, any>;
+  captured_at?: string | null;
+}
+
+export interface InvestigationArticle {
+  id: number;
+  title: string;
+  status?: string;
+  body?: string;
+  updated_at?: string | null;
+}
+
+export interface InvestigationEntity {
+  id: number;
+  kind: string;
+  name: string;
+  aliases?: string[];
+  metadata?: Record<string, any>;
+}
+
+export interface InvestigationRelation {
+  id: number;
+  source: string;
+  target: string;
+  relation_type: string;
+  notes?: string;
+}
+
+export async function fetchInvestigationProjects() {
+  const { data } = await api.get('/investigations/projects/');
+  return data as { items: InvestigationProject[]; count: number };
+}
+
+export async function createInvestigationProject(payload: { name: string; description?: string; status?: string }) {
+  const { data } = await api.post('/investigations/projects/', payload);
+  return data as { item: InvestigationProject };
+}
+
+export async function updateInvestigationProject(projectId: number, payload: Partial<InvestigationProject>) {
+  const { data } = await api.patch(`/investigations/projects/${projectId}/`, payload);
+  return data as { item: InvestigationProject };
+}
+
+export async function deleteInvestigationProject(projectId: number) {
+  const { data } = await api.delete(`/investigations/projects/${projectId}/`);
+  return data as { deleted: boolean };
+}
+
+export async function fetchInvestigationTargets(projectId: number) {
+  const { data } = await api.get(`/investigations/projects/${projectId}/targets/`);
+  return data as { items: InvestigationTarget[]; count: number };
+}
+
+export async function createInvestigationTarget(projectId: number, payload: Partial<InvestigationTarget>) {
+  const { data } = await api.post(`/investigations/projects/${projectId}/targets/`, payload);
+  return data as { item: InvestigationTarget };
+}
+
+export async function crawlInvestigationTarget(targetId: number, payload?: { policy?: Record<string, any> }) {
+  const { data } = await api.post(`/investigations/targets/${targetId}/crawl/`, payload || {});
+  return data as { saved: number; pages: number };
+}
+
+export async function fetchInvestigationEvidence(projectId: number, limit = 50) {
+  const { data } = await api.get(`/investigations/projects/${projectId}/evidence/`, { params: { limit } });
+  return data as { items: InvestigationEvidence[]; count: number };
+}
+
+export async function fetchInvestigationArticles(projectId: number) {
+  const { data } = await api.get(`/investigations/projects/${projectId}/articles/`);
+  return data as { items: InvestigationArticle[]; count: number };
+}
+
+export async function createInvestigationArticle(projectId: number, payload: Partial<InvestigationArticle>) {
+  const { data } = await api.post(`/investigations/projects/${projectId}/articles/`, payload);
+  return data as { item: InvestigationArticle };
+}
+
+export async function fetchInvestigationArticle(articleId: number) {
+  const { data } = await api.get(`/investigations/articles/${articleId}/`);
+  return data as { item: InvestigationArticle };
+}
+
+export async function updateInvestigationArticle(articleId: number, payload: Partial<InvestigationArticle>) {
+  const { data } = await api.patch(`/investigations/articles/${articleId}/`, payload);
+  return data as { item: InvestigationArticle };
+}
+
+export async function fetchInvestigationEntities(projectId: number) {
+  const { data } = await api.get(`/investigations/projects/${projectId}/entities/`);
+  return data as { items: InvestigationEntity[]; count: number };
+}
+
+export async function createInvestigationEntity(projectId: number, payload: Partial<InvestigationEntity>) {
+  const { data } = await api.post(`/investigations/projects/${projectId}/entities/`, payload);
+  return data as { item: InvestigationEntity };
+}
+
+export async function fetchInvestigationRelations(projectId: number) {
+  const { data } = await api.get(`/investigations/projects/${projectId}/relations/`);
+  return data as { items: InvestigationRelation[]; count: number };
+}
+
+export async function createInvestigationRelation(projectId: number, payload: { source_id: number; target_id: number; relation_type?: string; notes?: string }) {
+  const { data } = await api.post(`/investigations/projects/${projectId}/relations/`, payload);
+  return data as { item: InvestigationRelation };
 }
