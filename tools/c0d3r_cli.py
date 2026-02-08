@@ -730,6 +730,8 @@ def main(argv: List[str] | None = None) -> int:
     os.environ.setdefault("C0D3R_BEDROCK_LIVE", "1")
     os.environ.setdefault("C0D3R_BEDROCK_STREAM", "1")
     os.environ.setdefault("C0D3R_AUTO_CONTEXT_COMMANDS", "0")
+    if os.getenv("C0D3R_DB_USER") or os.getenv("C0D3R_DB_USER_ID"):
+        os.environ.setdefault("C0D3R_DB_SYNC", "1")
     from services.env_loader import EnvLoader
     from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
     from services.agent_workspace import run_command

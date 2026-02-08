@@ -172,17 +172,28 @@ const loadMessages = async () => {
   }
 };
 
-const createSession = async () => {
+const createSession = async (preserveMessages = false) => {
   loadingSessions.value = true;
   try {
     const data = await createC0d3rSession();
     const item = data.item;
     sessions.value = [item, ...sessions.value];
     activeSessionId.value = item.id;
-    messages.value = [];
+    if (!preserveMessages) {
+      messages.value = [];
+    }
   } finally {
     loadingSessions.value = false;
   }
+};
+
+const runPrompt = async (text: string, sessionId?: number | null) => {
+  const result = await runC0d3rPrompt({
+    prompt: text,
+    research: research.value,
+    session_id: sessionId || undefined
+  });
+  return result;
 };
 
 const submit = async () => {
@@ -193,11 +204,7 @@ const submit = async () => {
   prompt.value = '';
   sending.value = true;
   try {
-    const result = await runC0d3rPrompt({
-      prompt: text,
-      research: research.value,
-      session_id: activeSessionId.value || undefined
-    });
+    let result = await runPrompt(text, activeSessionId.value);
     if (result.model) modelLabel.value = result.model;
     if (result.session_id && !activeSessionId.value) {
       activeSessionId.value = result.session_id;
@@ -211,6 +218,28 @@ const submit = async () => {
     await scrollToBottom();
     await loadSessions();
   } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      try {
+        await createSession(true);
+        const retry = await runPrompt(text, activeSessionId.value);
+        if (retry.model) modelLabel.value = retry.model;
+        messages.value.push({
+          id: `${Date.now()}-a`,
+          role: 'c0d3r',
+          text: retry.output || '(no response)',
+          time: nowStamp(),
+        });
+        await scrollToBottom();
+        await loadSessions();
+        return;
+      } catch (retryErr: any) {
+        error.value = retryErr?.message || 'Unable to reach c0d3r.';
+        return;
+      } finally {
+        sending.value = false;
+      }
+    }
     error.value = err?.message || 'Unable to reach c0d3r.';
   } finally {
     sending.value = false;

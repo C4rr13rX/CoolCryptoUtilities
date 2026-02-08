@@ -1231,6 +1231,7 @@ class C0d3rSession:
         transcript_enabled: bool = True,
         event_store_enabled: bool = True,
         diagnostics_enabled: bool = True,
+        db_sync_enabled: bool | None = None,
         **settings: Any,
     ) -> None:
         self.session_name = session_name
@@ -1242,6 +1243,10 @@ class C0d3rSession:
         self.transcript_enabled = bool(transcript_enabled)
         self.event_store_enabled = bool(event_store_enabled)
         self.diagnostics_enabled = bool(diagnostics_enabled)
+        if db_sync_enabled is None:
+            raw_sync = os.getenv("C0D3R_DB_SYNC", "0").strip().lower()
+            db_sync_enabled = raw_sync in {"1", "true", "yes", "on"}
+        self.db_sync_enabled = bool(db_sync_enabled)
 
         self.transcript_dir = Path(transcript_dir)
         self.transcript_path = None
@@ -1324,6 +1329,7 @@ class C0d3rSession:
         _diag(f"send:response_len={len(output or '')}")
         self._log_event("response", {"response": output})
         self._append_transcript(prompt, output)
+        self._sync_db(prompt, output, research_override=research_override)
         if os.getenv("C0D3R_VERBOSE_MODEL_OUTPUT", "0").strip().lower() in {"1", "true", "yes", "on"}:
             try:
                 print("\n[model raw]\n", end="", flush=True)
@@ -1338,6 +1344,26 @@ class C0d3rSession:
             self._stream_output(output)
         self._stream_callback = prev_callback
         return output
+
+    def _sync_db(self, prompt: str, response: str, *, research_override: Optional[bool]) -> None:
+        if not self.db_sync_enabled:
+            return
+        try:
+            from services.c0d3r_db_sync import sync_cli_exchange
+        except Exception:
+            return
+        try:
+            sync_cli_exchange(
+                session_name=self.session_name,
+                session_id=self.session_id,
+                prompt=prompt,
+                response=response,
+                model_id=self.get_model_id(),
+                research=research_override,
+                workdir=str(self.workdir) if self.workdir else None,
+            )
+        except Exception:
+            return
         
         
     def _safe_send(self, *args, **kwargs) -> str:

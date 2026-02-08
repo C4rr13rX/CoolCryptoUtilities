@@ -812,7 +812,12 @@ class C0d3rRunView(LoginRequiredMixin, View):
                 key_points=[],
                 last_active=timezone.now(),
             )
-        session_key = f"user:{request.user.id}:session:{session_obj.id}"
+        session_name = f"c0d3r-web-{request.user.id}-{session_obj.id}"
+        if isinstance(session_obj.metadata, dict):
+            cli_name = session_obj.metadata.get("cli_session_name")
+            if isinstance(cli_name, str) and cli_name.strip():
+                session_name = cli_name.strip()
+        session_key = f"user:{request.user.id}:session:{session_name}"
         session = _C0D3R_SESSIONS.get(session_key)
         if reset:
             C0d3rWebMessage.objects.filter(session=session_obj).delete()
@@ -832,14 +837,18 @@ class C0d3rRunView(LoginRequiredMixin, View):
             settings["research_report_enabled"] = False
             for key in ("stream_default", "transcript_enabled", "event_store_enabled", "diagnostics_enabled"):
                 settings.pop(key, None)
+            transcript_dir = C0D3R_TRANSCRIPTS
+            if isinstance(session_obj.metadata, dict) and session_obj.metadata.get("cli_session_name"):
+                transcript_dir = Path("runtime/c0d3r/transcripts")
             session = C0d3rSession(
-                session_name=f"c0d3r-web-{request.user.id}-{session_obj.id}",
-                transcript_dir=C0D3R_TRANSCRIPTS,
+                session_name=session_name,
+                transcript_dir=transcript_dir,
                 stream_default=False,
                 workdir=ROOT,
                 transcript_enabled=False,
                 event_store_enabled=False,
                 diagnostics_enabled=False,
+                db_sync_enabled=False,
                 **settings,
             )
             _C0D3R_SESSIONS[session_key] = session
