@@ -7,11 +7,14 @@ import sys
 import time
 from typing import Any, Dict
 
-from router_wallet import CHAINS, UltraSwapBridge
+from web3 import Web3
+from router_wallet import CHAINS, UltraSwapBridge, POA_MIDDLEWARE, ERC20_ABI
 from cache import CacheBalances, CacheTransfers
 from services.env_loader import EnvLoader
 from services.wallet_actions import WALLET_ACTIONS
 from services.wallet_state import capture_wallet_state
+from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
+from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for, wei_to_eth
 
 try:
     from services.process_names import set_process_name
@@ -47,6 +50,211 @@ def _bridge_available(bridge: UltraSwapBridge | None) -> bool:
         return True
     print("[wallet] signing bridge unavailable; set MNEMONIC or PRIVATE_KEY.")
     return False
+
+
+def _readonly_w3(chain: str) -> Web3:
+    chain_l = (chain or "").strip().lower()
+    cfg = CHAINS.get(chain_l)
+    if not cfg:
+        raise ValueError(f"Unsupported chain '{chain}'.")
+    urls = [u for u in (cfg.get("rpcs") or []) if u]
+    last_err = None
+    for url in urls:
+        try:
+            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 12}))
+            if not w3.is_connected():
+                continue
+            if cfg.get("poa") and POA_MIDDLEWARE:
+                w3.middleware_onion.inject(POA_MIDDLEWARE, layer=0)
+            # Touch chain_id to ensure RPC is responsive
+            _ = int(w3.eth.chain_id)
+            return w3
+        except Exception as exc:
+            last_err = exc
+            continue
+    raise RuntimeError(f"No RPC reachable for {chain_l}. Last error: {last_err}")
+
+
+def _resolve_from_address(payload: Dict[str, Any], bridge: UltraSwapBridge | None) -> str | None:
+    addr = str(payload.get("from_address") or "").strip()
+    if addr:
+        return addr
+    if bridge is not None:
+        try:
+            return bridge.get_address()
+        except Exception:
+            return None
+    return None
+
+
+def _token_decimals(w3: Web3, token: str) -> int:
+    if is_native(token):
+        return 18
+    try:
+        contract = w3.eth.contract(address=w3.to_checksum_address(token), abi=ERC20_ABI)
+        return int(contract.functions.decimals().call())
+    except Exception:
+        return 18
+
+
+def _wallet_diagnostics():
+    results = {
+        "secrets_present": bool(os.getenv("MNEMONIC") or os.getenv("PRIVATE_KEY")),
+        "zerox_key": bool(os.getenv("ZEROX_API_KEY")),
+        "lifi_key": bool(os.getenv("LIFI_API_KEY")),
+        "oneinch_key": bool(os.getenv("ONEINCH_API_KEY")),
+        "alchemy_key": bool(os.getenv("ALCHEMY_API_KEY")),
+        "rpc": {},
+    }
+    for chain in CHAINS.keys():
+        try:
+            w3 = _readonly_w3(chain)
+            results["rpc"][chain] = {
+                "ok": True,
+                "chain_id": int(w3.eth.chain_id),
+            }
+        except Exception as exc:
+            results["rpc"][chain] = {"ok": False, "error": str(exc)}
+    print(json.dumps(results, indent=2))
+
+
+def _send_estimate(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
+    chain = _normalize_chain(payload.get("chain", ""))
+    token = str(payload.get("token") or "").strip()
+    to_addr = str(payload.get("to") or "").strip()
+    amount = str(payload.get("amount") or "").strip()
+    if not token or not to_addr or not amount:
+        raise ValueError("chain, token, to, and amount are required for send_estimate.")
+    from_addr = _resolve_from_address(payload, bridge)
+    if not from_addr:
+        raise ValueError("from_address is required for send_estimate when no wallet secret is set.")
+    w3 = _readonly_w3(chain)
+    from_cs = w3.to_checksum_address(from_addr)
+    to_cs = w3.to_checksum_address(to_addr)
+    if is_native(token):
+        value = int(to_base_units(amount, 18))
+        gas = w3.eth.estimate_gas({"from": from_cs, "to": to_cs, "value": value, "data": "0x"})
+    else:
+        dec = _token_decimals(w3, token)
+        value = int(to_base_units(amount, dec))
+        token_cs = w3.to_checksum_address(token)
+        contract = w3.eth.contract(address=token_cs, abi=ERC20_ABI)
+        data = contract.encode_abi("transfer", args=[to_cs, value])
+        gas = w3.eth.estimate_gas({"from": from_cs, "to": token_cs, "data": data, "value": 0})
+    gas_price = int(getattr(w3.eth, "gas_price", 0) or 0)
+    fee_wei = int(gas) * int(gas_price)
+    print(
+        json.dumps(
+            {
+                "chain": chain,
+                "from": from_cs,
+                "to": to_cs,
+                "token": token,
+                "amount": amount,
+                "gas_estimate": int(gas),
+                "gas_price_wei": gas_price,
+                "fee_estimate_eth": wei_to_eth(fee_wei),
+            },
+            indent=2,
+        )
+    )
+
+
+def _swap_quote(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
+    chain = _normalize_chain(payload.get("chain", ""))
+    sell = str(payload.get("sell_token") or "").strip()
+    buy = str(payload.get("buy_token") or "").strip()
+    amount = str(payload.get("amount") or "").strip()
+    if not sell or not buy or not amount:
+        raise ValueError("chain, sell_token, buy_token, and amount are required for swap_quote.")
+    slippage_bps = int(payload.get("slippage_bps") or 100)
+    from_addr = _resolve_from_address(payload, bridge)
+    if not from_addr:
+        raise ValueError("from_address is required for swap_quote when no wallet secret is set.")
+    w3 = _readonly_w3(chain)
+    taker = w3.to_checksum_address(from_addr)
+    dec = _token_decimals(w3, sell)
+    sell_raw = int(to_base_units(amount, dec))
+    if sell_raw <= 0:
+        raise ValueError("amount must be > 0")
+
+    # Prefer 0x v2 if key is present
+    try:
+        zx = ZeroXV2AllowanceHolder()
+        q0 = zx.quote(
+            chain_id=int(w3.eth.chain_id),
+            sell_token=normalize_for_0x(sell),
+            buy_token=normalize_for_0x(buy),
+            sell_amount=sell_raw,
+            taker=taker,
+            slippage_bps=slippage_bps,
+        )
+        print(json.dumps({"provider": "0x-v2", "quote": q0}, indent=2))
+        return
+    except Exception as exc:
+        print(f"[swap_quote] 0x failed: {exc}")
+
+    # Fallback to local routers (no keys) if supported.
+    uni = UniswapV3Local(lambda ch: _readonly_w3(ch))
+    camelot = CamelotV2Local(lambda ch: _readonly_w3(ch))
+    sushi = SushiV2Local(lambda ch: _readonly_w3(ch))
+    for name, provider in (
+        ("UniswapV3", uni),
+        ("CamelotV2", camelot),
+        ("SushiV2", sushi),
+    ):
+        try:
+            q = provider.quote_and_build(chain, sell, buy, sell_raw, slippage_bps=slippage_bps, recipient=taker)
+            if "__error__" in (q or {}):
+                print(f"[swap_quote] {name} unavailable: {q['__error__']}")
+                continue
+            print(json.dumps({"provider": name, "quote": q}, indent=2))
+            return
+        except Exception as exc:
+            print(f"[swap_quote] {name} failed: {exc}")
+    print("[swap_quote] No quote providers available for this chain/token pair.")
+
+
+def _bridge_quote(payload: Dict[str, Any], bridge: UltraSwapBridge | None):
+    from_chain = _normalize_chain(payload.get("source_chain", ""))
+    to_chain = _normalize_chain(payload.get("destination_chain", ""))
+    token = str(payload.get("token") or "").strip()
+    amount = str(payload.get("amount") or "").strip()
+    dst_token = str(payload.get("destination_token") or "").strip() or token
+    slippage_bps = int(payload.get("slippage_bps") or 100)
+    if not token or not amount:
+        raise ValueError("token and amount are required for bridge_quote.")
+    from_addr = _resolve_from_address(payload, bridge)
+    if not from_addr:
+        raise ValueError("from_address is required for bridge_quote when no wallet secret is set.")
+
+    w3 = _readonly_w3(from_chain)
+    dec = _token_decimals(w3, token)
+    amount_raw = int(to_base_units(amount, dec))
+    if amount_raw <= 0:
+        raise ValueError("amount must be > 0")
+
+    from_token = normalize_for_0x(token) if is_native(token) else w3.to_checksum_address(token)
+    to_token = normalize_for_0x(dst_token) if is_native(dst_token) else w3.to_checksum_address(dst_token)
+    params = {
+        "fromChain": CHAINS[from_chain]["id"],
+        "toChain": CHAINS[to_chain]["id"],
+        "fromToken": from_token,
+        "toToken": to_token,
+        "fromAmount": str(amount_raw),
+        "fromAddress": w3.to_checksum_address(from_addr),
+        "slippage": float(slippage_bps) / 10_000.0,
+    }
+    headers = {"accept": "application/json"}
+    lifi_key = os.getenv("LIFI_API_KEY")
+    if lifi_key:
+        headers["x-lifi-api-key"] = lifi_key
+    import requests
+
+    resp = requests.get(os.getenv("LIFI_BASE", "https://li.quest/v1") + "/quote", params=params, headers=headers, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    print(json.dumps({"provider": "LI.FI", "quote": data}, indent=2))
 
 
 def _normalize_chain(value: str) -> str:
@@ -304,6 +512,25 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
     action_def = WALLET_ACTIONS.get(action)
     if not action_def:
         raise ValueError(f"Unsupported wallet action '{action}'.")
+    payload = payload or {}
+
+    if action == "diagnostics":
+        _wallet_diagnostics()
+        return
+
+    if action in {"send_estimate", "swap_quote", "bridge_quote"}:
+        bridge = None
+        try:
+            bridge = UltraSwapBridge()
+        except Exception:
+            bridge = None
+        if action == "send_estimate":
+            _send_estimate(payload, bridge)
+        elif action == "swap_quote":
+            _swap_quote(payload, bridge)
+        else:
+            _bridge_quote(payload, bridge)
+        return
     if action == "start_production":
         try:
             from production import ProductionManager
@@ -339,7 +566,6 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
             finally:
                 manager.stop()
         return
-    payload = payload or {}
     try:
         bridge: UltraSwapBridge | None = UltraSwapBridge()
     except ImportError as exc:

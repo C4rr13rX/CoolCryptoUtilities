@@ -28,6 +28,13 @@ class WalletAction:
 CHAIN_OPTIONS = sorted(CHAINS)
 
 WALLET_ACTIONS: Dict[str, WalletAction] = {
+    "diagnostics": WalletAction(
+        name="diagnostics",
+        label="Diagnostics",
+        description="Checks RPC reachability, API keys, and wallet secret availability (no funds moved).",
+        fields=[],
+        category="monitoring",
+    ),
     "balances": WalletAction(
         name="balances",
         label="View Balances",
@@ -61,6 +68,19 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
         ],
         category="actions",
     ),
+    "send_estimate": WalletAction(
+        name="send_estimate",
+        label="Send (Estimate Only)",
+        description="Estimates gas for a send without broadcasting a transaction.",
+        fields=[
+            WalletField("chain", "Chain", "select", options=CHAIN_OPTIONS),
+            WalletField("token", "Token (symbol or address)", placeholder="ETH or 0x…"),
+            WalletField("to", "Recipient", placeholder="0x…"),
+            WalletField("amount", "Amount", kind="number", placeholder="0.01"),
+            WalletField("from_address", "From Address (optional)", required=False, placeholder="0x…"),
+        ],
+        category="monitoring",
+    ),
     "swap": WalletAction(
         name="swap",
         label="Swap Tokens",
@@ -72,6 +92,20 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
             WalletField("amount", "Sell Amount", kind="number", placeholder="0.5"),
         ],
         category="actions",
+    ),
+    "swap_quote": WalletAction(
+        name="swap_quote",
+        label="Swap (Quote Only)",
+        description="Fetches a swap quote without broadcasting a transaction.",
+        fields=[
+            WalletField("chain", "Chain", "select", options=CHAIN_OPTIONS),
+            WalletField("sell_token", "Sell Token", placeholder="ETH or 0x…"),
+            WalletField("buy_token", "Buy Token", placeholder="USDC"),
+            WalletField("amount", "Sell Amount", kind="number", placeholder="0.01"),
+            WalletField("slippage_bps", "Slippage (bps)", kind="number", required=False, placeholder="100"),
+            WalletField("from_address", "From Address (optional)", required=False, placeholder="0x…"),
+        ],
+        category="monitoring",
     ),
     "bridge": WalletAction(
         name="bridge",
@@ -85,6 +119,21 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
             WalletField("destination_token", "Destination Token", required=False, placeholder="Defaults to source token"),
         ],
         category="actions",
+    ),
+    "bridge_quote": WalletAction(
+        name="bridge_quote",
+        label="Bridge (Quote Only)",
+        description="Fetches a bridge quote without broadcasting a transaction.",
+        fields=[
+            WalletField("source_chain", "Source Chain", "select", options=CHAIN_OPTIONS),
+            WalletField("destination_chain", "Destination Chain", "select", options=CHAIN_OPTIONS),
+            WalletField("token", "Token", placeholder="ETH or 0x…"),
+            WalletField("amount", "Amount", kind="number", placeholder="0.01"),
+            WalletField("destination_token", "Destination Token", required=False, placeholder="Defaults to source token"),
+            WalletField("slippage_bps", "Slippage (bps)", kind="number", required=False, placeholder="100"),
+            WalletField("from_address", "From Address (optional)", required=False, placeholder="0x…"),
+        ],
+        category="monitoring",
     ),
     "start_production": WalletAction(
         name="start_production",
