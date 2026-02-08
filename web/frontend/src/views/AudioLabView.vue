@@ -8,7 +8,7 @@
         </div>
         <div class="header-actions">
           <button class="btn" type="button" @click="toggleAudio">
-            {{ enabled ? 'Disable Drone' : 'Enable Drone' }}
+            {{ enabled ? 'Disable Audio' : 'Enable Audio' }}
           </button>
           <button class="btn ghost" type="button" @click="playChord" :disabled="!enabled">
             Trigger Chord
@@ -97,6 +97,13 @@
           </select>
         </label>
         <label>
+          <span>Background Source</span>
+          <select v-model="settings.backgroundSource">
+            <option value="drone">drone</option>
+            <option value="midi" :disabled="!midiAvailable">midi file</option>
+          </select>
+        </label>
+        <label>
           <span>Drone Waveform</span>
           <select v-model="settings.droneWaveform">
             <option value="sine">sine</option>
@@ -113,6 +120,20 @@
             <option value="square">square</option>
             <option value="sawtooth">sawtooth</option>
           </select>
+        </label>
+        <label>
+          <span>MIDI Waveform</span>
+          <select v-model="settings.midiWaveform">
+            <option value="sine">sine</option>
+            <option value="triangle">triangle</option>
+            <option value="square">square</option>
+            <option value="sawtooth">sawtooth</option>
+          </select>
+        </label>
+        <label>
+          <span>MIDI Gain</span>
+          <input v-model.number="settings.midiGain" type="range" min="0" max="0.5" step="0.01" />
+          <span class="value">{{ settings.midiGain.toFixed(2) }}</span>
         </label>
         <label>
           <span>Chord Gate Mode</span>
@@ -197,6 +218,47 @@
           </div>
         </div>
         <label>
+          <span>MIDI Gate Mode</span>
+          <select v-model="settings.midiGateMode">
+            <option value="off">off</option>
+            <option value="pattern">pattern (1/16)</option>
+          </select>
+        </label>
+        <label>
+          <span>MIDI Gate BPM</span>
+          <input v-model.number="settings.midiGateBpm" type="range" min="40" max="160" step="1" />
+          <span class="value">{{ settings.midiGateBpm.toFixed(0) }}</span>
+        </label>
+        <label>
+          <span>MIDI Gate Depth</span>
+          <input v-model.number="settings.midiGateDepth" type="range" min="0" max="1" step="0.05" />
+          <span class="value">{{ settings.midiGateDepth.toFixed(2) }}</span>
+        </label>
+        <div class="gate-pattern">
+          <div class="gate-pattern-header">
+            <span>MIDI Gate Pattern (16th Notes)</span>
+            <button class="btn ghost" type="button" @click="resetMidiGatePattern">
+              Reset Pattern
+            </button>
+          </div>
+          <div class="gate-grid">
+            <div v-for="(val, idx) in settings.midiGatePattern" :key="`midi-gate-${idx}`" class="gate-cell">
+              <div class="gate-bar">
+                <span class="fill" :style="{ height: `${Math.round(val * 100)}%` }"></span>
+              </div>
+              <input
+                class="gate-slider"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                v-model.number="settings.midiGatePattern[idx]"
+              />
+              <span class="gate-label">{{ idx + 1 }}</span>
+            </div>
+          </div>
+        </div>
+        <label>
           <span>Key Root</span>
           <select v-model="settings.keyRoot">
             <option v-for="note in keyRoots" :key="note" :value="note">{{ note }}</option>
@@ -261,6 +323,7 @@ const settings = reactive<AmbientSettings>({
   ...DEFAULT_AMBIENT_SETTINGS,
   chordGatePattern: DEFAULT_AMBIENT_SETTINGS.chordGatePattern.slice(),
   droneGatePattern: DEFAULT_AMBIENT_SETTINGS.droneGatePattern.slice(),
+  midiGatePattern: DEFAULT_AMBIENT_SETTINGS.midiGatePattern.slice(),
 });
 const genre = ref('ambient');
 const midiFile = ref<File | null>(null);
@@ -268,6 +331,7 @@ const detectedMidiKey = ref<{ root: string; mode: 'major' | 'minor' } | null>(nu
 const soundMap = reactive<SoundMap>({ ...DEFAULT_SOUND_MAP });
 const keyRoots = ['C', 'C#', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 const motifOptions = MOTIF_NAMES;
+const midiAvailable = computed(() => Boolean(midiFile.value));
 
 const soundTargets = [
   { id: 'section:dashboard', label: 'Overview' },
@@ -327,9 +391,16 @@ const loadState = () => {
         settings.droneGatePattern,
         DEFAULT_AMBIENT_SETTINGS.droneGatePattern
       );
+      settings.midiGatePattern = normalizeGatePattern(
+        settings.midiGatePattern,
+        DEFAULT_AMBIENT_SETTINGS.midiGatePattern
+      );
       if (typeof data.genre === 'string') genre.value = data.genre;
       Object.assign(soundMap, data.soundMap || {});
       enabled.value = Boolean(data.enabled);
+    }
+    if (settings.backgroundSource === 'midi' && !midiFile.value) {
+      settings.backgroundSource = 'drone';
     }
   } catch {
     // ignore
@@ -374,9 +445,17 @@ const handleMidi = async (event: Event) => {
   const input = event.target as HTMLInputElement | null;
   midiFile.value = input?.files?.[0] || null;
   detectedMidiKey.value = null;
+  if (!midiFile.value) {
+    ambientAudio.clearMidi();
+    if (settings.backgroundSource === 'midi') {
+      settings.backgroundSource = 'drone';
+    }
+    return;
+  }
   if (!midiFile.value) return;
   try {
     const buffer = await midiFile.value.arrayBuffer();
+    ambientAudio.loadMidi(buffer);
     const parsed = parseMidiKey(buffer) || parseKeyFromName(midiFile.value.name);
     if (parsed) {
       detectedMidiKey.value = parsed;
@@ -404,6 +483,13 @@ watch(
     );
     if (!gatePatternEquals(droneNormalized, settings.droneGatePattern)) {
       settings.droneGatePattern = droneNormalized;
+    }
+    const midiNormalized = normalizeGatePattern(
+      settings.midiGatePattern,
+      DEFAULT_AMBIENT_SETTINGS.midiGatePattern
+    );
+    if (!gatePatternEquals(midiNormalized, settings.midiGatePattern)) {
+      settings.midiGatePattern = midiNormalized;
     }
     persistState();
     if (enabled.value) {
@@ -460,6 +546,10 @@ const resetChordGatePattern = () => {
 
 const resetDroneGatePattern = () => {
   settings.droneGatePattern = DEFAULT_AMBIENT_SETTINGS.droneGatePattern.slice();
+};
+
+const resetMidiGatePattern = () => {
+  settings.midiGatePattern = DEFAULT_AMBIENT_SETTINGS.midiGatePattern.slice();
 };
 
 const parseMidiKey = (buffer: ArrayBuffer): { root: string; mode: 'major' | 'minor' } | null => {

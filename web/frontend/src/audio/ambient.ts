@@ -11,6 +11,7 @@ export type AmbientSettings = {
   chordPreset: string;
   chordWaveform: OscillatorType;
   droneWaveform: OscillatorType;
+  backgroundSource: 'drone' | 'midi';
   chordGateMode: 'off' | 'pattern';
   chordGateBpm: number;
   chordGateDepth: number;
@@ -19,6 +20,12 @@ export type AmbientSettings = {
   droneGateBpm: number;
   droneGateDepth: number;
   droneGatePattern: number[];
+  midiWaveform: OscillatorType;
+  midiGain: number;
+  midiGateMode: 'off' | 'pattern';
+  midiGateBpm: number;
+  midiGateDepth: number;
+  midiGatePattern: number[];
   keyRoot: string;
   keyMode: 'major' | 'minor';
 };
@@ -38,6 +45,7 @@ export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   chordPreset: 'dream_minor',
   chordWaveform: 'sine',
   droneWaveform: 'sine',
+  backgroundSource: 'drone',
   chordGateMode: 'off',
   chordGateBpm: 84,
   chordGateDepth: 1,
@@ -46,6 +54,12 @@ export const DEFAULT_AMBIENT_SETTINGS: AmbientSettings = {
   droneGateBpm: 84,
   droneGateDepth: 1,
   droneGatePattern: [1, 0.2, 0.8, 0.2, 1, 0.3, 0.7, 0.2, 1, 0.4, 0.8, 0.2, 1, 0.3, 0.9, 0.2],
+  midiWaveform: 'sine',
+  midiGain: 0.2,
+  midiGateMode: 'off',
+  midiGateBpm: 84,
+  midiGateDepth: 1,
+  midiGatePattern: [1, 0, 1, 0, 1, 0.4, 1, 0, 1, 0.2, 1, 0, 1, 0.4, 1, 0],
   keyRoot: 'C',
   keyMode: 'minor',
 };
@@ -230,6 +244,8 @@ class AmbientAudio {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private droneGate: GainNode | null = null;
+  private midiMaster: GainNode | null = null;
+  private midiGate: GainNode | null = null;
   private leftOsc: OscillatorNode | null = null;
   private rightOsc: OscillatorNode | null = null;
   private leftPan: StereoPannerNode | null = null;
@@ -242,6 +258,9 @@ class AmbientAudio {
   private soundMap: SoundMap = { ...DEFAULT_SOUND_MAP };
   private motifCursor: Record<string, number> = {};
   private droneGateTimer: number | null = null;
+  private midiLoopTimer: number | null = null;
+  private midiGateTimer: number | null = null;
+  private midiData: MidiSequence | null = null;
 
   isEnabled() {
     return this.enabled;
@@ -276,6 +295,14 @@ class AmbientAudio {
       window.clearTimeout(this.droneGateTimer);
       this.droneGateTimer = null;
     }
+    if (this.midiLoopTimer) {
+      window.clearTimeout(this.midiLoopTimer);
+      this.midiLoopTimer = null;
+    }
+    if (this.midiGateTimer) {
+      window.clearTimeout(this.midiGateTimer);
+      this.midiGateTimer = null;
+    }
     this.fadeOut();
   }
 
@@ -286,6 +313,19 @@ class AmbientAudio {
     }
     this.ensureNodes();
     this.syncParams();
+  }
+
+  loadMidi(buffer: ArrayBuffer) {
+    const parsed = parseMidiSequence(buffer);
+    this.midiData = parsed;
+    if (this.enabled) {
+      this.syncParams();
+    }
+  }
+
+  clearMidi() {
+    this.midiData = null;
+    this.stopMidiPlayback();
   }
 
   triggerChord(soundId?: string) {
@@ -299,12 +339,21 @@ class AmbientAudio {
     const gain = this.ctx.createGain();
     const decayTime = Math.max(0.4, this.settings.decay);
     const stopTime = now + Math.max(this.settings.chordDuration, decayTime);
+    const useGate = this.settings.chordGateMode === 'pattern';
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(this.settings.chordGain, now + this.settings.attack);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + decayTime);
+    if (useGate) {
+      const release = Math.min(0.6, Math.max(0.12, this.settings.decay));
+      const sustainEnd = Math.max(now + this.settings.attack, stopTime - release);
+      gain.gain.linearRampToValueAtTime(this.settings.chordGain, now + this.settings.attack);
+      gain.gain.setValueAtTime(this.settings.chordGain, sustainEnd);
+      gain.gain.linearRampToValueAtTime(0.0001, stopTime);
+    } else {
+      gain.gain.linearRampToValueAtTime(this.settings.chordGain, now + this.settings.attack);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + decayTime);
+    }
 
     let outputNode: AudioNode = gain;
-    if (this.settings.chordGateMode === 'pattern') {
+    if (useGate) {
       const gateGain = this.ctx.createGain();
       gateGain.gain.setValueAtTime(1, now);
       gain.connect(gateGain);
@@ -369,6 +418,18 @@ class AmbientAudio {
       this.droneGate.connect(this.master);
     }
 
+    if (!this.midiMaster) {
+      this.midiMaster = this.ctx.createGain();
+      this.midiMaster.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+      this.midiMaster.connect(this.master);
+    }
+
+    if (!this.midiGate) {
+      this.midiGate = this.ctx.createGain();
+      this.midiGate.gain.setValueAtTime(1, this.ctx.currentTime);
+      this.midiGate.connect(this.midiMaster);
+    }
+
     if (!this.leftOsc || !this.rightOsc) {
       this.leftOsc = this.ctx.createOscillator();
       this.rightOsc = this.ctx.createOscillator();
@@ -396,7 +457,17 @@ class AmbientAudio {
   }
 
   private syncParams() {
-    if (!this.ctx || !this.master || !this.leftOsc || !this.rightOsc || !this.lfo || !this.lfoGain || !this.droneGate) {
+    if (
+      !this.ctx ||
+      !this.master ||
+      !this.leftOsc ||
+      !this.rightOsc ||
+      !this.lfo ||
+      !this.lfoGain ||
+      !this.droneGate ||
+      !this.midiMaster ||
+      !this.midiGate
+    ) {
       return;
     }
     const now = this.ctx.currentTime;
@@ -407,9 +478,12 @@ class AmbientAudio {
     this.leftOsc.frequency.setTargetAtTime(Math.max(30, base - detune / 2), now, 0.08);
     this.rightOsc.frequency.setTargetAtTime(Math.max(30, base + detune / 2), now, 0.08);
     this.master.gain.setTargetAtTime(this.settings.gain, now, 0.12);
+    this.midiMaster.gain.setTargetAtTime(this.settings.midiGain, now, 0.12);
     this.lfo.frequency.setTargetAtTime(this.settings.lfoRate, now, 0.2);
     this.lfoGain.gain.setTargetAtTime(this.settings.lfoDepth, now, 0.2);
     this.syncDroneGate();
+    this.syncMidiGate();
+    this.syncBackgroundMode();
   }
 
   private fadeOut() {
@@ -426,6 +500,7 @@ class AmbientAudio {
     depthValue: number,
     patternValue: number[]
   ) {
+    param.cancelScheduledValues(now);
     const bpm = Math.max(30, bpmValue);
     const stepSeconds = 60 / bpm / 4;
     const depth = clamp(depthValue, 0, 1);
@@ -433,7 +508,7 @@ class AmbientAudio {
     const steps = Math.max(1, Math.ceil((stopTime - now) / stepSeconds));
     const ramp = Math.min(0.005, stepSeconds * 0.2);
     let t = now;
-    let lastValue = 1;
+    let lastValue = clamp(pattern[0] ?? 1, 0, 1);
     for (let i = 0; i < steps; i += 1) {
       const raw = clamp(pattern[i % pattern.length] ?? 1, 0, 1);
       const value = (1 - depth) + depth * raw;
@@ -463,6 +538,20 @@ class AmbientAudio {
     this.scheduleDroneGateLoop();
   }
 
+  private syncMidiGate() {
+    if (!this.ctx || !this.midiGate) return;
+    if (this.midiGateTimer) {
+      window.clearTimeout(this.midiGateTimer);
+      this.midiGateTimer = null;
+    }
+    if (this.settings.midiGateMode !== 'pattern') {
+      this.midiGate.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.midiGate.gain.setTargetAtTime(1, this.ctx.currentTime, 0.05);
+      return;
+    }
+    this.scheduleMidiGateLoop();
+  }
+
   private scheduleDroneGateLoop() {
     if (!this.ctx || !this.droneGate) return;
     const now = this.ctx.currentTime;
@@ -481,6 +570,87 @@ class AmbientAudio {
     );
     const loopMs = stepSeconds * steps * 1000 * 0.9;
     this.droneGateTimer = window.setTimeout(() => this.scheduleDroneGateLoop(), Math.max(50, loopMs));
+  }
+
+  private scheduleMidiGateLoop() {
+    if (!this.ctx || !this.midiGate) return;
+    const now = this.ctx.currentTime;
+    const bpm = Math.max(30, this.settings.midiGateBpm);
+    const stepSeconds = 60 / bpm / 4;
+    const steps = 64;
+    const stopTime = now + stepSeconds * steps;
+    this.midiGate.gain.cancelScheduledValues(now);
+    this.scheduleGatePattern(
+      this.midiGate.gain,
+      now,
+      stopTime,
+      this.settings.midiGateBpm,
+      this.settings.midiGateDepth,
+      this.settings.midiGatePattern
+    );
+    const loopMs = stepSeconds * steps * 1000 * 0.9;
+    this.midiGateTimer = window.setTimeout(() => this.scheduleMidiGateLoop(), Math.max(50, loopMs));
+  }
+
+  private syncBackgroundMode() {
+    if (!this.ctx || !this.droneGate || !this.midiMaster || !this.midiGate) return;
+    const now = this.ctx.currentTime;
+    if (this.settings.backgroundSource === 'midi' && this.midiData) {
+      this.droneGate.gain.cancelScheduledValues(now);
+      this.droneGate.gain.setTargetAtTime(0.0001, now, 0.05);
+      this.startMidiPlayback();
+    } else {
+      this.stopMidiPlayback();
+      this.droneGate.gain.cancelScheduledValues(now);
+      this.droneGate.gain.setTargetAtTime(1, now, 0.05);
+    }
+  }
+
+  private startMidiPlayback() {
+    if (!this.ctx || !this.midiData || !this.midiGate) return;
+    if (this.midiLoopTimer) {
+      window.clearTimeout(this.midiLoopTimer);
+      this.midiLoopTimer = null;
+    }
+    const schedule = () => {
+      if (!this.ctx || !this.midiData || !this.midiGate) return;
+      const startAt = this.ctx.currentTime + 0.1;
+      const duration = Math.max(1, this.midiData.duration);
+      for (const note of this.midiData.notes) {
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = this.settings.midiWaveform || 'sine';
+        const freq = 440 * Math.pow(2, (note.note - 69) / 12);
+        osc.frequency.setValueAtTime(freq, startAt + note.start);
+        const velocity = clamp(note.velocity, 0, 1);
+        gain.gain.setValueAtTime(0.0001, startAt + note.start);
+        gain.gain.linearRampToValueAtTime(velocity, startAt + note.start + 0.01);
+        gain.gain.setValueAtTime(velocity, startAt + note.end);
+        gain.gain.linearRampToValueAtTime(0.0001, startAt + note.end + 0.02);
+        osc.connect(gain).connect(this.midiGate);
+        osc.start(startAt + note.start);
+        osc.stop(startAt + note.end + 0.05);
+      }
+      const loopMs = duration * 1000;
+      this.midiLoopTimer = window.setTimeout(schedule, Math.max(250, loopMs));
+    };
+    schedule();
+  }
+
+  private stopMidiPlayback() {
+    if (this.midiLoopTimer) {
+      window.clearTimeout(this.midiLoopTimer);
+      this.midiLoopTimer = null;
+    }
+    if (this.midiGateTimer) {
+      window.clearTimeout(this.midiGateTimer);
+      this.midiGateTimer = null;
+    }
+    if (this.ctx && this.midiGate) {
+      const now = this.ctx.currentTime;
+      this.midiGate.gain.cancelScheduledValues(now);
+      this.midiGate.gain.setTargetAtTime(0.0001, now, 0.05);
+    }
   }
 }
 
@@ -534,9 +704,11 @@ function normalizeSettings(settings: AmbientSettings): AmbientSettings {
     gateBpm?: number;
     gateDepth?: number;
     gatePattern?: number[];
+    midiEnabled?: boolean;
   };
   return {
     ...settings,
+    backgroundSource: settings.backgroundSource ?? (legacy.midiEnabled ? 'midi' : 'drone'),
     chordGateMode: settings.chordGateMode ?? (legacy.gateEnabled ? 'pattern' : 'off'),
     chordGateBpm: settings.chordGateBpm ?? legacy.gateBpm ?? DEFAULT_AMBIENT_SETTINGS.chordGateBpm,
     chordGateDepth: settings.chordGateDepth ?? legacy.gateDepth ?? DEFAULT_AMBIENT_SETTINGS.chordGateDepth,
@@ -551,5 +723,160 @@ function normalizeSettings(settings: AmbientSettings): AmbientSettings {
       settings.droneGatePattern,
       DEFAULT_AMBIENT_SETTINGS.droneGatePattern
     ),
+    midiWaveform: settings.midiWaveform ?? DEFAULT_AMBIENT_SETTINGS.midiWaveform,
+    midiGain: settings.midiGain ?? DEFAULT_AMBIENT_SETTINGS.midiGain,
+    midiGateMode: settings.midiGateMode ?? DEFAULT_AMBIENT_SETTINGS.midiGateMode,
+    midiGateBpm: settings.midiGateBpm ?? DEFAULT_AMBIENT_SETTINGS.midiGateBpm,
+    midiGateDepth: settings.midiGateDepth ?? DEFAULT_AMBIENT_SETTINGS.midiGateDepth,
+    midiGatePattern: normalizeGatePattern(
+      settings.midiGatePattern,
+      DEFAULT_AMBIENT_SETTINGS.midiGatePattern
+    ),
   };
+}
+
+type MidiNote = { note: number; velocity: number; start: number; end: number };
+type MidiSequence = { notes: MidiNote[]; duration: number };
+
+function parseMidiSequence(buffer: ArrayBuffer): MidiSequence | null {
+  const view = new DataView(buffer);
+  let offset = 0;
+  const readString = (len: number) => {
+    let out = '';
+    for (let i = 0; i < len; i += 1) {
+      out += String.fromCharCode(view.getUint8(offset + i));
+    }
+    offset += len;
+    return out;
+  };
+  const readUint32 = () => {
+    const value = view.getUint32(offset);
+    offset += 4;
+    return value;
+  };
+  const readUint16 = () => {
+    const value = view.getUint16(offset);
+    offset += 2;
+    return value;
+  };
+  const readVarLen = () => {
+    let value = 0;
+    while (true) {
+      const byte = view.getUint8(offset++);
+      value = (value << 7) | (byte & 0x7f);
+      if ((byte & 0x80) === 0) break;
+    }
+    return value;
+  };
+
+  if (readString(4) !== 'MThd') return null;
+  const headerLength = readUint32();
+  const format = readUint16();
+  const tracks = readUint16();
+  const division = readUint16();
+  offset += Math.max(0, headerLength - 6);
+  if (division & 0x8000) return null;
+  const ticksPerQuarter = division;
+
+  const noteEvents: Array<{ tick: number; note: number; velocity: number; on: boolean }> = [];
+  const tempoEvents: Array<{ tick: number; tempo: number }> = [{ tick: 0, tempo: 500000 }];
+
+  for (let t = 0; t < tracks; t += 1) {
+    if (readString(4) !== 'MTrk') break;
+    const trackLength = readUint32();
+    const trackEnd = offset + trackLength;
+    let tick = 0;
+    let runningStatus = 0;
+    while (offset < trackEnd) {
+      const delta = readVarLen();
+      tick += delta;
+      let status = view.getUint8(offset++);
+      if (status < 0x80) {
+        offset -= 1;
+        status = runningStatus;
+      } else {
+        runningStatus = status;
+      }
+      if (status === 0xff) {
+        const type = view.getUint8(offset++);
+        const len = readVarLen();
+        if (type === 0x51 && len === 3) {
+          const tempo =
+            (view.getUint8(offset) << 16) | (view.getUint8(offset + 1) << 8) | view.getUint8(offset + 2);
+          tempoEvents.push({ tick, tempo });
+        }
+        offset += len;
+        continue;
+      }
+      if (status === 0xf0 || status === 0xf7) {
+        const len = readVarLen();
+        offset += len;
+        continue;
+      }
+      const type = status & 0xf0;
+      const data1 = view.getUint8(offset++);
+      const data2 = type === 0xc0 || type === 0xd0 ? 0 : view.getUint8(offset++);
+      if (type === 0x90) {
+        if (data2 === 0) {
+          noteEvents.push({ tick, note: data1, velocity: 0, on: false });
+        } else {
+          noteEvents.push({ tick, note: data1, velocity: data2, on: true });
+        }
+      } else if (type === 0x80) {
+        noteEvents.push({ tick, note: data1, velocity: data2, on: false });
+      }
+    }
+    offset = trackEnd;
+  }
+
+  tempoEvents.sort((a, b) => a.tick - b.tick);
+  const segments: Array<{ startTick: number; startTime: number; tempo: number }> = [];
+  let currTempo = tempoEvents[0].tempo;
+  let currTick = 0;
+  let currTime = 0;
+  segments.push({ startTick: 0, startTime: 0, tempo: currTempo });
+  for (let i = 1; i < tempoEvents.length; i += 1) {
+    const change = tempoEvents[i];
+    if (change.tick < currTick) continue;
+    const deltaTicks = change.tick - currTick;
+    currTime += (deltaTicks * currTempo) / 1_000_000 / ticksPerQuarter;
+    currTick = change.tick;
+    currTempo = change.tempo;
+    segments.push({ startTick: currTick, startTime: currTime, tempo: currTempo });
+  }
+
+  const tickToSeconds = (tick: number) => {
+    let segment = segments[0];
+    for (const seg of segments) {
+      if (seg.startTick <= tick) segment = seg;
+      else break;
+    }
+    return segment.startTime + ((tick - segment.startTick) * segment.tempo) / 1_000_000 / ticksPerQuarter;
+  };
+
+  noteEvents.sort((a, b) => a.tick - b.tick);
+  const noteStacks: Record<number, Array<{ tick: number; velocity: number }>> = {};
+  const notes: MidiNote[] = [];
+  for (const evt of noteEvents) {
+    if (evt.on && evt.velocity > 0) {
+      noteStacks[evt.note] = noteStacks[evt.note] || [];
+      noteStacks[evt.note].push({ tick: evt.tick, velocity: evt.velocity });
+    } else {
+      const stack = noteStacks[evt.note];
+      if (stack && stack.length) {
+        const start = stack.shift()!;
+        const startTime = tickToSeconds(start.tick);
+        const endTime = tickToSeconds(evt.tick);
+        notes.push({
+          note: evt.note,
+          velocity: clamp(start.velocity / 127, 0, 1),
+          start: startTime,
+          end: Math.max(startTime + 0.05, endTime),
+        });
+      }
+    }
+  }
+
+  const duration = notes.reduce((max, note) => Math.max(max, note.end), 0);
+  return { notes, duration };
 }
