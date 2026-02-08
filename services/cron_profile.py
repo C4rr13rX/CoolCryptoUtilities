@@ -22,6 +22,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
             "steps": [
                 "discovery",
                 "watchlists",
+                "recommendations",
                 "downloads",
                 "news",
                 "training",
@@ -53,6 +54,18 @@ DEFAULT_PROFILE: Dict[str, Any] = {
         "enabled": True,
         "epochs": 1,
         "batch_size": 16,
+    },
+    "recommendations": {
+        "enabled": True,
+        "lookback_days": 30,
+        "max_tokens": 8,
+        "min_liquidity_usd": 50000,
+        "min_volume_usd": 100000,
+        "min_age_hours": 72,
+        "max_age_hours": 0,
+        "low_fee_chains": ["base", "arbitrum", "optimism", "polygon"],
+        "wallet_bias": True,
+        "min_score": 0.0,
     },
 }
 

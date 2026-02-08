@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import threading
@@ -252,6 +253,8 @@ class InternalCronSupervisor:
                 context["discovery"] = self._run_discovery(profile)
             elif step == "watchlists":
                 context["candidates"] = self._update_watchlists(profile)
+            elif step == "recommendations":
+                self._run_recommendations(profile, context)
             elif step == "downloads":
                 if production_active:
                     log_message(LOG_SOURCE, f"{task_id}: downloads skipped (production active)", severity="info")
@@ -404,6 +407,185 @@ class InternalCronSupervisor:
             "news batch complete",
             details={"tokens": tokens, "articles": len(result.get("items", []))},
         )
+
+    def _run_recommendations(self, profile: Dict[str, Any], context: Dict[str, Any]) -> None:
+        rec_cfg = profile.get("recommendations") or {}
+        if not rec_cfg.get("enabled", True):
+            return
+        try:
+            from datetime import timedelta
+            from django.utils import timezone
+            from discovery.models import DiscoveryEvent, DiscoveredToken, HoneypotCheck, SwapProbe
+        except Exception as exc:  # pragma: no cover
+            log_message(LOG_SOURCE, f"recommendations unavailable: {exc}", severity="warning")
+            return
+
+        lookback_days = float(rec_cfg.get("lookback_days") or 30)
+        max_tokens = int(rec_cfg.get("max_tokens") or 8)
+        min_liquidity = float(rec_cfg.get("min_liquidity_usd") or 0)
+        min_volume = float(rec_cfg.get("min_volume_usd") or 0)
+        min_age_hours = float(rec_cfg.get("min_age_hours") or 0)
+        max_age_hours = float(rec_cfg.get("max_age_hours") or 0)
+        min_score = float(rec_cfg.get("min_score") or 0.0)
+
+        low_fee = rec_cfg.get("low_fee_chains") or os.getenv(
+            "SAVINGS_LOW_FEE_CHAINS", "base,arbitrum,optimism,polygon"
+        )
+        if isinstance(low_fee, str):
+            low_fee_chains = [c.strip().lower() for c in low_fee.split(",") if c.strip()]
+        else:
+            low_fee_chains = [str(c).strip().lower() for c in low_fee if str(c).strip()]
+
+        preferred_chains: set[str] = set()
+        if bool(rec_cfg.get("wallet_bias", True)):
+            wallet = (
+                os.getenv("PRIMARY_WALLET")
+                or os.getenv("TRADING_WALLET")
+                or os.getenv("WALLET_NAME")
+                or ""
+            ).strip().lower()
+            if wallet:
+                try:
+                    db = get_db()
+                    rows = db.fetch_balances_flat(wallet=wallet, include_zero=False)
+                    chain_totals: Dict[str, float] = {}
+                    for row in rows:
+                        chain = str(row["chain"] or "").lower()
+                        usd_val = float(row["usd_amount"] or 0.0)
+                        if chain:
+                            chain_totals[chain] = chain_totals.get(chain, 0.0) + usd_val
+                    for chain, usd_val in sorted(chain_totals.items(), key=lambda kv: kv[1], reverse=True)[:2]:
+                        if usd_val > 0:
+                            preferred_chains.add(chain)
+                except Exception:
+                    preferred_chains = set()
+
+        cutoff = timezone.now() - timedelta(days=lookback_days)
+        events = DiscoveryEvent.objects.filter(created_at__gte=cutoff).order_by("-created_at")
+        if low_fee_chains:
+            events = events.filter(chain__in=low_fee_chains)
+
+        latest_events: Dict[tuple[str, str], DiscoveryEvent] = {}
+        for event in events:
+            symbol = (event.symbol or "").upper()
+            chain = (event.chain or "").lower()
+            if not symbol or not chain:
+                continue
+            key = (symbol, chain)
+            if key not in latest_events:
+                latest_events[key] = event
+
+        if not latest_events:
+            return
+
+        symbols = [sym for sym, _ in latest_events.keys()]
+        tokens = {
+            t.symbol.upper(): t
+            for t in DiscoveredToken.objects.filter(symbol__in=symbols)
+        }
+        checks = HoneypotCheck.objects.filter(symbol__in=symbols).order_by("symbol", "-created_at")
+        latest_checks: Dict[str, HoneypotCheck] = {}
+        for check in checks:
+            sym = check.symbol.upper()
+            if sym not in latest_checks:
+                latest_checks[sym] = check
+        probes = SwapProbe.objects.filter(symbol__in=symbols).order_by("symbol", "-created_at")
+        latest_probes: Dict[str, SwapProbe] = {}
+        for probe in probes:
+            sym = probe.symbol.upper()
+            if sym not in latest_probes:
+                latest_probes[sym] = probe
+
+        now = timezone.now()
+        scored: List[Dict[str, Any]] = []
+        for (symbol, chain), event in latest_events.items():
+            token = tokens.get(symbol)
+            if not token:
+                continue
+            status = (token.status or "").lower()
+            if status in {"honeypot", "rejected"}:
+                continue
+            check = latest_checks.get(symbol)
+            if check and (check.verdict or "").lower() == "honeypot":
+                continue
+            volume = float(event.volume_24h or 0.0)
+            liquidity = float(event.liquidity_usd or 0.0)
+            if volume < min_volume or liquidity < min_liquidity:
+                continue
+            age_hours = (now - token.first_seen).total_seconds() / 3600.0 if token.first_seen else 0.0
+            if min_age_hours and age_hours < min_age_hours:
+                continue
+            if max_age_hours and age_hours > max_age_hours:
+                continue
+            chain_weight = 1.0
+            if chain in low_fee_chains:
+                chain_weight += 0.15
+            if chain in preferred_chains:
+                chain_weight += 0.15
+            volatility = abs(float(event.price_change_24h or 0.0))
+            score = (
+                math.log1p(volume) * 1.1
+                + math.log1p(liquidity) * 0.9
+                + math.log1p(max(age_hours, 1.0)) * 0.4
+                - volatility * 0.02
+            )
+            score *= chain_weight
+            if score < min_score:
+                continue
+            probe = latest_probes.get(symbol)
+            scored.append(
+                {
+                    "symbol": symbol,
+                    "chain": chain,
+                    "score": round(score, 4),
+                    "volume_24h": volume,
+                    "liquidity_usd": liquidity,
+                    "age_hours": round(age_hours, 2),
+                    "price_change_24h": event.price_change_24h,
+                    "probe_ok": bool(probe.success) if probe else None,
+                    "probe_reason": probe.failure_reason if probe else None,
+                }
+            )
+
+        if not scored:
+            return
+        scored.sort(key=lambda row: row["score"], reverse=True)
+        top = scored[:max_tokens]
+        signature = "|".join(f"{row['symbol']}:{row['chain']}" for row in top)
+        db = get_db()
+        existing = db.fetch_advisories(limit=50, include_resolved=False)
+        for advisory in existing:
+            meta = advisory.get("meta") or {}
+            if meta.get("signature") == signature:
+                return
+
+        chain_list = ", ".join(sorted({row["chain"] for row in top}))
+        message = f"Top candidates on low-fee chains ({chain_list})."
+        recommendation = (
+            "Shortlist generated from volume/liquidity/age filters. "
+            "Review in Data Lab before allocating capital."
+        )
+        db.record_advisory(
+            topic="token_candidates",
+            message=message,
+            severity="info",
+            scope="discovery",
+            recommendation=recommendation,
+            meta={
+                "signature": signature,
+                "candidates": top,
+                "low_fee_chains": low_fee_chains,
+                "preferred_chains": sorted(preferred_chains),
+                "filters": {
+                    "min_volume_usd": min_volume,
+                    "min_liquidity_usd": min_liquidity,
+                    "min_age_hours": min_age_hours,
+                    "max_age_hours": max_age_hours,
+                    "lookback_days": lookback_days,
+                },
+            },
+        )
+        log_message(LOG_SOURCE, f"recommendations generated ({len(top)} tokens)", severity="info")
 
     def _run_training(self, profile: Dict[str, Any]) -> None:
         training_cfg = profile.get("training") or {}
