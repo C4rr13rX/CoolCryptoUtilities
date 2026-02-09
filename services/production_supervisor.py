@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -12,6 +11,7 @@ from typing import Any, Dict, Optional
 from production import ProductionManager
 from services.guardian_lock import GuardianLease
 from services.guardian_status import update_production_state
+from services.env_loader import resolve_python_bin
 from services.logging_utils import log_message
 
 HEARTBEAT_PATH = Path("logs/production_manager_heartbeat.json")
@@ -235,7 +235,7 @@ class ProductionSupervisor:
         if not MAIN_PATH.exists():
             log_message("production", "main.py not found; cannot start main process.", severity="error")
             return False
-        python_bin = os.getenv("PYTHON_BIN") or sys.executable
+        python_bin = resolve_python_bin()
         cmd = [python_bin, str(MAIN_PATH), "--action", "start_production", "--stay-alive"]
         env = os.environ.copy()
         env.setdefault("ALLOW_SQLITE_FALLBACK", "1")

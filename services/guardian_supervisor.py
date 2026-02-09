@@ -20,6 +20,7 @@ from services.guardian_status import (
     snapshot_status as guardian_queue_snapshot,
 )
 from services.guardian_lock import GuardianLease
+from services.env_loader import resolve_python_bin
 from services.logging_utils import log_message
 from services.production_supervisor import production_supervisor
 from services.secure_settings import build_process_env
@@ -29,17 +30,7 @@ GUARDIAN_LOG = Path("runtime/guardian/guardian.log")
 
 
 def _python_bin() -> str:
-    candidate = os.getenv("PYTHON_BIN")
-    if candidate:
-        return candidate
-    virtual_env = os.getenv("VIRTUAL_ENV")
-    if virtual_env:
-        if os.name == "nt":
-            return str(Path(virtual_env) / "Scripts" / "python.exe")
-        return str(Path(virtual_env) / "bin" / "python")
-    import sys
-
-    return sys.executable
+    return resolve_python_bin()
 
 
 class GuardianSupervisor:

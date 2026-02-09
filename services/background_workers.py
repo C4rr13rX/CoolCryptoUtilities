@@ -4,7 +4,6 @@ import json
 import math
 import os
 import subprocess
-import sys
 import threading
 import time
 from collections import defaultdict
@@ -17,6 +16,7 @@ DATA_ROOT = REPO_ROOT / "data"
 from db import TradingDatabase, get_db
 from services.public_api_clients import aggregate_market_data
 from services.discovery.coordinator import DiscoveryCoordinator
+from services.env_loader import resolve_python_bin
 from services.logging_utils import log_message
 
 _PAIR_INDEX_ATTEMPTED: set[str] = set()
@@ -38,7 +38,7 @@ def _maybe_generate_pair_index(chain: str) -> bool:
     env.setdefault("CHAIN_NAME", chain)
     env.setdefault("PAIR_INDEX_OUTPUT_PATH", str(index_path))
     try:
-        result = subprocess.run([sys.executable, str(script)], env=env, check=False, capture_output=True, text=True)
+        result = subprocess.run([resolve_python_bin(), str(script)], env=env, check=False, capture_output=True, text=True)
         if result.returncode != 0:
             log_message(
                 "pair-index",
@@ -120,7 +120,7 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     script = Path(__file__).resolve().parents[1] / "download2000.py"
     try:
         for _ in range(max_parallel):
-            proc = subprocess.Popen([sys.executable, str(script)], env=env)
+            proc = subprocess.Popen([resolve_python_bin(), str(script)], env=env)
             proc.wait()
     except Exception as exc:
         log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")

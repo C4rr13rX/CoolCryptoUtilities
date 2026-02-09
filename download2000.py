@@ -49,12 +49,23 @@ def load_env_robust() -> None:
 load_env_robust()
 
 def _configure_io_encoding() -> None:
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name, None)
         if not stream:
             continue
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
+            continue
+        except Exception:
+            pass
+        try:
+            buffer = getattr(stream, "buffer", None)
+            if buffer:
+                import io
+                wrapper = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+                setattr(sys, stream_name, wrapper)
         except Exception:
             pass
 
@@ -109,6 +120,7 @@ def _infer_chain_from_path(path: Path) -> Optional[str]:
 
 def _rpc_for_chain(chain: str) -> str:
     chain = chain.lower().strip()
+    prefer_free = os.getenv("PREFER_FREE_RPC", "1").strip().lower() not in {"0", "false", "no"}
     if RPC_URL_OVERRIDE:
         return RPC_URL_OVERRIDE
     alchemy_env_map = {
@@ -127,14 +139,23 @@ def _rpc_for_chain(chain: str) -> str:
     }
     env_var = alchemy_env_map.get(chain, "")
     candidate = os.getenv(env_var, "").strip()
-    if not candidate:
-        key = os.getenv("ALCHEMY_API_KEY", "").strip()
-        if key and chain in slugs:
-            candidate = f"https://{slugs[chain]}.g.alchemy.com/v2/{key}"
-    if not candidate and ANKR_API_KEY:
-        candidate = f"https://rpc.ankr.com/{chain}/{ANKR_API_KEY}".rstrip("/")
-    if not candidate:
-        candidate = PUBLIC_RPC_FALLBACKS.get(chain, "")
+    if prefer_free:
+        if ANKR_API_KEY:
+            candidate = candidate or f"https://rpc.ankr.com/{chain}/{ANKR_API_KEY}".rstrip("/")
+        candidate = candidate or PUBLIC_RPC_FALLBACKS.get(chain, "")
+        if not candidate:
+            key = os.getenv("ALCHEMY_API_KEY", "").strip()
+            if key and chain in slugs:
+                candidate = f"https://{slugs[chain]}.g.alchemy.com/v2/{key}"
+    else:
+        if not candidate:
+            key = os.getenv("ALCHEMY_API_KEY", "").strip()
+            if key and chain in slugs:
+                candidate = f"https://{slugs[chain]}.g.alchemy.com/v2/{key}"
+        if not candidate and ANKR_API_KEY:
+            candidate = f"https://rpc.ankr.com/{chain}/{ANKR_API_KEY}".rstrip("/")
+        if not candidate:
+            candidate = PUBLIC_RPC_FALLBACKS.get(chain, "")
     if not candidate:
         raise RuntimeError(
             f"No RPC configured for chain '{chain}'. "
@@ -423,6 +444,7 @@ def main():
             pair_addr = Web3.to_checksum_address(addr)
         except Exception as e:
             print(f"   [ERROR] Invalid pair address for {sym}: {addr} ({e}). Skipping.")
+            update_assignment(assignment, addr, completed=True, skipped=True, error="invalid_pair_address")
             continue
 
         pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
@@ -433,6 +455,7 @@ def main():
             t1_raw = limited(pair.functions.token1().call)
         except Exception as e:
             print(f"   [ERROR] {sym}: address {pair_addr} does not behave like a Uniswap V2-style pool: {e}. Skipping.")
+            update_assignment(assignment, addr, completed=True, skipped=True, error="non_uniswap_v2_pool")
             continue
 
         try:
@@ -440,12 +463,14 @@ def main():
             t1 = Web3.to_checksum_address(t1_raw)
         except Exception as e:
             print(f"   [ERROR] {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
+            update_assignment(assignment, addr, completed=True, skipped=True, error="invalid_token_address")
             continue
 
         dec0 = safe_decimals(t0)
         dec1 = safe_decimals(t1)
         if dec0 is None or dec1 is None:
             print(f"   [WARN] Skipping {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
+            update_assignment(assignment, addr, completed=True, skipped=True, error="token_metadata_unreadable")
             continue
 
         print(f"   tokens: {t0}(dec{dec0}) / {t1}(dec{dec1})")

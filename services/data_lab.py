@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -63,6 +63,18 @@ def _iter_historical(chain: Optional[str] = None) -> Iterable[Tuple[str, str, Pa
             yield "historical", ch, file_path
 
 
+def _iter_db_ohlcv(chain: Optional[str] = None) -> Iterable[Tuple[str, str, Any]]:
+    try:
+        from datalab.models import OhlcvDataset
+    except Exception:
+        return
+    qs = OhlcvDataset.objects.all()
+    if chain:
+        qs = qs.filter(chain=str(chain).lower())
+    for entry in qs:
+        yield "historical_db", entry.chain, entry
+
+
 def _iter_pair_indexes() -> Iterable[Tuple[str, str, Path]]:
     if not DATA_ROOT.exists():
         return
@@ -89,6 +101,7 @@ def list_datasets(
     entries: List[Tuple[str, str, Path]] = []
     if category in (None, "historical"):
         entries.extend(_iter_historical(chain))
+        entries.extend(_iter_db_ohlcv(chain))
     if category in (None, "pair_index"):
         entries.extend(_iter_pair_indexes())
     if category in (None, "assignment"):
@@ -96,6 +109,23 @@ def list_datasets(
 
     dataset_rows: List[DatasetEntry] = []
     for cat, ch, path in entries:
+        if cat == "historical_db":
+            try:
+                modified_ts = path.updated_at.timestamp() if path.updated_at else 0.0
+            except Exception:
+                modified_ts = 0.0
+            dataset_rows.append(
+                DatasetEntry(
+                    rank=0,
+                    category="historical",
+                    path=f"db:ohlcv:{path.id}",
+                    chain=ch,
+                    symbol=str(path.symbol).upper(),
+                    size_bytes=int(path.bars or 0),
+                    modified_ts=modified_ts,
+                )
+            )
+            continue
         try:
             stat = path.stat()
         except FileNotFoundError:
@@ -138,6 +168,93 @@ def list_datasets(
         }
         for row in dataset_rows
     ]
+
+
+def ingest_ohlcv_output(
+    *,
+    output_dir: str,
+    chain: str,
+    granularity_seconds: int,
+    user=None,
+) -> Dict[str, Any]:
+    summary = {"datasets": 0, "bars": 0, "skipped": 0}
+    try:
+        from datalab.models import OhlcvBar, OhlcvDataset
+    except Exception:
+        return summary
+
+    root = Path(output_dir)
+    if not root.exists():
+        return summary
+
+    store_mode = os.getenv("OHLCV_STORE_MODE", "database").strip().lower()
+    store_bars = store_mode in {"db", "database", "full", "bars"}
+
+    for file_path in root.glob("*.json"):
+        try:
+            bars = json.loads(file_path.read_text(encoding="utf-8", errors="ignore"))
+        except Exception:
+            summary["skipped"] += 1
+            continue
+        if not isinstance(bars, list) or not bars:
+            summary["skipped"] += 1
+            continue
+
+        symbol = file_path.stem.split("_", 1)[-1].upper()
+        start_ts = datetime.fromtimestamp(int(bars[0].get("timestamp", 0)), tz=timezone.utc)
+        end_ts = datetime.fromtimestamp(int(bars[-1].get("timestamp", 0)), tz=timezone.utc)
+        defaults = {
+            "bars": len(bars),
+            "source": "download2000",
+            "file_path": str(file_path.relative_to(REPO_ROOT)),
+            "checksum": "",
+            "last_ingested_by": user if user and getattr(user, "is_authenticated", False) else None,
+        }
+        dataset, _ = OhlcvDataset.objects.update_or_create(
+            chain=chain,
+            symbol=symbol,
+            granularity_seconds=int(granularity_seconds),
+            start_ts=start_ts,
+            end_ts=end_ts,
+            defaults=defaults,
+        )
+        summary["datasets"] += 1
+        if not store_bars:
+            continue
+
+        batch: List[OhlcvBar] = []
+        for bar in bars:
+            ts_val = bar.get("timestamp")
+            if ts_val is None:
+                continue
+            ts_dt = datetime.fromtimestamp(int(ts_val), tz=timezone.utc)
+            buy_vol = float(bar.get("buy_volume") or 0.0)
+            sell_vol = float(bar.get("sell_volume") or 0.0)
+            volume = float(bar.get("volume") or (buy_vol + sell_vol))
+            batch.append(
+                OhlcvBar(
+                    dataset=dataset,
+                    ts=ts_dt,
+                    open=float(bar.get("open") or 0.0),
+                    high=float(bar.get("high") or 0.0),
+                    low=float(bar.get("low") or 0.0),
+                    close=float(bar.get("close") or 0.0),
+                    volume=volume,
+                    buy_volume=buy_vol,
+                    sell_volume=sell_vol,
+                    net_volume=float(bar.get("net_volume") or (buy_vol - sell_vol)),
+                    vwap=float(bar.get("vwap") or 0.0),
+                )
+            )
+            if len(batch) >= 1000:
+                OhlcvBar.objects.bulk_create(batch, ignore_conflicts=True, batch_size=1000)
+                summary["bars"] += len(batch)
+                batch = []
+        if batch:
+            OhlcvBar.objects.bulk_create(batch, ignore_conflicts=True, batch_size=1000)
+            summary["bars"] += len(batch)
+
+    return summary
 
 
 class DataLabRunner:
@@ -216,6 +333,24 @@ class DataLabRunner:
         success = proc.returncode == 0
         if success:
             self._append_log("Job completed successfully.")
+            if job_type == "download2000":
+                try:
+                    chain = (options.get("chain") or "base").strip().lower()
+                    output_dir = options.get("output_dir") or str(HIST_ROOT / chain)
+                    granularity = int(options.get("granularity_seconds") or 300)
+                    summary = ingest_ohlcv_output(
+                        output_dir=output_dir,
+                        chain=chain,
+                        granularity_seconds=granularity,
+                        user=user,
+                    )
+                    self._append_log(
+                        "DB ingest: "
+                        f"{summary.get('datasets', 0)} datasets, "
+                        f"{summary.get('bars', 0)} bars"
+                    )
+                except Exception as exc:
+                    self._append_log(f"DB ingest failed: {exc}")
         else:
             self._append_log(f"Job failed with exit code {proc.returncode}.")
         message = "completed successfully" if success else f"job failed with code {proc.returncode}"
@@ -263,6 +398,7 @@ class DataLabRunner:
         env = build_process_env(user)
         env.setdefault("PYTHONUTF8", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PREFER_FREE_RPC", "1")
         chain = (options.get("chain") or "base").strip().lower()
         env["CHAIN_NAME"] = chain
         years_back = int(options.get("years_back") or 3)
@@ -305,6 +441,11 @@ class DataLabRunner:
                         return str(venv_bin)
             if candidate.is_absolute() and candidate.exists():
                 return str(candidate)
+        repo_venv = REPO_ROOT / ".venv"
+        if repo_venv.exists():
+            repo_bin = repo_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            if repo_bin.exists():
+                return str(repo_bin)
         return sys.executable
 
     def _ensure_python_ready(self, python_bin: str) -> bool:

@@ -207,6 +207,37 @@ def _apply_default_env() -> None:
     for key, value in defaults.items():
         os.environ.setdefault(key, value)
 
+    if not os.getenv("PYTHON_BIN"):
+        repo_root = Path(__file__).resolve().parents[1]
+        repo_venv = repo_root / ".venv"
+        if repo_venv.exists():
+            candidate = repo_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            if candidate.exists():
+                os.environ["PYTHON_BIN"] = str(candidate)
+
+
+def resolve_python_bin() -> str:
+    candidate = os.getenv("PYTHON_BIN")
+    if candidate:
+        try:
+            path = Path(candidate)
+            if path.exists():
+                return str(path)
+        except Exception:
+            pass
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_venv = repo_root / ".venv"
+    if repo_venv.exists():
+        repo_bin = repo_venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if repo_bin.exists():
+            return str(repo_bin)
+    virtual_env = os.getenv("VIRTUAL_ENV")
+    if virtual_env:
+        venv_bin = Path(virtual_env) / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if venv_bin.exists():
+            return str(venv_bin)
+    return sys.executable
+
 
 def _derive_stream_env(env: dict) -> dict:
     """
