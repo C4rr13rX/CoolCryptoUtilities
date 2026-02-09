@@ -562,6 +562,7 @@ const navItems = computed(() => [
   { route: 'pipeline', path: '/pipeline', label: 'Pipeline', icon: 'pipeline', intent: pipelineIntent.value },
   { route: 'streams', path: '/streams', label: 'Streams', icon: 'streams', intent: streamIntent.value },
   { route: 'telemetry', path: '/telemetry', label: 'Telemetry', icon: 'activity', intent: feedbackIntent.value },
+  { route: 'logs', path: '/logs', label: 'Logs', icon: 'activity', intent: feedbackIntent.value },
   { route: 'wallet', path: '/wallet', label: 'Wallet', icon: 'wallet', intent: consoleIntent.value },
   { route: 'c0d3r', path: '/c0d3r', label: 'c0d3r', icon: 'terminal', intent: consoleIntent.value },
   { route: 'investigations', path: '/investigations', label: 'Investigations', icon: 'shield', intent: advisoryIntent.value },

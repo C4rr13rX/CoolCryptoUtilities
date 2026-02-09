@@ -227,6 +227,21 @@ class Advisory(models.Model):
         ]
 
 
+class SystemLog(models.Model):
+    component = models.CharField(max_length=128)
+    severity = models.CharField(max_length=32, default="info")
+    message = models.TextField()
+    details = models.JSONField(default=dict, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "system_logs"
+        indexes = [
+            models.Index(fields=["component", "created_at"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+
 class OrganismSnapshot(models.Model):
     ts = models.FloatField(primary_key=True)
     payload = models.JSONField(default=dict, null=True, blank=True)

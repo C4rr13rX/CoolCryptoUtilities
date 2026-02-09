@@ -138,6 +138,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "core.middleware.ApiSlashFallbackMiddleware",
+    "core.middleware.ApiEventLogMiddleware",
 ]
 
 ROOT_URLCONF = "coolcrypto_dashboard.urls"

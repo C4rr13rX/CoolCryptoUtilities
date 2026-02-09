@@ -20,6 +20,7 @@ import C0d3rView from '@/views/C0d3rView.vue';
 import AudioLabView from '@/views/AudioLabView.vue';
 import CronView from '@/views/CronView.vue';
 import InvestigationsView from '@/views/InvestigationsView.vue';
+import LogsView from '@/views/LogsView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -133,6 +134,12 @@ const routes: RouteRecordRaw[] = [
     name: 'investigations',
     component: InvestigationsView,
     meta: { title: 'Investigations' },
+  },
+  {
+    path: '/logs',
+    name: 'logs',
+    component: LogsView,
+    meta: { title: 'Logs' },
   },
 ];
 

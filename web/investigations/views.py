@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from services.web_research import CrawlPolicy, WebResearcher
+from services.logging_utils import log_message
 
 from .models import (
     InvestigationArticle,
@@ -52,6 +53,7 @@ class ProjectListView(APIView):
         payload = request.data or {}
         name = str(payload.get("name") or "").strip()
         if not name:
+            log_message("investigations", "project create failed: missing name", severity="warning")
             return Response({"detail": "name is required"}, status=status.HTTP_400_BAD_REQUEST)
         description = str(payload.get("description") or "").strip()
         project = InvestigationProject.objects.create(
@@ -60,6 +62,7 @@ class ProjectListView(APIView):
             description=description,
             status=payload.get("status") or "active",
         )
+        log_message("investigations", f"project created: {project.id}", details={"name": project.name})
         return Response(
             {
                 "item": {
@@ -81,6 +84,7 @@ class ProjectDetailView(APIView):
     def patch(self, request: Request, project_id: int, *args, **kwargs) -> Response:
         project = _get_project(project_id, request)
         if not project:
+            log_message("investigations", f"project not found: {project_id}", severity="warning")
             return Response({"detail": "project not found"}, status=status.HTTP_404_NOT_FOUND)
         payload = request.data or {}
         if "name" in payload:
@@ -107,8 +111,10 @@ class ProjectDetailView(APIView):
     def delete(self, request: Request, project_id: int, *args, **kwargs) -> Response:
         project = _get_project(project_id, request)
         if not project:
+            log_message("investigations", f"project delete not found: {project_id}", severity="warning")
             return Response({"detail": "project not found"}, status=status.HTTP_404_NOT_FOUND)
         project.delete()
+        log_message("investigations", f"project deleted: {project_id}")
         return Response({"deleted": True}, status=status.HTTP_200_OK)
 
 
@@ -138,10 +144,12 @@ class TargetListView(APIView):
     def post(self, request: Request, project_id: int, *args, **kwargs) -> Response:
         project = _get_project(project_id, request)
         if not project:
+            log_message("investigations", f"target create missing project: {project_id}", severity="warning")
             return Response({"detail": "project not found"}, status=status.HTTP_404_NOT_FOUND)
         payload = request.data or {}
         url = str(payload.get("url") or "").strip()
         if not url:
+            log_message("investigations", f"target create failed: missing url (project {project_id})", severity="warning")
             return Response({"detail": "url is required"}, status=status.HTTP_400_BAD_REQUEST)
         target = InvestigationTarget.objects.create(
             project=project,
@@ -175,6 +183,7 @@ class TargetCrawlView(APIView):
         try:
             target = InvestigationTarget.objects.get(id=target_id, project__user=request.user)
         except InvestigationTarget.DoesNotExist:
+            log_message("investigations", f"crawl target not found: {target_id}", severity="warning")
             return Response({"detail": "target not found"}, status=status.HTTP_404_NOT_FOUND)
         payload = request.data or {}
         policy_payload = payload.get("policy") or target.crawl_policy or {}

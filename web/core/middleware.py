@@ -5,6 +5,7 @@ from django.conf import settings
 from django.http.request import split_domain_port, validate_host
 from django.urls import resolve
 from django.urls.exceptions import Resolver404
+from services.logging_utils import log_message
 
 
 class DynamicOriginMiddleware:
@@ -83,3 +84,29 @@ class ApiSlashFallbackMiddleware:
         request.path = candidate
         request.META["PATH_INFO"] = candidate
         return self.get_response(request)
+
+
+class ApiEventLogMiddleware:
+    """
+    Lightweight API logger that writes error responses (or all responses when
+    LOG_API_REQUESTS=1) to the shared logging bus.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self.log_all = os.getenv("LOG_API_REQUESTS", "0").lower() in {"1", "true", "yes", "on"}
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        path = request.path_info or ""
+        if path.startswith("/api/") or path.startswith("/investigations/"):
+            status = getattr(response, "status_code", 200)
+            if self.log_all or status >= 400:
+                severity = "error" if status >= 500 else "warning" if status >= 400 else "info"
+                log_message(
+                    "api",
+                    f"{request.method} {path} -> {status}",
+                    severity=severity,
+                    details={"query": request.META.get("QUERY_STRING", "")},
+                )
+        return response

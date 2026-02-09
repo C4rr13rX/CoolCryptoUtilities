@@ -860,81 +860,90 @@ export interface InvestigationRelation {
 }
 
 export async function fetchInvestigationProjects() {
-  const { data } = await api.get('/investigations/projects/');
+  const { data } = await api.get('investigations/projects/');
   return data as { items: InvestigationProject[]; count: number };
 }
 
 export async function createInvestigationProject(payload: { name: string; description?: string; status?: string }) {
-  const { data } = await api.post('/investigations/projects/', payload);
+  const { data } = await api.post('investigations/projects/', payload);
   return data as { item: InvestigationProject };
 }
 
 export async function updateInvestigationProject(projectId: number, payload: Partial<InvestigationProject>) {
-  const { data } = await api.patch(`/investigations/projects/${projectId}/`, payload);
+  const { data } = await api.patch(`investigations/projects/${projectId}/`, payload);
   return data as { item: InvestigationProject };
 }
 
 export async function deleteInvestigationProject(projectId: number) {
-  const { data } = await api.delete(`/investigations/projects/${projectId}/`);
+  const { data } = await api.delete(`investigations/projects/${projectId}/`);
   return data as { deleted: boolean };
 }
 
 export async function fetchInvestigationTargets(projectId: number) {
-  const { data } = await api.get(`/investigations/projects/${projectId}/targets/`);
+  const { data } = await api.get(`investigations/projects/${projectId}/targets/`);
   return data as { items: InvestigationTarget[]; count: number };
 }
 
 export async function createInvestigationTarget(projectId: number, payload: Partial<InvestigationTarget>) {
-  const { data } = await api.post(`/investigations/projects/${projectId}/targets/`, payload);
+  const { data } = await api.post(`investigations/projects/${projectId}/targets/`, payload);
   return data as { item: InvestigationTarget };
 }
 
 export async function crawlInvestigationTarget(targetId: number, payload?: { policy?: Record<string, any> }) {
-  const { data } = await api.post(`/investigations/targets/${targetId}/crawl/`, payload || {});
+  const { data } = await api.post(`investigations/targets/${targetId}/crawl/`, payload || {});
   return data as { saved: number; pages: number };
 }
 
 export async function fetchInvestigationEvidence(projectId: number, limit = 50) {
-  const { data } = await api.get(`/investigations/projects/${projectId}/evidence/`, { params: { limit } });
+  const { data } = await api.get(`investigations/projects/${projectId}/evidence/`, { params: { limit } });
   return data as { items: InvestigationEvidence[]; count: number };
 }
 
 export async function fetchInvestigationArticles(projectId: number) {
-  const { data } = await api.get(`/investigations/projects/${projectId}/articles/`);
+  const { data } = await api.get(`investigations/projects/${projectId}/articles/`);
   return data as { items: InvestigationArticle[]; count: number };
 }
 
 export async function createInvestigationArticle(projectId: number, payload: Partial<InvestigationArticle>) {
-  const { data } = await api.post(`/investigations/projects/${projectId}/articles/`, payload);
+  const { data } = await api.post(`investigations/projects/${projectId}/articles/`, payload);
   return data as { item: InvestigationArticle };
 }
 
 export async function fetchInvestigationArticle(articleId: number) {
-  const { data } = await api.get(`/investigations/articles/${articleId}/`);
+  const { data } = await api.get(`investigations/articles/${articleId}/`);
   return data as { item: InvestigationArticle };
 }
 
 export async function updateInvestigationArticle(articleId: number, payload: Partial<InvestigationArticle>) {
-  const { data } = await api.patch(`/investigations/articles/${articleId}/`, payload);
+  const { data } = await api.patch(`investigations/articles/${articleId}/`, payload);
   return data as { item: InvestigationArticle };
 }
 
 export async function fetchInvestigationEntities(projectId: number) {
-  const { data } = await api.get(`/investigations/projects/${projectId}/entities/`);
+  const { data } = await api.get(`investigations/projects/${projectId}/entities/`);
   return data as { items: InvestigationEntity[]; count: number };
 }
 
 export async function createInvestigationEntity(projectId: number, payload: Partial<InvestigationEntity>) {
-  const { data } = await api.post(`/investigations/projects/${projectId}/entities/`, payload);
+  const { data } = await api.post(`investigations/projects/${projectId}/entities/`, payload);
   return data as { item: InvestigationEntity };
 }
 
 export async function fetchInvestigationRelations(projectId: number) {
-  const { data } = await api.get(`/investigations/projects/${projectId}/relations/`);
+  const { data } = await api.get(`investigations/projects/${projectId}/relations/`);
   return data as { items: InvestigationRelation[]; count: number };
 }
 
 export async function createInvestigationRelation(projectId: number, payload: { source_id: number; target_id: number; relation_type?: string; notes?: string }) {
-  const { data } = await api.post(`/investigations/projects/${projectId}/relations/`, payload);
+  const { data } = await api.post(`investigations/projects/${projectId}/relations/`, payload);
   return data as { item: InvestigationRelation };
+}
+
+// ----------------------------- System Logs -----------------------------------
+
+export async function fetchSystemLogs(component?: string, limit = 100) {
+  const params: Record<string, string> = { limit: String(limit) };
+  if (component) params.component = component;
+  const { data } = await api.get('logs/', { params });
+  return data as { components?: string[]; logs?: Record<string, any[]>; items?: any[] };
 }

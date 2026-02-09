@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Optional
 import os
+from services.logging_db import write_db_log
 
 
 @dataclass
@@ -58,6 +59,7 @@ class LogBus:
             print(payload, file=sys.stdout, flush=True)
             self._write_aggregate(payload)
             self._write_source_log(record.source, payload)
+            write_db_log(record)
 
     def _write_aggregate(self, payload: str) -> None:
         with self._file_lock:

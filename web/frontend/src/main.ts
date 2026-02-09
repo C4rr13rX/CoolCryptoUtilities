@@ -78,6 +78,7 @@ if (mountEl) {
     c0d3r: '/c0d3r',
     audiolab: '/audiolab',
     investigations: '/investigations',
+    logs: '/logs',
     cron: '/cron',
   };
   const normalizePath = (path: string) => {

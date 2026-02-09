@@ -34,7 +34,7 @@ from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
 from services.graph_store import search_graph_equations, graph_enabled  # noqa: E402
 from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E402
-from .models import C0d3rWebSession, C0d3rWebMessage
+from .models import C0d3rWebSession, C0d3rWebMessage, SystemLog
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
@@ -338,6 +338,10 @@ class InvestigationsPageView(BaseSecureView):
     initial_route = "investigations"
 
 
+class LogsPageView(BaseSecureView):
+    initial_route = "logs"
+
+
 class SpaRouteView(BaseSecureView):
     """
     Catch-all view so refreshing /<route> stays inside the SPA shell.
@@ -369,6 +373,7 @@ class SpaRouteView(BaseSecureView):
             "audiolab",
             "cron",
             "investigations",
+            "logs",
         }
         if slug not in allowed:
             return redirect("core:dashboard")
@@ -376,6 +381,56 @@ class SpaRouteView(BaseSecureView):
         if slug != raw_slug:
             return redirect(f"/{slug}")
         return super().dispatch(request, *args, **kwargs)
+
+
+class SystemLogListView(View):
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        component = str(request.GET.get("component") or "").strip()
+        try:
+            limit = int(request.GET.get("limit") or 100)
+        except Exception:
+            limit = 100
+        limit = max(1, min(limit, 100))
+
+        if component:
+            rows = (
+                SystemLog.objects.filter(component=component)
+                .order_by("-created_at")[:limit]
+            )
+            items = [
+                {
+                    "id": row.id,
+                    "component": row.component,
+                    "severity": row.severity,
+                    "message": row.message,
+                    "details": row.details or {},
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in rows
+            ]
+            return JsonResponse({"component": component, "items": items, "count": len(items)}, status=200)
+
+        components = list(
+            SystemLog.objects.values_list("component", flat=True).distinct()
+        )
+        payload: Dict[str, List[Dict[str, Any]]] = {}
+        for comp in components:
+            rows = (
+                SystemLog.objects.filter(component=comp)
+                .order_by("-created_at")[:limit]
+            )
+            payload[comp] = [
+                {
+                    "id": row.id,
+                    "component": row.component,
+                    "severity": row.severity,
+                    "message": row.message,
+                    "details": row.details or {},
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in rows
+            ]
+        return JsonResponse({"components": components, "logs": payload}, status=200)
 
 
 class GuardianFallbackView(TemplateView):
