@@ -199,6 +199,7 @@ def _apply_default_env() -> None:
         "BRIDGE_FEE_USD": "1.5",
         "BRIDGE_FEE_RATIO": "0.001",
         "BRIDGE_MIN_PROFIT_USD": "1.0",
+        "LOG_API_REQUESTS": "1",
         "C0D3R_SESSION_BUCKET": "c0dersessions",
         "C0D3R_SESSION_REGION": "us-east-1",
         "C0D3R_SESSION_PREFIX": "sessions",
