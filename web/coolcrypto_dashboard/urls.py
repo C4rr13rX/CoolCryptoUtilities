@@ -22,6 +22,9 @@ urlpatterns = [
     path("api/branddozer/", include("branddozer.urls")),
     path("api/u53rxr080t/", include("u53rxr080t.urls")),
     path("api/investigations/", include("investigations.urls")),
+    # Hard fallback for investigations list/create in case include isn't picked up.
+    path("api/investigations/projects/", investigations_views.ProjectListView.as_view()),
+    path("api/investigations/projects", investigations_views.ProjectListView.as_view()),
     # Legacy alias: allow /investigations/... API calls if a client misses /api prefix.
     path("investigations/projects/", investigations_views.ProjectListView.as_view()),
     path("investigations/projects", investigations_views.ProjectListView.as_view()),

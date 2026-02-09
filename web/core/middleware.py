@@ -103,10 +103,22 @@ class ApiEventLogMiddleware:
             status = getattr(response, "status_code", 200)
             if self.log_all or status >= 400:
                 severity = "error" if status >= 500 else "warning" if status >= 400 else "info"
+                details = {"query": request.META.get("QUERY_STRING", "")}
+                if status == 404 and path.startswith("/api/"):
+                    try:
+                        details.update(
+                            {
+                                "root_urlconf": getattr(settings, "ROOT_URLCONF", ""),
+                                "settings_module": os.getenv("DJANGO_SETTINGS_MODULE", ""),
+                                "method": request.method,
+                            }
+                        )
+                    except Exception:
+                        pass
                 log_message(
                     "api",
                     f"{request.method} {path} -> {status}",
                     severity=severity,
-                    details={"query": request.META.get("QUERY_STRING", "")},
+                    details=details,
                 )
         return response
