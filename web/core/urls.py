@@ -76,6 +76,8 @@ urlpatterns = [
     path("api/graph/equations", views.EquationSearchView.as_view()),
     path("api/logs/", views.SystemLogListView.as_view(), name="system-logs"),
     path("api/logs", views.SystemLogListView.as_view()),
+    path("api/diag/", views.ApiDiagView.as_view(), name="api-diag"),
+    path("api/diag", views.ApiDiagView.as_view()),
     path("advisories/", views.AdvisoriesPageView.as_view(), name="advisories"),
     path("advisories", views.AdvisoriesPageView.as_view()),
     path("<slug:route>/", views.SpaRouteView.as_view(), name="spa-route"),

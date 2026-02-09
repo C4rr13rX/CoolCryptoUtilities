@@ -342,6 +342,32 @@ class LogsPageView(BaseSecureView):
     initial_route = "logs"
 
 
+class ApiDiagView(View):
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        try:
+            from django.urls import resolve
+            try:
+                resolve("/api/investigations/projects/")
+                investigations_resolve = True
+            except Exception:
+                investigations_resolve = False
+        except Exception:
+            investigations_resolve = False
+        try:
+            import coolcrypto_dashboard.urls as urlmod
+            url_file = getattr(urlmod, "__file__", "")
+        except Exception:
+            url_file = ""
+        return JsonResponse(
+            {
+                "root_urlconf": getattr(settings, "ROOT_URLCONF", ""),
+                "urlconf_file": url_file,
+                "has_investigations_app": "investigations.apps.InvestigationsConfig" in settings.INSTALLED_APPS,
+                "investigations_resolve": investigations_resolve,
+            }
+        )
+
+
 class SpaRouteView(BaseSecureView):
     """
     Catch-all view so refreshing /<route> stays inside the SPA shell.
