@@ -299,11 +299,15 @@ def _format_crypto_news(row: Dict[str, Any]) -> Dict[str, Any]:
     url = _parse_article_link(row.get("article", ""))
     source = _parse_article_source(row.get("article", "")) or "cryptopanic"
     timestamp = int(row.get("timestamp", 0))
+    headline = row.get("headline", "")
+    article = row.get("article", "")
     return {
         "timestamp": timestamp,
         "datetime": datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat(),
-        "title": row.get("headline", ""),
-        "summary": row.get("article", ""),
+        "title": headline,
+        "summary": article,
+        "headline": headline,
+        "article": article,
         "sentiment": row.get("sentiment", "neutral"),
         "tokens": row.get("tokens", []),
         "url": url,
@@ -346,7 +350,8 @@ def _score_sentiment(text: str) -> str:
     return "neutral"
 
 
-def _format_crawler_news(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _format_crawler_news(records: List[Dict[str, Any]], seed_tokens: Sequence[str]) -> List[Dict[str, Any]]:
+    token_map = _build_token_map(seed_tokens)
     formatted: List[Dict[str, Any]] = []
     for entry in records:
         detected = entry.get("detected_date")
@@ -360,21 +365,111 @@ def _format_crawler_news(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             ts = datetime.now(timezone.utc)
         title = entry.get("title") or entry.get("url") or "Untitled"
         summary = entry.get("description") or ""
+        source = entry.get("source") or "crawler"
+        origin = entry.get("query_match") or "crawler"
         sentiment = _score_sentiment(f"{title} {summary}")
+        tokens = _tokens_from_text(f"{title} {summary} {origin} {source}", token_map, seed_tokens)
         formatted.append(
             {
                 "timestamp": int(ts.timestamp()),
                 "datetime": ts.isoformat(),
                 "title": title,
                 "summary": summary,
+                "headline": title,
+                "article": summary or title,
                 "sentiment": sentiment,
-                "tokens": [],
+                "tokens": tokens,
                 "url": entry.get("url"),
-                "origin": entry.get("query_match") or "crawler",
-                "source": entry.get("source") or "crawler",
+                "origin": origin,
+                "source": source,
             }
         )
     return formatted
+
+
+def _normalize_token(candidate: str) -> str:
+    cleaned = re.sub(r"[^A-Z0-9]", "", candidate.upper())
+    return cleaned if len(cleaned) >= 2 else ""
+
+
+def _build_token_map(seed_tokens: Sequence[str]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for token in seed_tokens:
+        normalized = _normalize_token(token)
+        if not normalized:
+            continue
+        mapping[normalized.lower()] = normalized
+        mapping[f"${normalized.lower()}"] = normalized
+        if normalized.startswith("W") and len(normalized) > 2:
+            naked = normalized[1:]
+            mapping[naked.lower()] = normalized
+            mapping[f"${naked.lower()}"] = normalized
+        for synonym in TOKEN_SYNONYMS.get(normalized, []):
+            syn = _normalize_token(synonym)
+            if syn:
+                mapping[syn.lower()] = normalized
+    return mapping
+
+
+def _tokens_from_text(text: str, token_map: Dict[str, str], seed_tokens: Sequence[str]) -> List[str]:
+    tokens: Set[str] = set()
+    haystack = (text or "").lower()
+    for keyword, token in token_map.items():
+        if keyword and keyword in haystack:
+            tokens.add(token)
+    for raw in re.findall(r"\\$?[A-Za-z0-9]{2,12}", text or ""):
+        normalized = _normalize_token(raw)
+        if not normalized:
+            continue
+        mapped = token_map.get(normalized.lower())
+        tokens.add(mapped or normalized)
+    if not tokens and seed_tokens:
+        tokens.update([_normalize_token(tok) for tok in seed_tokens[:3] if _normalize_token(tok)])
+    return sorted(tokens)
+
+
+def _persist_free_news(items: Sequence[Dict[str, Any]]) -> None:
+    if not items:
+        return
+    path = Path(os.getenv("FREE_NEWS_PATH", "data/news/free_news.parquet"))
+    rows: List[Dict[str, Any]] = []
+    for item in items:
+        ts = item.get("timestamp")
+        try:
+            ts_int = int(ts)
+        except Exception:
+            continue
+        headline = (item.get("headline") or item.get("title") or "").strip()
+        article = (item.get("article") or item.get("summary") or "").strip()
+        tokens = item.get("tokens") or []
+        if isinstance(tokens, set):
+            tokens = sorted(tokens)
+        if not headline or not article or not tokens:
+            continue
+        rows.append(
+            {
+                "timestamp": ts_int,
+                "headline": headline[:256],
+                "article": article[:2048],
+                "sentiment": item.get("sentiment") or "neutral",
+                "tokens": list(tokens),
+            }
+        )
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    if path.exists():
+        try:
+            existing = pd.read_parquet(path)
+            if not existing.empty:
+                df = pd.concat([existing, df], ignore_index=True)
+        except Exception:
+            pass
+    df.drop_duplicates(subset=["timestamp", "headline"], inplace=True)
+    df.sort_values("timestamp", inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(path, index=False)
 
 
 def _cache_key(symbols: Sequence[str], start: datetime, end: datetime) -> str:
@@ -485,7 +580,7 @@ def collect_news_for_files(
     try:
         _trace("crawler_start", terms=query_terms)
         crawler_records = crawl_news(queries=query_terms, start=start_dt, end=end_dt, max_pages=160)
-        crawler_items = _format_crawler_news(crawler_records)
+        crawler_items = _format_crawler_news(crawler_records, seed_tokens=api_tokens)
         _trace("crawler_complete", articles=len(crawler_items))
         if crawler_items:
             for idx, item in enumerate(crawler_items[:2]):
@@ -500,6 +595,8 @@ def collect_news_for_files(
         _trace("crawler_error", level="error", error=str(exc))
 
     total_attempted = len(crypto_items) + len(crawler_items)
+    if crawler_items:
+        _persist_free_news(crawler_items)
     dedup_skipped = 0
     combined: Dict[str, Dict[str, Any]] = {}
     for item in crypto_items + crawler_items:
@@ -634,8 +731,10 @@ def collect_news_for_terms(
         end=end,
         max_pages=max_pages or 200,
     )
-    crawler_items = _format_crawler_news(crawler_records)
+    crawler_items = _format_crawler_news(crawler_records, seed_tokens=api_tokens)
     _trace("crawler_complete", articles=len(crawler_items))
+    if crawler_items:
+        _persist_free_news(crawler_items)
 
     total_attempted = len(crypto_items) + len(crawler_items)
     dedup_skipped = 0
