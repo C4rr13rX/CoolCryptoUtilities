@@ -21,7 +21,12 @@
             <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
           </span>
           <span class="label">{{ item.label }}</span>
-          <span class="nav-led" :class="[`intent-${item.intent}`, { blink: isBlinking(item.intent) }]" aria-hidden="true" />
+          <span
+            class="nav-led"
+            :class="[`intent-${item.intent}`, { blink: isBlinking(item.intent) }]"
+            aria-hidden="true"
+            @click.stop="maybePingGuardian(item.label, item.intent)"
+          />
         </button>
       </nav>
       <footer class="sidebar__foot">
@@ -78,7 +83,7 @@ import { ambientAudio } from '@/audio/ambient';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
-import { t } from '@/i18n';
+import { setLanguage, t } from '@/i18n';
 import { runGuardianJob } from '@/api';
 
 const store = useDashboardStore();
@@ -98,6 +103,7 @@ let glitchTimer: number | undefined;
 let pointerHandler: ((event: PointerEvent) => void) | undefined;
 let matrixCleanup: (() => void) | undefined;
 let starfieldCleanup: (() => void) | undefined;
+let languageSelectCleanup: (() => void) | undefined;
 
 onMounted(() => {
   refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
@@ -107,6 +113,7 @@ onMounted(() => {
   setupBackdropEffects();
   setupSplashOverlay();
   setupAutoScrollHint();
+  setupLanguageSync();
   pointerHandler = (event: PointerEvent) => {
     const soundId = resolveSoundId(event.target as HTMLElement | null);
     ambientAudio.triggerChord(soundId);
@@ -123,6 +130,7 @@ onBeforeUnmount(() => {
   }
   if (matrixCleanup) matrixCleanup();
   if (starfieldCleanup) starfieldCleanup();
+  if (languageSelectCleanup) languageSelectCleanup();
   teardownAutoScroll();
 });
 
@@ -223,7 +231,7 @@ const setupAutoScrollHint = () => {
 
 const setupBackdropEffects = () => {
   if (!document.body) return;
-  const host = document.getElementById('app') ?? document.body;
+  const host = document.body;
   const ensureCanvas = (id: string) => {
     let canvas = document.getElementById(id) as HTMLCanvasElement | null;
     if (!canvas) {
@@ -244,6 +252,20 @@ const setupBackdropEffects = () => {
   starfieldCleanup = runStarfieldBackground(ensureCanvas('starfield-bg'));
   (window as any).__ccuMatrixActive = true;
   (window as any).__ccuStarfieldActive = true;
+};
+
+const setupLanguageSync = () => {
+  const select = document.getElementById('language-select') as HTMLSelectElement | null;
+  if (!select) return;
+  const handler = () => {
+    const value = select.value || 'en';
+    setLanguage(value);
+  };
+  select.addEventListener('change', handler);
+  handler();
+  languageSelectCleanup = () => {
+    select.removeEventListener('change', handler);
+  };
 };
 
 const runMatrixBackground = (canvas: HTMLCanvasElement) => {
@@ -317,31 +339,20 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     ctx.fillRect(0, 0, width, height);
 
     const connectDist = Math.max(180, Math.min(280, Math.min(width, height) * 0.26));
-    const influence = Math.max(260, Math.min(420, Math.min(width, height) * 0.4));
+    const influence = 100;
     const spring = 0.032;
     const damping = 0.88;
-    const offsetStrength = 0.22;
-    let offsetX = 0;
-    let offsetY = 0;
-    if (mouse.x !== null && mouse.y !== null) {
-      const normX = (mouse.x - width / 2) / Math.max(1, width / 2);
-      const normY = (mouse.y - height / 2) / Math.max(1, height / 2);
-      offsetX = normX * offsetStrength * connectDist;
-      offsetY = normY * offsetStrength * connectDist;
-    }
 
     for (const node of nodes) {
       if (mouse.x !== null && mouse.y !== null) {
-        const dx = node.baseX - mouse.x;
-        const dy = node.baseY - mouse.y;
+        const dx = mouse.x - node.x;
+        const dy = mouse.y - node.y;
         const dist = Math.hypot(dx, dy);
         if (dist < influence && dist > 0.1) {
-          const influenceFactor = (1 - dist / influence);
-          node.vx += mouse.dx * (influenceFactor * 1.4);
-          node.vy += mouse.dy * (influenceFactor * 1.4);
-          const pull = influenceFactor * 0.06;
-          node.vx += (-dx / dist) * pull;
-          node.vy += (-dy / dist) * pull;
+          const influenceFactor = 1 - dist / influence;
+          const pull = influenceFactor * 0.08;
+          node.vx += (dx / dist) * pull;
+          node.vy += (dy / dist) * pull;
         }
       }
       node.vx += (node.baseX - node.x) * spring;
@@ -364,16 +375,16 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
         const b = nodes[j];
-        const dx = (a.x + offsetX) - (b.x + offsetX);
-        const dy = (a.y + offsetY) - (b.y + offsetY);
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
         const dist = Math.hypot(dx, dy);
         if (dist < connectDist) {
           const alpha = 1 - dist / connectDist;
           ctx.strokeStyle = `rgba(205, 220, 235, ${0.24 * alpha})`;
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(a.x + offsetX, a.y + offsetY);
-          ctx.lineTo(b.x + offsetX, b.y + offsetY);
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
           ctx.stroke();
         }
       }
@@ -382,7 +393,7 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     for (const node of nodes) {
       ctx.fillStyle = 'rgba(195, 210, 225, 0.75)';
       ctx.beginPath();
-      ctx.arc(node.x + offsetX, node.y + offsetY, node.radius, 0, Math.PI * 2);
+      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -949,6 +960,7 @@ const totalProfitDisplay = computed(() =>
   margin-left: auto;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
   transition: background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  cursor: pointer;
 }
 
 .nav-led.intent-ok {
