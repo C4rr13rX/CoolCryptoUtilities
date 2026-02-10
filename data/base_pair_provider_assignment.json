@@ -2799,20 +2799,26 @@
     "0x6225f6d7ad5ea259a2227d3f39cf808f3098af6e": {
       "symbol": "KEN-WETH",
       "index": 349,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x75001b3ffe0f77864c7dc64c55e1e22b205e4a07": {
       "symbol": "FVT-WETH",
       "index": 350,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5fa9569b0ed6aa01e234468e6a15b77988b950df": {
       "symbol": "BLZ-USDC",
       "index": 351,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xa5f0cf205af1f5b02c00ba7ab834824c01855b54": {
       "symbol": "OPUL-USDC",
