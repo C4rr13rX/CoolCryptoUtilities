@@ -2367,26 +2367,34 @@
     "0x7bc703a48c90da793f57b55808ae14cdd75458d6": {
       "symbol": "CLOSEDAI-WETH",
       "index": 295,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x94ca4065ae4af445b7b12449c16dd93559ea08cd": {
       "symbol": "STRUMP-WETH",
       "index": 296,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4eefe02fce5b53ca33c7717bbd8ad3c9cb0609f1": {
       "symbol": "WETH-ZENT",
       "index": 297,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf6dcdce0ac3001b2f67f750bc64ea5beb37b5824": {
       "symbol": "HEX-USDC",
       "index": 298,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x47270ca9a3cdf198d26a847b577e9bbdd96a082a": {
       "symbol": "WETH-BIRDDOG",
