@@ -267,6 +267,8 @@ class InternalCronSupervisor:
                     log_message(LOG_SOURCE, f"{task_id}: training skipped (production active)", severity="info")
                 else:
                     self._run_training(profile)
+            elif step == "production":
+                self._run_production(profile, production_active)
             elif step == "guardian":
                 self._run_guardian()
             elif step == "branddozer":
@@ -600,6 +602,24 @@ class InternalCronSupervisor:
         pipeline.train_candidate()
         log_message(LOG_SOURCE, "training candidate cycle completed", severity="info")
 
+    def _run_production(self, profile: Dict[str, Any], production_active: bool) -> None:
+        production_cfg = profile.get("production") or {}
+        if not production_cfg.get("enabled", True):
+            return
+        if production_active:
+            log_message(LOG_SOURCE, "production manager already active", severity="info")
+            return
+        if not self._production_ready(profile, production_cfg):
+            log_message(LOG_SOURCE, "production gate not yet satisfied; holding", severity="info")
+            return
+        try:
+            from services.production_supervisor import production_supervisor
+        except Exception as exc:  # pragma: no cover
+            log_message(LOG_SOURCE, f"production supervisor unavailable: {exc}", severity="warning")
+            return
+        production_supervisor.ensure_running()
+        log_message(LOG_SOURCE, "production supervisor ensured", severity="info")
+
     def _run_guardian(self) -> None:
         try:
             from services.guardian_supervisor import guardian_supervisor
@@ -625,6 +645,61 @@ class InternalCronSupervisor:
             started += 1
         if started:
             log_message(LOG_SOURCE, f"branddozer ensured {started} project(s)", severity="info")
+
+    def _production_ready(self, profile: Dict[str, Any], production_cfg: Dict[str, Any]) -> bool:
+        downloads_cfg = profile.get("downloads") or {}
+        chains = production_cfg.get("chains") or downloads_cfg.get("chains") or []
+        chains = [str(ch).lower().strip() for ch in chains if str(ch).strip()]
+        if not chains:
+            return False
+        require_index = bool(production_cfg.get("require_pair_index", True))
+        min_files = int(production_cfg.get("min_files_per_chain") or 1)
+        min_chains_ready = int(production_cfg.get("min_chains_ready") or 1)
+        ready_chains = 0
+        missing_indexes: list[str] = []
+        for chain in chains:
+            if require_index:
+                index_path = Path("data") / f"pair_index_{chain}.json"
+                if not index_path.exists():
+                    missing_indexes.append(chain)
+                    continue
+            files_ready = self._ohlcv_file_count(chain) >= min_files
+            db_ready = self._ohlcv_db_count(chain) >= min_files
+            if files_ready or db_ready:
+                ready_chains += 1
+        if missing_indexes:
+            log_message(
+                LOG_SOURCE,
+                "production gate waiting on pair indexes",
+                severity="info",
+                details={"missing": missing_indexes},
+            )
+        return ready_chains >= min_chains_ready
+
+    @staticmethod
+    def _ohlcv_file_count(chain: str) -> int:
+        root = Path("data") / "historical_ohlcv" / chain
+        if not root.exists() or not root.is_dir():
+            return 0
+        count = 0
+        for path in root.glob("*.json"):
+            try:
+                if path.stat().st_size > 0:
+                    count += 1
+            except Exception:
+                continue
+        return count
+
+    @staticmethod
+    def _ohlcv_db_count(chain: str) -> int:
+        try:
+            from datalab.models import OhlcvDataset
+        except Exception:
+            return 0
+        try:
+            return int(OhlcvDataset.objects.filter(chain=str(chain).lower()).count())
+        except Exception:
+            return 0
 
 
 cron_supervisor = InternalCronSupervisor()

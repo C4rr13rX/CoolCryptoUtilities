@@ -13,6 +13,19 @@ DEFAULT_PROFILE: Dict[str, Any] = {
     "max_concurrent_tasks": 1,
     "tasks": [
         {
+            "id": "auto_pipeline",
+            "label": "Auto pipeline bootstrap",
+            "enabled": True,
+            "interval_minutes": 180,  # 3 hours
+            "jitter_seconds": 120,
+            "requires_mnemonic": False,
+            "steps": [
+                "downloads",
+                "training",
+                "production",
+            ],
+        },
+        {
             "id": "weekly_bootstrap",
             "label": "Weekly bootstrap",
             "enabled": True,
@@ -27,7 +40,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
                 "news",
                 "training",
             ],
-        }
+        },
     ],
     "discovery": {
         "chains": ["base", "ethereum", "arbitrum", "optimism", "polygon"],
@@ -66,6 +79,13 @@ DEFAULT_PROFILE: Dict[str, Any] = {
         "low_fee_chains": ["base", "arbitrum", "optimism", "polygon"],
         "wallet_bias": True,
         "min_score": 0.0,
+    },
+    "production": {
+        "enabled": True,
+        "chains": ["base", "ethereum", "arbitrum", "optimism", "polygon"],
+        "require_pair_index": True,
+        "min_files_per_chain": 1,
+        "min_chains_ready": 1,
     },
 }
 
