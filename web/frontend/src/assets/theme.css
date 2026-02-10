@@ -119,14 +119,14 @@ body {
 }
 
 #matrix-bg {
-  z-index: 0;
-  opacity: 0.5;
+  z-index: 2;
+  opacity: 0.65;
   mix-blend-mode: screen;
 }
 
 #starfield-bg {
-  z-index: 5;
-  opacity: 0.35;
+  z-index: 8;
+  opacity: 0.45;
   mix-blend-mode: screen;
 }
 

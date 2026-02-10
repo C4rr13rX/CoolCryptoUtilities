@@ -263,7 +263,7 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
   let rafId = 0;
 
   const initNodes = () => {
-    const count = Math.min(260, Math.max(110, Math.floor((width * height) / 12000)));
+    const count = Math.min(340, Math.max(140, Math.floor((width * height) / 9000)));
     nodes = Array.from({ length: count }).map(() => {
       const baseX = Math.random() * width;
       const baseY = Math.random() * height;
@@ -309,8 +309,8 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     ctx.fillStyle = backgroundGradient || 'rgba(4, 8, 16, 0.6)';
     ctx.fillRect(0, 0, width, height);
 
-    const connectDist = Math.max(140, Math.min(200, Math.min(width, height) * 0.2));
-    const influence = Math.max(160, Math.min(240, Math.min(width, height) * 0.26));
+    const connectDist = Math.max(150, Math.min(220, Math.min(width, height) * 0.22));
+    const influence = Math.max(190, Math.min(280, Math.min(width, height) * 0.3));
     const spring = 0.028;
     const damping = 0.9;
 
@@ -372,13 +372,15 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
 
     if (!prefersReduced) {
       rafId = requestAnimationFrame(step);
+    } else {
+      rafId = requestAnimationFrame(step);
     }
   };
 
-  const onMove = (event: MouseEvent) => {
+  const onMove = (event: PointerEvent | MouseEvent) => {
     if (lastMouse.x !== null && lastMouse.y !== null) {
-      mouse.dx = (event.clientX - lastMouse.x) * 0.004;
-      mouse.dy = (event.clientY - lastMouse.y) * 0.004;
+      mouse.dx = (event.clientX - lastMouse.x) * 0.006;
+      mouse.dy = (event.clientY - lastMouse.y) * 0.006;
     }
     mouse.x = event.clientX;
     mouse.y = event.clientY;
@@ -392,16 +394,25 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     lastMouse = { x: null, y: null };
   };
 
-  window.addEventListener('mousemove', onMove, { passive: true });
+  const moveOptions: AddEventListenerOptions = { passive: true, capture: true };
+  window.addEventListener('pointermove', onMove, moveOptions);
+  document.addEventListener('pointermove', onMove, moveOptions);
+  window.addEventListener('mousemove', onMove, moveOptions);
   window.addEventListener('mouseleave', onLeave, { passive: true });
+  document.addEventListener('pointerleave', onLeave, { passive: true });
+  window.addEventListener('blur', onLeave, { passive: true });
   window.addEventListener('resize', resize);
 
   resize();
   step();
 
   return () => {
-    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('pointermove', onMove, moveOptions);
+    document.removeEventListener('pointermove', onMove, moveOptions);
+    window.removeEventListener('mousemove', onMove, moveOptions);
     window.removeEventListener('mouseleave', onLeave);
+    document.removeEventListener('pointerleave', onLeave);
+    window.removeEventListener('blur', onLeave);
     window.removeEventListener('resize', resize);
     if (rafId) cancelAnimationFrame(rafId);
   };
@@ -489,6 +500,8 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
       }
     }
     if (!prefersReduced) {
+      rafId = requestAnimationFrame(step);
+    } else {
       rafId = requestAnimationFrame(step);
     }
   };
