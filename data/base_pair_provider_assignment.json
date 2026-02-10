@@ -2951,32 +2951,42 @@
     "0x9f6facb42177f5af680f9f17cdf750bc7cf55973": {
       "symbol": "TOAD-WETH",
       "index": 368,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd90a1ba0cbaaaabfdc6c814cdf1611306a26e1f8": {
       "symbol": "WETH-SWAP",
       "index": 369,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x07840b4825b74cc6ce264bf2743dee647194f49b": {
       "symbol": "KOMPETE-WETH",
       "index": 370,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9c5999653f44672336c2ef0a0008587fa8b9957e": {
       "symbol": "HAKKA-WETH",
       "index": 371,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1636a5dfcf7a21945c06d1bea40b52ce975ea614": {
       "symbol": "LABRA-WETH",
       "index": 372,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2d0ba902badaa82592f0e1c04c71d66cea21d921": {
       "symbol": "WETH-BTT",
