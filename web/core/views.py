@@ -142,6 +142,15 @@ class DashboardContextMixin:
     def _base_context(self, initial_route: str) -> Dict[str, Any]:
         use_vite = settings.DEBUG and os.getenv("DJANGO_USE_VITE_DEV", "0").lower() in {"1", "true", "yes", "on"}
         asset_version = self._asset_version()
+        current_language = get_language() or settings.LANGUAGE_CODE
+        language_options = getattr(settings, "LANGUAGE_SELECT_OPTIONS", [])
+        current_flag = ""
+        current_flag_emoji = ""
+        for opt in language_options:
+            if opt.get("code") == current_language:
+                current_flag = opt.get("flag", "")
+                current_flag_emoji = opt.get("flag_emoji", "")
+                break
         return {
             "debug": settings.DEBUG,
             "vite_dev_server": os.getenv("VITE_DEV_SERVER", "http://localhost:5173"),
@@ -149,8 +158,10 @@ class DashboardContextMixin:
             "initial_route": initial_route,
             "asset_version": asset_version,
             "fallback_snapshot": self._dashboard_snapshot(),
-            "current_language": get_language() or settings.LANGUAGE_CODE,
-            "language_options": getattr(settings, "LANGUAGE_SELECT_OPTIONS", []),
+            "current_language": current_language,
+            "current_language_flag": current_flag,
+            "current_language_flag_emoji": current_flag_emoji,
+            "language_options": language_options,
         }
 
     def _asset_version(self) -> str:

@@ -144,18 +144,12 @@
         background: rgba(4, 12, 22, 0.85);
         border: 1px solid rgba(111, 167, 255, 0.35);
         color: #e5edff;
-        padding: 0.35rem 0.85rem 0.35rem 2.1rem;
+        padding: 0.35rem 0.85rem;
         border-radius: 12px;
         font-size: 0.78rem;
         letter-spacing: 0.12rem;
         text-transform: uppercase;
         cursor: pointer;
-        background-repeat: no-repeat;
-        background-position: 0.55rem center;
-        background-size: 18px 12px;
-      }
-      header.site-header .lang-select[data-flag="us"] {
-        background-image: url("{% static 'assets/flags/us.svg' %}");
       }
       header.site-header .lang-label {
         font-size: 0.7rem;
@@ -326,11 +320,11 @@
                   id="language-select"
                   name="language"
                   class="lang-select"
-                  data-flag="{% if current_language|default:'en'|slice:':2' == 'en' %}us{% endif %}"
+                  data-flag="{{ current_language_flag }}"
                 >
                   {% for opt in language_options %}
                     <option value="{{ opt.code }}" data-flag="{{ opt.flag }}" {% if opt.code == current_language %}selected{% endif %}>
-                      {{ opt.native }}
+                      {{ opt.flag_emoji }} {{ opt.native }}
                     </option>
                   {% endfor %}
                 </select>

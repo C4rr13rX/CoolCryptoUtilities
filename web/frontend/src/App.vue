@@ -83,7 +83,7 @@ import { ambientAudio } from '@/audio/ambient';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
-import { setLanguage, t } from '@/i18n';
+import { initDomTranslation, setLanguage, t } from '@/i18n';
 import { runGuardianJob } from '@/api';
 
 const store = useDashboardStore();
@@ -114,6 +114,7 @@ onMounted(() => {
   setupSplashOverlay();
   setupAutoScrollHint();
   setupLanguageSync();
+  initDomTranslation();
   pointerHandler = (event: PointerEvent) => {
     const soundId = resolveSoundId(event.target as HTMLElement | null);
     ambientAudio.triggerChord(soundId);
