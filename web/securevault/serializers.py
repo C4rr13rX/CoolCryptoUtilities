@@ -54,6 +54,7 @@ class SecureSettingSerializer(serializers.ModelSerializer):
         instance = SecureSetting(user=user, **validated_data)
         self._apply_value(instance, value)
         instance.save()
+        self._trigger_bootstrap(instance)
         return instance
 
     def update(self, instance: SecureSetting, validated_data):
@@ -63,6 +64,7 @@ class SecureSettingSerializer(serializers.ModelSerializer):
         if value is not None or instance.is_secret:
             self._apply_value(instance, value)
         instance.save()
+        self._trigger_bootstrap(instance)
         return instance
 
     def _apply_value(self, instance: SecureSetting, value: Optional[str]) -> None:
@@ -79,6 +81,18 @@ class SecureSettingSerializer(serializers.ModelSerializer):
             instance.ciphertext = None
             instance.encapsulated_key = None
             instance.nonce = None
+
+    def _trigger_bootstrap(self, instance: SecureSetting) -> None:
+        name = str(instance.name or "").strip().upper()
+        if not name:
+            return
+        if name.endswith("_API_KEY") or name.startswith("RPC_") or name in {"MNEMONIC", "PRIVATE_KEY"}:
+            try:
+                from services.internal_cron import cron_supervisor
+
+                cron_supervisor.run_once("auto_pipeline")
+            except Exception:
+                pass
 
     def get_label(self, obj: SecureSetting) -> str | None:
         from services.secure_settings_catalog import CATALOG_LOOKUP

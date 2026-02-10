@@ -298,7 +298,33 @@ def _resolve_placeholders(values: Dict[str, str], max_passes: int = 10) -> Dict[
 def default_env_user():
     try:
         User = get_user_model()
-        return User.objects.filter(is_superuser=True).order_by("id").first()
+        model = _load_secure_setting_model()
+        if model is not None:
+            key_names = [
+                "MNEMONIC",
+                "PRIVATE_KEY",
+                "ALCHEMY_API_KEY",
+                "INFURA_API_KEY",
+                "ANKR_API_KEY",
+                "ZEROX_API_KEY",
+                "ONEINCH_API_KEY",
+                "LIFI_API_KEY",
+                "COINGECKO_API_KEY",
+                "CRYPTOPANIC_API_KEY",
+                "THEGRAPH_API_KEY",
+            ]
+            setting = (
+                model.objects.filter(name__in=key_names)
+                .select_related("user")
+                .order_by("-updated_at")
+                .first()
+            )
+            if setting and setting.user:
+                return setting.user
+        superuser = User.objects.filter(is_superuser=True).order_by("id").first()
+        if superuser:
+            return superuser
+        return User.objects.order_by("id").first()
     except Exception:
         return None
 

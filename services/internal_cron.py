@@ -372,8 +372,10 @@ class InternalCronSupervisor:
         downloads_cfg = profile.get("downloads") or {}
         chains = downloads_cfg.get("chains") or []
         max_pairs = int(downloads_cfg.get("max_pairs") or 0)
+        chains = [str(ch).lower().strip() for ch in chains if str(ch).strip()]
         if chains:
-            os.environ["DOWNLOAD_WORKER_CHAINS"] = ",".join([str(ch).lower() for ch in chains])
+            chains = self._prioritize_chains(profile, chains)
+            os.environ["DOWNLOAD_WORKER_CHAINS"] = ",".join(chains)
         if max_pairs:
             os.environ["DOWNLOAD_MAX_PAIRS"] = str(max_pairs)
         try:
@@ -383,6 +385,15 @@ class InternalCronSupervisor:
             return
         supervisor = TokenDownloadSupervisor(db=get_db())
         supervisor.run_cycle()
+        try:
+            get_db().record_feedback_event(
+                source="cron",
+                severity="info",
+                label="downloads",
+                details={"chains": chains, "max_pairs": max_pairs},
+            )
+        except Exception:
+            pass
         log_message(LOG_SOURCE, "download supervisor cycle completed", severity="info")
 
     def _run_news(self, profile: Dict[str, Any], context: Dict[str, Any]) -> None:
@@ -407,6 +418,15 @@ class InternalCronSupervisor:
         end = datetime.now(timezone.utc)
         start = end - timedelta(hours=lookback_hours)
         result = collect_news_for_terms(tokens=tokens, start=start, end=end, max_pages=max_pages)
+        try:
+            get_db().record_feedback_event(
+                source="cron",
+                severity="info",
+                label="news",
+                details={"tokens": tokens, "articles": len(result.get("items", []))},
+            )
+        except Exception:
+            pass
         log_message(
             LOG_SOURCE,
             "news batch complete",
@@ -603,6 +623,15 @@ class InternalCronSupervisor:
             return
         pipeline = TrainingPipeline(db=get_db())
         pipeline.train_candidate()
+        try:
+            get_db().record_feedback_event(
+                source="cron",
+                severity="info",
+                label="training",
+                details={"status": "candidate_cycle_completed"},
+            )
+        except Exception:
+            pass
         log_message(LOG_SOURCE, "training candidate cycle completed", severity="info")
 
     def _run_production(self, profile: Dict[str, Any], production_active: bool) -> None:
@@ -614,6 +643,15 @@ class InternalCronSupervisor:
             return
         if not self._production_ready(profile, production_cfg):
             log_message(LOG_SOURCE, "production gate not yet satisfied; holding", severity="info")
+            try:
+                get_db().record_feedback_event(
+                    source="cron",
+                    severity="warning",
+                    label="production_gate",
+                    details={"status": "blocked"},
+                )
+            except Exception:
+                pass
             return
         try:
             from services.production_supervisor import production_supervisor
@@ -621,6 +659,15 @@ class InternalCronSupervisor:
             log_message(LOG_SOURCE, f"production supervisor unavailable: {exc}", severity="warning")
             return
         production_supervisor.ensure_running()
+        try:
+            get_db().record_feedback_event(
+                source="cron",
+                severity="info",
+                label="production",
+                details={"status": "started"},
+            )
+        except Exception:
+            pass
         log_message(LOG_SOURCE, "production supervisor ensured", severity="info")
 
     def _run_guardian(self) -> None:
@@ -678,6 +725,48 @@ class InternalCronSupervisor:
                 details={"missing": missing_indexes},
             )
         return ready_chains >= min_chains_ready
+
+    def _prioritize_chains(self, profile: Dict[str, Any], chains: List[str]) -> List[str]:
+        rec_cfg = profile.get("recommendations") or {}
+        low_fee = rec_cfg.get("low_fee_chains") or os.getenv(
+            "SAVINGS_LOW_FEE_CHAINS", "base,arbitrum,optimism,polygon"
+        )
+        if isinstance(low_fee, str):
+            low_fee_chains = [c.strip().lower() for c in low_fee.split(",") if c.strip()]
+        else:
+            low_fee_chains = [str(c).strip().lower() for c in low_fee if str(c).strip()]
+
+        preferred: List[str] = []
+        try:
+            wallet = (
+                os.getenv("PRIMARY_WALLET")
+                or os.getenv("TRADING_WALLET")
+                or os.getenv("WALLET_NAME")
+                or ""
+            ).strip().lower()
+            if wallet:
+                rows = get_db().fetch_balances_flat(wallet=wallet, include_zero=False)
+                chain_totals: Dict[str, float] = {}
+                for row in rows:
+                    chain = str(row.get("chain") or "").lower()
+                    usd_val = float(row.get("usd_amount") or 0.0)
+                    if chain:
+                        chain_totals[chain] = chain_totals.get(chain, 0.0) + usd_val
+                preferred = [c for c, _ in sorted(chain_totals.items(), key=lambda kv: kv[1], reverse=True)]
+        except Exception:
+            preferred = []
+
+        ordered: List[str] = []
+        for chain in preferred:
+            if chain in chains and chain not in ordered:
+                ordered.append(chain)
+        for chain in low_fee_chains:
+            if chain in chains and chain not in ordered:
+                ordered.append(chain)
+        for chain in chains:
+            if chain not in ordered:
+                ordered.append(chain)
+        return ordered
 
     @staticmethod
     def _ohlcv_file_count(chain: str) -> int:

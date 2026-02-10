@@ -92,6 +92,18 @@ class WalletMnemonicView(APIView):
             return Response({"changed": True, "preview": ""}, status=status.HTTP_200_OK)
         value = str(mnemonic).strip()
         _upsert_secret(request.user, "MNEMONIC", value)
+        try:
+            from services.internal_cron import cron_supervisor
+
+            cron_supervisor.run_once("auto_pipeline")
+            cron_supervisor.run_once("weekly_bootstrap")
+        except Exception:
+            pass
+        try:
+            if not wallet_runner.status().get("running"):
+                wallet_runner.run("refresh_balances_full", user=request.user)
+        except Exception:
+            pass
         return Response({"changed": True, "preview": mask_value("secret")}, status=status.HTTP_200_OK)
 
 
