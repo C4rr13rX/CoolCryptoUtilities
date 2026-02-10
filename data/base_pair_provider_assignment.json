@@ -2311,26 +2311,34 @@
     "0xaf3e33c8971be5b753145228d29f1e0197ec7bb6": {
       "symbol": "WOLF-WETH",
       "index": 288,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x60a8ea6005f7db580bc0c9341e7e6275d114e874": {
       "symbol": "X-WETH",
       "index": 289,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1d4e66b826c8bf8e3c93574386a8dd723b3a912f": {
       "symbol": "PLOUT\u03a9S-WETH",
       "index": 290,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3075ff29511446fec10a662d1866475bec1b3637": {
       "symbol": "WETH-MAGA",
       "index": 291,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9e5f2b740e52c239da457109bcced1f2bb40da5b": {
       "symbol": "Hold-WETH",
