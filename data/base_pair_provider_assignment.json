@@ -2823,98 +2823,130 @@
     "0xa5f0cf205af1f5b02c00ba7ab834824c01855b54": {
       "symbol": "OPUL-USDC",
       "index": 352,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xef9ef6e07602e1e0419a5788f1d85e0698eab077": {
       "symbol": "DORKL-WETH",
       "index": 353,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe6da0cbaedc5e1d0490ec2cda283b8d7f007319e": {
       "symbol": "WETH-BEBE",
       "index": 354,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9081b50bad8beefac48cc616694c26b027c559bb": {
       "symbol": "ORAI-WETH",
       "index": 355,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6afb3d434ac3d0c92e5397895f17f1f9af22a6c2": {
       "symbol": "WORLD-WETH",
       "index": 356,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6d3835560bd69c094db31f4a471fb947eae93179": {
       "symbol": "WETH-AP",
       "index": 357,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x7fdeb46b3a0916630f36e886d675602b1007fcbb": {
       "symbol": "VOW-WETH",
       "index": 358,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3bf0c6ef79334727a6652e90818649645e4ae5e8": {
       "symbol": "MATT-WETH",
       "index": 359,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xa7480aafa8ad2af3ce24ac6853f960ae6ac7f0c4": {
       "symbol": "ATOR-WETH",
       "index": 360,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x60148519ad90ca9bb11a126f466fbfb73d895ce6": {
       "symbol": "REFI-WETH",
       "index": 361,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x56cb109d29689b475c2e960954525d25b51a1810": {
       "symbol": "PINU-WETH",
       "index": 362,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc05371628f77cd274d111ec9621b5d85f5945da2": {
       "symbol": "Ly-WETH",
       "index": 363,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5dfbe95925ffeb68f7d17920be7b313289a1a583": {
       "symbol": "WETH-MEME",
       "index": 364,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd17e88b13e53029f356d46aba44b5640b35c8e9c": {
       "symbol": "WETH-WCI",
       "index": 365,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2dc9050d9873f50526e467e983d435e6d8d9afb0": {
       "symbol": "WETH-APX",
       "index": 366,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3155acd9f75915fcc21d34035f440da7040bd3ba": {
       "symbol": "PROS-USDC",
       "index": 367,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9f6facb42177f5af680f9f17cdf750bc7cf55973": {
       "symbol": "TOAD-WETH",
