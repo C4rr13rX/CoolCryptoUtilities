@@ -775,1154 +775,1538 @@
     "0x0da7096f14303eddd634c0241963c064e0244984": {
       "symbol": "XMW-WETH",
       "index": 96,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xa40bb1c47f6dd27142a2bd7c93bfa98db9d1f5c5": {
       "symbol": "MASK-USDC",
       "index": 97,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6c2b607bf0a8ede629d58ba5e05d0448ff7f890a": {
       "symbol": "LMEOW-WETH",
       "index": 98,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd9f2a7471d1998c69de5cae6df5d3f070f01df9f": {
       "symbol": "Kendu-WETH",
       "index": 99,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x977c5fcf7a552d38adcde4f41025956855497c6d": {
       "symbol": "WETH-\u0448\u0430\u0439\u043b\u0443\u0448\u0430\u0439",
       "index": 100,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x23bff8ca20aac06efdf23cee3b8ae296a30dfd27": {
       "symbol": "wNXM-WETH",
       "index": 101,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xbbbf1426cbe8509ef58451ab7ad67cb74866e3fa": {
       "symbol": "SHKOOBY-WETH",
       "index": 102,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x80a0102a1e601c55fd3f136128bb2d222a879ff3": {
       "symbol": "WETH-BDP",
       "index": 103,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xaf06e7c7170eb22d52eb09b5ec5d1373c34164e9": {
       "symbol": "POOH-WETH",
       "index": 104,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6a63be37a5501dc0f88ed3fa21d3cf9a64eb618e": {
       "symbol": "SHRUB-WETH",
       "index": 105,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1112956589a2bea1b038732db4ea6b0c416ef130": {
       "symbol": "NEURAL-WETH",
       "index": 106,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x78b9524101fb67286338261ddd85e20665e571c1": {
       "symbol": "UNISTAKE-WETH",
       "index": 107,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9ff68f61ca5eb0c6606dc517a9d44001e564bb66": {
       "symbol": "BOTTO-WETH",
       "index": 108,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc0a6bb3d31bb63033176edba7c48542d6b4e406d": {
       "symbol": "RNDR-WETH",
       "index": 109,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x68b44c26874998adbd41a964e92315809524c7cb": {
       "symbol": "ZYN-WETH",
       "index": 110,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xa29fe6ef9592b5d408cca961d0fb9b1faf497d6d": {
       "symbol": "WETH-DEXT",
       "index": 111,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x29c830864930c897efa2b9e9851342187b82010e": {
       "symbol": "BAD-WETH",
       "index": 112,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8fbd26a7cb1ab65834c5ea245aa1f1e78d03ed30": {
       "symbol": "WETH-BYTE",
       "index": 113,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x0b07188b12e3bba6a680e553e23c4079e98a034b": {
       "symbol": "USDT-MOCA",
       "index": 114,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x29f07e631a2f990e1f6117c6285a44e746b1f090": {
       "symbol": "EVN-WETH",
       "index": 115,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf4acdac048c14c5e49bbede0c72444d806a75cde": {
       "symbol": "VANRY-WETH",
       "index": 116,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xaf996125e98b5804c00ffdb4f7ff386307c99a00": {
       "symbol": "XFI-WETH",
       "index": 117,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd6f3768e62ef92a9798e5a8cedd2b78907cecef9": {
       "symbol": "FLX-WETH",
       "index": 118,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x450e653a0a125a1dc36d3901d3cce2e2287df0c2": {
       "symbol": "MONGOOSE-WETH",
       "index": 119,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xce84867c3c02b05dc570d0135103d3fb9cc19433": {
       "symbol": "SUSHI-WETH",
       "index": 120,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf80758ab42c3b07da84053fd88804bcb6baa4b5c": {
       "symbol": "sUSD-WETH",
       "index": 121,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x459e4eeafb9e5d7299bbbcd5b6ab36667ffe3597": {
       "symbol": "F9-WETH",
       "index": 122,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xefdf4dfc4e817197851266acf0082a80dab18b24": {
       "symbol": "TET-WETH",
       "index": 123,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2e81ec0b8b4022fac83a21b2f2b4b8f5ed744d70": {
       "symbol": "WETH-GRT",
       "index": 124,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x0ee0cb563a52ae1170ac34fbb94c50e89adde4bd": {
       "symbol": "WAXE-WETH",
       "index": 125,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xffa98a091331df4600f87c9164cd27e8a5cd2405": {
       "symbol": "POLS-WETH",
       "index": 126,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x43ae24960e5534731fc831386c07755a2dc33d47": {
       "symbol": "SNX-WETH",
       "index": 127,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc09bf2b1bc8725903c509e8caeef9190857215a8": {
       "symbol": "IXS-WETH",
       "index": 128,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x32c6d4f8c4e905f0218d2e8dca7e56d3d0acff09": {
       "symbol": "WETH-PATRIOT",
       "index": 129,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x318ba85ca49a3b12d3cf9c72cc72b29316971802": {
       "symbol": "MSTR-WETH",
       "index": 130,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x315ed60258702f8d159b98df4c0dbeb1d7d776df": {
       "symbol": "WETH-ZKML",
       "index": 131,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe1573b9d29e2183b1af0e743dc2754979a40d237": {
       "symbol": "FXS-FRAX",
       "index": 132,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x33906431e44553411b8668543ffc20aaa24f75f9": {
       "symbol": "WETH-CHAIN",
       "index": 133,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xcc6f7439147338e0401a76db978d7d0ca6e5bfee": {
       "symbol": "WETH-SBR",
       "index": 134,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3016a43b482d0480460f6625115bd372fe90c6bf": {
       "symbol": "ShibDoge-WETH",
       "index": 135,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xcffdded873554f362ac02f8fb1f02e5ada10516f": {
       "symbol": "COMP-WETH",
       "index": 136,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc6e40537215c1e041616478d8cfe312b1847b997": {
       "symbol": "Kekec-WETH",
       "index": 137,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x63f2a1b80af5b19da43ccccdf89b286155b92b7c": {
       "symbol": "WSB-WETH",
       "index": 138,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x36938d1419b717c97ebdb273702806ca73f89a4c": {
       "symbol": "CFi-WETH",
       "index": 139,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x05c024b441d2c288c2729b484bd4bcef3596aa51": {
       "symbol": "OSAK-WETH",
       "index": 140,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xecfe2c3c1ac0a5a59227a01f3dd7044159b11a57": {
       "symbol": "RAMP-WETH",
       "index": 141,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4ff4c7c8754127cc097910cf9d80400adef5b65d": {
       "symbol": "WETH-4CHAN",
       "index": 142,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xa2b04f8133fc25887a436812eae384e32a8a84f2": {
       "symbol": "WETH-COTI",
       "index": 143,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xdeba8fd61c1c87b6321a501ebb19e61e610421bf": {
       "symbol": "BOOE-WETH",
       "index": 144,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x21ffaa1c83946a89bef4d639f71d070c868b8694": {
       "symbol": "CSWAP-WETH",
       "index": 145,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3185626c14acb9531d19560decb9d3e5e80681b1": {
       "symbol": "XRT-WETH",
       "index": 146,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc3576f38c32e95e36bbd8d91e6cbe646a3723110": {
       "symbol": "WETH-PHIL",
       "index": 147,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3da1313ae46132a397d90d95b1424a9a7e3e0fce": {
       "symbol": "WETH-CRV",
       "index": 148,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x85aa97537837514a9229fcaeb66eeef7242122bf": {
       "symbol": "TGC-WETH",
       "index": 149,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4dd26482738be6c06c31467a19dcda9ad781e8c4": {
       "symbol": "API3-WETH",
       "index": 150,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xac336936f2f0c2ab0c8dece3a027445323e8a244": {
       "symbol": "PUSSY-WETH",
       "index": 151,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4fda00d490c1c05ff15d7313d1cebe9c711e434b": {
       "symbol": "WHALE-WETH",
       "index": 152,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x684b00a5773679f88598a19976fbeb25a68e9a5f": {
       "symbol": "eXRD-USDC",
       "index": 153,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe45b4a84e0ad24b8617a489d743c52b84b7acebe": {
       "symbol": "AGIX-WETH",
       "index": 154,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9345c3e50f31f18a68c5bd210cce6f2083ec6943": {
       "symbol": "SMILEY-WETH",
       "index": 155,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf22fdd2be7c6da9788e4941a6ffc78ca99d7b15c": {
       "symbol": "KIBSHI-WETH",
       "index": 156,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x99dfde431b40321a35deb6aeb55cf338ddd6eccd": {
       "symbol": "UFT-WETH",
       "index": 157,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x672fefac7f6e3017d9a2f1c14fe048191a24ce14": {
       "symbol": "WETH-HEMULE",
       "index": 158,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xccb63225a7b19dcf66717e4d40c9a72b39331d61": {
       "symbol": "MC-WETH",
       "index": 159,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x63a151d042dc870fb1b3f0c72cbbdd53a85898f6": {
       "symbol": "FIGHT-WETH",
       "index": 160,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x051ef36e55875c08e4efaea6072c6d0f66fb0b9f": {
       "symbol": "WETH-PALM",
       "index": 161,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3854612b93b140726167cca5418b01e832515d42": {
       "symbol": "HIGH-WETH",
       "index": 162,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6ec94f50cadcc79984463688de42a0ca696ec2db": {
       "symbol": "WHITE-USDC",
       "index": 163,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xfe9e7931e55c514c33d489c88582fa36e84bd8e3": {
       "symbol": "ORDS-WETH",
       "index": 164,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1f964ff83c54ce447adae5cb93f9ec17018bf55b": {
       "symbol": "WETH-BEZOGE",
       "index": 165,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2049df3435bdbb36d22f98fcd2e5027049a1f3ce": {
       "symbol": "M87-WETH",
       "index": 166,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8296d84e911e0c1f827e1e7d4b50c2568e807b36": {
       "symbol": "BIAO-WETH",
       "index": 167,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9c2b19dbdfad3f283c0b96c5546d91a275778d91": {
       "symbol": "WETH-MCC",
       "index": 168,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9c4cc862f51b1ba90485de3502aa058ca4331f32": {
       "symbol": "CELL-WETH",
       "index": 169,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x811cfb75567a252bea23474e2ccd1286927bfe0a": {
       "symbol": "FJO-WETH",
       "index": 170,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x06cd6245156c3608ae67d690c125e86a8bc6a88c": {
       "symbol": "OMIKAMI-USDC",
       "index": 171,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd18748b9839b0081a867a1a871d5b562b2ec9884": {
       "symbol": "POND-USDC",
       "index": 172,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xeaabb2ee89221455302d9ffb5325689ff8f0c37b": {
       "symbol": "IC-WETH",
       "index": 173,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x966053ca4fca049173eb1f27e4cb168ccb794534": {
       "symbol": "VLT-WETH",
       "index": 174,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8867f20c1c63baccec7617626254a060eeb0e61e": {
       "symbol": "PHA-WETH",
       "index": 175,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf6c4e4f339912541d3f8ed99dba64a1372af5e5b": {
       "symbol": "USDT-HEZ",
       "index": 176,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xac86903cdda380f20a06cc8a2dea7749f1558c68": {
       "symbol": "WETH-RAIL",
       "index": 177,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf7ef5352de45a20d8c8565cd94a4bd6c8831f749": {
       "symbol": "LINU-WETH",
       "index": 178,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1bfffb738d69167d5592160a47d5404a3cf5a846": {
       "symbol": "KEX-WETH",
       "index": 179,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2d27cae0c7e88de9b85b3e44ea37b9cb70ca745f": {
       "symbol": "WETH-SMI",
       "index": 180,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x97c4adc5d28a86f9470c70dd91dc6cc2f20d2d4d": {
       "symbol": "FRAX-USDC",
       "index": 181,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x79dd15ad871b0fe18040a52f951d757ef88cfe72": {
       "symbol": "KNDX-WETH",
       "index": 182,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1ca4713fc4a95f76fcb498b2a5fe8759c53df1a1": {
       "symbol": "WETH-GEN",
       "index": 183,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf66369997ae562bc9eec2ab9541581252f9ca383": {
       "symbol": "PERP-WETH",
       "index": 184,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd9848413a0569359e4a1a7adce7d270badc6c3e9": {
       "symbol": "TRWA-WETH",
       "index": 185,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1341c9da8e1d0639033898ae58e4bad7ff7c4201": {
       "symbol": "LAIKA-WETH",
       "index": 186,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4360658e680026e4c636e8be0f7d0b9f976c46f0": {
       "symbol": "WSB-WETH",
       "index": 187,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd6a347c998109ac87ccb323f78960c91bbe911cd": {
       "symbol": "BTC2.0-WETH",
       "index": 188,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xdf42388059692150d0a9de836e4171c7b9c09cbf": {
       "symbol": "WETH-KISHIMOTO",
       "index": 189,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4e84460a8b8bad045ff4eb5be1ecce7a3e3a17c8": {
       "symbol": "WETH-LUFFY",
       "index": 190,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6c35c40447e8011a63ab05f088fa7cd914d66904": {
       "symbol": "WETH-XAMP",
       "index": 191,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x32a505bf9db617d23bf3ebaac9aef80cb24a828c": {
       "symbol": "CHEDDA-WETH",
       "index": 192,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd6b117076222d95a05032a99f10738103c60d64d": {
       "symbol": "ELON-WETH",
       "index": 193,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x70258aa9830c2c84d855df1d61e12c256f6448b4": {
       "symbol": "TRB-WETH",
       "index": 194,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe101e63ee82f4c8acc5e8f0e03da8b444be71c68": {
       "symbol": "OVPP-WETH",
       "index": 195,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5013b8c94ff2e95e8b36e3c064274b20987403f8": {
       "symbol": "Mononoke-Inu-WETH",
       "index": 196,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xab2d2f5bc36620a57ec4bb60d6a7df2a847deab5": {
       "symbol": "xFUND-WETH",
       "index": 197,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5016cd7b785a773f7f3a3ff4035a1e7a76543946": {
       "symbol": "CAGA-USDT",
       "index": 198,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x7fd1de95fc975fbbd8be260525758549ec477960": {
       "symbol": "WETH-HOGE",
       "index": 199,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3bf862093cbb6412b6ee498f4d652bba005aa7f3": {
       "symbol": "K21-WETH",
       "index": 200,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5fa464cefe8901d66c09b85d5fcdc55b3738c688": {
       "symbol": "TOKE-WETH",
       "index": 201,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1037fa1f40b69c9266c4aeb2abcedc7553614b4c": {
       "symbol": "GLCH-WETH",
       "index": 202,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4f9fc4e0b79c1cbf16e68863ad5e9de6a94a346c": {
       "symbol": "PROPC-USDT",
       "index": 203,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xda2d09fbbf8ee4b5051a0e9b562c5fcb4b393b18": {
       "symbol": "WETH-GEKKO",
       "index": 204,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x453a43e2bf3080f7a23c9bb034ccdd869e306102": {
       "symbol": "WETH-STRNGR",
       "index": 205,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc6b9c3fa037303d10d50d71ae3cedb0eea7a1c78": {
       "symbol": "GHX-WETH",
       "index": 206,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x4c083084c9d50334b343c44ec97d16011303cc73": {
       "symbol": "WETH-GMEE",
       "index": 207,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9b3df8eae6e1ed1b931086852860d3c6375d7ae6": {
       "symbol": "MLT-WETH",
       "index": 208,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe5a7ab09e68b2cd335e2bc39e9591b42d29c3115": {
       "symbol": "WETH-INU",
       "index": 209,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x96aa22baedc5a605357e0b9ae20ab6b10a472e03": {
       "symbol": "VOLT-WETH",
       "index": 210,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x11b1f53204d03e5529f09eb3091939e4fd8c9cf3": {
       "symbol": "MANA-WETH",
       "index": 211,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x873056a02255872514f05249d93228d788fe4fb4": {
       "symbol": "DG-USDC",
       "index": 212,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9314941c11d6dee1d7bf93113eb74d4718949f3b": {
       "symbol": "WETH-HOKK",
       "index": 213,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8fe9203c12e797cac7e901d63cacc022b68b50c3": {
       "symbol": "TAOBOT-WETH",
       "index": 214,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x75f89ffbe5c25161cbc7e97c988c9f391eaefaf9": {
       "symbol": "WETH-wPE",
       "index": 215,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x15ab0333985fd1e289adf4fbbe19261454776642": {
       "symbol": "WETH-MLN",
       "index": 216,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6bcd2862522c0ab45f4f9fe693e36c791ede0a42": {
       "symbol": "WETH-TERMINUS",
       "index": 217,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe342253d5a0c1ac9da0203b0256e33c5cfe084f0": {
       "symbol": "WETH-jim",
       "index": 218,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xb6909b960dbbe7392d405429eb2b3649752b4838": {
       "symbol": "BAT-WETH",
       "index": 219,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x515d459555f8c1fcf2791ded819b73b60a80b8e3": {
       "symbol": "OPSEC-WETH",
       "index": 220,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xdab143548832194c8f2677eba9830e0b453b37c6": {
       "symbol": "TKX-WETH",
       "index": 221,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x0b9f5cef1ee41f8cccaa8c3b4c922ab406c980cc": {
       "symbol": "SHIK-WETH",
       "index": 222,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x08650bb9dc722c9c8c62e79c2bafa2d3fc5b3293": {
       "symbol": "WETH-AMP",
       "index": 223,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xdfc14d2af169b0d36c4eff567ada9b2e0cae044f": {
       "symbol": "AAVE-WETH",
       "index": 224,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x629d22e6eeac46a11dbc96be93b90aee9309be4c": {
       "symbol": "AURORA-WETH",
       "index": 225,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5003fdfc747a0acf06266c54fe7285abbca14f25": {
       "symbol": "RIBBIT-WETH",
       "index": 226,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x004375dff511095cc5a197a54140a24efef3a416": {
       "symbol": "WBTC-USDC",
       "index": 227,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8c894d91748a42fc68f681090db06720779a7347": {
       "symbol": "RSTK-WETH",
       "index": 228,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x468795e031c173942c9387aed0a302e26bdd0460": {
       "symbol": "SEN-WETH",
       "index": 229,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x7eb6d3466600b4857eb60a19e0d2115e65aa815e": {
       "symbol": "DOGGO-WETH",
       "index": 230,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf91c12dae1313d0be5d7a27aa559b1171cc1eac5": {
       "symbol": "ETH2x-FLI-WETH",
       "index": 231,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe3cc21af229934034b320502fa55cfa1ab7b1493": {
       "symbol": "TROG-WETH",
       "index": 232,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd75d1b30967d94b105f82f572ae7591cc3c48beb": {
       "symbol": "CLS-USDC",
       "index": 233,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6490828bd87be38279a36f029f3b9af8b4e14b49": {
       "symbol": "RVST-WETH",
       "index": 234,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc3fa0a8d68a43ed336174cb5673903572bbace8e": {
       "symbol": "YFIM-WETH",
       "index": 235,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8de7a9540e0edb617d78ca5a7c6cc18295fd8bb9": {
       "symbol": "OPTIMUS-WETH",
       "index": 236,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9b20e07394cd1fd767a302b502bb49d4da76bcab": {
       "symbol": "PLANET-WETH",
       "index": 237,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xb767c20d9773adce84d0f0a5bc64e2f114ad3076": {
       "symbol": "wOMI-WETH",
       "index": 238,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x394cb9e147b8b288e38615ae04f442a037bcb99f": {
       "symbol": "SANI-WETH",
       "index": 239,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xfe903a12359496b932e24c5e9b78f1b9060a6342": {
       "symbol": "PKF-WETH",
       "index": 240,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x68e78497a7b0db7718ccc833c164a18d8e626816": {
       "symbol": "WETH-RYU",
       "index": 241,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x8a6d9525a0f07dcdc17fff15644342c314025a80": {
       "symbol": "SPECTRE-WETH",
       "index": 242,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf64e49c1d1d2b1cfa570b1da6481dc8dc95cd093": {
       "symbol": "UNLEASH-WETH",
       "index": 243,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x11c20a3b83ff206e4ab6b5935d766564925b8b2b": {
       "symbol": "dogwifhat-WETH",
       "index": 244,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc76225124f3caab07f609b1d147a31de43926cd6": {
       "symbol": "SFI-WETH",
       "index": 245,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5d2c95651e0ee953b9abd8ec47ce2a165c852ae9": {
       "symbol": "WETH-Pikachu",
       "index": 246,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x82b8ee01e63af40bec3cb555795d2a12c495ee23": {
       "symbol": "WETH-LNQ",
       "index": 247,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xc465c0a16228ef6fe1bf29c04fdb04bb797fd537": {
       "symbol": "SDT-WETH",
       "index": 248,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xdca79f1f78b866988081de8a06f92b5e5d316857": {
       "symbol": "MCC-WETH",
       "index": 249,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xb54ce26f2e30f64c5b684b141311ce138ab5e00e": {
       "symbol": "FINE-WETH",
       "index": 250,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe06e1c61a4c220db5f1ae89f9a5839efbb00be7d": {
       "symbol": "QF-WETH",
       "index": 251,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5083b16da538c5022744526122243cf3bddb3bf2": {
       "symbol": "ALI-USDC",
       "index": 252,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x833ba7ed3d18b5ec72e2a2e3e7e279fc466d628b": {
       "symbol": "WETH-DOGC",
       "index": 253,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x24b8c320a4505057cb1e4808d200535ec5320817": {
       "symbol": "PAI-WETH",
       "index": 254,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1c6faf9ad252390ee5e6f0b2f8d2fc927a8eb4e6": {
       "symbol": "CoShi-WETH",
       "index": 255,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xfa5562729fdc3ed3a52c3aab2e12bd504fd24991": {
       "symbol": "AVG-WETH",
       "index": 256,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xd293d05e83035a757d510e2a5ebfe705c4f05b1f": {
       "symbol": "SHIRO-WETH",
       "index": 257,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2dfee82f4250dd3f3c6811c5d2926ede8b37a7d5": {
       "symbol": "JUP-WETH",
       "index": 258,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9faf7ad8711f6b87cfcf39c235b0a03ef4bdd7c2": {
       "symbol": "WASSIE-WETH",
       "index": 259,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x7b412f141996411401f57e2ba1bc2235af807d4d": {
       "symbol": "WETH-CUMINU",
       "index": 260,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x602414a63c90801dc4337ee440b3454a6d2c275b": {
       "symbol": "SHEESHA-WETH",
       "index": 261,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf6c3595cbd6858b47e93c83312cef89750cea3a4": {
       "symbol": "WETH-CUBE",
       "index": 262,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xbc7ce7b6b5437d7d715fbb1cc7b4ec12399c5516": {
       "symbol": "Yee-WETH",
       "index": 263,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xfe796ba940256e65048d1e6b52ec8755067c7145": {
       "symbol": "VOLT-WETH",
       "index": 264,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xb36ec83d844c0579ec2493f10b2087e96bb65460": {
       "symbol": "ZIG-WETH",
       "index": 265,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe99191b4a562ccb416ea8e00085e13105cf80639": {
       "symbol": "BIAO-WETH",
       "index": 266,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x0f388ecdbc128083bfe317b00de2c25fbe9f24d5": {
       "symbol": "SWAG-WETH",
       "index": 267,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xdf4f3749bb4e96bf91a67c7e873d9c04198d924a": {
       "symbol": "WAGMIGAMES-WETH",
       "index": 268,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xb2843c7133289541086fa41673850dbf61cac6db": {
       "symbol": "WETH-CAPY",
       "index": 269,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xb6ca52c7916ad7960c12dc489fd93e5af7ca257f": {
       "symbol": "eMax-WETH",
       "index": 270,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6061a36ad6b7958f68129bb313e6eff81cd9113c": {
       "symbol": "SMARTCREDIT-WETH",
       "index": 271,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x0d1cfdb753f03500f5ae1f565dc3823367630061": {
       "symbol": "COCORO-WETH",
       "index": 272,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x9ec9620e1fda9c1e57c46782bc3232903cacb59b": {
       "symbol": "WETH-SLAP",
       "index": 273,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3415e25b637686bbece1d0f798934772101486f6": {
       "symbol": "oGPU-WETH",
       "index": 274,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xf97503af8230a7e72909d6614f45e88168ff3c10": {
       "symbol": "ZEUS-WETH",
       "index": 275,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6c8b0dee9e90ea9f790da5daf6f5b20d23b39689": {
       "symbol": "ORN-WETH",
       "index": 276,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xa76a9baa3cc9dacd86852bea6c4ae8c63e70c4a4": {
       "symbol": "WETH-DEFROGS",
       "index": 277,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xe0076d311a4628516d157ad684dbd2ddada3dafe": {
       "symbol": "ROKO-WETH",
       "index": 278,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x3beeab9d5624e487045e01d12332975204a04a8a": {
       "symbol": "BCB-WETH",
       "index": 279,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xfe17ab3f63038b3b5bc400d6691b2f4d50a33bf0": {
       "symbol": "PAPI-WETH",
       "index": 280,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x1f3d61248ec81542889535595903078109707941": {
       "symbol": "WBTC-KBTC",
       "index": 281,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x7dd3f5705504002dc946aeafe6629b9481b72272": {
       "symbol": "DAO-WETH",
       "index": 282,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x2a706f26e0bd400ac710bec99150ed9d644f29bd": {
       "symbol": "YAI-WETH",
       "index": 283,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xcf4236db746dbc1855a4d095aaf58da9b030491e": {
       "symbol": "BLZ-WETH",
       "index": 284,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xed643618dd5194f243a8f23c7bd786a37a6dcf8b": {
       "symbol": "YFBETA-WETH",
       "index": 285,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x5b1e45ca08fa4d65aa7fdcf9e116990fb7fce73b": {
       "symbol": "pBTC35A-USDT",
       "index": 286,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x6147805e1011417b93e5d693424a62a70d09d0e5": {
       "symbol": "WETH-ankrETH",
       "index": 287,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0xaf3e33c8971be5b753145228d29f1e0197ec7bb6": {
       "symbol": "WOLF-WETH",

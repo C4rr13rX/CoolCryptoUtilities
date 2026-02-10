@@ -221,18 +221,24 @@ const setupAutoScrollHint = () => {
 };
 
 const setupBackdropEffects = () => {
-  if (!document.body || (window as any).__ccuMatrixActive) return;
+  if (!document.body) return;
+  const host = document.getElementById('app') ?? document.body;
   const ensureCanvas = (id: string) => {
     let canvas = document.getElementById(id) as HTMLCanvasElement | null;
     if (!canvas) {
       canvas = document.createElement('canvas');
       canvas.id = id;
       canvas.setAttribute('aria-hidden', 'true');
-      document.body.prepend(canvas);
+      host.appendChild(canvas);
     }
     return canvas;
   };
 
+  const hasMatrix = document.getElementById('matrix-bg');
+  const hasStarfield = document.getElementById('starfield-bg');
+  if ((window as any).__ccuMatrixActive && hasMatrix && hasStarfield) return;
+  if (matrixCleanup) matrixCleanup();
+  if (starfieldCleanup) starfieldCleanup();
   matrixCleanup = runMatrixBackground(ensureCanvas('matrix-bg'));
   starfieldCleanup = runStarfieldBackground(ensureCanvas('starfield-bg'));
   (window as any).__ccuMatrixActive = true;
