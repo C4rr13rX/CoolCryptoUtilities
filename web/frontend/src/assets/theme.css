@@ -152,6 +152,55 @@ body {
   filter: drop-shadow(0 12px 28px rgba(59, 130, 246, 0.25));
 }
 
+.auto-scroll-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.6s ease;
+}
+
+.auto-scroll-hint.fade-out {
+  opacity: 0;
+}
+
+.auto-scroll-hint .edge {
+  position: absolute;
+  left: 10%;
+  width: 80%;
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(120, 170, 255, 0), rgba(160, 205, 255, 0.55), rgba(120, 170, 255, 0));
+  filter: blur(0.6px);
+  opacity: 0.7;
+  animation: edgePulse 1.2s ease-in-out infinite;
+}
+
+.auto-scroll-hint .edge-top {
+  top: 12px;
+}
+
+.auto-scroll-hint .edge-bottom {
+  bottom: 12px;
+  animation-delay: 0.2s;
+}
+
+@keyframes edgePulse {
+  0% {
+    transform: scaleX(0.6);
+    opacity: 0.2;
+  }
+  50% {
+    transform: scaleX(1);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scaleX(0.6);
+    opacity: 0.25;
+  }
+}
+
 #app {
   min-height: 100%;
   width: 100%;

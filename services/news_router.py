@@ -52,7 +52,10 @@ class FreeNewsRouter:
         if df.empty:
             return
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(self.cache_path, index=False)
+        if self._write_parquet(df, self.cache_path):
+            return
+        fallback_path = self.cache_path.with_suffix(".json")
+        self._write_json(df, fallback_path)
 
     def _load_rows(self) -> List[Dict[str, object]]:
         rows: List[Dict[str, object]] = []
@@ -65,8 +68,40 @@ class FreeNewsRouter:
                 if not cached.empty:
                     rows.extend(cached.to_dict(orient="records"))
             except Exception:
-                pass
+                fallback_path = self.cache_path.with_suffix(".json")
+                if fallback_path.exists():
+                    rows.extend(self._read_json(fallback_path))
+        else:
+            fallback_path = self.cache_path.with_suffix(".json")
+            if fallback_path.exists():
+                rows.extend(self._read_json(fallback_path))
         return rows
+
+    @staticmethod
+    def _write_parquet(df: pd.DataFrame, path: Path) -> bool:
+        try:
+            df.to_parquet(path, index=False)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _write_json(df: pd.DataFrame, path: Path) -> None:
+        try:
+            payload = df.to_dict(orient="records")
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception:
+            return
+
+    @staticmethod
+    def _read_json(path: Path) -> List[Dict[str, object]]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if isinstance(payload, list):
+            return [row for row in payload if isinstance(row, dict)]
+        return []
 
     def _load_sources(self) -> List[Dict[str, str]]:
         if not self.config_path.exists():

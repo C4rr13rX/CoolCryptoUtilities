@@ -105,6 +105,7 @@ onMounted(() => {
   setupAutoScroll();
   setupBackdropEffects();
   setupSplashOverlay();
+  setupAutoScrollHint();
   pointerHandler = (event: PointerEvent) => {
     const soundId = resolveSoundId(event.target as HTMLElement | null);
     ambientAudio.triggerChord(soundId);
@@ -166,9 +167,10 @@ const setupAutoScroll = () => {
       autoScrollCleanup.push(
         attachEdgeAutoScroll(sidebarRef.value, {
           edgePx: 28,
-          delayMs: 500,
+          delayMs: 300,
           maxSpeedPxPerSec: 520,
           minSpeedPxPerSec: 140,
+          stopMoveThresholdPx: 1,
         })
       );
     }
@@ -176,9 +178,10 @@ const setupAutoScroll = () => {
       autoScrollCleanup.push(
         attachEdgeAutoScroll(contentRef.value, {
           edgePx: 28,
-          delayMs: 500,
+          delayMs: 300,
           maxSpeedPxPerSec: 560,
           minSpeedPxPerSec: 160,
+          stopMoveThresholdPx: 1,
         })
       );
     }
@@ -202,6 +205,19 @@ const setupSplashOverlay = () => {
   overlay.addEventListener('transitionend', () => {
     overlay.remove();
   });
+};
+
+const setupAutoScrollHint = () => {
+  if (document.getElementById('auto-scroll-hint')) return;
+  const hint = document.createElement('div');
+  hint.id = 'auto-scroll-hint';
+  hint.className = 'auto-scroll-hint';
+  hint.innerHTML = `<span class="edge edge-top"></span><span class="edge edge-bottom"></span>`;
+  document.body.appendChild(hint);
+  window.setTimeout(() => {
+    hint.classList.add('fade-out');
+  }, 900);
+  hint.addEventListener('transitionend', () => hint.remove());
 };
 
 const setupBackdropEffects = () => {
@@ -230,21 +246,39 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
   let width = 0;
   let height = 0;
   let dpr = Math.min(window.devicePixelRatio || 1, 2);
-  let nodes: Array<{ x: number; y: number; vx: number; vy: number; radius: number }> = [];
+  let nodes: Array<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    radius: number;
+    baseX: number;
+    baseY: number;
+    driftX: number;
+    driftY: number;
+  }> = [];
   let backgroundGradient: CanvasGradient | null = null;
   const mouse = { x: null as number | null, y: null as number | null, dx: 0, dy: 0 };
   let lastMouse = { x: null as number | null, y: null as number | null };
   let rafId = 0;
 
   const initNodes = () => {
-    const count = Math.min(140, Math.max(60, Math.floor((width * height) / 18000)));
-    nodes = Array.from({ length: count }).map(() => ({
-      x: Math.random() * width,
-      y: Math.random() * height,
-      vx: (Math.random() - 0.5) * 0.35,
-      vy: (Math.random() - 0.5) * 0.35,
-      radius: 1.2 + Math.random() * 1.6,
-    }));
+    const count = Math.min(260, Math.max(110, Math.floor((width * height) / 12000)));
+    nodes = Array.from({ length: count }).map(() => {
+      const baseX = Math.random() * width;
+      const baseY = Math.random() * height;
+      return {
+        x: baseX,
+        y: baseY,
+        vx: (Math.random() - 0.5) * 0.2,
+        vy: (Math.random() - 0.5) * 0.2,
+        radius: 1.1 + Math.random() * 1.4,
+        baseX,
+        baseY,
+        driftX: (Math.random() - 0.5) * 0.18,
+        driftY: (Math.random() - 0.5) * 0.18,
+      };
+    });
   };
 
   const buildGradient = () => {
@@ -275,30 +309,40 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     ctx.fillStyle = backgroundGradient || 'rgba(4, 8, 16, 0.6)';
     ctx.fillRect(0, 0, width, height);
 
-    const connectDist = Math.max(120, Math.min(180, Math.min(width, height) * 0.18));
-    const influence = 160;
+    const connectDist = Math.max(140, Math.min(200, Math.min(width, height) * 0.2));
+    const influence = Math.max(160, Math.min(240, Math.min(width, height) * 0.26));
+    const spring = 0.028;
+    const damping = 0.9;
 
     for (const node of nodes) {
       if (mouse.x !== null && mouse.y !== null) {
-        const dx = node.x - mouse.x;
-        const dy = node.y - mouse.y;
+        const dx = node.baseX - mouse.x;
+        const dy = node.baseY - mouse.y;
         const dist = Math.hypot(dx, dy);
         if (dist < influence && dist > 0.1) {
-          const force = (1 - dist / influence) * 0.08;
-          node.vx += (dx / dist) * force;
-          node.vy += (dy / dist) * force;
+          const influenceFactor = (1 - dist / influence) * 0.8;
+          node.vx += mouse.dx * influenceFactor;
+          node.vy += mouse.dy * influenceFactor;
+          const pull = (1 - dist / influence) * 0.04;
+          node.vx += (-dx / dist) * pull;
+          node.vy += (-dy / dist) * pull;
         }
       }
-      const driftStrength = 0.06;
-      node.vx += mouse.dx * driftStrength;
-      node.vy += mouse.dy * driftStrength;
+      node.vx += (node.baseX - node.x) * spring;
+      node.vy += (node.baseY - node.y) * spring;
+      node.vx *= damping;
+      node.vy *= damping;
       node.x += node.vx;
       node.y += node.vy;
-      if (node.x < -20) node.x = width + 20;
-      if (node.x > width + 20) node.x = -20;
-      if (node.y < -20) node.y = height + 20;
-      if (node.y > height + 20) node.y = -20;
+      node.baseX += node.driftX;
+      node.baseY += node.driftY;
+      if (node.baseX < -30) node.baseX = width + 30;
+      if (node.baseX > width + 30) node.baseX = -30;
+      if (node.baseY < -30) node.baseY = height + 30;
+      if (node.baseY > height + 30) node.baseY = -30;
     }
+    mouse.dx *= 0.92;
+    mouse.dy *= 0.92;
 
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
@@ -320,7 +364,7 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     }
 
     for (const node of nodes) {
-      ctx.fillStyle = 'rgba(185, 200, 215, 0.7)';
+      ctx.fillStyle = 'rgba(195, 210, 225, 0.75)';
       ctx.beginPath();
       ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
       ctx.fill();
@@ -370,20 +414,33 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
   let width = 0;
   let height = 0;
   let dpr = Math.min(window.devicePixelRatio || 1, 2);
-  let stars: Array<{ x: number; y: number; r: number; phase: number; tw: number; a: number; vy: number; vx: number }> = [];
+  let stars: Array<{
+    x: number;
+    y: number;
+    r: number;
+    phase: number;
+    tw: number;
+    a: number;
+    vy: number;
+    vx: number;
+    trail: number;
+    drift: number;
+  }> = [];
   let rafId = 0;
 
   const initStars = () => {
-    const count = Math.min(120, Math.max(40, Math.floor((width * height) / 50000)));
+    const count = Math.min(70, Math.max(25, Math.floor((width * height) / 72000)));
     stars = Array.from({ length: count }).map(() => ({
       x: Math.random() * width,
       y: Math.random() * height,
-      r: 0.6 + Math.random() * 1.2,
+      r: 0.6 + Math.random() * 1,
       phase: Math.random() * Math.PI * 2,
       tw: 0.004 + Math.random() * 0.012,
-      a: 0.18 + Math.random() * 0.35,
-      vy: 0.08 + Math.random() * 0.22,
-      vx: 0.04 + Math.random() * 0.14,
+      a: 0.14 + Math.random() * 0.28,
+      vy: 0.03 + Math.random() * 0.12,
+      vx: 0.02 + Math.random() * 0.08,
+      trail: 14 + Math.random() * 26,
+      drift: (Math.random() - 0.5) * 0.2,
     }));
   };
 
@@ -404,13 +461,28 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
     for (const star of stars) {
       star.phase += star.tw;
       const twinkle = (Math.sin(star.phase) + 1) / 2;
-      const alpha = Math.max(0.05, Math.min(0.6, star.a * (0.35 + twinkle)));
+      const alpha = Math.max(0.05, Math.min(0.55, star.a * (0.3 + twinkle)));
+      const drift = Math.sin(star.phase * 0.6) * star.drift;
+      const dx = star.vx + drift;
+      const dy = star.vy;
+      const tailX = star.x - dx * star.trail;
+      const tailY = star.y - dy * star.trail;
+      ctx.strokeStyle = `rgba(210, 230, 250, ${alpha * 0.35})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(star.x, star.y);
+      ctx.stroke();
       ctx.fillStyle = `rgba(220, 235, 255, ${alpha})`;
       ctx.beginPath();
       ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
       ctx.fill();
-      star.x += star.vx;
-      star.y += star.vy;
+      ctx.fillStyle = `rgba(220, 235, 255, ${alpha * 0.25})`;
+      ctx.beginPath();
+      ctx.arc(star.x - dx * 0.5 * star.trail, star.y - dy * 0.5 * star.trail, star.r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+      star.x += dx;
+      star.y += dy;
       if (star.y > height + 10 || star.x > width + 10) {
         star.y = -10;
         star.x = Math.random() * width * 0.6;

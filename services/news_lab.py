@@ -465,12 +465,26 @@ def _persist_free_news(items: Sequence[Dict[str, Any]]) -> None:
             if not existing.empty:
                 df = pd.concat([existing, df], ignore_index=True)
         except Exception:
-            pass
+            fallback = path.with_suffix(".json")
+            if fallback.exists():
+                try:
+                    payload = json.loads(fallback.read_text(encoding="utf-8"))
+                    if isinstance(payload, list) and payload:
+                        df = pd.concat([pd.DataFrame(payload), df], ignore_index=True)
+                except Exception:
+                    pass
     df.drop_duplicates(subset=["timestamp", "headline"], inplace=True)
     df.sort_values("timestamp", inplace=True)
     df.reset_index(drop=True, inplace=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(path, index=False)
+    try:
+        df.to_parquet(path, index=False)
+    except Exception:
+        fallback = path.with_suffix(".json")
+        try:
+            fallback.write_text(json.dumps(df.to_dict(orient="records"), indent=2), encoding="utf-8")
+        except Exception:
+            return
 
 
 def _free_router_items(
