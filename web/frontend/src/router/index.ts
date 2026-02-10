@@ -21,6 +21,7 @@ import AudioLabView from '@/views/AudioLabView.vue';
 import CronView from '@/views/CronView.vue';
 import InvestigationsView from '@/views/InvestigationsView.vue';
 import LogsView from '@/views/LogsView.vue';
+import BusScheduleView from '@/views/BusScheduleView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -140,6 +141,12 @@ const routes: RouteRecordRaw[] = [
     name: 'logs',
     component: LogsView,
     meta: { title: 'Logs' },
+  },
+  {
+    path: '/bus',
+    name: 'bus',
+    component: BusScheduleView,
+    meta: { title: 'Bus Scheduler' },
   },
 ];
 

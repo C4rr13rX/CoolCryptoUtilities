@@ -5,6 +5,7 @@ import json
 import time
 import re
 import random
+import subprocess
 from pathlib import Path
 from typing import List, Optional
 from datetime import datetime, timedelta, UTC
@@ -91,6 +92,11 @@ GRANULARITY_SECONDS  = _int_env("GRANULARITY_SECONDS", 60 * 5)   # 5 min
 MAX_WORKERS          = _int_env("MAX_WORKERS", 30)
 ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
 LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
+RPC_CONNECT_TIMEOUT  = _int_env("RPC_CONNECT_TIMEOUT_SEC", 12)
+RPC_CONNECT_RETRIES  = _int_env("RPC_CONNECT_RETRIES", 3)
+RPC_MAX_RETRIES      = _int_env("RPC_MAX_RETRIES", 3)
+PAIR_MAX_FAILURES    = _int_env("PAIR_MAX_FAILURES", 5)
+PAIR_BACKOFF_BASE    = _int_env("PAIR_BACKOFF_BASE_SEC", 300)
 
 # Optional full RPC URL override (e.g., self-hosted, Alchemy, Infura, Ankr w/ key)
 RPC_URL_OVERRIDE = os.getenv("ANKR_RPC_URL", "").strip()
@@ -106,6 +112,32 @@ PUBLIC_RPC_FALLBACKS = {
     "polygon": "https://polygon-rpc.com",
 }
 
+ANKR_CHAIN_SLUGS = {
+    "ethereum": "eth",
+    "base": "base",
+    "arbitrum": "arbitrum",
+    "optimism": "optimism",
+    "polygon": "polygon",
+}
+
+ANKR_PUBLIC_ENDPOINTS = {
+    chain: f"https://rpc.ankr.com/{slug}"
+    for chain, slug in ANKR_CHAIN_SLUGS.items()
+}
+
+EXTRA_PUBLIC_RPC_FALLBACKS = {
+    "base": [
+        "https://base.llamarpc.com",
+        "https://base-rpc.publicnode.com",
+        "https://gateway.tenderly.co/public/base",
+    ],
+}
+
+ACTIVE_CHAIN: Optional[str] = None
+ACTIVE_RPC: Optional[str] = None
+_rpc_candidates: List[str] = []
+_rpc_cursor = 0
+
 def _infer_chain_from_path(path: Path) -> Optional[str]:
     stem = path.stem.lower()
     for suffix in ("_pair_provider_assignment", "_pairs", "_assignment"):
@@ -118,11 +150,21 @@ def _infer_chain_from_path(path: Path) -> Optional[str]:
             return candidate
     return None
 
-def _rpc_for_chain(chain: str) -> str:
+def _rpc_candidates_for_chain(chain: str) -> List[str]:
     chain = chain.lower().strip()
     prefer_free = os.getenv("PREFER_FREE_RPC", "1").strip().lower() not in {"0", "false", "no"}
+    prefer_ankr = os.getenv("PREFER_ANKR_RPC", "1").strip().lower() not in {"0", "false", "no"}
+    candidates: List[str] = []
+
     if RPC_URL_OVERRIDE:
-        return RPC_URL_OVERRIDE
+        candidates.append(RPC_URL_OVERRIDE)
+
+    if prefer_ankr:
+        ankr_slug = ANKR_CHAIN_SLUGS.get(chain, chain)
+        if ANKR_API_KEY:
+            candidates.append(f"https://rpc.ankr.com/{ankr_slug}/{ANKR_API_KEY}".rstrip("/"))
+        candidates.append(ANKR_PUBLIC_ENDPOINTS.get(chain, ""))
+
     alchemy_env_map = {
         "base": "ALCHEMY_BASE_URL",
         "ethereum": "ALCHEMY_ETH_URL",
@@ -139,29 +181,79 @@ def _rpc_for_chain(chain: str) -> str:
     }
     env_var = alchemy_env_map.get(chain, "")
     candidate = os.getenv(env_var, "").strip()
+    if candidate:
+        candidates.append(candidate)
+    key = os.getenv("ALCHEMY_API_KEY", "").strip()
+    if key and chain in slugs:
+        candidates.append(f"https://{slugs[chain]}.g.alchemy.com/v2/{key}")
+
+    if not prefer_ankr and ANKR_API_KEY:
+        ankr_slug = ANKR_CHAIN_SLUGS.get(chain, chain)
+        candidates.append(f"https://rpc.ankr.com/{ankr_slug}/{ANKR_API_KEY}".rstrip("/"))
+        candidates.append(ANKR_PUBLIC_ENDPOINTS.get(chain, ""))
+
     if prefer_free:
-        if ANKR_API_KEY:
-            candidate = candidate or f"https://rpc.ankr.com/{chain}/{ANKR_API_KEY}".rstrip("/")
-        candidate = candidate or PUBLIC_RPC_FALLBACKS.get(chain, "")
-        if not candidate:
-            key = os.getenv("ALCHEMY_API_KEY", "").strip()
-            if key and chain in slugs:
-                candidate = f"https://{slugs[chain]}.g.alchemy.com/v2/{key}"
+        candidates.append(PUBLIC_RPC_FALLBACKS.get(chain, ""))
+        candidates.extend(EXTRA_PUBLIC_RPC_FALLBACKS.get(chain, []))
     else:
-        if not candidate:
-            key = os.getenv("ALCHEMY_API_KEY", "").strip()
-            if key and chain in slugs:
-                candidate = f"https://{slugs[chain]}.g.alchemy.com/v2/{key}"
-        if not candidate and ANKR_API_KEY:
-            candidate = f"https://rpc.ankr.com/{chain}/{ANKR_API_KEY}".rstrip("/")
-        if not candidate:
-            candidate = PUBLIC_RPC_FALLBACKS.get(chain, "")
-    if not candidate:
+        candidates.extend(EXTRA_PUBLIC_RPC_FALLBACKS.get(chain, []))
+        candidates.append(PUBLIC_RPC_FALLBACKS.get(chain, ""))
+
+    cleaned = []
+    seen = set()
+    for url in candidates:
+        url = (url or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        cleaned.append(url)
+    if not cleaned:
         raise RuntimeError(
             f"No RPC configured for chain '{chain}'. "
-            "Set ALCHEMY_API_KEY or a chain-specific URL (e.g., ALCHEMY_ETH_URL) or ANKR_RPC_URL."
+            "Set ANKR_API_KEY or ANKR_RPC_URL, or a chain-specific URL (e.g., ALCHEMY_ETH_URL)."
         )
-    return candidate
+    return cleaned
+
+
+def _probe_rpc(url: str) -> Optional[Web3]:
+    try:
+        w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": RPC_CONNECT_TIMEOUT}))
+        if not w3.is_connected():
+            return None
+        _ = w3.eth.chain_id
+        return w3
+    except Exception:
+        return None
+
+
+def _connect_web3(chain: str) -> Web3:
+    global web3, ACTIVE_RPC, _rpc_candidates, _rpc_cursor, ACTIVE_CHAIN
+    ACTIVE_CHAIN = chain
+    _rpc_candidates = _rpc_candidates_for_chain(chain)
+    if not _rpc_candidates:
+        raise RuntimeError(f"No RPC candidates for {chain}")
+    start = _rpc_cursor
+    for offset in range(len(_rpc_candidates)):
+        idx = (start + offset) % len(_rpc_candidates)
+        url = _rpc_candidates[idx]
+        for _ in range(max(1, RPC_CONNECT_RETRIES)):
+            w3 = _probe_rpc(url)
+            if w3 is not None:
+                web3 = w3
+                ACTIVE_RPC = url
+                _rpc_cursor = idx
+                return w3
+            time.sleep(0.2)
+    raise RuntimeError(f"[ERROR] Could not connect to any RPC endpoint for {chain}")
+
+
+def get_web3() -> Web3:
+    global web3
+    if web3 is None or not web3.is_connected():
+        if not ACTIVE_CHAIN:
+            raise RuntimeError("Chain not set for RPC initialization.")
+        return _connect_web3(ACTIVE_CHAIN)
+    return web3
 
 # --- RATE LIMITER ---
 bucket = Semaphore(0)
@@ -173,8 +265,24 @@ def _refill_bucket():
 Thread(target=_refill_bucket, daemon=True).start()
 
 def limited(fn, *args, **kwargs):
-    bucket.acquire()
-    return fn(*args, **kwargs)
+    last_exc = None
+    for attempt in range(max(1, RPC_MAX_RETRIES)):
+        bucket.acquire()
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 < RPC_MAX_RETRIES:
+                try:
+                    if ACTIVE_CHAIN:
+                        _connect_web3(ACTIVE_CHAIN)
+                except Exception:
+                    pass
+                time.sleep(0.15)
+            else:
+                raise
+    if last_exc:
+        raise last_exc
 
 # --- ABIs ---
 PAIR_ABI = json.loads("""[
@@ -233,15 +341,15 @@ def parse_delay(msg: str):
     return val * {'s':1,'m':60,'h':3600}[unit]
 
 def get_block_by_timestamp(ts: int):
-    latest = limited(lambda: web3.eth.block_number)
-    latest_ts = limited(web3.eth.get_block, latest)["timestamp"]
+    latest = limited(lambda: get_web3().eth.block_number)
+    latest_ts = limited(lambda: get_web3().eth.get_block(latest))["timestamp"]
     return max(1, latest - int((latest_ts - ts) / 13))
 
 def fetch_chunk(ev, b, e_b, sym, idx, total):
     delays = [30, 30, 30, 60]
     for attempt, delay in enumerate(delays, start=1):
         try:
-            logs = limited(ev.get_logs, from_block=b, to_block=e_b)
+            logs = limited(lambda: ev.get_logs(from_block=b, to_block=e_b))
             print(f"    [{idx+1}/{total}] [DATA] {sym}: {len(logs)} logs [{b}->{e_b}]")
             return logs
         except Exception as exc:
@@ -256,7 +364,7 @@ def fetch_chunk(ev, b, e_b, sym, idx, total):
 def get_block_with_retry(block_number, retries=7):
     for attempt in range(retries):
         try:
-            return limited(web3.eth.get_block, block_number)
+            return limited(lambda: get_web3().eth.get_block(block_number))
         except Exception as e:
             msg = str(e)
             delay = parse_delay(msg) or (10 + random.uniform(0, 5))
@@ -270,13 +378,86 @@ def chunked(lst, n):
 
 def _has_code(addr: str) -> bool:
     try:
-        code = limited(web3.eth.get_code, Web3.to_checksum_address(addr))
+        code = limited(lambda: get_web3().eth.get_code(Web3.to_checksum_address(addr)))
     except Exception:
         return False
     try:
         return len(code) > 0
     except Exception:
         return bool(code)
+
+
+def _should_rebuild_assignment(assignment: dict, chain: str, sample_size: int = 30, threshold: float = 0.75) -> bool:
+    pairs = list(assignment.get("pairs", {}).keys())
+    if not pairs:
+        return False
+    sample = random.sample(pairs, min(sample_size, len(pairs)))
+    missing = sum(1 for addr in sample if not _has_code(addr))
+    ratio = missing / max(1, len(sample))
+    if ratio >= threshold:
+        print(f"[WARN] {ratio:.0%} of sampled pairs have no code on {chain}. Rebuilding assignment.")
+        return True
+    return False
+
+
+def _rebuild_assignment_from_index(chain: str, assignment_path: Path) -> dict:
+    index_path = Path("data") / f"pair_index_{chain}.json"
+    if not index_path.exists() or _pair_index_invalid(index_path, chain):
+        _refresh_pair_index(chain, index_path)
+    with index_path.open("r", encoding="utf-8") as fh:
+        index = json.load(fh)
+    pairs = {}
+    for addr, meta in index.items():
+        symbol = str(meta.get("symbol") or "").upper()
+        if not symbol:
+            continue
+        pairs[addr] = {
+            "symbol": symbol,
+            "index": int(meta.get("index", len(pairs))),
+            "completed": False,
+        }
+    assignment = {
+        "granularity_seconds": GRANULARITY_SECONDS,
+        "years_back": YEARS_BACK,
+        "start_date": datetime.now(UTC).isoformat(),
+        "chain": chain,
+        "pairs": pairs,
+    }
+    assignment_path.parent.mkdir(parents=True, exist_ok=True)
+    with assignment_path.open("w", encoding="utf-8") as fh:
+        json.dump(assignment, fh, indent=2)
+    print(f"[INFO] Rebuilt assignment with {len(pairs)} pairs from {index_path}")
+    return assignment
+
+
+def _pair_index_invalid(index_path: Path, chain: str, sample_size: int = 30, threshold: float = 0.75) -> bool:
+    try:
+        with index_path.open("r", encoding="utf-8") as fh:
+            index = json.load(fh)
+    except Exception:
+        return True
+    addrs = list(index.keys())
+    if not addrs:
+        return True
+    sample = random.sample(addrs, min(sample_size, len(addrs)))
+    missing = sum(1 for addr in sample if not _has_code(addr))
+    ratio = missing / max(1, len(sample))
+    if ratio >= threshold:
+        print(f"[WARN] Pair index {index_path} looks wrong for {chain} ({ratio:.0%} empty code).")
+        return True
+    return False
+
+
+def _refresh_pair_index(chain: str, index_path: Path) -> None:
+    print(f"[INFO] Refreshing pair index for {chain}...")
+    env = os.environ.copy()
+    env["CHAIN_NAME"] = chain
+    env.setdefault("PAIR_INDEX_OUTPUT_PATH", str(index_path))
+    cmd = [sys.executable, str(Path(__file__).resolve().parent / "make2000index.py")]
+    try:
+        subprocess.run(cmd, env=env, check=True)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to refresh pair index for {chain}: {exc}")
 
 def safe_decimals(addr: str):
     """
@@ -296,18 +477,18 @@ def safe_decimals(addr: str):
         return None
 
     try:
-        c = web3.eth.contract(address=a, abi=ERC20_ABI)
-        return int(limited(c.functions.decimals().call))
+        c = get_web3().eth.contract(address=a, abi=ERC20_ABI)
+        return int(limited(lambda: c.functions.decimals().call()))
     except Exception:
         pass
     try:
-        c = web3.eth.contract(address=a, abi=ERC20_ABI_U256)
-        return int(limited(c.functions.decimals().call))
+        c = get_web3().eth.contract(address=a, abi=ERC20_ABI_U256)
+        return int(limited(lambda: c.functions.decimals().call()))
     except Exception:
         pass
     try:
-        c = web3.eth.contract(address=a, abi=ERC20_ABI_UPPER)
-        return int(limited(c.functions.DECIMALS().call))
+        c = get_web3().eth.contract(address=a, abi=ERC20_ABI_UPPER)
+        return int(limited(lambda: c.functions.DECIMALS().call()))
     except Exception:
         pass
 
@@ -361,21 +542,22 @@ def parse_logs_v3_no_ts(logs, dec0, dec1, granularity_seconds):
     return records_by_bar, blocks_by_bar
 
 def resolve_pool_kind(pair_addr):
-    pair_v2 = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
-    pair_v3 = web3.eth.contract(address=pair_addr, abi=V3_POOL_ABI)
     try:
-        t0_raw = limited(pair_v2.functions.token0().call)
-        t1_raw = limited(pair_v2.functions.token1().call)
+        pair_v2 = get_web3().eth.contract(address=pair_addr, abi=PAIR_ABI)
+        t0_raw = limited(lambda: pair_v2.functions.token0().call())
+        t1_raw = limited(lambda: pair_v2.functions.token1().call())
     except Exception:
         try:
-            t0_raw = limited(pair_v3.functions.token0().call)
-            t1_raw = limited(pair_v3.functions.token1().call)
+            pair_v3 = get_web3().eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+            t0_raw = limited(lambda: pair_v3.functions.token0().call())
+            t1_raw = limited(lambda: pair_v3.functions.token1().call())
         except Exception:
             return None
     pool_kind = "v2"
     fee = None
     try:
-        fee = int(limited(pair_v3.functions.fee().call))
+        pair_v3 = get_web3().eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+        fee = int(limited(lambda: pair_v3.functions.fee().call()))
         pool_kind = "v3"
     except Exception:
         pass
@@ -441,6 +623,36 @@ def update_assignment(assignment, addr, **fields):
     with open(PAIR_ASSIGNMENT_FILE, "w") as wf:
         json.dump(assignment, wf, indent=2)
 
+
+def _is_deferred(meta: dict) -> bool:
+    until = meta.get("deferred_until")
+    if not until:
+        return False
+    try:
+        if isinstance(until, (int, float)):
+            ts = float(until)
+        else:
+            ts = datetime.fromisoformat(str(until).replace("Z", "+00:00")).timestamp()
+        return time.time() < ts
+    except Exception:
+        return False
+
+
+def defer_pair(assignment: dict, addr: str, error: str) -> None:
+    meta = assignment["pairs"].get(addr, {})
+    failures = int(meta.get("failures", 0)) + 1
+    meta["failures"] = failures
+    meta["last_failure"] = datetime.now(UTC).isoformat()
+    meta["error"] = error
+    if failures >= PAIR_MAX_FAILURES:
+        meta["completed"] = True
+        meta["skipped"] = True
+        meta.pop("deferred_until", None)
+    else:
+        delay = min(6 * 3600, PAIR_BACKOFF_BASE * (2 ** max(0, failures - 1)))
+        meta["deferred_until"] = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+    update_assignment(assignment, addr, **meta)
+
 def main():
     assignment_path = Path(PAIR_ASSIGNMENT_FILE)
     if not assignment_path.exists():
@@ -473,12 +685,10 @@ def main():
         )
     assignment.setdefault("chain", chain)
 
-    rpc_url = _rpc_for_chain(chain)
-    print(f"[INFO] Chain: {chain} | RPC: {rpc_url}")
-
-    global web3
-    web3 = Web3(Web3.HTTPProvider(rpc_url))
-    assert web3.is_connected(), f"[ERROR] Could not connect to RPC at {rpc_url}"
+    _connect_web3(chain)
+    print(f"[INFO] Chain: {chain} | RPC: {ACTIVE_RPC}")
+    if _should_rebuild_assignment(assignment, chain):
+        assignment = _rebuild_assignment_from_index(chain, assignment_path)
 
     output_dir = Path(OUTPUT_DIR_ENV) if OUTPUT_DIR_ENV else Path("data") / "historical_ohlcv" / chain
     intermediate_dir = Path(INTERMEDIATE_DIR_ENV) if INTERMEDIATE_DIR_ENV else Path("data") / "intermediate" / chain
@@ -487,7 +697,7 @@ def main():
 
     start_ts = int((datetime.now(UTC) - timedelta(days=YEARS_BACK*365)).timestamp())
     start_blk = get_block_by_timestamp(start_ts)
-    end_blk   = limited(lambda: web3.eth.block_number)
+    end_blk   = limited(lambda: get_web3().eth.block_number)
     print(f"[SCAN] Scanning blocks {start_blk} -> {end_blk}")
 
     chunks_count = YEARS_BACK*365*24
@@ -495,7 +705,11 @@ def main():
     CHUNK_SIZE_BLOCKS = max(1, total_blocks // chunks_count)
     print(f"[INFO] Dynamic CHUNK_SIZE set to {CHUNK_SIZE_BLOCKS} blocks")
 
-    pairs = [(addr,meta) for addr,meta in assignment["pairs"].items() if not meta.get("completed",False)]
+    pairs = [
+        (addr, meta)
+        for addr, meta in assignment["pairs"].items()
+        if not meta.get("completed", False) and not _is_deferred(meta)
+    ]
     print(f"[START] Will process {len(pairs)} pairs...")
 
     for addr, meta in pairs:
@@ -515,14 +729,14 @@ def main():
             pair_addr = Web3.to_checksum_address(addr)
         except Exception as e:
             print(f"   [ERROR] Invalid pair address for {sym}: {addr} ({e}). Skipping.")
-            update_assignment(assignment, addr, completed=True, skipped=True, error="invalid_pair_address")
+            defer_pair(assignment, addr, "invalid_pair_address")
             skip_counts["invalid_pair_addr"] += 1
             continue
 
         resolved = resolve_pool_kind(pair_addr)
         if not resolved:
-            print(f"   [WARN] {sym}: address {pair_addr} does not behave like a Uniswap pool: token0/token1 not readable. Skipping.")
-            update_assignment(assignment, addr, completed=True, skipped=True, error="non_uniswap_pool")
+            print(f"   [WARN] {sym}: address {pair_addr} does not behave like a Uniswap pool: token0/token1 not readable. Deferring.")
+            defer_pair(assignment, addr, "non_uniswap_pool")
             skip_counts["non_uniswap_pool"] += 1
             continue
         pool_kind = resolved["kind"]
@@ -530,25 +744,25 @@ def main():
         t1_raw = resolved["t1_raw"]
         v3_fee = resolved["fee"]
         if pool_kind == "v3":
-            pair = web3.eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+            pair = get_web3().eth.contract(address=pair_addr, abi=V3_POOL_ABI)
         else:
-            pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
+            pair = get_web3().eth.contract(address=pair_addr, abi=PAIR_ABI)
         ev = pair.events.Swap()
 
         try:
             t0 = Web3.to_checksum_address(t0_raw)
             t1 = Web3.to_checksum_address(t1_raw)
         except Exception as e:
-            print(f"   [ERROR] {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
-            update_assignment(assignment, addr, completed=True, skipped=True, error="invalid_token_address")
+            print(f"   [ERROR] {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Deferring.")
+            defer_pair(assignment, addr, "invalid_token_address")
             skip_counts["invalid_token_address"] += 1
             continue
 
         dec0 = safe_decimals(t0)
         dec1 = safe_decimals(t1)
         if dec0 is None or dec1 is None:
-            print(f"   [WARN] Skipping {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
-            update_assignment(assignment, addr, completed=True, skipped=True, error="token_metadata_unreadable")
+            print(f"   [WARN] Deferring {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
+            defer_pair(assignment, addr, "token_metadata_unreadable")
             skip_counts["token_metadata_unreadable"] += 1
             continue
 
@@ -623,7 +837,7 @@ def main():
 
     print("\n[DONE] All pairs complete.")
     print(
-        "Skipped summary: "
+        "Deferred/Skipped summary: "
         f"invalid_pair_addr={skip_counts['invalid_pair_addr']}, "
         f"non_uniswap_pool={skip_counts['non_uniswap_pool']}, "
         f"invalid_token_address={skip_counts['invalid_token_address']}, "

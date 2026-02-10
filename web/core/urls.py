@@ -25,6 +25,8 @@ urlpatterns = [
     path("wallet", views.WalletPageView.as_view()),
     path("pipeline/", views.PipelinePageView.as_view(), name="pipeline"),
     path("pipeline", views.PipelinePageView.as_view()),
+    path("bus/", views.BusSchedulePageView.as_view(), name="bus"),
+    path("bus", views.BusSchedulePageView.as_view()),
     path("datalab/", views.DataLabPageView.as_view(), name="datalab"),
     path("datalab", views.DataLabPageView.as_view()),
     path("lab/", views.ModelLabPageView.as_view(), name="lab"),

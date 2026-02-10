@@ -274,6 +274,10 @@ class PipelinePageView(BaseSecureView):
     initial_route = "pipeline"
 
 
+class BusSchedulePageView(BaseSecureView):
+    initial_route = "bus"
+
+
 class DataLabPageView(BaseSecureView):
     initial_route = "datalab"
 
@@ -387,6 +391,7 @@ class SpaRouteView(BaseSecureView):
             "telemetry",
             "wallet",
             "pipeline",
+            "bus",
             "datalab",
             "lab",
             "guardian",

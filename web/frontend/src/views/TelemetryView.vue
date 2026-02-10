@@ -4,24 +4,24 @@
       <article class="summary-card" v-for="item in stageSummary" :key="item.stage">
         <h3>{{ item.stage }}</h3>
         <p class="value">{{ item.total }}</p>
-        <small>metrics recorded</small>
+        <small>{{ t('telemetry.metrics_recorded') }}</small>
       </article>
     </section>
 
     <section class="panel">
       <header>
-        <h2>Metric Stream</h2>
-        <span class="caption">{{ metrics.length }} recent records</span>
+        <h2>{{ t('telemetry.metric_stream') }}</h2>
+        <span class="caption">{{ t('telemetry.recent_records').replace('{count}', String(metrics.length)) }}</span>
       </header>
       <table class="table">
         <thead>
           <tr>
-            <th>Stage</th>
-            <th>Category</th>
-            <th>Name</th>
-            <th>Value</th>
-            <th>Meta</th>
-            <th>Timestamp</th>
+            <th>{{ t('pipeline.stage') }}</th>
+            <th>{{ t('telemetry.category') }}</th>
+            <th>{{ t('common.name') }}</th>
+            <th>{{ t('pipeline.value') }}</th>
+            <th>{{ t('pipeline.meta') }}</th>
+            <th>{{ t('telemetry.timestamp') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -34,7 +34,7 @@
             <td>{{ formatWhen(metric.ts) }}</td>
           </tr>
           <tr v-if="metrics.length === 0">
-            <td colspan="6">Metrics stream is idle.</td>
+            <td colspan="6">{{ t('telemetry.metrics_idle') }}</td>
           </tr>
         </tbody>
       </table>
@@ -42,12 +42,12 @@
 
     <section class="panel feedback-panel">
       <header>
-        <h2>Feedback Loop</h2>
-        <span class="caption">{{ feedback.length }} entries</span>
+        <h2>{{ t('telemetry.feedback_loop') }}</h2>
+        <span class="caption">{{ t('telemetry.entries_count').replace('{count}', String(feedback.length)) }}</span>
       </header>
       <ul class="feedback-timeline">
         <li v-for="event in feedback" :key="event.ts">
-          <div class="badge" :class="event.severity">{{ event.severity }}</div>
+          <div class="badge" :class="event.severity">{{ formatSeverity(event.severity) }}</div>
           <div class="details">
             <strong>{{ event.label }}</strong>
             <small>{{ event.source }}</small>
@@ -57,7 +57,7 @@
           </div>
           <time>{{ formatWhen(event.ts) }}</time>
         </li>
-        <li v-if="feedback.length === 0" class="empty">No feedback has been recorded yet.</li>
+        <li v-if="feedback.length === 0" class="empty">{{ t('telemetry.no_feedback') }}</li>
       </ul>
     </section>
   </div>
@@ -66,6 +66,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useDashboardStore } from '@/stores/dashboard';
+import { t } from '@/i18n';
 
 const store = useDashboardStore();
 
@@ -88,13 +89,22 @@ function formatWhen(ts: number | string) {
 }
 
 function summarizeMeta(meta: any) {
-  if (!meta || typeof meta !== 'object') return '—';
+  if (!meta || typeof meta !== 'object') return t('common.none');
   const entries = Object.entries(meta).slice(0, 2).map(([key, value]) => `${key}:${value}`);
   return entries.join(' · ');
 }
 
 function prettyJson(details: Record<string, any>) {
   return JSON.stringify(details, null, 2);
+}
+
+function formatSeverity(value: string) {
+  const lower = (value || '').toLowerCase();
+  if (lower === 'critical') return t('severity.critical');
+  if (lower === 'warning' || lower === 'warn') return t('severity.warning');
+  if (lower === 'info') return t('severity.info');
+  if (lower === 'error') return t('severity.error');
+  return value;
 }
 </script>
 

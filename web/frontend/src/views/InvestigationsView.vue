@@ -3,8 +3,8 @@
     <section class="panel project-panel">
       <header>
         <div>
-          <h1>Investigations</h1>
-          <p>Track sources, entities, and evidence with c0d3r assistance.</p>
+          <h1>{{ t('investigations.title') }}</h1>
+          <p>{{ t('investigations.subtitle') }}</p>
         </div>
       </header>
       <div class="project-list">
@@ -20,10 +20,10 @@
         </button>
       </div>
       <form class="project-form" @submit.prevent="createProject">
-        <input v-model="newProjectName" placeholder="New project name" />
-        <input v-model="newProjectDesc" placeholder="Short description" />
+        <input v-model="newProjectName" :placeholder="t('investigations.new_project_name')" />
+        <input v-model="newProjectDesc" :placeholder="t('investigations.new_project_desc')" />
         <button type="submit" class="btn" :disabled="!newProjectName.trim() || loadingProjects">
-          Create Project
+          {{ t('investigations.create_project') }}
         </button>
       </form>
       <p v-if="projectError" class="error">{{ projectError }}</p>
@@ -31,68 +31,68 @@
 
     <section class="panel workspace-panel">
       <header>
-        <h2>Workspace</h2>
+        <h2>{{ t('investigations.workspace') }}</h2>
         <span class="caption" v-if="activeProject">{{ activeProject.name }}</span>
       </header>
-      <div v-if="!activeProject" class="empty">Select a project to begin.</div>
+      <div v-if="!activeProject" class="empty">{{ t('investigations.workspace_empty') }}</div>
       <div v-else class="workspace-grid">
         <div class="workspace-column">
-          <h3>Targets</h3>
+          <h3>{{ t('investigations.targets') }}</h3>
           <div class="target-list">
             <div v-for="target in targets" :key="target.id" class="target-card">
               <div class="meta">{{ target.url }}</div>
-              <p class="muted">{{ target.notes || 'No notes yet.' }}</p>
+              <p class="muted">{{ target.notes || t('investigations.no_notes') }}</p>
               <button class="btn ghost" type="button" @click="crawlTarget(target.id)">
-                Crawl
+                {{ t('investigations.crawl') }}
               </button>
             </div>
-            <div v-if="!targets.length" class="empty small">No targets yet.</div>
+            <div v-if="!targets.length" class="empty small">{{ t('investigations.no_targets') }}</div>
           </div>
           <form class="target-form" @submit.prevent="addTarget">
-            <input v-model="newTargetUrl" placeholder="https://example.com/..." />
-            <input v-model="newTargetNotes" placeholder="Notes" />
+            <input v-model="newTargetUrl" :placeholder="t('investigations.target_url_placeholder')" />
+            <input v-model="newTargetNotes" :placeholder="t('investigations.target_notes_placeholder')" />
             <button type="submit" class="btn ghost" :disabled="!newTargetUrl.trim()">
-              Add Target
+              {{ t('investigations.add_target') }}
             </button>
           </form>
         </div>
         <div class="workspace-column">
-          <h3>Evidence</h3>
+          <h3>{{ t('investigations.evidence') }}</h3>
           <div class="evidence-list">
             <div v-for="item in evidence" :key="item.id" class="evidence-card">
               <div class="meta">{{ item.url }}</div>
               <p>{{ item.content?.slice(0, 240) }}...</p>
             </div>
-            <div v-if="!evidence.length" class="empty small">No evidence captured yet.</div>
+            <div v-if="!evidence.length" class="empty small">{{ t('investigations.no_evidence') }}</div>
           </div>
         </div>
         <div class="workspace-column">
-          <h3>Articles</h3>
+          <h3>{{ t('investigations.articles') }}</h3>
           <div class="article-list">
             <div v-for="article in articles" :key="article.id" class="article-card">
               <div class="meta">{{ article.title }}</div>
-              <button class="btn ghost" type="button" @click="openEditor(article.id)">Edit</button>
+              <button class="btn ghost" type="button" @click="openEditor(article.id)">{{ t('common.edit') }}</button>
             </div>
-            <div v-if="!articles.length" class="empty small">No articles yet.</div>
+            <div v-if="!articles.length" class="empty small">{{ t('investigations.no_articles') }}</div>
           </div>
-          <button class="btn" type="button" @click="createArticle">New Article</button>
+          <button class="btn" type="button" @click="createArticle">{{ t('investigations.new_article') }}</button>
         </div>
       </div>
     </section>
 
     <section class="panel assist-panel" v-if="activeProject">
       <header>
-        <h2>c0d3r Assist</h2>
-        <span class="caption">Investigation-focused prompts</span>
+        <h2>{{ t('investigations.assist_title') }}</h2>
+        <span class="caption">{{ t('investigations.assist_subtitle') }}</span>
       </header>
       <div class="assist-body">
-        <textarea v-model="assistPrompt" rows="4" placeholder="Ask c0d3r about this investigation…" />
+        <textarea v-model="assistPrompt" rows="4" :placeholder="t('investigations.assist_placeholder')" />
         <button class="btn" type="button" @click="runAssist" :disabled="assistLoading || !assistPrompt.trim()">
-          {{ assistLoading ? 'Working…' : 'Run' }}
+          {{ assistLoading ? t('common.working') : t('common.run') }}
         </button>
       </div>
       <div v-if="assistResponse" class="assist-response">
-        <div class="meta">c0d3r</div>
+        <div class="meta">{{ t('investigations.assist_response_label') }}</div>
         <pre>{{ assistResponse }}</pre>
       </div>
     </section>
@@ -102,9 +102,9 @@
         <header>
           <h2>{{ editorTitle }}</h2>
           <div class="editor-actions">
-            <button class="btn ghost" type="button" @click="closeEditor">Close</button>
+            <button class="btn ghost" type="button" @click="closeEditor">{{ t('common.close') }}</button>
             <button class="btn" type="button" @click="saveArticle" :disabled="editorSaving">
-              {{ editorSaving ? 'Saving…' : 'Save' }}
+              {{ editorSaving ? t('common.saving') : t('common.save') }}
             </button>
           </div>
         </header>
@@ -133,6 +133,7 @@ import {
   type InvestigationArticle,
   runC0d3rPrompt
 } from '@/api';
+import { t } from '@/i18n';
 
 const projects = ref<InvestigationProject[]>([]);
 const activeProjectId = ref<number | null>(null);
@@ -151,7 +152,7 @@ const newTargetNotes = ref('');
 const editorOpen = ref(false);
 const editorArticleId = ref<number | null>(null);
 const editorBody = ref('');
-const editorTitle = ref('Untitled Article');
+const editorTitle = ref(t('investigations.untitled_article'));
 const editorSaving = ref(false);
 
 const assistPrompt = ref('');
@@ -206,7 +207,7 @@ const createProject = async () => {
     newProjectDesc.value = '';
     await loadWorkspace();
   } catch (err: any) {
-    projectError.value = err?.response?.data?.detail || err?.message || 'Unable to create project.';
+    projectError.value = err?.response?.data?.detail || err?.message || t('investigations.error_create_project');
   } finally {
     loadingProjects.value = false;
   }
@@ -230,7 +231,7 @@ const crawlTarget = async (targetId: number) => {
 
 const createArticle = async () => {
   if (!activeProjectId.value) return;
-  const data = await createInvestigationArticle(activeProjectId.value, { title: 'Untitled Article' });
+  const data = await createInvestigationArticle(activeProjectId.value, { title: t('investigations.untitled_article') });
   articles.value = [data.item, ...articles.value];
   await openEditor(data.item.id);
 };
@@ -238,7 +239,7 @@ const createArticle = async () => {
 const openEditor = async (articleId: number) => {
   const data = await fetchInvestigationArticle(articleId);
   editorArticleId.value = articleId;
-  editorTitle.value = data.item.title || 'Untitled Article';
+  editorTitle.value = data.item.title || t('investigations.untitled_article');
   editorBody.value = data.item.body || '';
   editorOpen.value = true;
 };

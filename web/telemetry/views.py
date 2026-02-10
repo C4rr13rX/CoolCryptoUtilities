@@ -35,6 +35,13 @@ def _load_report(path: Path) -> Dict[str, Any]:
         return {}
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class MetricsListView(generics.ListAPIView):
     serializer_class = MetricEntrySerializer
 
@@ -153,6 +160,110 @@ class PipelineReadinessView(APIView):
             horizon.get("updated_at") if isinstance(horizon, dict) else None,
         ]
         payload["updated_at"] = max((ts for ts in timestamps if isinstance(ts, (int, float))), default=None)
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class BusScheduleView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        db = get_db()
+        snapshot = db.fetch_latest_organism_snapshot() or {}
+        scheduler = snapshot.get("scheduler") if isinstance(snapshot, dict) else []
+        transition = {}
+        if isinstance(snapshot, dict):
+            transition = snapshot.get("transition_plan") or {}
+            if not transition:
+                pipeline_payload = snapshot.get("pipeline") or {}
+                if isinstance(pipeline_payload, dict):
+                    transition = pipeline_payload.get("transition_plan") or {}
+
+        risk_flags = transition.get("risk_flags") if isinstance(transition, dict) else {}
+        capital_plan = transition.get("capital_plan") if isinstance(transition, dict) else {}
+        bus_actions = transition.get("bus_swap_actions") if isinstance(transition, dict) else None
+        if not isinstance(bus_actions, list):
+            bus_actions = transition.get("bus_actions") if isinstance(transition, dict) else []
+
+        ghost_schedule = []
+        if isinstance(scheduler, list):
+            for entry in scheduler:
+                if not isinstance(entry, dict):
+                    continue
+                directive = entry.get("last_directive")
+                if not isinstance(directive, dict):
+                    continue
+                size = _safe_float(directive.get("size"))
+                price = _safe_float(directive.get("target_price") or entry.get("price"))
+                usd_value = round(size * price, 6) if size and price else 0.0
+                ghost_schedule.append(
+                    {
+                        "symbol": entry.get("symbol"),
+                        "action": directive.get("action") or "enter",
+                        "size": size,
+                        "price": price,
+                        "usd_value": usd_value,
+                        "horizon": directive.get("horizon"),
+                        "confidence": _safe_float(directive.get("confidence")),
+                        "reason": directive.get("reason"),
+                        "tier": directive.get("tier"),
+                        "updated_at": entry.get("last_update"),
+                    }
+                )
+        ghost_schedule.sort(key=lambda item: item.get("usd_value", 0.0), reverse=True)
+        ghost_schedule = ghost_schedule[:16]
+
+        live_schedule = []
+        if isinstance(bus_actions, list):
+            for action in bus_actions:
+                if not isinstance(action, dict):
+                    continue
+                size = _safe_float(action.get("size"))
+                price = _safe_float(action.get("price"))
+                usd_value = _safe_float(action.get("target_usd") or action.get("usd_value"))
+                if not usd_value and size and price:
+                    usd_value = round(size * price, 6)
+                live_schedule.append(
+                    {
+                        "symbol": action.get("symbol") or action.get("pair") or action.get("token"),
+                        "action": action.get("action") or "bus_action",
+                        "size": size,
+                        "price": price,
+                        "usd_value": usd_value,
+                        "reason": action.get("reason"),
+                        "priority": action.get("priority"),
+                        "window_sec": action.get("window_sec"),
+                    }
+                )
+
+        live_ramp = {}
+        if isinstance(capital_plan, dict):
+            live_ramp = capital_plan.get("live_ramp_schedule") or {}
+
+        payload = {
+            "available": bool(snapshot),
+            "timestamp": snapshot.get("timestamp") if isinstance(snapshot, dict) else None,
+            "ghost": {
+                "halted": bool(risk_flags.get("halt_ghost")) if isinstance(risk_flags, dict) else False,
+                "reason": risk_flags.get("ghost_halt_reason") if isinstance(risk_flags, dict) else None,
+                "risk_multiplier": _safe_float(risk_flags.get("ghost_risk_multiplier")) if isinstance(risk_flags, dict) else 0.0,
+                "schedule": ghost_schedule,
+            },
+            "live": {
+                "halted": bool(risk_flags.get("halt_live")) if isinstance(risk_flags, dict) else False,
+                "reason": risk_flags.get("halt_reason") if isinstance(risk_flags, dict) else None,
+                "recommended_live_usd": _safe_float(risk_flags.get("recommended_live_usd")) if isinstance(risk_flags, dict) else 0.0,
+                "min_clip_usd": _safe_float(risk_flags.get("min_clip_usd")) if isinstance(risk_flags, dict) else 0.0,
+                "schedule": live_schedule,
+                "ramp": {
+                    "first_tranche_usd": _safe_float(live_ramp.get("first_tranche_usd")),
+                    "max_live_usd": _safe_float(live_ramp.get("max_live_usd")),
+                    "deployable_stable_usd": _safe_float(live_ramp.get("deployable_stable_usd")),
+                    "first_tranche_cap_usd": _safe_float(live_ramp.get("first_tranche_cap_usd")),
+                },
+            },
+            "summary": {
+                "bus_actions_pending": bool(risk_flags.get("bus_actions_pending")) if isinstance(risk_flags, dict) else False,
+                "bus_action_count": len(bus_actions) if isinstance(bus_actions, list) else 0,
+            },
+        }
         return Response(payload, status=status.HTTP_200_OK)
 
 

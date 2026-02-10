@@ -4,19 +4,19 @@
 
     <section class="kpi-grid">
       <article class="kpi-card">
-        <h3>Stable Bank</h3>
+        <h3>{{ t('dashboard.kpi_stable_bank') }}</h3>
         <p class="value">{{ stableBank }}</p>
-        <small class="meta">Capital allocated for stable operations</small>
+        <small class="meta">{{ t('dashboard.kpi_stable_bank_meta') }}</small>
       </article>
       <article class="kpi-card">
-        <h3>Total Profit</h3>
+        <h3>{{ t('dashboard.kpi_total_profit') }}</h3>
         <p class="value">{{ totalProfit }}</p>
-        <small class="meta">Net of fees, slippage, and gas</small>
+        <small class="meta">{{ t('dashboard.kpi_total_profit_meta') }}</small>
       </article>
       <article class="kpi-card">
-        <h3>Active Advisories</h3>
+        <h3>{{ t('dashboard.kpi_active_advisories') }}</h3>
         <p class="value">{{ advisories.length }}</p>
-        <small class="meta">Signals that demand operator attention</small>
+        <small class="meta">{{ t('dashboard.kpi_active_advisories_meta') }}</small>
       </article>
     </section>
 
@@ -46,8 +46,8 @@
 
     <section class="panel nav-map">
       <header>
-        <h2>Command Map</h2>
-        <span class="caption">Jump to any surface from the control room</span>
+        <h2>{{ t('dashboard.command_map') }}</h2>
+        <span class="caption">{{ t('dashboard.command_map_subtitle') }}</span>
       </header>
       <div class="nav-grid">
         <RouterLink
@@ -68,17 +68,17 @@
     <section class="panels-grid">
       <article class="panel">
         <header>
-          <h2>Recent Trades</h2>
-          <span class="caption">{{ recentTrades.length }} entries</span>
+          <h2>{{ t('dashboard.recent_trades') }}</h2>
+          <span class="caption">{{ formatEntries(recentTrades.length) }}</span>
         </header>
         <table class="table">
           <thead>
             <tr>
-              <th>Symbol</th>
-              <th>Action</th>
-              <th>Status</th>
-              <th>Chain</th>
-              <th>When</th>
+              <th>{{ t('pipeline.symbol') }}</th>
+              <th>{{ t('dashboard.action') }}</th>
+              <th>{{ t('pipeline.status') }}</th>
+              <th>{{ t('common.chain') }}</th>
+              <th>{{ t('pipeline.when') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -90,7 +90,7 @@
               <td>{{ formatWhen(trade.ts) }}</td>
             </tr>
             <tr v-if="recentTrades.length === 0">
-              <td colspan="5">No trades recorded in the current window.</td>
+              <td colspan="5">{{ t('dashboard.no_trades') }}</td>
             </tr>
           </tbody>
         </table>
@@ -98,8 +98,8 @@
 
       <article class="panel">
         <header>
-          <h2>Latest Feedback</h2>
-          <span class="caption">{{ feedback.length }} signals</span>
+          <h2>{{ t('dashboard.latest_feedback') }}</h2>
+          <span class="caption">{{ formatSignals(feedback.length) }}</span>
         </header>
         <ul class="feedback-list">
           <li v-for="item in feedback" :key="item.ts" :class="`severity-${item.severity}`">
@@ -109,52 +109,52 @@
             </div>
             <time>{{ formatWhen(item.ts) }}</time>
           </li>
-          <li v-if="feedback.length === 0" class="empty">No telemetry warnings right now.</li>
+          <li v-if="feedback.length === 0" class="empty">{{ t('dashboard.no_warnings') }}</li>
         </ul>
       </article>
     </section>
 
     <section class="panel trades-delta">
       <header>
-        <h2>Ghost vs Live</h2>
-        <span class="caption">Signal quality across the decision path</span>
+        <h2>{{ t('dashboard.ghost_vs_live') }}</h2>
+        <span class="caption">{{ t('dashboard.ghost_vs_live_subtitle') }}</span>
       </header>
       <div class="trade-stats">
         <div class="trade-card">
-          <h3>Ghost Trading</h3>
+          <h3>{{ t('dashboard.ghost_trading') }}</h3>
           <div class="stat-line">
-            <span>Active Signals</span>
+            <span>{{ t('dashboard.active_signals') }}</span>
             <strong>{{ ghostSummary.total }}</strong>
           </div>
           <div class="stat-line">
-            <span>Success</span>
+            <span>{{ t('dashboard.success') }}</span>
             <strong class="text-ok">{{ ghostSummary.success }}</strong>
           </div>
           <div class="stat-line">
-            <span>Failed</span>
+            <span>{{ t('dashboard.failed') }}</span>
             <strong class="text-error">{{ ghostSummary.failed }}</strong>
           </div>
           <div class="stat-line">
-            <span>Pending</span>
+            <span>{{ t('dashboard.pending') }}</span>
             <strong class="text-warn">{{ ghostSummary.pending }}</strong>
           </div>
         </div>
         <div class="trade-card">
-          <h3>Live Trading</h3>
+          <h3>{{ t('dashboard.live_trading') }}</h3>
           <div class="stat-line">
-            <span>Executions</span>
+            <span>{{ t('dashboard.executions') }}</span>
             <strong>{{ liveSummary.total }}</strong>
           </div>
           <div class="stat-line">
-            <span>Profitable</span>
+            <span>{{ t('dashboard.profitable') }}</span>
             <strong class="text-ok">{{ liveSummary.success }}</strong>
           </div>
           <div class="stat-line">
-            <span>Loss</span>
+            <span>{{ t('dashboard.loss') }}</span>
             <strong class="text-error">{{ liveSummary.failed }}</strong>
           </div>
           <div class="stat-line">
-            <span>Pending</span>
+            <span>{{ t('dashboard.pending') }}</span>
             <strong class="text-warn">{{ liveSummary.pending }}</strong>
           </div>
         </div>
@@ -163,16 +163,16 @@
 
     <section class="panel metrics-panel">
       <header>
-        <h2>Latest Metrics</h2>
-        <span class="caption">{{ metrics.length }} tracked</span>
+        <h2>{{ t('pipeline.latest_metrics') }}</h2>
+        <span class="caption">{{ formatTracked(metrics.length) }}</span>
       </header>
       <table class="table">
         <thead>
           <tr>
-            <th>Stage</th>
-            <th>Metric</th>
-            <th>Value</th>
-            <th>Recorded</th>
+            <th>{{ t('pipeline.stage') }}</th>
+            <th>{{ t('pipeline.metric') }}</th>
+            <th>{{ t('pipeline.value') }}</th>
+            <th>{{ t('dashboard.recorded') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -183,7 +183,7 @@
             <td>{{ formatWhen(metric.ts) }}</td>
           </tr>
           <tr v-if="metrics.length === 0">
-            <td colspan="4">No metrics recorded yet; waiting for training loop.</td>
+            <td colspan="4">{{ t('dashboard.no_metrics') }}</td>
           </tr>
         </tbody>
       </table>
@@ -197,6 +197,7 @@ import { RouterLink } from 'vue-router';
 import { useDashboardStore } from '@/stores/dashboard';
 import TickerTape from '@/components/TickerTape.vue';
 import HackerIcon from '@/components/HackerIcon.vue';
+import { t } from '@/i18n';
 
 const store = useDashboardStore();
 
@@ -224,7 +225,7 @@ const tickerItems = computed(() => {
     return {
       symbol,
       price,
-      meta: metaParts.join(' • ') || 'stream',
+      meta: metaParts.join(' • ') || t('dashboard.stream_fallback'),
       severity,
     };
   });
@@ -281,28 +282,34 @@ const healthCards = computed(() => {
 
   return [
     {
-      label: 'Data Stream',
+      label: t('dashboard.health_data_stream'),
       icon: 'radar',
       level: streamLevel,
-      detail: streams ? `${streams} live feeds` : 'No feeds detected',
+      detail: streams
+        ? t('dashboard.health_live_feeds').replace('{count}', String(streams))
+        : t('dashboard.health_no_feeds'),
     },
     {
-      label: 'Pipeline',
+      label: t('dashboard.health_pipeline'),
       icon: 'pipeline',
       level: pipelineLevel,
-      detail: metrics.length ? `${metrics.length} stages reporting` : 'Awaiting metrics',
+      detail: metrics.length
+        ? t('dashboard.health_stages_reporting').replace('{count}', String(metrics.length))
+        : t('dashboard.health_awaiting_metrics'),
     },
     {
-      label: 'Feedback',
+      label: t('dashboard.health_feedback'),
       icon: 'shield',
       level: feedbackLevel,
-      detail: feedback.slice(0, 1).map((entry: any) => entry.label).join(' · ') || 'Nominal',
+      detail: feedback.slice(0, 1).map((entry: any) => entry.label).join(' · ') || t('dashboard.health_nominal'),
     },
     {
-      label: 'Console',
+      label: t('dashboard.health_console'),
       icon: 'terminal',
       level: consoleLevel,
-      detail: store.consoleStatus?.uptime ? `Up ${Number(store.consoleStatus.uptime).toFixed(0)}s` : (store.consoleStatus?.status || 'idle'),
+      detail: store.consoleStatus?.uptime
+        ? t('dashboard.health_uptime').replace('{count}', String(Number(store.consoleStatus.uptime).toFixed(0)))
+        : (store.consoleStatus?.status || t('dashboard.health_idle')),
     },
   ];
 });
@@ -313,20 +320,20 @@ const metrics = computed(() => (store.latestMetrics || []).slice(0, 12));
 const quickLinks = computed(() => [
   {
     to: '/pipeline',
-    label: 'Pipeline',
-    detail: 'Drill into training, calibration, and ghost supervision.',
+    label: t('dashboard.quick_pipeline'),
+    detail: t('dashboard.quick_pipeline_detail'),
     icon: 'pipeline',
   },
   {
     to: '/datalab',
-    label: 'Data Lab',
-    detail: 'Run ingestion jobs, discover signals, and fetch news.',
+    label: t('dashboard.quick_datalab'),
+    detail: t('dashboard.quick_datalab_detail'),
     icon: 'datalab',
   },
   {
     to: '/lab',
-    label: 'Model Lab',
-    detail: 'Train, evaluate, and preview candidate models.',
+    label: t('dashboard.quick_modellab'),
+    detail: t('dashboard.quick_modellab_detail'),
     icon: 'lab',
   },
 ]);
@@ -334,56 +341,56 @@ const quickLinks = computed(() => [
 const siteLinks = computed(() => [
   {
     to: '/pipeline',
-    label: 'Pipeline',
-    detail: 'Full training telemetry, ghost metrics, and readiness.',
+    label: t('dashboard.site_pipeline'),
+    detail: t('dashboard.site_pipeline_detail'),
     icon: 'pipeline',
   },
   {
     to: '/streams',
-    label: 'Market Streams',
-    detail: 'Live consensus feed, per-source diagnostics, and fallbacks.',
+    label: t('dashboard.site_streams'),
+    detail: t('dashboard.site_streams_detail'),
     icon: 'streams',
   },
   {
     to: '/telemetry',
-    label: 'Telemetry',
-    detail: 'Metrics timelines, feedback history, and advisories.',
+    label: t('dashboard.site_telemetry'),
+    detail: t('dashboard.site_telemetry_detail'),
     icon: 'activity',
   },
   {
     to: '/organism',
-    label: 'Organism',
-    detail: 'Inspect the organism snapshot and adjust label scaling.',
+    label: t('dashboard.site_organism'),
+    detail: t('dashboard.site_organism_detail'),
     icon: 'organism',
   },
   {
     to: '/datalab',
-    label: 'Data Lab',
-    detail: 'Discover bullish/bearish movers and run news/scam tooling.',
+    label: t('dashboard.site_datalab'),
+    detail: t('dashboard.site_datalab_detail'),
     icon: 'datalab',
   },
   {
     to: '/lab',
-    label: 'Model Lab',
-    detail: 'Drive model training/eval jobs with ghost parity previews.',
+    label: t('dashboard.site_modellab'),
+    detail: t('dashboard.site_modellab_detail'),
     icon: 'lab',
   },
   {
     to: '/wallet',
-    label: 'Ops Console',
-    detail: 'Start/stop main.py option 9 and send live commands.',
+    label: t('dashboard.site_ops_console'),
+    detail: t('dashboard.site_ops_console_detail'),
     icon: 'terminal',
   },
   {
     to: '/advisories',
-    label: 'Advisories',
-    detail: 'Review outstanding warnings and mitigation steps.',
+    label: t('dashboard.site_advisories'),
+    detail: t('dashboard.site_advisories_detail'),
     icon: 'shield',
   },
   {
     to: '/guardian',
-    label: 'Guardian',
-    detail: 'Configure prompts and auto-restart policies.',
+    label: t('dashboard.site_guardian'),
+    detail: t('dashboard.site_guardian_detail'),
     icon: 'guardian',
   },
 ]);
@@ -392,11 +399,18 @@ function formatWhen(ts: number | string) {
   const numeric = Number(ts);
   if (!Number.isFinite(numeric)) return String(ts);
   const delta = Date.now() / 1000 - numeric;
-  if (delta < 90) return 'just now';
-  if (delta < 3600) return `${Math.round(delta / 60)} min ago`;
-  if (delta < 86400) return `${Math.round(delta / 3600)} h ago`;
-  return `${Math.round(delta / 86400)} d ago`;
+  if (delta < 90) return t('common.just_now');
+  if (delta < 3600) return t('common.minutes_ago').replace('{count}', String(Math.round(delta / 60)));
+  if (delta < 86400) return t('common.hours_ago').replace('{count}', String(Math.round(delta / 3600)));
+  return t('common.days_ago').replace('{count}', String(Math.round(delta / 86400)));
 }
+
+const formatEntries = (count: number) =>
+  t('dashboard.entries_count').replace('{count}', String(count));
+const formatSignals = (count: number) =>
+  t('dashboard.signals_count').replace('{count}', String(count));
+const formatTracked = (count: number) =>
+  t('dashboard.tracked_count').replace('{count}', String(count));
 </script>
 
 <style scoped>

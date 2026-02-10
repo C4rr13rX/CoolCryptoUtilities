@@ -2,18 +2,18 @@
   <div class="pipeline-view">
     <header class="view-header">
       <div>
-        <h1>Pipeline Status</h1>
-        <p>Live telemetry from the training loop, ghost trading supervisor, and feedback audits.</p>
+        <h1>{{ t('pipeline.title') }}</h1>
+        <p>{{ t('pipeline.subtitle') }}</p>
       </div>
       <button type="button" class="btn" @click="refreshAll" :disabled="store.loading || readinessLoading">
-        {{ store.loading || readinessLoading ? 'Refreshing…' : 'Refresh Now' }}
+        {{ store.loading || readinessLoading ? t('common.refreshing') : t('common.refresh_now') }}
       </button>
     </header>
 
     <section class="panel stage-grid">
       <header>
-        <h2>Stage Coverage</h2>
-        <span class="caption">{{ stageSummary.length }} phases tracked</span>
+        <h2>{{ t('pipeline.stage_coverage') }}</h2>
+        <span class="caption">{{ formatPhases(stageSummary.length) }}</span>
       </header>
       <div class="progress-track">
         <div
@@ -34,29 +34,29 @@
         <article v-for="stage in stageSummary" :key="stage.stage" class="stage-card">
           <h3>{{ stage.stage }}</h3>
           <p class="total">{{ stage.total }}</p>
-          <small>metrics recorded</small>
+          <small>{{ t('pipeline.metrics_recorded') }}</small>
         </article>
         <article v-if="!stageSummary.length" class="stage-card muted">
-          <h3>Waiting</h3>
+          <h3>{{ t('common.waiting') }}</h3>
           <p class="total">—</p>
-          <small>Collecting first signals…</small>
+          <small>{{ t('pipeline.collecting_signals') }}</small>
         </article>
       </div>
     </section>
 
     <section class="panel metrics-section">
       <header>
-        <h2>Latest Metrics</h2>
-        <span class="caption">Top {{ metrics.length }} readings</span>
+        <h2>{{ t('pipeline.latest_metrics') }}</h2>
+        <span class="caption">{{ formatReadings(metrics.length) }}</span>
       </header>
       <table class="table">
         <thead>
           <tr>
-            <th>Stage</th>
-            <th>Metric</th>
-            <th>Value</th>
-            <th>Meta</th>
-            <th>When</th>
+            <th>{{ t('pipeline.stage') }}</th>
+            <th>{{ t('pipeline.metric') }}</th>
+            <th>{{ t('pipeline.value') }}</th>
+            <th>{{ t('pipeline.meta') }}</th>
+            <th>{{ t('pipeline.when') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -68,7 +68,7 @@
             <td>{{ formatAge(metric.ts) }}</td>
           </tr>
           <tr v-if="!metrics.length">
-            <td colspan="5">No metrics emitted yet.</td>
+            <td colspan="5">{{ t('pipeline.no_metrics') }}</td>
           </tr>
         </tbody>
       </table>
@@ -76,18 +76,18 @@
 
     <section class="panel trades-section">
       <header>
-        <h2>Ghost vs Live Decisions</h2>
-        <span class="caption">Comparing the most recent directives</span>
+        <h2>{{ t('pipeline.ghost_vs_live') }}</h2>
+        <span class="caption">{{ t('pipeline.recent_directives') }}</span>
       </header>
       <div class="trade-columns">
         <article>
-          <h3>Ghost Trades</h3>
+          <h3>{{ t('pipeline.ghost_trades') }}</h3>
           <table class="table compact">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Status</th>
-                <th>When</th>
+                <th>{{ t('pipeline.symbol') }}</th>
+                <th>{{ t('pipeline.status') }}</th>
+                <th>{{ t('pipeline.when') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -97,19 +97,19 @@
                 <td>{{ formatAge(trade.ts) }}</td>
               </tr>
               <tr v-if="!ghostTrades.length">
-                <td colspan="3">No ghost trades logged.</td>
+                <td colspan="3">{{ t('pipeline.no_ghost_trades') }}</td>
               </tr>
             </tbody>
           </table>
         </article>
         <article>
-          <h3>Live Trades</h3>
+          <h3>{{ t('pipeline.live_trades') }}</h3>
           <table class="table compact">
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Status</th>
-                <th>When</th>
+                <th>{{ t('pipeline.symbol') }}</th>
+                <th>{{ t('pipeline.status') }}</th>
+                <th>{{ t('pipeline.when') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -119,7 +119,7 @@
                 <td>{{ formatAge(trade.ts) }}</td>
               </tr>
               <tr v-if="!liveTrades.length">
-                <td colspan="3">No live executions yet.</td>
+                <td colspan="3">{{ t('pipeline.no_live_trades') }}</td>
               </tr>
             </tbody>
           </table>
@@ -130,8 +130,8 @@
     <section class="grid-two">
       <article class="panel feedback-panel">
         <header>
-          <h2>Feedback Signals</h2>
-          <span class="caption">{{ feedback.length }} recent alerts</span>
+          <h2>{{ t('pipeline.feedback_signals') }}</h2>
+          <span class="caption">{{ formatAlerts(feedback.length) }}</span>
         </header>
         <ul class="feedback-timeline">
           <li v-for="event in feedback" :key="event.ts">
@@ -142,14 +142,14 @@
             </div>
             <time>{{ formatAge(event.ts) }}</time>
           </li>
-          <li v-if="!feedback.length" class="empty">No feedback captured.</li>
+          <li v-if="!feedback.length" class="empty">{{ t('pipeline.no_feedback') }}</li>
         </ul>
       </article>
 
       <article class="panel advisory-panel">
         <header>
-          <h2>Open Advisories</h2>
-          <span class="caption">{{ advisories.length }} active</span>
+          <h2>{{ t('pipeline.open_advisories') }}</h2>
+          <span class="caption">{{ formatActive(advisories.length) }}</span>
         </header>
         <ul class="advisory-list">
           <li v-for="item in advisories" :key="item.id || item.ts">
@@ -160,7 +160,7 @@
               <small v-if="item.recommendation">{{ item.recommendation }}</small>
             </div>
           </li>
-          <li v-if="!advisories.length" class="empty">No open advisories.</li>
+          <li v-if="!advisories.length" class="empty">{{ t('pipeline.no_advisories') }}</li>
         </ul>
       </article>
     </section>
@@ -169,9 +169,9 @@
     v-if="wizardSteps.length"
     v-model:open="wizardOpen"
     :steps="wizardSteps"
-    title="Trading Launch Checklist"
-    subtitle="Unlock ghost + live trading by clearing the missing signals."
-    eyebrow="Pipeline Wizard"
+    :title="t('pipeline.wizard_title')"
+    :subtitle="t('pipeline.wizard_subtitle')"
+    :eyebrow="t('pipeline.wizard_eyebrow')"
   />
 </template>
 
@@ -181,6 +181,7 @@ import { useRouter } from 'vue-router';
 import { fetchPipelineReadiness } from '@/api';
 import { useDashboardStore } from '@/stores/dashboard';
 import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
+import { t } from '@/i18n';
 
 const store = useDashboardStore();
 const router = useRouter();
@@ -200,11 +201,11 @@ const readinessReport = computed(() => readinessPayload.value?.live_readiness ||
 const stageProgress = computed(() => {
   const readiness = readinessReport.value || {};
   const stages = [
-    { key: 'ingest', label: 'Data Ingest', done: Boolean(stageSummary.value.length || metrics.value.length) },
-    { key: 'training', label: 'Training', done: Boolean(readiness.samples || readiness.precision) },
-    { key: 'ghost', label: 'Ghost Ready', done: Boolean(readiness.mini_ready) },
-    { key: 'live', label: 'Live Ready', done: Boolean(readiness.ready) },
-    { key: 'trading', label: 'Live Trading', done: Boolean(liveTrades.value.length) },
+    { key: 'ingest', label: t('pipeline.stage_ingest'), done: Boolean(stageSummary.value.length || metrics.value.length) },
+    { key: 'training', label: t('pipeline.stage_training'), done: Boolean(readiness.samples || readiness.precision) },
+    { key: 'ghost', label: t('pipeline.stage_ghost'), done: Boolean(readiness.mini_ready) },
+    { key: 'live', label: t('pipeline.stage_live'), done: Boolean(readiness.ready) },
+    { key: 'trading', label: t('pipeline.stage_trading'), done: Boolean(liveTrades.value.length) },
   ];
   let current = stages.findIndex((s) => !s.done);
   if (current === -1) current = stages.length - 1;
@@ -222,10 +223,10 @@ function formatAge(ts: number | string) {
   const numeric = Number(ts);
   if (!Number.isFinite(numeric)) return '—';
   const delta = Date.now() / 1000 - numeric;
-  if (delta < 60) return 'just now';
-  if (delta < 3600) return `${Math.round(delta / 60)} min ago`;
-  if (delta < 86400) return `${Math.round(delta / 3600)} h ago`;
-  return `${Math.round(delta / 86400)} d ago`;
+  if (delta < 60) return t('common.just_now');
+  if (delta < 3600) return t('common.minutes_ago').replace('{count}', String(Math.round(delta / 60)));
+  if (delta < 86400) return t('common.hours_ago').replace('{count}', String(Math.round(delta / 3600)));
+  return t('common.days_ago').replace('{count}', String(Math.round(delta / 86400)));
 }
 
 function summariseMeta(meta: any) {
@@ -233,6 +234,15 @@ function summariseMeta(meta: any) {
   const entries = Object.entries(meta).slice(0, 2).map(([key, value]) => `${key}:${value}`);
   return entries.join(' · ');
 }
+
+const formatPhases = (count: number) =>
+  t('pipeline.phases_tracked').replace('{count}', String(count));
+const formatReadings = (count: number) =>
+  t('pipeline.top_readings').replace('{count}', String(count));
+const formatAlerts = (count: number) =>
+  t('pipeline.recent_alerts').replace('{count}', String(count));
+const formatActive = (count: number) =>
+  t('pipeline.active_count').replace('{count}', String(count));
 
 type WizardStep = {
   id: string;
@@ -259,10 +269,10 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (!hasReadiness) {
     steps.push({
       id: 'readiness',
-      title: 'Generate readiness snapshot',
-      description: 'Run the training loop once so the pipeline can calculate ghost + live readiness.',
-      detail: 'No live_readiness report detected yet.',
-      ctaLabel: 'Open Model Lab',
+      title: t('pipeline.wizard_readiness_title'),
+      description: t('pipeline.wizard_readiness_desc'),
+      detail: t('pipeline.wizard_readiness_detail'),
+      ctaLabel: t('pipeline.wizard_open_model_lab'),
       ctaAction: () => router.push('/lab'),
       tone: 'warning',
     });
@@ -272,10 +282,10 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (!hasSignals) {
     steps.push({
       id: 'signals',
-      title: 'Collect training signals',
-      description: 'We need live samples before the ghost gate can unlock.',
-      detail: 'Train or ingest fresh data so samples + precision can populate.',
-      ctaLabel: 'Open Data Lab',
+      title: t('pipeline.wizard_signals_title'),
+      description: t('pipeline.wizard_signals_desc'),
+      detail: t('pipeline.wizard_signals_detail'),
+      ctaLabel: t('pipeline.wizard_open_data_lab'),
       ctaAction: () => router.push('/datalab'),
       tone: 'warning',
     });
@@ -284,10 +294,10 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (readiness.mini_ready === false) {
     steps.push({
       id: 'ghost',
-      title: 'Ghost trading gate',
-      description: 'Ghost trading readiness is still below target.',
-      detail: readiness.mini_reason ? `Reason: ${formatReason(readiness.mini_reason)}` : undefined,
-      ctaLabel: 'Review Metrics',
+      title: t('pipeline.wizard_ghost_title'),
+      description: t('pipeline.wizard_ghost_desc'),
+      detail: readiness.mini_reason ? `${t('common.reason')}: ${formatReason(readiness.mini_reason)}` : undefined,
+      ctaLabel: t('pipeline.wizard_review_metrics'),
       ctaAction: () => router.push('/telemetry'),
       tone: 'warning',
     });
@@ -296,10 +306,10 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (readiness.ghost_ready === false || reasonLower.startsWith('ghost_')) {
     steps.push({
       id: 'ghost-health',
-      title: 'Ghost performance health',
-      description: 'Ghost trading performance needs to stabilize before live promotion.',
-      detail: ghostReason ? `Reason: ${formatReason(ghostReason)}` : undefined,
-      ctaLabel: 'Open Ghost Logs',
+      title: t('pipeline.wizard_ghost_health_title'),
+      description: t('pipeline.wizard_ghost_health_desc'),
+      detail: ghostReason ? `${t('common.reason')}: ${formatReason(ghostReason)}` : undefined,
+      ctaLabel: t('pipeline.wizard_open_ghost_logs'),
       ctaAction: () => router.push('/guardian'),
       tone: 'warning',
     });
@@ -309,20 +319,26 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (walletState.sparse) {
     const detailParts: string[] = [];
     if (walletState.stable_deficit_usd) {
-      detailParts.push(`Stable deficit: ${formatUsd(walletState.stable_deficit_usd)}`);
+      detailParts.push(
+        t('pipeline.wizard_stable_deficit').replace('{amount}', formatUsd(walletState.stable_deficit_usd))
+      );
     }
     if (walletState.native_buffer_gap_usd) {
-      detailParts.push(`Gas buffer gap: ${formatUsd(walletState.native_buffer_gap_usd)}`);
+      detailParts.push(
+        t('pipeline.wizard_gas_gap').replace('{amount}', formatUsd(walletState.native_buffer_gap_usd))
+      );
     }
     if (Array.isArray(walletState.sparse_reasons) && walletState.sparse_reasons.length) {
-      detailParts.push(`Signals: ${walletState.sparse_reasons.join(', ')}`);
+      detailParts.push(
+        t('pipeline.wizard_signal_flags').replace('{signals}', walletState.sparse_reasons.join(', '))
+      );
     }
     steps.push({
       id: 'funding',
-      title: 'Fund trading wallet',
-      description: 'Live trading needs stablecoin + gas buffers.',
+      title: t('pipeline.wizard_fund_title'),
+      description: t('pipeline.wizard_fund_desc'),
       detail: detailParts.join(' | '),
-      ctaLabel: 'Go to Wallet',
+      ctaLabel: t('pipeline.wizard_go_wallet'),
       ctaAction: () => router.push('/wallet'),
       tone: 'critical',
     });
@@ -331,10 +347,10 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (readiness.ready === false && !reasonLower.startsWith('ghost_') && !reasonLower.startsWith('sparse_wallet')) {
     steps.push({
       id: 'live-ready',
-      title: 'Live readiness gate',
-      description: 'Live trading is still locked by the readiness gate.',
-      detail: reason ? `Reason: ${formatReason(reason)}` : undefined,
-      ctaLabel: 'Refresh Readiness',
+      title: t('pipeline.wizard_live_title'),
+      description: t('pipeline.wizard_live_desc'),
+      detail: reason ? `${t('common.reason')}: ${formatReason(reason)}` : undefined,
+      ctaLabel: t('pipeline.wizard_refresh_readiness'),
       ctaAction: () => refreshAll(),
       tone: 'info',
     });

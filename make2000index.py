@@ -81,22 +81,30 @@ THEGRAPH_API_KEY = os.getenv("THEGRAPH_API_KEY", "").strip()
 # Resolve target chain before configuring subgraphs/paths
 CHAIN_NAME = os.getenv("CHAIN_NAME", "base").strip().lower() or "base"
 
-# Optional: override the Uniswap V2 subgraph ID via env,
-# falls back to the given default if not provided.
-default_subgraph = "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu"
-if CHAIN_NAME == "base":
-    default_subgraph = os.getenv("BASE_UNISWAP_SUBGRAPH_ID", "").strip() or default_subgraph
+# Optional: override the Uniswap V2 subgraph ID via env.
+# Default is ONLY for Ethereum; other chains require explicit subgraph IDs.
+default_subgraph = ""
+if CHAIN_NAME == "ethereum":
+    default_subgraph = os.getenv("ETHEREUM_UNISWAP_SUBGRAPH_ID", "").strip() or "EYCKATKGBKLWvSfwvBjzfCBmGwYNdVkduYXVivCsLRFu"
+elif CHAIN_NAME == "base":
+    default_subgraph = os.getenv("BASE_UNISWAP_SUBGRAPH_ID", "").strip()
+elif CHAIN_NAME == "arbitrum":
+    default_subgraph = os.getenv("ARBITRUM_UNISWAP_SUBGRAPH_ID", "").strip()
+elif CHAIN_NAME == "optimism":
+    default_subgraph = os.getenv("OPTIMISM_UNISWAP_SUBGRAPH_ID", "").strip()
+elif CHAIN_NAME == "polygon":
+    default_subgraph = os.getenv("POLYGON_UNISWAP_SUBGRAPH_ID", "").strip()
 
-UNISWAP_V2_SUBGRAPH_ID = os.getenv(
-    "UNISWAP_V2_SUBGRAPH_ID",
-    default_subgraph
-).strip()
+UNISWAP_V2_SUBGRAPH_ID = os.getenv("UNISWAP_V2_SUBGRAPH_ID", "").strip() or default_subgraph
 
 # Optional: allow full URL override (e.g., self-hosted/alt gateway)
-THEGRAPH_SUBGRAPH_URL = os.getenv(
-    "THEGRAPH_SUBGRAPH_URL",
-    f"https://gateway.thegraph.com/api/{THEGRAPH_API_KEY}/subgraphs/id/{UNISWAP_V2_SUBGRAPH_ID}"
-).strip()
+if UNISWAP_V2_SUBGRAPH_ID:
+    THEGRAPH_SUBGRAPH_URL = os.getenv(
+        "THEGRAPH_SUBGRAPH_URL",
+        f"https://gateway.thegraph.com/api/{THEGRAPH_API_KEY}/subgraphs/id/{UNISWAP_V2_SUBGRAPH_ID}"
+    ).strip()
+else:
+    THEGRAPH_SUBGRAPH_URL = ""
 
 # Output path can be overridden via env if desired
 OUTPUT_PATH = os.getenv(

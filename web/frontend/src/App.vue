@@ -579,7 +579,8 @@ const streamIntent = computed(() => {
 
 const streamSummary = computed(() => {
   const keys = Object.keys(store.streams || {});
-  return keys.length ? `${keys.length} active` : 'No active streams';
+  if (!keys.length) return t('common.no_active_streams');
+  return t('common.active_streams').replace('{count}', String(keys.length));
 });
 
 const feedbackIntent = computed(() => {
@@ -593,8 +594,10 @@ const feedbackIntent = computed(() => {
 
 const feedbackSummary = computed(() => {
   const counts = store.dashboard?.feedback_by_severity || [];
-  if (!counts.length) return 'No signals';
-  return counts.map((entry: any) => `${entry.severity}:${entry.total}`).join(' • ');
+  if (!counts.length) return t('common.no_signals');
+  return counts
+    .map((entry: any) => `${formatSeverity(entry.severity)}:${entry.total}`)
+    .join(' • ');
 });
 
 const consoleIntent = computed(() => {
@@ -608,10 +611,13 @@ const consoleIntent = computed(() => {
 
 const consoleSummary = computed(() => {
   const status = store.consoleStatus;
-  if (!status) return 'not initialised';
-  if (status.uptime) return `up ${Number(status.uptime).toFixed(1)}s`;
-  if (status.returncode) return `code ${status.returncode}`;
-  return status.pid ? `pid ${status.pid}` : 'idle';
+  if (!status) return t('common.not_initialised');
+  if (status.uptime) {
+    return t('common.up_time').replace('{count}', Number(status.uptime).toFixed(1));
+  }
+  if (status.returncode) return t('common.code').replace('{count}', String(status.returncode));
+  if (status.pid) return t('common.pid').replace('{count}', String(status.pid));
+  return t('common.idle');
 });
 
 const advisoryIntent = computed(() => {
@@ -625,12 +631,12 @@ const advisoryIntent = computed(() => {
 
 const advisorySummary = computed(() => {
   const advisories = store.advisories || [];
-  if (!advisories.length) return 'All clear';
+  if (!advisories.length) return t('common.all_clear');
   const critical = advisories.filter((entry: any) => entry.severity === 'critical').length;
   const warning = advisories.filter((entry: any) => entry.severity === 'warning').length;
-  if (critical) return `${critical} critical`;
-  if (warning) return `${warning} warnings`;
-  return `${advisories.length} advisories`;
+  if (critical) return t('common.critical_count').replace('{count}', String(critical));
+  if (warning) return t('common.warning_count').replace('{count}', String(warning));
+  return t('common.advisories_count').replace('{count}', String(advisories.length));
 });
 
 const pipelineIntent = computed(() => {
@@ -644,14 +650,25 @@ const pipelineIntent = computed(() => {
 
 const pipelineSummary = computed(() => {
   const metrics = store.dashboard?.metrics_by_stage || [];
-  if (!metrics.length) return 'Awaiting metrics';
+  if (!metrics.length) return t('common.awaiting_metrics');
   return metrics.map((entry: any) => `${entry.stage}:${entry.total}`).join(' • ');
 });
+
+const formatSeverity = (value: string) => {
+  const lower = (value || '').toLowerCase();
+  if (lower === 'critical') return t('severity.critical');
+  if (lower === 'warning') return t('severity.warning');
+  if (lower === 'warn') return t('severity.warning');
+  if (lower === 'info') return t('severity.info');
+  if (lower === 'error') return t('severity.error');
+  return value;
+};
 
 const navItems = computed(() => [
   { route: 'dashboard', path: '/', label: t('nav.overview'), icon: 'overview', intent: streamIntent.value },
   { route: 'organism', path: '/organism', label: t('nav.organism'), icon: 'organism', intent: pipelineIntent.value },
   { route: 'pipeline', path: '/pipeline', label: t('nav.pipeline'), icon: 'pipeline', intent: pipelineIntent.value },
+  { route: 'bus', path: '/bus', label: t('nav.bus'), icon: 'rocket', intent: pipelineIntent.value },
   { route: 'streams', path: '/streams', label: t('nav.streams'), icon: 'streams', intent: streamIntent.value },
   { route: 'telemetry', path: '/telemetry', label: t('nav.telemetry'), icon: 'activity', intent: feedbackIntent.value },
   { route: 'logs', path: '/logs', label: t('nav.logs'), icon: 'activity', intent: feedbackIntent.value },

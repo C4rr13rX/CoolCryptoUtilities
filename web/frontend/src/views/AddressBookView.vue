@@ -3,14 +3,14 @@
     <section class="panel header-panel">
       <header>
         <div>
-          <h1>Address Book</h1>
-          <p>Save wallets, notes, and contact images for fast routing.</p>
+          <h1>{{ t('addressbook.title') }}</h1>
+          <p>{{ t('addressbook.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <button type="button" class="btn ghost" @click="refresh" :disabled="loading">
-            {{ loading ? 'Refreshing…' : 'Refresh' }}
+            {{ loading ? t('common.refreshing') : t('common.refresh') }}
           </button>
-          <button type="button" class="btn" @click="openCreate">New Entry</button>
+          <button type="button" class="btn" @click="openCreate">{{ t('addressbook.new_entry') }}</button>
         </div>
       </header>
     </section>
@@ -18,19 +18,19 @@
     <section class="panel">
       <header class="toolbar">
         <div class="search-row">
-          <input v-model="query" type="text" placeholder="Search by name…" @keyup.enter="search" />
+          <input v-model="query" type="text" :placeholder="t('addressbook.search_placeholder')" @keyup.enter="search" />
           <button type="button" class="btn ghost" @click="search" :disabled="loading || !query.trim()">
-            Search
+            {{ t('common.search') }}
           </button>
           <button type="button" class="btn ghost" @click="clearSearch" :disabled="loading">
-            Clear
+            {{ t('common.clear') }}
           </button>
         </div>
-        <div class="caption">{{ entries.length }} entries</div>
+        <div class="caption">{{ formatEntryCount(entries.length) }}</div>
       </header>
 
       <p v-if="error" class="error">{{ error }}</p>
-      <p v-else-if="loading" class="muted">Loading address book…</p>
+      <p v-else-if="loading" class="muted">{{ t('addressbook.loading') }}</p>
 
       <div v-else class="entries-grid">
         <article v-for="entry in entries" :key="entry.id" class="entry-card">
@@ -42,18 +42,18 @@
             <div class="entry-head">
               <div>
                 <strong>{{ entry.name }}</strong>
-                <small class="chain">{{ entry.chain || 'Unspecified chain' }}</small>
+                <small class="chain">{{ entry.chain || t('addressbook.chain_unspecified') }}</small>
               </div>
               <div class="entry-actions">
-                <button type="button" class="link" @click="openEdit(entry)">Edit</button>
-                <button type="button" class="link danger" @click="remove(entry)">Delete</button>
+                <button type="button" class="link" @click="openEdit(entry)">{{ t('common.edit') }}</button>
+                <button type="button" class="link danger" @click="remove(entry)">{{ t('common.delete') }}</button>
               </div>
             </div>
             <div class="address">{{ entry.address }}</div>
             <p v-if="entry.notes" class="notes">{{ entry.notes }}</p>
           </div>
         </article>
-        <div v-if="!entries.length" class="empty">No address book entries yet.</div>
+        <div v-if="!entries.length" class="empty">{{ t('addressbook.empty') }}</div>
       </div>
     </section>
 
@@ -61,40 +61,40 @@
       <div class="modal-card">
         <header>
           <div>
-            <h2>{{ editing ? 'Edit Entry' : 'New Entry' }}</h2>
-            <p class="muted">Store wallet addresses with optional images.</p>
+            <h2>{{ editing ? t('addressbook.edit_entry') : t('addressbook.new_entry') }}</h2>
+            <p class="muted">{{ t('addressbook.form_subtitle') }}</p>
           </div>
         </header>
         <form class="form-grid" @submit.prevent="save">
           <label>
-            <span>Name</span>
+            <span>{{ t('common.name') }}</span>
             <input v-model="form.name" type="text" required />
           </label>
           <label>
-            <span>Wallet Address</span>
+            <span>{{ t('addressbook.wallet_address') }}</span>
             <input v-model="form.address" type="text" required />
           </label>
           <label>
-            <span>Chain</span>
-            <input v-model="form.chain" type="text" placeholder="Ethereum, Solana…" />
+            <span>{{ t('common.chain') }}</span>
+            <input v-model="form.chain" type="text" :placeholder="t('addressbook.chain_placeholder')" />
           </label>
           <label class="full">
-            <span>Notes</span>
-            <textarea v-model="form.notes" rows="3" placeholder="How you know them, risk notes…" />
+            <span>{{ t('common.notes') }}</span>
+            <textarea v-model="form.notes" rows="3" :placeholder="t('addressbook.notes_placeholder')" />
           </label>
           <label class="full">
-            <span>Contact Image</span>
+            <span>{{ t('addressbook.contact_image') }}</span>
             <input type="file" accept="image/*" @change="handleFile" />
             <div v-if="previewUrl" class="preview">
-              <img :src="previewUrl" alt="Preview" />
+              <img :src="previewUrl" :alt="t('common.preview')" />
             </div>
           </label>
           <div class="actions">
             <button type="submit" class="btn" :disabled="saving">
-              {{ saving ? 'Saving…' : 'Save' }}
+              {{ saving ? t('common.saving') : t('common.save') }}
             </button>
             <button type="button" class="btn ghost" @click="closeForm" :disabled="saving">
-              Cancel
+              {{ t('common.cancel') }}
             </button>
           </div>
         </form>
@@ -113,6 +113,7 @@ import {
   lookupAddressBookEntries,
   updateAddressBookEntry,
 } from '@/api';
+import { t } from '@/i18n';
 
 const entries = ref<AddressBookEntry[]>([]);
 const loading = ref(false);
@@ -143,7 +144,7 @@ const refresh = async () => {
   try {
     entries.value = await fetchAddressBookEntries();
   } catch (err: any) {
-    error.value = err?.message || 'Unable to load address book entries.';
+    error.value = err?.message || t('addressbook.error_load');
   } finally {
     loading.value = false;
   }
@@ -161,7 +162,7 @@ const search = async () => {
     const results = await lookupAddressBookEntries(term, false, 50);
     entries.value = results.results || [];
   } catch (err: any) {
-    error.value = err?.message || 'Search failed.';
+    error.value = err?.message || t('addressbook.error_search');
   } finally {
     loading.value = false;
   }
@@ -226,22 +227,27 @@ const save = async () => {
     }
     closeForm();
   } catch (err: any) {
-    error.value = err?.message || 'Unable to save entry.';
+    error.value = err?.message || t('addressbook.error_save');
   } finally {
     saving.value = false;
   }
 };
 
 const remove = async (entry: AddressBookEntry) => {
-  if (!window.confirm(`Delete ${entry.name}?`)) return;
+  const label = entry.name || t('common.item');
+  const message = t('common.confirm_delete').replace('{item}', label);
+  if (!window.confirm(message)) return;
   error.value = '';
   try {
     await deleteAddressBookEntry(entry.id);
     entries.value = entries.value.filter((item) => item.id !== entry.id);
   } catch (err: any) {
-    error.value = err?.message || 'Unable to delete entry.';
+    error.value = err?.message || t('addressbook.error_delete');
   }
 };
+
+const formatEntryCount = (count: number) =>
+  t('addressbook.entries_count').replace('{count}', String(count));
 
 onMounted(() => {
   refresh();

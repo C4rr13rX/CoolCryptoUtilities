@@ -3,29 +3,29 @@
     <section class="panel summary-panel">
       <header>
         <div>
-          <h2>Wallet Overview</h2>
-          <p class="caption">{{ wallet.snapshot?.wallet || 'No wallet detected' }}</p>
+          <h2>{{ t('wallet.title') }}</h2>
+          <p class="caption">{{ wallet.snapshot?.wallet || t('wallet.no_wallet') }}</p>
         </div>
         <div class="summary-actions">
           <button class="btn" type="button" @click="wallet.autoRefresh" :disabled="wallet.running || wallet.autoRefreshing">
-            {{ wallet.autoRefreshing || wallet.running ? 'Refreshing…' : 'Auto Refresh' }}
+            {{ wallet.autoRefreshing || wallet.running ? t('common.refreshing') : t('wallet.auto_refresh') }}
           </button>
           <button class="btn ghost" type="button" @click="wallet.fetchSnapshot" :disabled="wallet.snapshotLoading">
-            Reload Snapshot
+            {{ t('wallet.reload_snapshot') }}
           </button>
         </div>
       </header>
       <div class="summary-grid">
         <div>
-          <span class="label">Total USD</span>
+          <span class="label">{{ t('wallet.total_usd') }}</span>
           <span class="value">{{ totalUsdDisplay }}</span>
         </div>
         <div>
-          <span class="label">Last Updated</span>
+          <span class="label">{{ t('wallet.last_updated') }}</span>
           <span class="value">{{ snapshotTimestamp }}</span>
         </div>
         <div>
-          <span class="label">Worker Status</span>
+          <span class="label">{{ t('wallet.worker_status') }}</span>
           <span class="value">{{ workerSummary }}</span>
         </div>
       </div>
@@ -34,10 +34,10 @@
     <section class="panel actions-panel" v-if="wallet.actions.length">
       <header>
         <div>
-          <h2>Wallet Actions</h2>
-          <p class="caption">Live controls bound to main.py options</p>
+          <h2>{{ t('wallet.actions_title') }}</h2>
+          <p class="caption">{{ t('wallet.actions_caption') }}</p>
         </div>
-        <span class="caption" v-if="wallet.running">Running…</span>
+        <span class="caption" v-if="wallet.running">{{ t('wallet.running') }}</span>
       </header>
       <div class="action-tabs">
         <button
@@ -57,7 +57,7 @@
           <label v-for="field in currentAction.fields" :key="field.name">
             <span>{{ field.label }}</span>
             <select v-if="field.kind === 'select'" v-model="formState[currentAction.name][field.name]" :required="field.required">
-              <option value="" disabled selected hidden>Select</option>
+              <option value="" disabled selected hidden>{{ t('common.select') }}</option>
               <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
             </select>
             <input
@@ -69,7 +69,7 @@
             />
           </label>
           <div class="actions">
-            <button class="btn" type="submit" :disabled="wallet.running">Run Action</button>
+            <button class="btn" type="submit" :disabled="wallet.running">{{ t('wallet.run_action') }}</button>
           </div>
         </form>
       </div>
@@ -78,18 +78,18 @@
     <section class="panel balances-panel">
       <header>
         <div>
-          <h2>Token Balances</h2>
-          <p class="caption">Filtered by scam registry & cached for the UI</p>
+          <h2>{{ t('wallet.token_balances') }}</h2>
+          <p class="caption">{{ t('wallet.balances_caption') }}</p>
         </div>
       </header>
       <div class="table-scroll" v-if="walletBalances.length">
         <table>
           <thead>
             <tr>
-              <th>Chain</th>
-              <th>Token</th>
-              <th class="align-right">Quantity</th>
-              <th class="align-right">USD</th>
+              <th>{{ t('common.chain') }}</th>
+              <th>{{ t('wallet.token') }}</th>
+              <th class="align-right">{{ t('wallet.quantity') }}</th>
+              <th class="align-right">{{ t('common.usd') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -102,14 +102,14 @@
           </tbody>
         </table>
       </div>
-      <p v-else class="empty-text">No balances cached yet.</p>
+      <p v-else class="empty-text">{{ t('wallet.no_balances') }}</p>
     </section>
 
     <section class="panel transfers-panel">
       <header>
         <div>
-          <h2>Recent Transfers</h2>
-          <p class="caption">Latest 25 per chain</p>
+          <h2>{{ t('wallet.recent_transfers') }}</h2>
+          <p class="caption">{{ t('wallet.transfers_caption') }}</p>
         </div>
       </header>
       <div class="transfers-grid" v-if="transferEntries.length">
@@ -119,21 +119,21 @@
           </header>
           <ul>
             <li v-for="item in items" :key="item.hash + item.block">
-              <span class="direction" :class="item.direction">{{ item.direction === 'in' ? 'In' : 'Out' }}</span>
+              <span class="direction" :class="item.direction">{{ item.direction === 'in' ? t('wallet.in') : t('wallet.out') }}</span>
               <span class="amount">{{ formatValue(item.value) }}</span>
               <span class="hash">{{ truncateHash(item.hash) }}</span>
             </li>
           </ul>
         </article>
       </div>
-      <p v-else class="empty-text">No transfers cached yet.</p>
+      <p v-else class="empty-text">{{ t('wallet.no_transfers') }}</p>
     </section>
 
     <section class="panel nft-panel">
       <header class="nft-header">
         <div>
-          <h2>NFT Holdings</h2>
-          <p class="caption">Resolved via major gateways (Alchemy / IPFS / Arweave)</p>
+          <h2>{{ t('wallet.nft_holdings') }}</h2>
+          <p class="caption">{{ t('wallet.nft_caption') }}</p>
         </div>
         <div class="nft-tabs">
           <button
@@ -142,7 +142,7 @@
             :class="{ active: nftTab === 'shown' }"
             @click="nftTab = 'shown'"
           >
-            Shown ({{ shownNfts.length }})
+            {{ t('wallet.tab_shown').replace('{count}', String(shownNfts.length)) }}
           </button>
           <button
             class="tab"
@@ -150,7 +150,7 @@
             :class="{ active: nftTab === 'hidden' }"
             @click="nftTab = 'hidden'"
           >
-            Hidden ({{ hiddenNfts.length }})
+            {{ t('wallet.tab_hidden').replace('{count}', String(hiddenNfts.length)) }}
           </button>
         </div>
       </header>
@@ -162,7 +162,7 @@
           :disabled="!shownSelectionCount"
           @click="hideSelectedNfts"
         >
-          Hide Selected
+          {{ t('wallet.hide_selected') }}
         </button>
         <button
           v-else
@@ -171,7 +171,7 @@
           :disabled="!hiddenSelectionCount"
           @click="showSelectedNfts"
         >
-          Show Selected
+          {{ t('wallet.show_selected') }}
         </button>
       </div>
       <div class="nft-grid" v-if="activeNfts.length">
@@ -185,29 +185,29 @@
             <span class="checkmark"></span>
           </label>
           <div class="thumb" :class="{ placeholder: !nft.image }">
-            <img v-if="nft.image" :src="nft.image" :alt="nft.title || 'NFT'" loading="lazy" />
-            <span v-else>No image</span>
+            <img v-if="nft.image" :src="nft.image" :alt="nft.title || t('wallet.nft') " loading="lazy" />
+            <span v-else>{{ t('wallet.no_image') }}</span>
           </div>
           <div class="nft-meta">
-            <strong>{{ nft.title || 'Untitled' }}</strong>
+            <strong>{{ nft.title || t('wallet.untitled') }}</strong>
             <span class="caption">{{ nft.chain }}</span>
             <span class="token-id">#{{ nft.token_id }}</span>
           </div>
         </article>
       </div>
       <p v-else class="empty-text">
-        {{ nftTab === 'shown' ? 'No NFTs shown yet.' : 'No hidden NFTs.' }}
+        {{ nftTab === 'shown' ? t('wallet.no_nfts_shown') : t('wallet.no_nfts_hidden') }}
       </p>
     </section>
 
     <section class="panel console-panel">
       <header>
         <div>
-          <h2>Automation Consoles</h2>
-          <p class="caption">Mirrors guardian + production manager logs.</p>
+          <h2>{{ t('wallet.automation_consoles') }}</h2>
+          <p class="caption">{{ t('wallet.console_caption') }}</p>
         </div>
         <button class="btn ghost" type="button" @click="refreshConsoleLogs" :disabled="consoleBusy">
-          {{ consoleBusy ? 'Refreshing…' : 'Refresh Logs' }}
+          {{ consoleBusy ? t('common.refreshing') : t('wallet.refresh_logs') }}
         </button>
       </header>
       <AutomationConsoleStack :manager-lines="consoleLines" :guardian-lines="guardianConsole" />
@@ -216,16 +216,16 @@
     <section class="panel mnemonic-panel">
       <header>
         <div>
-          <h2>Wallet Seed</h2>
-          <span class="caption">MNEMONIC stored in the secure vault</span>
+          <h2>{{ t('wallet.seed_title') }}</h2>
+          <span class="caption">{{ t('wallet.seed_caption') }}</span>
         </div>
-        <span class="caption">{{ wallet.mnemonicPreview ? 'Loaded' : 'Not set' }}</span>
+        <span class="caption">{{ wallet.mnemonicPreview ? t('wallet.loaded') : t('wallet.not_set') }}</span>
       </header>
       <form class="mnemonic-form" @submit.prevent="saveMnemonic">
-        <textarea v-model="mnemonicInput" rows="3" placeholder="problem tube idea ..."></textarea>
+        <textarea v-model="mnemonicInput" rows="3" :placeholder="t('wallet.mnemonic_placeholder')"></textarea>
         <div class="actions">
-          <button class="btn" type="submit">Save</button>
-          <button class="btn ghost" type="button" @click="clearMnemonic">Clear</button>
+          <button class="btn" type="submit">{{ t('common.save') }}</button>
+          <button class="btn ghost" type="button" @click="clearMnemonic">{{ t('common.clear') }}</button>
         </div>
       </form>
     </section>
@@ -234,25 +234,25 @@
     v-if="wizardSteps.length"
     v-model:open="wizardOpen"
     :steps="wizardSteps"
-    title="Trading Launch Checklist"
-    subtitle="Finish the missing wallet steps to unlock ghost + live trading."
-    eyebrow="Wallet Wizard"
+    :title="t('wallet.wizard_title')"
+    :subtitle="t('wallet.wizard_subtitle')"
+    :eyebrow="t('wallet.wizard_eyebrow')"
   >
     <template #step-mnemonic>
       <div class="wizard-field">
-        <label for="wizard-mnemonic">Recovery phrase</label>
+        <label for="wizard-mnemonic">{{ t('wallet.wizard_recovery_phrase') }}</label>
         <textarea
           id="wizard-mnemonic"
           v-model="wizardMnemonicInput"
           rows="3"
-          placeholder="problem tube idea ..."
+          :placeholder="t('wallet.mnemonic_placeholder')"
         ></textarea>
         <div class="wizard-actions">
           <button class="btn" type="button" @click="saveWizardMnemonic" :disabled="!wizardMnemonicInput.trim()">
-            Save Phrase
+            {{ t('wallet.save_phrase') }}
           </button>
           <button class="btn ghost" type="button" @click="clearWizardMnemonic">
-            Clear
+            {{ t('common.clear') }}
           </button>
         </div>
       </div>
@@ -267,6 +267,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 import { useWalletStore } from '@/stores/wallet';
 import AutomationConsoleStack from '@/components/AutomationConsoleStack.vue';
 import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
+import { t } from '@/i18n';
 
 const dashboard = useDashboardStore();
 const wallet = useWalletStore();
@@ -288,7 +289,7 @@ const transferEntries = computed(() => Object.entries(wallet.transfers || {}));
 const consoleLines = computed(() => dashboard.consoleLogs || []);
 const guardianConsole = computed(() => dashboard.guardianLogs || []);
 const totalUsdDisplay = computed(() => currency(wallet.snapshot?.totals?.usd || 0));
-const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || 'Never');
+const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || t('common.never'));
 const shownNfts = computed(() => wallet.nfts.filter((nft: any) => !nftHidden.value.has(nftKey(nft))));
 const hiddenNfts = computed(() => wallet.nfts.filter((nft: any) => nftHidden.value.has(nftKey(nft))));
 const activeNfts = computed(() => (nftTab.value === 'shown' ? shownNfts.value : hiddenNfts.value));
@@ -297,20 +298,20 @@ const hiddenSelectionCount = computed(() => nftSelectionHidden.value.size);
 
 const workerSummary = computed(() => {
   if (wallet.running || wallet.autoRefreshing || wallet.status?.running) {
-    return 'Updating…';
+    return t('wallet.updating');
   }
   const status = wallet.status || {};
-  const message = String(status.message || 'idle');
+  const message = String(status.message || t('common.idle'));
   const returncode = status.returncode;
   if (message.toLowerCase().startsWith('failed') || (typeof returncode === 'number' && returncode !== 0)) {
     const finishedAt = Number(status.finished_at || 0);
     const snapshotAt = parseTimestamp(wallet.snapshot?.updated_at);
     if (snapshotAt && finishedAt && snapshotAt > (finishedAt * 1000 + 5000)) {
-      return 'Updated (last run failed)';
+      return t('wallet.updated_failed');
     }
     return message;
   }
-  return message === 'idle' ? 'Idle' : message;
+  return message === 'idle' ? t('common.idle') : message;
 });
 
 const currentAction = computed(() => wallet.actions.find((action: any) => action.name === activeAction.value));
@@ -334,9 +335,9 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (!hasMnemonic) {
     steps.push({
       id: 'mnemonic',
-      title: 'Add wallet recovery phrase',
-      description: 'Live trading needs your wallet seed stored in the secure vault.',
-      detail: 'This populates the MNEMONIC secret for automated signing.',
+      title: t('wallet.wizard_add_phrase_title'),
+      description: t('wallet.wizard_add_phrase_desc'),
+      detail: t('wallet.wizard_add_phrase_detail'),
       tone: 'critical',
     });
   }
@@ -344,10 +345,10 @@ const wizardSteps = computed<WizardStep[]>(() => {
   if (productionKnown && !productionRunning) {
     steps.push({
       id: 'production',
-      title: 'Start live trading engine',
-      description: 'The production manager is offline, so trades cannot execute yet.',
-      detail: 'Kick off the production supervisor once the wallet + readiness gates are clear.',
-      ctaLabel: 'Start Production',
+      title: t('wallet.wizard_start_production_title'),
+      description: t('wallet.wizard_start_production_desc'),
+      detail: t('wallet.wizard_start_production_detail'),
+      ctaLabel: t('wallet.wizard_start_production_cta'),
       ctaAction: () => startProduction(),
       tone: 'warning',
     });
@@ -493,7 +494,7 @@ function formatNumber(value: number | string) {
 }
 
 function formatValue(value: any) {
-  if (!value) return '—';
+  if (!value) return t('common.none');
   if (typeof value === 'string' && value.startsWith('0x')) {
     return parseInt(value, 16).toString();
   }
@@ -501,7 +502,7 @@ function formatValue(value: any) {
 }
 
 function truncateHash(hash: string | undefined) {
-  if (!hash) return 'unknown';
+  if (!hash) return t('common.unknown');
   return `${hash.slice(0, 6)}…${hash.slice(-4)}`;
 }
 

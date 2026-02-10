@@ -3,34 +3,33 @@
     <section class="panel pm-panel">
       <header>
         <div>
-          <h2>Production Manager · Auto Trader</h2>
-          <p class="caption">Ghost + live trading orchestration (option 7)</p>
+          <h2>{{ t('guardian.pm_title') }}</h2>
+          <p class="caption">{{ t('guardian.pm_subtitle') }}</p>
         </div>
         <div class="pm-actions">
           <button class="btn" type="button" @click="startProduction" :disabled="pmBusy || isRunning">
-            {{ pmBusy || isRunning ? 'Running…' : 'Start Bot' }}
+            {{ pmBusy || isRunning ? t('common.running') : t('guardian.start_bot') }}
           </button>
           <button class="btn danger" type="button" @click="stopProduction" :disabled="pmBusy || !isRunning">
-            Stop
+            {{ t('common.stop') }}
           </button>
         </div>
       </header>
       <div class="pm-body">
         <p>
-          The production manager is the dedicated automated trader. Guardian supervises it and restarts Codex sessions
-          as needed; the output streams here for live situational awareness.
+          {{ t('guardian.pm_description') }}
         </p>
         <div class="pm-meta">
           <div>
-            <span class="label">Status</span>
+            <span class="label">{{ t('common.status') }}</span>
             <span class="value" :class="{ online: productionStatus.running }">{{ productionStatusLabel }}</span>
           </div>
           <div>
-            <span class="label">Last Update</span>
+            <span class="label">{{ t('common.last_update') }}</span>
             <span class="value">{{ productionUpdatedAt }}</span>
           </div>
           <div v-if="productionNote">
-            <span class="label">Note</span>
+            <span class="label">{{ t('common.note') }}</span>
             <span class="value">{{ productionNote }}</span>
           </div>
         </div>
@@ -41,39 +40,39 @@
     <section class="panel control-panel">
       <header>
         <div>
-          <h1>Guardian Automation</h1>
-          <p>Manage the log guardian, prompt, and background console lifecycle.</p>
+          <h1>{{ t('guardian.title') }}</h1>
+          <p>{{ t('guardian.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <label class="switch">
             <input type="checkbox" :checked="guardianEnabled" @change="toggleGuardian" />
-            <span>Guardian {{ guardianEnabled ? 'On' : 'Off' }}</span>
+            <span>{{ t('guardian.toggle').replace('{state}', guardianEnabled ? t('common.on') : t('common.off')) }}</span>
           </label>
           <button type="button" class="btn ghost" @click="store.load" :disabled="store.loading">
-            {{ store.loading ? 'Refreshing…' : 'Refresh' }}
+            {{ store.loading ? t('common.refreshing') : t('common.refresh') }}
           </button>
         </div>
       </header>
       <div class="status-grid">
         <article>
-          <h3>Guardian Loop</h3>
+          <h3>{{ t('guardian.loop_title') }}</h3>
           <p class="metric">{{ guardianStatus }}</p>
-          <small>Last report: {{ formatTime(store.status?.last_report) }}</small>
+          <small>{{ t('guardian.last_report') }} {{ formatTime(store.status?.last_report) }}</small>
         </article>
         <article>
-          <h3>Next Interval</h3>
+          <h3>{{ t('guardian.next_interval') }}</h3>
           <div class="interval-edit">
             <input type="number" min="10" max="720" v-model.number="localInterval" />
-            <span>minutes</span>
+            <span>{{ t('common.minutes') }}</span>
           </div>
           <button type="button" class="btn ghost" @click="saveInterval" :disabled="store.saving">
-            Save Interval
+            {{ t('guardian.save_interval') }}
           </button>
         </article>
         <article>
-          <h3>Main Process</h3>
+          <h3>{{ t('guardian.main_process') }}</h3>
           <p class="metric">{{ consoleSummary }}</p>
-          <small v-if="store.consoleStatus?.uptime">Uptime: {{ Number(store.consoleStatus.uptime).toFixed(1) }}s</small>
+          <small v-if="store.consoleStatus?.uptime">{{ t('guardian.uptime') }} {{ Number(store.consoleStatus.uptime).toFixed(1) }}s</small>
         </article>
       </div>
     </section>
@@ -81,11 +80,11 @@
     <section class="panel prompt-panel">
       <header>
         <div>
-          <h2>Default Prompt</h2>
-          <p>This template is used for every guardian cycle.</p>
+          <h2>{{ t('guardian.default_prompt') }}</h2>
+          <p>{{ t('guardian.default_prompt_caption') }}</p>
         </div>
         <button type="button" class="btn" @click="saveDefault" :disabled="store.saving">
-          {{ store.saving ? 'Saving…' : 'Save Default' }}
+          {{ store.saving ? t('common.saving') : t('guardian.save_default') }}
         </button>
       </header>
       <textarea v-model="defaultPrompt" rows="10"></textarea>
@@ -94,28 +93,28 @@
     <section class="panel prompt-panel">
       <header>
         <div>
-          <h2>Run Ad-hoc Prompt</h2>
-          <p>Overwrite the next cycle with a temporary prompt or set a new default.</p>
+          <h2>{{ t('guardian.adhoc_title') }}</h2>
+          <p>{{ t('guardian.adhoc_caption') }}</p>
         </div>
       </header>
-      <textarea v-model="tempPrompt" rows="6" placeholder="Enter a temporary prompt"></textarea>
+      <textarea v-model="tempPrompt" rows="6" :placeholder="t('guardian.adhoc_placeholder')"></textarea>
       <div class="action-row">
         <button type="button" class="btn ghost" @click="runOnce" :disabled="!tempPrompt || store.running">
-          {{ store.running ? 'Queueing…' : 'Run Once' }}
+          {{ store.running ? t('guardian.queueing') : t('guardian.run_once') }}
         </button>
         <button type="button" class="btn ghost" @click="saveAndRun" :disabled="!tempPrompt || store.running">
-          Save as Default & Run
+          {{ t('guardian.save_and_run') }}
         </button>
       </div>
     </section>
 
     <section class="panel findings-panel">
       <header>
-        <h2>Recent Findings</h2>
+        <h2>{{ t('guardian.recent_findings') }}</h2>
       </header>
       <ul>
         <li v-for="line in recentFindings" :key="line">{{ line }}</li>
-        <li v-if="!recentFindings.length" class="empty">No findings recorded in the last cycle.</li>
+        <li v-if="!recentFindings.length" class="empty">{{ t('guardian.no_findings') }}</li>
       </ul>
     </section>
   </div>
@@ -126,6 +125,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AutomationConsoleStack from '@/components/AutomationConsoleStack.vue';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useGuardianStore } from '@/stores/guardian';
+import { t } from '@/i18n';
 
 const store = useGuardianStore();
 const dashboard = useDashboardStore();
@@ -137,23 +137,26 @@ const consoleTimer = ref<number>();
 
 const guardianEnabled = computed(() => Boolean(store.settings?.enabled));
 const guardianStatus = computed(() => {
-  if (!store.status) return 'Unknown';
-  return store.status.running ? 'Active' : 'Idle';
+  if (!store.status) return t('common.unknown');
+  return store.status.running ? t('common.active') : t('common.idle');
 });
 const consoleSummary = computed(() => {
   const status = store.consoleStatus || dashboard.consoleStatus;
-  if (!status) return 'Unknown';
-  return status.status === 'running' ? `PID ${status.pid}` : (status.status || 'stopped');
+  if (!status) return t('common.unknown');
+  if (status.status === 'running') {
+    return t('common.pid').replace('{count}', String(status.pid));
+  }
+  return status.status || t('common.stopped');
 });
 const recentFindings = computed(() => (store.status?.findings || []).slice(-10));
 const consoleLines = computed(() => dashboard.consoleLogs || []);
 const guardianConsole = computed(() => dashboard.guardianLogs || []);
 const isRunning = computed(() => (dashboard.consoleStatus?.status || '').includes('run'));
 const productionStatus = computed(() => store.status?.production || {});
-const productionStatusLabel = computed(() => (productionStatus.value.running ? 'Running' : 'Idle'));
+const productionStatusLabel = computed(() => (productionStatus.value.running ? t('common.running') : t('common.idle')));
 const productionUpdatedAt = computed(() => {
   const ts = productionStatus.value.updated_at;
-  if (!ts) return 'Unknown';
+  if (!ts) return t('common.unknown');
   const parsed = new Date(ts);
   if (Number.isNaN(parsed.getTime())) return ts;
   return parsed.toLocaleString();
@@ -199,14 +202,14 @@ watch(
 );
 
 function formatTime(ts?: number | string | null) {
-  if (!ts) return '—';
+  if (!ts) return t('common.none');
   const value = Number(ts);
-  if (!Number.isFinite(value)) return '—';
+  if (!Number.isFinite(value)) return t('common.none');
   const delta = Date.now() / 1000 - value;
-  if (delta < 60) return 'just now';
-  if (delta < 3600) return `${Math.round(delta / 60)} min ago`;
-  if (delta < 86400) return `${Math.round(delta / 3600)} h ago`;
-  return `${Math.round(delta / 86400)} d ago`;
+  if (delta < 60) return t('common.just_now');
+  if (delta < 3600) return t('common.minutes_ago').replace('{count}', String(Math.round(delta / 60)));
+  if (delta < 86400) return t('common.hours_ago').replace('{count}', String(Math.round(delta / 3600)));
+  return t('common.days_ago').replace('{count}', String(Math.round(delta / 86400)));
 }
 
 async function toggleGuardian() {

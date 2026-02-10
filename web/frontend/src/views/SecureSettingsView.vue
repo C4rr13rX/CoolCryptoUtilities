@@ -3,12 +3,12 @@
     <section class="panel">
       <header>
         <div>
-          <h1>Secure Settings</h1>
-          <p>Vaulted values pulled into every subprocess (Guardian, console, wallet, labs).</p>
+          <h1>{{ t('settings.title') }}</h1>
+          <p>{{ t('settings.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <button type="button" class="btn ghost" @click="refresh" :disabled="store.loading">
-            {{ store.loading ? 'Refreshing…' : 'Refresh' }}
+            {{ store.loading ? t('common.refreshing') : t('common.refresh') }}
           </button>
           <button
             v-if="wizardSteps.length"
@@ -17,10 +17,10 @@
             @click="wizardOpen = true"
             :disabled="store.loading"
           >
-            Open Pipeline Wizard
+            {{ t('settings.open_pipeline_wizard') }}
           </button>
           <button type="button" class="btn danger" @click="confirmingClear = true" :disabled="store.loading || !store.items.length">
-            Clear All
+            {{ t('settings.clear_all') }}
           </button>
         </div>
       </header>
@@ -35,68 +35,67 @@
                 <small class="field-code">{{ item.name }}</small>
               </div>
               <div class="card-actions">
-                <button type="button" class="link" @click="edit(item)">{{ item.is_placeholder ? 'Add' : 'Edit' }}</button>
-                <button v-if="item.id" type="button" class="link danger" @click="remove(item)">Delete</button>
+                <button type="button" class="link" @click="edit(item)">{{ item.is_placeholder ? t('common.add') : t('common.edit') }}</button>
+                <button v-if="item.id" type="button" class="link danger" @click="remove(item)">{{ t('common.delete') }}</button>
               </div>
             </div>
             <div class="value-row">
               <span v-if="item.is_secret">
                 <template v-if="item.id && revealVisible[item.id]">
-                  {{ revealValues[item.id] || '—' }}
+                  {{ revealValues[item.id] || t('common.none') }}
                 </template>
                 <template v-else>
-                  {{ item.preview || '••••••' }}
+                  {{ item.preview || t('common.masked') }}
                 </template>
               </span>
-              <span v-else>{{ item.preview || 'Not set' }}</span>
+              <span v-else>{{ item.preview || t('common.not_set') }}</span>
               <button
                 v-if="item.is_secret && item.id"
                 type="button"
                 class="link"
                 @click="toggleReveal(item)"
               >
-                {{ item.id && revealVisible[item.id] ? 'Hide' : 'Reveal' }}
+                {{ item.id && revealVisible[item.id] ? t('common.hide') : t('common.reveal') }}
               </button>
             </div>
-            <p v-if="item.is_placeholder" class="placeholder-note">This value has not been configured yet.</p>
+            <p v-if="item.is_placeholder" class="placeholder-note">{{ t('settings.placeholder_note') }}</p>
           </article>
         </div>
       </div>
       <article class="setting-card add-card" @click="showCreate = true">
-        <span>+ Add Setting</span>
+        <span>{{ t('settings.add_setting') }}</span>
       </article>
     </section>
 
     <section class="panel">
       <header>
         <div>
-          <h2>Import from .env</h2>
-          <p>Paste entries or upload a .env file. Parsed values populate the Default category.</p>
+          <h2>{{ t('settings.import_title') }}</h2>
+          <p>{{ t('settings.import_subtitle') }}</p>
         </div>
         <div class="header-actions">
           <button type="button" class="btn ghost" @click="downloadExport" :disabled="store.loading">
-            Export .env
+            {{ t('settings.export_env') }}
           </button>
         </div>
         <label class="switch-row import-secret-toggle">
           <input type="checkbox" v-model="importForm.is_secret" />
-          <span>Store imported values as secrets</span>
+          <span>{{ t('settings.import_as_secret') }}</span>
         </label>
       </header>
       <form class="form-grid" @submit.prevent="importEnv">
         <label>
-          <span>.env contents</span>
-          <textarea v-model="importForm.content" rows="6" placeholder="API_KEY=example123
-RPC_URL=https://..." />
+          <span>{{ t('settings.env_contents') }}</span>
+          <textarea v-model="importForm.content" rows="6" :placeholder="t('settings.env_placeholder')" />
         </label>
         <label>
-          <span>.env file</span>
+          <span>{{ t('settings.env_file') }}</span>
           <input type="file" accept=".env,text/plain" @change="handleFile" />
         </label>
         <div class="actions">
-          <button type="submit" class="btn" :disabled="!importForm.content.trim()">Import</button>
-          <button type="button" class="btn ghost" @click="importFile" :disabled="!importForm.file">Import File</button>
-          <button type="button" class="btn ghost" @click="resetImport">Clear Text</button>
+          <button type="submit" class="btn" :disabled="!importForm.content.trim()">{{ t('common.import') }}</button>
+          <button type="button" class="btn ghost" @click="importFile" :disabled="!importForm.file">{{ t('settings.import_file') }}</button>
+          <button type="button" class="btn ghost" @click="resetImport">{{ t('settings.clear_text') }}</button>
         </div>
       </form>
     </section>
@@ -104,44 +103,44 @@ RPC_URL=https://..." />
     <section class="panel">
       <header>
         <div>
-          <h2>Interface</h2>
-          <p>UI preferences stored locally for this browser.</p>
+          <h2>{{ t('settings.interface_title') }}</h2>
+          <p>{{ t('settings.interface_subtitle') }}</p>
         </div>
       </header>
       <label class="switch-row">
         <input type="checkbox" v-model="uiSettings.autoScrollEnabled" @change="saveUiSettings" />
-        <span>Edge hover auto-scroll</span>
+        <span>{{ t('settings.auto_scroll') }}</span>
       </label>
-      <p class="caption">Hold the cursor at the very top or bottom for 0.5s to scroll. Move to stop.</p>
+      <p class="caption">{{ t('settings.auto_scroll_hint') }}</p>
     </section>
 
     <div v-if="showCreate" class="modal-backdrop" @click.self="cancel">
       <div class="modal-card wide">
         <header>
           <div>
-            <h2>{{ editing ? 'Edit Setting' : 'New Setting' }}</h2>
+            <h2>{{ editing ? t('settings.edit_setting') : t('settings.new_setting') }}</h2>
           </div>
         </header>
         <form class="form-grid" @submit.prevent="save">
           <label>
-            <span>Name</span>
+            <span>{{ t('common.name') }}</span>
             <input type="text" v-model="form.name" required />
           </label>
           <label>
-            <span>Category</span>
-            <input type="text" v-model="form.category" placeholder="default" />
+            <span>{{ t('settings.category') }}</span>
+            <input type="text" v-model="form.category" :placeholder="t('settings.category_default')" />
           </label>
           <label class="switch-row">
             <input type="checkbox" v-model="form.is_secret" />
-            <span>Secret value</span>
+            <span>{{ t('settings.secret_value') }}</span>
           </label>
           <label>
-            <span>Value</span>
+            <span>{{ t('settings.value') }}</span>
             <textarea v-model="form.value" rows="4"></textarea>
           </label>
           <div class="actions">
-            <button type="submit" class="btn">{{ editing ? 'Update' : 'Save' }}</button>
-            <button type="button" class="btn ghost" @click="cancel">Cancel</button>
+            <button type="submit" class="btn">{{ editing ? t('common.update') : t('common.save') }}</button>
+            <button type="button" class="btn ghost" @click="cancel">{{ t('common.cancel') }}</button>
           </div>
         </form>
       </div>
@@ -149,11 +148,11 @@ RPC_URL=https://..." />
 
     <div v-if="confirmingClear" class="modal-backdrop">
       <div class="modal-card">
-        <h3>Clear all settings?</h3>
-        <p>This removes every stored value for your account. This cannot be undone.</p>
+        <h3>{{ t('settings.clear_confirm_title') }}</h3>
+        <p>{{ t('settings.clear_confirm_body') }}</p>
         <div class="modal-actions">
-          <button type="button" class="btn danger" @click="clearAll">Yes</button>
-          <button type="button" class="btn ghost" @click="confirmingClear = false">Cancel</button>
+          <button type="button" class="btn danger" @click="clearAll">{{ t('common.yes') }}</button>
+          <button type="button" class="btn ghost" @click="confirmingClear = false">{{ t('common.cancel') }}</button>
         </div>
       </div>
     </div>
@@ -162,9 +161,9 @@ RPC_URL=https://..." />
     v-if="wizardSteps.length"
     v-model:open="wizardOpen"
     :steps="wizardSteps"
-    title="Pipeline Setup Wizard"
-    subtitle="Add the missing keys so the pipeline can run end-to-end."
-    eyebrow="Settings Wizard"
+    :title="t('settings.wizard_title')"
+    :subtitle="t('settings.wizard_subtitle')"
+    :eyebrow="t('settings.wizard_eyebrow')"
   >
     <template v-for="step in wizardSteps" #[`step-${step.id}`]="{ step: slotStep }">
       <div class="wizard-field">
@@ -185,10 +184,10 @@ RPC_URL=https://..." />
         />
         <div class="wizard-actions">
           <button class="btn" type="button" @click="saveWizardStep(step)" :disabled="!wizardValues[step.id]?.trim() || wizardSaving[step.id]">
-            {{ wizardSaving[step.id] ? 'Saving…' : 'Save' }}
+            {{ wizardSaving[step.id] ? t('common.saving') : t('common.save') }}
           </button>
           <button class="btn ghost" type="button" @click="clearWizardStep(step)">
-            Clear
+            {{ t('common.clear') }}
           </button>
         </div>
         <p v-if="wizardErrors[step.id]" class="wizard-error">{{ wizardErrors[step.id] }}</p>
@@ -202,6 +201,7 @@ import { reactive, ref, onMounted, computed, watch } from 'vue';
 import { useSecureSettingsStore } from '@/stores/secureSettings';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
+import { t } from '@/i18n';
 
 const store = useSecureSettingsStore();
 const uiSettings = useUiSettingsStore();
@@ -244,15 +244,15 @@ type WizardStep = {
   tone?: 'info' | 'warning' | 'critical' | 'success';
 };
 
-const pipelineRequirements: WizardStep[] = [
+const pipelineRequirements = computed<WizardStep[]>(() => [
   {
     id: 'mnemonic',
     name: 'MNEMONIC',
-    label: 'Wallet recovery phrase',
-    title: 'Add wallet recovery phrase',
-    description: 'Needed to sign transactions and run live trading.',
-    detail: 'Stored securely in the vault.',
-    placeholder: 'problem tube idea ...',
+    label: t('settings.req_mnemonic_label'),
+    title: t('settings.req_mnemonic_title'),
+    description: t('settings.req_mnemonic_desc'),
+    detail: t('settings.req_mnemonic_detail'),
+    placeholder: t('settings.req_mnemonic_placeholder'),
     is_secret: true,
     input: 'textarea',
     tone: 'critical',
@@ -260,85 +260,85 @@ const pipelineRequirements: WizardStep[] = [
   {
     id: 'alchemy',
     name: 'ALCHEMY_API_KEY',
-    label: 'Alchemy API Key',
-    title: 'Connect RPC provider',
-    description: 'RPC + NFT data for Base/ETH monitoring.',
-    detail: 'Used for wallet sync, price sampling, and on-chain reads.',
-    placeholder: 'Alchemy API key',
+    label: t('settings.req_alchemy_label'),
+    title: t('settings.req_alchemy_title'),
+    description: t('settings.req_alchemy_desc'),
+    detail: t('settings.req_alchemy_detail'),
+    placeholder: t('settings.req_alchemy_placeholder'),
     is_secret: true,
     tone: 'critical',
   },
   {
     id: 'cryptopanic',
     name: 'CRYPTOPANIC_API_KEY',
-    label: 'CryptoPanic API Key',
-    title: 'Enable news ingest',
-    description: 'Unlocks headline + news sentiment feeds.',
-    placeholder: 'CryptoPanic API key',
+    label: t('settings.req_cryptopanic_label'),
+    title: t('settings.req_cryptopanic_title'),
+    description: t('settings.req_cryptopanic_desc'),
+    placeholder: t('settings.req_cryptopanic_placeholder'),
     is_secret: true,
     tone: 'warning',
   },
   {
     id: 'thegraph',
     name: 'THEGRAPH_API_KEY',
-    label: 'The Graph API Key',
-    title: 'Enable subgraph data',
-    description: 'Needed for Uniswap/DEX data and analytics.',
-    placeholder: 'The Graph API key',
+    label: t('settings.req_thegraph_label'),
+    title: t('settings.req_thegraph_title'),
+    description: t('settings.req_thegraph_desc'),
+    placeholder: t('settings.req_thegraph_placeholder'),
     is_secret: true,
     tone: 'warning',
   },
   {
     id: 'zerox',
     name: 'ZEROX_API_KEY',
-    label: '0x API Key',
-    title: 'Enable swap routing',
-    description: 'Unlocks swap pricing + routing quotes.',
-    placeholder: '0x API key',
+    label: t('settings.req_zerox_label'),
+    title: t('settings.req_zerox_title'),
+    description: t('settings.req_zerox_desc'),
+    placeholder: t('settings.req_zerox_placeholder'),
     is_secret: true,
     tone: 'warning',
   },
   {
     id: 'lifi',
     name: 'LIFI_API_KEY',
-    label: 'LI.FI API Key',
-    title: 'Enable bridging',
-    description: 'Bridge + swap orchestration for cross-chain moves.',
-    placeholder: 'LI.FI API key',
+    label: t('settings.req_lifi_label'),
+    title: t('settings.req_lifi_title'),
+    description: t('settings.req_lifi_desc'),
+    placeholder: t('settings.req_lifi_placeholder'),
     is_secret: true,
     tone: 'warning',
   },
   {
     id: 'ankr',
     name: 'ANKR_API_KEY',
-    label: 'Ankr API Key',
-    title: 'Enable historical data pulls',
-    description: 'Provides multichain RPC + historical queries.',
-    placeholder: 'Ankr API key',
+    label: t('settings.req_ankr_label'),
+    title: t('settings.req_ankr_title'),
+    description: t('settings.req_ankr_desc'),
+    placeholder: t('settings.req_ankr_placeholder'),
     is_secret: true,
     tone: 'info',
   },
   {
     id: 'goplus-key',
     name: 'GOPLUS_APP_KEY',
-    label: 'GoPlus App Key',
-    title: 'Enable token safety checks',
-    description: 'Scam filtering uses GoPlus for security scoring.',
-    placeholder: 'GoPlus app key',
+    label: t('settings.req_goplus_key_label'),
+    title: t('settings.req_goplus_key_title'),
+    description: t('settings.req_goplus_key_desc'),
+    placeholder: t('settings.req_goplus_key_placeholder'),
     is_secret: true,
     tone: 'warning',
   },
   {
     id: 'goplus-secret',
     name: 'GOPLUS_APP_SECRET',
-    label: 'GoPlus App Secret',
-    title: 'Confirm GoPlus secret',
-    description: 'Pairs with the GoPlus app key.',
-    placeholder: 'GoPlus app secret',
+    label: t('settings.req_goplus_secret_label'),
+    title: t('settings.req_goplus_secret_title'),
+    description: t('settings.req_goplus_secret_desc'),
+    placeholder: t('settings.req_goplus_secret_placeholder'),
     is_secret: true,
     tone: 'warning',
   },
-];
+]);
 
 const groupedSettings = computed(() => {
   const groups: Record<string, any[]> = {};
@@ -352,7 +352,7 @@ const groupedSettings = computed(() => {
   });
   return Object.entries(groups).map(([key, items]) => ({
     key,
-    label: key === 'default' ? 'Default' : items[0]?.category || key,
+    label: key === 'default' ? t('settings.category_default_label') : items[0]?.category || key,
     items,
   }));
 });
@@ -373,7 +373,7 @@ const settingsByName = computed(() => {
 
 const wizardSteps = computed<WizardStep[]>(() => {
   const steps: WizardStep[] = [];
-  pipelineRequirements.forEach((req) => {
+  pipelineRequirements.value.forEach((req) => {
     const entry = settingsByName.value.get(req.name);
     const missing = !entry || entry.is_placeholder;
     if (missing) {
@@ -410,7 +410,7 @@ async function clearAll() {
 function edit(item: any) {
   editing.value = item.id || null;
   form.name = item.name;
-  form.category = item.category ? (item.category === 'default' ? 'Default' : item.category) : 'Default';
+  form.category = item.category ? (item.category === 'default' ? t('settings.category_default_label') : item.category) : t('settings.category_default_label');
   form.is_secret = !!item.is_secret;
   form.value = '';
   showCreate.value = true;
@@ -418,7 +418,7 @@ function edit(item: any) {
 
 function remove(item: any) {
   if (!item.id) return;
-  if (!confirm(`Delete ${item.name}?`)) return;
+  if (!confirm(t('common.confirm_delete').replace('{item}', item.name))) return;
   store.remove(item.id);
 }
 
@@ -426,7 +426,7 @@ function cancel() {
   showCreate.value = false;
   editing.value = null;
   form.name = '';
-  form.category = 'Default';
+  form.category = t('settings.category_default_label');
   form.is_secret = true;
   form.value = '';
 }
@@ -511,7 +511,7 @@ async function saveWizardStep(step: WizardStep) {
     });
     wizardValues[step.id] = '';
   } catch (error: any) {
-    wizardErrors[step.id] = error?.message || 'Failed to save setting';
+    wizardErrors[step.id] = error?.message || t('settings.error_save');
   } finally {
     wizardSaving[step.id] = false;
   }

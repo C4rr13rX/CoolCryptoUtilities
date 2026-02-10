@@ -3,10 +3,10 @@
     <section class="panel">
       <header>
         <div>
-          <h2>API Integrations</h2>
-          <p class="caption">Provider credentials stored in the secure vault.</p>
+          <h2>{{ t('integrations.title') }}</h2>
+          <p class="caption">{{ t('integrations.subtitle') }}</p>
         </div>
-        <button class="btn ghost" type="button" @click="store.load">Refresh</button>
+        <button class="btn ghost" type="button" @click="store.load">{{ t('common.refresh') }}</button>
       </header>
       <div class="integration-grid">
         <article v-for="item in store.items" :key="item.name" class="integration-card">
@@ -15,7 +15,7 @@
               <strong>{{ item.label }}</strong>
               <span class="caption">{{ item.description }}</span>
             </div>
-            <a v-if="item.url" class="link" :href="item.url" target="_blank" rel="noreferrer">Manage</a>
+            <a v-if="item.url" class="link" :href="item.url" target="_blank" rel="noreferrer">{{ t('integrations.manage') }}</a>
           </header>
           <div class="stored-value">
             <span>{{ displayValue(item) }}</span>
@@ -25,21 +25,21 @@
               type="button"
               @click="toggleReveal(item.name)"
             >
-              {{ store.revealVisible[item.name] ? 'Hide' : 'Reveal' }}
+              {{ store.revealVisible[item.name] ? t('common.hide') : t('common.reveal') }}
             </button>
           </div>
           <div class="actions">
             <button class="btn" type="button" @click="openEditor(item)">
-              {{ item.has_value ? 'Update' : 'Set' }}
+              {{ item.has_value ? t('common.update') : t('common.set') }}
             </button>
             <button class="btn ghost" type="button" @click="clearDirect(item)" :disabled="!item.has_value">
-              Clear
+              {{ t('common.clear') }}
             </button>
           </div>
           <p v-if="store.testResult[item.name]" class="test-result">{{ store.testResult[item.name] }}</p>
         </article>
       </div>
-      <p v-if="!store.items.length" class="empty-text">No integrations configured.</p>
+      <p v-if="!store.items.length" class="empty-text">{{ t('integrations.empty') }}</p>
     </section>
 
     <div v-if="activeItem" class="modal-backdrop" @click.self="closeEditor">
@@ -52,14 +52,14 @@
         </header>
         <form class="form-grid" @submit.prevent="saveActive">
           <label>
-            <span>New value</span>
-            <input type="text" v-model="draftValue" placeholder="Enter key" />
+            <span>{{ t('integrations.new_value') }}</span>
+            <input type="text" v-model="draftValue" :placeholder="t('integrations.enter_key')" />
           </label>
           <div class="actions">
-            <button class="btn" type="submit">Save</button>
-            <button class="btn ghost" type="button" @click="closeEditor">Cancel</button>
+            <button class="btn" type="submit">{{ t('common.save') }}</button>
+            <button class="btn ghost" type="button" @click="closeEditor">{{ t('common.cancel') }}</button>
             <button class="btn ghost" type="button" @click="clearActive" :disabled="!activeItem.has_value">
-              Clear
+              {{ t('common.clear') }}
             </button>
             <button
               v-if="activeItem.can_test"
@@ -68,7 +68,7 @@
               :disabled="store.testing[activeItem.name]"
               @click="testActive"
             >
-              {{ store.testing[activeItem.name] ? 'Testing…' : 'Test' }}
+              {{ store.testing[activeItem.name] ? t('common.testing') : t('common.test') }}
             </button>
           </div>
         </form>
@@ -81,6 +81,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useIntegrationsStore } from '@/stores/integrations';
+import { t } from '@/i18n';
 
 const store = useIntegrationsStore();
 const activeItem = ref<any | null>(null);
@@ -92,9 +93,9 @@ onMounted(() => {
 
 function displayValue(item: any) {
   if (store.revealVisible[item.name]) {
-    return store.revealState[item.name] || '—';
+    return store.revealState[item.name] || t('common.none');
   }
-  return item.has_value ? '••••••' : 'Not set';
+  return item.has_value ? t('common.masked') : t('common.not_set');
 }
 
 function toggleReveal(name: string) {

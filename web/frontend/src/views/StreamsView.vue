@@ -1,24 +1,24 @@
 <template>
   <div class="streams-view">
     <header class="view-header">
-      <h1>Market Streams</h1>
-      <p>Live consensus from the active data stream endpoints.</p>
+      <h1>{{ t('streams.title') }}</h1>
+      <p>{{ t('streams.subtitle') }}</p>
     </header>
     <StreamsPanel :streams="store.streams" />
     <section class="stream-table panel">
       <header>
-        <h2>Stream Snapshot</h2>
-        <span class="caption">{{ streamRows.length }} pairs</span>
+        <h2>{{ t('streams.snapshot') }}</h2>
+        <span class="caption">{{ t('streams.pairs_count').replace('{count}', String(streamRows.length)) }}</span>
       </header>
       <table class="table">
         <thead>
           <tr>
-            <th>Symbol</th>
-            <th>Chain</th>
-            <th>Price</th>
-            <th>Volume</th>
-            <th>Updated</th>
-            <th>Source</th>
+            <th>{{ t('pipeline.symbol') }}</th>
+            <th>{{ t('common.chain') }}</th>
+            <th>{{ t('streams.price') }}</th>
+            <th>{{ t('streams.volume') }}</th>
+            <th>{{ t('streams.updated') }}</th>
+            <th>{{ t('streams.source') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -31,7 +31,7 @@
             <td>{{ row.source }}</td>
           </tr>
           <tr v-if="streamRows.length === 0">
-            <td colspan="6">No live data streams are currently available.</td>
+            <td colspan="6">{{ t('streams.no_data') }}</td>
           </tr>
         </tbody>
       </table>
@@ -43,6 +43,7 @@
 import { computed } from 'vue';
 import StreamsPanel from '@/components/StreamsPanel.vue';
 import { useDashboardStore } from '@/stores/dashboard';
+import { t } from '@/i18n';
 
 const store = useDashboardStore();
 
@@ -64,14 +65,14 @@ const streamRows = computed(() => {
     const ts = Number(payload?.ts ?? 0);
     const updated = Number.isFinite(ts)
       ? new Date(ts * 1000).toLocaleTimeString([], { hour12: false })
-      : '—';
+      : t('common.none');
     return {
       symbol,
-      chain: payload?.chain ?? '—',
-      priceDisplay: Number.isFinite(price) ? numberFormatter.format(price) : payload?.price ?? '—',
-      volumeDisplay: Number.isFinite(volume) ? volumeFormatter.format(volume) : payload?.volume ?? '—',
+      chain: payload?.chain ?? t('common.none'),
+      priceDisplay: Number.isFinite(price) ? numberFormatter.format(price) : payload?.price ?? t('common.none'),
+      volumeDisplay: Number.isFinite(volume) ? volumeFormatter.format(volume) : payload?.volume ?? t('common.none'),
       updated,
-      source: payload?.source ?? '—',
+      source: payload?.source ?? t('common.none'),
     };
   });
 });

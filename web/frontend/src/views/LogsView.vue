@@ -3,18 +3,18 @@
     <section class="panel">
       <header class="logs-header">
         <div>
-          <h1>System Logs</h1>
-          <p>Last 100 events per component.</p>
+          <h1>{{ t('logs.title') }}</h1>
+          <p>{{ t('logs.subtitle') }}</p>
         </div>
         <div class="controls">
           <select v-model="activeComponent" @change="reload">
-            <option value="">All components</option>
+            <option value="">{{ t('logs.all_components') }}</option>
             <option v-for="comp in components" :key="comp" :value="comp">
               {{ comp }}
             </option>
           </select>
           <button class="btn ghost" type="button" @click="reload" :disabled="loading">
-            {{ loading ? 'Refreshing…' : 'Refresh' }}
+            {{ loading ? t('common.refreshing') : t('common.refresh') }}
           </button>
         </div>
       </header>
@@ -23,20 +23,20 @@
         <h3 class="log-title">{{ activeComponent }}</h3>
         <div v-for="item in filteredLogs" :key="item.id" class="log-row">
           <span class="stamp">{{ item.created_at }}</span>
-          <span class="severity" :class="item.severity">{{ item.severity }}</span>
+          <span class="severity" :class="item.severity">{{ formatSeverity(item.severity) }}</span>
           <span class="message">{{ item.message }}</span>
         </div>
-        <div v-if="!filteredLogs.length" class="empty small">No logs yet.</div>
+        <div v-if="!filteredLogs.length" class="empty small">{{ t('logs.empty') }}</div>
       </div>
       <div v-else class="log-grid">
         <div v-for="comp in components" :key="comp" class="log-block">
           <h3 class="log-title">{{ comp }}</h3>
           <div v-for="item in logs[comp] || []" :key="item.id" class="log-row">
             <span class="stamp">{{ item.created_at }}</span>
-            <span class="severity" :class="item.severity">{{ item.severity }}</span>
+            <span class="severity" :class="item.severity">{{ formatSeverity(item.severity) }}</span>
             <span class="message">{{ item.message }}</span>
           </div>
-          <div v-if="!(logs[comp] || []).length" class="empty small">No logs yet.</div>
+          <div v-if="!(logs[comp] || []).length" class="empty small">{{ t('logs.empty') }}</div>
         </div>
       </div>
     </section>
@@ -46,6 +46,7 @@
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue';
 import { fetchSystemLogs } from '@/api';
+import { t } from '@/i18n';
 
 interface LogItem {
   id: number;
@@ -83,10 +84,19 @@ const reload = async () => {
       components.value = data.components || [];
     }
   } catch (err: any) {
-    error.value = err?.response?.data?.detail || err?.message || 'Failed to load logs';
+    error.value = err?.response?.data?.detail || err?.message || t('logs.error_load');
   } finally {
     loading.value = false;
   }
+};
+
+const formatSeverity = (value: string) => {
+  const lower = (value || '').toLowerCase();
+  if (lower === 'critical') return t('severity.critical');
+  if (lower === 'warning' || lower === 'warn') return t('severity.warning');
+  if (lower === 'info') return t('severity.info');
+  if (lower === 'error') return t('severity.error');
+  return value;
 };
 
 onMounted(reload);

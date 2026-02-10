@@ -39,6 +39,11 @@ export async function fetchPipelineReadiness() {
   return data;
 }
 
+export async function fetchBusSchedule() {
+  const { data } = await api.get('/telemetry/bus/schedule/');
+  return data;
+}
+
 export async function fetchLatestStreams(symbols?: string[]) {
   const params = new URLSearchParams();
   symbols?.forEach((symbol) => params.append('symbol', symbol));
