@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import List
 import requests
+import time
 from operator import itemgetter
 
 # -----------------------------------------------------------------------
@@ -103,14 +104,12 @@ OUTPUT_PATH = os.getenv(
     os.path.join("data", "pair_index_%s.json" % CHAIN_NAME)
 )
 
-if "gateway.thegraph.com" in THEGRAPH_SUBGRAPH_URL and not THEGRAPH_API_KEY:
-    raise RuntimeError(
-        "Missing THEGRAPH_API_KEY in environment for gateway.thegraph.com.\n"
-        "Set THEGRAPH_API_KEY in your .env or provide THEGRAPH_SUBGRAPH_URL to bypass."
-    )
-
-if CHAIN_NAME == "base" and not THEGRAPH_SUBGRAPH_URL:
-    raise RuntimeError("Provide THEGRAPH_SUBGRAPH_URL for Base network pairs.")
+_GRAPH_REQUIRED = "gateway.thegraph.com" in THEGRAPH_SUBGRAPH_URL
+_GRAPH_ENABLED = bool(THEGRAPH_SUBGRAPH_URL) and (not _GRAPH_REQUIRED or bool(THEGRAPH_API_KEY))
+_FALLBACK_PAIR_LIMIT = int(os.getenv("PAIR_INDEX_FALLBACK_LIMIT", "1200"))
+_FALLBACK_TOP_SYMBOLS = int(os.getenv("PAIR_INDEX_FALLBACK_TOP_SYMBOLS", "200"))
+_DEXSCREENER_BACKOFF = float(os.getenv("DEXSCREENER_BACKOFF_SEC", "0.6"))
+_DEXSCREENER_TIMEOUT = float(os.getenv("DEXSCREENER_TIMEOUT_SEC", "12"))
 
 # -----------------------------------------------------------------------
 # Fetch pairs ordered by a given field (1000 + 1000 for paging)
@@ -141,7 +140,8 @@ def fetch_pairs(order_by_field: str, batch_size: int = 1000):
                     "orderDirection": "desc",
                 },
             },
-            headers={"Content-Type": "application/json"}
+            headers={"Content-Type": "application/json"},
+            timeout=20,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -153,6 +153,103 @@ def fetch_pairs(order_by_field: str, batch_size: int = 1000):
     return results
 
 # -----------------------------------------------------------------------
+# Fallback: Dexscreener + public market snapshots (no API keys)
+# -----------------------------------------------------------------------
+
+def _fetch_top_symbols(limit: int) -> List[str]:
+    symbols: List[str] = []
+    try:
+        from services.public_api_clients import aggregate_market_data
+
+        snapshots = aggregate_market_data(top_n=limit)
+        for snap in snapshots:
+            sym = (snap.symbol or "").upper().strip()
+            if sym and sym not in symbols:
+                symbols.append(sym)
+    except Exception:
+        symbols = []
+    if not symbols:
+        symbols = [
+            "BTC",
+            "ETH",
+            "USDT",
+            "USDC",
+            "SOL",
+            "BNB",
+            "AVAX",
+            "MATIC",
+            "ARB",
+            "OP",
+            "DOGE",
+            "LINK",
+            "UNI",
+            "AAVE",
+        ]
+    return symbols[:limit]
+
+
+def build_index_from_dexscreener(chain: str) -> dict:
+    chain = chain.lower().strip()
+    target = int(os.getenv("PAIR_INDEX_TARGET", str(_FALLBACK_PAIR_LIMIT)))
+    symbols = _fetch_top_symbols(_FALLBACK_TOP_SYMBOLS)
+    if not symbols:
+        return {}
+    session = requests.Session()
+    results: dict = {}
+
+    def _score(entry: dict) -> float:
+        volume = float(entry.get("volumeUsd24h") or entry.get("volumeUsd") or 0.0)
+        liquidity = 0.0
+        liq = entry.get("liquidity") or {}
+        try:
+            liquidity = float(liq.get("usd") or 0.0)
+        except Exception:
+            liquidity = 0.0
+        return volume + (liquidity * 0.5)
+
+    for symbol in symbols:
+        try:
+            resp = session.get(
+                "https://api.dexscreener.com/latest/dex/search",
+                params={"q": symbol},
+                timeout=_DEXSCREENER_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                continue
+            payload = resp.json() or {}
+        except Exception:
+            continue
+        pairs = payload.get("pairs") or []
+        for entry in pairs:
+            try:
+                chain_id = str(entry.get("chainId") or entry.get("chain") or "").lower()
+                if chain_id != chain:
+                    continue
+                pair_addr = str(entry.get("pairAddress") or "").strip()
+                if not pair_addr:
+                    continue
+                base = entry.get("baseToken") or {}
+                quote = entry.get("quoteToken") or {}
+                sym = f"{base.get('symbol','')}-{quote.get('symbol','')}".strip("-")
+                score = _score(entry)
+                existing = results.get(pair_addr)
+                if existing and existing.get("score", 0) >= score:
+                    continue
+                results[pair_addr] = {"symbol": sym or "UNKNOWN", "score": score}
+            except Exception:
+                continue
+        if len(results) >= target:
+            break
+        time.sleep(_DEXSCREENER_BACKOFF + (0.1 * (symbol.__len__() % 3)))
+
+    ranked = sorted(results.items(), key=lambda kv: kv[1].get("score", 0), reverse=True)
+    trimmed = ranked[:target]
+    index = {}
+    for idx, (addr, meta) in enumerate(trimmed):
+        index[addr] = {"index": idx, "symbol": meta.get("symbol", "UNKNOWN"), "source": "dexscreener"}
+    return index
+
+# -----------------------------------------------------------------------
 # Main: combine rankings by volumeUSD and reserveUSD to decide "true" top
 # -----------------------------------------------------------------------
 def main():
@@ -161,10 +258,30 @@ def main():
         print(f"Output already exists, skipping fetch: {OUTPUT_PATH}")
         return
 
-    # 1) fetch top by cumulative swap volume (volumeUSD)
-    vol_pairs = fetch_pairs("volumeUSD")
-    # 2) fetch top by liquidity (reserveUSD)
-    reserve_pairs = fetch_pairs("reserveUSD")
+    if _GRAPH_ENABLED:
+        try:
+            # 1) fetch top by cumulative swap volume (volumeUSD)
+            vol_pairs = fetch_pairs("volumeUSD")
+            # 2) fetch top by liquidity (reserveUSD)
+            reserve_pairs = fetch_pairs("reserveUSD")
+        except Exception as exc:
+            print(f"Graph fetch failed: {exc}. Falling back to free sources.")
+            vol_pairs = []
+            reserve_pairs = []
+    else:
+        if _GRAPH_REQUIRED:
+            print("Missing THEGRAPH_API_KEY for gateway; using free-source fallback.")
+        vol_pairs = []
+        reserve_pairs = []
+
+    if not vol_pairs and not reserve_pairs:
+        fallback_index = build_index_from_dexscreener(chain=CHAIN_NAME)
+        if not fallback_index:
+            raise RuntimeError("Unable to build pair index: graph unavailable and fallback returned empty.")
+        with open(OUTPUT_PATH, "w") as f:
+            json.dump(fallback_index, f, indent=2)
+        print(f"Saved {len(fallback_index)} pairs to {OUTPUT_PATH} (fallback)")
+        return
 
     # build ranking dicts
     vol_rank = {p["id"]: idx for idx, p in enumerate(vol_pairs)}

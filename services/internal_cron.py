@@ -393,6 +393,9 @@ class InternalCronSupervisor:
         tokens = context.get("candidates") or []
         if tokens:
             tokens = list(tokens)[:max_tokens]
+        if not tokens:
+            fallback = news_cfg.get("default_tokens") or ["BTC", "ETH", "USDC"]
+            tokens = list(fallback)[:max_tokens]
         try:
             from datetime import datetime, timedelta, timezone
             from services.news_lab import collect_news_for_terms

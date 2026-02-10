@@ -21,6 +21,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
             "requires_mnemonic": False,
             "steps": [
                 "downloads",
+                "news",
                 "training",
                 "production",
             ],
@@ -62,6 +63,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
         "lookback_hours": 72,
         "max_pages": 2,
         "max_tokens": 8,
+        "default_tokens": ["BTC", "ETH", "USDC", "SOL", "AVAX"],
     },
     "training": {
         "enabled": True,

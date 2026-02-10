@@ -16,6 +16,7 @@ import pandas as pd
 from db import TradingDatabase, get_db
 from services.news_archive import CryptoNewsArchiver
 from services.polite_news_crawler import collect_news as crawl_news
+from services.news_router import FreeNewsRouter
 from trading.data_loader import TOKEN_SYNONYMS
 
 try:  # Optional dependency – falls back to lexical scoring when unavailable.
@@ -472,6 +473,51 @@ def _persist_free_news(items: Sequence[Dict[str, Any]]) -> None:
     df.to_parquet(path, index=False)
 
 
+def _free_router_items(
+    *,
+    start_ts: int,
+    end_ts: int,
+    tokens: Optional[Sequence[str]] = None,
+) -> List[Dict[str, Any]]:
+    try:
+        router = FreeNewsRouter()
+        df = router.window(start_ts=start_ts, end_ts=end_ts, tokens=tokens)
+        if df is None or df.empty:
+            return []
+        rows = df.to_dict(orient="records")
+    except Exception:
+        return []
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        try:
+            ts_int = int(row.get("timestamp", 0))
+        except Exception:
+            continue
+        headline = str(row.get("headline") or "").strip()
+        article = str(row.get("article") or "").strip()
+        tokens_row = row.get("tokens") or []
+        if isinstance(tokens_row, set):
+            tokens_row = sorted(tokens_row)
+        if not headline or not article or not tokens_row:
+            continue
+        items.append(
+            {
+                "timestamp": ts_int,
+                "datetime": datetime.fromtimestamp(ts_int, tz=timezone.utc).isoformat(),
+                "title": headline,
+                "summary": article[:512],
+                "headline": headline,
+                "article": article,
+                "sentiment": row.get("sentiment") or "neutral",
+                "tokens": tokens_row,
+                "url": row.get("url"),
+                "origin": "free_router",
+                "source": "free_router",
+            }
+        )
+    return items
+
+
 def _cache_key(symbols: Sequence[str], start: datetime, end: datetime) -> str:
     digest_source = "|".join(sorted(symbols)) + f"|{start.isoformat()}|{end.isoformat()}"
     digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()
@@ -619,6 +665,14 @@ def collect_news_for_files(
             seen_titles.add(title)
 
     items = sorted(combined.values(), key=lambda row: row["timestamp"], reverse=True)
+    if not items:
+        fallback_items = _free_router_items(
+            start_ts=int(start_dt.timestamp()),
+            end_ts=int(end_dt.timestamp()),
+            tokens=api_tokens,
+        )
+        if fallback_items:
+            items = sorted(fallback_items, key=lambda row: row["timestamp"], reverse=True)
     _trace(
         "dedupe_complete",
         attempted=total_attempted,
@@ -759,6 +813,14 @@ def collect_news_for_terms(
             seen_titles.add(title)
 
     items = sorted(combined.values(), key=lambda row: row["timestamp"], reverse=True)
+    if not items:
+        fallback_items = _free_router_items(
+            start_ts=int(start.timestamp()),
+            end_ts=int(end.timestamp()),
+            tokens=api_tokens,
+        )
+        if fallback_items:
+            items = sorted(fallback_items, key=lambda row: row["timestamp"], reverse=True)
     if query:
         query_lower = query.lower()
         items = [item for item in items if query_lower in (item["title"] + " " + item.get("summary", "")).lower()]
