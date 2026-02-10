@@ -1,6 +1,6 @@
 <template>
   <div class="card">
-    <h2>Process Console</h2>
+    <h2>{{ t('console.title') }}</h2>
     <div class="console-controls">
       <StatusIndicator
         :label="statusLabel"
@@ -8,8 +8,8 @@
         :detail="statusDetail"
       />
       <div class="actions">
-        <button class="btn" @click="emit('start')">Start</button>
-        <button class="btn" @click="emit('stop')">Stop</button>
+        <button class="btn" @click="emit('start')">{{ t('common.start') }}</button>
+        <button class="btn" @click="emit('stop')">{{ t('common.stop') }}</button>
       </div>
     </div>
     <div class="console-output" ref="consoleBox">
@@ -21,6 +21,7 @@
 <script setup lang="ts">
 import { computed, onUpdated, ref } from 'vue';
 import StatusIndicator from './StatusIndicator.vue';
+import { t } from '@/i18n';
 
 const props = defineProps<{
   status: Record<string, any> | null;
@@ -31,8 +32,8 @@ const emit = defineEmits<{ (event: 'start'): void; (event: 'stop'): void }>();
 const consoleBox = ref<HTMLElement | null>(null);
 
 const statusLabel = computed(() => {
-  if (!props.status) return 'IDLE';
-  return (props.status.status || 'unknown').toString().toUpperCase();
+  if (!props.status) return t('common.idle').toUpperCase();
+  return (props.status.status || t('common.unknown')).toString().toUpperCase();
 });
 
 const statusLevel = computed(() => {
@@ -44,9 +45,9 @@ const statusLevel = computed(() => {
 
 const statusDetail = computed(() => {
   if (!props.status) return '';
-  if (props.status.uptime) return `up ${Number(props.status.uptime).toFixed(1)}s`;
-  if (props.status.returncode) return `code ${props.status.returncode}`;
-  return props.status.pid ? `pid ${props.status.pid}` : '';
+  if (props.status.uptime) return t('common.up_time').replace('{count}', Number(props.status.uptime).toFixed(1));
+  if (props.status.returncode) return t('common.code').replace('{count}', String(props.status.returncode));
+  return props.status.pid ? t('common.pid').replace('{count}', String(props.status.pid)) : '';
 });
 
 onUpdated(() => {

@@ -2,8 +2,8 @@
   <div class="lab-view">
     <header class="lab-header">
       <div>
-        <h1>Model Lab</h1>
-        <p>Run focused training loops and evaluation passes against curated historical windows.</p>
+        <h1>{{ t('modellab.title') }}</h1>
+        <p>{{ t('modellab.subtitle') }}</p>
       </div>
       <div class="action-buttons">
         <button
@@ -12,10 +12,10 @@
           :disabled="store.newsLoading || !hasSelection"
           @click="fetchNews"
         >
-          {{ store.newsLoading ? 'Fetching…' : 'Fetch News' }}
+          {{ store.newsLoading ? t('modellab.fetching_news') : t('modellab.fetch_news') }}
         </button>
         <button type="button" class="btn ghost" :disabled="selectedEval.length === 0 || previewLoading" @click="openPreview">
-          Preview Eval
+          {{ t('modellab.preview_eval') }}
         </button>
         <button
           type="button"
@@ -23,71 +23,71 @@
           :disabled="store.loading || isStarting || !hasSelection"
           @click="startRun"
         >
-          {{ isStarting ? 'Starting…' : 'Run Selected' }}
+          {{ isStarting ? t('modellab.starting') : t('modellab.run_selected') }}
         </button>
       </div>
     </header>
 
     <section class="lab-panels">
       <article class="panel control-panel">
-        <h2>Configuration</h2>
+        <h2>{{ t('modellab.configuration') }}</h2>
         <div class="control-grid">
           <label>
-            Epochs
+            {{ t('modellab.epochs') }}
             <input type="number" min="1" max="20" v-model.number="epochs" />
           </label>
           <label>
-            Batch Size
+            {{ t('modellab.batch_size') }}
             <input type="number" min="8" max="128" step="8" v-model.number="batchSize" />
           </label>
           <label>
-            Training Files
-            <span class="hint">{{ selectedTrain.length }} selected</span>
+            {{ t('modellab.training_files') }}
+            <span class="hint">{{ t('modellab.selected_count').replace('{count}', String(selectedTrain.length)) }}</span>
           </label>
           <label>
-            Evaluation Files
-            <span class="hint">{{ selectedEval.length }} selected</span>
+            {{ t('modellab.evaluation_files') }}
+            <span class="hint">{{ t('modellab.selected_count').replace('{count}', String(selectedEval.length)) }}</span>
           </label>
         </div>
         <p class="note">
-          Training pauses the live pipeline while the job runs. Pick compact windows to keep runtimes short on CPU-only rigs.
+          {{ t('modellab.note') }}
         </p>
       </article>
 
       <article class="panel status-panel">
-        <h2>Status</h2>
+        <h2>{{ t('common.status') }}</h2>
         <div class="progress-wrapper">
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: `${Math.round(progress * 100)}%` }"></div>
           </div>
           <span class="progress-label">{{ Math.round(progress * 100) }}%</span>
         </div>
-        <p class="status-message">{{ store.message || 'Idle' }}</p>
+        <p class="status-message">{{ store.message || t('common.idle') }}</p>
         <div v-if="store.error" class="error">{{ store.error }}</div>
         <div v-if="result" class="result-block">
-          <h3>Training Metrics</h3>
+          <h3>{{ t('modellab.training_metrics') }}</h3>
           <ul v-if="result.train?.metrics">
             <li v-for="(value, key) in result.train.metrics" :key="key">
               <strong>{{ key }}</strong>
               <span>{{ formatNumber(value) }}</span>
             </li>
           </ul>
-          <p v-else>Training was skipped.</p>
-          <h3>Evaluation Metrics</h3>
+          <p v-else>{{ t('modellab.training_skipped') }}</p>
+          <h3>{{ t('modellab.evaluation_metrics') }}</h3>
           <ul v-if="result.evaluation?.metrics">
             <li v-for="(value, key) in result.evaluation.metrics" :key="key">
               <strong>{{ key }}</strong>
               <span>{{ formatNumber(value) }}</span>
             </li>
           </ul>
-          <p v-else>No evaluation metrics recorded.</p>
+          <p v-else>{{ t('modellab.no_evaluation_metrics') }}</p>
         </div>
         <div v-if="jobLog.length" class="log-block">
-          <h3>Job Log</h3>
+          <h3>{{ t('modellab.job_log') }}</h3>
           <pre>{{ jobLog.join('\n') }}</pre>
         </div>
         <div v-if="statusEvents.length" class="events-block">
-          <h3>Recent Events</h3>
+          <h3>{{ t('modellab.recent_events') }}</h3>
           <ul>
             <li v-for="event in statusEvents.slice(-6)" :key="`${event.ts}-${event.message}`">
               <span class="event-time">{{ formatEpoch(event.ts) }}</span>
@@ -97,47 +97,47 @@
           </ul>
         </div>
         <div v-if="statusSnapshot?.config" class="snapshot-block">
-          <h3>Snapshot</h3>
+          <h3>{{ t('modellab.snapshot') }}</h3>
           <dl>
             <div>
-              <dt>Epochs</dt>
+              <dt>{{ t('modellab.epochs') }}</dt>
               <dd>{{ statusSnapshot.config.epochs }}</dd>
             </div>
             <div>
-              <dt>Batch Size</dt>
+              <dt>{{ t('modellab.batch_size') }}</dt>
               <dd>{{ statusSnapshot.config.batch_size }}</dd>
             </div>
             <div>
-              <dt>Train Files</dt>
+              <dt>{{ t('modellab.train_files') }}</dt>
               <dd>{{ (statusSnapshot.config.train_files || []).length }}</dd>
             </div>
             <div>
-              <dt>Eval Files</dt>
+              <dt>{{ t('modellab.eval_files') }}</dt>
               <dd>{{ (statusSnapshot.config.eval_files || []).length }}</dd>
             </div>
             <div v-if="statusSnapshot.error">
-              <dt>Error</dt>
+              <dt>{{ t('common.error') }}</dt>
               <dd>{{ statusSnapshot.error.message }}</dd>
             </div>
           </dl>
         </div>
       </article>
       <article v-if="historyEntries.length" class="panel history-panel">
-        <h2>Job History</h2>
+        <h2>{{ t('modellab.job_history') }}</h2>
         <table class="history-table">
           <thead>
             <tr>
-              <th>Started</th>
-              <th>Finished</th>
-              <th>Status</th>
-              <th>Message</th>
+              <th>{{ t('modellab.started') }}</th>
+              <th>{{ t('modellab.finished') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('modellab.message') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="entry in historyEntries" :key="String(entry.started_at) + String(entry.status)">
               <td>{{ formatEpoch(entry.started_at) }}</td>
               <td>{{ formatEpoch(entry.finished_at) }}</td>
-              <td :class="entry.status">{{ entry.status === 'success' ? 'Success' : 'Failure' }}</td>
+              <td :class="entry.status">{{ entry.status === 'success' ? t('common.success') : t('common.failure') }}</td>
               <td>
                 {{ entry.message }}
                 <span v-if="entry.error" class="error-text"> — {{ entry.error }}</span>
@@ -150,41 +150,41 @@
 
     <section class="panel files-panel">
       <header>
-        <h2>Historical Windows</h2>
-        <button type="button" class="btn ghost" @click="refreshAll" :disabled="store.loading">Refresh</button>
+        <h2>{{ t('modellab.historical_windows') }}</h2>
+        <button type="button" class="btn ghost" @click="refreshAll" :disabled="store.loading">{{ t('common.refresh') }}</button>
       </header>
       <div class="filters">
         <div class="filters-row">
           <label>
-            <span>Search</span>
-            <input type="search" v-model.trim="filters.search" placeholder="Symbol or file…" />
+            <span>{{ t('common.search') }}</span>
+            <input type="search" v-model.trim="filters.search" :placeholder="t('modellab.search_placeholder')" />
           </label>
           <label>
-            <span>Chain</span>
+            <span>{{ t('common.chain') }}</span>
             <select v-model="filters.chain">
-              <option value="all">All chains</option>
+              <option value="all">{{ t('modellab.all_chains') }}</option>
               <option v-for="chain in chains" :key="chain" :value="chain">{{ chain }}</option>
             </select>
           </label>
           <label>
-            <span>Start Date</span>
+            <span>{{ t('modellab.start_date') }}</span>
             <input type="date" v-model="filters.startDate" />
           </label>
           <label>
-            <span>End Date</span>
+            <span>{{ t('modellab.end_date') }}</span>
             <input type="date" v-model="filters.endDate" />
           </label>
         </div>
         <div class="filters-row">
           <label>
-            <span>Min Size (kB)</span>
+            <span>{{ t('modellab.min_size') }}</span>
             <input type="number" min="0" v-model.number="filters.minSize" />
           </label>
           <label>
-            <span>Max Size (kB)</span>
+            <span>{{ t('modellab.max_size') }}</span>
             <input type="number" min="0" v-model.number="filters.maxSize" />
           </label>
-          <button type="button" class="btn ghost reset" @click="resetFilters">Reset</button>
+          <button type="button" class="btn ghost reset" @click="resetFilters">{{ t('common.clear') }}</button>
         </div>
       </div>
       <table class="table">
@@ -197,23 +197,23 @@
             <th>
               <input type="checkbox" :checked="allEvalSelected" @change="toggleAll('eval')" />
             </th>
-            <th>Chain</th>
+            <th>{{ t('common.chain') }}</th>
             <th>
               <button type="button" class="link" @click="toggleFileSort('symbol')">
-                Symbol
+                {{ t('modellab.symbol') }}
                 <span v-if="fileSort.key === 'symbol'">{{ fileSort.dir === 'asc' ? '▲' : '▼' }}</span>
               </button>
             </th>
-            <th>File</th>
+            <th>{{ t('modellab.file') }}</th>
             <th>
               <button type="button" class="link" @click="toggleFileSort('size')">
-                Size
+                {{ t('modellab.size') }}
                 <span v-if="fileSort.key === 'size'">{{ fileSort.dir === 'asc' ? '▲' : '▼' }}</span>
               </button>
             </th>
             <th>
               <button type="button" class="link" @click="toggleFileSort('modified')">
-                Updated
+                {{ t('modellab.updated') }}
                 <span v-if="fileSort.key === 'modified'">{{ fileSort.dir === 'asc' ? '▲' : '▼' }}</span>
               </button>
             </th>
@@ -235,7 +235,7 @@
             <td>{{ formatDate(file.modified) }}</td>
           </tr>
           <tr v-if="!sortedFiles.length">
-            <td colspan="8">No historical windows detected. Populate data/historical_ohlcv first.</td>
+            <td colspan="8">{{ t('modellab.no_historical_windows') }}</td>
           </tr>
         </tbody>
       </table>
@@ -243,8 +243,8 @@
 
     <section class="panel news-panel">
       <header>
-        <h2>Contextual News</h2>
-        <span class="caption" v-if="newsMeta">{{ newsMeta.symbols?.join(', ') || '—' }} · {{ newsRange }}</span>
+        <h2>{{ t('modellab.contextual_news') }}</h2>
+        <span class="caption" v-if="newsMeta">{{ newsMeta.symbols?.join(', ') || t('common.na') }} · {{ newsRange }}</span>
       </header>
       <div v-if="store.newsError" class="error">{{ store.newsError }}</div>
       <ul v-if="newsItems.length" class="news-list">
@@ -255,14 +255,14 @@
           </div>
           <div class="meta">
             <span>{{ formatDateText(item.datetime) }}</span>
-            <span>Source: {{ item.source || item.origin }}</span>
-            <span v-if="item.sentiment && item.sentiment !== 'unknown'">Sentiment: {{ item.sentiment }}</span>
+            <span>{{ t('modellab.source') }} {{ item.source || item.origin }}</span>
+            <span v-if="item.sentiment && item.sentiment !== 'unknown'">{{ t('modellab.sentiment') }} {{ item.sentiment }}</span>
           </div>
           <p v-if="item.summary" class="summary">{{ item.summary }}</p>
         </li>
       </ul>
-      <p v-else-if="store.newsLoading" class="empty">Fetching contextual news…</p>
-      <p v-else class="empty">Select one or more windows and fetch news to see contextual headlines.</p>
+      <p v-else-if="store.newsLoading" class="empty">{{ t('modellab.news_loading') }}</p>
+      <p v-else class="empty">{{ t('modellab.news_empty') }}</p>
     </section>
 
     <transition name="modal-fade">
@@ -270,22 +270,22 @@
         <div class="preview-modal">
           <header>
             <div>
-              <h2>Evaluation Preview</h2>
+              <h2>{{ t('modellab.preview_title') }}</h2>
               <p class="caption">
-                {{ previewSeries.length }} samples · {{ previewMeta.files?.length || selectedEval.length }} files
+                {{ t('modellab.preview_samples').replace('{samples}', String(previewSeries.length)).replace('{files}', String(previewMeta.files?.length || selectedEval.length)) }}
               </p>
             </div>
-            <button type="button" class="close-btn" @click="closePreview" aria-label="Close preview">×</button>
+            <button type="button" class="close-btn" @click="closePreview" :aria-label="t('common.close')">×</button>
           </header>
           <section class="preview-modal__body">
-            <div v-if="previewLoading" class="preview-loading">Generating preview…</div>
+            <div v-if="previewLoading" class="preview-loading">{{ t('modellab.preview_loading') }}</div>
             <div v-else-if="previewError" class="error">{{ previewError }}</div>
-            <div v-else-if="!previewSeries.length" class="preview-empty">No preview data available for the selected files.</div>
+            <div v-else-if="!previewSeries.length" class="preview-empty">{{ t('modellab.preview_empty') }}</div>
             <div v-else class="preview-content">
               <PreviewChart :series="previewSeries" :selected-index="previewIndex" />
               <div class="preview-controls">
                 <label>
-                  <span>Sample</span>
+                  <span>{{ t('modellab.sample') }}</span>
                   <input
                     v-model.number="previewIndex"
                     type="range"
@@ -294,7 +294,7 @@
                   />
                 </label>
                 <label>
-                  <span>Date &amp; Time</span>
+                  <span>{{ t('modellab.date_time') }}</span>
                   <input
                     type="datetime-local"
                     v-model="previewDatetime"
@@ -317,28 +317,28 @@
               </div>
               <div v-if="previewPoint" class="preview-stats">
                 <div>
-                  <span class="label">Current</span>
+                  <span class="label">{{ t('modellab.current') }}</span>
                   <span class="value">{{ formatNumber(previewPoint.current_price) }}</span>
                 </div>
                 <div>
-                  <span class="label">Predicted</span>
+                  <span class="label">{{ t('modellab.predicted') }}</span>
                   <span class="value">{{ formatNumber(previewPoint.predicted_price) }}</span>
                 </div>
                 <div>
-                  <span class="label">Future</span>
+                  <span class="label">{{ t('modellab.future') }}</span>
                   <span class="value">{{ formatNumber(previewPoint.future_price) }}</span>
                 </div>
                 <div>
-                  <span class="label">Dir Prob</span>
+                  <span class="label">{{ t('modellab.dir_prob') }}</span>
                   <span class="value">{{ formatNumber(previewPoint.dir_probability) }}</span>
                 </div>
                 <div>
-                  <span class="label">Net Margin</span>
+                  <span class="label">{{ t('modellab.net_margin') }}</span>
                   <span class="value">{{ formatNumber(previewPoint.net_margin_pred) }}</span>
                 </div>
               </div>
               <div class="preview-metrics" v-if="Object.keys(previewMetrics).length">
-                <h3>Summary Metrics</h3>
+                <h3>{{ t('modellab.summary_metrics') }}</h3>
                 <ul>
                   <li v-for="(value, key) in previewMetrics" :key="key">
                     <strong>{{ key }}</strong>
@@ -347,7 +347,7 @@
                 </ul>
               </div>
               <div class="preview-news" v-if="previewNews.length">
-                <h3>Contextual News</h3>
+                <h3>{{ t('modellab.contextual_news') }}</h3>
                 <ul>
                   <li v-for="item in previewNews" :key="item.url || item.title">
                     <div class="headline">
@@ -356,8 +356,8 @@
                     </div>
                     <div class="meta">
                       <span>{{ formatDateText(item.datetime || item.timestamp) }}</span>
-                      <span>Source: {{ item.source || item.origin }}</span>
-                      <span v-if="item.sentiment">Sentiment: {{ item.sentiment }}</span>
+                      <span>{{ t('modellab.source') }} {{ item.source || item.origin }}</span>
+                      <span v-if="item.sentiment">{{ t('modellab.sentiment') }} {{ item.sentiment }}</span>
                     </div>
                   </li>
                 </ul>
@@ -374,6 +374,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import PreviewChart from '@/components/PreviewChart.vue';
 import { useLabStore } from '@/stores/lab';
+import { t } from '@/i18n';
 
 const store = useLabStore();
 const epochs = ref(2);
@@ -455,8 +456,8 @@ const allEvalSelected = computed(() => filteredPaths.value.length > 0 && filtere
 
 const newsRange = computed(() => {
   if (!newsMeta.value) return '';
-  const start = newsMeta.value.start ? formatDateText(newsMeta.value.start) : '—';
-  const end = newsMeta.value.end ? formatDateText(newsMeta.value.end) : '—';
+  const start = newsMeta.value.start ? formatDateText(newsMeta.value.start) : t('common.na');
+  const end = newsMeta.value.end ? formatDateText(newsMeta.value.end) : t('common.na');
   return `${start} → ${end}`;
 });
 
@@ -657,20 +658,20 @@ function clearPolling() {
 }
 
 function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes)) return '—';
+  if (!Number.isFinite(bytes)) return t('common.na');
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
   if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} kB`;
   return `${bytes} B`;
 }
 
 function formatDate(ts: number) {
-  if (!Number.isFinite(ts)) return '—';
+  if (!Number.isFinite(ts)) return t('common.na');
   const date = new Date(ts * 1000);
   return date.toLocaleString();
 }
 
 function formatDateText(value: any) {
-  if (value === null || value === undefined || value === '') return '—';
+  if (value === null || value === undefined || value === '') return t('common.na');
   let dt: Date;
   if (typeof value === 'number') {
     dt = new Date((value > 1e12 ? value : value * 1000));
@@ -691,7 +692,7 @@ function formatNumber(value: any) {
 
 function formatEpoch(value: any) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
+  if (!Number.isFinite(num)) return t('common.na');
   return new Date(num * 1000).toLocaleString();
 }
 

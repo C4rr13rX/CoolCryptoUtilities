@@ -2,13 +2,13 @@
   <div class="console-stack">
     <article class="console-card">
       <header>
-        <span class="label">Production Manager Console</span>
+        <span class="label">{{ t('console.manager_console') }}</span>
       </header>
       <pre class="console-output" ref="managerEl">{{ managerText }}</pre>
     </article>
     <article class="console-card">
       <header>
-        <span class="label">Guardian · Codex Console</span>
+        <span class="label">{{ t('console.guardian_console') }}</span>
       </header>
       <pre class="console-output" ref="guardianEl">{{ guardianText }}</pre>
     </article>
@@ -17,6 +17,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { t } from '@/i18n';
 
 const props = defineProps<{
   managerLines?: string[];
@@ -26,9 +27,9 @@ const props = defineProps<{
 const managerEl = ref<HTMLElement | null>(null);
 const guardianEl = ref<HTMLElement | null>(null);
 
-const managerText = computed(() => (props.managerLines?.length ? props.managerLines.join('\n') : 'No output yet.'));
+const managerText = computed(() => (props.managerLines?.length ? props.managerLines.join('\n') : t('console.no_output')));
 const guardianText = computed(() =>
-  props.guardianLines?.length ? props.guardianLines.join('\n') : 'No guardian transcript yet.'
+  props.guardianLines?.length ? props.guardianLines.join('\n') : t('console.no_guardian_transcript')
 );
 
 function scrollToBottom(el: HTMLElement | null, force = false) {

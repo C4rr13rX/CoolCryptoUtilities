@@ -1,6 +1,6 @@
 <template>
   <div class="card">
-    <h2>Market Streams</h2>
+    <h2>{{ t('streams.title') }}</h2>
     <div class="grid-three">
       <article v-for="(sample, symbol) in displayStreams" :key="symbol" class="stream-card">
         <header>
@@ -9,15 +9,15 @@
         </header>
         <dl>
           <div>
-            <dt>Price</dt>
+            <dt>{{ t('streams.price') }}</dt>
             <dd>{{ sample.price?.toFixed?.(6) ?? sample.price }}</dd>
           </div>
           <div>
-            <dt>Volume</dt>
+            <dt>{{ t('streams.volume') }}</dt>
             <dd>{{ sample.volume?.toFixed?.(4) ?? sample.volume }}</dd>
           </div>
           <div>
-            <dt>Updated</dt>
+            <dt>{{ t('streams.updated') }}</dt>
             <dd>{{ formatTimestamp(sample.ts) }}</dd>
           </div>
         </dl>
@@ -29,13 +29,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import StatusIndicator from './StatusIndicator.vue';
+import { t } from '@/i18n';
 
 const props = defineProps<{ streams: Record<string, any> }>();
 
 const displayStreams = computed(() => props.streams || {});
 
 function formatTimestamp(ts: number | string) {
-  if (ts === undefined || ts === null) return '—';
+  if (ts === undefined || ts === null) return t('common.none');
   const numeric = Number(ts);
   if (!Number.isFinite(numeric)) return String(ts);
   const date = new Date(numeric * 1000);

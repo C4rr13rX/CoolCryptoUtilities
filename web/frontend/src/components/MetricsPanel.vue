@@ -1,9 +1,9 @@
 <template>
   <div class="card">
-    <h2>Telemetry</h2>
+    <h2>{{ t('telemetry.title') }}</h2>
     <div class="grid-two">
       <section class="telemetry-block">
-        <header>Metrics by Stage</header>
+        <header>{{ t('telemetry.metrics_by_stage') }}</header>
         <ul>
           <li v-for="entry in dashboardData.metrics_by_stage" :key="entry.stage">
             <span>{{ entry.stage }}</span>
@@ -12,11 +12,11 @@
         </ul>
       </section>
       <section class="telemetry-block">
-        <header>Feedback Signal</header>
+        <header>{{ t('telemetry.feedback_signal') }}</header>
         <ul>
           <li v-for="entry in dashboardData.feedback_by_severity" :key="entry.severity">
             <StatusIndicator
-              :label="entry.severity.toUpperCase()"
+              :label="formatSeverity(entry.severity)"
               :level="severityToLevel(entry.severity)"
               :detail="String(entry.total)"
             />
@@ -26,14 +26,14 @@
     </div>
     <div class="grid-two">
       <section class="telemetry-table">
-        <header>Recent Metrics</header>
+        <header>{{ t('telemetry.recent_metrics') }}</header>
         <table class="table">
           <thead>
             <tr>
-              <th>Stage</th>
-              <th>Name</th>
-              <th>Value</th>
-              <th>Timestamp</th>
+              <th>{{ t('pipeline.stage') }}</th>
+              <th>{{ t('common.name') }}</th>
+              <th>{{ t('pipeline.value') }}</th>
+              <th>{{ t('telemetry.timestamp') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -47,14 +47,14 @@
         </table>
       </section>
       <section class="telemetry-table">
-        <header>Recent Trades</header>
+        <header>{{ t('telemetry.recent_trades') }}</header>
         <table class="table">
           <thead>
             <tr>
-              <th>Symbol</th>
-              <th>Action</th>
-              <th>Status</th>
-              <th>When</th>
+              <th>{{ t('pipeline.symbol') }}</th>
+              <th>{{ t('dashboard.action') }}</th>
+              <th>{{ t('pipeline.status') }}</th>
+              <th>{{ t('pipeline.when') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -68,12 +68,12 @@
         </table>
       </section>
       <section class="telemetry-table advisory-panel">
-        <header>Operational Advisories</header>
+        <header>{{ t('telemetry.operational_advisories') }}</header>
         <ul class="advisory-list">
           <li v-for="advisory in dashboardData.active_advisories" :key="advisory.id" :data-level="advisory.severity">
             <div class="headline">
               <StatusIndicator
-                :label="advisory.severity.toUpperCase()"
+                :label="formatSeverity(advisory.severity)"
                 :level="severityToLevel(advisory.severity)"
                 :detail="advisory.topic"
               />
@@ -81,11 +81,11 @@
             </div>
             <p class="message">{{ advisory.message }}</p>
             <p class="action">
-              <strong>Action:</strong> {{ advisory.recommendation }}
+              <strong>{{ t('telemetry.action') }}:</strong> {{ advisory.recommendation }}
             </p>
           </li>
           <li v-if="!dashboardData.active_advisories.length" class="empty">
-            No active advisories
+            {{ t('telemetry.no_active_advisories') }}
           </li>
         </ul>
       </section>
@@ -96,6 +96,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import StatusIndicator from './StatusIndicator.vue';
+import { t } from '@/i18n';
 
 const props = defineProps<{ dashboard: Record<string, any> | null }>();
 
@@ -112,9 +113,9 @@ function formatRelative(ts: number | string) {
   const numeric = Number(ts);
   if (!Number.isFinite(numeric)) return String(ts);
   const delta = Date.now() / 1000 - numeric;
-  if (delta < 60) return `${delta.toFixed(0)}s ago`;
-  if (delta < 3600) return `${(delta / 60).toFixed(1)}m ago`;
-  return `${(delta / 3600).toFixed(1)}h ago`;
+  if (delta < 60) return t('common.seconds_ago').replace('{count}', delta.toFixed(0));
+  if (delta < 3600) return t('common.minutes_ago').replace('{count}', (delta / 60).toFixed(1));
+  return t('common.hours_ago').replace('{count}', (delta / 3600).toFixed(1));
 }
 
 function severityToLevel(severity: string) {
@@ -122,6 +123,15 @@ function severityToLevel(severity: string) {
   if (lvl === 'critical') return 'error';
   if (lvl === 'warning') return 'warn';
   return 'ok';
+}
+
+function formatSeverity(value: string) {
+  const lower = (value || '').toLowerCase();
+  if (lower === 'critical') return t('severity.critical').toUpperCase();
+  if (lower === 'warning' || lower === 'warn') return t('severity.warning').toUpperCase();
+  if (lower === 'info') return t('severity.info').toUpperCase();
+  if (lower === 'error') return t('severity.error').toUpperCase();
+  return value.toUpperCase();
 }
 </script>
 

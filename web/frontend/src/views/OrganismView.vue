@@ -3,12 +3,12 @@
     <div class="hero-card">
       <header class="card-header">
         <div>
-          <h1>Neurograph Control</h1>
-          <p>Visualise the multi-loop trading organism across brain, schedule, and exposure domains.</p>
+          <h1>{{ t('organism.title') }}</h1>
+          <p>{{ t('organism.subtitle') }}</p>
         </div>
         <div class="header-right">
           <span class="pill" :class="{ busy: store.loading }">
-            {{ store.loading ? 'Syncing…' : 'Live' }}
+            {{ store.loading ? t('organism.syncing') : t('organism.live') }}
           </span>
           <span class="timestamp">
             {{ formattedTimestamp }}
@@ -20,16 +20,16 @@
           <OrganismCanvas :graph="activeGraph" :label-scale="labelScaleLocal" />
         </template>
         <div v-else class="canvas-empty">
-          <h2>No Network Activity Yet</h2>
-          <p>Waiting for the trading bot to emit a brain snapshot with active modules and edges.</p>
+          <h2>{{ t('organism.no_activity') }}</h2>
+          <p>{{ t('organism.no_activity_detail') }}</p>
           <p class="hint">
-            Keep the production manager running; snapshots appear once live market streams and the model start updating.
+            {{ t('organism.no_activity_hint') }}
           </p>
         </div>
       </div>
       <footer class="card-footer">
         <div class="label-controls">
-          <span>Label Scale</span>
+          <span>{{ t('organism.label_scale') }}</span>
           <input
             class="label-range"
             type="range"
@@ -42,7 +42,7 @@
           <span class="label-value">{{ labelScaleLocal.toFixed(2) }}×</span>
         </div>
         <label class="slider-label" for="timeline-range">
-          Timeline
+          {{ t('organism.timeline') }}
         </label>
         <input
           id="timeline-range"
@@ -53,12 +53,12 @@
           v-model.number="selectedIndex"
         />
         <div class="timeline-meta">
-          <span>{{ timelinePoints.length }} snapshots</span>
+          <span>{{ t('organism.snapshots').replace('{count}', String(timelinePoints.length)) }}</span>
           <button class="btn ghost" type="button" @click="togglePlayback" :disabled="timelinePoints.length <= 1">
-            {{ playbackActive ? 'Pause Trail' : 'Play Trail' }}
+            {{ playbackActive ? t('organism.pause_trail') : t('organism.play_trail') }}
           </button>
           <button class="btn" type="button" @click="jumpLatest">
-            Jump to Latest
+            {{ t('organism.jump_latest') }}
           </button>
         </div>
       </footer>
@@ -66,27 +66,27 @@
 
     <div class="grid">
       <div class="info-card">
-        <h2>Brain State</h2>
+        <h2>{{ t('organism.brain_state') }}</h2>
         <div class="metrics-grid">
           <div class="metric">
-            <span class="label">Graph Confidence</span>
+            <span class="label">{{ t('organism.graph_confidence') }}</span>
             <span class="value">{{ formatPercent(brain.graph_confidence) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Swarm Bias</span>
+            <span class="label">{{ t('organism.swarm_bias') }}</span>
             <span class="value">{{ formatPercent(brain.swarm_bias) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Memory Bias</span>
+            <span class="label">{{ t('organism.memory_bias') }}</span>
             <span class="value">{{ formatPercent(brain.memory_bias) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Scenario Spread</span>
+            <span class="label">{{ t('organism.scenario_spread') }}</span>
             <span class="value">{{ formatPercent(brain.scenario_spread) }}</span>
           </div>
         </div>
         <div class="swarm-votes">
-          <h3>Swarm Voting</h3>
+          <h3>{{ t('organism.swarm_voting') }}</h3>
           <ul>
             <li v-for="vote in brain.swarm_votes || []" :key="vote.horizon">
               <span>{{ vote.horizon }}</span>
@@ -97,48 +97,48 @@
           </ul>
         </div>
         <div class="swarm-diagnostics" v-if="swarmDiagnostics.length">
-          <h3>Horizon Diagnostics</h3>
+          <h3>{{ t('organism.horizon_diagnostics') }}</h3>
           <ul>
             <li v-for="diag in swarmDiagnostics" :key="diag.horizon">
               <span>{{ diag.horizon }}</span>
-              <span>acc {{ formatPercent(diag.accuracy) }}</span>
-              <span>mae {{ diag.mae?.toFixed(3) ?? '—' }}</span>
-              <span>⚡ {{ formatPercent(diag.energy) }}</span>
+              <span>{{ t('organism.accuracy').replace('{value}', formatPercent(diag.accuracy)) }}</span>
+              <span>{{ t('organism.mae').replace('{value}', diag.mae?.toFixed(3) ?? t('common.na')) }}</span>
+              <span>{{ t('organism.energy').replace('{value}', formatPercent(diag.energy)) }}</span>
             </li>
           </ul>
         </div>
       </div>
 
       <div class="info-card">
-        <h2>Exposure & Positions</h2>
+        <h2>{{ t('organism.exposure_positions') }}</h2>
         <div class="metrics-grid">
           <div class="metric">
-            <span class="label">Active Symbols</span>
+            <span class="label">{{ t('organism.active_symbols') }}</span>
             <span class="value">{{ positionList.length }}</span>
           </div>
           <div class="metric">
-            <span class="label">Total Exposure</span>
+            <span class="label">{{ t('organism.total_exposure') }}</span>
             <span class="value">
               {{ formatCurrency(totalExposure) }}
             </span>
           </div>
           <div class="metric">
-            <span class="label">Queue Depth</span>
+            <span class="label">{{ t('organism.queue_depth') }}</span>
             <span class="value">{{ (snapshot?.queue_depth ?? 0) + (snapshot?.pending_samples ?? 0) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Latency P95</span>
+            <span class="label">{{ t('organism.latency_p95') }}</span>
             <span class="value">{{ formatMilliseconds(snapshot?.latency_stats?.p95_ms) }}</span>
           </div>
         </div>
         <table class="positions-table" v-if="positionList.length">
           <thead>
             <tr>
-              <th>Symbol</th>
-              <th>Size</th>
-              <th>Entry</th>
-              <th>Target</th>
-              <th>Age</th>
+              <th>{{ t('organism.symbol') }}</th>
+              <th>{{ t('organism.size') }}</th>
+              <th>{{ t('organism.entry') }}</th>
+              <th>{{ t('organism.target') }}</th>
+              <th>{{ t('organism.age') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -151,11 +151,11 @@
             </tr>
           </tbody>
         </table>
-        <p v-else class="empty">No open ghost positions.</p>
+        <p v-else class="empty">{{ t('organism.no_positions') }}</p>
       </div>
 
       <div class="info-card discovery-card">
-        <h2>Discovery Signals</h2>
+        <h2>{{ t('organism.discovery_signals') }}</h2>
         <div class="metrics-grid">
           <div class="metric" v-for="(count, status) in discoveryCounts" :key="status">
             <span class="label">{{ status }}</span>
@@ -163,11 +163,11 @@
           </div>
         </div>
         <div class="recent-discovery">
-          <h3>Recent Trend Reports</h3>
+          <h3>{{ t('organism.recent_trends') }}</h3>
           <ul>
             <li v-for="event in recentDiscovery" :key="event.created_at + event.symbol">
               <span>{{ event.symbol }}</span>
-              <span>{{ (event.liquidity_usd ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) }}$ LQ</span>
+              <span>{{ t('organism.liquidity').replace('{value}', (event.liquidity_usd ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })) }}</span>
               <span>{{ formatPercent(event.price_change_24h) }}</span>
             </li>
           </ul>
@@ -175,70 +175,70 @@
       </div>
 
       <div class="info-card totals-card">
-        <h2>Financial State</h2>
+        <h2>{{ t('organism.financial_state') }}</h2>
         <div class="metrics-grid">
           <div class="metric">
-            <span class="label">Equity</span>
+            <span class="label">{{ t('organism.equity') }}</span>
             <span class="value">{{ formatCurrency(snapshot?.totals?.equity) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Stable Bank</span>
+            <span class="label">{{ t('organism.stable_bank') }}</span>
             <span class="value">{{ formatCurrency(snapshot?.totals?.stable_bank) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Realised Profit</span>
+            <span class="label">{{ t('organism.realised_profit') }}</span>
             <span class="value">{{ formatCurrency(snapshot?.totals?.realized_profit) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Win Rate</span>
+            <span class="label">{{ t('organism.win_rate') }}</span>
             <span class="value">{{ formatPercent(winRate) }}</span>
           </div>
         </div>
       </div>
 
       <div class="info-card pipeline-card">
-        <h2>Pipeline & News</h2>
+        <h2>{{ t('organism.pipeline_news') }}</h2>
         <div class="metrics-grid">
           <div class="metric">
-            <span class="label">Samples</span>
-            <span class="value">{{ pipelineDataset.samples?.toLocaleString?.() || '—' }}</span>
+            <span class="label">{{ t('organism.samples') }}</span>
+            <span class="value">{{ pipelineDataset.samples?.toLocaleString?.() || t('common.na') }}</span>
           </div>
           <div class="metric">
-            <span class="label">News Coverage</span>
+            <span class="label">{{ t('organism.news_coverage') }}</span>
             <span class="value">{{ formatPercent(pipelineDataset.news_coverage_ratio) }}</span>
           </div>
           <div class="metric">
-            <span class="label">News Sources</span>
-            <span class="value">{{ pipelineNews.sources ?? '—' }}</span>
+            <span class="label">{{ t('organism.news_sources') }}</span>
+            <span class="value">{{ pipelineNews.sources ?? t('common.na') }}</span>
           </div>
           <div class="metric">
-            <span class="label">Ghost Win Rate</span>
+            <span class="label">{{ t('organism.ghost_win_rate') }}</span>
             <span class="value">{{ formatPercent(pipelineCandidate.ghost_win_rate) }}</span>
           </div>
         </div>
         <p v-if="pipelineNews.top_sources?.length" class="hint">
-          Sources: {{ pipelineNews.top_sources.slice(0, 5).join(', ') }}
+          {{ t('organism.sources') }} {{ pipelineNews.top_sources.slice(0, 5).join(', ') }}
         </p>
       </div>
 
       <div class="info-card gas-card">
-        <h2>Gas Strategy</h2>
+        <h2>{{ t('organism.gas_strategy') }}</h2>
         <div class="metrics-grid">
           <div class="metric">
-            <span class="label">Chain</span>
-            <span class="value">{{ gasStrategy.chain || '—' }}</span>
+            <span class="label">{{ t('common.chain') }}</span>
+            <span class="value">{{ gasStrategy.chain || t('common.na') }}</span>
           </div>
           <div class="metric">
-            <span class="label">Gas Required</span>
+            <span class="label">{{ t('organism.gas_required') }}</span>
             <span class="value">{{ formatNumber(gasStrategy.gas_required) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Target Native</span>
+            <span class="label">{{ t('organism.target_native') }}</span>
             <span class="value">{{ formatNumber(gasStrategy.target_native) }}</span>
           </div>
           <div class="metric">
-            <span class="label">Mode</span>
-            <span class="value">{{ gasStrategy.mode || (isLiveMode ? 'live' : 'ghost') }}</span>
+            <span class="label">{{ t('organism.mode') }}</span>
+            <span class="value">{{ gasStrategy.mode || (isLiveMode ? t('organism.mode_live') : t('organism.mode_ghost')) }}</span>
           </div>
         </div>
         <p v-if="gasStrategy.recommendation" class="hint">
@@ -247,75 +247,78 @@
       </div>
 
       <div class="info-card cluster-card">
-        <h2>Process Clusters</h2>
+        <h2>{{ t('organism.process_clusters') }}</h2>
         <ul class="cluster-list">
           <li v-for="cluster in processClusters" :key="cluster.label">
             <header>
               <strong>{{ cluster.label }}</strong>
-              <span>{{ cluster.nodes }} nodes</span>
+              <span>{{ t('organism.nodes').replace('{count}', String(cluster.nodes)) }}</span>
             </header>
             <div class="energy-bar">
               <div class="energy-fill" :style="{ width: formatPercentValue(cluster.energy) }"></div>
             </div>
             <footer>
-              <span>Energy {{ formatPercent(cluster.energy) }}</span>
+              <span>{{ t('organism.energy').replace('{value}', formatPercent(cluster.energy)) }}</span>
             </footer>
           </li>
         </ul>
-        <p v-if="!processClusters.length" class="empty">No cluster telemetry yet.</p>
+        <p v-if="!processClusters.length" class="empty">{{ t('organism.no_clusters') }}</p>
       </div>
 
       <div class="info-card transition-card">
-        <h2>Live Transition</h2>
+        <h2>{{ t('organism.live_transition') }}</h2>
         <div class="transition-status" :class="{ live: isLiveMode, ready: liveTransition.ready && !isLiveMode }">
-          <span v-if="isLiveMode">Live trading active</span>
-          <span v-else-if="liveTransition.ready">Ready for hand-off</span>
-          <span v-else>Ghost calibration running</span>
+          <span v-if="isLiveMode">{{ t('organism.live_active') }}</span>
+          <span v-else-if="liveTransition.ready">{{ t('organism.ready_handoff') }}</span>
+          <span v-else>{{ t('organism.ghost_calibration') }}</span>
         </div>
         <div class="transition-metrics">
           <div>
-            <span>Precision</span>
+            <span>{{ t('organism.precision') }}</span>
             <strong>{{ formatPercent(liveTransition.precision) }}</strong>
           </div>
           <div>
-            <span>Recall</span>
+            <span>{{ t('organism.recall') }}</span>
             <strong>{{ formatPercent(liveTransition.recall) }}</strong>
           </div>
           <div>
-            <span>Samples</span>
-            <strong>{{ liveTransition.samples ?? '—' }}</strong>
+            <span>{{ t('organism.samples') }}</span>
+            <strong>{{ liveTransition.samples ?? t('common.na') }}</strong>
           </div>
           <div>
-            <span>Threshold</span>
-            <strong>{{ liveTransition.threshold ? liveTransition.threshold.toFixed(2) : '—' }}</strong>
+            <span>{{ t('organism.threshold') }}</span>
+            <strong>{{ liveTransition.threshold ? liveTransition.threshold.toFixed(2) : t('common.na') }}</strong>
           </div>
         </div>
         <p class="transition-note">
-          Targets {{ formatPercent(requiredLiveWinRate) }} precision/recall and {{ requiredLiveTrades }} qualifying trades
-          before moving swaps from ghost to live execution.
+          {{ t('organism.transition_note')
+            .replace('{precision}', formatPercent(requiredLiveWinRate))
+            .replace('{trades}', String(requiredLiveTrades)) }}
         </p>
         <ul class="transition-horizons" v-if="transitionHighlights.length">
           <li v-for="row in transitionHighlights" :key="row.label" :class="{ allowed: row.allowed }">
             <span>{{ row.label }}</span>
             <span>{{ formatPercent(row.precision) }}</span>
-            <span>{{ row.samples.toLocaleString() }} samples</span>
+            <span>{{ t('organism.samples_count').replace('{count}', row.samples.toLocaleString()) }}</span>
           </li>
         </ul>
       </div>
 
       <div class="info-card horizon-card" v-if="horizonRows.length">
-        <h2>Horizon Accuracy Map</h2>
+        <h2>{{ t('organism.horizon_accuracy') }}</h2>
         <p class="horizon-dominant" v-if="dominantHorizon">
-          Dominant window: <strong>{{ dominantHorizon }}</strong> · Coverage {{ formatPercent(coverageShare) }}
+          {{ t('organism.dominant_window')
+            .replace('{window}', dominantHorizon)
+            .replace('{coverage}', formatPercent(coverageShare)) }}
         </p>
         <table>
           <thead>
             <tr>
-              <th>Horizon</th>
-              <th>Precision</th>
-              <th>Recall</th>
-              <th>Samples</th>
-              <th>Lift</th>
+              <th>{{ t('organism.horizon') }}</th>
+              <th>{{ t('organism.precision') }}</th>
+              <th>{{ t('organism.recall') }}</th>
+              <th>{{ t('organism.samples') }}</th>
+              <th>{{ t('organism.lift') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -337,6 +340,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import OrganismCanvas from '@/components/OrganismCanvas.vue';
 import { useOrganismStore } from '@/stores/organism';
+import { t } from '@/i18n';
 
 const store = useOrganismStore();
 const selectedIndex = ref(0);
@@ -362,7 +366,7 @@ const snapshot = computed(() => {
 
 const formattedTimestamp = computed(() => {
   const ts = snapshot.value?.timestamp;
-  if (!ts) return '—';
+  if (!ts) return t('common.na');
   const date = new Date(ts * 1000);
   return date.toLocaleString();
 });
@@ -437,9 +441,9 @@ const labelScaleLocal = ref(1);
 const swarmDiagnostics = computed(() => brain.value?.swarm_diagnostics || []);
 
 function formatPercent(value: any) {
-  if (value === null || value === undefined) return '—';
+  if (value === null || value === undefined) return t('common.na');
   const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
+  if (!Number.isFinite(num)) return t('common.na');
   return `${(num * 100).toFixed(1)}%`;
 }
 
@@ -490,10 +494,10 @@ function onLabelScaleInput(event: Event) {
 }
 
 function formatDuration(seconds: number) {
-  if (!Number.isFinite(seconds)) return '—';
-  if (seconds < 60) return `${seconds.toFixed(0)}s`;
-  if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
-  return `${(seconds / 3600).toFixed(2)}h`;
+  if (!Number.isFinite(seconds)) return t('common.na');
+  if (seconds < 60) return t('common.seconds_short').replace('{value}', seconds.toFixed(0));
+  if (seconds < 3600) return t('common.minutes_short').replace('{value}', (seconds / 60).toFixed(1));
+  return t('common.hours_short').replace('{value}', (seconds / 3600).toFixed(2));
 }
 
 function jumpLatest() {

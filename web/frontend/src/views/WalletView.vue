@@ -185,7 +185,7 @@
             <span class="checkmark"></span>
           </label>
           <div class="thumb" :class="{ placeholder: !nft.image }">
-            <img v-if="nft.image" :src="nft.image" :alt="nft.title || t('wallet.nft') " loading="lazy" />
+            <img v-if="nft.image" :src="nft.image" :alt="nft.title || t('wallet.nft')" loading="lazy" />
             <span v-else>{{ t('wallet.no_image') }}</span>
           </div>
           <div class="nft-meta">

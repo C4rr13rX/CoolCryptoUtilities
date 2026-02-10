@@ -3,33 +3,33 @@
     <section class="panel">
       <header>
         <div>
-          <h1>Internal Cron</h1>
-          <p>Automated data refresh and discovery jobs while the website is running.</p>
+          <h1>{{ t('cron.title') }}</h1>
+          <p>{{ t('cron.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <label class="switch">
             <input type="checkbox" :checked="enabled" @change="toggleEnabled" />
-            <span>{{ enabled ? 'Enabled' : 'Disabled' }}</span>
+            <span>{{ enabled ? t('cron.enabled') : t('cron.disabled') }}</span>
           </label>
           <button type="button" class="btn ghost" :disabled="store.loading" @click="store.load">
-            {{ store.loading ? 'Refreshing…' : 'Refresh' }}
+            {{ store.loading ? t('common.refreshing') : t('common.refresh') }}
           </button>
           <button type="button" class="btn" :disabled="store.running" @click="runAll">
-            {{ store.running ? 'Queued…' : 'Run Now' }}
+            {{ store.running ? t('cron.queued') : t('cron.run_now') }}
           </button>
         </div>
       </header>
       <div class="status-grid">
         <div class="metric">
-          <span class="label">Runner</span>
+          <span class="label">{{ t('cron.runner') }}</span>
           <span class="value">{{ runnerStatus }}</span>
         </div>
         <div class="metric">
-          <span class="label">Last Cycle</span>
+          <span class="label">{{ t('cron.last_cycle') }}</span>
           <span class="value">{{ formatTimestamp(store.status?.last_cycle) }}</span>
         </div>
         <div class="metric">
-          <span class="label">Errors</span>
+          <span class="label">{{ t('cron.errors') }}</span>
           <span class="value">{{ store.status?.errors ?? 0 }}</span>
         </div>
       </div>
@@ -39,20 +39,20 @@
     <section class="panel">
       <header>
         <div>
-          <h2>Tasks</h2>
-          <p>Current cron tasks and last run status.</p>
+          <h2>{{ t('cron.tasks') }}</h2>
+          <p>{{ t('cron.tasks_subtitle') }}</p>
         </div>
       </header>
       <div class="table-wrap">
         <table class="table">
           <thead>
             <tr>
-              <th>Task</th>
-              <th>Interval</th>
-              <th>Last Run</th>
-              <th>Status</th>
-              <th>Next Run</th>
-              <th>Action</th>
+              <th>{{ t('cron.task') }}</th>
+              <th>{{ t('cron.interval') }}</th>
+              <th>{{ t('cron.last_run') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('cron.next_run') }}</th>
+              <th>{{ t('cron.action') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -64,15 +64,15 @@
               <td>{{ formatInterval(task.interval_minutes) }}</td>
               <td>{{ formatTimestamp(task.state?.last_run) }}</td>
               <td :class="['status', task.state?.last_status || 'idle']">
-                {{ task.state?.last_status || 'idle' }}
+                {{ formatStatus(task.state?.last_status) }}
               </td>
               <td>{{ formatTimestamp(task.state?.next_run) }}</td>
               <td>
-                <button type="button" class="btn ghost" @click="runTask(task.id)">Run</button>
+                <button type="button" class="btn ghost" @click="runTask(task.id)">{{ t('common.run') }}</button>
               </td>
             </tr>
             <tr v-if="!taskRows.length">
-              <td colspan="6" class="empty">No cron tasks configured.</td>
+              <td colspan="6" class="empty">{{ t('cron.no_tasks') }}</td>
             </tr>
           </tbody>
         </table>
@@ -82,12 +82,12 @@
     <section class="panel">
       <header>
         <div>
-          <h2>Profile</h2>
-          <p>Edit cron profile JSON to tune discovery, downloads, and training.</p>
+          <h2>{{ t('cron.profile') }}</h2>
+          <p>{{ t('cron.profile_subtitle') }}</p>
         </div>
         <div class="header-actions">
           <button type="button" class="btn" :disabled="store.saving" @click="saveProfile">
-            {{ store.saving ? 'Saving…' : 'Save Profile' }}
+            {{ store.saving ? t('common.saving') : t('cron.save_profile') }}
           </button>
         </div>
       </header>
@@ -100,6 +100,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useCronStore } from '@/stores/cron';
+import { t } from '@/i18n';
 
 const store = useCronStore();
 const profileText = ref('');
@@ -121,8 +122,8 @@ watch(
 const enabled = computed(() => Boolean(store.profile?.enabled));
 
 const runnerStatus = computed(() => {
-  if (!store.status) return 'Unknown';
-  return store.status.running ? 'Running' : 'Idle';
+  if (!store.status) return t('cron.runner_unknown');
+  return store.status.running ? t('cron.running') : t('cron.idle');
 });
 
 const taskRows = computed(() => {
@@ -134,17 +135,31 @@ const taskRows = computed(() => {
 });
 
 const formatTimestamp = (value: any) => {
-  if (!value) return '—';
+  if (!value) return t('common.na');
   const date = new Date(Number(value) * 1000);
-  if (Number.isNaN(date.getTime())) return '—';
+  if (Number.isNaN(date.getTime())) return t('common.na');
   return date.toLocaleString();
 };
 
 const formatInterval = (minutes: number) => {
-  if (!minutes) return '—';
-  if (minutes >= 1440) return `${Math.round(minutes / 1440)}d`;
-  if (minutes >= 60) return `${Math.round(minutes / 60)}h`;
-  return `${minutes}m`;
+  if (!minutes) return t('common.na');
+  if (minutes >= 1440) return t('cron.interval_days').replace('{count}', String(Math.round(minutes / 1440)));
+  if (minutes >= 60) return t('cron.interval_hours').replace('{count}', String(Math.round(minutes / 60)));
+  return t('cron.interval_minutes').replace('{count}', String(minutes));
+};
+
+const formatStatus = (status?: string) => {
+  const key = String(status || 'idle').toLowerCase();
+  switch (key) {
+    case 'running':
+      return t('cron.running');
+    case 'error':
+      return t('common.error');
+    case 'success':
+      return t('common.success');
+    default:
+      return t('cron.idle');
+  }
 };
 
 const toggleEnabled = async (event: Event) => {
@@ -158,7 +173,7 @@ const saveProfile = async () => {
     const parsed = JSON.parse(profileText.value);
     await store.saveProfile(parsed);
   } catch (err: any) {
-    localError.value = err?.message || 'Invalid JSON';
+    localError.value = err?.message || t('cron.invalid_json');
   }
 };
 

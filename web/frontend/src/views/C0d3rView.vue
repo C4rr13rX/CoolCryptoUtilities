@@ -3,41 +3,41 @@
     <section class="panel">
       <header>
         <div>
-          <h1>c0d3r Control</h1>
-          <p>Send prompts to the Bedrock-backed c0d3r session and capture responses.</p>
+          <h1>{{ t('c0d3r.title') }}</h1>
+          <p>{{ t('c0d3r.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <div class="session-picker">
-            <span>Session</span>
+            <span>{{ t('c0d3r.session') }}</span>
             <select v-model="activeSessionId" @change="handleSessionChange" :disabled="loadingSessions">
               <option v-for="item in sessions" :key="item.id" :value="item.id">
-                {{ item.title || `Session ${item.id}` }}
+                {{ item.title || t('c0d3r.session_id').replace('{id}', String(item.id)) }}
               </option>
             </select>
           </div>
           <button type="button" class="btn ghost" @click="createSession" :disabled="sending || loadingSessions">
-            New Session
+            {{ t('c0d3r.new_session') }}
           </button>
           <button type="button" class="btn ghost" @click="resetSession" :disabled="sending || !activeSessionId">
-            Reset Session
+            {{ t('c0d3r.reset_session') }}
           </button>
         </div>
       </header>
 
       <form class="prompt-form" @submit.prevent="submit">
         <label>
-          <span>Prompt</span>
-          <textarea v-model="prompt" rows="5" placeholder="Ask c0d3r anything…" />
+          <span>{{ t('c0d3r.prompt') }}</span>
+          <textarea v-model="prompt" rows="5" :placeholder="t('c0d3r.prompt_placeholder')" />
         </label>
         <div class="actions">
           <button type="submit" class="btn" :disabled="sending || !prompt.trim()">
-            {{ sending ? 'Running…' : 'Send' }}
+            {{ sending ? t('common.running') : t('common.send') }}
           </button>
           <label class="switch-row">
             <input type="checkbox" v-model="research" />
-            <span>Research mode</span>
+            <span>{{ t('c0d3r.research_mode') }}</span>
           </label>
-          <span v-if="modelLabel" class="pill">Model: {{ modelLabel }}</span>
+          <span v-if="modelLabel" class="pill">{{ t('c0d3r.model') }}: {{ modelLabel }}</span>
         </div>
       </form>
       <p v-if="error" class="error">{{ error }}</p>
@@ -45,33 +45,33 @@
 
     <section class="panel">
       <header>
-        <h2>Conversation</h2>
-        <span class="caption">{{ messages.length }} messages</span>
+        <h2>{{ t('c0d3r.conversation') }}</h2>
+        <span class="caption">{{ t('c0d3r.messages_count').replace('{count}', String(messages.length)) }}</span>
       </header>
       <div class="conversation" ref="conversationRef">
         <div v-for="item in messages" :key="item.id" :class="['message', item.role]">
-          <div class="meta">{{ item.role === 'user' ? 'You' : 'c0d3r' }} · {{ item.time }}</div>
+          <div class="meta">{{ item.role === 'user' ? t('c0d3r.you') : t('c0d3r.agent') }} · {{ item.time }}</div>
           <pre>{{ item.text }}</pre>
         </div>
-        <div v-if="!messages.length" class="empty">No prompts yet.</div>
+        <div v-if="!messages.length" class="empty">{{ t('c0d3r.no_prompts') }}</div>
       </div>
     </section>
 
     <section class="panel">
       <header>
-        <h2>Equation Matrix Search</h2>
-        <span class="caption">{{ graphResults.length }} hits</span>
+        <h2>{{ t('c0d3r.graph_title') }}</h2>
+        <span class="caption">{{ t('c0d3r.graph_hits').replace('{count}', String(graphResults.length)) }}</span>
       </header>
       <div class="graph-search">
-        <input v-model="graphQuery" placeholder="Search equations, labels, metadata…" />
+        <input v-model="graphQuery" :placeholder="t('c0d3r.graph_placeholder')" />
         <button type="button" class="btn ghost" @click="runGraphSearch" :disabled="graphLoading || !graphQuery.trim()">
-          {{ graphLoading ? 'Searching…' : 'Search' }}
+          {{ graphLoading ? t('common.searching') : t('common.search') }}
         </button>
       </div>
       <div class="graph-results">
         <div v-for="hit in graphResults" :key="hit.id || hit.text" class="graph-hit">
-          <div class="meta">{{ hit.origin || 'graph' }}</div>
-          <div class="graph-text">{{ hit.text || hit.latex || '(no text)' }}</div>
+          <div class="meta">{{ hit.origin || t('c0d3r.graph_origin') }}</div>
+          <div class="graph-text">{{ hit.text || hit.latex || t('c0d3r.graph_no_text') }}</div>
           <div v-if="hit.disciplines?.length" class="graph-tags">
             <span v-for="tag in hit.disciplines" :key="tag">{{ tag }}</span>
           </div>
@@ -79,7 +79,7 @@
             <span>{{ hit.disciplines }}</span>
           </div>
         </div>
-        <div v-if="!graphResults.length" class="empty">No graph matches yet.</div>
+        <div v-if="!graphResults.length" class="empty">{{ t('c0d3r.graph_empty') }}</div>
       </div>
     </section>
   </div>
@@ -96,6 +96,7 @@ import {
   type C0d3rSessionSummary,
   type C0d3rMessage
 } from '@/api';
+import { t } from '@/i18n';
 
 type MessageRole = 'user' | 'c0d3r';
 
@@ -212,7 +213,7 @@ const submit = async () => {
     messages.value.push({
       id: `${Date.now()}-a`,
       role: 'c0d3r',
-      text: result.output || '(no response)',
+      text: result.output || t('c0d3r.no_response'),
       time: nowStamp(),
     });
     await scrollToBottom();
@@ -227,20 +228,20 @@ const submit = async () => {
         messages.value.push({
           id: `${Date.now()}-a`,
           role: 'c0d3r',
-          text: retry.output || '(no response)',
+          text: retry.output || t('c0d3r.no_response'),
           time: nowStamp(),
         });
         await scrollToBottom();
         await loadSessions();
         return;
       } catch (retryErr: any) {
-        error.value = retryErr?.message || 'Unable to reach c0d3r.';
+        error.value = retryErr?.message || t('c0d3r.error_unreachable');
         return;
       } finally {
         sending.value = false;
       }
     }
-    error.value = err?.message || 'Unable to reach c0d3r.';
+    error.value = err?.message || t('c0d3r.error_unreachable');
   } finally {
     sending.value = false;
   }
@@ -254,7 +255,7 @@ const resetSession = async () => {
     await runC0d3rPrompt({ prompt: '', reset: true, session_id: activeSessionId.value });
     messages.value = [];
   } catch (err: any) {
-    error.value = err?.message || 'Unable to reset session.';
+    error.value = err?.message || t('c0d3r.error_reset');
   } finally {
     sending.value = false;
   }

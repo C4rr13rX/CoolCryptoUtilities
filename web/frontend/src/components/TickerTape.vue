@@ -12,6 +12,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { t } from '@/i18n';
 
 interface TickerItem {
   symbol: string;
@@ -42,7 +43,7 @@ function severityClass(level: string) {
 }
 
 function formatNumber(value: number) {
-  if (!Number.isFinite(value)) return '—';
+  if (!Number.isFinite(value)) return t('common.none');
   if (value >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   if (value >= 1) return value.toFixed(4);
   return value.toPrecision(4);

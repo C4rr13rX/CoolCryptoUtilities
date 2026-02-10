@@ -15,13 +15,13 @@
           class="nav-link"
           :class="[{ active: isActive(item.path) }, `intent-${item.intent}`]"
           :data-sound="`section:${item.route}`"
-          @click.stop.prevent="goTo(item.path)"
+          @click.stop.prevent="goTo(item)"
         >
           <span class="icon">
             <HackerIcon :name="item.icon" :size="item.iconSize ?? 20" />
           </span>
           <span class="label">{{ item.label }}</span>
-          <span class="nav-led" :class="`intent-${item.intent}`" aria-hidden="true" />
+          <span class="nav-led" :class="[`intent-${item.intent}`, { blink: isBlinking(item.intent) }]" aria-hidden="true" />
         </button>
       </nav>
       <footer class="sidebar__foot">
@@ -79,6 +79,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
 import { t } from '@/i18n';
+import { runGuardianJob } from '@/api';
 
 const store = useDashboardStore();
 const uiSettings = useUiSettingsStore();
@@ -269,7 +270,7 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
   let rafId = 0;
 
   const initNodes = () => {
-    const count = Math.min(340, Math.max(140, Math.floor((width * height) / 9000)));
+    const count = Math.min(520, Math.max(220, Math.floor((width * height) / 7000)));
     nodes = Array.from({ length: count }).map(() => {
       const baseX = Math.random() * width;
       const baseY = Math.random() * height;
@@ -315,10 +316,19 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     ctx.fillStyle = backgroundGradient || 'rgba(4, 8, 16, 0.6)';
     ctx.fillRect(0, 0, width, height);
 
-    const connectDist = Math.max(150, Math.min(220, Math.min(width, height) * 0.22));
-    const influence = Math.max(190, Math.min(280, Math.min(width, height) * 0.3));
-    const spring = 0.028;
-    const damping = 0.9;
+    const connectDist = Math.max(180, Math.min(280, Math.min(width, height) * 0.26));
+    const influence = Math.max(260, Math.min(420, Math.min(width, height) * 0.4));
+    const spring = 0.032;
+    const damping = 0.88;
+    const offsetStrength = 0.22;
+    let offsetX = 0;
+    let offsetY = 0;
+    if (mouse.x !== null && mouse.y !== null) {
+      const normX = (mouse.x - width / 2) / Math.max(1, width / 2);
+      const normY = (mouse.y - height / 2) / Math.max(1, height / 2);
+      offsetX = normX * offsetStrength * connectDist;
+      offsetY = normY * offsetStrength * connectDist;
+    }
 
     for (const node of nodes) {
       if (mouse.x !== null && mouse.y !== null) {
@@ -326,10 +336,10 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
         const dy = node.baseY - mouse.y;
         const dist = Math.hypot(dx, dy);
         if (dist < influence && dist > 0.1) {
-          const influenceFactor = (1 - dist / influence) * 0.8;
-          node.vx += mouse.dx * influenceFactor;
-          node.vy += mouse.dy * influenceFactor;
-          const pull = (1 - dist / influence) * 0.04;
+          const influenceFactor = (1 - dist / influence);
+          node.vx += mouse.dx * (influenceFactor * 1.4);
+          node.vy += mouse.dy * (influenceFactor * 1.4);
+          const pull = influenceFactor * 0.06;
           node.vx += (-dx / dist) * pull;
           node.vy += (-dy / dist) * pull;
         }
@@ -354,16 +364,16 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
         const b = nodes[j];
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
+        const dx = (a.x + offsetX) - (b.x + offsetX);
+        const dy = (a.y + offsetY) - (b.y + offsetY);
         const dist = Math.hypot(dx, dy);
         if (dist < connectDist) {
           const alpha = 1 - dist / connectDist;
           ctx.strokeStyle = `rgba(205, 220, 235, ${0.24 * alpha})`;
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.moveTo(a.x, a.y);
-          ctx.lineTo(b.x, b.y);
+          ctx.moveTo(a.x + offsetX, a.y + offsetY);
+          ctx.lineTo(b.x + offsetX, b.y + offsetY);
           ctx.stroke();
         }
       }
@@ -372,7 +382,7 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
     for (const node of nodes) {
       ctx.fillStyle = 'rgba(195, 210, 225, 0.75)';
       ctx.beginPath();
-      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+      ctx.arc(node.x + offsetX, node.y + offsetY, node.radius, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -385,8 +395,8 @@ const runMatrixBackground = (canvas: HTMLCanvasElement) => {
 
   const onMove = (event: PointerEvent | MouseEvent) => {
     if (lastMouse.x !== null && lastMouse.y !== null) {
-      mouse.dx = (event.clientX - lastMouse.x) * 0.006;
-      mouse.dy = (event.clientY - lastMouse.y) * 0.006;
+      mouse.dx = (event.clientX - lastMouse.x) * 0.012;
+      mouse.dy = (event.clientY - lastMouse.y) * 0.012;
     }
     mouse.x = event.clientX;
     mouse.y = event.clientY;
@@ -431,6 +441,8 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
   let width = 0;
   let height = 0;
   let dpr = Math.min(window.devicePixelRatio || 1, 2);
+  let veil = 1;
+  let veilGradient: CanvasGradient | null = null;
   let stars: Array<{
     x: number;
     y: number;
@@ -446,19 +458,40 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
   let rafId = 0;
 
   const initStars = () => {
-    const count = Math.min(70, Math.max(25, Math.floor((width * height) / 72000)));
-    stars = Array.from({ length: count }).map(() => ({
-      x: Math.random() * width,
-      y: Math.random() * height,
-      r: 0.6 + Math.random() * 1,
-      phase: Math.random() * Math.PI * 2,
-      tw: 0.004 + Math.random() * 0.012,
-      a: 0.14 + Math.random() * 0.28,
-      vy: 0.03 + Math.random() * 0.12,
-      vx: 0.02 + Math.random() * 0.08,
-      trail: 14 + Math.random() * 26,
-      drift: (Math.random() - 0.5) * 0.2,
-    }));
+    const count = Math.min(90, Math.max(28, Math.floor((width * height) / 80000)));
+    const baseAngle = Math.PI / 3.4;
+    stars = Array.from({ length: count }).map(() => {
+      const speed = 0.03 + Math.random() * 0.09;
+      const angle = baseAngle + (Math.random() - 0.5) * 0.35;
+      return {
+        x: Math.random() * width,
+        y: Math.random() * height,
+        r: 0.6 + Math.random() * 1,
+        phase: Math.random() * Math.PI * 2,
+        tw: 0.004 + Math.random() * 0.012,
+        a: 0.12 + Math.random() * 0.26,
+        vy: Math.sin(angle) * speed,
+        vx: Math.cos(angle) * speed,
+        trail: 18 + Math.random() * 30,
+        drift: (Math.random() - 0.5) * 0.18,
+      };
+    });
+  };
+
+  const buildVeil = () => {
+    const gradient = ctx.createRadialGradient(
+      width * 0.45,
+      height * 0.45,
+      0,
+      width * 0.5,
+      height * 0.5,
+      Math.max(width, height) * 0.85
+    );
+    gradient.addColorStop(0, 'rgba(255, 160, 210, 0.85)');
+    gradient.addColorStop(0.35, 'rgba(255, 120, 190, 0.65)');
+    gradient.addColorStop(0.7, 'rgba(170, 70, 140, 0.35)');
+    gradient.addColorStop(1, 'rgba(40, 10, 30, 0.05)');
+    veilGradient = gradient;
   };
 
   const resize = () => {
@@ -470,11 +503,20 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    buildVeil();
     initStars();
+    veil = 1;
   };
 
   const step = () => {
     ctx.clearRect(0, 0, width, height);
+    if (veil > 0) {
+      ctx.fillStyle = veilGradient || 'rgba(255, 120, 190, 0.6)';
+      ctx.globalAlpha = 0.9 * veil;
+      ctx.fillRect(0, 0, width, height);
+      ctx.globalAlpha = 1;
+      veil = Math.max(0, veil - 0.018);
+    }
     for (const star of stars) {
       star.phase += star.tw;
       const twinkle = (Math.sin(star.phase) + 1) / 2;
@@ -501,8 +543,14 @@ const runStarfieldBackground = (canvas: HTMLCanvasElement) => {
       star.x += dx;
       star.y += dy;
       if (star.y > height + 10 || star.x > width + 10) {
-        star.y = -10;
-        star.x = Math.random() * width * 0.6;
+        const resetFromTop = Math.random() > 0.5;
+        if (resetFromTop) {
+          star.y = -10;
+          star.x = Math.random() * width * 0.6;
+        } else {
+          star.x = -10;
+          star.y = Math.random() * height * 0.6;
+        }
       }
     }
     if (!prefersReduced) {
@@ -536,11 +584,49 @@ const handleNavClick = () => {
   }
 };
 
-const goTo = (path: string) => {
-  if (!path) return;
+const guardianPingHistory = new Map<string, number>();
+
+const isBlinking = (intent: string) => intent === 'warn' || intent === 'error';
+
+const buildGuardianPrompt = (label: string, intent: string) => {
+  const streamCount = Object.keys(store.streams || {}).length;
+  const metricsCount = store.latestMetrics?.length || 0;
+  const feedbackCount = store.latestFeedback?.length || 0;
+  const advisoryCount = store.advisories?.length || 0;
+  const consoleStatus = store.consoleStatus?.status || 'unknown';
+  return [
+    `Investigate ${label} status.`,
+    `Intent: ${intent}.`,
+    `Console status: ${consoleStatus}.`,
+    `Streams: ${streamCount}. Metrics: ${metricsCount}. Feedback: ${feedbackCount}. Advisories: ${advisoryCount}.`,
+    `Return a concise fix or next action.`,
+  ].join(' ');
+};
+
+const maybePingGuardian = async (label: string, intent: string) => {
+  if (!isBlinking(intent)) return;
+  const now = Date.now();
+  const last = guardianPingHistory.get(label) || 0;
+  if (now - last < 30000) return;
+  const shouldSend = window.confirm(
+    `${label} is reporting ${intent.toUpperCase()}. Send a one-time Guardian diagnostic?`
+  );
+  if (!shouldSend) return;
+  guardianPingHistory.set(label, now);
+  try {
+    await runGuardianJob({ prompt: buildGuardianPrompt(label, intent), save_default: false });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Guardian ping failed', err);
+  }
+};
+
+const goTo = async (item: { path: string; label: string; intent: string }) => {
+  if (!item?.path) return;
   handleNavClick();
-  if (normalizePath(route.path) === normalizePath(path)) return;
-  router.push(path).catch((err) => {
+  await maybePingGuardian(item.label, item.intent);
+  if (normalizePath(route.path) === normalizePath(item.path)) return;
+  router.push(item.path).catch((err) => {
     // eslint-disable-next-line no-console
     console.error('Navigation failed', err);
   });
@@ -664,30 +750,86 @@ const formatSeverity = (value: string) => {
   return value;
 };
 
-const navItems = computed(() => [
-  { route: 'dashboard', path: '/', label: t('nav.overview'), icon: 'overview', intent: streamIntent.value },
-  { route: 'organism', path: '/organism', label: t('nav.organism'), icon: 'organism', intent: pipelineIntent.value },
-  { route: 'pipeline', path: '/pipeline', label: t('nav.pipeline'), icon: 'pipeline', intent: pipelineIntent.value },
-  { route: 'bus', path: '/bus', label: t('nav.bus'), icon: 'rocket', intent: pipelineIntent.value },
-  { route: 'streams', path: '/streams', label: t('nav.streams'), icon: 'streams', intent: streamIntent.value },
-  { route: 'telemetry', path: '/telemetry', label: t('nav.telemetry'), icon: 'activity', intent: feedbackIntent.value },
-  { route: 'logs', path: '/logs', label: t('nav.logs'), icon: 'activity', intent: feedbackIntent.value },
-  { route: 'wallet', path: '/wallet', label: t('nav.wallet'), icon: 'wallet', intent: consoleIntent.value },
-  { route: 'c0d3r', path: '/c0d3r', label: t('nav.c0d3r'), icon: 'terminal', intent: consoleIntent.value },
-  { route: 'investigations', path: '/investigations', label: t('nav.investigations'), icon: 'shield', intent: advisoryIntent.value },
-  { route: 'addressbook', path: '/addressbook', label: t('nav.addressbook'), icon: 'link', intent: advisoryIntent.value },
-  { route: 'advisories', path: '/advisories', label: t('nav.advisories'), icon: 'shield', intent: advisoryIntent.value },
-  { route: 'datalab', path: '/datalab', label: t('nav.datalab'), icon: 'datalab', intent: pipelineIntent.value },
-  { route: 'lab', path: '/lab', label: t('nav.lab'), icon: 'lab', intent: pipelineIntent.value },
-  { route: 'guardian', path: '/guardian', label: t('nav.guardian'), icon: 'guardian', intent: pipelineIntent.value },
-  { route: 'cron', path: '/cron', label: t('nav.cron'), icon: 'activity', intent: pipelineIntent.value },
-  { route: 'codegraph', path: '/codegraph', label: t('nav.codegraph'), icon: 'activity', intent: pipelineIntent.value },
-  { route: 'integrations', path: '/integrations', label: t('nav.integrations'), icon: 'link', intent: pipelineIntent.value },
-  { route: 'settings', path: '/settings', label: t('nav.settings'), icon: 'settings', intent: pipelineIntent.value },
-  { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar', intent: pipelineIntent.value },
-  { route: 'u53rxr080t', path: '/u53rxr080t', label: t('nav.u53rxr080t'), icon: 'radar', intent: pipelineIntent.value },
-  { route: 'branddozer', path: '/branddozer', label: t('nav.branddozer'), icon: 'lab', intent: pipelineIntent.value },
-]);
+const resolveAppIntent = (routeName: string) => {
+  if (store.error || !store.serverOnline) return 'error';
+  const streamsCount = Object.keys(store.streams || {}).length;
+  const metricsCount = store.latestMetrics?.length || 0;
+  const feedbackCount = store.latestFeedback?.length || 0;
+  const advisoryCount = store.advisories?.length || 0;
+  const hasCritical = store.advisories?.some((entry: any) => entry.severity === 'critical');
+  const hasWarnings = store.advisories?.some((entry: any) => entry.severity === 'warning');
+  const hasDashboard = Boolean(store.dashboard);
+  const consoleStatus = String(store.consoleStatus?.status || '');
+  const consoleOk = consoleStatus.includes('run');
+
+  switch (routeName) {
+    case 'dashboard':
+      return hasDashboard ? 'ok' : 'warn';
+    case 'streams':
+      return streamsCount ? 'ok' : 'warn';
+    case 'telemetry':
+      if (hasCritical) return 'error';
+      return feedbackCount ? 'ok' : 'warn';
+    case 'pipeline':
+    case 'bus':
+      if (hasCritical) return 'error';
+      return metricsCount ? (hasWarnings ? 'warn' : 'ok') : 'warn';
+    case 'advisories':
+      if (hasCritical) return 'error';
+      return advisoryCount ? 'warn' : 'ok';
+    case 'logs':
+      return (store.consoleLogs?.length || store.guardianLogs?.length) ? 'ok' : 'warn';
+    case 'wallet':
+    case 'c0d3r':
+      return consoleOk ? 'ok' : 'warn';
+    case 'guardian':
+      return consoleOk ? 'ok' : 'warn';
+    case 'datalab':
+    case 'lab':
+      return metricsCount ? 'ok' : 'warn';
+    case 'integrations':
+    case 'settings':
+    case 'addressbook':
+    case 'investigations':
+    case 'codegraph':
+    case 'audiolab':
+    case 'u53rxr080t':
+    case 'branddozer':
+    default:
+      return hasDashboard ? 'ok' : 'warn';
+  }
+};
+
+const navItems = computed(() => {
+  const items = [
+    { route: 'dashboard', path: '/', label: t('nav.overview'), icon: 'overview' },
+    { route: 'organism', path: '/organism', label: t('nav.organism'), icon: 'organism' },
+    { route: 'pipeline', path: '/pipeline', label: t('nav.pipeline'), icon: 'pipeline' },
+    { route: 'bus', path: '/bus', label: t('nav.bus'), icon: 'rocket' },
+    { route: 'streams', path: '/streams', label: t('nav.streams'), icon: 'streams' },
+    { route: 'telemetry', path: '/telemetry', label: t('nav.telemetry'), icon: 'activity' },
+    { route: 'logs', path: '/logs', label: t('nav.logs'), icon: 'activity' },
+    { route: 'wallet', path: '/wallet', label: t('nav.wallet'), icon: 'wallet' },
+    { route: 'c0d3r', path: '/c0d3r', label: t('nav.c0d3r'), icon: 'terminal' },
+    { route: 'investigations', path: '/investigations', label: t('nav.investigations'), icon: 'shield' },
+    { route: 'addressbook', path: '/addressbook', label: t('nav.addressbook'), icon: 'link' },
+    { route: 'advisories', path: '/advisories', label: t('nav.advisories'), icon: 'shield' },
+    { route: 'datalab', path: '/datalab', label: t('nav.datalab'), icon: 'datalab' },
+    { route: 'lab', path: '/lab', label: t('nav.lab'), icon: 'lab' },
+    { route: 'guardian', path: '/guardian', label: t('nav.guardian'), icon: 'guardian' },
+    { route: 'cron', path: '/cron', label: t('nav.cron'), icon: 'activity' },
+    { route: 'codegraph', path: '/codegraph', label: t('nav.codegraph'), icon: 'activity' },
+    { route: 'integrations', path: '/integrations', label: t('nav.integrations'), icon: 'link' },
+    { route: 'settings', path: '/settings', label: t('nav.settings'), icon: 'settings' },
+    { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar' },
+    { route: 'u53rxr080t', path: '/u53rxr080t', label: t('nav.u53rxr080t'), icon: 'radar' },
+    { route: 'branddozer', path: '/branddozer', label: t('nav.branddozer'), icon: 'lab' },
+  ];
+  return items.map((item) => ({
+    ...item,
+    intent: resolveAppIntent(item.route),
+  }));
+});
 
 const normalizePath = (value: string) => (value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value);
 
@@ -825,6 +967,44 @@ const totalProfitDisplay = computed(() =>
   background: #f87171;
   border-color: rgba(248, 113, 113, 0.8);
   box-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
+}
+
+.nav-led.blink.intent-warn {
+  animation: warnBlink 0.5s steps(1, end) infinite;
+}
+
+.nav-led.blink.intent-error {
+  animation: errorBlink 0.2s steps(1, end) infinite;
+}
+
+@keyframes warnBlink {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 12px rgba(250, 204, 21, 0.65);
+  }
+  50% {
+    opacity: 0.35;
+    box-shadow: 0 0 4px rgba(250, 204, 21, 0.25);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 12px rgba(250, 204, 21, 0.65);
+  }
+}
+
+@keyframes errorBlink {
+  0% {
+    opacity: 1;
+    box-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
+  }
+  50% {
+    opacity: 0.2;
+    box-shadow: 0 0 3px rgba(248, 113, 113, 0.3);
+  }
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
+  }
 }
 
 .nav-link.active {

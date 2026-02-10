@@ -2,29 +2,31 @@
   <div class="u53rx">
     <header class="u53rx__header">
       <div>
-        <p class="eyebrow">UX automation</p>
-        <h1>U53RxR080T</h1>
-        <p class="lede">Live view of UX agents, open tasks, and reported findings.</p>
+        <p class="eyebrow">{{ t('ux.eyebrow') }}</p>
+        <h1>{{ t('ux.title') }}</h1>
+        <p class="lede">{{ t('ux.subtitle') }}</p>
       </div>
       <div class="header-meta">
         <div class="pill" :class="intentClass">{{ summaryText }}</div>
-        <div class="timestamp">Updated {{ lastUpdatedText }}</div>
+        <div class="timestamp">{{ t('ux.updated').replace('{time}', lastUpdatedText) }}</div>
       </div>
     </header>
 
     <section class="u53rx__downloads">
       <div class="panel">
         <div class="panel__header">
-          <h3>Recommended install</h3>
+          <h3>{{ t('ux.recommended_install') }}</h3>
           <span class="muted small">{{ detectionLabel }}</span>
         </div>
-        <p class="muted">We auto-detected your OS and browser to suggest the right artifacts. Swap below if needed.</p>
+        <p class="muted">{{ t('ux.recommended_subtitle') }}</p>
         <div class="download-grid">
           <div class="download-card">
-            <p class="label">Browser extension</p>
-            <p class="muted">Install in {{ detected.browserLabel }} to drive UI checks and capture screenshots.</p>
-            <a class="primary block" :href="recommendedExtensionLink" download>Download for {{ detected.browserLabel }}</a>
-            <p class="tiny muted">Need a different browser? Pick below.</p>
+            <p class="label">{{ t('ux.browser_extension') }}</p>
+            <p class="muted">{{ t('ux.browser_extension_note').replace('{browser}', detected.browserLabel) }}</p>
+            <a class="primary block" :href="recommendedExtensionLink" download>
+              {{ t('ux.download_for').replace('{target}', detected.browserLabel) }}
+            </a>
+            <p class="tiny muted">{{ t('ux.pick_browser') }}</p>
             <div class="download-choices">
               <button v-for="b in browserOptions" :key="b.id" class="ghost" @click="overrideBrowser(b.id)">
                 {{ b.label }}
@@ -32,12 +34,16 @@
             </div>
           </div>
           <div class="download-card">
-            <p class="label">Rust helper</p>
-            <p class="muted">Local daemon for OS-level actions and Playwright control.</p>
-            <a class="primary block" :href="recommendedRustLink" download>Download for {{ detected.osLabel }}</a>
-            <p class="tiny muted">Need a build for your OS? Grab the build kit below.</p>
-            <a class="ghost block" href="/static/u53rxr080t/rust-agent-build-kit.zip" download>Build kit (sources + scripts)</a>
-            <p class="tiny muted">Select another OS if needed.</p>
+            <p class="label">{{ t('ux.rust_helper') }}</p>
+            <p class="muted">{{ t('ux.rust_helper_note') }}</p>
+            <a class="primary block" :href="recommendedRustLink" download>
+              {{ t('ux.download_for').replace('{target}', detected.osLabel) }}
+            </a>
+            <p class="tiny muted">{{ t('ux.pick_os') }}</p>
+            <a class="ghost block" href="/static/u53rxr080t/rust-agent-build-kit.zip" download>
+              {{ t('ux.build_kit') }}
+            </a>
+            <p class="tiny muted">{{ t('ux.pick_os_alt') }}</p>
             <div class="download-choices">
               <button v-for="o in osOptions" :key="o.id" class="ghost" @click="overrideOs(o.id)">
                 {{ o.label }}
@@ -45,42 +51,45 @@
             </div>
           </div>
         </div>
-        <p class="tiny muted">Note: builds are placeholders until packaged artifacts are uploaded.</p>
+        <p class="tiny muted">{{ t('ux.builds_note') }}</p>
       </div>
     </section>
 
     <section class="u53rx__metrics">
       <div class="metric">
-        <p class="label">Agents</p>
+        <p class="label">{{ t('ux.agents') }}</p>
         <p class="value">{{ store.agents.length }}</p>
-        <p class="sub">{{ activeAgents }} active</p>
+        <p class="sub">{{ t('ux.active_count').replace('{count}', String(activeAgents)) }}</p>
       </div>
       <div class="metric">
-        <p class="label">Tasks</p>
+        <p class="label">{{ t('ux.tasks') }}</p>
         <p class="value">{{ store.tasks.length }}</p>
-        <p class="sub">{{ pendingTasks }} pending • {{ inProgressTasks }} in flight</p>
+        <p class="sub">
+          {{ t('ux.pending_count').replace('{count}', String(pendingTasks)) }} •
+          {{ t('ux.in_flight_count').replace('{count}', String(inProgressTasks)) }}
+        </p>
       </div>
       <div class="metric">
-        <p class="label">Findings</p>
+        <p class="label">{{ t('ux.findings') }}</p>
         <p class="value">{{ store.findings.length }}</p>
-        <p class="sub">Most recent {{ recentFindingTime }}</p>
+        <p class="sub">{{ t('ux.most_recent').replace('{time}', recentFindingTime) }}</p>
       </div>
     </section>
 
     <section class="u53rx__grid">
       <div class="panel">
         <div class="panel__header">
-          <h3>Agents</h3>
-          <button class="ghost" @click="store.refreshAll">Refresh</button>
+          <h3>{{ t('ux.agents') }}</h3>
+          <button class="ghost" @click="store.refreshAll">{{ t('common.refresh') }}</button>
         </div>
         <div class="table">
           <div class="table__head">
-            <span>ID</span>
-            <span>Status</span>
-            <span>Platform</span>
-            <span>Last Seen</span>
+            <span>{{ t('ux.id') }}</span>
+            <span>{{ t('common.status') }}</span>
+            <span>{{ t('ux.platform') }}</span>
+            <span>{{ t('ux.last_seen') }}</span>
           </div>
-          <div v-if="!store.agents.length" class="empty">No agents registered yet.</div>
+          <div v-if="!store.agents.length" class="empty">{{ t('ux.no_agents') }}</div>
           <div v-for="agent in store.agents" :key="agent.id" class="table__row">
             <span class="mono">{{ agent.name || agent.id.slice(0, 8) }}</span>
             <span class="status">
@@ -95,27 +104,27 @@
 
       <div class="panel">
         <div class="panel__header">
-          <h3>Tasks</h3>
+          <h3>{{ t('ux.tasks') }}</h3>
           <div class="panel__actions">
             <select v-model="statusFilter" class="input">
-              <option value="">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="in_progress">In progress</option>
-              <option value="done">Done</option>
-              <option value="error">Error</option>
+              <option value="">{{ t('ux.all_statuses') }}</option>
+              <option value="pending">{{ t('ux.status_pending') }}</option>
+              <option value="in_progress">{{ t('ux.status_in_progress') }}</option>
+              <option value="done">{{ t('ux.status_done') }}</option>
+              <option value="error">{{ t('ux.status_error') }}</option>
             </select>
-            <button class="ghost" @click="store.refreshTasks">Reload</button>
+            <button class="ghost" @click="store.refreshTasks">{{ t('common.refresh') }}</button>
           </div>
         </div>
         <div class="table tasks">
           <div class="table__head">
-            <span>Title</span>
-            <span>Status</span>
-            <span>Stage</span>
-            <span>Assignee</span>
-            <span>Updated</span>
+            <span>{{ t('ux.title') }}</span>
+            <span>{{ t('common.status') }}</span>
+            <span>{{ t('ux.stage') }}</span>
+            <span>{{ t('ux.assignee') }}</span>
+            <span>{{ t('ux.updated') }}</span>
           </div>
-          <div v-if="!filteredTasks.length" class="empty">No tasks available.</div>
+          <div v-if="!filteredTasks.length" class="empty">{{ t('ux.no_tasks') }}</div>
           <div v-for="task in filteredTasks" :key="task.id" class="table__row">
             <div>
               <div class="mono">{{ task.title }}</div>
@@ -123,14 +132,14 @@
             </div>
             <div>
               <select class="input input--tight" :value="task.status" @change="(e) => updateStatus(task.id, (e.target as HTMLSelectElement).value)">
-                <option value="pending">Pending</option>
-                <option value="in_progress">In progress</option>
-                <option value="done">Done</option>
-                <option value="error">Error</option>
+                <option value="pending">{{ t('ux.status_pending') }}</option>
+                <option value="in_progress">{{ t('ux.status_in_progress') }}</option>
+                <option value="done">{{ t('ux.status_done') }}</option>
+                <option value="error">{{ t('ux.status_error') }}</option>
               </select>
             </div>
-            <span class="mono">{{ task.stage || 'n/a' }}</span>
-            <span class="mono">{{ task.assigned_to?.slice(0, 8) || '—' }}</span>
+            <span class="mono">{{ task.stage || t('common.na') }}</span>
+            <span class="mono">{{ task.assigned_to?.slice(0, 8) || t('common.na') }}</span>
             <span>{{ formatTime(task.updated_at) }}</span>
           </div>
         </div>
@@ -138,17 +147,17 @@
 
       <div class="panel">
         <div class="panel__header">
-          <h3>Create Task</h3>
-          <button class="ghost" @click="showTaskModal = true">New Task</button>
+          <h3>{{ t('ux.create_task') }}</h3>
+          <button class="ghost" @click="showTaskModal = true">{{ t('ux.new_task') }}</button>
         </div>
-        <p class="muted">Use the modal to add a new task for the UX agents.</p>
+        <p class="muted">{{ t('ux.create_task_hint') }}</p>
         <p v-if="store.error" class="error">{{ store.error }}</p>
       </div>
 
       <div class="panel findings">
         <div class="panel__header">
-          <h3>Findings</h3>
-          <button class="ghost" @click="store.refreshAll">Reload</button>
+          <h3>{{ t('ux.findings') }}</h3>
+          <button class="ghost" @click="store.refreshAll">{{ t('common.refresh') }}</button>
         </div>
         <div class="finding" v-for="finding in store.findings" :key="finding.id">
           <div class="finding__header">
@@ -159,10 +168,10 @@
           <div class="finding__title">{{ finding.title }}</div>
           <div class="finding__body">{{ finding.summary }}</div>
           <div v-if="finding.screenshot_url" class="finding__screenshot">
-            <a :href="finding.screenshot_url" target="_blank" rel="noreferrer">View screenshot</a>
+            <a :href="finding.screenshot_url" target="_blank" rel="noreferrer">{{ t('ux.view_screenshot') }}</a>
           </div>
         </div>
-        <div v-if="!store.findings.length" class="empty">No findings yet.</div>
+        <div v-if="!store.findings.length" class="empty">{{ t('ux.no_findings') }}</div>
       </div>
     </section>
 
@@ -170,30 +179,30 @@
       <div class="modal-card">
         <header>
           <div>
-            <h3>New Task</h3>
-            <p class="muted">Provide a short objective and optional URL.</p>
+            <h3>{{ t('ux.new_task') }}</h3>
+            <p class="muted">{{ t('ux.new_task_hint') }}</p>
           </div>
         </header>
         <form class="form" @submit.prevent="submitTask">
           <label>
-            <span>Title</span>
-            <input v-model="form.title" class="input" placeholder="Walk navigation" required />
+            <span>{{ t('ux.title') }}</span>
+            <input v-model="form.title" class="input" :placeholder="t('ux.placeholder_title')" required />
           </label>
           <label>
-            <span>Description</span>
-            <textarea v-model="form.description" class="input" rows="3" placeholder="Open each nav item and capture screenshot" />
+            <span>{{ t('ux.description') }}</span>
+            <textarea v-model="form.description" class="input" rows="3" :placeholder="t('ux.placeholder_description')" />
           </label>
           <label>
-            <span>Target URL (optional)</span>
-            <input v-model="form.target_url" class="input" placeholder="http://127.0.0.1:8000/pipeline" />
+            <span>{{ t('ux.target_url') }}</span>
+            <input v-model="form.target_url" class="input" :placeholder="t('ux.placeholder_url')" />
           </label>
           <label>
-            <span>Stage</span>
-            <input v-model="form.stage" class="input" placeholder="overview" />
+            <span>{{ t('ux.stage') }}</span>
+            <input v-model="form.stage" class="input" :placeholder="t('ux.placeholder_stage')" />
           </label>
           <div class="actions">
-            <button type="submit" class="primary">Save</button>
-            <button type="button" class="ghost" @click="closeTaskModal">Cancel</button>
+            <button type="submit" class="primary">{{ t('common.save') }}</button>
+            <button type="button" class="ghost" @click="closeTaskModal">{{ t('common.cancel') }}</button>
           </div>
           <p v-if="store.error" class="error">{{ store.error }}</p>
         </form>
@@ -205,14 +214,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useUxRobotStore } from '@/stores/u53rxr080t';
+import { t } from '@/i18n';
 
 const store = useUxRobotStore();
 const statusFilter = ref('');
 const form = reactive({
-  title: 'UX sweep',
+  title: t('ux.default_title'),
   description: '',
   target_url: '',
-  stage: 'overview',
+  stage: t('ux.default_stage'),
 });
 const showTaskModal = ref(false);
 
@@ -221,18 +231,18 @@ let timer: ReturnType<typeof setInterval> | null = null;
 type OsId = 'windows' | 'mac' | 'linux' | 'unknown';
 type BrowserId = 'chrome' | 'edge' | 'firefox' | 'safari' | 'unknown';
 
-const osOptions = [
-  { id: 'windows' as OsId, label: 'Windows' },
-  { id: 'mac' as OsId, label: 'macOS' },
-  { id: 'linux' as OsId, label: 'Linux' },
-];
+const osOptions = computed(() => [
+  { id: 'windows' as OsId, label: t('common.windows') },
+  { id: 'mac' as OsId, label: t('common.macos') },
+  { id: 'linux' as OsId, label: t('common.linux') },
+]);
 
-const browserOptions = [
-  { id: 'chrome' as BrowserId, label: 'Chrome' },
-  { id: 'edge' as BrowserId, label: 'Edge' },
-  { id: 'firefox' as BrowserId, label: 'Firefox' },
-  { id: 'safari' as BrowserId, label: 'Safari' },
-];
+const browserOptions = computed(() => [
+  { id: 'chrome' as BrowserId, label: t('common.chrome') },
+  { id: 'edge' as BrowserId, label: t('common.edge') },
+  { id: 'firefox' as BrowserId, label: t('common.firefox') },
+  { id: 'safari' as BrowserId, label: t('common.safari') },
+]);
 
 const manualBrowser = ref<BrowserId>('unknown');
 const manualOs = ref<OsId>('unknown');
@@ -243,12 +253,12 @@ const filteredTasks = computed(() => {
 });
 
 const summaryText = computed(() => {
-  if (store.loading) return 'Loading…';
-  if (store.error) return 'Attention needed';
-  if (!store.tasks.length) return 'Awaiting tasks';
-  if (store.tasks.some((t) => t.status === 'error')) return 'Issues detected';
-  if (store.tasks.some((t) => t.status === 'in_progress')) return 'Working';
-  return 'Ready';
+  if (store.loading) return t('ux.summary_loading');
+  if (store.error) return t('ux.summary_attention');
+  if (!store.tasks.length) return t('ux.summary_awaiting');
+  if (store.tasks.some((t) => t.status === 'error')) return t('ux.summary_issues');
+  if (store.tasks.some((t) => t.status === 'in_progress')) return t('ux.summary_working');
+  return t('ux.summary_ready');
 });
 
 const intentClass = computed(() => {
@@ -259,11 +269,11 @@ const intentClass = computed(() => {
 });
 
 const lastUpdatedText = computed(() => {
-  if (!store.lastUpdated) return 'just now';
+  if (!store.lastUpdated) return t('common.just_now');
   const seconds = Math.max(1, Math.round((Date.now() - store.lastUpdated) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 60) return t('common.seconds_ago').replace('{count}', String(seconds));
   const minutes = Math.round(seconds / 60);
-  return `${minutes}m ago`;
+  return t('common.minutes_ago').replace('{count}', String(minutes));
 });
 
 const activeAgents = computed(() =>
@@ -272,7 +282,7 @@ const activeAgents = computed(() =>
 const pendingTasks = computed(() => store.tasks.filter((t) => t.status === 'pending').length);
 const inProgressTasks = computed(() => store.tasks.filter((t) => t.status === 'in_progress').length);
 const recentFindingTime = computed(() => {
-  if (!store.findings.length) return '—';
+  if (!store.findings.length) return t('common.na');
   return formatTime(store.findings[0].created_at);
 });
 
@@ -284,7 +294,7 @@ function statusDot(status: string | undefined) {
 }
 
 function formatTime(value: any) {
-  if (!value) return '—';
+  if (!value) return t('common.na');
   try {
     const dt = new Date(value);
     return dt.toLocaleString();
@@ -313,8 +323,8 @@ const detected = computed(() => {
   const env = detectEnvironment();
   const os = manualOs.value !== 'unknown' ? manualOs.value : env.os;
   const browser = manualBrowser.value !== 'unknown' ? manualBrowser.value : env.browser;
-  const osLabel = osOptions.find((o) => o.id === os)?.label || 'your OS';
-  const browserLabel = browserOptions.find((b) => b.id === browser)?.label || 'your browser';
+  const osLabel = osOptions.value.find((o) => o.id === os)?.label || t('ux.your_os');
+  const browserLabel = browserOptions.value.find((b) => b.id === browser)?.label || t('ux.your_browser');
   return { ...env, os, browser, osLabel, browserLabel };
 });
 

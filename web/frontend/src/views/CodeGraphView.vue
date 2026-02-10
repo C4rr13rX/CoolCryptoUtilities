@@ -3,18 +3,18 @@
     <section class="panel toolbar">
       <div class="controls">
         <button class="btn" type="button" @click="refreshGraph(true)" :disabled="loading || building">
-          <span v-if="loading">Loading…</span>
-          <span v-else-if="building">Building…</span>
-          <span v-else>Refresh Graph</span>
+          <span v-if="loading">{{ t('codegraph.loading') }}</span>
+          <span v-else-if="building">{{ t('codegraph.building') }}</span>
+          <span v-else>{{ t('codegraph.refresh') }}</span>
         </button>
         <button class="btn ghost" type="button" @click="resetView" :disabled="loading">
-          Reset View
+          {{ t('codegraph.reset_view') }}
         </button>
         <button class="btn warning" type="button" @click="captureSnapshots('warnings')" :disabled="capturing || !graphReady">
-          Snapshot Warnings
+          {{ t('codegraph.snapshot_warnings') }}
         </button>
         <button class="btn danger" type="button" @click="captureSnapshots('errors')" :disabled="capturing || !graphReady">
-          Snapshot Errors
+          {{ t('codegraph.snapshot_errors') }}
         </button>
       </div>
       <div class="loading-bar" v-if="loading || building || loadingProgress > 0">
@@ -31,23 +31,23 @@
       </div>
       <div class="summary">
         <div>
-          <span class="label">Files</span>
+          <span class="label">{{ t('codegraph.files') }}</span>
           <span class="value">{{ summary.files || 0 }}</span>
         </div>
         <div>
-          <span class="label">Classes</span>
+          <span class="label">{{ t('codegraph.classes') }}</span>
           <span class="value">{{ summary.classes || 0 }}</span>
         </div>
         <div>
-          <span class="label">Functions</span>
+          <span class="label">{{ t('codegraph.functions') }}</span>
           <span class="value">{{ summary.functions || 0 }}</span>
         </div>
         <div>
-          <span class="label">Warnings</span>
+          <span class="label">{{ t('codegraph.warnings') }}</span>
           <span class="value warn">{{ warnings.length }}</span>
         </div>
         <div>
-          <span class="label">Errors</span>
+          <span class="label">{{ t('codegraph.errors') }}</span>
           <span class="value error">{{ errors.length }}</span>
         </div>
       </div>
@@ -121,7 +121,7 @@
       <div v-if="graphError" class="hint hint-error">
         {{ graphError }}
       </div>
-      <div v-else-if="!graphReady" class="hint">Graph data will appear here once loaded.</div>
+      <div v-else-if="!graphReady" class="hint">{{ t('codegraph.hint_ready') }}</div>
     </section>
   </div>
 </template>
@@ -131,6 +131,7 @@ import { onBeforeUnmount, onMounted, ref, nextTick, watch, computed } from 'vue'
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { fetchCodeGraph, fetchCodeGraphFiles, uploadCodeGraphSnapshot } from '@/api';
+import { t } from '@/i18n';
 
 type GraphNodePayload = {
   id: string;
@@ -181,8 +182,8 @@ const fileNames = ref<string[]>([]);
 const currentFileName = ref('');
 const loadingProgress = ref(0);
 const loadingPhase = ref<'idle' | 'loading' | 'building' | 'done'>('idle');
-const loadingLabel = ref('Idle');
-const buildingLabel = ref('Awaiting build plan…');
+const loadingLabel = ref(t('codegraph.idle'));
+const buildingLabel = ref(t('codegraph.awaiting_plan'));
 const recentFiles = ref<string[]>([]);
 
 let renderer: THREE.WebGLRenderer | null = null;
@@ -241,12 +242,12 @@ const LABEL_CANVAS_WIDTH = 768;
 const LABEL_CANVAS_HEIGHT = 256;
 const MAX_LABEL_LINES = 3;
 const BUILDING_MESSAGES = [
-  'Linking call graph…',
-  'Resolving class hierarchies…',
-  'Indexing functions…',
-  'Scoring unused definitions…',
-  'Drawing flow channels…',
-  'Assembling viewport chunks…',
+  t('codegraph.build_linking'),
+  t('codegraph.build_resolving'),
+  t('codegraph.build_indexing'),
+  t('codegraph.build_scoring'),
+  t('codegraph.build_drawing'),
+  t('codegraph.build_assembling'),
 ];
 
 async function refreshGraph(force = false) {
@@ -271,21 +272,20 @@ async function refreshGraph(force = false) {
         // eslint-disable-next-line no-console
         console.error('[codegraph] failed to render scene', error);
         graphReady.value = false;
-        graphError.value = 'Unable to render graph canvas. Refresh to retry.';
+        graphError.value = t('codegraph.error_render');
       }
     } else {
       if (building.value) {
-        graphError.value = 'Graph build still running… please wait while dependencies are scanned.';
+        graphError.value = t('codegraph.build_pending');
       } else {
-        graphError.value =
-          graphError.value || 'No code artifacts detected. Trigger a refresh build to regenerate the diagram.';
+        graphError.value = graphError.value || t('codegraph.no_artifacts');
       }
       await resetView();
     }
     schedulePoll();
   } catch (error: any) {
     const friendly = describeGraphError(error);
-    loadingLabel.value = 'Awaiting graph response…';
+    loadingLabel.value = t('codegraph.awaiting_response');
     buildingLabel.value = friendly;
     graphError.value = friendly;
     schedulePoll();
@@ -479,7 +479,13 @@ function createFileMesh(node: GraphNodePayload, position: THREE.Vector3, ioStats
   mesh.position.y = 6;
   mesh.userData = { node };
   const stats = aggregateFileStats(node);
-  const label = createLabelPlane(node.label, `classes ${stats.classes} · functions ${stats.functions}`, width - 30);
+  const label = createLabelPlane(
+    node.label,
+    t('codegraph.label_classes')
+      .replace('{classes}', String(stats.classes))
+      .replace('{functions}', String(stats.functions)),
+    width - 30
+  );
   mesh.add(label);
   const dots = createIoDots(getIoStats(ioStats, node.id), width - 40);
   mesh.add(dots);
@@ -534,7 +540,9 @@ function createFlowNodeMesh(node: GraphNodePayload, position: THREE.Vector3, ioS
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.copy(position);
   mesh.userData = { node };
-  const subtitle = `IN ${stats.inbound} · OUT ${stats.outbound}`;
+  const subtitle = t('codegraph.io_stats')
+    .replace('{in}', String(stats.inbound))
+    .replace('{out}', String(stats.outbound));
   const label = createLabelPlane(node.label, subtitle, labelWidth);
   mesh.add(label);
   const dots = createIoDots(stats, labelWidth - 12);
@@ -1060,13 +1068,15 @@ function startLoadingTicker() {
   if (loadingTimer) return;
   loadingTimer = window.setInterval(() => {
     if (!fileNames.value.length) {
-      currentFileName.value = 'Scanning project…';
+      currentFileName.value = t('codegraph.scanning');
     } else {
       currentFileName.value = fileNames.value[fileIndex % fileNames.value.length];
       fileIndex += 1;
     }
     if (loadingPhase.value === 'loading') {
-      loadingLabel.value = currentFileName.value ? `Loading ${currentFileName.value}` : 'Scanning project…';
+      loadingLabel.value = currentFileName.value
+        ? t('codegraph.loading_file').replace('{file}', currentFileName.value)
+        : t('codegraph.scanning');
       pushRecentFile(currentFileName.value);
     }
   }, 25);
@@ -1089,8 +1099,8 @@ function setPhase(state: 'idle' | 'loading' | 'building' | 'done') {
   phaseStart = performance.now();
   if (state === 'loading') {
     loadingProgress.value = 0;
-    loadingLabel.value = currentFileName.value || 'Scanning project…';
-    buildingLabel.value = 'Preparing build schematic…';
+    loadingLabel.value = currentFileName.value || t('codegraph.scanning');
+    buildingLabel.value = t('codegraph.preparing_build');
     recentFiles.value = [];
     stopBuildingLabelTicker();
   } else if (state === 'building') {
@@ -1098,8 +1108,8 @@ function setPhase(state: 'idle' | 'loading' | 'building' | 'done') {
     startBuildingLabelTicker();
   } else if (state === 'done') {
     stopBuildingLabelTicker();
-    buildingLabel.value = 'Graph up to date.';
-    loadingLabel.value = 'Idle';
+    buildingLabel.value = t('codegraph.up_to_date');
+    loadingLabel.value = t('codegraph.idle');
     currentFileName.value = '';
     loadingProgress.value = 1;
     stopProgressLoop();
@@ -1138,7 +1148,7 @@ function updateProgress() {
   if (loadingPhase.value === 'loading') {
     const pct = Math.min(elapsed / LOADING_EXPECTED_MS, 1);
     loadingProgress.value = Math.min(pct * 0.6, 0.6);
-    loadingLabel.value = currentFileName.value || 'Scanning project…';
+    loadingLabel.value = currentFileName.value || t('codegraph.scanning');
   } else if (loadingPhase.value === 'building') {
     const pct = Math.min(elapsed / BUILD_EXPECTED_MS, 1);
     loadingProgress.value = 0.6 + pct * 0.38;
@@ -1252,23 +1262,23 @@ function nextFrame() {
 function describeGraphError(error: any): string {
   if (error?.code === 'ECONNABORTED') {
     const timeout = error?.config?.timeout ? `${error.config.timeout}ms` : 'the request';
-    return `Graph API timed out after ${timeout}. Retrying shortly…`;
+    return t('codegraph.timeout').replace('{timeout}', timeout);
   }
   if (error?.response) {
     const status = error.response.status;
     if (status === 403) {
-      return 'Session expired. Please sign in again to view the code graph.';
+      return t('codegraph.error_session');
     }
     if (status === 404) {
-      return 'Code graph endpoint unavailable (404). Verify the backend routes.';
+      return t('codegraph.error_404');
     }
-    return `Graph API responded with ${status}. Retrying shortly…`;
+    return t('codegraph.error_status').replace('{status}', String(status));
   }
   if (error?.request) {
-    return 'Unable to reach the code graph API. Check that the server is running.';
+    return t('codegraph.error_unreachable');
   }
-  const message = typeof error?.message === 'string' ? error.message : 'Unknown error';
-  return `Code graph request failed: ${message}`;
+  const message = typeof error?.message === 'string' ? error.message : t('codegraph.error_unknown');
+  return t('codegraph.error_request').replace('{message}', message);
 }
 
 function resolveNodeFromObject(object: THREE.Object3D | null): GraphNodePayload | null {

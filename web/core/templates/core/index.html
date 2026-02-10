@@ -327,7 +327,6 @@
                   name="language"
                   class="lang-select"
                   data-flag="{% if current_language|default:'en'|slice:':2' == 'en' %}us{% endif %}"
-                  onchange="this.form.submit()"
                 >
                   {% for opt in language_options %}
                     <option value="{{ opt.code }}" data-flag="{{ opt.flag }}" {% if opt.code == current_language %}selected{% endif %}>
@@ -392,6 +391,7 @@
           (() => {
             const select = document.getElementById('language-select');
             if (!select) return;
+            const form = select.form;
             const applyLang = (value, flag) => {
               if (value) {
                 document.documentElement.setAttribute('lang', value);
@@ -399,21 +399,25 @@
                 if (appRoot) {
                   appRoot.dataset.language = value;
                 }
+                if (window.ccuSetLanguage) {
+                  window.ccuSetLanguage(value);
+                }
                 try {
                   localStorage.setItem('ccu.language', value);
                 } catch (err) {
                   // ignore
                 }
               }
-              if (flag) {
-                select.dataset.flag = flag;
-              }
+              select.dataset.flag = flag || '';
             };
             const selected = select.options[select.selectedIndex];
             applyLang(select.value, selected?.dataset?.flag);
             select.addEventListener('change', () => {
               const opt = select.options[select.selectedIndex];
               applyLang(select.value, opt?.dataset?.flag);
+              if (form) {
+                form.submit();
+              }
             });
           })();
         </script>
@@ -493,6 +497,7 @@
     </script>
     <script>
       (() => {
+        if (document.getElementById('app')) return;
         const canvas = document.getElementById('matrix-bg');
         if (!canvas || !canvas.getContext) return;
         const ctx = canvas.getContext('2d');
@@ -660,6 +665,7 @@
     </script>
     <script>
       (() => {
+        if (document.getElementById('app')) return;
         const canvas = document.getElementById('starfield-bg');
         if (!canvas || !canvas.getContext) return;
         const ctx = canvas.getContext('2d');

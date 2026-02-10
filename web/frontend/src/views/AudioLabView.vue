@@ -3,34 +3,34 @@
     <section class="panel">
       <header>
         <div>
-          <h1>Audio Lab</h1>
-          <p>Ambient drone + reactive chord pulses for the control tower.</p>
+          <h1>{{ t('audio.title') }}</h1>
+          <p>{{ t('audio.subtitle') }}</p>
         </div>
         <div class="header-actions">
           <button class="btn" type="button" @click="toggleAudio">
-            {{ enabled ? 'Disable Audio' : 'Enable Audio' }}
+            {{ enabled ? t('audio.disable') : t('audio.enable') }}
           </button>
           <button class="btn ghost" type="button" @click="playChord" :disabled="!enabled">
-            Trigger Chord
+            {{ t('audio.trigger_chord') }}
           </button>
         </div>
       </header>
 
       <div class="status-grid">
         <div class="status-card">
-          <span class="label">Status</span>
-          <span class="value">{{ enabled ? 'Active' : 'Idle' }}</span>
+          <span class="label">{{ t('common.status') }}</span>
+          <span class="value">{{ enabled ? t('common.active') : t('common.idle') }}</span>
         </div>
         <div class="status-card">
-          <span class="label">Chord preset</span>
+          <span class="label">{{ t('audio.chord_preset') }}</span>
           <span class="value">{{ settings.chordPreset }}</span>
         </div>
         <div class="status-card">
-          <span class="label">Key</span>
+          <span class="label">{{ t('audio.key') }}</span>
           <span class="value">{{ keyLabel }}</span>
         </div>
         <div class="status-card">
-          <span class="label">Genre</span>
+          <span class="label">{{ t('audio.genre') }}</span>
           <span class="value">{{ genre }}</span>
         </div>
       </div>
@@ -38,125 +38,125 @@
 
     <section class="panel">
       <header>
-        <h2>Drone Controls</h2>
-        <p>Adjust the ambient layer and the reactive chord envelope.</p>
+        <h2>{{ t('audio.drone_controls') }}</h2>
+        <p>{{ t('audio.drone_subtitle') }}</p>
       </header>
       <div class="controls-grid">
         <label>
-          <span>Base Frequency (Hz)</span>
+          <span>{{ t('audio.base_frequency') }}</span>
           <input v-model.number="settings.baseFreq" type="range" min="48" max="196" step="1" />
           <span class="value">{{ settings.baseFreq.toFixed(0) }}</span>
         </label>
         <label>
-          <span>Binaural Detune (Hz)</span>
+          <span>{{ t('audio.binaural_detune') }}</span>
           <input v-model.number="settings.detuneHz" type="range" min="0" max="12" step="0.5" />
           <span class="value">{{ settings.detuneHz.toFixed(1) }}</span>
         </label>
         <label>
-          <span>Drone Gain</span>
+          <span>{{ t('audio.drone_gain') }}</span>
           <input v-model.number="settings.gain" type="range" min="0.04" max="0.4" step="0.01" />
           <span class="value">{{ settings.gain.toFixed(2) }}</span>
         </label>
         <label>
-          <span>Pulse LFO Rate (Hz)</span>
+          <span>{{ t('audio.lfo_rate') }}</span>
           <input v-model.number="settings.lfoRate" type="range" min="0.02" max="0.4" step="0.01" />
           <span class="value">{{ settings.lfoRate.toFixed(2) }}</span>
         </label>
         <label>
-          <span>LFO Depth</span>
+          <span>{{ t('audio.lfo_depth') }}</span>
           <input v-model.number="settings.lfoDepth" type="range" min="0.02" max="0.35" step="0.01" />
           <span class="value">{{ settings.lfoDepth.toFixed(2) }}</span>
         </label>
         <label>
-          <span>Chord Gain</span>
+          <span>{{ t('audio.chord_gain') }}</span>
           <input v-model.number="settings.chordGain" type="range" min="0.05" max="0.5" step="0.01" />
           <span class="value">{{ settings.chordGain.toFixed(2) }}</span>
         </label>
         <label>
-          <span>Attack (s)</span>
+          <span>{{ t('audio.attack') }}</span>
           <input v-model.number="settings.attack" type="range" min="0.01" max="0.2" step="0.01" />
           <span class="value">{{ settings.attack.toFixed(2) }}</span>
         </label>
         <label>
-          <span>Decay (s)</span>
+          <span>{{ t('audio.decay') }}</span>
           <input v-model.number="settings.decay" type="range" min="1" max="6" step="0.1" />
           <span class="value">{{ settings.decay.toFixed(1) }}</span>
         </label>
         <label>
-          <span>Chord Duration (s)</span>
+          <span>{{ t('audio.chord_duration') }}</span>
           <input v-model.number="settings.chordDuration" type="range" min="1" max="6" step="0.1" />
           <span class="value">{{ settings.chordDuration.toFixed(1) }}</span>
         </label>
         <label>
-          <span>Chord Preset</span>
+          <span>{{ t('audio.chord_preset') }}</span>
           <select v-model="settings.chordPreset">
-            <option value="dream_minor">dream_minor</option>
-            <option value="soft_major">soft_major</option>
-            <option value="suspended">suspended</option>
-            <option value="shimmer">shimmer</option>
+            <option value="dream_minor">{{ t('audio.preset_dream_minor') }}</option>
+            <option value="soft_major">{{ t('audio.preset_soft_major') }}</option>
+            <option value="suspended">{{ t('audio.preset_suspended') }}</option>
+            <option value="shimmer">{{ t('audio.preset_shimmer') }}</option>
           </select>
         </label>
         <label>
-          <span>Background Source</span>
+          <span>{{ t('audio.background_source') }}</span>
           <select v-model="settings.backgroundSource">
-            <option value="drone">drone</option>
-            <option value="midi" :disabled="!midiAvailable">midi file</option>
+            <option value="drone">{{ t('audio.source_drone') }}</option>
+            <option value="midi" :disabled="!midiAvailable">{{ t('audio.source_midi') }}</option>
           </select>
         </label>
         <label>
-          <span>Drone Waveform</span>
+          <span>{{ t('audio.drone_waveform') }}</span>
           <select v-model="settings.droneWaveform">
-            <option value="sine">sine</option>
-            <option value="triangle">triangle</option>
-            <option value="square">square</option>
-            <option value="sawtooth">sawtooth</option>
+            <option value="sine">{{ t('audio.wave_sine') }}</option>
+            <option value="triangle">{{ t('audio.wave_triangle') }}</option>
+            <option value="square">{{ t('audio.wave_square') }}</option>
+            <option value="sawtooth">{{ t('audio.wave_sawtooth') }}</option>
           </select>
         </label>
         <label>
-          <span>Chord Waveform</span>
+          <span>{{ t('audio.chord_waveform') }}</span>
           <select v-model="settings.chordWaveform">
-            <option value="sine">sine</option>
-            <option value="triangle">triangle</option>
-            <option value="square">square</option>
-            <option value="sawtooth">sawtooth</option>
+            <option value="sine">{{ t('audio.wave_sine') }}</option>
+            <option value="triangle">{{ t('audio.wave_triangle') }}</option>
+            <option value="square">{{ t('audio.wave_square') }}</option>
+            <option value="sawtooth">{{ t('audio.wave_sawtooth') }}</option>
           </select>
         </label>
         <label>
-          <span>MIDI Waveform</span>
+          <span>{{ t('audio.midi_waveform') }}</span>
           <select v-model="settings.midiWaveform">
-            <option value="sine">sine</option>
-            <option value="triangle">triangle</option>
-            <option value="square">square</option>
-            <option value="sawtooth">sawtooth</option>
+            <option value="sine">{{ t('audio.wave_sine') }}</option>
+            <option value="triangle">{{ t('audio.wave_triangle') }}</option>
+            <option value="square">{{ t('audio.wave_square') }}</option>
+            <option value="sawtooth">{{ t('audio.wave_sawtooth') }}</option>
           </select>
         </label>
         <label>
-          <span>MIDI Gain</span>
+          <span>{{ t('audio.midi_gain') }}</span>
           <input v-model.number="settings.midiGain" type="range" min="0" max="0.5" step="0.01" />
           <span class="value">{{ settings.midiGain.toFixed(2) }}</span>
         </label>
         <label>
-          <span>Chord Gate Mode</span>
+          <span>{{ t('audio.chord_gate_mode') }}</span>
           <select v-model="settings.chordGateMode">
-            <option value="off">off</option>
-            <option value="pattern">pattern (1/16)</option>
+            <option value="off">{{ t('audio.gate_off') }}</option>
+            <option value="pattern">{{ t('audio.gate_pattern') }}</option>
           </select>
         </label>
         <label>
-          <span>Chord Gate BPM</span>
+          <span>{{ t('audio.chord_gate_bpm') }}</span>
           <input v-model.number="settings.chordGateBpm" type="range" min="40" max="160" step="1" />
           <span class="value">{{ settings.chordGateBpm.toFixed(0) }}</span>
         </label>
         <label>
-          <span>Chord Gate Depth</span>
+          <span>{{ t('audio.chord_gate_depth') }}</span>
           <input v-model.number="settings.chordGateDepth" type="range" min="0" max="1" step="0.05" />
           <span class="value">{{ settings.chordGateDepth.toFixed(2) }}</span>
         </label>
         <div class="gate-pattern">
           <div class="gate-pattern-header">
-            <span>Chord Gate Pattern (16th Notes)</span>
+            <span>{{ t('audio.chord_gate_pattern') }}</span>
             <button class="btn ghost" type="button" @click="resetChordGatePattern">
-              Reset Pattern
+              {{ t('audio.reset_pattern') }}
             </button>
           </div>
           <div class="gate-grid">
@@ -177,27 +177,27 @@
           </div>
         </div>
         <label>
-          <span>Drone Gate Mode</span>
+          <span>{{ t('audio.drone_gate_mode') }}</span>
           <select v-model="settings.droneGateMode">
-            <option value="off">off</option>
-            <option value="pattern">pattern (1/16)</option>
+            <option value="off">{{ t('audio.gate_off') }}</option>
+            <option value="pattern">{{ t('audio.gate_pattern') }}</option>
           </select>
         </label>
         <label>
-          <span>Drone Gate BPM</span>
+          <span>{{ t('audio.drone_gate_bpm') }}</span>
           <input v-model.number="settings.droneGateBpm" type="range" min="40" max="160" step="1" />
           <span class="value">{{ settings.droneGateBpm.toFixed(0) }}</span>
         </label>
         <label>
-          <span>Drone Gate Depth</span>
+          <span>{{ t('audio.drone_gate_depth') }}</span>
           <input v-model.number="settings.droneGateDepth" type="range" min="0" max="1" step="0.05" />
           <span class="value">{{ settings.droneGateDepth.toFixed(2) }}</span>
         </label>
         <div class="gate-pattern">
           <div class="gate-pattern-header">
-            <span>Drone Gate Pattern (16th Notes)</span>
+            <span>{{ t('audio.drone_gate_pattern') }}</span>
             <button class="btn ghost" type="button" @click="resetDroneGatePattern">
-              Reset Pattern
+              {{ t('audio.reset_pattern') }}
             </button>
           </div>
           <div class="gate-grid">
@@ -218,27 +218,27 @@
           </div>
         </div>
         <label>
-          <span>MIDI Gate Mode</span>
+          <span>{{ t('audio.midi_gate_mode') }}</span>
           <select v-model="settings.midiGateMode">
-            <option value="off">off</option>
-            <option value="pattern">pattern (1/16)</option>
+            <option value="off">{{ t('audio.gate_off') }}</option>
+            <option value="pattern">{{ t('audio.gate_pattern') }}</option>
           </select>
         </label>
         <label>
-          <span>MIDI Gate BPM</span>
+          <span>{{ t('audio.midi_gate_bpm') }}</span>
           <input v-model.number="settings.midiGateBpm" type="range" min="40" max="160" step="1" />
           <span class="value">{{ settings.midiGateBpm.toFixed(0) }}</span>
         </label>
         <label>
-          <span>MIDI Gate Depth</span>
+          <span>{{ t('audio.midi_gate_depth') }}</span>
           <input v-model.number="settings.midiGateDepth" type="range" min="0" max="1" step="0.05" />
           <span class="value">{{ settings.midiGateDepth.toFixed(2) }}</span>
         </label>
         <div class="gate-pattern">
           <div class="gate-pattern-header">
-            <span>MIDI Gate Pattern (16th Notes)</span>
+            <span>{{ t('audio.midi_gate_pattern') }}</span>
             <button class="btn ghost" type="button" @click="resetMidiGatePattern">
-              Reset Pattern
+              {{ t('audio.reset_pattern') }}
             </button>
           </div>
           <div class="gate-grid">
@@ -259,38 +259,37 @@
           </div>
         </div>
         <label>
-          <span>Key Root</span>
+          <span>{{ t('audio.key_root') }}</span>
           <select v-model="settings.keyRoot">
             <option v-for="note in keyRoots" :key="note" :value="note">{{ note }}</option>
           </select>
         </label>
         <label>
-          <span>Key Mode</span>
+          <span>{{ t('audio.key_mode') }}</span>
           <select v-model="settings.keyMode">
-            <option value="major">major</option>
-            <option value="minor">minor</option>
+            <option value="major">{{ t('audio.key_major') }}</option>
+            <option value="minor">{{ t('audio.key_minor') }}</option>
           </select>
         </label>
         <label>
-          <span>Genre Hint (stored only)</span>
-          <input v-model="genre" type="text" placeholder="ambient, synthwave…" />
+          <span>{{ t('audio.genre_hint') }}</span>
+          <input v-model="genre" type="text" :placeholder="t('audio.genre_placeholder')" />
         </label>
         <label>
-          <span>MIDI Background (stored only)</span>
+          <span>{{ t('audio.midi_background') }}</span>
           <input type="file" accept=".mid,.midi" @change="handleMidi" />
           <span class="value">{{ midiLabel }}</span>
         </label>
       </div>
       <p class="muted note">
-        The current engine is a local Web Audio synth. You can still store genre/MIDI choices now,
-        and we can wire them into a local AI model pipeline next.
+        {{ t('audio.engine_note') }}
       </p>
     </section>
 
     <section class="panel">
       <header>
-        <h2>Section Chords</h2>
-        <p>Assign a motif to each section and click type. Each click will cycle its melody.</p>
+        <h2>{{ t('audio.section_chords') }}</h2>
+        <p>{{ t('audio.section_subtitle') }}</p>
       </header>
       <div class="sound-grid">
         <label v-for="target in soundTargets" :key="target.id">
@@ -301,7 +300,7 @@
         </label>
       </div>
       <div class="sound-actions">
-        <button class="btn ghost" type="button" @click="resetSoundMap">Reset Defaults</button>
+        <button class="btn ghost" type="button" @click="resetSoundMap">{{ t('audio.reset_defaults') }}</button>
       </div>
     </section>
   </div>
@@ -317,6 +316,7 @@ import {
   AmbientSettings,
   SoundMap,
 } from '@/audio/ambient';
+import { t } from '@/i18n';
 
 const enabled = ref(false);
 const settings = reactive<AmbientSettings>({
@@ -333,35 +333,35 @@ const keyRoots = ['C', 'C#', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'Ab', '
 const motifOptions = MOTIF_NAMES;
 const midiAvailable = computed(() => Boolean(midiFile.value));
 
-const soundTargets = [
-  { id: 'section:dashboard', label: 'Overview' },
-  { id: 'section:organism', label: 'Organism' },
-  { id: 'section:pipeline', label: 'Pipeline' },
-  { id: 'section:streams', label: 'Streams' },
-  { id: 'section:telemetry', label: 'Telemetry' },
-  { id: 'section:wallet', label: 'Wallet' },
-  { id: 'section:c0d3r', label: 'c0d3r' },
-  { id: 'section:addressbook', label: 'Address Book' },
-  { id: 'section:advisories', label: 'Advisories' },
-  { id: 'section:datalab', label: 'Data Lab' },
-  { id: 'section:lab', label: 'Model Lab' },
-  { id: 'section:guardian', label: 'Guardian' },
-  { id: 'section:codegraph', label: 'Code Graph' },
-  { id: 'section:integrations', label: 'API Integrations' },
-  { id: 'section:settings', label: 'Settings' },
-  { id: 'section:audiolab', label: 'Audio Lab' },
-  { id: 'section:u53rxr080t', label: 'U53RxR080T' },
-  { id: 'section:branddozer', label: 'BrandDozer' },
-  { id: 'section:branddozer_solo', label: 'BrandDozer Solo' },
-  { id: 'action', label: 'Primary actions' },
-  { id: 'link', label: 'Links / Ghost buttons' },
-  { id: 'toggle', label: 'Toggles' },
-  { id: 'warning', label: 'Warning buttons' },
-  { id: 'danger', label: 'Danger buttons' },
-  { id: 'confirm', label: 'Confirm actions' },
-];
+const soundTargets = computed(() => [
+  { id: 'section:dashboard', label: t('nav.overview') },
+  { id: 'section:organism', label: t('nav.organism') },
+  { id: 'section:pipeline', label: t('nav.pipeline') },
+  { id: 'section:streams', label: t('nav.streams') },
+  { id: 'section:telemetry', label: t('nav.telemetry') },
+  { id: 'section:wallet', label: t('nav.wallet') },
+  { id: 'section:c0d3r', label: t('nav.c0d3r') },
+  { id: 'section:addressbook', label: t('nav.addressbook') },
+  { id: 'section:advisories', label: t('nav.advisories') },
+  { id: 'section:datalab', label: t('nav.datalab') },
+  { id: 'section:lab', label: t('nav.lab') },
+  { id: 'section:guardian', label: t('nav.guardian') },
+  { id: 'section:codegraph', label: t('nav.codegraph') },
+  { id: 'section:integrations', label: t('nav.integrations') },
+  { id: 'section:settings', label: t('nav.settings') },
+  { id: 'section:audiolab', label: t('nav.audiolab') },
+  { id: 'section:u53rxr080t', label: t('nav.u53rxr080t') },
+  { id: 'section:branddozer', label: t('nav.branddozer') },
+  { id: 'section:branddozer_solo', label: t('audio.branddozer_solo') },
+  { id: 'action', label: t('audio.sound_primary') },
+  { id: 'link', label: t('audio.sound_links') },
+  { id: 'toggle', label: t('audio.sound_toggles') },
+  { id: 'warning', label: t('audio.sound_warning') },
+  { id: 'danger', label: t('audio.sound_danger') },
+  { id: 'confirm', label: t('audio.sound_confirm') },
+]);
 
-const midiLabel = computed(() => (midiFile.value ? midiFile.value.name : 'none selected'));
+const midiLabel = computed(() => (midiFile.value ? midiFile.value.name : t('audio.none_selected')));
 const keyLabel = computed(() => `${settings.keyRoot} ${settings.keyMode}`);
 
 const loadState = () => {

@@ -3,8 +3,8 @@
     <section class="panel project-list-panel">
       <header>
         <div>
-          <h2>Current Projects</h2>
-          <p class="caption">Select a project to view logs or edit settings.</p>
+          <h2>{{ t('branddozer.current_projects') }}</h2>
+          <p class="caption">{{ t('branddozer.current_projects_caption') }}</p>
         </div>
       </header>
       <div class="project-list">
@@ -21,14 +21,15 @@
               <small class="path">{{ project.root_path }}</small>
             </div>
             <span class="status-pill" :class="project.running ? 'ok' : 'warn'">
-              {{ project.running ? 'Running' : 'Idle' }}
+              {{ project.running ? t('branddozer.running') : t('branddozer.idle') }}
             </span>
           </header>
           <p class="meta">
-            Interval: {{ project.interval_minutes }}m · Interjections: {{ project.interjections?.length || 0 }}
+            {{ t('branddozer.interval') }}: {{ project.interval_minutes }}m · {{ t('branddozer.interjections') }}:
+            {{ project.interjections?.length || 0 }}
           </p>
-          <p v-if="project.repo_url" class="meta">Repo: {{ project.repo_url }}</p>
-          <p class="meta">Last: {{ formatTime(project.last_run) }} · {{ project.last_message || '—' }}</p>
+          <p v-if="project.repo_url" class="meta">{{ t('branddozer.repo') }}: {{ project.repo_url }}</p>
+          <p class="meta">{{ t('branddozer.last') }}: {{ formatTime(project.last_run) }} · {{ project.last_message || t('common.na') }}</p>
           <div class="card-actions">
             <button
               type="button"
@@ -36,33 +37,33 @@
               @click.stop="start(project.id)"
               :disabled="project.running || store.saving"
             >
-              Start
+              {{ t('common.start') }}
             </button>
-            <button type="button" class="btn ghost" @click.stop="openPublish(project)">Push</button>
+            <button type="button" class="btn ghost" @click.stop="openPublish(project)">{{ t('branddozer.push') }}</button>
             <button
               type="button"
               class="btn ghost danger"
               @click.stop="stop(project.id)"
               :disabled="!project.running || store.saving"
             >
-              Stop
+              {{ t('common.stop') }}
             </button>
-            <button type="button" class="btn ghost" @click.stop="editProject(project)">Edit</button>
-            <button type="button" class="btn ghost danger" @click.stop="remove(project.id)">Delete</button>
+            <button type="button" class="btn ghost" @click.stop="editProject(project)">{{ t('common.edit') }}</button>
+            <button type="button" class="btn ghost danger" @click.stop="remove(project.id)">{{ t('common.delete') }}</button>
           </div>
         </article>
-        <div v-if="!store.projects.length" class="empty">No projects yet. Create one to begin.</div>
+        <div v-if="!store.projects.length" class="empty">{{ t('branddozer.no_projects') }}</div>
       </div>
     </section>
 
     <section class="panel projects-panel">
       <header>
         <div>
-          <h1>Br∆nD D0z3r</h1>
-          <p class="caption">Multi-agent project lab powered by Codex sessions.</p>
+          <h1>{{ t('branddozer.title') }}</h1>
+          <p class="caption">{{ t('branddozer.subtitle') }}</p>
         </div>
         <button type="button" class="btn" @click="toggleForm">
-          {{ showForm ? 'Close' : 'New Project' }}
+          {{ showForm ? t('common.close') : t('branddozer.new_project') }}
         </button>
       </header>
 
@@ -70,55 +71,55 @@
         <div class="modal-card wide">
           <header>
             <div>
-              <h2>{{ form.id ? 'Edit Project' : 'New Project' }}</h2>
-              <p class="caption">Define the root folder, cadence, and prompt stack.</p>
+              <h2>{{ form.id ? t('branddozer.edit_project') : t('branddozer.new_project') }}</h2>
+              <p class="caption">{{ t('branddozer.project_form_caption') }}</p>
             </div>
           </header>
           <form class="project-form" @submit.prevent="saveProject">
             <div class="form-grid">
               <label>
-                <span>Name</span>
+                <span>{{ t('common.name') }}</span>
                 <input v-model="form.name" type="text" required />
               </label>
               <label>
-                <span>Root Folder</span>
+                <span>{{ t('branddozer.root_folder') }}</span>
                 <div class="path-picker">
                   <input v-model="form.root_path" type="text" :placeholder="folderState.home || '/home'" readonly required />
-                  <button type="button" class="btn ghost" @click="openFolderPicker">Browse</button>
+                  <button type="button" class="btn ghost" @click="openFolderPicker">{{ t('branddozer.browse') }}</button>
                 </div>
-                <small class="caption">Browse server-side folders; defaults to your home directory.</small>
+                <small class="caption">{{ t('branddozer.browse_hint') }}</small>
               </label>
               <label>
-                <span>Interval (minutes)</span>
+                <span>{{ t('branddozer.interval_minutes') }}</span>
                 <input v-model.number="form.interval_minutes" type="number" min="5" max="720" />
               </label>
             </div>
             <label>
-              <span>Default Prompt (runs every cycle)</span>
+              <span>{{ t('branddozer.default_prompt') }}</span>
               <textarea v-model="form.default_prompt" rows="4" required />
             </label>
             <div class="interjections">
               <div class="interjections-header">
-                <span>Interjectionary Prompts (run after default each cycle, in order)</span>
+                <span>{{ t('branddozer.interjections_prompt') }}</span>
                 <div class="interjection-actions">
-                  <button type="button" class="btn ghost" @click="addInterjection">Add Prompt</button>
+                  <button type="button" class="btn ghost" @click="addInterjection">{{ t('branddozer.add_prompt') }}</button>
                   <button type="button" class="btn ghost" @click="openAiConfirm" :disabled="store.saving || !form.default_prompt.trim()">
-                    AI Expand
+                    {{ t('branddozer.ai_expand') }}
                   </button>
                 </div>
               </div>
-              <div v-if="!form.interjections.length" class="empty">No interjections added.</div>
+              <div v-if="!form.interjections.length" class="empty">{{ t('branddozer.no_interjections') }}</div>
               <div v-for="(prompt, idx) in form.interjections" :key="idx" class="interjection-row">
                 <textarea v-model="form.interjections[idx]" rows="3" />
-                <button type="button" class="btn danger ghost" @click="removeInterjection(idx)">Remove</button>
+                <button type="button" class="btn danger ghost" @click="removeInterjection(idx)">{{ t('common.remove') }}</button>
               </div>
               <div v-if="interjectionError" class="error">{{ interjectionError }}</div>
             </div>
             <div class="actions">
               <button type="submit" class="btn" :disabled="store.saving">
-                {{ store.saving ? 'Saving…' : form.id ? 'Update' : 'Create' }}
+                {{ store.saving ? t('common.saving') : form.id ? t('common.update') : t('common.create') }}
               </button>
-              <button type="button" class="btn ghost" @click="resetForm">Cancel</button>
+              <button type="button" class="btn ghost" @click="resetForm">{{ t('common.cancel') }}</button>
             </div>
           </form>
         </div>
@@ -127,12 +128,12 @@
       <div class="delivery-card">
         <div class="import-head">
           <div>
-            <h3>Delivery System</h3>
-            <p class="caption">One prompt → SCRUM + PMP pipeline with gated verification.</p>
+            <h3>{{ t('branddozer.delivery_system') }}</h3>
+            <p class="caption">{{ t('branddozer.delivery_caption') }}</p>
           </div>
         <div class="import-actions">
           <span class="status-chip" :class="activeDelivery?.status === 'running' ? 'ok' : 'warn'">
-            {{ activeDelivery?.status || 'Idle' }}
+            {{ activeDelivery?.status || t('branddozer.idle') }}
           </span>
           <button
             type="button"
@@ -140,81 +141,81 @@
             @click="openDeliveryDesktop"
             :disabled="!activeDelivery?.id"
           >
-            Open Desktop
+            {{ t('branddozer.open_desktop') }}
           </button>
-          <button type="button" class="btn ghost small" @click="refreshDelivery">Refresh</button>
+          <button type="button" class="btn ghost small" @click="refreshDelivery">{{ t('common.refresh') }}</button>
         </div>
         </div>
         <div class="form-grid compact">
           <label>
-            <span>Project</span>
+            <span>{{ t('branddozer.project') }}</span>
             <select v-model="deliveryForm.project_id">
-              <option disabled value="">Select project</option>
+              <option disabled value="">{{ t('branddozer.select_project') }}</option>
               <option v-for="project in store.projects" :key="project.id" :value="project.id">
                 {{ project.name }}
               </option>
             </select>
           </label>
           <label>
-            <span>Start Mode</span>
+            <span>{{ t('branddozer.start_mode') }}</span>
             <select v-model="deliveryForm.mode">
-              <option value="auto">Auto-detect</option>
-              <option value="new">New Project Mode</option>
-              <option value="existing">Existing Project Mode</option>
+              <option value="auto">{{ t('branddozer.mode_auto') }}</option>
+              <option value="new">{{ t('branddozer.mode_new') }}</option>
+              <option value="existing">{{ t('branddozer.mode_existing') }}</option>
             </select>
           </label>
           <label>
-            <span>Team Mode</span>
+            <span>{{ t('branddozer.team_mode') }}</span>
             <select v-model="deliveryForm.team_mode">
-              <option value="full">Full Team</option>
-              <option value="solo">Solo (single session)</option>
+              <option value="full">{{ t('branddozer.team_full') }}</option>
+              <option value="solo">{{ t('branddozer.team_solo') }}</option>
             </select>
           </label>
           <label>
-            <span>Session Provider</span>
+            <span>{{ t('branddozer.session_provider') }}</span>
             <select v-model="deliveryForm.session_provider">
-              <option value="codex">Codex (CLI)</option>
-              <option value="c0d3r">c0d3r (Bedrock)</option>
+              <option value="codex">{{ t('branddozer.provider_codex') }}</option>
+              <option value="c0d3r">{{ t('branddozer.provider_c0d3r') }}</option>
             </select>
           </label>
           <label>
-            <span>Codex Model</span>
+            <span>{{ t('branddozer.codex_model') }}</span>
             <input v-model="deliveryForm.codex_model" placeholder="gpt-5.2-codex" />
           </label>
           <label>
-            <span>Codex Reasoning</span>
+            <span>{{ t('branddozer.codex_reasoning') }}</span>
             <select v-model="deliveryForm.codex_reasoning">
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="extra_high">Extra High</option>
-              <option value="low">Low</option>
+              <option value="medium">{{ t('branddozer.reasoning_medium') }}</option>
+              <option value="high">{{ t('branddozer.reasoning_high') }}</option>
+              <option value="extra_high">{{ t('branddozer.reasoning_extra_high') }}</option>
+              <option value="low">{{ t('branddozer.reasoning_low') }}</option>
             </select>
           </label>
           <label>
-            <span>c0d3r Model</span>
+            <span>{{ t('branddozer.c0d3r_model') }}</span>
             <input v-model="deliveryForm.c0d3r_model" placeholder="anthropic.claude-3-5-sonnet" />
           </label>
           <label>
-            <span>c0d3r Reasoning</span>
+            <span>{{ t('branddozer.c0d3r_reasoning') }}</span>
             <select v-model="deliveryForm.c0d3r_reasoning">
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="extra_high">Extra High</option>
-              <option value="low">Low</option>
+              <option value="medium">{{ t('branddozer.reasoning_medium') }}</option>
+              <option value="high">{{ t('branddozer.reasoning_high') }}</option>
+              <option value="extra_high">{{ t('branddozer.reasoning_extra_high') }}</option>
+              <option value="low">{{ t('branddozer.reasoning_low') }}</option>
             </select>
           </label>
           <label class="full">
-            <span>Prompt (single source of truth)</span>
-            <textarea v-model="deliveryForm.prompt" rows="3" placeholder="Describe the feature or project outcome." />
+            <span>{{ t('branddozer.prompt') }}</span>
+            <textarea v-model="deliveryForm.prompt" rows="3" :placeholder="t('branddozer.prompt_placeholder')" />
           </label>
           <label class="full">
-            <span>Solo smoke test command (optional)</span>
-            <input v-model="deliveryForm.smoke_test_cmd" placeholder="python -m pytest -q --maxfail=1" />
+            <span>{{ t('branddozer.smoke_test') }}</span>
+            <input v-model="deliveryForm.smoke_test_cmd" :placeholder="t('branddozer.smoke_test_placeholder')" />
           </label>
         </div>
         <div class="actions">
           <button type="button" class="btn" @click="startDeliveryRun" :disabled="deliveryRunning">
-            {{ deliveryRunning ? 'Running…' : 'Start Delivery Run' }}
+            {{ deliveryRunning ? t('common.running') : t('branddozer.start_delivery') }}
           </button>
           <button
             type="button"
@@ -222,13 +223,13 @@
             @click="stopDeliveryRun"
             :disabled="!deliveryRunning"
           >
-            Stop Delivery Run
+            {{ t('branddozer.stop_delivery') }}
           </button>
           <button type="button" class="btn ghost" @click="acceptDeliveryRun" :disabled="activeDelivery?.status !== 'awaiting_acceptance'">
-            Record Acceptance
+            {{ t('branddozer.record_acceptance') }}
           </button>
           <button type="button" class="btn ghost" @click="runUiCapture" :disabled="!activeDelivery?.id || store.uiCaptureLoading">
-            {{ store.uiCaptureLoading ? 'Capturing…' : 'Capture UI' }}
+            {{ store.uiCaptureLoading ? t('branddozer.capturing') : t('branddozer.capture_ui') }}
           </button>
         </div>
         <div v-if="deliveryError" class="error">{{ deliveryError }}</div>
@@ -237,53 +238,55 @@
         <div v-if="uiCaptureStatus" class="caption">{{ uiCaptureStatus }}</div>
         <div class="delivery-status">
           <div>
-            <strong>Status</strong>
-            <p class="caption">{{ activeDelivery?.status || '—' }} · {{ activeDelivery?.phase || '—' }}</p>
+            <strong>{{ t('common.status') }}</strong>
+            <p class="caption">{{ activeDelivery?.status || t('common.na') }} · {{ activeDelivery?.phase || t('common.na') }}</p>
           </div>
           <div>
-            <strong>Run ID</strong>
-            <p class="caption">{{ activeDelivery?.id || '—' }}</p>
+            <strong>{{ t('branddozer.run_id') }}</strong>
+            <p class="caption">{{ activeDelivery?.id || t('common.na') }}</p>
           </div>
           <div>
-            <strong>Sprints</strong>
-            <p class="caption">{{ activeDelivery?.sprint_count || 0 }} · Iteration {{ activeDelivery?.iteration || 0 }}</p>
+            <strong>{{ t('branddozer.sprints') }}</strong>
+            <p class="caption">
+              {{ activeDelivery?.sprint_count || 0 }} · {{ t('branddozer.iteration') }} {{ activeDelivery?.iteration || 0 }}
+            </p>
           </div>
           <div>
-            <strong>Activity</strong>
-            <p class="caption">{{ deliveryActivity || '—' }}</p>
+            <strong>{{ t('branddozer.activity') }}</strong>
+            <p class="caption">{{ deliveryActivity || t('common.na') }}</p>
             <p v-if="deliveryActivityDetail" class="caption muted">{{ deliveryActivityDetail }}</p>
-            <p v-if="deliveryActivityTime" class="caption muted">Last update: {{ deliveryActivityTime }}</p>
-            <p v-if="deliveryEta" class="caption muted">ETA: {{ deliveryEta }}</p>
+            <p v-if="deliveryActivityTime" class="caption muted">{{ t('branddozer.last_update') }}: {{ deliveryActivityTime }}</p>
+            <p v-if="deliveryEta" class="caption muted">{{ t('branddozer.eta') }}: {{ deliveryEta }}</p>
           </div>
         </div>
         <div class="delivery-grid">
           <div class="delivery-block">
-            <h4>Gates</h4>
-            <div v-if="!deliveryGateSummary.length" class="empty">No gate runs yet.</div>
+            <h4>{{ t('branddozer.gates') }}</h4>
+            <div v-if="!deliveryGateSummary.length" class="empty">{{ t('branddozer.no_gate_runs') }}</div>
             <div v-for="gate in deliveryGateSummary" :key="gate.name" class="delivery-row">
               <span>{{ gate.name }}</span>
               <span class="status-pill" :class="gate.tone">{{ gate.label }}</span>
             </div>
           </div>
           <div class="delivery-block">
-            <h4>Backlog</h4>
-            <div v-if="!store.deliveryBacklog.length" class="empty">No backlog items yet.</div>
+            <h4>{{ t('branddozer.backlog') }}</h4>
+            <div v-if="!store.deliveryBacklog.length" class="empty">{{ t('branddozer.no_backlog_items') }}</div>
             <div v-for="item in store.deliveryBacklog.slice(0, 6)" :key="item.id" class="delivery-row">
               <span>{{ item.title }}</span>
               <span class="status-pill" :class="item.status === 'done' ? 'ok' : 'warn'">{{ item.status }}</span>
             </div>
           </div>
           <div class="delivery-block">
-            <h4>Sessions</h4>
-            <div v-if="!store.deliverySessions.length" class="empty">No sessions yet.</div>
+            <h4>{{ t('branddozer.sessions') }}</h4>
+            <div v-if="!store.deliverySessions.length" class="empty">{{ t('branddozer.no_sessions') }}</div>
             <div v-for="session in store.deliverySessions" :key="session.id" class="delivery-row">
               <span>{{ session.role }}</span>
               <span class="status-pill" :class="session.status === 'done' ? 'ok' : 'warn'">{{ session.status }}</span>
             </div>
           </div>
           <div class="delivery-block">
-            <h4>Governance</h4>
-            <div v-if="!store.deliveryGovernance.length" class="empty">No governance artifacts yet.</div>
+            <h4>{{ t('branddozer.governance') }}</h4>
+            <div v-if="!store.deliveryGovernance.length" class="empty">{{ t('branddozer.no_governance') }}</div>
             <div v-for="artifact in store.deliveryGovernance.slice(0, 4)" :key="artifact.id" class="delivery-row">
               <span>{{ artifact.kind }}</span>
               <span class="caption">{{ artifact.summary }}</span>
@@ -295,14 +298,14 @@
       <div class="import-card">
         <div class="import-head">
           <div>
-            <h3>Import from GitHub</h3>
-          <p class="caption">Save PATs per account, then switch to pick projects.</p>
+            <h3>{{ t('branddozer.import_github') }}</h3>
+          <p class="caption">{{ t('branddozer.import_caption') }}</p>
           </div>
           <div class="import-actions">
             <span class="status-chip" :class="githubConnectionTone">
               {{ githubConnectionLabel }}
             </span>
-            <button type="button" class="btn ghost" @click="resetGithubForm">Reset</button>
+            <button type="button" class="btn ghost" @click="resetGithubForm">{{ t('common.reset') }}</button>
           </div>
         </div>
 
@@ -310,9 +313,9 @@
           <div class="github-block">
             <div class="block-head">
               <div>
-                <p class="eyebrow">Step 1</p>
-                <strong>Accounts</strong>
-                <p class="caption">Store multiple PATs and switch which repos load.</p>
+                <p class="eyebrow">{{ t('branddozer.step').replace('{count}', '1') }}</p>
+                <strong>{{ t('branddozer.accounts') }}</strong>
+                <p class="caption">{{ t('branddozer.accounts_caption') }}</p>
               </div>
               <div class="connection-actions">
                 <button
@@ -321,7 +324,13 @@
                   @click="connectGithub"
                   :disabled="store.githubAccountLoading || !githubAccountForm.token"
                 >
-                  {{ store.githubAccountLoading ? 'Saving…' : githubAccountSelection === 'new' ? 'Add account' : 'Update token' }}
+                  {{
+                    store.githubAccountLoading
+                      ? t('common.saving')
+                      : githubAccountSelection === 'new'
+                        ? t('branddozer.add_account')
+                        : t('branddozer.update_token')
+                  }}
                 </button>
                 <button
                   type="button"
@@ -329,80 +338,81 @@
                   @click="refreshGithubRepos"
                   :disabled="store.githubRepoLoading"
                 >
-                  {{ store.githubRepoLoading ? 'Refreshing…' : 'Refresh repos' }}
+                  {{ store.githubRepoLoading ? t('common.refreshing') : t('branddozer.refresh_repos') }}
                 </button>
               </div>
             </div>
             <div class="form-grid compact">
               <label>
-                <span>Account</span>
+                <span>{{ t('branddozer.account') }}</span>
                 <select v-model="githubAccountSelection">
-                  <option value="new">Add new account…</option>
+                  <option value="new">{{ t('branddozer.add_new_account') }}</option>
                   <option v-for="account in store.githubAccounts" :key="account.id" :value="account.id">
-                    {{ account.label || account.username || 'GitHub account' }}
+                    {{ account.label || account.username || t('branddozer.github_account') }}
                   </option>
                 </select>
               </label>
               <label>
-                <span>GitHub username</span>
-                <input v-model="githubAccountForm.username" type="text" :placeholder="store.githubUsername || 'octocat'" />
+                <span>{{ t('branddozer.github_username') }}</span>
+                <input v-model="githubAccountForm.username" type="text" :placeholder="store.githubUsername || t('branddozer.github_username_placeholder')" />
               </label>
               <label>
-                <span>Personal Access Token</span>
-                <input v-model="githubAccountForm.token" type="password" placeholder="ghp_xxx" />
+                <span>{{ t('branddozer.pat') }}</span>
+                <input v-model="githubAccountForm.token" type="password" :placeholder="t('branddozer.pat_placeholder')" />
               </label>
             </div>
-            <p class="caption muted">We keep the token in the encrypted vault and reuse it for imports.</p>
+            <p class="caption muted">{{ t('branddozer.pat_hint') }}</p>
             <p v-if="githubTokenLocked" class="caption warn">
-              Token saved but cannot be unlocked. Re-enter the PAT to refresh it.
+              {{ t('branddozer.token_locked') }}
             </p>
           </div>
 
           <div class="github-block">
             <div class="block-head">
               <div>
-                <p class="eyebrow">Step 2</p>
-                <strong>Select a repository</strong>
-                <p class="caption">Loaded from GitHub once you're connected.</p>
+                <p class="eyebrow">{{ t('branddozer.step').replace('{count}', '2') }}</p>
+                <strong>{{ t('branddozer.select_repo') }}</strong>
+                <p class="caption">{{ t('branddozer.select_repo_caption') }}</p>
               </div>
             </div>
             <div class="form-grid compact">
               <label>
-                <span>Filter repos</span>
-                <input v-model="githubRepoSearch" type="text" placeholder="Search by name" />
+                <span>{{ t('branddozer.filter_repos') }}</span>
+                <input v-model="githubRepoSearch" type="text" :placeholder="t('branddozer.filter_repos_placeholder')" />
               </label>
               <label>
-                <span>Repository</span>
+                <span>{{ t('branddozer.repository') }}</span>
                 <select
                   v-model="githubImportForm.repo_full_name"
                   :disabled="store.githubRepoLoading || !store.githubRepos.length"
                 >
                   <option disabled value="">
-                    {{ store.githubRepoLoading ? 'Loading repos…' : 'Select from GitHub' }}
+                    {{ store.githubRepoLoading ? t('branddozer.loading_repos') : t('branddozer.select_from_github') }}
                   </option>
                   <option v-for="repo in filteredRepos" :key="repo.full_name" :value="repo.full_name">
-                    {{ repo.full_name }} {{ repo.private ? '• private' : '' }}
+                    {{ repo.full_name }} {{ repo.private ? t('branddozer.private_suffix') : '' }}
                   </option>
                 </select>
               </label>
               <label>
-                <span>Branch</span>
+                <span>{{ t('branddozer.branch') }}</span>
                 <select v-model="githubImportForm.branch" :disabled="store.githubBranchLoading || !githubImportForm.repo_full_name">
-                  <option value="">Use default branch</option>
+                  <option value="">{{ t('branddozer.use_default_branch') }}</option>
                   <option v-for="branch in store.githubBranches" :key="branch.name" :value="branch.name">
-                    {{ branch.name }}{{ branch.protected ? ' (protected)' : '' }}
+                    {{ branch.name }}{{ branch.protected ? t('branddozer.protected_suffix') : '' }}
                   </option>
                 </select>
               </label>
             </div>
             <div v-if="selectedRepo" class="repo-meta">
-              <p class="caption">{{ selectedRepo.description || 'No description provided' }}</p>
+              <p class="caption">{{ selectedRepo.description || t('branddozer.no_description') }}</p>
               <p class="caption muted">
-                Default branch: {{ selectedRepo.default_branch || 'unknown' }} · {{ selectedRepo.private ? 'Private' : 'Public' }}
+                {{ t('branddozer.default_branch') }}: {{ selectedRepo.default_branch || t('common.unknown') }} ·
+                {{ selectedRepo.private ? t('branddozer.private') : t('branddozer.public') }}
               </p>
             </div>
             <div v-if="!store.githubRepoLoading && !store.githubRepos.length" class="empty">
-              Connect your GitHub account and click refresh to load repositories.
+              {{ t('branddozer.connect_github_hint') }}
             </div>
           </div>
         </div>
@@ -410,38 +420,38 @@
         <div class="github-block wide">
           <div class="block-head">
             <div>
-              <p class="eyebrow">Step 3</p>
-              <strong>Import settings</strong>
-              <p class="caption">We auto-fill paths and names so you can just hit import.</p>
+              <p class="eyebrow">{{ t('branddozer.step').replace('{count}', '3') }}</p>
+              <strong>{{ t('branddozer.import_settings') }}</strong>
+              <p class="caption">{{ t('branddozer.import_settings_caption') }}</p>
             </div>
           </div>
           <div class="form-grid compact">
             <label>
-              <span>Destination folder</span>
+              <span>{{ t('branddozer.destination_folder') }}</span>
               <input
                 v-model="githubImportForm.destination"
                 type="text"
                 :placeholder="`~/BrandDozerProjects/${githubImportForm.repo_full_name.split('/').pop() || ''}`"
               />
-              <small class="caption">We place projects under your home directory by default.</small>
+              <small class="caption">{{ t('branddozer.destination_hint') }}</small>
             </label>
             <label>
-              <span>Project name</span>
-              <input v-model="githubImportForm.name" type="text" placeholder="Use repo name" />
+              <span>{{ t('branddozer.project_name') }}</span>
+              <input v-model="githubImportForm.name" type="text" :placeholder="t('branddozer.project_name_placeholder')" />
             </label>
             <label class="full">
-              <span>Default Prompt (optional)</span>
+              <span>{{ t('branddozer.default_prompt_optional') }}</span>
               <textarea
                 v-model="githubImportForm.default_prompt"
                 rows="2"
-                :placeholder="form.default_prompt || 'Set a default prompt for the repo'"
+                :placeholder="form.default_prompt || t('branddozer.default_prompt_placeholder')"
               />
             </label>
           </div>
         </div>
         <div v-if="githubError" class="error">{{ githubError }}</div>
         <div class="import-status">
-          <span class="caption">Import status</span>
+          <span class="caption">{{ t('branddozer.import_status') }}</span>
           <strong>{{ githubImportStatus }}</strong>
           <span v-if="githubImportDetail" class="caption">{{ githubImportDetail }}</span>
         </div>
@@ -452,7 +462,7 @@
             @click="runGithubImport"
             :disabled="store.importing || !!githubImportJobId || !githubImportForm.repo_full_name || store.githubRepoLoading"
           >
-            {{ store.importing || githubImportJobId ? 'Importing…' : 'Import & Create Project' }}
+            {{ store.importing || githubImportJobId ? t('branddozer.importing') : t('branddozer.import_and_create') }}
           </button>
         </div>
       </div>
@@ -461,17 +471,17 @@
     <section class="panel logs-panel">
       <header>
         <div>
-          <h2>Console Output</h2>
-          <p class="caption">Latest lines from the active project Codex session.</p>
+          <h2>{{ t('branddozer.console_output') }}</h2>
+          <p class="caption">{{ t('branddozer.console_caption') }}</p>
         </div>
         <div class="header-actions">
           <select v-model="selectedId">
-            <option disabled value="">Select project</option>
+            <option disabled value="">{{ t('branddozer.select_project') }}</option>
             <option v-for="project in store.projects" :key="project.id" :value="project.id">
               {{ project.name }}
             </option>
           </select>
-          <button type="button" class="btn ghost" @click="refreshLogs" :disabled="store.logLoading">Refresh</button>
+          <button type="button" class="btn ghost" @click="refreshLogs" :disabled="store.logLoading">{{ t('common.refresh') }}</button>
         </div>
       </header>
       <pre class="console-output" ref="logBox">{{ logText }}</pre>
@@ -482,14 +492,14 @@
         <div class="desktop-topbar">
           <div class="topbar-left">
             <div class="desktop-brand">
-              <h2>Delivery Command Center</h2>
+              <h2>{{ t('branddozer.delivery_command_center') }}</h2>
               <span class="caption">
-                Project {{ deliveryProjectName || activeDelivery?.project_id || deliveryForm.project_id || '—' }}
+                {{ t('branddozer.project') }} {{ deliveryProjectName || activeDelivery?.project_id || deliveryForm.project_id || t('common.na') }}
               </span>
             </div>
             <div class="topbar-meta">
               <span class="status-chip" :class="deliveryRunning ? 'ok' : 'warn'">
-                {{ activeDelivery?.status || 'Idle' }}
+                {{ activeDelivery?.status || t('branddozer.idle') }}
               </span>
               <span v-if="deliveryActivity" class="caption">{{ deliveryActivity }}</span>
               <span v-if="deliveryActivityDetail" class="caption muted">{{ deliveryActivityDetail }}</span>
@@ -503,7 +513,7 @@
                 :color="desktopLayout === 'free' ? 'primary' : 'grey-5'"
                 @click="applyDesktopLayout('free')"
               >
-                Free
+                {{ t('branddozer.layout_free') }}
               </q-btn>
               <q-btn
                 size="sm"
@@ -511,7 +521,7 @@
                 :color="desktopLayout === 'grid' ? 'primary' : 'grey-5'"
                 @click="applyDesktopLayout('grid')"
               >
-                Grid
+                {{ t('branddozer.layout_grid') }}
               </q-btn>
               <q-btn
                 size="sm"
@@ -519,7 +529,7 @@
                 :color="desktopLayout === 'masonry' ? 'primary' : 'grey-5'"
                 @click="applyDesktopLayout('masonry')"
               >
-                Masonry
+                {{ t('branddozer.layout_masonry') }}
               </q-btn>
               <q-btn
                 size="sm"
@@ -527,29 +537,29 @@
                 :color="desktopLayout === 'cascade' ? 'primary' : 'grey-5'"
                 @click="applyDesktopLayout('cascade')"
               >
-                Cascade
+                {{ t('branddozer.layout_cascade') }}
               </q-btn>
             </div>
-            <q-btn size="sm" flat color="primary" @click="scatterWindows">Scatter</q-btn>
+            <q-btn size="sm" flat color="primary" @click="scatterWindows">{{ t('branddozer.scatter') }}</q-btn>
             <q-btn size="sm" flat color="secondary" @click="toggleDesktopLogs">
-              {{ desktopLiveLogs ? 'Pause Logs' : 'Resume Logs' }}
+              {{ desktopLiveLogs ? t('branddozer.pause_logs') : t('branddozer.resume_logs') }}
             </q-btn>
-            <q-toggle v-model="performanceMode" dense color="amber" label="Performance" />
+            <q-toggle v-model="performanceMode" dense color="amber" :label="t('branddozer.performance')" />
             <q-btn size="sm" color="negative" outline @click="stopDeliveryRun" :disable="!deliveryRunning">
-              Stop
+              {{ t('common.stop') }}
             </q-btn>
-            <q-btn size="sm" color="primary" outline @click="minimizeDeliveryDesktop">Minimize</q-btn>
+            <q-btn size="sm" color="primary" outline @click="minimizeDeliveryDesktop">{{ t('branddozer.minimize') }}</q-btn>
             <q-btn v-if="!deliveryRunning" size="sm" color="secondary" outline @click="closeDeliveryDesktop">
-              Hide
+              {{ t('common.hide') }}
             </q-btn>
             <q-btn v-if="deliveryComplete" size="sm" color="positive" outline @click="closeDeliveryDesktop">
-              Close
+              {{ t('common.close') }}
             </q-btn>
           </div>
         </div>
 
         <div v-if="!desktopReady" class="desktop-loading">
-          Preparing the delivery desktop…
+          {{ t('branddozer.preparing_desktop') }}
         </div>
         <div v-else class="desktop-shell">
           <div class="desktop-canvas" ref="desktopRef" :class="`layout-${desktopLayout}`">
@@ -584,15 +594,17 @@
                   </template>
                 </q-virtual-scroll>
                 <div v-if="!sessionLogLines(session.id).length" class="terminal-empty">
-                  No output yet.
+                  {{ t('branddozer.no_output') }}
                 </div>
                 <div v-if="!desktopLiveLogs" class="terminal-paused">
-                  Live updates paused. Click Resume Logs to continue.
+                  {{ t('branddozer.logs_paused') }}
                 </div>
               </div>
             </div>
             <div v-if="hiddenDesktopSessionCount" class="desktop-empty">
-              Showing first {{ desktopWindowSessions.length }} sessions for stability. {{ hiddenDesktopSessionCount }} hidden.
+              {{ t('branddozer.showing_first')
+                .replace('{shown}', String(desktopWindowSessions.length))
+                .replace('{hidden}', String(hiddenDesktopSessionCount)) }}
             </div>
             <div v-if="!store.deliverySessions.length" class="desktop-empty">
               {{ desktopEmptyMessage }}
@@ -602,46 +614,46 @@
           <aside class="desktop-panels">
             <div class="desktop-module">
               <div class="module-head">
-                <h4>Run Control</h4>
+                <h4>{{ t('branddozer.run_control') }}</h4>
                 <q-badge :color="deliveryRunning ? 'warning' : 'positive'" outline>
-                  {{ activeDelivery?.status || 'idle' }}
+                  {{ activeDelivery?.status || t('common.idle') }}
                 </q-badge>
               </div>
               <div class="module-body">
                 <div class="module-row">
-                  <span class="caption">Activity</span>
-                  <span>{{ deliveryActivity || '—' }}</span>
+                  <span class="caption">{{ t('branddozer.activity') }}</span>
+                  <span>{{ deliveryActivity || t('common.na') }}</span>
                 </div>
                 <div v-if="deliveryActivityDetail" class="module-row">
-                  <span class="caption">Detail</span>
+                  <span class="caption">{{ t('branddozer.detail') }}</span>
                   <span class="muted">{{ deliveryActivityDetail }}</span>
                 </div>
                 <div v-if="deliveryActivityTime" class="module-row">
-                  <span class="caption">Last update</span>
+                  <span class="caption">{{ t('branddozer.last_update') }}</span>
                   <span class="muted">{{ deliveryActivityTime }}</span>
                 </div>
                 <div v-if="deliveryPromptSnippet" class="module-row stacked">
-                  <span class="caption">Prompt</span>
+                  <span class="caption">{{ t('branddozer.prompt') }}</span>
                   <span class="muted">{{ deliveryPromptSnippet }}</span>
                 </div>
               </div>
               <div class="module-actions">
-                <q-btn size="sm" outline color="primary" @click="refreshDelivery">Refresh</q-btn>
+                <q-btn size="sm" outline color="primary" @click="refreshDelivery">{{ t('common.refresh') }}</q-btn>
                 <q-btn size="sm" outline color="secondary" @click="toggleDesktopLogs">
-                  {{ desktopLiveLogs ? 'Pause Logs' : 'Resume Logs' }}
+                  {{ desktopLiveLogs ? t('branddozer.pause_logs') : t('branddozer.resume_logs') }}
                 </q-btn>
                 <q-btn size="sm" outline color="primary" @click="runUiCapture" :disable="!activeDelivery?.id">
-                  Capture UI
+                  {{ t('branddozer.capture_ui') }}
                 </q-btn>
                 <q-btn size="sm" outline color="negative" @click="stopDeliveryRun" :disable="!deliveryRunning">
-                  Stop Run
+                  {{ t('branddozer.stop_run') }}
                 </q-btn>
               </div>
             </div>
 
             <div class="desktop-module">
-              <h4>Gate Radar</h4>
-              <div v-if="!deliveryGateSummary.length" class="caption">No gate runs yet.</div>
+              <h4>{{ t('branddozer.gate_radar') }}</h4>
+              <div v-if="!deliveryGateSummary.length" class="caption">{{ t('branddozer.no_gate_runs') }}</div>
               <div v-for="gate in deliveryGateSummary" :key="gate.name" class="module-row">
                 <span>{{ gate.name }}</span>
                 <span class="status-pill" :class="gate.tone">{{ gate.label }}</span>
@@ -649,7 +661,7 @@
             </div>
 
             <div class="desktop-module">
-              <h4>Project Checklist</h4>
+              <h4>{{ t('branddozer.project_checklist') }}</h4>
               <q-scroll-area class="checklist-scroll">
                 <div v-for="item in store.deliveryBacklog" :key="item.id" class="checklist-row">
                   <q-checkbox :model-value="item.status === 'done'" dense />
@@ -658,13 +670,13 @@
                     <small class="caption">{{ item.status }}</small>
                   </div>
                 </div>
-                <div v-if="!store.deliveryBacklog.length" class="caption">No checklist items yet.</div>
+                <div v-if="!store.deliveryBacklog.length" class="caption">{{ t('branddozer.no_checklist_items') }}</div>
               </q-scroll-area>
             </div>
 
             <div class="desktop-module">
               <div class="module-head">
-                <h4>UI Evidence</h4>
+                <h4>{{ t('branddozer.ui_evidence') }}</h4>
                 <q-btn
                   size="sm"
                   flat
@@ -673,10 +685,10 @@
                   :loading="store.uiCaptureLoading"
                   :disable="!activeDelivery?.id"
                 >
-                  Capture
+                  {{ t('branddozer.capture') }}
                 </q-btn>
               </div>
-              <div v-if="!uiSnapshots.length" class="caption">No screenshots yet.</div>
+              <div v-if="!uiSnapshots.length" class="caption">{{ t('branddozer.no_screenshots') }}</div>
               <div v-else class="evidence-grid">
                 <button
                   v-for="shot in uiSnapshots.slice(0, 6)"
@@ -685,7 +697,7 @@
                   class="evidence-thumb"
                   @click="openScreenshot(shot)"
                 >
-                  <img :src="artifactUrl(shot)" :alt="shot.title || 'UI screenshot'" loading="lazy" />
+                  <img :src="artifactUrl(shot)" :alt="shot.title || t('branddozer.ui_screenshot')" loading="lazy" />
                   <span class="caption">
                     {{ shot.title || shot.id.slice(0, 8) }}
                     <template v-if="shot.kind && shot.kind !== 'ui_screenshot'">
@@ -698,7 +710,7 @@
 
             <div class="desktop-module">
               <div class="module-head">
-                <h4>UX Audit & Funnel</h4>
+                <h4>{{ t('branddozer.ux_audit') }}</h4>
                 <q-btn
                   v-if="uxReport"
                   size="sm"
@@ -708,19 +720,19 @@
                   target="_blank"
                   rel="noopener"
                 >
-                  Open report
+                  {{ t('branddozer.open_report') }}
                 </q-btn>
               </div>
               <div v-if="!uxReport && !conversionArtifacts.length && !uxGateStatuses.length" class="caption">
-                No UX audit or conversion checks yet.
+                {{ t('branddozer.no_ux_audit') }}
               </div>
               <div v-else>
                 <div v-if="uxReport" class="module-row">
                   <div>
-                    <div>{{ uxReport.title || 'UX audit report' }}</div>
-                    <div class="caption">Gate summary and screenshots bundled for review.</div>
+                    <div>{{ uxReport.title || t('branddozer.ux_audit_report') }}</div>
+                    <div class="caption">{{ t('branddozer.ux_audit_caption') }}</div>
                   </div>
-                  <a :href="artifactUrl(uxReport)" target="_blank" rel="noopener" class="caption">View</a>
+                  <a :href="artifactUrl(uxReport)" target="_blank" rel="noopener" class="caption">{{ t('common.view') }}</a>
                 </div>
                 <div v-for="gate in uxGateStatuses" :key="gate.name" class="module-row">
                   <span>{{ gate.name }}</span>
@@ -728,29 +740,29 @@
                 </div>
                 <div v-for="artifact in conversionArtifacts.slice(0, 4)" :key="artifact.id" class="module-row">
                   <div>
-                    <div>{{ artifact.title || 'Conversion check' }}</div>
+                    <div>{{ artifact.title || t('branddozer.conversion_check') }}</div>
                     <div class="caption">
-                      {{ artifact.data?.detail || artifact.data?.status || 'Recorded conversion smoke test.' }}
+                      {{ artifact.data?.detail || artifact.data?.status || t('branddozer.conversion_recorded') }}
                     </div>
                   </div>
-                  <a :href="artifactUrl(artifact)" target="_blank" rel="noopener" class="caption">Open</a>
+                  <a :href="artifactUrl(artifact)" target="_blank" rel="noopener" class="caption">{{ t('common.open') }}</a>
                 </div>
               </div>
             </div>
 
             <div class="desktop-module">
               <div class="module-head">
-                <h4>Worker Intents</h4>
+                <h4>{{ t('branddozer.worker_intents') }}</h4>
               </div>
-              <div v-if="!taskIntents.length" class="caption">No worker intents captured yet.</div>
+              <div v-if="!taskIntents.length" class="caption">{{ t('branddozer.no_worker_intents') }}</div>
               <div v-else>
                 <div v-for="intent in taskIntents.slice(0, 6)" :key="intent.id" class="module-row">
                   <div>
-                    <div>{{ intent.title || intent.meta?.title || 'Task intent' }}</div>
+                    <div>{{ intent.title || intent.meta?.title || t('branddozer.task_intent') }}</div>
                     <div class="caption">
-                      {{ intent.meta?.codex_role || intent.meta?.role || 'worker' }} ·
-                      {{ intent.meta?.codex_model || intent.meta?.model || 'model?' }}
-                      <span v-if="intent.meta?.priority !== undefined"> · priority {{ intent.meta?.priority }}</span>
+                      {{ intent.meta?.codex_role || intent.meta?.role || t('branddozer.worker') }} ·
+                      {{ intent.meta?.codex_model || intent.meta?.model || t('branddozer.model_unknown') }}
+                      <span v-if="intent.meta?.priority !== undefined"> · {{ t('branddozer.priority') }} {{ intent.meta?.priority }}</span>
                     </div>
                   </div>
                 </div>
@@ -762,19 +774,19 @@
     </q-dialog>
 
     <div v-if="deliveryDesktopMinimized && activeDelivery?.id" class="delivery-minibar" @click="restoreDeliveryDesktop">
-      <span>Delivery Desktop · {{ activeDelivery?.status || 'idle' }}</span>
-      <span class="caption">Click to restore</span>
+      <span>{{ t('branddozer.delivery_desktop') }} · {{ activeDelivery?.status || t('common.idle') }}</span>
+      <span class="caption">{{ t('branddozer.click_restore') }}</span>
     </div>
 
     <div v-if="confirmOpen" class="modal">
       <div class="modal-card">
-        <h3>Generate interjections with GPT-4o-mini?</h3>
-        <p>This will send the default prompt to OpenAI to propose interjection prompts and overwrite the list below.</p>
+        <h3>{{ t('branddozer.generate_interjections_title') }}</h3>
+        <p>{{ t('branddozer.generate_interjections_desc') }}</p>
         <div class="actions">
           <button type="button" class="btn" @click="generateInterjections" :disabled="store.saving">
-            {{ store.saving ? 'Generating…' : 'Yes, generate' }}
+            {{ store.saving ? t('branddozer.generating') : t('branddozer.generate_yes') }}
           </button>
-          <button type="button" class="btn ghost" @click="confirmOpen = false">Cancel</button>
+          <button type="button" class="btn ghost" @click="confirmOpen = false">{{ t('common.cancel') }}</button>
         </div>
       </div>
     </div>
@@ -784,26 +796,26 @@
         <q-btn class="publish-close" flat dense label="X" @click="closePublishModal" />
         <div class="publish-header">
           <div>
-            <h3>Push to GitHub</h3>
+            <h3>{{ t('branddozer.push_github') }}</h3>
             <p class="caption">
-              Stage, commit, and push changes to the selected GitHub account.
-              <span v-if="activeGithubLabel">Active: {{ activeGithubLabel }}</span>
+              {{ t('branddozer.push_caption') }}
+              <span v-if="activeGithubLabel">{{ t('branddozer.active_account') }} {{ activeGithubLabel }}</span>
             </p>
           </div>
           <q-badge v-if="publishTarget?.name" color="primary" outline>{{ publishTarget.name }}</q-badge>
         </div>
         <div class="publish-grid">
-          <q-input v-model="publishForm.message" label="Commit message" dense outlined />
-          <q-input v-model="publishForm.repo_name" label="Repository name (if new)" dense outlined />
-          <q-toggle v-model="publishForm.private" label="Private repo" />
+          <q-input v-model="publishForm.message" :label="t('branddozer.commit_message')" dense outlined />
+          <q-input v-model="publishForm.repo_name" :label="t('branddozer.repo_name_new')" dense outlined />
+          <q-toggle v-model="publishForm.private" :label="t('branddozer.private_repo')" />
         </div>
         <div v-if="publishStatus" class="caption">{{ publishStatus }}</div>
         <div v-if="publishError" class="error">{{ publishError }}</div>
         <div v-else-if="githubTokenLocked" class="error">
-          GitHub token saved but cannot be unlocked. Re-enter the PAT under Import from GitHub → Accounts.
+          {{ t('branddozer.github_token_locked') }}
         </div>
         <div v-else-if="!githubConnected" class="error">
-          No GitHub account connected. Add a PAT under Import from GitHub → Accounts, select it, and try again.
+          {{ t('branddozer.github_not_connected') }}
         </div>
         <div class="actions">
           <q-btn
@@ -812,9 +824,9 @@
             :loading="store.publishing"
             :disable="!publishForm.message || !githubConnected || githubTokenLocked"
           >
-            Push now
+            {{ t('branddozer.push_now') }}
           </q-btn>
-          <q-btn outline color="secondary" class="publish-cancel" @click="closePublishModal">Cancel</q-btn>
+          <q-btn outline color="secondary" class="publish-cancel" @click="closePublishModal">{{ t('common.cancel') }}</q-btn>
         </div>
       </q-card>
     </q-dialog>
@@ -822,30 +834,30 @@
     <q-dialog v-model="screenshotOpen">
       <q-card class="screenshot-modal">
         <div class="screenshot-header">
-          <h3>{{ selectedScreenshot?.title || 'UI Screenshot' }}</h3>
-          <q-btn flat color="secondary" @click="screenshotOpen = false">Close</q-btn>
+          <h3>{{ selectedScreenshot?.title || t('branddozer.ui_screenshot') }}</h3>
+          <q-btn flat color="secondary" @click="screenshotOpen = false">{{ t('common.close') }}</q-btn>
         </div>
         <div v-if="selectedScreenshot" class="screenshot-body">
-          <img :src="artifactUrl(selectedScreenshot)" :alt="selectedScreenshot.title || 'UI screenshot'" />
+          <img :src="artifactUrl(selectedScreenshot)" :alt="selectedScreenshot.title || t('branddozer.ui_screenshot')" />
         </div>
       </q-card>
     </q-dialog>
 
     <div v-if="folderModalOpen" class="modal">
       <div class="modal-card wide">
-        <h3>Select project folder</h3>
-        <p class="caption">Browsing server-side directories under {{ folderState.home || 'home' }}.</p>
+        <h3>{{ t('branddozer.select_project_folder') }}</h3>
+        <p class="caption">{{ t('branddozer.browsing_under').replace('{path}', folderState.home || t('common.home')) }}</p>
         <div class="folder-controls">
           <button type="button" class="btn ghost" @click="loadFolders(folderState.home)" :disabled="folderLoading">
-            Home
+            {{ t('common.home') }}
           </button>
           <button type="button" class="btn ghost" @click="goToParent" :disabled="!folderState.parent || folderLoading">
-            Up
+            {{ t('common.up') }}
           </button>
-          <span class="current-path">{{ folderState.current_path || '—' }}</span>
+          <span class="current-path">{{ folderState.current_path || t('common.na') }}</span>
         </div>
         <div v-if="folderError" class="error">{{ folderError }}</div>
-        <div v-if="folderLoading" class="caption">Loading folders…</div>
+        <div v-if="folderLoading" class="caption">{{ t('branddozer.loading_folders') }}</div>
         <div v-else class="folder-list">
           <button
             v-for="dir in folderState.directories"
@@ -857,13 +869,13 @@
             <span>{{ dir.name }}</span>
             <span class="caption">{{ dir.path }}</span>
           </button>
-          <div v-if="!folderState.directories.length" class="empty">No subfolders here.</div>
+          <div v-if="!folderState.directories.length" class="empty">{{ t('branddozer.no_subfolders') }}</div>
         </div>
         <div class="actions">
           <button type="button" class="btn" :disabled="!folderState.current_path" @click="chooseFolder">
-            Use this folder
+            {{ t('branddozer.use_this_folder') }}
           </button>
-          <button type="button" class="btn ghost" @click="folderModalOpen = false">Close</button>
+          <button type="button" class="btn ghost" @click="folderModalOpen = false">{{ t('common.close') }}</button>
         </div>
       </div>
     </div>
@@ -873,6 +885,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useBrandDozerStore } from '@/stores/branddozer';
+import { t } from '@/i18n';
 
 const store = useBrandDozerStore();
 const selectedId = ref<string>('');
@@ -909,7 +922,7 @@ const githubImportForm = ref({
 const githubRepoSearch = ref('');
 const lastAutoDestination = ref('');
 const githubError = ref('');
-const githubImportStatus = ref('Ready to import.');
+const githubImportStatus = ref(t('branddozer.import_ready'));
 const githubImportDetail = ref('');
 const githubImportJobId = ref('');
 const confirmOpen = ref(false);
@@ -932,7 +945,7 @@ const publishError = ref('');
 const publishStatus = ref('');
 const publishTarget = ref<any | null>(null);
 const publishForm = ref({
-  message: 'Update from BrandDozer',
+  message: t('branddozer.default_commit_message'),
   repo_name: '',
   private: true,
 });
@@ -1177,7 +1190,7 @@ watch(
 );
 
 const logText = computed(() => {
-  if (!store.logs.length) return 'No output yet.';
+  if (!store.logs.length) return t('branddozer.no_output');
   const lines = store.logs.slice(-consoleLogMaxLines.value).map((line) => {
     if (line.length > consoleLogMaxChars.value) {
       return `${line.slice(0, consoleLogMaxChars.value)}...`;
@@ -1208,12 +1221,12 @@ const activeGithubLabel = computed(
 const githubConnectionLabel = computed(() => {
   const label = activeGithubLabel.value ? ` · ${activeGithubLabel.value}` : '';
   if (githubTokenLocked.value) {
-    return `Token needs re-save${label}`;
+    return t('branddozer.github_token_needs_resave').replace('{label}', label);
   }
   if (githubConnected.value) {
-    return `Connected${label}`;
+    return t('branddozer.github_connected').replace('{label}', label);
   }
-  return 'Not connected';
+  return t('branddozer.github_not_connected');
 });
 const githubConnectionTone = computed(() => (githubConnected.value ? 'ok' : 'warn'));
 const activeDelivery = computed(() => store.activeDeliveryRun);
@@ -1243,8 +1256,8 @@ const deliveryEta = computed(() => {
   if (!eta || typeof eta !== 'object') return '';
   const minutes = eta.minutes;
   if (minutes === undefined || minutes === null) return '';
-  const asOf = eta.as_of ? `as of ${eta.as_of}` : 'current';
-  return `ETA ~ ${minutes} min (${asOf})`;
+  const asOf = eta.as_of ? t('branddozer.as_of').replace('{time}', String(eta.as_of)) : t('branddozer.current');
+  return t('branddozer.eta_minutes').replace('{minutes}', String(minutes)).replace('{as_of}', asOf);
 });
 const deliveryActivityTime = computed(() => {
   const ts = activeDelivery.value?.context?.status_ts;
@@ -1276,7 +1289,7 @@ const deliveryGateSummary = computed(() => {
     const isOk = status === 'passed' || status === 'skipped';
     summary.push({
       name: gate.name,
-      label: status === 'skipped' ? 'not relevant' : (gate.status || 'unknown'),
+      label: status === 'skipped' ? t('branddozer.not_relevant') : (gate.status || t('common.unknown')),
       tone: isOk ? 'ok' : 'warn',
     });
   }
@@ -1297,12 +1310,13 @@ const desktopWindowSessions = computed(() => sortedDeliverySessions.value);
 const hiddenDesktopSessionCount = computed(() => 0);
 const desktopEmptyMessage = computed(() => {
   if (!activeDelivery.value?.id) {
-    return 'No delivery run selected. Start one to see sessions.';
+    return t('branddozer.no_delivery_selected');
   }
   if (!deliveryRunning.value) {
-    return `Run is ${activeDelivery.value?.status || 'inactive'}. Start a new run to open sessions.`;
+    return t('branddozer.run_inactive')
+      .replace('{status}', String(activeDelivery.value?.status || t('branddozer.inactive_status')));
   }
-  return 'Waiting for sessions to start... You can minimize this window while it spins up. If this stays queued, check that the background worker is running.';
+  return t('branddozer.waiting_sessions');
 });
 const uiSnapshotKinds = ['ui_screenshot', 'ui_screenshot_mobile', 'ui_screenshot_desktop'];
 const uiSnapshots = computed(() =>
@@ -1353,7 +1367,7 @@ async function loadFolders(path?: string) {
       form.value.root_path = data.current_path;
     }
   } catch (err: any) {
-    folderError.value = err?.message || 'Failed to load folders';
+    folderError.value = err?.message || t('branddozer.error_load_folders');
   } finally {
     folderLoading.value = false;
   }
@@ -1396,7 +1410,7 @@ async function refreshGithubRepos() {
       githubImportForm.value.repo_full_name = store.githubRepos[0].full_name;
     }
   } catch (err: any) {
-    githubError.value = err?.message || 'Unable to load repositories';
+    githubError.value = err?.message || t('branddozer.error_load_repos');
   }
 }
 
@@ -1405,7 +1419,7 @@ async function refreshGithubBranches(fullName: string) {
   try {
     await store.fetchGithubBranches(fullName);
   } catch (err: any) {
-    githubError.value = err?.message || 'Unable to load branches';
+    githubError.value = err?.message || t('branddozer.error_load_branches');
   }
 }
 
@@ -1422,14 +1436,14 @@ async function switchGithubAccount() {
     githubImportForm.value.branch = '';
     githubImportForm.value.destination = '';
     githubImportForm.value.name = '';
-    setImportStatus('Ready to import.', '');
+    setImportStatus(t('branddozer.import_ready'), '');
     return;
   }
   if (selection !== store.githubActiveAccountId) {
     try {
       await store.setGithubActiveAccount(selection);
     } catch (err: any) {
-      githubError.value = err?.message || 'Failed to switch GitHub account';
+      githubError.value = err?.message || t('branddozer.error_switch_account');
       return;
     }
   }
@@ -1491,7 +1505,7 @@ async function refreshDelivery() {
       }
     }
   } catch (err: any) {
-    deliveryError.value = err?.message || 'Failed to load delivery status';
+    deliveryError.value = err?.message || t('branddozer.error_delivery_status');
   } finally {
     deliveryRefreshing.value = false;
   }
@@ -1772,11 +1786,11 @@ function focusSession(sessionId: string) {
 async function startDeliveryRun() {
   deliveryError.value = '';
   if (!deliveryForm.value.project_id) {
-    deliveryError.value = 'Select a project.';
+    deliveryError.value = t('branddozer.error_select_project');
     return;
   }
   if (!deliveryForm.value.prompt.trim()) {
-    deliveryError.value = 'Add a prompt to start delivery.';
+    deliveryError.value = t('branddozer.error_add_prompt');
     return;
   }
   try {
@@ -1802,14 +1816,14 @@ async function startDeliveryRun() {
     openDeliveryDesktop();
     await refreshDelivery();
   } catch (err: any) {
-    deliveryError.value = err?.message || 'Failed to start delivery';
+    deliveryError.value = err?.message || t('branddozer.error_start_delivery');
   }
 }
 
 async function stopDeliveryRun() {
   deliveryError.value = '';
   if (!activeDelivery.value?.id) {
-    deliveryError.value = 'No active delivery run to stop.';
+    deliveryError.value = t('branddozer.error_no_active_delivery');
     return;
   }
   try {
@@ -1817,7 +1831,7 @@ async function stopDeliveryRun() {
     deliveryStatusNote.value = 'Stop requested.';
     await refreshDelivery();
   } catch (err: any) {
-    deliveryError.value = err?.message || 'Failed to stop delivery';
+    deliveryError.value = err?.message || t('branddozer.error_stop_delivery');
   }
 }
 
@@ -1825,17 +1839,17 @@ async function runUiCapture() {
   uiCaptureError.value = '';
   uiCaptureStatus.value = '';
   if (!activeDelivery.value?.id) {
-    uiCaptureError.value = 'Start or select a delivery run first.';
+    uiCaptureError.value = t('branddozer.error_select_delivery');
     return;
   }
   try {
     await store.triggerDeliveryUiCapture(activeDelivery.value.id);
-    uiCaptureStatus.value = 'UI capture queued. Screenshots will appear under UI Evidence.';
+    uiCaptureStatus.value = t('branddozer.capture_queued');
     window.setTimeout(() => {
       refreshDelivery();
     }, 3000);
   } catch (err: any) {
-    uiCaptureError.value = err?.message || 'Failed to start UI capture.';
+    uiCaptureError.value = err?.message || t('branddozer.error_capture');
   }
 }
 
@@ -1853,13 +1867,13 @@ async function acceptDeliveryRun() {
   if (!store.activeDeliveryRun?.id) return;
   try {
     await store.acceptDeliveryRun(store.activeDeliveryRun.id, {
-      notes: 'Accepted via dashboard',
+      notes: t('branddozer.accepted_via_dashboard'),
       checklist: store.activeDeliveryRun.definition_of_done || [],
     });
-    deliveryStatusNote.value = 'Acceptance recorded.';
+    deliveryStatusNote.value = t('branddozer.acceptance_recorded');
     await refreshDelivery();
   } catch (err: any) {
-    deliveryError.value = err?.message || 'Failed to accept delivery';
+    deliveryError.value = err?.message || t('branddozer.error_accept_delivery');
   }
 }
 
@@ -1880,17 +1894,17 @@ function stopImportPolling() {
 async function pollImportStatus(jobId: string) {
   try {
     const data = await store.fetchGithubImportStatus(jobId);
-    const message = data.message || data.step || 'Working…';
+    const message = data.message || data.step || t('common.working');
     const detail = data.detail || '';
     setImportStatus(message, detail);
     if (data.error) {
       githubError.value = data.error;
-      setImportStatus('Import failed', data.error);
+      setImportStatus(t('branddozer.import_failed'), data.error);
     }
     if (data.status === 'completed') {
       stopImportPolling();
       githubImportJobId.value = '';
-      setImportStatus('Import complete');
+      setImportStatus(t('branddozer.import_complete'));
       if (data.project?.id) {
         await store.load();
         selectedId.value = data.project.id;
@@ -1900,14 +1914,14 @@ async function pollImportStatus(jobId: string) {
     if (data.status === 'error') {
       stopImportPolling();
       githubImportJobId.value = '';
-      setImportStatus('Import failed', data.error || '');
+      setImportStatus(t('branddozer.import_failed'), data.error || '');
     }
   } catch (err: any) {
     stopImportPolling();
     githubImportJobId.value = '';
-    const message = err?.message || 'Import status check failed';
+    const message = err?.message || t('branddozer.import_status_failed');
     githubError.value = message;
-    setImportStatus('Import failed', message);
+    setImportStatus(t('branddozer.import_failed'), message);
   }
 }
 
@@ -1921,7 +1935,7 @@ function startImportPolling(jobId: string) {
 async function connectGithub() {
   githubError.value = '';
   if (!githubAccountForm.value.token) {
-    githubError.value = 'Add a personal access token first.';
+    githubError.value = t('branddozer.error_add_pat');
     return;
   }
   try {
@@ -1936,7 +1950,7 @@ async function connectGithub() {
     githubAccountForm.value.token = '';
     await refreshGithubRepos();
   } catch (err: any) {
-    githubError.value = err?.message || 'Failed to save GitHub token';
+    githubError.value = err?.message || t('branddozer.error_save_token');
   }
 }
 
@@ -1954,7 +1968,7 @@ function resetGithubForm() {
   lastAutoDestination.value = '';
   githubError.value = '';
   githubImportJobId.value = '';
-  setImportStatus('Ready to import.', '');
+  setImportStatus(t('branddozer.import_ready'), '');
   stopImportPolling();
   store.githubBranches = [];
 }
@@ -1996,7 +2010,7 @@ async function runGithubImport() {
     payload.account_id = accountId;
   }
   try {
-    setImportStatus('Starting import…', '');
+    setImportStatus(t('branddozer.import_starting'), '');
     const data = await store.importFromGitHub(payload);
     const jobId = data.job_id;
     if (jobId) {
@@ -2007,12 +2021,12 @@ async function runGithubImport() {
       resetGithubForm();
       selectedId.value = data.project.id;
       await store.refreshLogs(data.project.id, 200);
-      setImportStatus('Import complete');
+      setImportStatus(t('branddozer.import_complete'));
     }
   } catch (err: any) {
     const message = err?.message || 'GitHub import failed';
     githubError.value = message;
-    setImportStatus('Import failed', message);
+    setImportStatus(t('branddozer.import_failed'), message);
   }
 }
 
@@ -2147,18 +2161,18 @@ function formatAheadBehind(result: any) {
   const behind = Number.isFinite(result?.behind) ? Number(result.behind) : 0;
   if (!ahead && !behind) return '';
   const parts = [];
-  if (ahead) parts.push(`ahead ${ahead}`);
-  if (behind) parts.push(`behind ${behind}`);
-  return ` (local ${parts.join(', ')})`;
+  if (ahead) parts.push(t('branddozer.ahead').replace('{count}', String(ahead)));
+  if (behind) parts.push(t('branddozer.behind').replace('{count}', String(behind)));
+  return t('branddozer.local_ahead_behind').replace('{details}', parts.join(', '));
 }
 
 async function pollPublishStatus(jobId: string) {
   try {
     const data = await store.fetchGithubPublishStatus(jobId);
     if (data.status === 'queued') {
-      publishStatus.value = 'Push queued. Waiting for the background worker...';
+      publishStatus.value = t('branddozer.push_queued');
     } else if (data.status === 'running') {
-      publishStatus.value = data.message || 'Pushing to GitHub...';
+      publishStatus.value = data.message || t('branddozer.pushing');
     } else if (data.message) {
       publishStatus.value = data.message;
     }
@@ -2168,27 +2182,29 @@ async function pollPublishStatus(jobId: string) {
       const branch = data?.result?.branch;
       const repoUrl = data?.result?.repo_url;
       if (resultStatus === 'no_changes') {
-        const detail = data?.result?.detail || 'No changes to commit or push.';
-        publishStatus.value = `${detail}${formatAheadBehind(data?.result)}${branch ? ` (branch ${branch})` : ''}`;
+        const detail = data?.result?.detail || t('branddozer.no_changes');
+        publishStatus.value = `${detail}${formatAheadBehind(data?.result)}${branch ? t('branddozer.branch_suffix').replace('{branch}', String(branch)) : ''}`;
       } else {
         const target = repoUrl || 'GitHub';
-        publishStatus.value = `Pushed to ${target}${branch ? ` (branch ${branch})` : ''}.`;
+        publishStatus.value = t('branddozer.pushed_to')
+          .replace('{target}', String(target))
+          .replace('{branch}', branch ? t('branddozer.branch_suffix').replace('{branch}', String(branch)) : '');
       }
     }
     if (data.status === 'error') {
       stopPublishPolling();
-      publishError.value = data.error || 'Failed to push to GitHub.';
+      publishError.value = data.error || t('branddozer.error_push');
     }
   } catch (err: any) {
     stopPublishPolling();
-    publishError.value = err?.message || 'Publish status check failed.';
+    publishError.value = err?.message || t('branddozer.error_publish_status');
   }
 }
 
 async function runPublish() {
   if (!publishTarget.value?.id) return;
   publishError.value = '';
-  publishStatus.value = 'Preparing push...';
+  publishStatus.value = t('branddozer.preparing_push');
   if (!store.githubAccounts.length && !store.githubAccountLoading) {
     try {
       await store.loadGithubAccount();
@@ -2197,13 +2213,11 @@ async function runPublish() {
     }
   }
   if (githubTokenLocked.value) {
-    publishError.value =
-      'GitHub token is saved but cannot be unlocked. Re-enter the PAT under Import from GitHub → Accounts.';
+    publishError.value = t('branddozer.github_token_locked');
     return;
   }
   if (!githubConnected.value) {
-    publishError.value =
-      'No GitHub account connected. Add a PAT under Import from GitHub → Accounts, select it, and try again.';
+    publishError.value = t('branddozer.github_not_connected_detail');
     return;
   }
   const payload: Record<string, any> = {
@@ -2218,19 +2232,21 @@ async function runPublish() {
   try {
     const data = await store.publishProject(publishTarget.value.id, payload);
     if (data?.job_id) {
-      publishStatus.value = 'Push queued...';
+      publishStatus.value = t('branddozer.push_queued_short');
       startPublishPolling(data.job_id);
       return;
     }
     if (data?.status === 'no_changes') {
-      const detail = data?.detail || 'No changes to commit or push.';
-      publishStatus.value = `${detail}${formatAheadBehind(data)}${data?.branch ? ` (branch ${data.branch})` : ''}`;
+      const detail = data?.detail || t('branddozer.no_changes');
+      publishStatus.value = `${detail}${formatAheadBehind(data)}${data?.branch ? t('branddozer.branch_suffix').replace('{branch}', String(data.branch)) : ''}`;
     } else {
       const target = data?.repo_url || 'GitHub';
-      publishStatus.value = `Pushed to ${target}${data?.branch ? ` (branch ${data.branch})` : ''}.`;
+      publishStatus.value = t('branddozer.pushed_to')
+        .replace('{target}', String(target))
+        .replace('{branch}', data?.branch ? t('branddozer.branch_suffix').replace('{branch}', String(data.branch)) : '');
     }
   } catch (err: any) {
-    publishError.value = resolveErrorMessage(err, 'Failed to push to GitHub.');
+    publishError.value = resolveErrorMessage(err, t('branddozer.error_push'));
   }
 }
 
@@ -2239,7 +2255,7 @@ async function generateInterjections() {
   confirmOpen.value = false;
   const defaultPrompt = form.value.default_prompt.trim();
   if (!defaultPrompt) {
-    interjectionError.value = 'Default prompt is required.';
+    interjectionError.value = t('branddozer.error_default_prompt_required');
     return;
   }
   try {
@@ -2253,10 +2269,10 @@ async function generateInterjections() {
     if (prompts && prompts.length) {
       form.value.interjections = prompts;
     } else {
-      interjectionError.value = 'No interjections returned. Try adjusting the prompt.';
+      interjectionError.value = t('branddozer.error_no_interjections');
     }
   } catch (err: any) {
-    interjectionError.value = resolveErrorMessage(err, 'Failed to generate interjections.');
+    interjectionError.value = resolveErrorMessage(err, t('branddozer.error_generate_interjections'));
   }
 }
 
@@ -2265,14 +2281,14 @@ function resolveErrorMessage(err: any, fallback: string) {
 }
 
 function formatTime(ts?: number | string | null) {
-  if (!ts) return '—';
+  if (!ts) return t('common.na');
   const value = Number(ts);
-  if (!Number.isFinite(value)) return '—';
+  if (!Number.isFinite(value)) return t('common.na');
   const delta = Date.now() / 1000 - value;
-  if (delta < 60) return 'just now';
-  if (delta < 3600) return `${Math.round(delta / 60)} min ago`;
-  if (delta < 86400) return `${Math.round(delta / 3600)} h ago`;
-  return `${Math.round(delta / 86400)} d ago`;
+  if (delta < 60) return t('common.just_now');
+  if (delta < 3600) return t('common.minutes_ago').replace('{count}', String(Math.round(delta / 60)));
+  if (delta < 86400) return t('common.hours_ago').replace('{count}', String(Math.round(delta / 3600)));
+  return t('common.days_ago').replace('{count}', String(Math.round(delta / 86400)));
 }
 </script>
 

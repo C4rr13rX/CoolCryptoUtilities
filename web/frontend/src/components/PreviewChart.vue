@@ -1,6 +1,6 @@
 <template>
   <div class="preview-chart" v-if="pointsActual.length > 1 && width > 0 && height > 0">
-    <svg :viewBox="`0 0 ${width} ${height}`" role="img" aria-label="Price preview chart">
+    <svg :viewBox="`0 0 ${width} ${height}`" role="img" :aria-label="t('preview.chart_label')">
       <defs>
         <linearGradient id="actualGradient" x1="0%" y1="0%" x2="0%" y2="100%">
           <stop offset="0%" stop-color="rgba(79,168,255,0.6)" />
@@ -42,11 +42,12 @@
       </g>
     </svg>
   </div>
-  <div v-else class="preview-chart empty">Insufficient data to render preview.</div>
+  <div v-else class="preview-chart empty">{{ t('preview.insufficient_data') }}</div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { t } from '@/i18n';
 
 interface SeriesPoint {
   timestamp: number;

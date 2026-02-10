@@ -3,76 +3,76 @@
     <section class="panel job-panel">
       <header>
         <div>
-          <h1>Data Lab</h1>
-          <p>Launch ingestion scripts, explore datasets, and pull contextual news across chains.</p>
+          <h1>{{ t('datalab.title') }}</h1>
+          <p>{{ t('datalab.subtitle') }}</p>
         </div>
         <button type="button" class="btn ghost" :disabled="jobPolling" @click="togglePolling">
-          {{ jobPolling ? 'Stop Polling' : 'Start Polling' }}
+          {{ jobPolling ? t('datalab.stop_polling') : t('datalab.start_polling') }}
         </button>
       </header>
 
       <div class="job-grid">
         <label>
-          Job Type
+          {{ t('datalab.job_type') }}
           <select v-model="jobType">
-            <option value="make2000index">Make 2000 Pair Index</option>
-            <option value="make_assignments">Generate Pair Assignments</option>
-            <option value="download2000">Download OHLCV</option>
+            <option value="make2000index">{{ t('datalab.job_make2000') }}</option>
+            <option value="make_assignments">{{ t('datalab.job_assignments') }}</option>
+            <option value="download2000">{{ t('datalab.job_download') }}</option>
           </select>
         </label>
         <label>
-          Network
+          {{ t('datalab.network') }}
           <select v-model="chain">
             <option v-for="opt in chains" :key="opt" :value="opt">{{ opt }}</option>
           </select>
         </label>
         <label>
-          Years Back
+          {{ t('datalab.years_back') }}
           <input type="number" min="1" max="10" v-model.number="yearsBack" />
         </label>
         <label>
-          Granularity (seconds)
+          {{ t('datalab.granularity') }}
           <input type="number" min="60" step="60" v-model.number="granularity" />
         </label>
         <label>
-          Max Workers
+          {{ t('datalab.max_workers') }}
           <input type="number" min="1" max="64" v-model.number="maxWorkers" />
         </label>
         <label>
-          Output Directory
+          {{ t('datalab.output_dir') }}
           <input type="text" v-model="outputDir" />
         </label>
         <label>
-          Pair Assignment File
+          {{ t('datalab.assignment_file') }}
           <input type="text" v-model="assignmentFile" />
         </label>
         <label>
-          Pair Index File
+          {{ t('datalab.pair_index_file') }}
           <input type="text" v-model="pairIndexFile" />
         </label>
       </div>
 
       <div class="job-actions">
         <button type="button" class="btn" :disabled="store.jobLoading" @click="runJob">
-          {{ store.jobLoading ? 'Starting…' : 'Run Job' }}
+          {{ store.jobLoading ? t('common.starting') : t('datalab.run_job') }}
         </button>
         <span class="status">{{ jobStatusMessage }}</span>
       </div>
 
       <div v-if="jobLog.length" class="log-block">
-        <h3>Job Log</h3>
+        <h3>{{ t('datalab.job_log') }}</h3>
         <pre>{{ jobLog.join('\n') }}</pre>
       </div>
       <div v-if="jobHistory.length" class="history-block">
-        <h3>Recent Job History</h3>
+        <h3>{{ t('datalab.job_history') }}</h3>
         <table class="history-table">
           <thead>
             <tr>
-              <th>Started</th>
-              <th>Finished</th>
-              <th>Job</th>
-              <th>Status</th>
-              <th>Message</th>
+              <th>{{ t('datalab.started') }}</th>
+              <th>{{ t('datalab.finished') }}</th>
+              <th>{{ t('datalab.job') }}</th>
+              <th>{{ t('common.status') }}</th>
+              <th>{{ t('common.message') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -80,7 +80,7 @@
               <td>{{ formatEpoch(entry.started_at) }}</td>
               <td>{{ formatEpoch(entry.finished_at) }}</td>
               <td>{{ entry.job_type }}</td>
-              <td :class="entry.status">{{ entry.status === 'success' ? 'Success' : 'Failure' }}</td>
+              <td :class="entry.status">{{ entry.status === 'success' ? t('common.success') : t('common.failure') }}</td>
               <td>{{ entry.message }}</td>
             </tr>
           </tbody>
@@ -91,47 +91,47 @@
     <section class="panel discovery-panel">
       <header>
         <div>
-          <h2>Market Discovery</h2>
-          <p>Uniswap-style scan of bullish/bearish behaviour to spot candidates fast.</p>
+          <h2>{{ t('datalab.discovery_title') }}</h2>
+          <p>{{ t('datalab.discovery_subtitle') }}</p>
         </div>
         <div class="discovery-controls">
           <label>
-            <span>Window</span>
+            <span>{{ t('datalab.window') }}</span>
             <select v-model="signalFilters.window">
               <option v-for="opt in signalWindows" :key="opt" :value="opt">{{ opt }}</option>
             </select>
           </label>
           <label>
-            <span>Direction</span>
+            <span>{{ t('datalab.direction') }}</span>
             <select v-model="signalFilters.direction">
-              <option value="bullish">Bullish</option>
-              <option value="bearish">Bearish</option>
-              <option value="all">All</option>
+              <option value="bullish">{{ t('datalab.bullish') }}</option>
+              <option value="bearish">{{ t('datalab.bearish') }}</option>
+              <option value="all">{{ t('common.all') }}</option>
             </select>
           </label>
           <label>
-            <span>Min Volume</span>
+            <span>{{ t('datalab.min_volume') }}</span>
             <input type="number" min="0" step="0.1" v-model.number="signalFilters.minVolume" />
           </label>
           <label>
-            <span>Limit</span>
+            <span>{{ t('datalab.limit') }}</span>
             <input type="number" min="5" max="200" v-model.number="signalFilters.limit" />
           </label>
           <button type="button" class="btn ghost" :disabled="store.signalsLoading" @click="refreshSignals">
-            {{ store.signalsLoading ? 'Scanning…' : 'Refresh' }}
+            {{ store.signalsLoading ? t('datalab.scanning') : t('common.refresh') }}
           </button>
         </div>
       </header>
       <div class="discovery-actions">
         <div class="selection-meta">
-          <strong>{{ selectedSignals.length }}</strong> selected
+          <strong>{{ selectedSignals.length }}</strong> {{ t('datalab.selected') }}
           <button
             type="button"
             class="link"
             @click="toggleSignalSelectAll"
             :disabled="!orderedSignals.length"
           >
-            {{ signalAllSelected ? 'Clear selection' : 'Select all' }}
+            {{ signalAllSelected ? t('datalab.clear_selection') : t('datalab.select_all') }}
           </button>
         </div>
         <div class="action-buttons">
@@ -141,7 +141,7 @@
             @click="applySelectionWatchlist('stream')"
             :disabled="!selectedSignals.length"
           >
-            Add to Stream
+            {{ t('datalab.add_stream') }}
           </button>
           <button
             type="button"
@@ -149,7 +149,7 @@
             @click="applySelectionWatchlist('ghost')"
             :disabled="!selectedSignals.length"
           >
-            Add to Ghost
+            {{ t('datalab.add_ghost') }}
           </button>
           <button
             type="button"
@@ -157,7 +157,7 @@
             @click="applySelectionWatchlist('live')"
             :disabled="!selectedSignals.length"
           >
-            Add to Live
+            {{ t('datalab.add_live') }}
           </button>
           <button
             type="button"
@@ -165,7 +165,7 @@
             @click="fetchSelectionNews"
             :disabled="!selectedSignals.length || store.newsLoading"
           >
-            {{ store.newsLoading ? 'Fetching…' : 'News (72h)' }}
+            {{ store.newsLoading ? t('common.fetching') : t('datalab.news_72h') }}
           </button>
         </div>
       </div>
@@ -177,24 +177,24 @@
               <th>
                 <input type="checkbox" :checked="signalAllSelected" @change="toggleSignalSelectAll" />
               </th>
-              <th>Symbol</th>
-              <th>Chain</th>
+              <th>{{ t('pipeline.symbol') }}</th>
+              <th>{{ t('common.chain') }}</th>
               <th>
                 <button type="button" class="link" @click="toggleSignalSort('change')">
-                  Change %
+                  {{ t('datalab.change_pct') }}
                   <span v-if="signalSort.key === 'change'">{{ signalSort.dir === 'asc' ? '▲' : '▼' }}</span>
                 </button>
               </th>
-              <th>Direction</th>
-              <th>Start</th>
-              <th>Latest</th>
+              <th>{{ t('datalab.direction') }}</th>
+              <th>{{ t('datalab.start') }}</th>
+              <th>{{ t('datalab.latest') }}</th>
               <th>
                 <button type="button" class="link" @click="toggleSignalSort('volume')">
-                  Avg Vol
+                  {{ t('datalab.avg_vol') }}
                   <span v-if="signalSort.key === 'volume'">{{ signalSort.dir === 'asc' ? '▲' : '▼' }}</span>
                 </button>
               </th>
-              <th>Risk</th>
+              <th>{{ t('datalab.risk') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -206,9 +206,9 @@
                 <div class="symbol-cell">
                   <strong>{{ item.symbol }}</strong>
                   <div class="watchlist-badges">
-                    <span v-if="item.watchlists?.stream" class="badge">S</span>
-                    <span v-if="item.watchlists?.ghost" class="badge ghost">G</span>
-                    <span v-if="item.watchlists?.live" class="badge live">L</span>
+                    <span v-if="item.watchlists?.stream" class="badge">{{ t('datalab.badge_stream') }}</span>
+                    <span v-if="item.watchlists?.ghost" class="badge ghost">{{ t('datalab.badge_ghost') }}</span>
+                    <span v-if="item.watchlists?.live" class="badge live">{{ t('datalab.badge_live') }}</span>
                   </div>
                 </div>
               </td>
@@ -220,26 +220,26 @@
               <td>{{ formatVolume(item.avg_volume) }}</td>
               <td>
                 <span v-if="item.risk" class="risk-badge" :class="item.risk.verdict || item.risk.status">
-                  {{ (item.risk.verdict || item.risk.status || 'ok') }}
+                  {{ (item.risk.verdict || item.risk.status || t('common.ok')) }}
                 </span>
-                <span v-else>—</span>
+                <span v-else>{{ t('common.none') }}</span>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
       <p v-else class="empty">
-        {{ store.signalsLoading ? 'Scanning markets…' : signalSummary }}
+        {{ store.signalsLoading ? t('datalab.scanning_markets') : signalSummary }}
       </p>
     </section>
 
     <section class="panel watchlists-panel">
       <header>
         <div>
-          <h2>Watchlists</h2>
-          <p>Pin tokens for streams, ghost trading, and live execution.</p>
+          <h2>{{ t('datalab.watchlists_title') }}</h2>
+          <p>{{ t('datalab.watchlists_subtitle') }}</p>
         </div>
-        <button type="button" class="btn ghost" @click="store.refreshWatchlists">Refresh Lists</button>
+        <button type="button" class="btn ghost" @click="store.refreshWatchlists">{{ t('datalab.refresh_lists') }}</button>
       </header>
       <div class="watchlist-grid">
         <article v-for="(label, key) in watchlistLabels" :key="key">
@@ -247,13 +247,13 @@
           <ul class="watchlist-list">
             <li v-for="token in store.watchlists?.[key] || []" :key="token">
               <span>{{ token }}</span>
-              <button type="button" class="link" @click="removeWatchlistSymbol(key, token)">Remove</button>
+              <button type="button" class="link" @click="removeWatchlistSymbol(key, token)">{{ t('common.remove') }}</button>
             </li>
-            <li v-if="!(store.watchlists?.[key] || []).length" class="empty">No pairs pinned.</li>
+            <li v-if="!(store.watchlists?.[key] || []).length" class="empty">{{ t('datalab.no_pairs') }}</li>
           </ul>
           <form class="watchlist-form" @submit.prevent="addWatchlistSymbol(key)">
-            <input type="text" v-model="watchlistDrafts[key]" placeholder="Add symbol e.g. WETH-USDBC" />
-            <button type="submit" class="btn ghost">Add</button>
+            <input type="text" v-model="watchlistDrafts[key]" :placeholder="t('datalab.watchlist_placeholder')" />
+            <button type="submit" class="btn ghost">{{ t('common.add') }}</button>
           </form>
         </article>
       </div>
@@ -262,19 +262,19 @@
     <section class="panel datasets-panel">
       <header>
         <div>
-          <h2>Dataset Explorer</h2>
-          <p>Browse generated datasets and sort by size or freshness.</p>
+          <h2>{{ t('datalab.datasets_title') }}</h2>
+          <p>{{ t('datalab.datasets_subtitle') }}</p>
         </div>
         <div class="dataset-controls">
           <select v-model="datasetChain" @change="refreshDatasets">
-            <option value="">All Networks</option>
+            <option value="">{{ t('datalab.all_networks') }}</option>
             <option v-for="opt in chains" :key="opt" :value="opt">{{ opt }}</option>
           </select>
           <select v-model="datasetCategory" @change="refreshDatasets">
-            <option value="">All Categories</option>
-            <option value="pair_index">Pair Index</option>
-            <option value="assignment">Assignments</option>
-            <option value="historical">Historical OHLCV</option>
+            <option value="">{{ t('datalab.all_categories') }}</option>
+            <option value="pair_index">{{ t('datalab.category_pair_index') }}</option>
+            <option value="assignment">{{ t('datalab.category_assignment') }}</option>
+            <option value="historical">{{ t('datalab.category_historical') }}</option>
           </select>
         </div>
       </header>
@@ -283,24 +283,24 @@
         <thead>
           <tr>
             <th>#</th>
-            <th>Category</th>
-            <th>Chain</th>
+            <th>{{ t('datalab.category') }}</th>
+            <th>{{ t('common.chain') }}</th>
             <th>
               <button type="button" class="link" @click="toggleDatasetSort('symbol')">
-                Symbol
+                {{ t('pipeline.symbol') }}
                 <span v-if="datasetSort.key === 'symbol'">{{ datasetSort.dir === 'asc' ? '▲' : '▼' }}</span>
               </button>
             </th>
-            <th>Path</th>
+            <th>{{ t('datalab.path') }}</th>
             <th>
               <button type="button" class="link" @click="toggleDatasetSort('size')">
-                Size
+                {{ t('datalab.size') }}
                 <span v-if="datasetSort.key === 'size'">{{ datasetSort.dir === 'asc' ? '▲' : '▼' }}</span>
               </button>
             </th>
             <th>
               <button type="button" class="link" @click="toggleDatasetSort('modified')">
-                Modified
+                {{ t('datalab.modified') }}
                 <span v-if="datasetSort.key === 'modified'">{{ datasetSort.dir === 'asc' ? '▲' : '▼' }}</span>
               </button>
             </th>
@@ -317,7 +317,7 @@
             <td>{{ formatDateText(entry.modified_iso) }}</td>
           </tr>
           <tr v-if="!sortedDatasets.length">
-            <td colspan="7">No dataset files found.</td>
+            <td colspan="7">{{ t('datalab.no_datasets') }}</td>
           </tr>
         </tbody>
       </table>
@@ -326,16 +326,16 @@
     <section class="panel news-panel">
       <header>
         <div>
-          <h2>News & Signals</h2>
-          <p>Aggregate token-specific news across APIs and curated sources.</p>
+          <h2>{{ t('datalab.news_title') }}</h2>
+          <p>{{ t('datalab.news_subtitle') }}</p>
         </div>
         <div class="news-controls">
-          <input type="text" placeholder="Tokens (comma separated)" v-model="newsTokens" />
+          <input type="text" :placeholder="t('datalab.news_tokens')" v-model="newsTokens" />
           <input type="datetime-local" v-model="newsStart" />
           <input type="datetime-local" v-model="newsEnd" />
-          <input type="text" placeholder="Search term" v-model="newsQuery" />
+          <input type="text" :placeholder="t('datalab.search_term')" v-model="newsQuery" />
           <button type="button" class="btn ghost" :disabled="store.newsLoading" @click="fetchNews">
-            {{ store.newsLoading ? 'Fetching…' : 'Fetch News' }}
+            {{ store.newsLoading ? t('common.fetching') : t('datalab.fetch_news') }}
           </button>
         </div>
       </header>
@@ -349,25 +349,25 @@
           </div>
           <div class="meta">
             <span>{{ formatDateText(item.datetime) }}</span>
-            <span>Source: {{ item.source || item.origin }}</span>
-            <span v-if="item.sentiment && item.sentiment !== 'unknown'">Sentiment: {{ item.sentiment }}</span>
-            <span v-if="item.tokens?.length">Tokens: {{ item.tokens.join(', ') }}</span>
+            <span>{{ t('datalab.source') }}: {{ item.source || item.origin }}</span>
+            <span v-if="item.sentiment && item.sentiment !== 'unknown'">{{ t('datalab.sentiment') }}: {{ item.sentiment }}</span>
+            <span v-if="item.tokens?.length">{{ t('datalab.tokens') }}: {{ item.tokens.join(', ') }}</span>
           </div>
           <p v-if="item.summary" class="summary">{{ item.summary }}</p>
         </li>
       </ul>
-      <p v-else-if="store.newsLoading" class="empty">Fetching news…</p>
-      <p v-else class="empty">Select tokens and timeframe, then fetch to see headlines.</p>
+      <p v-else-if="store.newsLoading" class="empty">{{ t('datalab.fetching_news') }}</p>
+      <p v-else class="empty">{{ t('datalab.news_empty') }}</p>
     </section>
 
     <section class="panel custom-news-panel">
       <header>
         <div>
-          <h2>Custom News Sources</h2>
-          <p>Register URL patterns and let c0d3r validate the extractor when needed.</p>
+          <h2>{{ t('datalab.custom_sources') }}</h2>
+          <p>{{ t('datalab.custom_sources_subtitle') }}</p>
         </div>
         <button type="button" class="btn ghost" @click="loadNewsSources">
-          Refresh
+          {{ t('common.refresh') }}
         </button>
       </header>
       <div class="source-grid">
@@ -376,22 +376,22 @@
           <p class="muted">{{ src.base_url }}</p>
           <p v-if="src.last_error" class="error">{{ src.last_error }}</p>
           <div class="source-actions">
-            <button class="btn ghost" type="button" @click="testNewsSource(src.id)">Test</button>
-            <button class="btn ghost" type="button" @click="runNewsSource(src.id)">Run</button>
+            <button class="btn ghost" type="button" @click="testNewsSource(src.id)">{{ t('common.test') }}</button>
+            <button class="btn ghost" type="button" @click="runNewsSource(src.id)">{{ t('common.run') }}</button>
           </div>
         </div>
-        <div v-if="!newsSources.length" class="empty small">No custom sources yet.</div>
+        <div v-if="!newsSources.length" class="empty small">{{ t('datalab.no_custom_sources') }}</div>
       </div>
       <form class="source-form" @submit.prevent="createNewsSource">
-        <input v-model="newSourceName" placeholder="Source name" />
-        <input v-model="newSourceUrl" placeholder="https://news.example.com" />
-        <textarea v-model="newSourceConfig" rows="3" placeholder='{"item_selector":"article","title_selector":"h2","link_selector":"a"}' />
+        <input v-model="newSourceName" :placeholder="t('datalab.source_name')" />
+        <input v-model="newSourceUrl" :placeholder="t('datalab.source_url')" />
+        <textarea v-model="newSourceConfig" rows="3" :placeholder="t('datalab.source_config')" />
         <button type="submit" class="btn" :disabled="!newSourceName.trim() || !newSourceUrl.trim()">
-          Add Source
+          {{ t('datalab.add_source') }}
         </button>
       </form>
       <div v-if="newsSourceTestResults.length" class="log-block">
-        <h3>Test Results</h3>
+        <h3>{{ t('datalab.test_results') }}</h3>
         <pre>{{ JSON.stringify(newsSourceTestResults, null, 2) }}</pre>
       </div>
     </section>
@@ -408,6 +408,7 @@ import {
   type DataLabNewsSource,
 } from '@/api';
 import { useDataLabStore } from '@/stores/dataLab';
+import { t } from '@/i18n';
 
 const store = useDataLabStore();
 
@@ -458,11 +459,11 @@ const watchlistDrafts = reactive<Record<'stream' | 'ghost' | 'live', string>>({
   ghost: '',
   live: '',
 });
-const watchlistLabels: Record<'stream' | 'ghost' | 'live', string> = {
-  stream: 'Data Stream',
-  ghost: 'Ghost Trading',
-  live: 'Live Swaps',
-};
+const watchlistLabels = computed<Record<'stream' | 'ghost' | 'live', string>>(() => ({
+  stream: t('datalab.watchlist_stream'),
+  ghost: t('datalab.watchlist_ghost'),
+  live: t('datalab.watchlist_live'),
+}));
 const compactFormatter = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 });
 
 watch(
@@ -523,17 +524,17 @@ const orderedSignals = computed(() => {
 
 const signalSummary = computed(() => {
   const meta = store.signalsMeta || {};
-  if (!Object.keys(meta).length) return 'Awaiting scan…';
+  if (!Object.keys(meta).length) return t('datalab.awaiting_scan');
   const parts: string[] = [];
   const streamPairs = meta.stream_pairs ?? 0;
   const streamHits = meta.stream_hits ?? 0;
   const historical = meta.historical_considered ?? 0;
   const historicalHits = meta.historical_hits ?? 0;
   const scams = meta.scam_filtered ?? 0;
-  parts.push(`Live pairs: ${streamHits}/${streamPairs}`);
-  parts.push(`Historical hits: ${historicalHits}/${historical}`);
+  parts.push(t('datalab.live_pairs').replace('{hits}', String(streamHits)).replace('{total}', String(streamPairs)));
+  parts.push(t('datalab.historical_hits').replace('{hits}', String(historicalHits)).replace('{total}', String(historical)));
   if (scams) {
-    parts.push(`Scams filtered: ${scams}`);
+    parts.push(t('datalab.scams_filtered').replace('{count}', String(scams)));
   }
   const message = meta.message ? `· ${meta.message}` : '';
   return `${parts.join(' • ')} ${message}`.trim();
@@ -545,9 +546,11 @@ const signalAllSelected = computed(() => {
 });
 
 const jobStatusMessage = computed(() => {
-  if (!store.jobStatus) return 'Idle';
-  if (store.jobStatus.running) return `Running ${store.jobStatus.job_type || ''}`;
-  return store.jobStatus.message || 'Idle';
+  if (!store.jobStatus) return t('common.idle');
+  if (store.jobStatus.running) {
+    return t('datalab.running_job').replace('{job}', String(store.jobStatus.job_type || '')).trim();
+  }
+  return store.jobStatus.message || t('common.idle');
 });
 
 const jobLog = computed(() => store.jobLog);
@@ -633,9 +636,9 @@ async function refreshDatasets() {
 }
 
 function humanCategory(value: string) {
-  if (value === 'pair_index') return 'Pair Index';
-  if (value === 'assignment') return 'Assignments';
-  return 'Historical';
+  if (value === 'pair_index') return t('datalab.category_pair_index');
+  if (value === 'assignment') return t('datalab.category_assignment');
+  return t('datalab.category_historical');
 }
 
 async function runJob() {
@@ -684,27 +687,27 @@ async function fetchSelectionNews() {
 
 function formatChange(value: any) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
+  if (!Number.isFinite(num)) return t('common.none');
   const prefix = num > 0 ? '+' : '';
   return `${prefix}${num.toFixed(2)}%`;
 }
 
 function formatPrice(value: any) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
-  if (num === 0) return '0';
+  if (!Number.isFinite(num)) return t('common.none');
+  if (num === 0) return t('common.zero');
   if (Math.abs(num) >= 1) return num.toFixed(4);
   return num.toExponential(2);
 }
 
 function formatVolume(value: any) {
   const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) return '—';
+  if (!Number.isFinite(num) || num <= 0) return t('common.none');
   return compactFormatter.format(num);
 }
 
 function formatDateText(value: string) {
-  if (!value) return '—';
+  if (!value) return t('common.none');
   const dt = new Date(value);
   if (Number.isNaN(dt.getTime())) return value;
   return dt.toLocaleString();
@@ -722,7 +725,7 @@ function togglePolling() {
 
 function formatEpoch(value: any) {
   const num = Number(value);
-  if (!Number.isFinite(num)) return '—';
+  if (!Number.isFinite(num)) return t('common.none');
   return new Date(num * 1000).toLocaleString();
 }
 

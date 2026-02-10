@@ -9,12 +9,12 @@
             <h2>{{ title }}</h2>
             <p>{{ subtitle }}</p>
           </div>
-          <button class="close-btn" type="button" @click="close" aria-label="Close wizard">x</button>
+          <button class="close-btn" type="button" @click="close" :aria-label="t('wizard.close')">x</button>
         </header>
 
         <div class="wizard-status">
           <div class="status-pill">
-            Step {{ activeIndex + 1 }} / {{ steps.length }}
+            {{ t('wizard.step').replace('{current}', String(activeIndex + 1)).replace('{total}', String(steps.length)) }}
           </div>
           <div class="status-dots">
             <button
@@ -24,7 +24,7 @@
               class="dot"
               :class="{ active: idx === activeIndex }"
               @click="goTo(idx)"
-              :aria-label="`Jump to ${step.title}`"
+              :aria-label="t('wizard.jump_to').replace('{title}', step.title)"
             ></button>
           </div>
         </div>
@@ -50,7 +50,7 @@
 
         <footer class="wizard-footer">
           <button class="btn ghost" type="button" @click="prev" :disabled="activeIndex === 0">
-            Back
+            {{ t('common.back') }}
           </button>
           <div class="rail">
             <span class="fill" :style="{ width: progressWidth }"></span>
@@ -66,6 +66,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { t } from '@/i18n';
 
 interface WizardStep {
   id: string;
@@ -98,7 +99,9 @@ const emit = defineEmits<{
 const activeIndex = ref(0);
 
 const isOpen = computed(() => props.open !== false);
-const nextLabel = computed(() => (activeIndex.value >= props.steps.length - 1 ? 'Done' : 'Next'));
+const nextLabel = computed(() =>
+  activeIndex.value >= props.steps.length - 1 ? t('common.done') : t('common.next')
+);
 const progressWidth = computed(() => {
   if (!props.steps.length) return '0%';
   return `${((activeIndex.value + 1) / props.steps.length) * 100}%`;
