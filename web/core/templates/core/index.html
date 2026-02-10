@@ -1,7 +1,8 @@
 {% load static %}
 {% load humanize %}
+{% load i18n %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ current_language|default:'en' }}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -131,6 +132,36 @@
         margin: 0;
         font-size: 1.4rem;
         color: var(--accent-3);
+      }
+      header.site-header .lang-switcher {
+        margin-top: 0.35rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      header.site-header .lang-select {
+        appearance: none;
+        background: rgba(4, 12, 22, 0.85);
+        border: 1px solid rgba(111, 167, 255, 0.35);
+        color: #e5edff;
+        padding: 0.35rem 0.85rem 0.35rem 2.1rem;
+        border-radius: 12px;
+        font-size: 0.78rem;
+        letter-spacing: 0.12rem;
+        text-transform: uppercase;
+        cursor: pointer;
+        background-repeat: no-repeat;
+        background-position: 0.55rem center;
+        background-size: 18px 12px;
+      }
+      header.site-header .lang-select[data-flag="us"] {
+        background-image: url("{% static 'assets/flags/us.svg' %}");
+      }
+      header.site-header .lang-label {
+        font-size: 0.7rem;
+        letter-spacing: 0.16rem;
+        text-transform: uppercase;
+        color: rgba(226, 237, 255, 0.7);
       }
       header.site-header .user-chip {
         font-size: 0.85rem;
@@ -284,15 +315,36 @@
       <header class="site-header">
         <div class="brand">
           <img src="{% static 'assets/main_logo.png' %}?v={{ asset_version }}" alt="R3V3N!R insignia" />
-          <h1>R3V3N!R • Crypto Trading AI Bot</h1>
+          <div>
+            <h1>{% trans "R3V3N!R • Crypto Trading AI Bot" %}</h1>
+            <div class="lang-switcher">
+              <span class="lang-label">{% trans "Language" %}</span>
+              <form method="post" action="{% url 'set_language' %}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.path }}" />
+                <select
+                  name="language"
+                  class="lang-select"
+                  data-flag="{% if current_language|default:'en'|slice:':2' == 'en' %}us{% endif %}"
+                  onchange="this.form.submit()"
+                >
+                  {% for opt in language_options %}
+                    <option value="{{ opt.code }}" {% if opt.code == current_language %}selected{% endif %}>
+                      {{ opt.native }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </form>
+            </div>
+          </div>
         </div>
         {% if user.is_authenticated %}
           <div class="user-actions">
             <div class="user-stack">
-              <span class="user-chip">Logged in as {{ user.get_username }}</span>
+              <span class="user-chip">{% trans "Logged in as" %} {{ user.get_username }}</span>
               <form method="post" action="{% url 'core:logout' %}">
                 {% csrf_token %}
-                <button type="submit" class="logout-btn">Log out</button>
+                <button type="submit" class="logout-btn">{% trans "Log out" %}</button>
               </form>
             </div>
           </div>
@@ -331,6 +383,7 @@
           id="app"
           data-initial-route="{{ initial_route }}"
           data-initial-path="{{ request.path }}"
+          data-language="{{ current_language|default:'en' }}"
           data-fallback-id="fallback-data"
         ></div>
         {{ fallback_snapshot|json_script:"fallback-data" }}

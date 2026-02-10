@@ -8,6 +8,7 @@ from investigations import views as investigations_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("i18n/", include("django.conf.urls.i18n")),
     path("api/streams/", include("streams.urls")),
     path("api/telemetry/", include("telemetry.urls")),
     path("api/console/", include("opsconsole.urls")),

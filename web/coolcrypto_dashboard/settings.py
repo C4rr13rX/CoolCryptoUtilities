@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from django.utils.translation import gettext_lazy as _
 
 from corsheaders.defaults import default_headers
 
@@ -132,6 +133,7 @@ MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -220,6 +222,99 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
+USE_I18N = True
+USE_L10N = True
+LOCALE_PATHS = [BASE_DIR / "locale"]
+
+LANGUAGES = [
+    ("en", _("English")),
+    ("es", _("Spanish")),
+    ("fr", _("French")),
+    ("de", _("German")),
+    ("it", _("Italian")),
+    ("pt", _("Portuguese")),
+    ("pt-br", _("Portuguese (Brazil)")),
+    ("nl", _("Dutch")),
+    ("sv", _("Swedish")),
+    ("no", _("Norwegian")),
+    ("da", _("Danish")),
+    ("fi", _("Finnish")),
+    ("pl", _("Polish")),
+    ("cs", _("Czech")),
+    ("sk", _("Slovak")),
+    ("hu", _("Hungarian")),
+    ("ro", _("Romanian")),
+    ("bg", _("Bulgarian")),
+    ("el", _("Greek")),
+    ("tr", _("Turkish")),
+    ("ru", _("Russian")),
+    ("uk", _("Ukrainian")),
+    ("ar", _("Arabic")),
+    ("he", _("Hebrew")),
+    ("fa", _("Persian")),
+    ("hi", _("Hindi")),
+    ("bn", _("Bengali")),
+    ("ur", _("Urdu")),
+    ("ta", _("Tamil")),
+    ("te", _("Telugu")),
+    ("mr", _("Marathi")),
+    ("gu", _("Gujarati")),
+    ("pa", _("Punjabi")),
+    ("vi", _("Vietnamese")),
+    ("th", _("Thai")),
+    ("id", _("Indonesian")),
+    ("ms", _("Malay")),
+    ("fil", _("Filipino")),
+    ("ja", _("Japanese")),
+    ("ko", _("Korean")),
+    ("zh-hans", _("Chinese (Simplified)")),
+    ("zh-hant", _("Chinese (Traditional)")),
+]
+
+LANGUAGE_SELECT_OPTIONS = [
+    {"code": "en", "label": "English", "native": "English", "flag": "us"},
+    {"code": "es", "label": "Spanish", "native": "Español", "flag": "es"},
+    {"code": "fr", "label": "French", "native": "Français", "flag": "fr"},
+    {"code": "de", "label": "German", "native": "Deutsch", "flag": "de"},
+    {"code": "it", "label": "Italian", "native": "Italiano", "flag": "it"},
+    {"code": "pt", "label": "Portuguese", "native": "Português", "flag": "pt"},
+    {"code": "pt-br", "label": "Portuguese (Brazil)", "native": "Português (Brasil)", "flag": "br"},
+    {"code": "nl", "label": "Dutch", "native": "Nederlands", "flag": "nl"},
+    {"code": "sv", "label": "Swedish", "native": "Svenska", "flag": "se"},
+    {"code": "no", "label": "Norwegian", "native": "Norsk", "flag": "no"},
+    {"code": "da", "label": "Danish", "native": "Dansk", "flag": "dk"},
+    {"code": "fi", "label": "Finnish", "native": "Suomi", "flag": "fi"},
+    {"code": "pl", "label": "Polish", "native": "Polski", "flag": "pl"},
+    {"code": "cs", "label": "Czech", "native": "Čeština", "flag": "cz"},
+    {"code": "sk", "label": "Slovak", "native": "Slovenčina", "flag": "sk"},
+    {"code": "hu", "label": "Hungarian", "native": "Magyar", "flag": "hu"},
+    {"code": "ro", "label": "Romanian", "native": "Română", "flag": "ro"},
+    {"code": "bg", "label": "Bulgarian", "native": "Български", "flag": "bg"},
+    {"code": "el", "label": "Greek", "native": "Ελληνικά", "flag": "gr"},
+    {"code": "tr", "label": "Turkish", "native": "Türkçe", "flag": "tr"},
+    {"code": "ru", "label": "Russian", "native": "Русский", "flag": "ru"},
+    {"code": "uk", "label": "Ukrainian", "native": "Українська", "flag": "ua"},
+    {"code": "ar", "label": "Arabic", "native": "العربية", "flag": "ae"},
+    {"code": "he", "label": "Hebrew", "native": "עברית", "flag": "il"},
+    {"code": "fa", "label": "Persian", "native": "فارسی", "flag": "ir"},
+    {"code": "hi", "label": "Hindi", "native": "हिन्दी", "flag": "in"},
+    {"code": "bn", "label": "Bengali", "native": "বাংলা", "flag": "bd"},
+    {"code": "ur", "label": "Urdu", "native": "اردو", "flag": "pk"},
+    {"code": "ta", "label": "Tamil", "native": "தமிழ்", "flag": "in"},
+    {"code": "te", "label": "Telugu", "native": "తెలుగు", "flag": "in"},
+    {"code": "mr", "label": "Marathi", "native": "मराठी", "flag": "in"},
+    {"code": "gu", "label": "Gujarati", "native": "ગુજરાતી", "flag": "in"},
+    {"code": "pa", "label": "Punjabi", "native": "ਪੰਜਾਬੀ", "flag": "in"},
+    {"code": "vi", "label": "Vietnamese", "native": "Tiếng Việt", "flag": "vn"},
+    {"code": "th", "label": "Thai", "native": "ไทย", "flag": "th"},
+    {"code": "id", "label": "Indonesian", "native": "Bahasa Indonesia", "flag": "id"},
+    {"code": "ms", "label": "Malay", "native": "Bahasa Melayu", "flag": "my"},
+    {"code": "fil", "label": "Filipino", "native": "Filipino", "flag": "ph"},
+    {"code": "ja", "label": "Japanese", "native": "日本語", "flag": "jp"},
+    {"code": "ko", "label": "Korean", "native": "한국어", "flag": "kr"},
+    {"code": "zh-hans", "label": "Chinese (Simplified)", "native": "简体中文", "flag": "cn"},
+    {"code": "zh-hant", "label": "Chinese (Traditional)", "native": "繁體中文", "flag": "tw"},
+]
 TIME_ZONE = os.getenv("DJANGO_TIME_ZONE", "UTC")
 USE_I18N = True
 USE_TZ = True

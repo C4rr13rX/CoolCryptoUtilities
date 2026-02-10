@@ -20,6 +20,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db.models import Q, Count
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
+from django.utils.translation import get_language
 from django.utils import timezone
 from django.views import View
 from django.views.generic import TemplateView
@@ -148,6 +149,8 @@ class DashboardContextMixin:
             "initial_route": initial_route,
             "asset_version": asset_version,
             "fallback_snapshot": self._dashboard_snapshot(),
+            "current_language": get_language() or settings.LANGUAGE_CODE,
+            "language_options": getattr(settings, "LANGUAGE_SELECT_OPTIONS", []),
         }
 
     def _asset_version(self) -> str:

@@ -4,7 +4,7 @@
       <div class="sidebar__brand">
         <div class="brand-copy">
           <span class="title">R3V3N!R</span>
-          <small class="subtitle">Crypto Trading AI Bot</small>
+          <small class="subtitle">{{ t('nav.subtitle') }}</small>
         </div>
       </div>
       <nav class="sidebar__nav">
@@ -27,11 +27,11 @@
       <footer class="sidebar__foot">
         <div class="sidebar__stats">
           <div>
-            <span class="label">Stable Bank</span>
+            <span class="label">{{ t('nav.stable_bank') }}</span>
             <span class="value">{{ stableBankDisplay }}</span>
           </div>
           <div>
-            <span class="label">Total Profit</span>
+            <span class="label">{{ t('nav.total_profit') }}</span>
             <span class="value">{{ totalProfitDisplay }}</span>
           </div>
         </div>
@@ -48,14 +48,14 @@
           <span />
         </button>
         <div class="header-metrics">
-          <StatusIndicator label="Streams" :level="streamIntent" :detail="streamSummary" icon="radar" />
-          <StatusIndicator label="Feedback" :level="feedbackIntent" :detail="feedbackSummary" icon="shield" />
-          <StatusIndicator label="ProdMgr" :level="consoleIntent" :detail="consoleSummary" icon="terminal" />
-          <StatusIndicator label="Pipeline" :level="pipelineIntent" :detail="pipelineSummary" icon="pipeline" />
-          <StatusIndicator label="Advisories" :level="advisoryIntent" :detail="advisorySummary" icon="lightning" />
+          <StatusIndicator :label="t('nav.streams')" :level="streamIntent" :detail="streamSummary" icon="radar" />
+          <StatusIndicator :label="t('nav.feedback')" :level="feedbackIntent" :detail="feedbackSummary" icon="shield" />
+          <StatusIndicator :label="t('nav.prodmgr')" :level="consoleIntent" :detail="consoleSummary" icon="terminal" />
+          <StatusIndicator :label="t('nav.pipeline')" :level="pipelineIntent" :detail="pipelineSummary" icon="pipeline" />
+          <StatusIndicator :label="t('nav.advisories')" :level="advisoryIntent" :detail="advisorySummary" icon="lightning" />
         </div>
         <div class="header-right">
-          <span v-if="store.loading" class="loading-pill">Refreshing…</span>
+          <span v-if="store.loading" class="loading-pill">{{ t('nav.refreshing') }}</span>
         </div>
       </header>
       <section class="content__body" :class="{ 'glitch-pulse': glitchActive }">
@@ -78,6 +78,7 @@ import { ambientAudio } from '@/audio/ambient';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
+import { t } from '@/i18n';
 
 const store = useDashboardStore();
 const uiSettings = useUiSettingsStore();
@@ -557,27 +558,27 @@ const pipelineSummary = computed(() => {
 });
 
 const navItems = computed(() => [
-  { route: 'dashboard', path: '/', label: 'Overview', icon: 'overview', intent: streamIntent.value },
-  { route: 'organism', path: '/organism', label: 'Organism', icon: 'organism', intent: pipelineIntent.value },
-  { route: 'pipeline', path: '/pipeline', label: 'Pipeline', icon: 'pipeline', intent: pipelineIntent.value },
-  { route: 'streams', path: '/streams', label: 'Streams', icon: 'streams', intent: streamIntent.value },
-  { route: 'telemetry', path: '/telemetry', label: 'Telemetry', icon: 'activity', intent: feedbackIntent.value },
-  { route: 'logs', path: '/logs', label: 'Logs', icon: 'activity', intent: feedbackIntent.value },
-  { route: 'wallet', path: '/wallet', label: 'Wallet', icon: 'wallet', intent: consoleIntent.value },
-  { route: 'c0d3r', path: '/c0d3r', label: 'c0d3r', icon: 'terminal', intent: consoleIntent.value },
-  { route: 'investigations', path: '/investigations', label: 'Investigations', icon: 'shield', intent: advisoryIntent.value },
-  { route: 'addressbook', path: '/addressbook', label: 'Address Book', icon: 'link', intent: advisoryIntent.value },
-  { route: 'advisories', path: '/advisories', label: 'Advisories', icon: 'shield', intent: advisoryIntent.value },
-  { route: 'datalab', path: '/datalab', label: 'Data Lab', icon: 'datalab', intent: pipelineIntent.value },
-  { route: 'lab', path: '/lab', label: 'Model Lab', icon: 'lab', intent: pipelineIntent.value },
-  { route: 'guardian', path: '/guardian', label: 'Guardian', icon: 'guardian', intent: pipelineIntent.value },
-  { route: 'cron', path: '/cron', label: 'Cron', icon: 'activity', intent: pipelineIntent.value },
-  { route: 'codegraph', path: '/codegraph', label: 'Code Graph', icon: 'activity', intent: pipelineIntent.value },
-  { route: 'integrations', path: '/integrations', label: 'API Integrations', icon: 'link', intent: pipelineIntent.value },
-  { route: 'settings', path: '/settings', label: 'Settings', icon: 'settings', intent: pipelineIntent.value },
-  { route: 'audiolab', path: '/audiolab', label: 'Audio Lab', icon: 'radar', intent: pipelineIntent.value },
-  { route: 'u53rxr080t', path: '/u53rxr080t', label: 'U53RxR080T', icon: 'radar', intent: pipelineIntent.value },
-  { route: 'branddozer', path: '/branddozer', label: 'Br∆nD D0z3r', icon: 'lab', intent: pipelineIntent.value },
+  { route: 'dashboard', path: '/', label: t('nav.overview'), icon: 'overview', intent: streamIntent.value },
+  { route: 'organism', path: '/organism', label: t('nav.organism'), icon: 'organism', intent: pipelineIntent.value },
+  { route: 'pipeline', path: '/pipeline', label: t('nav.pipeline'), icon: 'pipeline', intent: pipelineIntent.value },
+  { route: 'streams', path: '/streams', label: t('nav.streams'), icon: 'streams', intent: streamIntent.value },
+  { route: 'telemetry', path: '/telemetry', label: t('nav.telemetry'), icon: 'activity', intent: feedbackIntent.value },
+  { route: 'logs', path: '/logs', label: t('nav.logs'), icon: 'activity', intent: feedbackIntent.value },
+  { route: 'wallet', path: '/wallet', label: t('nav.wallet'), icon: 'wallet', intent: consoleIntent.value },
+  { route: 'c0d3r', path: '/c0d3r', label: t('nav.c0d3r'), icon: 'terminal', intent: consoleIntent.value },
+  { route: 'investigations', path: '/investigations', label: t('nav.investigations'), icon: 'shield', intent: advisoryIntent.value },
+  { route: 'addressbook', path: '/addressbook', label: t('nav.addressbook'), icon: 'link', intent: advisoryIntent.value },
+  { route: 'advisories', path: '/advisories', label: t('nav.advisories'), icon: 'shield', intent: advisoryIntent.value },
+  { route: 'datalab', path: '/datalab', label: t('nav.datalab'), icon: 'datalab', intent: pipelineIntent.value },
+  { route: 'lab', path: '/lab', label: t('nav.lab'), icon: 'lab', intent: pipelineIntent.value },
+  { route: 'guardian', path: '/guardian', label: t('nav.guardian'), icon: 'guardian', intent: pipelineIntent.value },
+  { route: 'cron', path: '/cron', label: t('nav.cron'), icon: 'activity', intent: pipelineIntent.value },
+  { route: 'codegraph', path: '/codegraph', label: t('nav.codegraph'), icon: 'activity', intent: pipelineIntent.value },
+  { route: 'integrations', path: '/integrations', label: t('nav.integrations'), icon: 'link', intent: pipelineIntent.value },
+  { route: 'settings', path: '/settings', label: t('nav.settings'), icon: 'settings', intent: pipelineIntent.value },
+  { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar', intent: pipelineIntent.value },
+  { route: 'u53rxr080t', path: '/u53rxr080t', label: t('nav.u53rxr080t'), icon: 'radar', intent: pipelineIntent.value },
+  { route: 'branddozer', path: '/branddozer', label: t('nav.branddozer'), icon: 'lab', intent: pipelineIntent.value },
 ]);
 
 const normalizePath = (value: string) => (value.length > 1 && value.endsWith('/') ? value.slice(0, -1) : value);

@@ -194,6 +194,26 @@ PAIR_ABI = json.loads("""[
   {"inputs":[],"name":"token1","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"}
 ]""")
 
+V3_POOL_ABI = json.loads("""[
+  {
+    "anonymous": false,
+    "inputs": [
+      {"indexed": true, "name": "sender", "type": "address"},
+      {"indexed": true, "name": "recipient", "type": "address"},
+      {"indexed": false, "name": "amount0", "type": "int256"},
+      {"indexed": false, "name": "amount1", "type": "int256"},
+      {"indexed": false, "name": "sqrtPriceX96", "type": "uint160"},
+      {"indexed": false, "name": "liquidity", "type": "uint128"},
+      {"indexed": false, "name": "tick", "type": "int24"}
+    ],
+    "name": "Swap",
+    "type": "event"
+  },
+  {"inputs":[],"name":"token0","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"token1","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"fee","outputs":[{"internalType":"uint24","name":"","type":"uint24"}],"stateMutability":"view","type":"function"}
+]""")
+
 # keep your original ABI; add tolerant variants for edge tokens
 ERC20_ABI = json.loads("""[
   {"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}
@@ -294,7 +314,7 @@ def safe_decimals(addr: str):
     print(f"   [ERROR] Could not read decimals() from {a}.")
     return None
 
-def parse_logs_no_ts(logs, dec0, dec1, granularity_seconds):
+def parse_logs_v2_no_ts(logs, dec0, dec1, granularity_seconds):
     # returns {bar_slot: [parsed records]}, {bar_slot: set(block_numbers)}
     records_by_bar = {}
     blocks_by_bar = {}
@@ -315,6 +335,51 @@ def parse_logs_no_ts(logs, dec0, dec1, granularity_seconds):
         records_by_bar.setdefault(bar_slot, []).append(rec)
         blocks_by_bar.setdefault(bar_slot, set()).add(blk_num)
     return records_by_bar, blocks_by_bar
+
+def parse_logs_v3_no_ts(logs, dec0, dec1, granularity_seconds):
+    records_by_bar = {}
+    blocks_by_bar = {}
+    for lg in logs:
+        args = lg["args"]
+        blk_num = lg["blockNumber"]
+        amt0 = int(args["amount0"])
+        amt1 = int(args["amount1"])
+        if amt0 == 0 or amt1 == 0:
+            continue
+        a0 = abs(amt0) / 10**dec0
+        a1 = abs(amt1) / 10**dec1
+        if a1 == 0:
+            continue
+        price = a0 / a1
+        if amt1 < 0:
+            rec = {"block": blk_num, "price": price, "buy_volume": a1, "sell_volume": 0.0}
+        else:
+            rec = {"block": blk_num, "price": price, "buy_volume": 0.0, "sell_volume": a1}
+        bar_slot = blk_num // granularity_seconds
+        records_by_bar.setdefault(bar_slot, []).append(rec)
+        blocks_by_bar.setdefault(bar_slot, set()).add(blk_num)
+    return records_by_bar, blocks_by_bar
+
+def resolve_pool_kind(pair_addr):
+    pair_v2 = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
+    pair_v3 = web3.eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+    try:
+        t0_raw = limited(pair_v2.functions.token0().call)
+        t1_raw = limited(pair_v2.functions.token1().call)
+    except Exception:
+        try:
+            t0_raw = limited(pair_v3.functions.token0().call)
+            t1_raw = limited(pair_v3.functions.token1().call)
+        except Exception:
+            return None
+    pool_kind = "v2"
+    fee = None
+    try:
+        fee = int(limited(pair_v3.functions.fee().call))
+        pool_kind = "v3"
+    except Exception:
+        pass
+    return {"kind": pool_kind, "t0_raw": t0_raw, "t1_raw": t1_raw, "fee": fee}
 
 def aggregate_ohlcv_by_bar(records, bar_ts):
     if not records:
@@ -385,6 +450,12 @@ def main():
         )
     with assignment_path.open() as f:
         assignment = json.load(f)
+    skip_counts = {
+        "invalid_pair_addr": 0,
+        "non_uniswap_pool": 0,
+        "invalid_token_address": 0,
+        "token_metadata_unreadable": 0,
+    }
 
     inferred_chain = assignment.get("chain") or _infer_chain_from_path(assignment_path)
     explicit_chain = CHAIN_NAME_ENV or None
@@ -445,18 +516,24 @@ def main():
         except Exception as e:
             print(f"   [ERROR] Invalid pair address for {sym}: {addr} ({e}). Skipping.")
             update_assignment(assignment, addr, completed=True, skipped=True, error="invalid_pair_address")
+            skip_counts["invalid_pair_addr"] += 1
             continue
 
-        pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
-        ev   = pair.events.Swap()
-
-        try:
-            t0_raw = limited(pair.functions.token0().call)
-            t1_raw = limited(pair.functions.token1().call)
-        except Exception as e:
-            print(f"   [ERROR] {sym}: address {pair_addr} does not behave like a Uniswap V2-style pool: {e}. Skipping.")
-            update_assignment(assignment, addr, completed=True, skipped=True, error="non_uniswap_v2_pool")
+        resolved = resolve_pool_kind(pair_addr)
+        if not resolved:
+            print(f"   [WARN] {sym}: address {pair_addr} does not behave like a Uniswap pool: token0/token1 not readable. Skipping.")
+            update_assignment(assignment, addr, completed=True, skipped=True, error="non_uniswap_pool")
+            skip_counts["non_uniswap_pool"] += 1
             continue
+        pool_kind = resolved["kind"]
+        t0_raw = resolved["t0_raw"]
+        t1_raw = resolved["t1_raw"]
+        v3_fee = resolved["fee"]
+        if pool_kind == "v3":
+            pair = web3.eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+        else:
+            pair = web3.eth.contract(address=pair_addr, abi=PAIR_ABI)
+        ev = pair.events.Swap()
 
         try:
             t0 = Web3.to_checksum_address(t0_raw)
@@ -464,6 +541,7 @@ def main():
         except Exception as e:
             print(f"   [ERROR] {sym}: invalid token addresses {t0_raw}/{t1_raw}: {e}. Skipping.")
             update_assignment(assignment, addr, completed=True, skipped=True, error="invalid_token_address")
+            skip_counts["invalid_token_address"] += 1
             continue
 
         dec0 = safe_decimals(t0)
@@ -471,9 +549,14 @@ def main():
         if dec0 is None or dec1 is None:
             print(f"   [WARN] Skipping {sym}: unreadable token metadata (t0={t0}, t1={t1}).")
             update_assignment(assignment, addr, completed=True, skipped=True, error="token_metadata_unreadable")
+            skip_counts["token_metadata_unreadable"] += 1
             continue
 
-        print(f"   tokens: {t0}(dec{dec0}) / {t1}(dec{dec1})")
+        if pool_kind == "v3":
+            print(f"   pool: v3 fee={v3_fee} | tokens: {t0}(dec{dec0}) / {t1}(dec{dec1})")
+        else:
+            print(f"   pool: v2 | tokens: {t0}(dec{dec0}) / {t1}(dec{dec1})")
+        update_assignment(assignment, addr, pool_type=pool_kind, fee=v3_fee)
 
         b = pair_start_blk
         chunk_idx = 0
@@ -493,7 +576,10 @@ def main():
                 chunk_records_by_bar = {}
                 chunk_blocks_by_bar = {}
                 with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-                    futs = [ex.submit(parse_logs_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
+                    if pool_kind == "v3":
+                        futs = [ex.submit(parse_logs_v3_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
+                    else:
+                        futs = [ex.submit(parse_logs_v2_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
                     for pf in as_completed(futs):
                         try:
                             recs_by_bar, blocks_by_bar = pf.result()
@@ -536,6 +622,13 @@ def main():
         print(f"    [DONE] Pair {sym} complete and saved.")
 
     print("\n[DONE] All pairs complete.")
+    print(
+        "Skipped summary: "
+        f"invalid_pair_addr={skip_counts['invalid_pair_addr']}, "
+        f"non_uniswap_pool={skip_counts['non_uniswap_pool']}, "
+        f"invalid_token_address={skip_counts['invalid_token_address']}, "
+        f"token_metadata_unreadable={skip_counts['token_metadata_unreadable']}"
+    )
 
 if __name__=="__main__":
     main()
