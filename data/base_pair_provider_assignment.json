@@ -2343,20 +2343,26 @@
     "0x9e5f2b740e52c239da457109bcced1f2bb40da5b": {
       "symbol": "Hold-WETH",
       "index": 292,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x251ce6231c8f892d41c0472121959c8ba577a415": {
       "symbol": "PEEPO-WETH",
       "index": 293,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x332a24318d56f9cca677a242aff668314492bf80": {
       "symbol": "MHRD-WETH",
       "index": 294,
-      "completed": false,
-      "next_block": null
+      "completed": true,
+      "next_block": null,
+      "skipped": true,
+      "error": "non_uniswap_pool"
     },
     "0x7bc703a48c90da793f57b55808ae14cdd75458d6": {
       "symbol": "CLOSEDAI-WETH",
