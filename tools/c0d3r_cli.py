@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import re
 import os
 import getpass
@@ -14,6 +15,7 @@ import subprocess
 import urllib.request
 import hashlib
 import shutil
+import platform
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 import json
@@ -40,6 +42,10 @@ def _runtime_root() -> Path:
 def _runtime_path(*parts: str) -> Path:
     return _runtime_root().joinpath(*parts)
 
+_SEARCH_MEMORY_PATH = _runtime_path("search_memory.jsonl")
+_SEARCH_MEMORY_SESSION_TEMPLATE = "search_memory_{session_id}.jsonl"
+_ENV_MEMORY_PATH = _runtime_path("env_command_memory.jsonl")
+
 _INSTALL_ATTEMPTS: set[str] = set()
 _UI_MANAGER = None
 _LAST_FILE_OPS_ERRORS: list[str] = []
@@ -55,6 +61,8 @@ _MNEMONIC_PHRASE = re.compile(r"\b(?:[a-zA-Z]{3,}\s+){11,23}[a-zA-Z]{3,}\b")
 _DOCUMENT_EXTENSIONS = {".pdf", ".csv", ".doc", ".docx", ".xls", ".xlsx", ".html", ".txt", ".md"}
 _ANIMATION_LOCK = threading.Lock()
 _ANIMATION_STATE: dict[str, object | None] = {"stop": None, "thread": None, "kind": None}
+_LIVE_NOTE_QUEUE: "queue.Queue[str]" = queue.Queue()
+_PENDING_IMAGES: list[str] = []
 
 
 def _ensure_root_dir(root: Path | None) -> None:
@@ -208,6 +216,419 @@ def _stop_status_animation(stop_event: threading.Event | None) -> None:
         stop_event.set()
     except Exception:
         pass
+
+
+def _stash_pending_images(paths: list[str] | None) -> None:
+    if not paths:
+        return
+    for path in paths:
+        if not path:
+            continue
+        try:
+            resolved = str(Path(path).expanduser().resolve())
+        except Exception:
+            resolved = str(path)
+        if resolved not in _PENDING_IMAGES:
+            _PENDING_IMAGES.append(resolved)
+
+
+def _consume_pending_images() -> list[str]:
+    if not _PENDING_IMAGES:
+        return []
+    pending = list(_PENDING_IMAGES)
+    _PENDING_IMAGES.clear()
+    return pending
+
+
+def _jsonl_load(path: Path, *, limit: int = 200) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return []
+    items: list[dict] = []
+    for line in lines[-limit:]:
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            items.append(obj)
+    return items
+
+
+def _jsonl_append(path: Path, record: dict, *, max_records: int = 500) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if max_records <= 0:
+            return
+        entries = _jsonl_load(path, limit=max_records + 50)
+        if len(entries) > max_records:
+            with path.open("w", encoding="utf-8") as fh:
+                for row in entries[-max_records:]:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _env_signature() -> dict:
+    return {
+        "host": platform.node(),
+        "os": platform.system(),
+        "release": platform.release(),
+        "platform": sys.platform,
+        "python": sys.executable,
+        "user": getpass.getuser(),
+        "shell": os.getenv("SHELL") or os.getenv("COMSPEC") or "",
+    }
+
+
+def _command_fingerprint(command: str) -> str:
+    base = re.sub(r"\s+", " ", command.strip().lower())
+    return base[:240]
+
+
+def _error_signature(output: str) -> str:
+    if not output:
+        return ""
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    patterns = [
+        r"(error|exception|traceback|failed|no such file|not found|permission denied)",
+    ]
+    for line in reversed(lines):
+        for pat in patterns:
+            if re.search(pat, line, re.IGNORECASE):
+                return line[:300]
+    return lines[-1][:300] if lines else ""
+
+
+def _record_env_memory(
+    *,
+    command: str,
+    purpose: str,
+    cwd: str,
+    shell: str,
+    success: bool,
+    exit_code: int,
+    duration_s: float,
+    timed_out: bool,
+    output: str,
+) -> None:
+    record = {
+        "ts": time.time(),
+        "env": _env_signature(),
+        "command": command,
+        "purpose": purpose,
+        "cwd": cwd,
+        "shell": shell,
+        "success": bool(success),
+        "exit_code": int(exit_code),
+        "duration_s": round(float(duration_s), 3),
+        "timed_out": bool(timed_out),
+        "error_signature": _error_signature(output),
+        "fingerprint": _command_fingerprint(command),
+    }
+    _jsonl_append(_ENV_MEMORY_PATH, record, max_records=800)
+
+
+def _update_failure_with_fix(fingerprint: str, fix_command: str) -> None:
+    try:
+        entries = _jsonl_load(_ENV_MEMORY_PATH, limit=800)
+        updated = False
+        for row in reversed(entries):
+            if row.get("fingerprint") == fingerprint and not row.get("success"):
+                row["fix_command"] = fix_command
+                row["fixed_at"] = time.time()
+                updated = True
+                break
+        if updated:
+            with _ENV_MEMORY_PATH.open("w", encoding="utf-8") as fh:
+                for row in entries[-800:]:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _environment_memory_hint(prompt: str) -> str:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return ""
+    env = _env_signature()
+    entries = _jsonl_load(_ENV_MEMORY_PATH, limit=400)
+    candidates: list[tuple[float, dict]] = []
+    for row in entries:
+        row_env = row.get("env") or {}
+        if row_env.get("host") != env.get("host") or row_env.get("os") != env.get("os"):
+            continue
+        text = f"{row.get('purpose','')} {row.get('command','')}".strip()
+        if not text:
+            continue
+        ratio = difflib.SequenceMatcher(None, prompt.lower(), text.lower()).ratio()
+        if ratio >= 0.58:
+            candidates.append((ratio, row))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    lines = ["Known-good patterns on this machine:"]
+    for ratio, row in candidates[:3]:
+        status = "ok" if row.get("success") else "failed"
+        fix = row.get("fix_command")
+        line = f"- {status}: {row.get('purpose') or row.get('command')} (cwd={row.get('cwd')})"
+        if fix:
+            line += f" | fix: {fix}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _is_search_command(command: str) -> bool:
+    cmd = command.strip().lower()
+    patterns = [
+        r"^rg\b",
+        r"\bripgrep\b",
+        r"\bgrep\b.*-r",
+        r"\bfind\b",
+        r"\bget-childitem\b",
+        r"\bgci\b",
+        r"\bdir\b.* /s",
+        r"\bfd\b",
+        r"\blocate\b",
+    ]
+    return any(re.search(pat, cmd) for pat in patterns)
+
+
+def _extract_search_terms(command: str) -> str:
+    cmd = command.strip()
+    m = re.search(r"rg\b.*?\s+(['\"]?)([^'\"\\s]+)\\1", cmd)
+    if m:
+        return m.group(2)
+    m = re.search(r"grep\b.*?\s+(['\"]?)([^'\"\\s]+)\\1", cmd)
+    if m:
+        return m.group(2)
+    m = re.search(r"find\\b.*-name\\s+(['\"]?)([^'\"\\s]+)\\1", cmd)
+    if m:
+        return m.group(2)
+    m = re.search(r"-Filter\\s+(['\"]?)([^'\"\\s]+)\\1", cmd, re.I)
+    if m:
+        return m.group(2)
+    return cmd[:80]
+
+
+def _extract_paths_from_output(output: str) -> list[str]:
+    if not output:
+        return []
+    paths: list[str] = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        rg_match = re.match(r"^([A-Za-z]:\\\\[^:]+|/[^:]+):", line)
+        if rg_match:
+            paths.append(rg_match.group(1))
+            continue
+        candidates = re.findall(r"([A-Za-z]:\\\\[^\\s]+|/[^\\s]+)", line)
+        for candidate in candidates:
+            paths.append(candidate)
+    deduped: list[str] = []
+    seen = set()
+    for path in paths:
+        key = path.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+        if len(deduped) >= 12:
+            break
+    return deduped
+
+
+def _search_memory_paths(session_id: str | None = None) -> list[Path]:
+    paths: list[Path] = []
+    if session_id:
+        paths.append(_runtime_path(_SEARCH_MEMORY_SESSION_TEMPLATE.format(session_id=session_id)))
+    paths.append(_SEARCH_MEMORY_PATH)
+    return paths
+
+
+def _record_search_memory(command: str, purpose: str, cwd: str, output: str, *, session_id: str | None = None) -> None:
+    paths = _extract_paths_from_output(output)
+    if not paths:
+        return
+    record_base = {
+        "ts": time.time(),
+        "cwd": cwd,
+        "command": command,
+        "query": _extract_search_terms(command),
+        "purpose": purpose,
+        "paths": paths,
+        "last_confirmed": time.time(),
+        "hits": 1,
+        "session_id": session_id or "",
+    }
+    for path in _search_memory_paths(session_id):
+        scope = "session" if session_id and path.name != _SEARCH_MEMORY_PATH.name else "global"
+        record = dict(record_base)
+        record["scope"] = scope
+        record["id"] = hashlib.sha256(
+            (scope + "|" + purpose + "|" + command + "|" + cwd).encode("utf-8", errors="ignore")
+        ).hexdigest()[:12]
+        _jsonl_append(path, record, max_records=300)
+
+
+def _lookup_search_memory(
+    command: str,
+    purpose: str,
+    *,
+    session_id: str | None = None,
+    queries: list[str] | None = None,
+) -> Optional[dict]:
+    raw_queries = queries or [_extract_search_terms(command)]
+    cleaned = []
+    for q in raw_queries:
+        q = (q or "").strip()
+        if q and q not in cleaned:
+            cleaned.append(q)
+    if not cleaned:
+        return None
+    candidates: list[tuple[float, dict]] = []
+    for path in _search_memory_paths(session_id):
+        entries = _jsonl_load(path, limit=300)
+        if not entries:
+            continue
+        for row in entries:
+            text = f"{row.get('purpose','')} {row.get('query','')}"
+            best = 0.0
+            for query in cleaned:
+                ratio = difflib.SequenceMatcher(None, query.lower(), text.lower()).ratio()
+                if ratio > best:
+                    best = ratio
+            if best >= 0.62:
+                row = dict(row)
+                row["source_path"] = str(path)
+                candidates.append((best, row))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _touch_search_memory(record_id: str, *, path: str | None = None) -> None:
+    try:
+        target = Path(path) if path else _SEARCH_MEMORY_PATH
+        entries = _jsonl_load(target, limit=400)
+        updated = False
+        for row in entries:
+            if row.get("id") == record_id:
+                row["hits"] = int(row.get("hits") or 0) + 1
+                row["last_confirmed"] = time.time()
+                updated = True
+                break
+        if updated:
+            with target.open("w", encoding="utf-8") as fh:
+                for row in entries[-300:]:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _search_memory_hint(prompt: str, *, session_id: str | None = None) -> str:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return ""
+    entries: list[dict] = []
+    for path in _search_memory_paths(session_id):
+        entries.extend(_jsonl_load(path, limit=200))
+    candidates: list[tuple[float, dict]] = []
+    for row in entries:
+        text = f"{row.get('purpose','')} {row.get('query','')}"
+        ratio = difflib.SequenceMatcher(None, prompt.lower(), text.lower()).ratio()
+        if ratio >= 0.6:
+            candidates.append((ratio, row))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    top = candidates[:2]
+    lines = ["Known search locations:"]
+    for _, row in top:
+        paths = row.get("paths") or []
+        if paths:
+            lines.append(f"- {row.get('purpose') or row.get('query')}: {', '.join(paths[:4])}")
+    return "\n".join(lines)
+
+
+def _should_use_side_memory(prompt: str) -> bool:
+    lower = (prompt or "").lower()
+    triggers = [
+        "script",
+        "file",
+        "path",
+        "folder",
+        "config",
+        "where",
+        "location",
+        "locate",
+        "find",
+        "search",
+        "command",
+        "run",
+        "execute",
+        "module",
+        "repo",
+    ]
+    return any(t in lower for t in triggers)
+
+
+def _side_loaded_router(session, prompt: str) -> dict:
+    if not session:
+        return {}
+    if os.getenv("C0D3R_SIDELOAD_AI", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return {}
+    if not _should_use_side_memory(prompt):
+        return {}
+    system = (
+        "Return ONLY JSON with keys: use_search_memory (bool), use_env_memory (bool), "
+        "search_queries (list of short strings), env_queries (list of short strings), reason (string). "
+        "Use search_queries to locate files/paths/scripts. Use env_queries to match known command fixes. "
+        "Keep each query under 8 words."
+    )
+    model_prompt = f"User prompt:\n{prompt}\n"
+    try:
+        raw = session.send(prompt=model_prompt, stream=False, system=system)
+    except Exception:
+        return {}
+    payload = _safe_json(raw or "")
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "use_search_memory": bool(payload.get("use_search_memory")),
+        "use_env_memory": bool(payload.get("use_env_memory")),
+        "search_queries": payload.get("search_queries") if isinstance(payload.get("search_queries"), list) else [],
+        "env_queries": payload.get("env_queries") if isinstance(payload.get("env_queries"), list) else [],
+        "reason": str(payload.get("reason") or "").strip(),
+    }
+
+
+def _queue_live_note(note: str) -> None:
+    cleaned = str(note or "").strip()
+    if not cleaned:
+        return
+    try:
+        _LIVE_NOTE_QUEUE.put(cleaned)
+    except Exception:
+        pass
+
+
+def _drain_live_notes(max_items: int = 50) -> list[str]:
+    items: list[str] = []
+    for _ in range(max_items):
+        try:
+            items.append(_LIVE_NOTE_QUEUE.get_nowait())
+        except queue.Empty:
+            break
+        except Exception:
+            break
+    return items
 
 
 class TerminalUI:
@@ -973,6 +1394,10 @@ def _environment_context_block(workdir: Path) -> str:
     lines.append("- local_tools: datalab + wallet meta commands available")
     lines.append("- datalab.meta: ::datalab_tables | ::datalab_query {json} | ::datalab_news {json} | ::datalab_web {json}")
     lines.append("- wallet.meta: ::wallet_login | ::wallet_logout | ::wallet_actions | ::wallet_lookup {json} | ::wallet_send {json} | ::wallet_swap {json} | ::wallet_bridge {json}")
+    lines.append(
+        "- vm.meta: ::vm_status | ::vm_catalog | ::vm_latest {json} | ::vm_bootstrap {json} | ::vm_update {json} | ::vm_fetch {json} | ::vm_create {json} | ::vm_unattended {json} | ::vm_autopilot {json} | ::vm_start {json} | ::vm_stop {json} | ::vm_wait {json} | ::vm_screenshot {json} | ::vm_mouse {json} | ::vm_type {json} | ::vm_keys {json} | ::vm_exec {json} | ::vm_guest {json} | ::vm_tail {json} | ::vm_obstacle {json}"
+    )
+    lines.append("- vm.notes: vm_screenshot + vm_obstacle auto-attach images for the next model step")
     lines.append("- documents: auto-attach supported files (pdf/csv/doc/docx/xls/xlsx/html/txt/md) when referenced or via --doc")
     return "\n".join(lines)
 
@@ -1446,6 +1871,19 @@ def _maybe_long_term_recall(
         return bonus, score
 
     hits.sort(key=_rank, reverse=True)
+    prompt_lower = (prompt or "").lower()
+    if "deadline" in prompt_lower:
+        dated = [h for h in hits if re.search(r"\b\d{4}-\d{2}-\d{2}\b", h) or "deadline" in h.lower()]
+        hits = dated
+    if "key phrase" in prompt_lower:
+        phrased = [
+            h
+            for h in hits
+            if re.search(r"\bkey phrase\b", h.lower())
+            or re.search(r"\"[^\"]{4,80}\"", h)
+            or re.search(r"\b[A-Z]{3,}(?:\s+[A-Z]{3,})+\b", h)
+        ]
+        hits = phrased or hits
     return hits[:5]
 
 
@@ -1964,8 +2402,7 @@ def _intent_for_step(step: int, *, step_failed: bool, last_error: str = "", outp
     return "Continue with the next commands and checks to complete the objective."
 
 
-def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
-    """Wrap a command string for the requested shell in a cross-platform way."""
+def _resolve_shell(shell: str) -> str:
     shell = (shell or "auto").strip().lower()
     is_windows = os.name == "nt" or sys.platform.startswith("win")
     if shell == "auto":
@@ -1973,6 +2410,13 @@ def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
             shell = "pwsh" if shutil.which("pwsh") else ("powershell" if shutil.which("powershell") else "cmd")
         else:
             shell = "bash" if shutil.which("bash") else "sh"
+    return shell
+
+
+def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
+    """Wrap a command string for the requested shell in a cross-platform way."""
+    shell = _resolve_shell(shell)
+    is_windows = os.name == "nt" or sys.platform.startswith("win")
     if shell in {"pwsh", "powershell"}:
         exe = "pwsh" if shutil.which("pwsh") else "powershell"
         if not shutil.which(exe):
@@ -1992,6 +2436,159 @@ def _wrap_command_for_shell(command: str, shell: str) -> list[str]:
     return ["bash", "-lc", command]
 
 
+def _command_has_verbose_flag(command: str) -> bool:
+    lowered = command.lower()
+    return any(flag in lowered for flag in ("--verbose", " -v", " -vv", "--debug"))
+
+
+def _augment_verbose(command: str) -> tuple[str, bool]:
+    cmd = command.strip()
+    lowered = cmd.lower()
+    if _command_has_verbose_flag(cmd):
+        return cmd, False
+    if re.search(r"(^|\s)pytest(\s|$)", lowered) or re.search(r"-m\s+pytest", lowered):
+        return f"{cmd} -vv -s", True
+    if re.search(r"(^|\s)(pip|pip3)(\s|$)", lowered) or re.search(r"-m\s+pip", lowered):
+        return f"{cmd} -v", True
+    if re.search(r"(^|\s)npm(\s|$)", lowered):
+        return f"{cmd} --verbose", True
+    if re.search(r"(^|\s)yarn(\s|$)", lowered) or re.search(r"(^|\s)pnpm(\s|$)", lowered):
+        return f"{cmd} --verbose", True
+    if re.search(r"(^|\s)git\s+clone", lowered):
+        return f"{cmd} --progress", True
+    return cmd, False
+
+
+def _sanitize_echo_text(text: str, shell: str) -> str:
+    text = re.sub(r"\s+", " ", text.strip())
+    if shell in {"pwsh", "powershell"}:
+        return text.replace("'", "''")
+    if shell == "cmd":
+        return text.replace('"', "'")
+    return text.replace('"', '\\"').replace("$", "\\$")
+
+
+def _indent_python(code: str) -> str:
+    lines = code.splitlines() or [code]
+    return "\n".join(("    " + line if line.strip() else "    pass") for line in lines)
+
+
+def _wrap_with_progress(command: str, shell: str, cwd: Path, purpose: str, targets: list[str]) -> str:
+    short_targets = ", ".join(targets[:4])
+    header = f"step: {purpose or 'command'}"
+    cwd_label = f"cwd: {cwd}"
+    targets_label = f"targets: {short_targets}" if short_targets else "targets: (none)"
+    if shell == "python":
+        h = repr(f"[c0d3r] {header}")
+        c = repr(f"[c0d3r] {cwd_label}")
+        t = repr(f"[c0d3r] {targets_label}")
+        body = _indent_python(command)
+        return (
+            "import sys\n"
+            f"print({h})\n"
+            f"print({c})\n"
+            f"print({t})\n"
+            "rc = 0\n"
+            "try:\n"
+            f"{body}\n"
+            "except SystemExit as e:\n"
+            "    rc = int(e.code) if isinstance(e.code, int) else 1\n"
+            "    raise\n"
+            "except Exception:\n"
+            "    rc = 1\n"
+            "    raise\n"
+            "finally:\n"
+            "    print('[c0d3r] finished: exit=' + str(rc))\n"
+        )
+    if shell in {"pwsh", "powershell"}:
+        h = _sanitize_echo_text(header, shell)
+        c = _sanitize_echo_text(cwd_label, shell)
+        t = _sanitize_echo_text(targets_label, shell)
+        return (
+            f"Write-Output '[c0d3r] {h}'; "
+            f"Write-Output '[c0d3r] {c}'; "
+            f"Write-Output '[c0d3r] {t}'; "
+            f"{command}; "
+            "$exit=$LASTEXITCODE; "
+            "Write-Output \"[c0d3r] finished: exit=$exit\"; "
+            "exit $exit"
+        )
+    if shell == "cmd":
+        h = _sanitize_echo_text(header, shell)
+        c = _sanitize_echo_text(cwd_label, shell)
+        t = _sanitize_echo_text(targets_label, shell)
+        return (
+            f"echo [c0d3r] {h} & "
+            f"echo [c0d3r] {c} & "
+            f"echo [c0d3r] {t} & "
+            f"{command} & "
+            "set RC=%ERRORLEVEL% & "
+            "echo [c0d3r] finished: exit=%RC% & "
+            "exit /b %RC%"
+        )
+    # bash/sh
+    h = _sanitize_echo_text(header, shell)
+    c = _sanitize_echo_text(cwd_label, shell)
+    t = _sanitize_echo_text(targets_label, shell)
+    return (
+        f"echo \"[c0d3r] {h}\"; "
+        f"echo \"[c0d3r] {c}\"; "
+        f"echo \"[c0d3r] {t}\"; "
+        f"{command}; "
+        "rc=$?; "
+        "echo \"[c0d3r] finished: exit=$rc\"; "
+        "exit $rc"
+    )
+
+
+def _command_targets(command: str) -> list[str]:
+    targets = []
+    for match in re.findall(r"([A-Za-z]:\\\\[^\\s]+|/[^\\s]+|[\\w\\-./]+\\.[A-Za-z0-9]{1,6})", command):
+        targets.append(match)
+    deduped = []
+    seen = set()
+    for item in targets:
+        key = item.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+        if len(deduped) >= 6:
+            break
+    return deduped
+
+
+def _prepare_command_for_execution(command: str, shell: str, cwd: Path, purpose: str) -> tuple[str, dict]:
+    raw = command.strip()
+    resolved_shell = _resolve_shell(shell)
+    if raw.startswith("::"):
+        return raw, {"verbose_added": False, "wrapped": False, "targets": [], "shell": resolved_shell}
+    updated, verbose_added = _augment_verbose(raw)
+    targets = _command_targets(updated)
+    updated = _wrap_with_progress(updated, resolved_shell, cwd, purpose, targets)
+    return updated, {"verbose_added": verbose_added, "wrapped": True, "targets": targets, "shell": resolved_shell}
+
+
+def _explain_failure(exit_code: int, timed_out: bool, output: str) -> str:
+    if timed_out:
+        return "Timed out before completing."
+    if exit_code == 127 or "command not found" in output.lower():
+        return "Command not found or executable missing."
+    if re.search(r"no such file|cannot find|not found", output, re.I):
+        return "File or path was not found."
+    if re.search(r"permission denied|access is denied", output, re.I):
+        return "Permission denied."
+    if re.search(r"ModuleNotFoundError|No module named", output, re.I):
+        return "A required Python module is missing."
+    if re.search(r"Traceback", output, re.I):
+        return "Python script crashed with an exception."
+    return "Command failed."
+
+
+def _format_result_banner(success: bool, duration_s: float, exit_code: int, timed_out: bool) -> str:
+    status = "DONE" if success else ("FAILED (TIMEOUT)" if timed_out else "FAILED")
+    return f"[{status}] duration={duration_s:.2f}s exit={exit_code}"
+
 def _stream_subprocess(
     *,
     command: str,
@@ -1999,6 +2596,8 @@ def _stream_subprocess(
     shell: str = "auto",
     timeout_s: float | None = None,
     log_prefix: str = "cmd",
+    purpose: str = "",
+    raw_command: str = "",
 ) -> dict:
     """Run a command with streamed output + capture."""
     cwd = Path(cwd).resolve()
@@ -2018,9 +2617,24 @@ def _stream_subprocess(
         split = output.splitlines()
         head = "\n".join(split[:20])
         tail = "\n".join(split[-20:]) if split else ""
+        duration_s = time.time() - started
+        try:
+            _record_env_memory(
+                command=raw_command or command,
+                purpose=purpose,
+                cwd=str(cwd),
+                shell=shell,
+                success=(code == 0),
+                exit_code=int(code),
+                duration_s=float(duration_s),
+                timed_out=False,
+                output=output,
+            )
+        except Exception:
+            pass
         return {
             "exit_code": code,
-            "duration_s": time.time() - started,
+            "duration_s": duration_s,
             "output": output,
             "head": head,
             "tail": tail,
@@ -2034,6 +2648,7 @@ def _stream_subprocess(
     timed_out = False
     q: "queue.Queue[str]" = queue.Queue()
     lines: list[str] = []
+    last_line = ""
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     digest = hashlib.sha256((str(cwd) + "\n" + shell + "\n" + command).encode("utf-8", errors="ignore")).hexdigest()[:12]
@@ -2087,6 +2702,20 @@ def _stream_subprocess(
                 item = q.get(timeout=0.1)
             except Exception:
                 item = None
+            if _UI_MANAGER and hasattr(_UI_MANAGER, "drain_input"):
+                try:
+                    notes = _UI_MANAGER.drain_input(max_items=5)
+                except Exception:
+                    notes = []
+                if notes:
+                    for note in notes:
+                        _queue_live_note(note)
+                        _ui_write(f"[note queued] {str(note).strip()}\n")
+                    elapsed = time.time() - started
+                    if last_line:
+                        _ui_write(f"[status] still running ({elapsed:.1f}s). last output: {last_line.strip()}\n")
+                    else:
+                        _ui_write(f"[status] still running ({elapsed:.1f}s). no output yet.\n")
             if item is None:
                 if proc.poll() is not None and not t.is_alive():
                     break
@@ -2096,6 +2725,7 @@ def _stream_subprocess(
                     break
                 continue
             lines.append(item)
+            last_line = item
             lf.write(item)
             lf.flush()
             _ui_write(item)
@@ -2111,7 +2741,7 @@ def _stream_subprocess(
     head = "\n".join(split[:20])
     tail = "\n".join(split[-20:]) if split else ""
 
-    return {
+    result = {
         "exit_code": exit_code,
         "duration_s": duration_s,
         "output": output,
@@ -2120,6 +2750,23 @@ def _stream_subprocess(
         "log_path": str(log_path),
         "timed_out": timed_out,
     }
+    try:
+        _record_env_memory(
+            command=raw_command or command,
+            purpose=purpose,
+            cwd=str(cwd),
+            shell=shell,
+            success=(exit_code == 0 and not timed_out),
+            exit_code=int(exit_code),
+            duration_s=float(duration_s),
+            timed_out=timed_out,
+            output=output,
+        )
+        if exit_code == 0 and not timed_out and raw_command:
+            _update_failure_with_fix(_command_fingerprint(raw_command), raw_command)
+    except Exception:
+        pass
+    return result
 
 
 def _extract_json_object(text: str) -> dict | None:
@@ -2271,17 +2918,65 @@ def _run_tool_loop_v2(
     rolling_summary = str(summary_bundle.get("summary") or "").strip()
     key_points_block = _key_points_block(summary_bundle.get("key_points") or rolling_summary) if rolling_summary or summary_bundle.get("key_points") else ""
     user_notes: list[str] = []
+    last_commands_snapshot: list[str] = []
+    last_checks_snapshot: list[str] = []
+    last_failed_fingerprint: str | None = None
+    side_router = _side_loaded_router(session, base_request)
+    side_search_queries = side_router.get("search_queries") if isinstance(side_router, dict) else []
+    side_env_queries = side_router.get("env_queries") if isinstance(side_router, dict) else []
+    side_reason = side_router.get("reason") if isinstance(side_router, dict) else ""
+
+    def _flatten_commands(items: list[dict]) -> list[str]:
+        flattened: list[str] = []
+        for entry in items:
+            if not isinstance(entry, dict):
+                continue
+            purpose = str(entry.get("purpose") or "").strip()
+            cmd = str(entry.get("command") or "").strip()
+            if cmd:
+                label = f"{purpose} :: {cmd}" if purpose else cmd
+                flattened.append(label)
+        return flattened
+
+    def _diff_snapshot(prev: list[str], curr: list[str]) -> str:
+        prev_set = set(prev)
+        curr_set = set(curr)
+        added = list(curr_set - prev_set)
+        removed = list(prev_set - curr_set)
+        changed = []
+        if not added and not removed and prev and curr:
+            for idx, item in enumerate(curr):
+                if idx >= len(prev):
+                    break
+                if item != prev[idx]:
+                    changed.append(item)
+        parts = []
+        if added:
+            parts.append(f"added {len(added)}")
+        if removed:
+            parts.append(f"removed {len(removed)}")
+        if changed:
+            parts.append(f"modified {len(changed)}")
+        return ", ".join(parts) if parts else "no changes"
+
+    def _summarize_lines(text: str, max_lines: int = 10) -> str:
+        lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return ""
+        if len(lines) <= max_lines:
+            return "\n".join(lines)
+        return "\n".join(lines[:max_lines]) + f"\n...({len(lines) - max_lines} more)"
 
     def _capture_user_notes(reason: str = "") -> bool:
-        if not _UI_MANAGER or not hasattr(_UI_MANAGER, "drain_input"):
+        drained = _drain_live_notes(max_items=20)
+        if _UI_MANAGER and hasattr(_UI_MANAGER, "drain_input"):
+            try:
+                drained.extend(_UI_MANAGER.drain_input())
+            except Exception:
+                pass
+        if not drained:
             return False
-        try:
-            notes = _UI_MANAGER.drain_input()
-        except Exception:
-            notes = []
-        if not notes:
-            return False
-        for note in notes:
+        for note in drained:
             cleaned = str(note).strip()
             if not cleaned:
                 continue
@@ -2334,6 +3029,20 @@ def _run_tool_loop_v2(
             sys_info = f"System info:\nos={os.name} platform={sys.platform} cwd={current_cwd}"
 
         env_block = _environment_context_block(current_cwd)
+        memory_hint = _environment_memory_hint(base_request)
+        search_hint = _search_memory_hint(base_request, session_id=session_id)
+        if side_env_queries:
+            for q in side_env_queries:
+                hint = _environment_memory_hint(str(q))
+                if hint and hint not in memory_hint:
+                    memory_hint = (memory_hint + "\n" + hint).strip() if memory_hint else hint
+        if side_search_queries:
+            for q in side_search_queries:
+                hint = _search_memory_hint(str(q), session_id=session_id)
+                if hint and hint not in search_hint:
+                    search_hint = (search_hint + "\n" + hint).strip() if search_hint else hint
+        if side_reason:
+            memory_hint = (memory_hint + f"\nSide-loaded memory router: {side_reason}").strip() if memory_hint else f"Side-loaded memory router: {side_reason}"
         objective = base_request.strip()
         intent = _intent_for_step(step, step_failed=prev_step_failed, last_error=last_error)
         summary_block = f"Rolling summary:\n{rolling_summary}" if rolling_summary else ""
@@ -2357,6 +3066,8 @@ def _run_tool_loop_v2(
             + "\n"
             + sys_info
             + ("\n\n" + env_block if env_block else "")
+            + ("\n\n" + memory_hint if memory_hint else "")
+            + ("\n\n" + search_hint if search_hint else "")
             + ("\n\n" + summary_block if summary_block else "")
             + ("\n\n" + key_points_block if key_points_block else "")
             + ("\n\n" + notes_block if notes_block else "")
@@ -2393,9 +3104,17 @@ def _run_tool_loop_v2(
             attempt += 1
             usage_tracker.add_input(active_prompt)
             images_for_step = None
+            pending_images = _consume_pending_images()
+            merged_images: list[str] = []
             if images:
-                if step == 1 or os.getenv("C0D3R_IMAGES_EVERY_STEP", "0").strip().lower() in {"1", "true", "yes", "on"}:
-                    images_for_step = images
+                merged_images.extend(images)
+            if pending_images:
+                for path in pending_images:
+                    if path not in merged_images:
+                        merged_images.append(path)
+            if merged_images:
+                if pending_images or step == 1 or os.getenv("C0D3R_IMAGES_EVERY_STEP", "0").strip().lower() in {"1", "true", "yes", "on"}:
+                    images_for_step = merged_images
             docs_for_step = None
             if documents:
                 if step == 1 or os.getenv("C0D3R_DOCS_EVERY_STEP", "0").strip().lower() in {"1", "true", "yes", "on"}:
@@ -2484,6 +3203,17 @@ def _run_tool_loop_v2(
             history.append("[no_commands] Model returned no commands and no checks. Ask for concrete commands next.")
             continue
 
+        current_commands_snapshot = _flatten_commands(commands)
+        current_checks_snapshot = _flatten_commands(checks)
+        diff_cmds = _diff_snapshot(last_commands_snapshot, current_commands_snapshot)
+        diff_checks = _diff_snapshot(last_checks_snapshot, current_checks_snapshot)
+        _ui_write(
+            f"\n[attempt {step}/{max_steps}] commands={len(commands)} checks={len(checks)} | "
+            f"changes: commands({diff_cmds}), checks({diff_checks})\n"
+        )
+        last_commands_snapshot = current_commands_snapshot
+        last_checks_snapshot = current_checks_snapshot
+
         usage_tracker.set_status("executing", f"executor_v2 running {len(commands)} cmd(s)")
         step_failed = False
         ran_any = False
@@ -2491,7 +3221,7 @@ def _run_tool_loop_v2(
 
         for i, cmd in enumerate(commands[:max_commands_per_step], start=1):
             ran_any = True
-            purpose = (cmd.get("purpose") or "").strip()
+            purpose = (cmd.get("purpose") or "").strip() or "command"
             shell = (cmd.get("shell") or "auto").strip()
             cwd_s = (cmd.get("cwd") or ".").strip()
             timeout_s = cmd.get("timeout_s")
@@ -2499,15 +3229,67 @@ def _run_tool_loop_v2(
                 cwd = (current_cwd / cwd_s).resolve() if not Path(cwd_s).is_absolute() else Path(cwd_s).resolve()
             except Exception:
                 cwd = current_cwd
+            raw_command = str(cmd.get("command") or "").strip()
+            if not raw_command:
+                continue
+            resolved_shell = _resolve_shell(shell)
+            memory_purpose = purpose if purpose != "command" else f"run: {raw_command[:80]}"
+            prepared_command, prep_meta = _prepare_command_for_execution(raw_command, resolved_shell, cwd, purpose)
+            effective_shell = prep_meta.get("shell") or resolved_shell
 
-            _ui_write(f"\n[cmd {i}/{min(len(commands), max_commands_per_step)}] {purpose}\n$ {cmd.get('command')}\n")
-            res = _stream_subprocess(
-                command=str(cmd.get("command") or ""),
-                cwd=cwd,
-                shell=shell,
-                timeout_s=timeout_s,
-                log_prefix=f"step{step}_cmd{i}",
+            _ui_write(f"\n[cmd {i}/{min(len(commands), max_commands_per_step)}] {purpose}\n")
+            _ui_write(f"cwd: {cwd}\n")
+            _ui_write(f"shell: {effective_shell}\n")
+            if prep_meta.get("verbose_added"):
+                _ui_write("verbose: enabled\n")
+            if prep_meta.get("wrapped"):
+                _ui_write("progress: enabled\n")
+            _ui_write(f"command (raw): {raw_command}\n")
+            if prepared_command != raw_command:
+                _ui_write(f"command (exec): {prepared_command}\n")
+            else:
+                _ui_write(f"command: {prepared_command}\n")
+
+            res: dict
+            memory_hit = (
+                _lookup_search_memory(
+                    raw_command,
+                    memory_purpose,
+                    session_id=session_id,
+                    queries=side_search_queries if side_search_queries else None,
+                )
+                if _is_search_command(raw_command)
+                else None
             )
+            executed = True
+            if memory_hit:
+                paths = memory_hit.get("paths") or []
+                memo_line = f"[search-memory] hit (skipping scan): {memory_hit.get('purpose') or memory_hit.get('query')}"
+                output_text = memo_line + ("\n" + "\n".join(paths) if paths else "")
+                _ui_write(output_text + ("\n" if not output_text.endswith("\n") else ""))
+                _touch_search_memory(memory_hit.get("id") or "", path=memory_hit.get("source_path"))
+                executed = False
+                res = {
+                    "exit_code": 0,
+                    "duration_s": 0.0,
+                    "output": output_text,
+                    "head": output_text,
+                    "tail": output_text,
+                    "log_path": "",
+                    "timed_out": False,
+                }
+            else:
+                res = _stream_subprocess(
+                    command=prepared_command,
+                    cwd=cwd,
+                    shell=effective_shell,
+                    timeout_s=timeout_s,
+                    log_prefix=f"step{step}_cmd{i}",
+                    purpose=memory_purpose,
+                    raw_command=raw_command,
+                )
+                if _is_search_command(raw_command):
+                    _record_search_memory(raw_command, memory_purpose, str(cwd), res.get("output") or "", session_id=session_id)
 
             output_text = res.get("output") or ""
             tail = res.get("tail") or ""
@@ -2515,18 +3297,29 @@ def _run_tool_loop_v2(
             log_path = res.get("log_path") or ""
             exit_code = res.get("exit_code", 1)
             timed_out = bool(res.get("timed_out"))
+            duration_s = float(res.get("duration_s") or 0.0)
+            success = bool(exit_code == 0 and not timed_out)
             chunk_key = f"step{step}_cmd{i}"
             chunks = _chunk_output(output_text)
             if chunks:
                 output_cache[chunk_key] = chunks
                 output_cursor.setdefault(chunk_key, 0)
 
+            banner = _format_result_banner(success, duration_s, int(exit_code), timed_out)
+            _ui_write(banner + "\n")
+            important = _summarize_lines(tail or head, max_lines=10)
+            if important:
+                _ui_write("Output (most relevant):\n" + important + "\n")
+            if not success:
+                _ui_write("Reason: " + _explain_failure(int(exit_code), timed_out, output_text) + "\n")
+
             history.append(
                 "\n".join(
                     [
                         f"[cmd_result] step={step} idx={i} exit={exit_code} timeout={timed_out}",
                         f"purpose: {purpose}",
-                        f"command: {cmd.get('command')}",
+                        f"command: {raw_command}",
+                        f"exec: {prepared_command}",
                         f"cwd: {cwd}",
                         f"log: {log_path}",
                         f"chunk_key: {chunk_key} chunks_total: {len(chunks)}",
@@ -2537,6 +3330,7 @@ def _run_tool_loop_v2(
             )
 
             if timed_out or exit_code != 0:
+                last_failed_fingerprint = _command_fingerprint(raw_command)
                 step_failed = True
                 last_error = f"exit={exit_code} timeout={timed_out}"
                 if chunks:
@@ -2545,6 +3339,9 @@ def _run_tool_loop_v2(
                         history.append(f"[output_chunk] key={chunk_key} index={idx} total={len(chunks)}\n{chunks[idx]}")
                         output_cursor[chunk_key] = idx + 1
                 break
+            if executed and not step_failed and last_failed_fingerprint:
+                _update_failure_with_fix(last_failed_fingerprint, raw_command)
+                last_failed_fingerprint = None
             if _capture_user_notes("during command execution"):
                 user_interrupted = True
                 break
@@ -2552,7 +3349,7 @@ def _run_tool_loop_v2(
         if not step_failed and not user_interrupted and checks:
             usage_tracker.set_status("executing", f"executor_v2 checks ({len(checks)} cmd)")
             for j, chk in enumerate(checks[:max_commands_per_step], start=1):
-                purpose = (chk.get("purpose") or "check").strip()
+                purpose = (chk.get("purpose") or "check").strip() or "check"
                 shell = (chk.get("shell") or "auto").strip()
                 cwd_s = (chk.get("cwd") or ".").strip()
                 timeout_s = chk.get("timeout_s")
@@ -2561,31 +3358,94 @@ def _run_tool_loop_v2(
                 except Exception:
                     cwd = current_cwd
 
-                _ui_write(f"\n[check {j}/{min(len(checks), max_commands_per_step)}] {purpose}\n$ {chk.get('command')}\n")
-                res = _stream_subprocess(
-                    command=str(chk.get('command') or ""),
-                    cwd=cwd,
-                    shell=shell,
-                    timeout_s=timeout_s,
-                    log_prefix=f"step{step}_chk{j}",
+                raw_command = str(chk.get("command") or "").strip()
+                if not raw_command:
+                    continue
+                resolved_shell = _resolve_shell(shell)
+                memory_purpose = purpose if purpose != "check" else f"check: {raw_command[:80]}"
+                prepared_command, prep_meta = _prepare_command_for_execution(raw_command, resolved_shell, cwd, purpose)
+                effective_shell = prep_meta.get("shell") or resolved_shell
+
+                _ui_write(f"\n[check {j}/{min(len(checks), max_commands_per_step)}] {purpose}\n")
+                _ui_write(f"cwd: {cwd}\n")
+                _ui_write(f"shell: {effective_shell}\n")
+                if prep_meta.get("verbose_added"):
+                    _ui_write("verbose: enabled\n")
+                if prep_meta.get("wrapped"):
+                    _ui_write("progress: enabled\n")
+                _ui_write(f"command (raw): {raw_command}\n")
+                if prepared_command != raw_command:
+                    _ui_write(f"command (exec): {prepared_command}\n")
+                else:
+                    _ui_write(f"command: {prepared_command}\n")
+
+                res: dict
+                memory_hit = (
+                    _lookup_search_memory(
+                        raw_command,
+                        memory_purpose,
+                        session_id=session_id,
+                        queries=side_search_queries if side_search_queries else None,
+                    )
+                    if _is_search_command(raw_command)
+                    else None
                 )
+                executed = True
+                if memory_hit:
+                    paths = memory_hit.get("paths") or []
+                    memo_line = f"[search-memory] hit (skipping scan): {memory_hit.get('purpose') or memory_hit.get('query')}"
+                    output_text = memo_line + ("\n" + "\n".join(paths) if paths else "")
+                    _ui_write(output_text + ("\n" if not output_text.endswith("\n") else ""))
+                    _touch_search_memory(memory_hit.get("id") or "", path=memory_hit.get("source_path"))
+                    executed = False
+                    res = {
+                        "exit_code": 0,
+                        "duration_s": 0.0,
+                        "output": output_text,
+                        "head": output_text,
+                        "tail": output_text,
+                        "log_path": "",
+                        "timed_out": False,
+                    }
+                else:
+                    res = _stream_subprocess(
+                        command=prepared_command,
+                        cwd=cwd,
+                        shell=effective_shell,
+                        timeout_s=timeout_s,
+                        log_prefix=f"step{step}_chk{j}",
+                        purpose=memory_purpose,
+                        raw_command=raw_command,
+                    )
+                    if _is_search_command(raw_command):
+                        _record_search_memory(raw_command, memory_purpose, str(cwd), res.get("output") or "", session_id=session_id)
                 output_text = res.get("output") or ""
                 tail = res.get("tail") or ""
                 head = res.get("head") or ""
                 log_path = res.get("log_path") or ""
                 exit_code = res.get("exit_code", 1)
                 timed_out = bool(res.get("timed_out"))
+                duration_s = float(res.get("duration_s") or 0.0)
+                success = bool(exit_code == 0 and not timed_out)
                 chunk_key = f"step{step}_chk{j}"
                 chunks = _chunk_output(output_text)
                 if chunks:
                     output_cache[chunk_key] = chunks
                     output_cursor.setdefault(chunk_key, 0)
+                banner = _format_result_banner(success, duration_s, int(exit_code), timed_out)
+                _ui_write(banner + "\n")
+                important = _summarize_lines(tail or head, max_lines=10)
+                if important:
+                    _ui_write("Output (most relevant):\n" + important + "\n")
+                if not success:
+                    _ui_write("Reason: " + _explain_failure(int(exit_code), timed_out, output_text) + "\n")
                 history.append(
                     "\n".join(
                         [
                             f"[check_result] step={step} idx={j} exit={exit_code} timeout={timed_out}",
                             f"purpose: {purpose}",
-                            f"command: {chk.get('command')}",
+                            f"command: {raw_command}",
+                            f"exec: {prepared_command}",
                             f"cwd: {cwd}",
                             f"log: {log_path}",
                             f"chunk_key: {chunk_key} chunks_total: {len(chunks)}",
@@ -2595,6 +3455,7 @@ def _run_tool_loop_v2(
                     )[:4000]
                 )
                 if timed_out or exit_code != 0:
+                    last_failed_fingerprint = _command_fingerprint(raw_command)
                     step_failed = True
                     last_error = f"exit={exit_code} timeout={timed_out}"
                     if chunks:
@@ -2603,6 +3464,9 @@ def _run_tool_loop_v2(
                             history.append(f"[output_chunk] key={chunk_key} index={idx} total={len(chunks)}\n{chunks[idx]}")
                             output_cursor[chunk_key] = idx + 1
                     break
+                if executed and not step_failed and last_failed_fingerprint:
+                    _update_failure_with_fix(last_failed_fingerprint, raw_command)
+                    last_failed_fingerprint = None
                 if _capture_user_notes("during checks"):
                     user_interrupted = True
                     break
@@ -5234,7 +6098,8 @@ def _run_repl(
         elif _detect_recall_trigger(user_prompt):
             intent = (
                 "The user is asking about earlier conversation. Use Long-term recall, Rolling summary, and Transcript "
-                "to answer. If those blocks contain the topic, answer directly; otherwise say you couldn't find it."
+                "to answer. If Long-term recall contains explicit facts, answer using ONLY those facts and do not contradict them. "
+                "If Long-term recall does not include the needed details, say you cannot recall and do not guess."
             )
         full_prompt = (
             f"{context}\n\n"
@@ -6183,6 +7048,165 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
                     time.sleep(1.0)
                 return 1, "", "timeout waiting for wallet action", None
             return 0, json.dumps(wallet_runner.status(), indent=2), "", None
+        except Exception as exc:
+            return 1, "", str(exc), None
+    if action.startswith("vm_"):
+        try:
+            from services import vm_lab
+
+            payload = _parse_payload()
+            if action == "vm_status":
+                return 0, json.dumps(vm_lab.vm_status(), indent=2), "", None
+            if action == "vm_catalog":
+                return 0, json.dumps(vm_lab.vm_catalog(), indent=2), "", None
+            if action == "vm_latest":
+                return 0, json.dumps(vm_lab.vm_latest_virtualbox(), indent=2), "", None
+            if action == "vm_bootstrap":
+                auto_install = True
+                if isinstance(payload, dict) and "auto_install" in payload:
+                    auto_install = bool(payload.get("auto_install"))
+                return 0, json.dumps(vm_lab.vm_bootstrap(auto_install=auto_install), indent=2), "", None
+            if action == "vm_update":
+                auto_update = True
+                if isinstance(payload, dict) and "auto_update" in payload:
+                    auto_update = bool(payload.get("auto_update"))
+                return 0, json.dumps(vm_lab.vm_update_virtualbox(auto_update=auto_update), indent=2), "", None
+            if not isinstance(payload, dict):
+                return 1, "", "vm command payload must be a JSON object", None
+            if action == "vm_fetch":
+                image_id = str(payload.get("id") or payload.get("image") or "").strip()
+                if not image_id:
+                    return 1, "", "vm_fetch requires id", None
+                result = vm_lab.vm_fetch_image(
+                    image_id,
+                    url=payload.get("url"),
+                    overwrite=bool(payload.get("overwrite", False)),
+                )
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_create":
+                name = str(payload.get("name") or "").strip()
+                result = vm_lab.vm_create(
+                    name,
+                    image_path=payload.get("image_path") or payload.get("image"),
+                    os_type=str(payload.get("os_type") or "Ubuntu_64"),
+                    memory_mb=int(payload.get("memory_mb") or 4096),
+                    cpus=int(payload.get("cpus") or 2),
+                    vram_mb=int(payload.get("vram_mb") or 64),
+                    disk_gb=int(payload.get("disk_gb") or 40),
+                    efi=bool(payload.get("efi", False)),
+                )
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_unattended":
+                name = str(payload.get("name") or "").strip()
+                iso_path = str(payload.get("iso_path") or payload.get("iso") or "").strip()
+                user = str(payload.get("user") or "c0d3r").strip()
+                password = str(payload.get("password") or "").strip()
+                if not name or not iso_path or not password:
+                    return 1, "", "vm_unattended requires name, iso_path, password", None
+                result = vm_lab.vm_unattended_install(
+                    name,
+                    iso_path=iso_path,
+                    user=user,
+                    password=password,
+                    full_name=str(payload.get("full_name") or user),
+                    hostname=payload.get("hostname"),
+                    locale=str(payload.get("locale") or "en_US"),
+                    timezone=str(payload.get("timezone") or "UTC"),
+                    install_additions=bool(payload.get("install_additions", True)),
+                    additions_iso=payload.get("additions_iso"),
+                    post_install=payload.get("post_install"),
+                )
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_autopilot":
+                image_id = str(payload.get("image_id") or payload.get("image") or "").strip()
+                vm_name = str(payload.get("vm_name") or payload.get("name") or "").strip()
+                if not image_id or not vm_name:
+                    return 1, "", "vm_autopilot requires image_id and vm_name", None
+                result = vm_lab.vm_autopilot(
+                    image_id=image_id,
+                    vm_name=vm_name,
+                    auto_install=bool(payload.get("auto_install", True)),
+                    auto_update=bool(payload.get("auto_update", True)),
+                    min_free_gb=float(payload.get("min_free_gb") or 40.0),
+                    ssh_port=int(payload.get("ssh_port") or 2222),
+                    user=str(payload.get("user") or "c0d3r"),
+                    password=payload.get("password"),
+                )
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_start":
+                name = str(payload.get("name") or "").strip()
+                result = vm_lab.vm_start(name, headless=bool(payload.get("headless", True)))
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_stop":
+                name = str(payload.get("name") or "").strip()
+                result = vm_lab.vm_stop(name, force=bool(payload.get("force", False)))
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_screenshot":
+                name = str(payload.get("name") or "").strip()
+                result = vm_lab.vm_screenshot(name, path=payload.get("path"))
+                if result.get("ok") and result.get("path"):
+                    _stash_pending_images([str(result.get("path"))])
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_wait":
+                host = str(payload.get("host") or "127.0.0.1")
+                port = int(payload.get("port") or 22)
+                timeout_s = float(payload.get("timeout_s") or 120)
+                result = vm_lab.vm_wait_port(host, port, timeout_s=timeout_s)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_exec":
+                name = str(payload.get("name") or payload.get("vm") or "").strip()
+                command = str(payload.get("command") or "").strip()
+                timeout_s = float(payload.get("timeout_s") or 120)
+                result = vm_lab.vm_exec_ssh(name, command, timeout_s=timeout_s)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_guest":
+                name = str(payload.get("name") or payload.get("vm") or "").strip()
+                command = str(payload.get("command") or "").strip()
+                timeout_s = float(payload.get("timeout_s") or 120)
+                result = vm_lab.vm_guest_exec(name, command, timeout_s=timeout_s)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_tail":
+                lines = int(payload.get("lines") or 200)
+                result = vm_lab.vm_tail_logs(lines=lines)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_type":
+                name = str(payload.get("name") or "").strip()
+                text = str(payload.get("text") or "")
+                result = vm_lab.vm_type(name, text)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_keys":
+                name = str(payload.get("name") or payload.get("vm") or "").strip()
+                sequence = payload.get("sequence") or payload.get("keys") or []
+                if not isinstance(sequence, list):
+                    return 1, "", "vm_keys requires sequence list", None
+                result = vm_lab.vm_keys(name, [str(x) for x in sequence])
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_mouse":
+                name = str(payload.get("name") or "").strip()
+                result = vm_lab.vm_mouse(
+                    name,
+                    x=payload.get("x"),
+                    y=payload.get("y"),
+                    buttons=int(payload.get("buttons") or 0),
+                    screen_w=payload.get("screen_w"),
+                    screen_h=payload.get("screen_h"),
+                )
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_obstacle":
+                steps = payload.get("steps") or []
+                if not isinstance(steps, list):
+                    return 1, "", "vm_obstacle requires steps list", None
+                result = vm_lab.vm_obstacle_course(steps)
+                if result.get("ok"):
+                    paths = []
+                    for step in result.get("steps") or []:
+                        path = step.get("path")
+                        if path:
+                            paths.append(str(path))
+                    if paths:
+                        _stash_pending_images(paths)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            return 1, "", f"unknown vm command {action}", None
         except Exception as exc:
             return 1, "", str(exc), None
     if action in {"datalab_tables", "datalab_list"}:

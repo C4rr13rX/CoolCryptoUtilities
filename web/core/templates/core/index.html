@@ -139,6 +139,14 @@
         align-items: center;
         gap: 0.5rem;
       }
+      header.site-header .lang-flag {
+        font-size: 1rem;
+        line-height: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.4rem;
+      }
       header.site-header .lang-select {
         appearance: none;
         background: rgba(4, 12, 22, 0.85);
@@ -150,6 +158,7 @@
         letter-spacing: 0.12rem;
         text-transform: uppercase;
         cursor: pointer;
+        font-family: "Hackout", "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI", sans-serif;
       }
       header.site-header .lang-label {
         font-size: 0.7rem;
@@ -313,6 +322,7 @@
             <h1>{% trans "R3V3N!R • Crypto Trading AI Bot" %}</h1>
             <div class="lang-switcher">
               <span class="lang-label">{% trans "Language" %}</span>
+              <span id="language-flag" class="lang-flag">{{ current_language_flag_emoji }}</span>
               <form method="post" action="{% url 'set_language' %}">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{{ request.path }}" />
@@ -323,7 +333,7 @@
                   data-flag="{{ current_language_flag }}"
                 >
                   {% for opt in language_options %}
-                    <option value="{{ opt.code }}" data-flag="{{ opt.flag }}" {% if opt.code == current_language %}selected{% endif %}>
+                    <option value="{{ opt.code }}" data-flag="{{ opt.flag }}" data-emoji="{{ opt.flag_emoji }}" {% if opt.code == current_language %}selected{% endif %}>
                       {{ opt.flag_emoji }} {{ opt.native }}
                     </option>
                   {% endfor %}
@@ -385,8 +395,9 @@
           (() => {
             const select = document.getElementById('language-select');
             if (!select) return;
+            const flagSpan = document.getElementById('language-flag');
             const form = select.form;
-            const applyLang = (value, flag) => {
+            const applyLang = (value, flag, emoji) => {
               if (value) {
                 document.documentElement.setAttribute('lang', value);
                 const appRoot = document.getElementById('app');
@@ -403,12 +414,15 @@
                 }
               }
               select.dataset.flag = flag || '';
+              if (flagSpan) {
+                flagSpan.textContent = emoji || '';
+              }
             };
             const selected = select.options[select.selectedIndex];
-            applyLang(select.value, selected?.dataset?.flag);
+            applyLang(select.value, selected?.dataset?.flag, selected?.dataset?.emoji);
             select.addEventListener('change', () => {
               const opt = select.options[select.selectedIndex];
-              applyLang(select.value, opt?.dataset?.flag);
+              applyLang(select.value, opt?.dataset?.flag, opt?.dataset?.emoji);
               if (form) {
                 form.submit();
               }

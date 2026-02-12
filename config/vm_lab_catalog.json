@@ -1,0 +1,31 @@
+{
+  "images": [
+    {
+      "id": "ubuntu",
+      "label": "Ubuntu Desktop (LTS)",
+      "os_type": "Ubuntu_64",
+      "arch": "amd64",
+      "resolver": "ubuntu_lts",
+      "url": "",
+      "notes": "Auto-resolves latest LTS from releases.ubuntu.com."
+    },
+    {
+      "id": "kali",
+      "label": "Kali Linux",
+      "os_type": "Debian_64",
+      "arch": "amd64",
+      "resolver": "kali_current",
+      "url": "",
+      "notes": "Auto-resolves current ISO from cdimage.kali.org."
+    },
+    {
+      "id": "parrot",
+      "label": "ParrotOS",
+      "os_type": "Debian_64",
+      "arch": "amd64",
+      "resolver": "parrot_latest",
+      "url": "",
+      "notes": "Auto-resolves latest ISO from deb.parrot.sh."
+    }
+  ]
+}

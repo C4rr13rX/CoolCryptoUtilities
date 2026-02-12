@@ -226,18 +226,83 @@ class ConversationMemory:
         if not query_l:
             return []
 
-        keywords = [t for t in re.findall(r"[a-z0-9]{3,}", query_l) if t not in {"the", "and", "for", "are", "but", "not", "you", "your", "with", "that", "this", "from", "have", "has", "had", "was", "were", "what", "when", "where", "which", "who", "why", "how", "about", "into", "over", "under", "then", "than", "them", "they", "their", "ours", "can", "could", "should", "would", "will", "just", "like", "been", "did", "does", "doing", "it's", "im", "i'm", "we", "our", "us", "me", "my", "mine", "yours"}]
+        keywords = [
+            t
+            for t in re.findall(r"[a-z0-9]{3,}", query_l)
+            if t
+            not in {
+                "the",
+                "and",
+                "for",
+                "are",
+                "but",
+                "not",
+                "you",
+                "your",
+                "with",
+                "that",
+                "this",
+                "from",
+                "have",
+                "has",
+                "had",
+                "was",
+                "were",
+                "what",
+                "when",
+                "where",
+                "which",
+                "who",
+                "why",
+                "how",
+                "about",
+                "into",
+                "over",
+                "under",
+                "then",
+                "than",
+                "them",
+                "they",
+                "their",
+                "ours",
+                "can",
+                "could",
+                "should",
+                "would",
+                "will",
+                "just",
+                "like",
+                "been",
+                "did",
+                "does",
+                "doing",
+                "it's",
+                "im",
+                "i'm",
+                "we",
+                "our",
+                "us",
+                "me",
+                "my",
+                "mine",
+                "yours",
+            }
+        ]
         scored: List[tuple[float, int]] = []
         for idx, entry in enumerate(entries):
-            blob = f"{entry.content}\n{entry.context}".lower()
-            if query_l in blob:
+            content_blob = (entry.content or "").lower()
+            if not content_blob.strip():
+                continue
+            score = 0.0
+            if query_l in content_blob:
                 score = 1.0
             else:
-                score = SequenceMatcher(None, query_l, blob).ratio()
                 if keywords:
-                    hits = sum(1 for kw in keywords if kw in blob)
+                    hits = sum(1 for kw in keywords if kw in content_blob)
                     if hits:
                         score = max(score, hits / max(1, len(keywords)))
+                if score == 0.0 and len(query_l) >= 8:
+                    score = SequenceMatcher(None, query_l, content_blob).ratio()
             if score < 0.2:
                 continue
             scored.append((score, idx))
