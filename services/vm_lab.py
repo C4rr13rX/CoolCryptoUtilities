@@ -174,6 +174,24 @@ def _guest_additions_path() -> Optional[Path]:
     return None
 
 
+def _guest_os_for_image(image_id: str) -> str:
+    image_id = (image_id or "").lower()
+    if image_id in {"ubuntu", "kali", "parrot"}:
+        return "linux"
+    if image_id in {"windows", "win10", "win11", "windows10", "windows11"}:
+        return "windows"
+    return "unknown"
+
+
+def _guest_os_for_vm(name: str) -> str:
+    state = _load_state().get(name, {})
+    guest_os = (state.get("guest_os") or "").lower().strip()
+    if guest_os:
+        return guest_os
+    image_id = state.get("image_id") or ""
+    return _guest_os_for_image(str(image_id))
+
+
 def vm_check_disk(min_free_gb: float | None = None) -> dict:
     _ensure_dirs()
     usage = shutil.disk_usage(str(VM_ROOT))
@@ -539,6 +557,21 @@ def vm_create(
     return {"ok": True, "message": "vm created", "name": name}
 
 
+def vm_delete(name: str, *, delete_files: bool = True) -> dict:
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    args = ["unregistervm", name]
+    if delete_files:
+        args.append("--delete")
+    rc, out, err = _run_vboxmanage(args, timeout=300)
+    _log_line(f"vm delete {name} -> rc={rc}")
+    state = _load_state()
+    if name in state:
+        state.pop(name, None)
+        _save_state(state)
+    return {"ok": rc == 0, "message": out or err}
+
+
 def vm_enable_ssh(name: str, port: int = 2222) -> dict:
     if not name:
         return {"ok": False, "error": "vm name required"}
@@ -648,7 +681,12 @@ def vm_start(name: str, *, headless: bool = True) -> dict:
         args += ["--type", "headless"]
     rc, out, err = _run_vboxmanage(args)
     _log_line(f"vm start {name} -> rc={rc}")
-    return {"ok": rc == 0, "message": out or err}
+    msg = out or err
+    if rc != 0 and msg:
+        lowered = msg.lower()
+        if "already locked" in lowered or "already running" in lowered or "busy" in lowered:
+            return {"ok": True, "message": msg}
+    return {"ok": rc == 0, "message": msg}
 
 
 def vm_stop(name: str, *, force: bool = False) -> dict:
@@ -701,7 +739,67 @@ def vm_mouse(
         abs_y = int(max(0, min(65535, y)))
     rc, out, err = _run_vboxmanage(["controlvm", name, "mouseputstate", str(abs_x), str(abs_y), str(buttons), "0"])
     _log_line(f"vm mouse {name} -> {abs_x},{abs_y} buttons={buttons}")
-    return {"ok": rc == 0, "message": out or err}
+    msg = out or err
+    if rc == 0:
+        return {"ok": True, "message": msg}
+    if msg and "mouseputstate" in msg.lower():
+        guest = vm_guest_mouse(name, x=x, y=y, buttons=buttons)
+        if guest.get("ok"):
+            return {"ok": True, "message": "mouse via guestcontrol"}
+        return {"ok": False, "error": "mouse input not supported by VBoxManage on this host", "message": msg}
+    return {"ok": False, "message": msg}
+
+
+def vm_guest_prepare_input(name: str) -> dict:
+    guest_os = _guest_os_for_vm(name)
+    if guest_os != "linux":
+        return {"ok": False, "error": f"guest input prepare not supported for {guest_os}"}
+    state = _load_state().get(name, {})
+    password = state.get("password") or ""
+    if not password:
+        return {"ok": False, "error": "no guest password available"}
+    sudo_prefix = f"echo '{password}' | sudo -S "
+    user = state.get("user") or "c0d3r"
+    checks = [
+        f"{sudo_prefix}apt-get update -y",
+        f"{sudo_prefix}apt-get install -y xdotool x11-utils",
+        f"{sudo_prefix}sed -i 's/^#\\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf",
+        f"{sudo_prefix}sed -i 's/^#\\?AutomaticLoginEnable=.*/AutomaticLoginEnable=true/' /etc/gdm3/custom.conf",
+        f"{sudo_prefix}sed -i 's/^#\\?AutomaticLogin=.*/AutomaticLogin={user}/' /etc/gdm3/custom.conf",
+    ]
+    for cmd in checks:
+        vm_guest_exec(name, cmd, timeout_s=600)
+    return {"ok": True, "message": "guest input prepared"}
+
+
+def vm_guest_mouse(name: str, *, x: int, y: int, buttons: int = 0) -> dict:
+    guest_os = _guest_os_for_vm(name)
+    if guest_os == "windows":
+        script = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "Add-Type -AssemblyName System.Drawing; "
+            "Add-Type -TypeDefinition @'\n"
+            "using System;\n"
+            "using System.Runtime.InteropServices;\n"
+            "public static class Win32Mouse {\n"
+            "  [DllImport(\"user32.dll\", CallingConvention=CallingConvention.StdCall)]\n"
+            "  public static extern void mouse_event(int dwFlags, int dx, int dy, int cButtons, int dwExtraInfo);\n"
+            "}\n"
+            "'@; "
+            f"[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({x},{y}); "
+        )
+        if buttons & 1:
+            script += "[Win32Mouse]::mouse_event(2,0,0,0,0); [Win32Mouse]::mouse_event(4,0,0,0,0);"
+        return vm_guest_exec(name, script, timeout_s=30)
+    if guest_os != "linux":
+        return {"ok": False, "error": f"guest mouse not supported for {guest_os}"}
+    prep = vm_guest_prepare_input(name)
+    if not prep.get("ok"):
+        return prep
+    cmd = f"DISPLAY=:0 xdotool mousemove {int(x)} {int(y)}"
+    if buttons & 1:
+        cmd += " && DISPLAY=:0 xdotool click 1"
+    return vm_guest_exec(name, cmd, timeout_s=30)
 
 
 _SCAN_CODES = {
@@ -717,16 +815,18 @@ _SCAN_CODES = {
     "esc_up": "81",
     "tab_down": "0f",
     "tab_up": "8f",
-    "up_down": "e048",
-    "up_up": "e0c8",
-    "down_down": "e050",
-    "down_up": "e0d0",
-    "left_down": "e04b",
-    "left_up": "e0cb",
-    "right_down": "e04d",
-    "right_up": "e0cd",
+    "up_down": "e0 48",
+    "up_up": "e0 c8",
+    "down_down": "e0 50",
+    "down_up": "e0 d0",
+    "left_down": "e0 4b",
+    "left_up": "e0 cb",
+    "right_down": "e0 4d",
+    "right_up": "e0 cd",
     "t_down": "14",
     "t_up": "94",
+    "a_down": "1e",
+    "a_up": "9e",
 }
 
 
@@ -734,6 +834,8 @@ def vm_key_combo(name: str, combo: str) -> dict:
     combo = (combo or "").lower().strip()
     if combo == "ctrl+alt+t":
         sc = f"{_SCAN_CODES['ctrl_down']} {_SCAN_CODES['alt_down']} {_SCAN_CODES['t_down']} {_SCAN_CODES['t_up']} {_SCAN_CODES['alt_up']} {_SCAN_CODES['ctrl_up']}"
+    elif combo == "ctrl+a":
+        sc = f"{_SCAN_CODES['ctrl_down']} {_SCAN_CODES['a_down']} {_SCAN_CODES['a_up']} {_SCAN_CODES['ctrl_up']}"
     elif combo == "enter":
         sc = f"{_SCAN_CODES['enter_down']} {_SCAN_CODES['enter_up']}"
     elif combo == "tab":
@@ -789,7 +891,27 @@ def vm_obstacle_course(steps: List[dict]) -> dict:
         elif action == "exec":
             name = str(step.get("name") or step.get("vm") or "")
             cmd = str(step.get("command") or "")
-            result.update(vm_exec_ssh(name, cmd, timeout_s=float(step.get("timeout_s") or 120)))
+            retries = int(step.get("retries") or 6)
+            timeout_s = float(step.get("timeout_s") or 120)
+            retry_sleep_s = float(step.get("retry_sleep_s") or 10)
+            attempt = 0
+            last = {}
+            while attempt <= retries:
+                exec_result = vm_exec_ssh(name, cmd, timeout_s=timeout_s)
+                last = exec_result
+                if exec_result.get("ok"):
+                    break
+                err = (exec_result.get("stderr") or exec_result.get("error") or "").lower()
+                if any(sig in err for sig in ("connection reset", "connection refused", "kex_exchange", "no route", "timed out", "connection aborted")):
+                    port = int(_load_state().get(name, {}).get("ssh_port") or 2222)
+                    wait = vm_wait_port("127.0.0.1", port, timeout_s=180)
+                    exec_result["retry_wait"] = wait
+                    time.sleep(retry_sleep_s)
+                    attempt += 1
+                    continue
+                break
+            last["attempts"] = attempt + 1
+            result.update(last)
         else:
             result.update({"ok": False, "error": "unknown action"})
         results.append(result)
@@ -822,6 +944,7 @@ def vm_autopilot(
     ssh_port: int = 2222,
     user: str = "c0d3r",
     password: Optional[str] = None,
+    force_recreate: bool | None = None,
 ) -> dict:
     _log_line(f"autopilot start image={image_id} vm={vm_name}")
     logs: List[str] = []
@@ -854,6 +977,13 @@ def vm_autopilot(
         return {"ok": False, "logs": logs, "error": fetch.get("error", "image fetch failed")}
 
     image_path = fetch.get("path")
+    if force_recreate is None:
+        force_recreate = os.getenv("C0D3R_VM_FORCE_RECREATE", "0") in {"1", "true", "yes", "on"}
+    if force_recreate:
+        rc, out, err = _run_vboxmanage(["list", "vms"])
+        if rc == 0 and vm_name in (out or ""):
+            vm_stop(vm_name, force=True)
+            vm_delete(vm_name, delete_files=True)
     create = vm_create(vm_name, image_path=image_path)
     logs.append(f"vm create: {create.get('message')}")
     if not create.get("ok"):
@@ -872,7 +1002,15 @@ def vm_autopilot(
         pub_key = Path(ssh_key.get("public_key") or "").read_text(encoding="utf-8").strip()
     except Exception:
         pub_key = ""
-    post_install = "sudo apt-get update && sudo apt-get install -y openssh-server"
+    post_install = (
+        "sudo apt-get update"
+        " && sudo apt-get install -y openssh-server xdotool x11-utils"
+        " && sudo mkdir -p /etc/gdm3"
+        " && sudo touch /etc/gdm3/custom.conf"
+        " && sudo sed -i 's/^#\\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf"
+        " && sudo sed -i 's/^#\\?AutomaticLoginEnable=.*/AutomaticLoginEnable=true/' /etc/gdm3/custom.conf"
+        " && sudo sed -i 's/^#\\?AutomaticLogin=.*/AutomaticLogin={u}/' /etc/gdm3/custom.conf"
+    ).format(u=user)
     if pub_key:
         post_install += (
             " && mkdir -p /home/{u}/.ssh && echo '{k}' >> /home/{u}/.ssh/authorized_keys"
@@ -919,6 +1057,7 @@ def vm_autopilot(
     state[vm_name] = {
         "image_id": image_id,
         "image_path": image_path,
+        "guest_os": _guest_os_for_image(image_id),
         "user": user,
         "password": password,
         "ssh_port": ssh_port,
@@ -946,9 +1085,13 @@ def vm_exec_ssh(name: str, command: str, timeout_s: float = 120.0) -> dict:
     user = state.get("user") or "c0d3r"
     port = int(state.get("ssh_port") or 2222)
     key_path = state.get("ssh_private_key") or ""
+    password = state.get("password") or ""
     ssh = shutil.which("ssh")
     if not ssh:
         return {"ok": False, "error": "ssh client not available"}
+    cmd = command.strip()
+    if password and cmd.startswith("sudo ") and " -S" not in cmd and "--stdin" not in cmd:
+        cmd = f"echo '{password}' | sudo -S {cmd[5:]}"
     args = [
         ssh,
         "-p",
@@ -961,11 +1104,11 @@ def vm_exec_ssh(name: str, command: str, timeout_s: float = 120.0) -> dict:
     if key_path:
         args += ["-i", key_path]
     args.append(f"{user}@127.0.0.1")
-    args.append(command)
+    args.append(cmd)
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout_s)
         snippet = (proc.stdout.strip() or proc.stderr.strip() or "")[:400]
-        _log_line(f"ssh exec {name}: {command} -> rc={proc.returncode} {snippet}")
+        _log_line(f"ssh exec {name}: {cmd} -> rc={proc.returncode} {snippet}")
         return {
             "ok": proc.returncode == 0,
             "rc": proc.returncode,
@@ -991,22 +1134,46 @@ def vm_guest_exec(name: str, command: str, timeout_s: float = 120.0) -> dict:
     exe = _vboxmanage_path()
     if not exe:
         return {"ok": False, "error": "VBoxManage not found"}
-    args = [
-        str(exe),
-        "guestcontrol",
-        name,
-        "run",
-        "--username",
-        user,
-        "--password",
-        password,
-        "--exe",
-        "/bin/bash",
-        "--",
-        "bash",
-        "-lc",
-        command,
-    ]
+
+    guest_os = _guest_os_for_vm(name)
+    if guest_os == "windows":
+        shell_exe = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        args = [
+            str(exe),
+            "guestcontrol",
+            name,
+            "run",
+            "--username",
+            user,
+            "--password",
+            password,
+            "--exe",
+            shell_exe,
+            "--",
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ]
+    else:
+        args = [
+            str(exe),
+            "guestcontrol",
+            name,
+            "run",
+            "--username",
+            user,
+            "--password",
+            password,
+            "--exe",
+            "/bin/bash",
+            "--",
+            "bash",
+            "-lc",
+            command,
+        ]
     try:
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout_s)
         _log_line(f"guest exec {name}: {command} -> rc={proc.returncode}")

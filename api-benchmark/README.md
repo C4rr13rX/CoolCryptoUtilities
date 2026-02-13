@@ -1,58 +1,63 @@
-# REST API Benchmark Tool
+# REST API Benchmark Plan
 
-Minimal Python tool to benchmark REST API latency and throughput.
+## Overview
+Minimal benchmarking tool to measure REST API latency and throughput.
 
-## Setup
-
+## Quick Start
 ```bash
-pip install -r requirements.txt
+python benchmark.py <API_URL>
 ```
 
-## Usage
-
+## Example
 ```bash
-python benchmark.py
+python benchmark.py https://httpbin.org/get
 ```
 
-You will be prompted for:
-- API base URL (e.g., https://api.example.com)
-- Endpoints to test (comma-separated, or use defaults)
+## Metrics Measured
 
-## Metrics Collected
+### Latency Test
+- **Method**: Sequential requests (default: 5)
+- **Metrics**: Average, Min, Max response time in milliseconds
+- **Success Rate**: Percentage of successful requests
 
-### Latency Metrics
-- Average latency (ms)
-- Min/Max latency (ms) 
-- 95th percentile latency (ms)
-- Successful request count
+### Throughput Test
+- **Method**: Concurrent requests for fixed duration (default: 3s)
+- **Metrics**: Requests per second
+- **Success Rate**: Percentage of successful requests
 
-### Throughput Metrics
-- Requests per second (RPS)
-- Total requests completed
-- Error count
-- Test duration
-- Concurrent users
+## Customization
+Edit `benchmark.py` to adjust:
+- Request count for latency test
+- Duration for throughput test
+- Timeout values
+- Add authentication headers
+- Test different HTTP methods
 
-## Configuration
+## Dependencies
+- Python 3.6+
+- requests library
 
-Default settings:
-- Latency test: 100 sequential requests
-- Throughput test: 10 concurrent users for 30 seconds
-- Request timeout: 10s (latency), 5s (throughput)
-
-## Output
-
-Results are saved to `benchmark_results.json` with timestamp and detailed metrics.
-
-## Example Output
-
+## Installation
+```bash
+pip install requests
 ```
-Starting benchmark for https://api.example.com
-Timestamp: 2026-02-06T22:58:35
 
-Testing endpoint: /health
-  Running latency test...
-  Running throughput test...
-  Latency - Avg: 45.23ms, P95: 78.91ms
-  Throughput - RPS: 156.78, Errors: 0
+## Sample Output
+```
+REST API Benchmark - 2026-02-12 20:57:49
+Target: https://httpbin.org/get
+
+Latency test: 5 requests to https://httpbin.org/get
+  Request 1: 635.5ms
+  Request 2: 812.2ms
+  Request 3: 601.7ms
+  Request 4: 571.1ms
+  Request 5: 794.1ms
+Throughput test: 3s to https://httpbin.org/get
+
+=== RESULTS ===
+Latency - Avg: 682.9ms, Min: 571.12ms, Max: 812.2ms
+Success Rate: 100.0%
+Throughput: 1.49 req/s
+Success Rate: 100.0%
 ```

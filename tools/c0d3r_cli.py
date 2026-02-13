@@ -1853,8 +1853,12 @@ def _maybe_long_term_recall(
             bonus += 2
         if "key phrase is" in lower:
             bonus += 2
-        if "deadline is" in lower:
-            bonus += 1
+        if "deadline is" in lower or "deadline:" in lower or "due" in lower:
+            bonus += 2
+        if re.search(r"\b\d{4}-\d{2}-\d{2}\b", h):
+            bonus += 2
+        if re.search(r"cannot recall|no access|not available|don't have access", lower):
+            bonus -= 3
         # Prefer snippets that contain an explicit phrase (quoted or ALL CAPS),
         # since many "remember X" prompts ask for a specific token/phrase.
         if re.search(r"\"[^\"]{4,80}\"", h):
@@ -1873,8 +1877,14 @@ def _maybe_long_term_recall(
     hits.sort(key=_rank, reverse=True)
     prompt_lower = (prompt or "").lower()
     if "deadline" in prompt_lower:
-        dated = [h for h in hits if re.search(r"\b\d{4}-\d{2}-\d{2}\b", h) or "deadline" in h.lower()]
-        hits = dated
+        dated = [
+            h
+            for h in hits
+            if re.search(r"\b\d{4}-\d{2}-\d{2}\b", h)
+            or re.search(r"\bdeadline\b", h.lower())
+        ]
+        if dated:
+            hits = dated
     if "key phrase" in prompt_lower:
         phrased = [
             h
@@ -2543,7 +2553,7 @@ def _wrap_with_progress(command: str, shell: str, cwd: Path, purpose: str, targe
 
 def _command_targets(command: str) -> list[str]:
     targets = []
-    for match in re.findall(r"([A-Za-z]:\\\\[^\\s]+|/[^\\s]+|[\\w\\-./]+\\.[A-Za-z0-9]{1,6})", command):
+    for match in re.findall(r"([A-Za-z]:\\\\[^\\s]+|/[^\\s]+|[\\w./-]+\\.[A-Za-z0-9]{1,6})", command):
         targets.append(match)
     deduped = []
     seen = set()
@@ -2711,11 +2721,6 @@ def _stream_subprocess(
                     for note in notes:
                         _queue_live_note(note)
                         _ui_write(f"[note queued] {str(note).strip()}\n")
-                    elapsed = time.time() - started
-                    if last_line:
-                        _ui_write(f"[status] still running ({elapsed:.1f}s). last output: {last_line.strip()}\n")
-                    else:
-                        _ui_write(f"[status] still running ({elapsed:.1f}s). no output yet.\n")
             if item is None:
                 if proc.poll() is not None and not t.is_alive():
                     break
@@ -6079,6 +6084,11 @@ def _run_repl(
             finally:
                 if scan_executor:
                     scan_executor.shutdown(wait=True)
+        if _is_recent_recall(user_prompt):
+            last_user_entry = memory.last_user(session_id=session_id)
+            if last_user_entry and last_user_entry.content:
+                hint = f"Most recent user question (before this one): {last_user_entry.content}"
+                context = f"{context}\n\n{hint}" if context else hint
         system = (
             "Role: You are a senior software engineer. The user is a project manager. "
             "Provide brief, concrete status updates before the final response. "
@@ -7131,6 +7141,7 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
                     ssh_port=int(payload.get("ssh_port") or 2222),
                     user=str(payload.get("user") or "c0d3r"),
                     password=payload.get("password"),
+                    force_recreate=payload.get("force_recreate"),
                 )
                 return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
             if action == "vm_start":

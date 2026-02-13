@@ -34,7 +34,7 @@ def main() -> int:
         vm_name = payload.get("vm") or "c0d3r-ubuntu"
         image_id = payload.get("image_id") or "ubuntu"
         print(f"[gui-obstacle] autopilot: vm={vm_name} image={image_id}")
-        auto = vm_lab.vm_autopilot(image_id=image_id, vm_name=vm_name)
+        auto = vm_lab.vm_autopilot(image_id=image_id, vm_name=vm_name, force_recreate=True)
         print(json.dumps(auto, indent=2))
         if not auto.get("ok"):
             return 1
