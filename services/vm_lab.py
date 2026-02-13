@@ -303,15 +303,16 @@ def _resolve_kali_iso() -> Tuple[Optional[str], str]:
     return url + matches[0], "resolved"
 
 
-def _resolve_ubuntu_iso() -> Tuple[Optional[str], str]:
+def _resolve_ubuntu_iso(*, prefer_latest: bool = True) -> Tuple[Optional[str], str]:
     meta = _read_text("https://changelogs.ubuntu.com/meta-release-lts")
     versions = re.findall(r"Version:\s*(\d+\.\d+(?:\.\d+)?)\s+LTS", meta)
     if not versions:
         return None, "No Ubuntu LTS found"
-    latest = sorted(versions, key=_version_tuple, reverse=True)[0]
-    base = f"https://releases.ubuntu.com/{latest}/"
-    desktop = f"{base}ubuntu-{latest}-desktop-amd64.iso"
-    server = f"{base}ubuntu-{latest}-live-server-amd64.iso"
+    sorted_versions = sorted(versions, key=_version_tuple, reverse=True)
+    pick = sorted_versions[0] if prefer_latest else (sorted_versions[1] if len(sorted_versions) > 1 else sorted_versions[0])
+    base = f"https://releases.ubuntu.com/{pick}/"
+    desktop = f"{base}ubuntu-{pick}-desktop-amd64.iso"
+    server = f"{base}ubuntu-{pick}-live-server-amd64.iso"
     if _url_exists(desktop):
         return desktop, "resolved"
     if _url_exists(server):
@@ -344,7 +345,7 @@ def _resolve_image_url(image: dict) -> Tuple[Optional[str], str]:
     if resolver == "kali_current":
         return _resolve_kali_iso()
     if resolver == "ubuntu_lts":
-        return _resolve_ubuntu_iso()
+        return _resolve_ubuntu_iso(prefer_latest=True)
     if resolver == "parrot_latest":
         return _resolve_parrot_iso()
     return None, "no resolver"
@@ -673,13 +674,170 @@ def vm_wait_port(host: str, port: int, timeout_s: float = 120.0) -> dict:
     return {"ok": False, "error": f"timeout waiting for port {port}"}
 
 
-def vm_start(name: str, *, headless: bool = True) -> dict:
+def vm_wait_guest_additions(name: str, timeout_s: float = 300.0) -> dict:
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        rc, out, err = _run_vboxmanage(["guestproperty", "get", name, "/VirtualBox/GuestAdd/RunLevel"])
+        if rc == 0 and out and "No value set!" not in out:
+            return {"ok": True, "message": out.strip()}
+        rc, out, err = _run_vboxmanage(["guestproperty", "get", name, "/VirtualBox/GuestAdd/Version"])
+        if rc == 0 and out and "No value set!" not in out:
+            # Version is visible, but RunLevel not set yet; keep waiting.
+            time.sleep(5)
+            continue
+        time.sleep(5)
+    return {"ok": False, "error": "timeout waiting for guest additions"}
+
+
+def vm_wait_guest_user(name: str, user: str, timeout_s: float = 600.0) -> dict:
+    if not name or not user:
+        return {"ok": False, "error": "vm name and user required"}
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        rc, out, err = _run_vboxmanage(["guestproperty", "get", name, "/VirtualBox/GuestInfo/OS/LoggedInUsersList"])
+        if rc == 0 and out and "No value set!" not in out:
+            if user in out:
+                return {"ok": True, "message": out.strip()}
+        time.sleep(5)
+    return {"ok": False, "error": "timeout waiting for guest user login"}
+
+
+def vm_wait_ssh(name: str, timeout_s: float = 300.0) -> dict:
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    state = _load_state().get(name, {})
+    port = int(state.get("ssh_port") or 2222)
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        exec_result = vm_exec_ssh(name, "true", timeout_s=20)
+        if exec_result.get("ok"):
+            return {"ok": True, "message": "ssh ready"}
+        err = (exec_result.get("stderr") or exec_result.get("error") or "").lower()
+        if any(sig in err for sig in ("connection reset", "connection refused", "kex_exchange", "no route", "timed out", "connection aborted")):
+            vm_wait_port("127.0.0.1", port, timeout_s=30)
+            time.sleep(5)
+            continue
+        time.sleep(5)
+    return {"ok": False, "error": "timeout waiting for ssh ready"}
+
+
+def vm_wait_ready(
+    name: str,
+    *,
+    timeout_s: float = 1800.0,
+    poll_s: float = 5.0,
+    require_user: Optional[str] = None,
+    vbox_timeout_s: float = 15.0,
+) -> dict:
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    state = _load_state().get(name, {})
+    user = require_user or (state.get("user") or "c0d3r")
+    port = int(state.get("ssh_port") or 2222)
+    deadline = time.time() + timeout_s
+    last_status = ""
+    vbox_timeout = max(5, int(vbox_timeout_s))
+    while time.time() < deadline:
+        rc1, out1, _ = _run_vboxmanage(
+            ["guestproperty", "get", name, "/VirtualBox/GuestAdd/RunLevel"],
+            timeout=vbox_timeout,
+        )
+        ga_ok = rc1 == 0 and out1 and "No value set!" not in out1
+        rc2, out2, _ = _run_vboxmanage(
+            ["guestproperty", "get", name, "/VirtualBox/GuestInfo/OS/LoggedInUsersList"],
+            timeout=vbox_timeout,
+        )
+        user_ok = rc2 == 0 and out2 and user in out2
+        port_ok = vm_wait_port("127.0.0.1", port, timeout_s=1).get("ok")
+        status = f"ga={ga_ok} user={user_ok} port={port_ok}"
+        if ga_ok and user_ok and port_ok:
+            ssh_ok = vm_exec_ssh(name, "true", timeout_s=10).get("ok")
+            if ssh_ok:
+                return {"ok": True, "message": "ready"}
+            status = f"ga={ga_ok} user={user_ok} port={port_ok} ssh=False"
+        last_status = status
+        time.sleep(poll_s)
+    return {"ok": False, "error": "timeout waiting for vm ready", "last": last_status}
+
+
+def vm_exists(name: str) -> bool:
+    if not name:
+        return False
+    rc, out, _ = _run_vboxmanage(["list", "vms"])
+    if rc != 0 or not out:
+        return False
+    return f"\"{name}\"" in out
+
+
+def vm_info(name: str) -> dict:
+    if not name:
+        return {}
+    rc, out, _ = _run_vboxmanage(["showvminfo", name, "--machinereadable"])
+    if rc != 0 or not out:
+        return {}
+    info: dict = {}
+    for line in out.splitlines():
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        info[key.strip()] = val.strip().strip('"')
+    return info
+
+
+def vm_state(name: str) -> str:
+    info = vm_info(name)
+    return (info.get("VMState") or "").strip().lower()
+
+
+def vm_resume_or_recover(
+    name: str,
+    *,
+    user: str = "c0d3r",
+    timeout_s: float = 1800.0,
+    poll_s: float = 5.0,
+    recovery_retries: int = 2,
+) -> dict:
+    logs: List[str] = []
+    if not vm_exists(name):
+        return {"ok": False, "action": "missing", "error": "vm not found", "logs": logs}
+    state = vm_state(name)
+    logs.append(f"vm state: {state or 'unknown'}")
+    if state == "paused":
+        _run_vboxmanage(["controlvm", name, "resume"])
+        time.sleep(2)
+    elif state in {"poweroff", "saved", "aborted", "stopping", "stopped"}:
+        start = vm_start(name, headless=True, timeout_s=30)
+        logs.append(f"vm start: {start.get('message')}")
+    ready = vm_wait_ready(name, timeout_s=timeout_s, poll_s=poll_s, require_user=user)
+    logs.append(ready.get("message") or ready.get("error") or "")
+    if ready.get("ok"):
+        return {"ok": True, "logs": logs, "message": "ready"}
+    for attempt in range(max(0, recovery_retries)):
+        logs.append(f"recovery attempt {attempt + 1}/{recovery_retries}")
+        vm_stop(name, force=True)
+        vm_start(name, headless=True, timeout_s=30)
+        ready = vm_wait_ready(name, timeout_s=min(900.0, timeout_s), poll_s=poll_s, require_user=user)
+        logs.append(ready.get("message") or ready.get("error") or "")
+        if ready.get("ok"):
+            return {"ok": True, "logs": logs, "message": "ready after recovery"}
+    return {
+        "ok": False,
+        "action": "rebuild",
+        "error": "resume failed",
+        "logs": logs,
+        "last": ready.get("last"),
+    }
+
+
+def vm_start(name: str, *, headless: bool = True, timeout_s: int = 120) -> dict:
     if not name:
         return {"ok": False, "error": "vm name required"}
     args = ["startvm", name]
     if headless:
         args += ["--type", "headless"]
-    rc, out, err = _run_vboxmanage(args)
+    rc, out, err = _run_vboxmanage(args, timeout=timeout_s)
     _log_line(f"vm start {name} -> rc={rc}")
     msg = out or err
     if rc != 0 and msg:
@@ -695,6 +853,14 @@ def vm_stop(name: str, *, force: bool = False) -> dict:
     cmd = ["controlvm", name, "poweroff" if force else "acpipowerbutton"]
     rc, out, err = _run_vboxmanage(cmd)
     _log_line(f"vm stop {name} -> rc={rc}")
+    return {"ok": rc == 0, "message": out or err}
+
+
+def vm_reset(name: str) -> dict:
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    rc, out, err = _run_vboxmanage(["controlvm", name, "reset"])
+    _log_line(f"vm reset {name} -> rc={rc}")
     return {"ok": rc == 0, "message": out or err}
 
 
@@ -903,8 +1069,7 @@ def vm_obstacle_course(steps: List[dict]) -> dict:
                     break
                 err = (exec_result.get("stderr") or exec_result.get("error") or "").lower()
                 if any(sig in err for sig in ("connection reset", "connection refused", "kex_exchange", "no route", "timed out", "connection aborted")):
-                    port = int(_load_state().get(name, {}).get("ssh_port") or 2222)
-                    wait = vm_wait_port("127.0.0.1", port, timeout_s=180)
+                    wait = vm_wait_ssh(name, timeout_s=180)
                     exec_result["retry_wait"] = wait
                     time.sleep(retry_sleep_s)
                     attempt += 1
@@ -945,6 +1110,8 @@ def vm_autopilot(
     user: str = "c0d3r",
     password: Optional[str] = None,
     force_recreate: bool | None = None,
+    image_url_override: Optional[str] = None,
+    allow_fallback: bool = True,
 ) -> dict:
     _log_line(f"autopilot start image={image_id} vm={vm_name}")
     logs: List[str] = []
@@ -964,6 +1131,34 @@ def vm_autopilot(
     else:
         logs.append(f"virtualbox update failed: {update.get('error')}")
 
+    if force_recreate is None:
+        force_recreate = os.getenv("C0D3R_VM_FORCE_RECREATE", "0") in {"1", "true", "yes", "on"}
+    if not force_recreate and vm_exists(vm_name):
+        resume_timeout = float(os.getenv("C0D3R_VM_RESUME_TIMEOUT", "1800") or "1800")
+        recovery_retries = int(os.getenv("C0D3R_VM_RECOVERY_RETRIES", "2") or "2")
+        resume = vm_resume_or_recover(
+            vm_name,
+            user=user,
+            timeout_s=resume_timeout,
+            recovery_retries=recovery_retries,
+        )
+        logs.extend(resume.get("logs") or [])
+        if resume.get("ok"):
+            state = _load_state().get(vm_name, {})
+            return {
+                "ok": True,
+                "logs": logs,
+                "vm": vm_name,
+                "ssh_port": int(state.get("ssh_port") or ssh_port),
+                "user": state.get("user") or user,
+                "password": state.get("password") or password,
+                "ssh_private_key": str(state.get("ssh_private_key") or ""),
+            }
+        if resume.get("action") == "rebuild":
+            logs.append("resume failed; recreating vm")
+            vm_stop(vm_name, force=True)
+            vm_delete(vm_name, delete_files=True)
+
     if not _guest_additions_path():
         ga = vm_download_guest_additions()
         logs.append(f"guest additions: {ga.get('message') or ga.get('error')}")
@@ -971,14 +1166,12 @@ def vm_autopilot(
     else:
         additions_iso = str(_guest_additions_path())
 
-    fetch = vm_fetch_image(image_id)
+    fetch = vm_fetch_image(image_id, url=image_url_override)
     logs.append(f"image: {fetch.get('message') or fetch.get('note') or fetch.get('error')}")
     if not fetch.get("ok"):
         return {"ok": False, "logs": logs, "error": fetch.get("error", "image fetch failed")}
 
     image_path = fetch.get("path")
-    if force_recreate is None:
-        force_recreate = os.getenv("C0D3R_VM_FORCE_RECREATE", "0") in {"1", "true", "yes", "on"}
     if force_recreate:
         rc, out, err = _run_vboxmanage(["list", "vms"])
         if rc == 0 and vm_name in (out or ""):
@@ -1035,7 +1228,32 @@ def vm_autopilot(
     if not start.get("ok"):
         return {"ok": False, "logs": logs, "error": start.get("message", "start failed")}
 
-    wait = vm_wait_port("127.0.0.1", ssh_port, timeout_s=180)
+    ga_wait = vm_wait_guest_additions(vm_name, timeout_s=600)
+    logs.append(ga_wait.get("message") or ga_wait.get("error"))
+
+    user_wait = vm_wait_guest_user(vm_name, user, timeout_s=1200)
+    logs.append(user_wait.get("message") or user_wait.get("error"))
+    if not user_wait.get("ok") and allow_fallback and image_id == "ubuntu" and not image_url_override:
+        fallback_url, note = _resolve_ubuntu_iso(prefer_latest=False)
+        if fallback_url:
+            logs.append(f"fallback ubuntu LTS: {note}")
+            vm_stop(vm_name, force=True)
+            vm_delete(vm_name, delete_files=True)
+            return vm_autopilot(
+                image_id=image_id,
+                vm_name=vm_name,
+                auto_install=auto_install,
+                auto_update=auto_update,
+                min_free_gb=min_free_gb,
+                ssh_port=ssh_port,
+                user=user,
+                password=password,
+                force_recreate=True,
+                image_url_override=fallback_url,
+                allow_fallback=False,
+            )
+
+    wait = vm_wait_ssh(vm_name, timeout_s=600)
     logs.append(wait.get("message") or wait.get("error"))
     if not wait.get("ok"):
         _log_line("ssh not ready; attempting guestcontrol repair")
@@ -1050,7 +1268,7 @@ def vm_autopilot(
                 timeout_s=120,
             )
         vm_guest_exec(vm_name, f"{sudo_prefix}systemctl enable ssh && {sudo_prefix}systemctl start ssh", timeout_s=120)
-        wait = vm_wait_port("127.0.0.1", ssh_port, timeout_s=180)
+        wait = vm_wait_ssh(vm_name, timeout_s=300)
         logs.append(wait.get("message") or wait.get("error"))
 
     state = _load_state()
@@ -1096,6 +1314,10 @@ def vm_exec_ssh(name: str, command: str, timeout_s: float = 120.0) -> dict:
         ssh,
         "-p",
         str(port),
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "BatchMode=yes",
         "-o",
         "StrictHostKeyChecking=no",
         "-o",

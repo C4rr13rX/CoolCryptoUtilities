@@ -38,6 +38,10 @@ def main() -> int:
         print(json.dumps(auto, indent=2))
         if not auto.get("ok"):
             return 1
+        ready = vm_lab.vm_wait_ready(vm_name, timeout_s=1800)
+        print(json.dumps(ready, indent=2))
+        if not ready.get("ok"):
+            return 1
     result = vm_lab.vm_obstacle_course(steps)
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1

@@ -58,6 +58,29 @@ _DEFAULT_SECRET_CATEGORY = "default"
 _DJANGO_USER_FILE = _runtime_path("django_user.json")
 _MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE)
 _MNEMONIC_PHRASE = re.compile(r"\b(?:[a-zA-Z]{3,}\s+){11,23}[a-zA-Z]{3,}\b")
+_HEARTBEAT_SESSION = None
+_HEARTBEAT_MODEL_ID = ""
+_HEARTBEAT_INTERVAL_S = float(os.getenv("C0D3R_HEARTBEAT_MINUTES", "30") or "30") * 60.0
+_HEARTBEAT_USE_MODEL = os.getenv("C0D3R_HEARTBEAT_USE_MODEL", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _init_heartbeat(session) -> None:
+    global _HEARTBEAT_SESSION, _HEARTBEAT_MODEL_ID, _HEARTBEAT_INTERVAL_S
+    try:
+        from tools.c0d3r_session import ROLE_FALLBACK_MODEL
+    except Exception:
+        ROLE_FALLBACK_MODEL = {}
+    _HEARTBEAT_SESSION = session
+    fallback = ""
+    try:
+        fallback = ROLE_FALLBACK_MODEL.get("worker", "")
+    except Exception:
+        fallback = ""
+    _HEARTBEAT_MODEL_ID = os.getenv("C0D3R_HEARTBEAT_MODEL") or fallback or getattr(session, "get_model_id", lambda: "")()
+    try:
+        _HEARTBEAT_INTERVAL_S = float(os.getenv("C0D3R_HEARTBEAT_MINUTES", "30") or "30") * 60.0
+    except Exception:
+        _HEARTBEAT_INTERVAL_S = 1800.0
 _DOCUMENT_EXTENSIONS = {".pdf", ".csv", ".doc", ".docx", ".xls", ".xlsx", ".html", ".txt", ".md"}
 _ANIMATION_LOCK = threading.Lock()
 _ANIMATION_STATE: dict[str, object | None] = {"stop": None, "thread": None, "kind": None}
@@ -1242,6 +1265,7 @@ def main(argv: List[str] | None = None) -> int:
         workdir=str(workdir),
         **settings,
     )
+    _init_heartbeat(session)
     try:
         os.environ["C0D3R_SESSION_ID"] = str(session.session_id)
     except Exception:
@@ -1395,7 +1419,7 @@ def _environment_context_block(workdir: Path) -> str:
     lines.append("- datalab.meta: ::datalab_tables | ::datalab_query {json} | ::datalab_news {json} | ::datalab_web {json}")
     lines.append("- wallet.meta: ::wallet_login | ::wallet_logout | ::wallet_actions | ::wallet_lookup {json} | ::wallet_send {json} | ::wallet_swap {json} | ::wallet_bridge {json}")
     lines.append(
-        "- vm.meta: ::vm_status | ::vm_catalog | ::vm_latest {json} | ::vm_bootstrap {json} | ::vm_update {json} | ::vm_fetch {json} | ::vm_create {json} | ::vm_unattended {json} | ::vm_autopilot {json} | ::vm_start {json} | ::vm_stop {json} | ::vm_wait {json} | ::vm_screenshot {json} | ::vm_mouse {json} | ::vm_type {json} | ::vm_keys {json} | ::vm_exec {json} | ::vm_guest {json} | ::vm_tail {json} | ::vm_obstacle {json}"
+        "- vm.meta: ::vm_status | ::vm_catalog | ::vm_latest {json} | ::vm_bootstrap {json} | ::vm_update {json} | ::vm_fetch {json} | ::vm_create {json} | ::vm_unattended {json} | ::vm_autopilot {json} | ::vm_start {json} | ::vm_stop {json} | ::vm_wait {json} | ::vm_ready {json} | ::vm_screenshot {json} | ::vm_mouse {json} | ::vm_type {json} | ::vm_keys {json} | ::vm_exec {json} | ::vm_guest {json} | ::vm_tail {json} | ::vm_obstacle {json}"
     )
     lines.append("- vm.notes: vm_screenshot + vm_obstacle auto-attach images for the next model step")
     lines.append("- documents: auto-attach supported files (pdf/csv/doc/docx/xls/xlsx/html/txt/md) when referenced or via --doc")
@@ -2599,6 +2623,35 @@ def _format_result_banner(success: bool, duration_s: float, exit_code: int, time
     status = "DONE" if success else ("FAILED (TIMEOUT)" if timed_out else "FAILED")
     return f"[{status}] duration={duration_s:.2f}s exit={exit_code}"
 
+
+def _heartbeat_message(*, command: str, cwd: Path, elapsed_s: float, last_line: str) -> str:
+    fallback = f"still running ({elapsed_s/60:.0f}m) :: {command[:120]}"
+    if not _HEARTBEAT_USE_MODEL or _HEARTBEAT_SESSION is None or not _HEARTBEAT_MODEL_ID:
+        return fallback
+    system = "Return ONE short line (<=120 chars) confirming the task is still running. No extra formatting."
+    prompt = (
+        "Task heartbeat.\n"
+        f"Elapsed: {elapsed_s/60:.1f} minutes\n"
+        f"CWD: {cwd}\n"
+        f"Command: {command}\n"
+        f"Last output: {last_line.strip()[:200] if last_line else '(none)'}\n"
+        "Respond with a concise status line."
+    )
+    try:
+        msg = _send_with_model_override(
+            _HEARTBEAT_SESSION,
+            prompt=prompt,
+            model_id=_HEARTBEAT_MODEL_ID,
+            stream=False,
+            system=system,
+        )
+        if not msg:
+            return fallback
+        line = msg.strip().splitlines()[0].strip()
+        return line or fallback
+    except Exception:
+        return fallback
+
 def _stream_subprocess(
     *,
     command: str,
@@ -2659,6 +2712,8 @@ def _stream_subprocess(
     q: "queue.Queue[str]" = queue.Queue()
     lines: list[str] = []
     last_line = ""
+    last_output_ts = started
+    last_heartbeat_ts = started
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
     digest = hashlib.sha256((str(cwd) + "\n" + shell + "\n" + command).encode("utf-8", errors="ignore")).hexdigest()[:12]
@@ -2712,6 +2767,16 @@ def _stream_subprocess(
                 item = q.get(timeout=0.1)
             except Exception:
                 item = None
+            if _HEARTBEAT_INTERVAL_S > 0 and (time.time() - last_output_ts) >= _HEARTBEAT_INTERVAL_S:
+                if (time.time() - last_heartbeat_ts) >= _HEARTBEAT_INTERVAL_S and proc.poll() is None:
+                    hb = _heartbeat_message(
+                        command=raw_command or command,
+                        cwd=cwd,
+                        elapsed_s=time.time() - started,
+                        last_line=last_line,
+                    )
+                    _ui_write(f"[heartbeat] {hb}\n")
+                    last_heartbeat_ts = time.time()
             if _UI_MANAGER and hasattr(_UI_MANAGER, "drain_input"):
                 try:
                     notes = _UI_MANAGER.drain_input(max_items=5)
@@ -2731,6 +2796,7 @@ def _stream_subprocess(
                 continue
             lines.append(item)
             last_line = item
+            last_output_ts = time.time()
             lf.write(item)
             lf.flush()
             _ui_write(item)
@@ -7163,6 +7229,13 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
                 port = int(payload.get("port") or 22)
                 timeout_s = float(payload.get("timeout_s") or 120)
                 result = vm_lab.vm_wait_port(host, port, timeout_s=timeout_s)
+                return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
+            if action == "vm_ready":
+                name = str(payload.get("name") or payload.get("vm") or "").strip()
+                timeout_s = float(payload.get("timeout_s") or 1800)
+                poll_s = float(payload.get("poll_s") or 5)
+                require_user = payload.get("require_user")
+                result = vm_lab.vm_wait_ready(name, timeout_s=timeout_s, poll_s=poll_s, require_user=require_user)
                 return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
             if action == "vm_exec":
                 name = str(payload.get("name") or payload.get("vm") or "").strip()
