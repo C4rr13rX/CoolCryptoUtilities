@@ -7235,7 +7235,14 @@ def _execute_meta_command(cmd: str, workdir: Path) -> Tuple[int, str, str, Path 
                 timeout_s = float(payload.get("timeout_s") or 1800)
                 poll_s = float(payload.get("poll_s") or 5)
                 require_user = payload.get("require_user")
-                result = vm_lab.vm_wait_ready(name, timeout_s=timeout_s, poll_s=poll_s, require_user=require_user)
+                require_ga = bool(payload.get("require_guest_additions", True))
+                result = vm_lab.vm_wait_ready(
+                    name,
+                    timeout_s=timeout_s,
+                    poll_s=poll_s,
+                    require_user=require_user,
+                    require_guest_additions=require_ga,
+                )
                 return 0 if result.get("ok") else 1, json.dumps(result, indent=2), "", None
             if action == "vm_exec":
                 name = str(payload.get("name") or payload.get("vm") or "").strip()

@@ -391,6 +391,89 @@ def vm_download_guest_additions(version: Optional[str] = None) -> dict:
     return {"ok": ok, "path": str(dest), "message": msg}
 
 
+def _state_bump_counter(name: str, key: str) -> int:
+    state = _load_state()
+    entry = state.get(name, {}) if name else {}
+    current = int(entry.get(key) or 0) + 1
+    entry[key] = current
+    if name:
+        state[name] = entry
+        _save_state(state)
+    return current
+
+
+def vm_attach_guest_additions_iso(name: str, iso_path: Optional[str] = None) -> dict:
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    if not iso_path:
+        iso_path = str(_guest_additions_path() or "")
+        if not iso_path:
+            download = vm_download_guest_additions()
+            iso_path = str(download.get("path") or "")
+    if not iso_path:
+        return {"ok": False, "error": "guest additions iso not available"}
+    rc, out, err = _run_vboxmanage(
+        [
+            "storageattach",
+            name,
+            "--storagectl",
+            "IDE",
+            "--port",
+            "1",
+            "--device",
+            "0",
+            "--type",
+            "dvddrive",
+            "--medium",
+            iso_path,
+        ],
+        timeout=60,
+    )
+    _log_line(f"attach guest additions iso {name} -> rc={rc}")
+    return {"ok": rc == 0, "message": out or err, "path": iso_path}
+
+
+def vm_repair_guest_additions(
+    name: str,
+    *,
+    user: str = "c0d3r",
+    password: Optional[str] = None,
+    timeout_s: float = 900.0,
+) -> dict:
+    logs: List[str] = []
+    if not name:
+        return {"ok": False, "error": "vm name required"}
+    if vm_wait_guest_additions(name, timeout_s=5).get("ok"):
+        return {"ok": True, "message": "guest additions already ready"}
+    attempt = _state_bump_counter(name, "ga_repair_attempts")
+    max_attempts = int(os.getenv("C0D3R_VM_GA_REPAIR_MAX", "3") or "3")
+    logs.append(f"ga repair attempt {attempt}/{max_attempts}")
+    if attempt > max_attempts:
+        return {"ok": False, "error": "guest additions repair maxed", "logs": logs, "action": "rebuild"}
+    attach = vm_attach_guest_additions_iso(name)
+    if attach.get("ok"):
+        logs.append("guest additions iso attached")
+    else:
+        logs.append(f"guest additions iso attach failed: {attach.get('error') or attach.get('message')}")
+    if vm_wait_ssh(name, timeout_s=30).get("ok"):
+        cmd = (
+            "sudo apt-get update -y"
+            " && sudo apt-get install -y build-essential dkms linux-headers-$(uname -r) "
+            "virtualbox-guest-dkms virtualbox-guest-utils virtualbox-guest-x11"
+            " && sudo systemctl enable --now vboxservice || true"
+            " && sudo modprobe vboxguest vboxsf vboxvideo || true"
+        )
+        exec_result = vm_exec_ssh(name, cmd, timeout_s=timeout_s)
+        logs.append(exec_result.get("stderr") or exec_result.get("stdout") or "ssh install attempted")
+    else:
+        logs.append("ssh not ready; falling back to gui recovery")
+        gui = vm_gui_recover(name, user=user, password=password)
+        logs.append(gui.get("message") or gui.get("error") or "")
+    wait = vm_wait_guest_additions(name, timeout_s=timeout_s)
+    logs.append(wait.get("message") or wait.get("error") or "")
+    return {"ok": wait.get("ok", False), "logs": logs, "message": "guest additions repair attempted"}
+
+
 def vm_bootstrap(auto_install: bool = True) -> dict:
     _ensure_dirs()
     exe = _vboxmanage_path()
@@ -684,9 +767,8 @@ def vm_wait_guest_additions(name: str, timeout_s: float = 300.0) -> dict:
             return {"ok": True, "message": out.strip()}
         rc, out, err = _run_vboxmanage(["guestproperty", "get", name, "/VirtualBox/GuestAdd/Version"])
         if rc == 0 and out and "No value set!" not in out:
-            # Version is visible, but RunLevel not set yet; keep waiting.
-            time.sleep(5)
-            continue
+            # Some guests never publish RunLevel but do publish Version.
+            return {"ok": True, "message": out.strip()}
         time.sleep(5)
     return {"ok": False, "error": "timeout waiting for guest additions"}
 
@@ -729,6 +811,7 @@ def vm_wait_ready(
     timeout_s: float = 1800.0,
     poll_s: float = 5.0,
     require_user: Optional[str] = None,
+    require_guest_additions: bool = True,
     vbox_timeout_s: float = 15.0,
 ) -> dict:
     if not name:
@@ -744,19 +827,26 @@ def vm_wait_ready(
             ["guestproperty", "get", name, "/VirtualBox/GuestAdd/RunLevel"],
             timeout=vbox_timeout,
         )
-        ga_ok = rc1 == 0 and out1 and "No value set!" not in out1
+        ga_present = rc1 == 0 and out1 and "No value set!" not in out1
+        if not ga_present:
+            rcv, outv, _ = _run_vboxmanage(
+                ["guestproperty", "get", name, "/VirtualBox/GuestAdd/Version"],
+                timeout=vbox_timeout,
+            )
+            ga_present = rcv == 0 and outv and "No value set!" not in outv
         rc2, out2, _ = _run_vboxmanage(
             ["guestproperty", "get", name, "/VirtualBox/GuestInfo/OS/LoggedInUsersList"],
             timeout=vbox_timeout,
         )
         user_ok = rc2 == 0 and out2 and user in out2
         port_ok = vm_wait_port("127.0.0.1", port, timeout_s=1).get("ok")
-        status = f"ga={ga_ok} user={user_ok} port={port_ok}"
+        ga_ok = ga_present or not require_guest_additions
+        status = f"ga={ga_present} user={user_ok} port={port_ok}"
         if ga_ok and user_ok and port_ok:
             ssh_ok = vm_exec_ssh(name, "true", timeout_s=10).get("ok")
             if ssh_ok:
                 return {"ok": True, "message": "ready"}
-            status = f"ga={ga_ok} user={user_ok} port={port_ok} ssh=False"
+            status = f"ga={ga_present} user={user_ok} port={port_ok} ssh=False"
         last_status = status
         time.sleep(poll_s)
     return {"ok": False, "error": "timeout waiting for vm ready", "last": last_status}
@@ -791,6 +881,50 @@ def vm_state(name: str) -> str:
     return (info.get("VMState") or "").strip().lower()
 
 
+def _read_vbox_log_tail(name: str, lines: int = 80) -> str:
+    try:
+        log_path = VMS_DIR / name / "Logs" / "VBox.log"
+        if not log_path.exists():
+            return ""
+        text = log_path.read_text(encoding="utf-8", errors="ignore")
+        parts = text.splitlines()
+        tail = "\n".join(parts[-lines:]) if parts else ""
+        return tail
+    except Exception:
+        return ""
+
+
+def vm_health_snapshot(name: str, *, user: str = "c0d3r") -> dict:
+    snapshot: dict = {"vm": name}
+    snapshot["state"] = vm_state(name)
+    rc1, out1, err1 = _run_vboxmanage(["guestproperty", "get", name, "/VirtualBox/GuestAdd/RunLevel"], timeout=10)
+    snapshot["guest_additions"] = out1.strip() if out1 else err1
+    rc2, out2, err2 = _run_vboxmanage(["guestproperty", "get", name, "/VirtualBox/GuestInfo/OS/LoggedInUsersList"], timeout=10)
+    snapshot["logged_in_users"] = out2.strip() if out2 else err2
+    snapshot["user_present"] = bool(out2 and user in out2)
+    snapshot["vbox_log_tail"] = _read_vbox_log_tail(name, lines=40)
+    return snapshot
+
+
+def _health_evidence(snapshot: dict) -> list[str]:
+    evidence: list[str] = []
+    state = (snapshot.get("state") or "").lower()
+    if state in {"aborted", "stopping", "stopped"}:
+        evidence.append(f"state={state}")
+    guest_add = snapshot.get("guest_additions") or ""
+    if "No value set!" in guest_add:
+        evidence.append("guest_additions_unset")
+    if "not found" in guest_add.lower():
+        evidence.append("guest_additions_unavailable")
+    if not snapshot.get("user_present"):
+        evidence.append("user_not_logged_in")
+    log_tail = (snapshot.get("vbox_log_tail") or "").lower()
+    for sig in ("guru meditation", "vt-x", "vbox_e_invalid_object_state", "aborted", "e_fail", "err"):
+        if sig in log_tail:
+            evidence.append(f"log:{sig}")
+    return evidence
+
+
 def vm_resume_or_recover(
     name: str,
     *,
@@ -802,18 +936,50 @@ def vm_resume_or_recover(
     logs: List[str] = []
     if not vm_exists(name):
         return {"ok": False, "action": "missing", "error": "vm not found", "logs": logs}
-    state = vm_state(name)
+    snapshot = vm_health_snapshot(name, user=user)
+    evidence = _health_evidence(snapshot)
+    state = snapshot.get("state") or ""
     logs.append(f"vm state: {state or 'unknown'}")
+    if evidence:
+        ev_line = ", ".join(sorted(set(evidence)))
+        logs.append("evidence: " + ev_line)
+        _log_line(f"vm resume evidence {name}: {ev_line}")
     if state == "paused":
         _run_vboxmanage(["controlvm", name, "resume"])
         time.sleep(2)
     elif state in {"poweroff", "saved", "aborted", "stopping", "stopped"}:
         start = vm_start(name, headless=True, timeout_s=30)
         logs.append(f"vm start: {start.get('message')}")
+    if "state=aborted" in evidence or "log:guru meditation" in evidence or "log:vt-x" in evidence:
+        return {
+            "ok": False,
+            "action": "rebuild",
+            "error": "critical vm error evidence",
+            "logs": logs,
+            "evidence": evidence,
+        }
+    if "guest_additions_unset" in evidence and "user_not_logged_in" in evidence:
+        logs.append("early gui recovery (login + guest additions)")
+        _log_line(f"vm resume: gui recovery triggered for {name}")
+        gui = vm_gui_recover(name, user=user)
+        logs.append(gui.get("message") or gui.get("error") or "")
+    if "guest_additions_unset" in evidence and "user_not_logged_in" not in evidence:
+        logs.append("guest additions repair")
+        _log_line(f"vm resume: guest additions repair triggered for {name}")
+        ga_repair = vm_repair_guest_additions(name, user=user)
+        logs.append(ga_repair.get("message") or ga_repair.get("error") or "")
     ready = vm_wait_ready(name, timeout_s=timeout_s, poll_s=poll_s, require_user=user)
     logs.append(ready.get("message") or ready.get("error") or "")
     if ready.get("ok"):
         return {"ok": True, "logs": logs, "message": "ready"}
+    if "guest_additions_unset" in evidence or "user_not_logged_in" in evidence:
+        logs.append("attempting gui recovery")
+        gui = vm_gui_recover(name, user=user)
+        logs.append(gui.get("message") or gui.get("error") or "")
+        ready = vm_wait_ready(name, timeout_s=min(600.0, timeout_s), poll_s=poll_s, require_user=user)
+        logs.append(ready.get("message") or ready.get("error") or "")
+        if ready.get("ok"):
+            return {"ok": True, "logs": logs, "message": "ready after gui recovery"}
     for attempt in range(max(0, recovery_retries)):
         logs.append(f"recovery attempt {attempt + 1}/{recovery_retries}")
         vm_stop(name, force=True)
@@ -822,11 +988,13 @@ def vm_resume_or_recover(
         logs.append(ready.get("message") or ready.get("error") or "")
         if ready.get("ok"):
             return {"ok": True, "logs": logs, "message": "ready after recovery"}
+    evidence.append("resume_timeout")
     return {
         "ok": False,
         "action": "rebuild",
         "error": "resume failed",
         "logs": logs,
+        "evidence": evidence,
         "last": ready.get("last"),
     }
 
@@ -993,6 +1161,10 @@ _SCAN_CODES = {
     "t_up": "94",
     "a_down": "1e",
     "a_up": "9e",
+    "f1_down": "3b",
+    "f1_up": "bb",
+    "f3_down": "3d",
+    "f3_up": "bd",
 }
 
 
@@ -1000,6 +1172,10 @@ def vm_key_combo(name: str, combo: str) -> dict:
     combo = (combo or "").lower().strip()
     if combo == "ctrl+alt+t":
         sc = f"{_SCAN_CODES['ctrl_down']} {_SCAN_CODES['alt_down']} {_SCAN_CODES['t_down']} {_SCAN_CODES['t_up']} {_SCAN_CODES['alt_up']} {_SCAN_CODES['ctrl_up']}"
+    elif combo == "ctrl+alt+f3":
+        sc = f"{_SCAN_CODES['ctrl_down']} {_SCAN_CODES['alt_down']} {_SCAN_CODES['f3_down']} {_SCAN_CODES['f3_up']} {_SCAN_CODES['alt_up']} {_SCAN_CODES['ctrl_up']}"
+    elif combo == "ctrl+alt+f1":
+        sc = f"{_SCAN_CODES['ctrl_down']} {_SCAN_CODES['alt_down']} {_SCAN_CODES['f1_down']} {_SCAN_CODES['f1_up']} {_SCAN_CODES['alt_up']} {_SCAN_CODES['ctrl_up']}"
     elif combo == "ctrl+a":
         sc = f"{_SCAN_CODES['ctrl_down']} {_SCAN_CODES['a_down']} {_SCAN_CODES['a_up']} {_SCAN_CODES['ctrl_up']}"
     elif combo == "enter":
@@ -1026,6 +1202,107 @@ def vm_keys(name: str, sequence: List[str]) -> dict:
     return {"ok": True, "message": "keys sent"}
 
 
+def _vm_type_line(name: str, text: str, *, delay_s: float = 0.4) -> None:
+    vm_type(name, text)
+    vm_key_combo(name, "enter")
+    time.sleep(delay_s)
+
+
+def vm_gui_recover(name: str, *, user: Optional[str] = None, password: Optional[str] = None) -> dict:
+    state = _load_state().get(name, {})
+    user = user or state.get("user") or "c0d3r"
+    password = password or state.get("password") or ""
+    if not password:
+        return {"ok": False, "error": "missing password for gui recovery"}
+    safe_pw = password.replace("'", "")
+    sudo = f"echo '{safe_pw}' | sudo -S "
+    attach = vm_attach_guest_additions_iso(name)
+    if attach.get("ok"):
+        _log_line(f"vm gui recover attached additions iso {name}")
+    _log_line(f"vm gui recover start {name}")
+    # Switch to TTY for deterministic login.
+    vm_key_combo(name, "ctrl+alt+f3")
+    time.sleep(2.0)
+    vm_key_combo(name, "enter")
+    time.sleep(1.0)
+    _vm_type_line(name, user, delay_s=1.0)
+    _vm_type_line(name, password, delay_s=2.0)
+    # Install guest additions + ssh, enable autologin.
+    _vm_type_line(name, f"{sudo}apt-get update -y", delay_s=3.0)
+    _vm_type_line(
+        name,
+        f"{sudo}apt-get install -y openssh-server xdotool build-essential dkms linux-headers-$(uname -r) "
+        "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms",
+        delay_s=3.0,
+    )
+    _vm_type_line(name, f"{sudo}systemctl enable --now ssh", delay_s=1.0)
+    _vm_type_line(
+        name,
+        "{sudo}bash -lc \"for s in $(systemctl list-unit-files | awk '/vbox/ {{print $1}}'); do systemctl enable --now $s || true; done\"".format(
+            sudo=sudo
+        ),
+        delay_s=2.0,
+    )
+    _vm_type_line(
+        name,
+        f"{sudo}bash -lc \"mkdir -p /mnt/vboxadd; mount /dev/cdrom /mnt/vboxadd 2>/dev/null || mount /dev/sr0 /mnt/vboxadd 2>/dev/null || true; "
+        "if [ -x /mnt/vboxadd/VBoxLinuxAdditions.run ]; then /mnt/vboxadd/VBoxLinuxAdditions.run --nox11 || true; fi\"",
+        delay_s=2.0,
+    )
+    _vm_type_line(name, f"{sudo}systemctl enable --now vboxservice || true", delay_s=1.0)
+    _vm_type_line(name, f"{sudo}modprobe vboxguest vboxsf vboxvideo || true", delay_s=1.0)
+    _vm_type_line(name, f"{sudo}mkdir -p /etc/gdm3", delay_s=1.0)
+    gdm_conf = (
+        "[daemon]\\n"
+        "WaylandEnable=false\\n"
+        "AutomaticLoginEnable=true\\n"
+        f"AutomaticLogin={user}\\n"
+    )
+    _vm_type_line(
+        name,
+        f"{sudo}bash -lc \"printf '%s' '{gdm_conf}' > /etc/gdm3/custom.conf\"",
+        delay_s=1.0,
+    )
+    _vm_type_line(
+        name,
+        f"{sudo}bash -lc \"if systemctl list-unit-files | grep -q lightdm; then printf '[Seat:*]\\nautologin-user={user}\\n' > /etc/lightdm/lightdm.conf; systemctl restart lightdm; fi\"",
+        delay_s=1.0,
+    )
+    _vm_type_line(name, f"{sudo}systemctl restart gdm3", delay_s=2.0)
+    _vm_type_line(name, f"{sudo}reboot", delay_s=1.0)
+    # Return to GUI session.
+    vm_key_combo(name, "ctrl+alt+f1")
+    time.sleep(2.0)
+    # Attempt GUI login if auto-login did not trigger.
+    vm_key_combo(name, "enter")
+    time.sleep(1.5)
+    vm_type(name, password)
+    vm_key_combo(name, "enter")
+    time.sleep(3.0)
+    # Open terminal in GUI and re-assert installs if needed.
+    vm_key_combo(name, "ctrl+alt+t")
+    time.sleep(2.0)
+    _vm_type_line(name, f"{sudo}apt-get update -y", delay_s=2.0)
+    _vm_type_line(
+        name,
+        f"{sudo}apt-get install -y openssh-server xdotool build-essential dkms linux-headers-$(uname -r) "
+        "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms",
+        delay_s=2.0,
+    )
+    _vm_type_line(name, f"{sudo}systemctl enable ssh", delay_s=1.0)
+    _vm_type_line(name, f"{sudo}systemctl start ssh", delay_s=1.0)
+    _vm_type_line(name, f"{sudo}systemctl enable --now vboxservice || true", delay_s=1.0)
+    _vm_type_line(name, f"{sudo}modprobe vboxguest vboxsf vboxvideo || true", delay_s=1.0)
+    _vm_type_line(
+        name,
+        f"{sudo}bash -lc \"mkdir -p /mnt/vboxadd; mount /dev/cdrom /mnt/vboxadd 2>/dev/null || mount /dev/sr0 /mnt/vboxadd 2>/dev/null || true; "
+        "if [ -x /mnt/vboxadd/VBoxLinuxAdditions.run ]; then /mnt/vboxadd/VBoxLinuxAdditions.run --nox11 || true; fi\"",
+        delay_s=2.0,
+    )
+    _log_line(f"vm gui recover end {name}")
+    return {"ok": True, "message": "gui recovery attempted"}
+
+
 def vm_obstacle_course(steps: List[dict]) -> dict:
     results: List[dict] = []
     for idx, step in enumerate(steps, start=1):
@@ -1039,6 +1316,16 @@ def vm_obstacle_course(steps: List[dict]) -> dict:
             result.update(vm_start(str(step.get("name") or step.get("vm") or "")))
         elif action == "stop":
             result.update(vm_stop(str(step.get("name") or step.get("vm") or ""), force=bool(step.get("force"))))
+        elif action == "wait_ready":
+            vm_name = str(step.get("name") or step.get("vm") or "")
+            user = step.get("user") or None
+            timeout_s = float(step.get("timeout_s") or 1800.0)
+            result.update(vm_wait_ready(vm_name, timeout_s=timeout_s, require_user=user))
+        elif action == "ssh":
+            vm_name = str(step.get("name") or step.get("vm") or "")
+            command = str(step.get("command") or "")
+            timeout_s = float(step.get("timeout_s") or 120.0)
+            result.update(vm_exec_ssh(vm_name, command, timeout_s=timeout_s))
         elif action == "screenshot":
             result.update(vm_screenshot(str(step.get("name") or step.get("vm") or ""), path=step.get("path")))
         elif action == "type":
@@ -1118,6 +1405,21 @@ def vm_autopilot(
     disk = vm_check_disk(min_free_gb)
     logs.append(f"disk free {disk.get('free_gb')}GB (min {disk.get('min_required_gb')}GB)")
     if not disk.get("ok"):
+        if not force_recreate and vm_exists(vm_name):
+            logs.append("disk below threshold; attempting resume with existing VM")
+            resume = vm_resume_or_recover(vm_name, user=user, timeout_s=1200, recovery_retries=1)
+            logs.extend(resume.get("logs") or [])
+            if resume.get("ok"):
+                state = _load_state().get(vm_name, {})
+                return {
+                    "ok": True,
+                    "logs": logs,
+                    "vm": vm_name,
+                    "ssh_port": int(state.get("ssh_port") or ssh_port),
+                    "user": state.get("user") or user,
+                    "password": state.get("password") or password,
+                    "ssh_private_key": str(state.get("ssh_private_key") or ""),
+                }
         return {"ok": False, "logs": logs, "error": "insufficient disk space"}
 
     boot = vm_bootstrap(auto_install=auto_install)
@@ -1197,7 +1499,10 @@ def vm_autopilot(
         pub_key = ""
     post_install = (
         "sudo apt-get update"
-        " && sudo apt-get install -y openssh-server xdotool x11-utils"
+        " && sudo apt-get install -y openssh-server xdotool x11-utils build-essential dkms linux-headers-$(uname -r) "
+        "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms"
+        " && sudo systemctl enable --now vboxservice || true"
+        " && sudo modprobe vboxguest vboxsf vboxvideo || true"
         " && sudo mkdir -p /etc/gdm3"
         " && sudo touch /etc/gdm3/custom.conf"
         " && sudo sed -i 's/^#\\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf"
@@ -1230,9 +1535,44 @@ def vm_autopilot(
 
     ga_wait = vm_wait_guest_additions(vm_name, timeout_s=600)
     logs.append(ga_wait.get("message") or ga_wait.get("error"))
+    if not ga_wait.get("ok"):
+        logs.append("guest additions missing; attempting repair")
+        _log_line(f"autopilot guest additions repair triggered for {vm_name}")
+        ga_repair = vm_repair_guest_additions(vm_name, user=user, password=password)
+        logs.extend(ga_repair.get("logs") or [])
+        ga_wait = vm_wait_guest_additions(vm_name, timeout_s=600)
+        logs.append(ga_wait.get("message") or ga_wait.get("error"))
+    if not ga_wait.get("ok"):
+        if allow_fallback and image_id == "ubuntu" and not image_url_override:
+            fallback_url, note = _resolve_ubuntu_iso(prefer_latest=False)
+            if fallback_url:
+                logs.append(f"fallback ubuntu LTS for guest additions: {note}")
+                vm_stop(vm_name, force=True)
+                vm_delete(vm_name, delete_files=True)
+                return vm_autopilot(
+                    image_id=image_id,
+                    vm_name=vm_name,
+                    auto_install=auto_install,
+                    auto_update=auto_update,
+                    min_free_gb=min_free_gb,
+                    ssh_port=ssh_port,
+                    user=user,
+                    password=password,
+                    force_recreate=True,
+                    image_url_override=fallback_url,
+                    allow_fallback=False,
+                )
+        return {"ok": False, "logs": logs, "error": "guest additions not ready"}
 
     user_wait = vm_wait_guest_user(vm_name, user, timeout_s=1200)
     logs.append(user_wait.get("message") or user_wait.get("error"))
+    if not user_wait.get("ok"):
+        logs.append("user not logged in; attempting gui recovery")
+        _log_line(f"autopilot gui recovery triggered for {vm_name}")
+        gui = vm_gui_recover(vm_name, user=user, password=password)
+        logs.append(gui.get("message") or gui.get("error") or "")
+        user_wait = vm_wait_guest_user(vm_name, user, timeout_s=300)
+        logs.append(user_wait.get("message") or user_wait.get("error"))
     if not user_wait.get("ok") and allow_fallback and image_id == "ubuntu" and not image_url_override:
         fallback_url, note = _resolve_ubuntu_iso(prefer_latest=False)
         if fallback_url:
