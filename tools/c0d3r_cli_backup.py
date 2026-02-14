@@ -9346,16 +9346,3 @@ class HeaderRenderer:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-# Enhanced Discovery Integration
-from enhanced_discovery import AIDiscoveryEngine
-
-def enhanced_project_investigation(project_path: str) -> dict:
-    """Perform AI-enhanced project investigation"""
-    engine = AIDiscoveryEngine(project_path)
-    return engine.methodical_project_scan()
-
-def find_russian_course_files(project_path: str) -> dict:
-    """Specialized search for Russian language course components"""
-    engine = AIDiscoveryEngine(project_path)
-    return engine.investigate_russian_course()
