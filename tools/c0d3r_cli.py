@@ -4576,6 +4576,11 @@ def _safe_json(text: str):
         import json as _json
     except Exception:
         return {}
+    def _repair_backslashes(raw: str) -> str:
+        try:
+            return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", raw)
+        except Exception:
+            return raw
     preferred = None
     for candidate in _extract_json_candidates(text):
         try:
@@ -4591,13 +4596,33 @@ def _safe_json(text: str):
                 return parsed
             preferred = parsed
         except Exception:
+            repaired = _repair_backslashes(candidate)
+            if repaired != candidate:
+                try:
+                    parsed = _json.loads(repaired)
+                    if isinstance(parsed, dict) and (
+                        "final" in parsed
+                        or "commands" in parsed
+                        or "needs_terminal" in parsed
+                        or "checks" in parsed
+                        or "status_updates" in parsed
+                        or "conclusion" in parsed
+                    ):
+                        return parsed
+                    preferred = preferred or parsed
+                except Exception:
+                    pass
             continue
     # Fallback: best-effort slice from first to last brace.
     try:
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end > start:
-            parsed = _json.loads(text[start : end + 1])
+            candidate = text[start : end + 1]
+            try:
+                parsed = _json.loads(candidate)
+            except Exception:
+                parsed = _json.loads(_repair_backslashes(candidate))
             if isinstance(parsed, dict) and (
                 "final" in parsed
                 or "commands" in parsed
