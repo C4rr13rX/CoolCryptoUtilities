@@ -1,0 +1,2 @@
+#!/usr/bin/env python3`nfrom __future__ import annotations`n`nimport json`nimport os`nimport subprocess`nimport time`nfrom dataclasses import dataclass`nfrom pathlib import Path`nfrom typing import Callable, Dict, List, Optional, Tuple, Any`n`nPROJECT_ROOT = Path(__file__).resolve().parent.parent
+`n@dataclass`nclass ObstacleTask:`n    key: str`n    title: str`n    description: str`n    prompt: str`n    checker: Callable[[str], Tuple[float, str, Dict[str, Any]]]`n    max_score: float = 100.0`n    timeout_s: int = 600`n    complexity_level: int = 5
