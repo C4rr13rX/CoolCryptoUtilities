@@ -474,6 +474,29 @@ def vm_repair_guest_additions(
     return {"ok": wait.get("ok", False), "logs": logs, "message": "guest additions repair attempted"}
 
 
+def _install_grace_seconds() -> float:
+    try:
+        mins = float(os.getenv("C0D3R_VM_INSTALL_GRACE_MIN", "45") or "45")
+    except Exception:
+        mins = 45.0
+    return max(5.0, mins * 60.0)
+
+
+def _install_grace_remaining(name: str) -> float:
+    state = _load_state().get(name, {})
+    started = state.get("install_started_at")
+    if not started:
+        return 0.0
+    try:
+        started = float(started)
+    except Exception:
+        return 0.0
+    elapsed = time.time() - started
+    grace = _install_grace_seconds()
+    remaining = max(0.0, grace - elapsed)
+    return remaining
+
+
 def vm_bootstrap(auto_install: bool = True) -> dict:
     _ensure_dirs()
     exe = _vboxmanage_path()
@@ -959,10 +982,15 @@ def vm_resume_or_recover(
             "evidence": evidence,
         }
     if "guest_additions_unset" in evidence and "user_not_logged_in" in evidence:
-        logs.append("early gui recovery (login + guest additions)")
-        _log_line(f"vm resume: gui recovery triggered for {name}")
-        gui = vm_gui_recover(name, user=user)
-        logs.append(gui.get("message") or gui.get("error") or "")
+        grace_remaining = _install_grace_remaining(name)
+        if grace_remaining > 0:
+            logs.append(f"install grace active ({int(grace_remaining)}s remaining), deferring gui recovery")
+            _log_line(f"vm resume: install grace active for {name}")
+        else:
+            logs.append("early gui recovery (login + guest additions)")
+            _log_line(f"vm resume: gui recovery triggered for {name}")
+            gui = vm_gui_recover(name, user=user)
+            logs.append(gui.get("message") or gui.get("error") or "")
     if "guest_additions_unset" in evidence and "user_not_logged_in" not in evidence:
         logs.append("guest additions repair")
         _log_line(f"vm resume: guest additions repair triggered for {name}")
@@ -1532,16 +1560,27 @@ def vm_autopilot(
     logs.append(f"vm start: {start.get('message')}")
     if not start.get("ok"):
         return {"ok": False, "logs": logs, "error": start.get("message", "start failed")}
+    state = _load_state()
+    state.setdefault(vm_name, {})
+    state[vm_name]["install_started_at"] = time.time()
+    _save_state(state)
 
     ga_wait = vm_wait_guest_additions(vm_name, timeout_s=600)
     logs.append(ga_wait.get("message") or ga_wait.get("error"))
     if not ga_wait.get("ok"):
-        logs.append("guest additions missing; attempting repair")
-        _log_line(f"autopilot guest additions repair triggered for {vm_name}")
-        ga_repair = vm_repair_guest_additions(vm_name, user=user, password=password)
-        logs.extend(ga_repair.get("logs") or [])
-        ga_wait = vm_wait_guest_additions(vm_name, timeout_s=600)
-        logs.append(ga_wait.get("message") or ga_wait.get("error"))
+        grace_remaining = _install_grace_remaining(vm_name)
+        if grace_remaining > 0:
+            logs.append(f"install grace active ({int(grace_remaining)}s remaining); waiting before repair")
+            extra_wait = min(grace_remaining, float(os.getenv("C0D3R_VM_INSTALL_GRACE_WAIT_MAX", "2400") or "2400"))
+            ga_wait = vm_wait_guest_additions(vm_name, timeout_s=extra_wait)
+            logs.append(ga_wait.get("message") or ga_wait.get("error"))
+        if not ga_wait.get("ok"):
+            logs.append("guest additions missing; attempting repair")
+            _log_line(f"autopilot guest additions repair triggered for {vm_name}")
+            ga_repair = vm_repair_guest_additions(vm_name, user=user, password=password)
+            logs.extend(ga_repair.get("logs") or [])
+            ga_wait = vm_wait_guest_additions(vm_name, timeout_s=600)
+            logs.append(ga_wait.get("message") or ga_wait.get("error"))
     if not ga_wait.get("ok"):
         if allow_fallback and image_id == "ubuntu" and not image_url_override:
             fallback_url, note = _resolve_ubuntu_iso(prefer_latest=False)
