@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -95,7 +96,7 @@ def _typewriter_output(text: str) -> None:
         path = Path("runtime/c0d3r/bedrock_live.log")
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+            fh.write(text + "\n")
     except Exception:
         pass
 
@@ -757,7 +758,7 @@ class C0d3r:
             return output
         repair_prompt = (
             "Return ONLY valid JSON matching the requested schema. "
-            "No prose, no markdown fences, no code blocks. "
+            "Apply deterministic schema repair; no prose, no markdown fences, no code blocks. "
             f"Fix these issues: {issues}. "
         )
         if _requires_evidence(prompt):

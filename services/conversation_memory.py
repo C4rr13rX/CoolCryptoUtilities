@@ -347,7 +347,8 @@ class ConversationMemory:
         system = (
             "Return ONLY JSON with keys: summary (string, <=200 words), "
             "key_points (list of 10 short strings). "
-            "Focus on the most important and most recent conversation facts."
+            "Focus on the most important and most recent conversation facts, "
+            "prioritizing empirically verifiable decisions and outcomes."
         )
         prompt = (
             f"Current summary (<=200 words):\n{summary_text}\n\n"

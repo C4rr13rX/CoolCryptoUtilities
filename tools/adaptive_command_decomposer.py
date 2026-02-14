@@ -30,8 +30,15 @@ class AdaptiveCommandDecomposer:
         }
     
     def decompose_command(self, command: str, context: Dict[str, Any]) -> Tuple[List[CommandStep], DecompositionStrategy]:
-        complexity = self._assess_complexity(command)
-        strategy = self._select_strategy(command, complexity, context)
+        complexity = context.get("complexity") or self._assess_complexity(command)
+        strategy_hint = context.get("strategy")
+        if strategy_hint:
+            try:
+                strategy = DecompositionStrategy(strategy_hint)
+            except Exception:
+                strategy = self._select_strategy(command, complexity, context)
+        else:
+            strategy = self._select_strategy(command, complexity, context)
         
         if complexity == "simple":
             return self._simple_decomposition(command), strategy
@@ -61,6 +68,13 @@ class AdaptiveCommandDecomposer:
             return DecompositionStrategy.PARALLEL
         else:
             return DecompositionStrategy.HIERARCHICAL
+
+    def record_outcome(self, command: str, strategy: DecompositionStrategy, score: float) -> None:
+        command_hash = hash(command) % 1000
+        history = self.strategy_history.setdefault(command_hash, {})
+        prior = history.get(strategy.value, 0.0)
+        blended = prior * 0.7 + max(0.0, min(1.0, score)) * 0.3
+        history[strategy.value] = blended
     
     def _simple_decomposition(self, command: str) -> List[CommandStep]:
         return [CommandStep(
