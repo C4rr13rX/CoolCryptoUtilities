@@ -192,6 +192,82 @@ def _guest_os_for_vm(name: str) -> str:
     return _guest_os_for_image(str(image_id))
 
 
+def _shell_join(commands: List[str]) -> str:
+    return " ; ".join(cmd for cmd in commands if cmd)
+
+
+def _bash_escape(script: str) -> str:
+    return script.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _linux_bootstrap_commands(
+    user: str,
+    *,
+    pub_key: str = "",
+    include_ssh: bool = True,
+    include_guest_additions: bool = True,
+    include_input_tools: bool = True,
+) -> List[str]:
+    safe_user = re.sub(r"[^a-zA-Z0-9_-]", "", user or "c0d3r") or "c0d3r"
+    safe_key = (pub_key or "").replace("'", "").replace("\n", "").replace("\r", "")
+    cmds: List[str] = [
+        "export DEBIAN_FRONTEND=noninteractive",
+        "if command -v apt-get >/dev/null; then "
+        "apt-get update -y || apt-get update -y --fix-missing || true; "
+        "apt-get install -y software-properties-common || true; "
+        "if command -v add-apt-repository >/dev/null; then add-apt-repository -y universe || true; add-apt-repository -y multiverse || true; fi; "
+        "apt-get update -y || apt-get update -y --fix-missing || true; "
+        "fi",
+    ]
+    if include_ssh:
+        cmds.append("if command -v apt-get >/dev/null; then apt-get install -y openssh-server || true; fi")
+        cmds.append("if command -v dnf >/dev/null; then dnf install -y openssh-server || true; fi")
+        cmds.append("if command -v yum >/dev/null; then yum install -y openssh-server || true; fi")
+        cmds.append("if command -v pacman >/dev/null; then pacman -Sy --noconfirm openssh || true; fi")
+    if include_guest_additions:
+        cmds.append(
+            "if command -v apt-get >/dev/null; then "
+            "apt-get install -y build-essential dkms linux-headers-$(uname -r) "
+            "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms || true; "
+            "fi"
+        )
+    if include_input_tools:
+        cmds.append("if command -v apt-get >/dev/null; then apt-get install -y xdotool x11-utils || true; fi")
+    if include_ssh:
+        cmds.append(
+            "if command -v systemctl >/dev/null; then "
+            "systemctl enable --now ssh || systemctl enable --now sshd || true; "
+            "fi"
+        )
+    if include_guest_additions:
+        cmds.append("if command -v systemctl >/dev/null; then systemctl enable --now vboxservice || true; fi")
+        cmds.append("modprobe vboxguest vboxsf vboxvideo || true")
+        cmds.append(
+            "mkdir -p /mnt/vboxadd; "
+            "mount /dev/cdrom /mnt/vboxadd 2>/dev/null || mount /dev/sr0 /mnt/vboxadd 2>/dev/null || true; "
+            "if [ -x /mnt/vboxadd/VBoxLinuxAdditions.run ]; then /mnt/vboxadd/VBoxLinuxAdditions.run --nox11 || true; fi"
+        )
+        cmds.append(
+            "if [ -d /etc/gdm3 ]; then "
+            f"printf '[daemon]\\nWaylandEnable=false\\nAutomaticLoginEnable=true\\nAutomaticLogin={safe_user}\\n' "
+            "> /etc/gdm3/custom.conf; "
+            "fi"
+        )
+        cmds.append(
+            "if command -v systemctl >/dev/null && systemctl list-unit-files | grep -q lightdm; then "
+            f"printf '[Seat:*]\\nautologin-user={safe_user}\\n' > /etc/lightdm/lightdm.conf; "
+            "systemctl restart lightdm || true; "
+            "fi"
+        )
+        cmds.append("if command -v systemctl >/dev/null; then systemctl restart gdm3 || true; fi")
+    if safe_key:
+        cmds.append(
+            f"mkdir -p /home/{safe_user}/.ssh && echo '{safe_key}' >> /home/{safe_user}/.ssh/authorized_keys "
+            f"&& chown -R {safe_user}:{safe_user} /home/{safe_user}/.ssh || true"
+        )
+    return cmds
+
+
 def vm_check_disk(min_free_gb: float | None = None) -> dict:
     _ensure_dirs()
     usage = shutil.disk_usage(str(VM_ROOT))
@@ -456,14 +532,15 @@ def vm_repair_guest_additions(
     else:
         logs.append(f"guest additions iso attach failed: {attach.get('error') or attach.get('message')}")
     if vm_wait_ssh(name, timeout_s=30).get("ok"):
-        cmd = (
-            "sudo apt-get update -y"
-            " && sudo apt-get install -y build-essential dkms linux-headers-$(uname -r) "
-            "virtualbox-guest-dkms virtualbox-guest-utils virtualbox-guest-x11"
-            " && sudo systemctl enable --now vboxservice || true"
-            " && sudo modprobe vboxguest vboxsf vboxvideo || true"
+        script = _shell_join(
+            _linux_bootstrap_commands(
+                user,
+                include_ssh=True,
+                include_guest_additions=True,
+                include_input_tools=True,
+            )
         )
-        exec_result = vm_exec_ssh(name, cmd, timeout_s=timeout_s)
+        exec_result = vm_exec_ssh(name, f"sudo bash -lc \"{_bash_escape(script)}\"", timeout_s=timeout_s)
         logs.append(exec_result.get("stderr") or exec_result.get("stdout") or "ssh install attempted")
     else:
         logs.append("ssh not ready; falling back to gui recovery")
@@ -636,6 +713,8 @@ def vm_create(
     if efi:
         _run_vboxmanage(["modifyvm", name, "--firmware", "efi"])
     _run_vboxmanage(["modifyvm", name, "--nic1", "nat"])
+    _run_vboxmanage(["modifyvm", name, "--natdnshostresolver1", "on"])
+    _run_vboxmanage(["modifyvm", name, "--natdnsproxy1", "on"])
     _run_vboxmanage(["setproperty", "machinefolder", str(VMS_DIR)])
     if image_path:
         img = Path(image_path).expanduser()
@@ -1120,17 +1199,18 @@ def vm_guest_prepare_input(name: str) -> dict:
     password = state.get("password") or ""
     if not password:
         return {"ok": False, "error": "no guest password available"}
-    sudo_prefix = f"echo '{password}' | sudo -S "
+    safe_pw = password.replace("'", "")
     user = state.get("user") or "c0d3r"
-    checks = [
-        f"{sudo_prefix}apt-get update -y",
-        f"{sudo_prefix}apt-get install -y xdotool x11-utils",
-        f"{sudo_prefix}sed -i 's/^#\\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf",
-        f"{sudo_prefix}sed -i 's/^#\\?AutomaticLoginEnable=.*/AutomaticLoginEnable=true/' /etc/gdm3/custom.conf",
-        f"{sudo_prefix}sed -i 's/^#\\?AutomaticLogin=.*/AutomaticLogin={user}/' /etc/gdm3/custom.conf",
-    ]
-    for cmd in checks:
-        vm_guest_exec(name, cmd, timeout_s=600)
+    script = _shell_join(
+        _linux_bootstrap_commands(
+            user,
+            include_ssh=False,
+            include_guest_additions=False,
+            include_input_tools=True,
+        )
+    )
+    cmd = f"echo '{safe_pw}' | sudo -S bash -lc \"{_bash_escape(script)}\""
+    vm_guest_exec(name, cmd, timeout_s=900)
     return {"ok": True, "message": "guest input prepared"}
 
 
@@ -1255,48 +1335,16 @@ def vm_gui_recover(name: str, *, user: Optional[str] = None, password: Optional[
     time.sleep(1.0)
     _vm_type_line(name, user, delay_s=1.0)
     _vm_type_line(name, password, delay_s=2.0)
-    # Install guest additions + ssh, enable autologin.
-    _vm_type_line(name, f"{sudo}apt-get update -y", delay_s=3.0)
-    _vm_type_line(
-        name,
-        f"{sudo}apt-get install -y openssh-server xdotool build-essential dkms linux-headers-$(uname -r) "
-        "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms",
-        delay_s=3.0,
+    # Install guest additions + ssh, enable autologin with a hardened script.
+    script = _shell_join(
+        _linux_bootstrap_commands(
+            user,
+            include_ssh=True,
+            include_guest_additions=True,
+            include_input_tools=True,
+        )
     )
-    _vm_type_line(name, f"{sudo}systemctl enable --now ssh", delay_s=1.0)
-    _vm_type_line(
-        name,
-        "{sudo}bash -lc \"for s in $(systemctl list-unit-files | awk '/vbox/ {{print $1}}'); do systemctl enable --now $s || true; done\"".format(
-            sudo=sudo
-        ),
-        delay_s=2.0,
-    )
-    _vm_type_line(
-        name,
-        f"{sudo}bash -lc \"mkdir -p /mnt/vboxadd; mount /dev/cdrom /mnt/vboxadd 2>/dev/null || mount /dev/sr0 /mnt/vboxadd 2>/dev/null || true; "
-        "if [ -x /mnt/vboxadd/VBoxLinuxAdditions.run ]; then /mnt/vboxadd/VBoxLinuxAdditions.run --nox11 || true; fi\"",
-        delay_s=2.0,
-    )
-    _vm_type_line(name, f"{sudo}systemctl enable --now vboxservice || true", delay_s=1.0)
-    _vm_type_line(name, f"{sudo}modprobe vboxguest vboxsf vboxvideo || true", delay_s=1.0)
-    _vm_type_line(name, f"{sudo}mkdir -p /etc/gdm3", delay_s=1.0)
-    gdm_conf = (
-        "[daemon]\\n"
-        "WaylandEnable=false\\n"
-        "AutomaticLoginEnable=true\\n"
-        f"AutomaticLogin={user}\\n"
-    )
-    _vm_type_line(
-        name,
-        f"{sudo}bash -lc \"printf '%s' '{gdm_conf}' > /etc/gdm3/custom.conf\"",
-        delay_s=1.0,
-    )
-    _vm_type_line(
-        name,
-        f"{sudo}bash -lc \"if systemctl list-unit-files | grep -q lightdm; then printf '[Seat:*]\\nautologin-user={user}\\n' > /etc/lightdm/lightdm.conf; systemctl restart lightdm; fi\"",
-        delay_s=1.0,
-    )
-    _vm_type_line(name, f"{sudo}systemctl restart gdm3", delay_s=2.0)
+    _vm_type_line(name, f"{sudo}bash -lc \"{_bash_escape(script)}\"", delay_s=6.0)
     _vm_type_line(name, f"{sudo}reboot", delay_s=1.0)
     # Return to GUI session.
     vm_key_combo(name, "ctrl+alt+f1")
@@ -1310,23 +1358,7 @@ def vm_gui_recover(name: str, *, user: Optional[str] = None, password: Optional[
     # Open terminal in GUI and re-assert installs if needed.
     vm_key_combo(name, "ctrl+alt+t")
     time.sleep(2.0)
-    _vm_type_line(name, f"{sudo}apt-get update -y", delay_s=2.0)
-    _vm_type_line(
-        name,
-        f"{sudo}apt-get install -y openssh-server xdotool build-essential dkms linux-headers-$(uname -r) "
-        "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms",
-        delay_s=2.0,
-    )
-    _vm_type_line(name, f"{sudo}systemctl enable ssh", delay_s=1.0)
-    _vm_type_line(name, f"{sudo}systemctl start ssh", delay_s=1.0)
-    _vm_type_line(name, f"{sudo}systemctl enable --now vboxservice || true", delay_s=1.0)
-    _vm_type_line(name, f"{sudo}modprobe vboxguest vboxsf vboxvideo || true", delay_s=1.0)
-    _vm_type_line(
-        name,
-        f"{sudo}bash -lc \"mkdir -p /mnt/vboxadd; mount /dev/cdrom /mnt/vboxadd 2>/dev/null || mount /dev/sr0 /mnt/vboxadd 2>/dev/null || true; "
-        "if [ -x /mnt/vboxadd/VBoxLinuxAdditions.run ]; then /mnt/vboxadd/VBoxLinuxAdditions.run --nox11 || true; fi\"",
-        delay_s=2.0,
-    )
+    _vm_type_line(name, f"{sudo}bash -lc \"{_bash_escape(script)}\"", delay_s=4.0)
     _log_line(f"vm gui recover end {name}")
     return {"ok": True, "message": "gui recovery attempted"}
 
@@ -1525,23 +1557,16 @@ def vm_autopilot(
         pub_key = Path(ssh_key.get("public_key") or "").read_text(encoding="utf-8").strip()
     except Exception:
         pub_key = ""
-    post_install = (
-        "sudo apt-get update"
-        " && sudo apt-get install -y openssh-server xdotool x11-utils build-essential dkms linux-headers-$(uname -r) "
-        "virtualbox-guest-x11 virtualbox-guest-utils virtualbox-guest-dkms"
-        " && sudo systemctl enable --now vboxservice || true"
-        " && sudo modprobe vboxguest vboxsf vboxvideo || true"
-        " && sudo mkdir -p /etc/gdm3"
-        " && sudo touch /etc/gdm3/custom.conf"
-        " && sudo sed -i 's/^#\\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf"
-        " && sudo sed -i 's/^#\\?AutomaticLoginEnable=.*/AutomaticLoginEnable=true/' /etc/gdm3/custom.conf"
-        " && sudo sed -i 's/^#\\?AutomaticLogin=.*/AutomaticLogin={u}/' /etc/gdm3/custom.conf"
-    ).format(u=user)
-    if pub_key:
-        post_install += (
-            " && mkdir -p /home/{u}/.ssh && echo '{k}' >> /home/{u}/.ssh/authorized_keys"
-            " && chown -R {u}:{u} /home/{u}/.ssh"
-        ).format(u=user, k=pub_key.replace("'", ""))
+    post_install_script = _shell_join(
+        _linux_bootstrap_commands(
+            user,
+            pub_key=pub_key,
+            include_ssh=True,
+            include_guest_additions=True,
+            include_input_tools=True,
+        )
+    )
+    post_install = f"bash -lc \"{_bash_escape(post_install_script)}\""
     unattended = vm_unattended_install(
         vm_name,
         iso_path=str(image_path),
