@@ -64,10 +64,11 @@ _HEARTBEAT_MODEL_ID = ""
 _HEARTBEAT_INTERVAL_S = float(os.getenv("C0D3R_HEARTBEAT_MINUTES", "30") or "30") * 60.0
 _HEARTBEAT_USE_MODEL = os.getenv("C0D3R_HEARTBEAT_USE_MODEL", "1").strip().lower() not in {"0", "false", "no", "off"}
 _CONTROL_SYSTEM_PREFIX = (
-    "You are operating as an empirical scientific and engineering control system. "
-    "Frame decisions as hypotheses, constraints, and measurable acceptance criteria. "
-    "Prefer adaptive feedback loops and context injection over rigid heuristics, "
-    "reserving deterministic rules only for fully deterministic operations. "
+    "You are operating as a closed-loop empirical systems-engineering control system. "
+    "Frame decisions as hypotheses, constraints, state variables, and measurable acceptance criteria. "
+    "Continuously compare observations to expectations and adapt via feedback loops and context injection, "
+    "avoiding rigid heuristics except where operations are provably deterministic. "
+    "Prioritize experimental validation, error bounds, and falsifiable checks. "
     "Return deterministic, schema-compliant JSON only. "
 )
 
@@ -406,6 +407,7 @@ def _self_context_block(workdir: Path, *, session_id: str | None = None) -> str:
                 cwd=str(workdir),
                 paths=paths,
                 query="c0d3r cli",
+                project_root=str(PROJECT_ROOT),
             )
         except Exception:
             pass
@@ -425,8 +427,9 @@ def _self_upgrade_guidance(*, python_exec: str, project_root: Path) -> str:
             "- Enumerate at least 10 upgrade hypotheses with rationale, expected impact, and validation method.",
             "- Implement the upgrades iteratively using commands/checks and monitor outcomes after each batch.",
             "- Use rigorous systems-engineering vernacular with measurable criteria, falsifiable checks, and feedback control.",
-            "- Do NOT replace adaptive reasoning, feedback loops, or context-injection logic with rigid one-off functions.",
-            "- Use deterministic code only for deterministic operations; keep reasoning adaptive and evidence-driven.",
+            "- Do NOT replace adaptive reasoning, feedback loops, or context-injection logic with rigid single-purpose functions.",
+            "- Keep reasoning adaptive and evidence-driven; only use deterministic code for provably deterministic operations.",
+            "- Evaluate upgrades via closed-loop verification (before/after evidence) and record deltas.",
             "- If an upgrade cannot be implemented, log the constraint and propose an experiment or alternative.",
             "Required verification checks (must appear in checks[]):",
             f"- {checks_cmd}",
@@ -609,6 +612,8 @@ def _extract_paths_from_output(output: str) -> list[str]:
     for line in output.splitlines():
         if not line.strip():
             continue
+        if "[c0d3r]" in line or "targets:" in line or "finished:" in line:
+            continue
         rg_match = re.match(r"^([A-Za-z]:\\\\[^:]+|/[^:]+):", line)
         if rg_match:
             paths.append(rg_match.group(1))
@@ -661,6 +666,19 @@ def _record_search_memory(command: str, purpose: str, cwd: str, output: str, *, 
     if not paths:
         return
     workdir = Path(cwd).resolve() if cwd else Path.cwd()
+    resolved_paths: list[str] = []
+    for path in paths:
+        try:
+            candidate = Path(path)
+            if not candidate.is_absolute():
+                candidate = (workdir / candidate).resolve()
+            if candidate.exists():
+                resolved_paths.append(str(candidate))
+        except Exception:
+            continue
+    if resolved_paths:
+        paths = resolved_paths
+    project_root = _find_nearest_project_root(workdir) or workdir
     index = _side_loaded_index(session_id, workdir)
     if index is None:
         record_base = {
@@ -673,7 +691,7 @@ def _record_search_memory(command: str, purpose: str, cwd: str, output: str, *, 
             "last_confirmed": time.time(),
             "hits": 1,
             "session_id": session_id or "",
-            "project_root": str(workdir),
+            "project_root": str(project_root),
             "host": _env_signature().get("host"),
             "os": _env_signature().get("os"),
         }
@@ -693,6 +711,7 @@ def _record_search_memory(command: str, purpose: str, cwd: str, output: str, *, 
             cwd=str(workdir),
             paths=paths,
             query=_extract_search_terms(command),
+            project_root=str(project_root),
         )
     except Exception:
         pass
@@ -720,7 +739,20 @@ def _lookup_search_memory(
         try:
             hit = index.lookup(command=command, purpose=purpose, queries=cleaned)
             if hit:
-                return hit
+                paths = hit.get("paths") or []
+                valid_paths: list[str] = []
+                for p in paths:
+                    try:
+                        candidate = Path(p)
+                        if not candidate.is_absolute():
+                            candidate = (workdir / candidate).resolve()
+                        if candidate.exists():
+                            valid_paths.append(str(candidate))
+                    except Exception:
+                        continue
+                if valid_paths:
+                    hit["paths"] = valid_paths
+                    return hit
         except Exception:
             pass
     candidates: list[tuple[float, dict]] = []
@@ -834,7 +866,8 @@ def _side_loaded_router(session, prompt: str) -> dict:
     if os.getenv("C0D3R_SIDELOAD_AI", "1").strip().lower() in {"0", "false", "no", "off"}:
         return {}
     if not _should_use_side_memory(prompt):
-        return {}
+        if os.getenv("C0D3R_SIDELOAD_SOFT_GATE", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return {}
     system = _control_system_prompt(
         "Return ONLY JSON with keys: use_search_memory (bool), use_env_memory (bool), "
         "search_queries (list of short strings), env_queries (list of short strings), reason (string). "
@@ -3129,6 +3162,9 @@ def _extract_json_object(text: str) -> dict | None:
     """Best-effort extraction of the first JSON object from a string."""
     if not text:
         return None
+    payload = _safe_json(text)
+    if isinstance(payload, dict) and payload:
+        return payload
     text = text.strip()
     try:
         obj = json.loads(text)
@@ -3625,6 +3661,7 @@ def _run_tool_loop_v2(
         "- Treat each step as an experiment: use observed outputs as evidence and adapt commands accordingly.\n"
         "- Prefer iterative feedback loops and context injection over rigid, pre-baked workflows; "
         "use rigid rules only for deterministic operations.\n"
+        "- Favor forward-slash paths and literal searches (rg -F) to avoid backslash-heavy JSON escaping.\n"
         "- All filesystem/OS actions MUST be expressed as terminal commands in commands[]. No file_ops.\n"
         "- Prefer idempotent commands. Avoid creating helper scripts unless absolutely required by the task.\n"
         "- Always include verification in checks[] (tests, grep, ls, python -m ...), and interpret failures to produce the next command batch.\n"
@@ -3632,6 +3669,7 @@ def _run_tool_loop_v2(
         "- Meta commands starting with :: are allowed for local tools (e.g., ::datalab_news {...}).\n"
         "- ui_actions is optional; use it to set UI preferences such as final response style (action: set_final_style, value: \"bold yellow\").\n"
         "- If done, set needs_terminal=false, commands=[], checks=[], output_request=[] and put the user-facing answer in final.\n"
+        "- In final, summarize completed work, tests run, and files changed; do not claim completion without empirical evidence.\n"
     )
 
     _refresh_petals("startup")
@@ -4029,6 +4067,18 @@ def _run_tool_loop_v2(
             if _capture_user_notes("during command execution"):
                 user_interrupted = True
                 break
+            _refresh_petals("command complete")
+            if petal_effects.get("pause_for_input") and allow_interrupt:
+                try:
+                    note = _prompt_local_input("[petal] pause requested after command (enter override or blank to continue): ")
+                except Exception:
+                    note = ""
+                if note:
+                    user_notes.append(note)
+                    history.append(f"User note: {note}")
+                    _refresh_petals("pause input")
+                    user_interrupted = True
+                    break
 
         if not step_failed and not user_interrupted and checks:
             usage_tracker.set_status("executing", f"executor_v2 checks ({len(checks)} cmd)")
@@ -4164,6 +4214,18 @@ def _run_tool_loop_v2(
                 if _capture_user_notes("during checks"):
                     user_interrupted = True
                     break
+                _refresh_petals("check complete")
+                if petal_effects.get("pause_for_input") and allow_interrupt:
+                    try:
+                        note = _prompt_local_input("[petal] pause requested after check (enter override or blank to continue): ")
+                    except Exception:
+                        note = ""
+                    if note:
+                        user_notes.append(note)
+                        history.append(f"User note: {note}")
+                        _refresh_petals("pause input")
+                        user_interrupted = True
+                        break
 
         if final and not step_failed and self_upgrade_requested and not self_upgrade_verified:
             usage_tracker.set_status("executing", "self-upgrade checks")
@@ -4191,6 +4253,20 @@ def _run_tool_loop_v2(
         if step_failed:
             failure_count += 1
             prev_step_failed = True
+            try:
+                critical = _critical_thinking_checkpoint(session, base_request, history)
+            except Exception:
+                critical = {}
+            if isinstance(critical, dict) and critical:
+                summary = {
+                    "needs_code_changes": critical.get("needs_code_changes"),
+                    "needs_tests": critical.get("needs_tests"),
+                    "missing_info": critical.get("missing_info"),
+                    "next_actions": critical.get("next_actions"),
+                    "rationale": critical.get("rationale"),
+                    "plan_steps": critical.get("plan_steps"),
+                }
+                history.append("[critical_thinking]\n" + json.dumps(summary, indent=2)[:2000])
             history.append("[next] previous step failed; propose adjusted commands and re-verify.")
         else:
             prev_step_failed = False
@@ -5084,6 +5160,9 @@ def _universal_response_schema() -> str:
         "Return ONLY JSON with keys: status_updates (list of short strings), "
         "needs_terminal (bool), commands (list), checks (list), output_request (list), final (string). "
         "commands/checks entries must be objects with {purpose, shell, cwd, timeout_s, command}. "
+        "Ensure JSON is valid: escape backslashes as \\\\ and double-quote characters inside command strings. "
+        "Prefer single quotes inside command strings to minimize escaping and avoid regex backslashes when possible. "
+        "Prefer forward slashes for paths and use literal search flags (rg -F) to avoid backslash-heavy regex. "
         "Use status_updates to report empirical progress and verification intent. "
         "If no terminal actions are needed, set needs_terminal=false and commands/checks to [] and output_request to []. "
         "No markdown or extra text."

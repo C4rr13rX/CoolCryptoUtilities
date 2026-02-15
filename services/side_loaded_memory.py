@@ -68,6 +68,8 @@ def extract_paths_from_output(output: str) -> List[str]:
     for line in output.splitlines():
         if not line.strip():
             continue
+        if "[c0d3r]" in line or "targets:" in line or "finished:" in line:
+            continue
         rg_match = re.match(r"^([A-Za-z]:\\\\[^:]+|/[^:]+):", line)
         if rg_match:
             paths.append(rg_match.group(1))
@@ -258,13 +260,14 @@ class SideLoadedMemoryIndex:
         cwd: str,
         paths: List[str],
         query: str,
+        project_root: str | None = None,
     ) -> None:
         if not paths:
             return
         timestamp = time.time()
         env_host = str(self.env.get("host") or "")
         env_os = str(self.env.get("os") or "")
-        project_root = str(self.workdir)
+        project_root = str(project_root or self.workdir)
         for scope, store in (("session", self.short_term), ("global", self.long_term)):
             entry = SideLoadedEntry(
                 id=self._entry_id(scope, purpose, command, cwd),

@@ -606,6 +606,8 @@ class C0d3r:
             "4) If JSON is required, return JSON only (no prose).\n"
             "5) Avoid speculation; mark unknowns explicitly.\n"
             "6) Be concise; do not include self-talk.\n"
+            "7) Use systems-engineering vernacular: hypotheses, constraints, measurable acceptance criteria, "
+            "closed-loop verification, and feedback-controlled iteration.\n"
             "Execution policy:\n"
             "- Use a constrained plan->execute->verify loop.\n"
             "- If output fails schema validation, retry with corrections.\n"
@@ -742,6 +744,10 @@ class C0d3r:
         """
         Enforce JSON-only outputs when the prompt requires it by re-asking with constraints.
         """
+        if _requires_json(prompt):
+            repaired = _repair_json_text(output)
+            if repaired:
+                output = repaired
         # Pre-coerce schema shape before validation when possible.
         schema = _schema_for_prompt(prompt)
         schemas = _load_schemas()
@@ -783,6 +789,10 @@ class C0d3r:
                 images=images,
                 documents=documents,
             )
+            if _requires_json(prompt):
+                repaired = _repair_json_text(corrected)
+                if repaired:
+                    corrected = repaired
             if _requires_evidence(prompt) and _looks_like_json(corrected):
                 corrected = _inject_evidence_hash(corrected, evidence_bundle or "")
             issues = _validate_output(prompt, corrected, evidence_bundle=evidence_bundle)
@@ -1698,14 +1708,65 @@ def _inject_evidence_hash(text: str, evidence_bundle: str) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
+def _repair_backslashes(raw: str) -> str:
+    try:
+        return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", raw)
+    except Exception:
+        return raw
+
+
+def _repair_json_text(text: str) -> Optional[str]:
+    if not text:
+        return None
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned.strip(), flags=re.I | re.M)
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except Exception:
+        pass
+    candidate = _extract_json(cleaned)
+    try:
+        json.loads(candidate)
+        return candidate
+    except Exception:
+        pass
+    repaired = _repair_backslashes(candidate)
+    try:
+        payload = json.loads(repaired)
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        pass
+    try:
+        trimmed = re.sub(r",\s*([}\]])", r"\1", candidate)
+        payload = json.loads(trimmed)
+        return json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        return None
+
+
 def _safe_json(text: str) -> object:
+    try:
+        repaired = _repair_json_text(text)
+        if repaired:
+            return json.loads(repaired)
+    except Exception:
+        pass
     try:
         for candidate in _extract_json_candidates(text):
             try:
                 return json.loads(candidate)
             except Exception:
+                repaired = _repair_backslashes(candidate)
+                if repaired != candidate:
+                    try:
+                        return json.loads(repaired)
+                    except Exception:
+                        continue
                 continue
-        return json.loads(_extract_json(text))
+        repaired = _repair_backslashes(_extract_json(text))
+        return json.loads(repaired)
     except Exception:
         return {}
 

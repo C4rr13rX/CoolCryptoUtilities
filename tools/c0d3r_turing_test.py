@@ -92,8 +92,12 @@ def _score_response(prompt: str, response: str, step: TuringTestStep | None = No
             if step_coverage < 0.5 and len(step.steps) > 1:
                 notes.append("low_step_coverage")
                 score -= 0.1
+            if len(step.steps) > 2 and step_coverage < 0.7:
+                notes.append("low_multi_step_coverage")
+                score -= 0.15
 
-        if len(step.steps) > 1 and _step_mentions(response) <= 1:
+        expected_mentions = max(2, len(step.steps) // 2) if len(step.steps) > 1 else 0
+        if len(step.steps) > 1 and _step_mentions(response) <= expected_mentions:
             notes.append("single_step_response")
             score -= 0.1
 

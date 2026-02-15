@@ -226,20 +226,24 @@ def _evaluate_task(task: ObstacleTask, response: str) -> ObstacleResult:
     words = _word_count(response)
     length_score = min(1.0, words / max(min_words, 1))
     penalty = 1.0
+    expected_mentions = max(2, len(task.steps) // 2) if len(task.steps) > 1 else 0
     if len(task.steps) > 1 and coverage < 0.5:
         penalty *= 0.7
-    if len(task.steps) > 1 and step_mentions <= 1:
-        penalty *= 0.75
+    if len(task.steps) > 1 and step_mentions <= expected_mentions:
+        penalty *= 0.7
+    if len(task.steps) > 1 and coverage < task.completion_threshold:
+        penalty *= 0.8
     blended = (detail_score * 0.6 + coverage * 100.0 * 0.3 + length_score * 100.0 * 0.1) * penalty
     final_score = min(task.max_score, blended)
-    passed = final_score >= task.max_score * task.completion_threshold
-    feedback = "passed" if passed else "needs more complete coverage"
+    passed = final_score >= task.max_score * task.completion_threshold and coverage >= task.completion_threshold
+    feedback = "passed" if passed else "needs more complete multi-step coverage"
     details = {
         "coverage": round(coverage, 3),
         "detail_score": round(detail_score, 2),
         "length_score": round(length_score, 3),
         "word_count": words,
         "step_mentions": step_mentions,
+        "expected_step_mentions": expected_mentions,
         "steps": [result.__dict__ for result in step_results],
     }
     return ObstacleResult(
