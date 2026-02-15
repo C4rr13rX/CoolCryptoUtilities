@@ -352,11 +352,15 @@ def _is_self_query(prompt: str) -> bool:
         "your implementation",
         "your workflow",
         "your architecture",
-        "where are you",
+        "where are your",
         "where is your",
         "how do you work",
         "about yourself",
         "about you",
+        "do you",
+        "what are your",
+        "does your",
+        "are your"
     )
     return any(cue in lower for cue in cues)
 
