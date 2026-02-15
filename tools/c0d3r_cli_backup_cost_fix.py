@@ -32,31 +32,6 @@ if WEB_ROOT.exists() and str(WEB_ROOT) not in sys.path:
 def _allow_local_fallback() -> bool:
     return os.getenv("C0D3R_ALLOW_LOCAL_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "on"}
 
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = str(raw).strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except Exception:
-        return default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = str(raw).strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except Exception:
-        return default
-
 def _runtime_root() -> Path:
     override = os.getenv("C0D3R_RUNTIME_ROOT")
     if override:
@@ -86,7 +61,7 @@ _MNEMONIC_TRIGGER = re.compile(r"\b(mnemonic|seed phrase|seed)\b", re.IGNORECASE
 _MNEMONIC_PHRASE = re.compile(r"\b(?:[a-zA-Z]{3,}\s+){11,23}[a-zA-Z]{3,}\b")
 _HEARTBEAT_SESSION = None
 _HEARTBEAT_MODEL_ID = ""
-_HEARTBEAT_INTERVAL_S = _env_float("C0D3R_HEARTBEAT_MINUTES", 30.0) * 60.0
+_HEARTBEAT_INTERVAL_S = float(os.getenv("C0D3R_HEARTBEAT_MINUTES", "30") or "30") * 60.0
 _HEARTBEAT_USE_MODEL = os.getenv("C0D3R_HEARTBEAT_USE_MODEL", "1").strip().lower() not in {"0", "false", "no", "off"}
 _CONTROL_SYSTEM_PREFIX = (
     "You are operating as a closed-loop empirical systems-engineering control system. "
@@ -111,7 +86,10 @@ def _init_heartbeat(session) -> None:
     except Exception:
         fallback = ""
     _HEARTBEAT_MODEL_ID = os.getenv("C0D3R_HEARTBEAT_MODEL") or fallback or getattr(session, "get_model_id", lambda: "")()
-    _HEARTBEAT_INTERVAL_S = _env_float("C0D3R_HEARTBEAT_MINUTES", 30.0) * 60.0
+    try:
+        _HEARTBEAT_INTERVAL_S = float(os.getenv("C0D3R_HEARTBEAT_MINUTES", "30") or "30") * 60.0
+    except Exception:
+        _HEARTBEAT_INTERVAL_S = 1800.0
 _DOCUMENT_EXTENSIONS = {".pdf", ".csv", ".doc", ".docx", ".xls", ".xlsx", ".html", ".txt", ".md"}
 _ANIMATION_LOCK = threading.Lock()
 _ANIMATION_STATE: dict[str, object | None] = {"stop": None, "thread": None, "kind": None}

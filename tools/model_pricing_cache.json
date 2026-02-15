@@ -1,0 +1,10 @@
+{
+  "claude-3-sonnet": {
+    "input_per_1k": 0.003,
+    "output_per_1k": 0.015,
+    "model_name": "claude-3-sonnet",
+    "source": "fallback",
+    "last_updated": 1771179380.6718137,
+    "as_of": "2024-01-01"
+  }
+}
