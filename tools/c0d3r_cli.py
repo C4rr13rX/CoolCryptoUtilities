@@ -3300,8 +3300,8 @@ def _run_tool_loop_v2(
     base_request = _tool_loop_base_request(prompt)
     self_upgrade_requested = _is_self_upgrade_request(base_request)
     self_upgrade_verified = False
-    max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "10") or "10")
-    max_commands_per_step = int(os.getenv("C0D3R_TOOL_MAX_CMDS", "12") or "12")
+    max_steps = int(os.getenv("C0D3R_TOOL_STEPS", "100") or "100")
+    max_commands_per_step = int(os.getenv("C0D3R_TOOL_MAX_CMDS", "102") or "102")
     max_json_attempts = min(10, int(os.getenv("C0D3R_JSON_MAX_ATTEMPTS", "3") or "3"))
     history: list[str] = []
     last_payload: dict | None = None
