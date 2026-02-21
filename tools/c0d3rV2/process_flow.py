@@ -20,9 +20,10 @@ from typing import List, Tuple, Dict, Optional
 import json
 from collections import deque
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
+os.environ["C0D3R_RUNTIME_ROOT"] = str((PROJECT_ROOT / "runtime" / "c0d3r").resolve())
 
 class ProcessFlow:
     def __init__(self, userRequest: str):
@@ -292,7 +293,7 @@ class ProcessFlow:
 
 
 
-    def _build_context_block(self, workdir: Path, run_command, *, session_id: str | None = None) -> str:
+    def _build_context_block(self, workdir: Path) -> str:
         lines = [
             "Context:",
             f"- cwd: {workdir}",
@@ -324,8 +325,8 @@ class ProcessFlow:
                 lines.append("- frameworks: (unknown)")
             # Parallelize independent context probes.
             tasks = []
-            tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
-            tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
+            # tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
+            # tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
             def _ls_cmd() -> str:
                 if os.name == "nt":
                     if shutil.which("pwsh") or shutil.which("powershell"):
@@ -334,7 +335,7 @@ class ProcessFlow:
                 if shutil.which("ls"):
                     return "ls -1"
                 return f'{sys.executable} -c "import os;print(\'\\n\'.join(os.listdir(\'.\')))"'
-            tasks.append(("ls", lambda: run_command(_ls_cmd(), cwd=workdir)))
+            # tasks.append(("ls", lambda: run_command(_ls_cmd(), cwd=workdir)))
             results = self._run_parallel_tasks([(name, fn) for name, fn in tasks], max_workers=3)
             result_map = {name: res for name, res in results}
             if "git_status" in result_map:
@@ -357,8 +358,15 @@ class ProcessFlow:
         return "\n".join(lines)
         
     def _step_2_inject_context(self):
-        context = self._build_context_block(Path.cwd(), lambda cmd, cwd=None: subprocess.getstatusoutput(cmd), session_id=None)
-        
+        context = self._build_context_block(Path.cwd())
+        print(f"{sys.argv[0]} {context}")
     def _step_3_orchestration(self):
         # Placeholder for the main orchestration logic of the process flow.
         pass
+    
+    def main(self):
+        self._step_2_inject_context()
+    
+if __name__ == "__main__":
+    process_flow = ProcessFlow(userRequest="Example request")
+    process_flow.main()

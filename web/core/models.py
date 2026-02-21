@@ -533,7 +533,6 @@ class TechMatrixRecord(models.Model):
         indexes = [
             models.Index(fields=["created_at"], name="tech_matrix_created_idx"),
         ]
-
     def __str__(self) -> str:  # pragma: no cover - human readable
         return f"TechMatrix {self.pk}"
 
@@ -552,7 +551,7 @@ class C0d3rWebSession(models.Model):
     class Meta:
         db_table = "c0d3r_web_sessions"
         indexes = [
-            models.Index(fields=["user", "last_active"]),
+            models.Index(fields=["user", "last_active"])
         ]
 
     def __str__(self) -> str:  # pragma: no cover - human readable
@@ -566,10 +565,11 @@ class C0d3rWebMessage(models.Model):
     content = models.TextField(default="", blank=True)
     model_id = models.CharField(max_length=128, default="", blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "c0d3r_web_messages"
         indexes = [
-            models.Index(fields=["session", "created_at"]),
+            models.Index(fields=["session", "created_at"])
         ]
