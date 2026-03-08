@@ -1,372 +1,409 @@
 from __future__ import annotations
 
-import argparse
-import difflib
-import re
-import os
-import getpass
-import sys
-import time
-import datetime
-import threading
-import queue
-import subprocess
-import urllib.request
-import hashlib
-import shutil
-import platform
-from pathlib import Path
-from typing import List, Tuple, Dict, Optional
 import json
-from collections import deque
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+from context_builder import ContextBuilder
+from orchestrator import Orchestrator, StepResult
+from petal_system import PetalManager
+from task_tree import TaskTree
+from tool_registry import ToolRegistry
 
-
-os.environ["C0D3R_RUNTIME_ROOT"] = str((PROJECT_ROOT / "runtime" / "c0d3r").resolve())
 
 class ProcessFlow:
-    def __init__(self, userRequest: str):
-        self.userRequest = userRequest
-        self.response = None
-        
-    def _runtime_root(self) -> Path:
-        override = os.getenv("C0D3R_RUNTIME_ROOT")
-        if override:
-            return Path(override).expanduser().resolve()
-        return (PROJECT_ROOT / "runtime" / "c0d3r").resolve()
+    """
+    Main coordinator for c0d3r V2.
 
-    def _auto_context_commands_enabled(self) -> bool:
-        return os.getenv("C0D3R_AUTO_CONTEXT_COMMANDS", "0").strip().lower() in {"1", "true", "yes", "on"}
+    Implements the three-step process described in the architecture outline:
 
+      Step 1  User sends a request via the CLI input field.
+      Step 2  Context is injected (local + memory + transcript + tools +
+              accumulated results).
+      Step 3  The Orchestrator reformulates the request in scientific /
+              engineering vernacular, plans branches in a TaskTree, then
+              executes each branch recursively.  Every AI call within the
+              tree sees ALL tool descriptions and ALL accumulated tool
+              outputs — this is the cross-tool feedback loop.
+      Step 3A Each step has a self-regulatory validation loop.
 
-    def _runtime_path(self,*parts: str) -> Path:
-        return self._runtime_root().joinpath(*parts)
+    After each turn the rolling summary is updated via the model and the
+    transcript is stored in long-term memory.
+    """
 
+    def __init__(
+        self,
+        session: Any,
+        workdir: Path,
+        tools: ToolRegistry,
+        *,
+        session_id: str | None = None,
+        lt_memory: Any | None = None,
+        st_memory: Any | None = None,
+        lt_side_memory: Any | None = None,
+        usage_tracker: Any | None = None,
+        header: Any | None = None,
+        tui: Any | None = None,
+        petals: PetalManager | None = None,
+    ) -> None:
+        self.session = session
+        self.workdir = workdir
+        self.tools = tools
+        self.session_id = session_id
+        self.lt_memory = lt_memory
+        self.st_memory = st_memory
+        self.lt_side_memory = lt_side_memory
+        self.usage = usage_tracker
+        self.header = header
+        self.tui = tui
+        self.petals = petals or PetalManager()
+        self._context: str = ""
+        # If a modular STMemory is provided, it owns summary + transcript.
+        # Otherwise fall back to the embedded summary bundle.
+        self._st_mem = None
+        if st_memory and hasattr(st_memory, "build_memory_section"):
+            # This is the new modular STMemory (st_memory.py).
+            self._st_mem = st_memory
+            self._summary_bundle = st_memory.summary_bundle
+        else:
+            self._summary_bundle = self._load_summary_bundle()
 
-    def _detect_shells(self) -> List[str]:
-        shells = [
-            ("pwsh", "pwsh"),
-            ("powershell", "powershell"),
-            ("cmd", "cmd"),
-            ("bash", "bash"),
-            ("sh", "sh"),
-            ("zsh", "zsh"),
-        ]
-        available = []
-        for name, exe in shells:
-            if shutil.which(exe):
-                available.append(name)
-        return available
+    # ------------------------------------------------------------------
+    # Step 1: User input
+    # ------------------------------------------------------------------
 
+    def step_1_read_input(self, prompt: str | None = None) -> str:
+        """
+        Read the user's request.
 
-    def _detect_tools(self) -> Dict[str, str]:
-        tools = ("python", "pip", "git", "node", "npm", "npx", "yarn", "pnpm", "uv", "rg")
-        found: Dict[str, str] = {}
-        for tool in tools:
-            path = shutil.which(tool) or ""
-            found[tool] = path
-        return found
+        If *prompt* is provided it is returned immediately.
+        Otherwise we read from the TUI, stdin pipe, or interactive input.
+        """
+        if prompt is not None:
+            return prompt.strip()
 
+        # TUI input queue
+        if self.tui:
+            return self.tui.read_input(f"[{self.workdir.name}]> ")
 
-    def _system_time_info(self) -> dict:
+        # Non-interactive stdin (pipe / file redirect)
+        if not sys.stdin.isatty():
+            return sys.stdin.read().strip()
+
+        # Interactive REPL
         try:
-            now = datetime.datetime.now().astimezone()
-            return {
-                "local_time": now.strftime("%Y-%m-%d %H:%M:%S"),
-                "timezone": now.tzname() or "",
-                "utc_offset": now.strftime("%z") or "",
-            }
-        except Exception:
-            return {}
+            line = input(f"[{self.workdir.name}]> ")
+            return (line or "").strip()
+        except (EOFError, KeyboardInterrupt):
+            return "/exit"
 
+    # ------------------------------------------------------------------
+    # Step 2: Context injection
+    # ------------------------------------------------------------------
 
-    def _weather_summary(self) -> str:
-        if os.getenv("C0D3R_WEATHER", "1").strip().lower() in {"0", "false", "no", "off"}:
-            return ""
-        url = os.getenv("C0D3R_WEATHER_URL", "https://wttr.in/?format=1").strip()
-        if not url:
-            return ""
-        timeout_s = float(os.getenv("C0D3R_WEATHER_TIMEOUT_S", "5.0") or "1.0")
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "c0d3r/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                text = resp.read().decode("utf-8", errors="ignore").strip()
-            return text[:200] if text else ""
-        except Exception:
-            return ""
+    def step_2_inject_context(
+        self,
+        request: str,
+        accumulated_results: str = "",
+        task_tree_summary: str = "",
+    ) -> str:
+        """
+        Build the full context block and prepend it to the user request.
 
-    def _environment_context_block(self, workdir: Path) -> str:
-        lines = ["Environment:"]
-        lines.append(f"- platform: {sys.platform}")
-        lines.append(f"- os_name: {os.name}")
-        lines.append(f"- cwd: {workdir}")
-        try:
-            lines.append(f"- project_root: {workdir.resolve()}")
-        except Exception:
-            pass
-        shells = self._detect_shells()
-        lines.append(f"- shells: {', '.join(shells) if shells else '(none found)'}")
-        tools = self._detect_tools()
-        for name, path in tools.items():
-            lines.append(f"- tool.{name}: {path or 'missing'}")
-        time_info = self._system_time_info()
-        if time_info:
-            if time_info.get("local_time"):
-                lines.append(f"- local_time: {time_info['local_time']}")
-            if time_info.get("timezone"):
-                lines.append(f"- timezone: {time_info['timezone']}")
-            if time_info.get("utc_offset"):
-                lines.append(f"- utc_offset: {time_info['utc_offset']}")
-        weather = self._weather_summary()
-        if weather:
-            lines.append(f"- weather: {weather}")
-        try:
-            from services.system_probe import collect_system_probe
-
-            probe = collect_system_probe(cwd=workdir)
-            lines.append(f"- is_admin: {probe.is_admin}")
-            lines.append(f"- cpu_count: {probe.cpu_count}")
-            lines.append(f"- total_memory_gb: {probe.total_memory_gb}")
-            lines.append(f"- hostname: {probe.hostname}")
-            lines.append(f"- network_available: {probe.network_available}")
-        except Exception:
-            pass
-        lines.append("- local_tools: datalab + wallet meta commands available")
-        lines.append("- datalab.meta: ::datalab_tables | ::datalab_query {json} | ::datalab_news {json} | ::datalab_web {json}")
-        lines.append("- wallet.meta: ::wallet_login | ::wallet_logout | ::wallet_actions | ::wallet_lookup {json} | ::wallet_send {json} | ::wallet_swap {json} | ::wallet_bridge {json}")
-        lines.append(
-            "- vm.meta: ::vm_status | ::vm_catalog | ::vm_latest {json} | ::vm_bootstrap {json} | ::vm_update {json} | ::vm_fetch {json} | ::vm_create {json} | ::vm_unattended {json} | ::vm_autopilot {json} | ::vm_start {json} | ::vm_stop {json} | ::vm_wait {json} | ::vm_ready {json} | ::vm_screenshot {json} | ::vm_mouse {json} | ::vm_type {json} | ::vm_keys {json} | ::vm_exec {json} | ::vm_guest {json} | ::vm_tail {json} | ::vm_obstacle {json}"
+        Stores the raw context on *self._context* so the Orchestrator can
+        receive system context separately from the user input.
+        """
+        builder = ContextBuilder(
+            self.workdir,
+            session_id=self.session_id,
+            lt_memory=self.lt_memory,
+            st_memory=self._st_mem,
+            tool_descriptions=self.tools.tool_descriptions(),
+            summary_bundle=self._summary_bundle,
+            accumulated_results=accumulated_results,
+            task_tree_summary=task_tree_summary,
         )
-        lines.append("- vm.notes: vm_screenshot + vm_obstacle auto-attach images for the next model step")
-        lines.append("- documents: auto-attach supported files (pdf/csv/doc/docx/xls/xlsx/html/txt/md) when referenced or via --doc")
-        return "\n".join(lines)
+        self._context = builder.build()
+        return f"{self._context}\n\nUser request:\n{request}"
 
+    # ------------------------------------------------------------------
+    # Step 3 + 3A: Orchestration
+    # ------------------------------------------------------------------
 
+    def step_3_orchestrate(
+        self, user_request: str,
+    ) -> tuple[list[StepResult], TaskTree]:
+        """
+        Pass the user request to the Orchestrator.
 
-    def _summary_paths(self, session_id: str | None = None) -> tuple[Path, Path]:
-        if session_id:
-            return (self._runtime_path(f"summary_{session_id}.json"), self._runtime_path(f"summary_{session_id}.txt"))
-        return (self._runtime_path("summary.json"), self._runtime_path("summary.txt"))
+        The Orchestrator:
+          1. Reformulates the request in scientific / engineering vernacular.
+          2. Plans branches in a TaskTree.
+          3. Executes each branch recursively with an inner agent loop.
+          4. Every AI call sees ALL tool descriptions + ALL accumulated
+             results (the feedback loop).
 
+        Returns (flat results list, TaskTree).
+        """
+        orchestrator = Orchestrator(
+            session=self.session,
+            tools=self.tools,
+            context=self._context,
+            petals=self.petals,
+        )
+        return orchestrator.run(user_request)
 
-    def _load_summary_bundle(self, session_id: str | None = None) -> dict:
-        summary_json, summary_txt = self._summary_paths(session_id)
-        def _trim_200_words(text: str) -> str:
-            words = text.split()
-            if len(words) > 200:
-                return " ".join(words[:200])
-            return text
+    # ------------------------------------------------------------------
+    # Post-step: memory update
+    # ------------------------------------------------------------------
 
-        strict = os.getenv("C0D3R_SUMMARY_SESSION_STRICT", "1").strip().lower() not in {"0", "false", "no", "off"}
-        if summary_json.exists():
+    def _update_memory(
+        self,
+        user_input: str,
+        results: list[StepResult],
+        tree: TaskTree,
+    ) -> None:
+        """Store the turn in LT memory and update the rolling summary."""
+        output_text = "\n".join(r.output for r in results if r.output)
+
+        # Persist transcript
+        if self.lt_memory:
+            self.lt_memory.append(
+                user_input,
+                output_text[:8000],
+                workdir=str(self.workdir),
+                model_id=getattr(
+                    self.session, "get_model_id", lambda: ""
+                )(),
+                session_id=self.session_id or "",
+            )
+
+        # Record file paths in side-loaded memory (ST + LT)
+        for entry in tree.accumulated_results():
+            result = entry.get("result") or {}
+            # Collect paths from file_locate results, executor outputs, etc.
+            paths = result.get("paths") or []
+            # Also look for file paths in stdout (executor results)
+            stdout = result.get("stdout", "")
+            if not paths and stdout:
+                import re as _re
+                # Extract plausible file paths from stdout
+                found = _re.findall(
+                    r'[A-Za-z]:[/\\][\w./\\-]+|/[\w./\\-]{5,}',
+                    stdout,
+                )
+                paths = [p for p in found if "." in p.split("/")[-1].split("\\")[-1]]
+
+            if paths:
+                if self.st_memory:
+                    self.st_memory.record_paths(
+                        user_input[:200],
+                        paths,
+                        cwd=str(self.workdir),
+                        project_root=str(self.workdir),
+                    )
+                if self.lt_side_memory and hasattr(self.lt_side_memory, "record_paths"):
+                    self.lt_side_memory.record_paths(
+                        user_input[:200],
+                        paths,
+                        cwd=str(self.workdir),
+                        project_root=str(self.workdir),
+                        session_id=self.session_id or "",
+                    )
+
+        # Delegate rolling summary to modular STMemory if available.
+        if self._st_mem and hasattr(self._st_mem, "record_turn"):
+            has_error = any(not r.success for r in results)
+            has_tool_calls = any(r.step_id for r in results)
+            self._st_mem.record_turn(
+                user_input,
+                output_text,
+                has_error=has_error,
+                has_tool_calls=has_tool_calls,
+            )
+            self._summary_bundle = self._st_mem.summary_bundle
+        else:
+            self._update_rolling_summary(user_input, output_text)
+
+    def _on_session_exit(self) -> None:
+        """Promote ST side-loaded memory entries to LT on session end."""
+        try:
+            if (
+                self.st_memory
+                and self.lt_side_memory
+                and hasattr(self.st_memory, "hazy_hash")
+                and hasattr(self.lt_side_memory, "absorb_from_session")
+            ):
+                promoted = self.lt_side_memory.absorb_from_session(
+                    self.st_memory.hazy_hash._scope,
+                )
+                if promoted and self.tui:
+                    self.tui.write_line(
+                        f"[memory] promoted {promoted} location entries to long-term memory"
+                    )
+        except Exception:
+            pass
+
+    def _update_rolling_summary(self, user_input: str, output: str) -> None:
+        """
+        Rolling summary: summarize the new turn together with the previous
+        summary.  The model produces the updated summary and the 10 most
+        important points to keep track of.
+        """
+        prev_summary = self._summary_bundle.get("summary", "")
+        prompt = (
+            f"Previous summary:\n{prev_summary[:2000]}\n\n"
+            f"New user input:\n{user_input[:1000]}\n\n"
+            f"New system output:\n{output[:2000]}\n\n"
+            "Create an updated rolling summary (max 200 words) and list the "
+            "10 most important points to keep track of.\n"
+            'Return JSON only: {"summary": str, "key_points": [str]}'
+        )
+        try:
+            raw = self.session.send(prompt=prompt, stream=False)
+            m = re.search(r"\{[\s\S]*\}", raw or "")
+            if m:
+                payload = json.loads(m.group(0))
+                self._summary_bundle = {
+                    "summary": str(payload.get("summary", ""))[:1000],
+                    "key_points": [
+                        str(p)
+                        for p in (payload.get("key_points") or [])[:10]
+                    ],
+                }
+                self._save_summary_bundle()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Summary persistence
+    # ------------------------------------------------------------------
+
+    def _load_summary_bundle(self) -> dict:
+        path = self._summary_path()
+        if path.exists():
             try:
-                payload = json.loads(summary_json.read_text(encoding="utf-8", errors="ignore"))
-                stored_session = str(payload.get("session_id") or "").strip()
-                if session_id and stored_session and stored_session != session_id:
+                payload = json.loads(
+                    path.read_text(encoding="utf-8", errors="ignore")
+                )
+                stored_id = str(payload.get("session_id", "")).strip()
+                if (
+                    self.session_id
+                    and stored_id
+                    and stored_id != self.session_id
+                ):
                     return {"summary": "", "key_points": []}
-                if session_id and not stored_session and strict:
-                    return {"summary": "", "key_points": []}
-                summary = str(payload.get("summary") or "").strip()
-                summary = _trim_200_words(summary)
-                points = payload.get("key_points") or []
-                if not isinstance(points, list):
-                    points = []
-                points = [str(p).strip() for p in points if str(p).strip()]
-                return {"summary": summary, "key_points": points}
+                return {
+                    "summary": str(payload.get("summary", ""))[:1000],
+                    "key_points": [
+                        str(p).strip()
+                        for p in (payload.get("key_points") or [])[:10]
+                        if str(p).strip()
+                    ],
+                }
             except Exception:
                 pass
-        if session_id and strict:
-            return {"summary": "", "key_points": []}
-        summary = ""
-        if summary_txt.exists():
-            try:
-                summary = summary_txt.read_text(encoding="utf-8", errors="ignore").strip()
-            except Exception:
-                summary = ""
-        summary = _trim_200_words(summary)
-        points = self._extract_key_points(summary, limit=10)
-        return {"summary": summary, "key_points": points}
+        return {"summary": "", "key_points": []}
 
-
-    def _save_summary_bundle(self, bundle: dict, *, session_id: str | None = None) -> None:
-        summary_json, summary_txt = self._summary_paths(session_id)
-        summary_json.parent.mkdir(parents=True, exist_ok=True)
-        summary = str(bundle.get("summary") or "").strip()
-        words = summary.split()
-        if len(words) > 200:
-            summary = " ".join(words[:200])
-        points = bundle.get("key_points") or []
-        if not isinstance(points, list):
-            points = []
-        points = [str(p).strip() for p in points if str(p).strip()]
-        if len(points) > 10:
-            points = points[:10]
-        payload = {"summary": summary, "key_points": points, "session_id": session_id or ""}
+    def _save_summary_bundle(self) -> None:
+        path = self._summary_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            **self._summary_bundle,
+            "session_id": self.session_id or "",
+        }
         try:
-            summary_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-        try:
-            summary_txt.write_text(summary, encoding="utf-8")
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception:
             pass
 
+    def _summary_path(self) -> Path:
+        from helpers import _runtime_path
+        if self.session_id:
+            return _runtime_path(f"summary_{self.session_id}.json")
+        return _runtime_path("summary.json")
 
-    def _load_rolling_summary(self, max_chars: int = 2000, *, session_id: str | None = None) -> str:
-        bundle = self._load_summary_bundle(session_id=session_id)
-        summary = str(bundle.get("summary") or "").strip()
-        if not summary:
-            return ""
-        if max_chars and len(summary) > max_chars:
-            return summary[:max_chars]
-        return summary
+    # ------------------------------------------------------------------
+    # Main REPL loop
+    # ------------------------------------------------------------------
 
-
-    def _extract_key_points(self, summary_or_points, limit: int = 6) -> List[str]:
-        if not summary_or_points:
-            return []
-        if isinstance(summary_or_points, list):
-            points = [str(p).strip() for p in summary_or_points if str(p).strip()]
-            return points[:limit]
-        summary = str(summary_or_points or "")
-        points = []
-        for line in summary.splitlines():
-            raw = line.strip()
-            if not raw:
-                continue
-            if raw.startswith(("-", "*", "•")):
-                points.append(raw.lstrip("-*• ").strip())
-        if points:
-            return points[:limit]
-        # Fallback: split by sentence-ish boundaries.
-        sentences = re.split(r"(?<=[.!?])\s+", summary.strip())
-        for sent in sentences:
-            if sent.strip():
-                points.append(sent.strip())
-            if len(points) >= limit:
-                break
-        return points[:limit]
-
-
-    def _key_points_block(self, summary_or_points) -> str:
-        points = self._extract_key_points(summary_or_points, limit=10)
-        if not points:
-            return ""
-        lines = ["Key points:"]
-        for item in points:
-            lines.append(f"- {item}")
-        return "\n".join(lines)
-
-    def _run_parallel_tasks(self, tasks: list[tuple[str, callable]], max_workers: int = 3) -> list[tuple[str, object]]:
+    def run(self, initial_prompt: str | None = None) -> int:
         """
-        Run independent tasks in parallel; return list of (label, result_text).
+        Drive the full step 1-3 loop.
+
+        initial_prompt: if provided, runs once (single-shot) when stdin is
+                        not interactive, otherwise enters the REPL after
+                        the first turn.
+        Returns an OS exit code (0 = clean exit).
         """
-        if not tasks:
-            return []
-        results: list[tuple[str, str]] = []
-        use_parallel = os.getenv("C0D3R_PARALLEL_TASKS", "1").strip().lower() not in {"0", "false", "no", "off"}
-        if not use_parallel or len(tasks) == 1:
-            for label, fn in tasks:
-                try:
-                    results.append((label, fn()))
-                except Exception:
-                    results.append((label, None))
-            return results
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                future_map = {ex.submit(fn): label for label, fn in tasks}
-                for fut in as_completed(future_map):
-                    label = future_map[fut]
-                    try:
-                        results.append((label, fut.result()))
-                    except Exception:
-                        results.append((label, None))
-        except Exception:
-            for label, fn in tasks:
-                try:
-                    results.append((label, fn()))
-                except Exception:
-                    results.append((label, None))
-        return results
+        single_shot = (
+            initial_prompt is not None and not sys.stdin.isatty()
+        )
 
+        while True:
+            # Step 1 ──────────────────────────────────────────────────
+            raw = self.step_1_read_input(initial_prompt)
+            initial_prompt = None  # only use the seed prompt once
 
+            if not raw or raw.lower() in {"/exit", "/quit", "exit", "quit"}:
+                self._on_session_exit()
+                if self.tui:
+                    self.tui.stop()
+                return 0
 
-    def _build_context_block(self, workdir: Path) -> str:
-        lines = [
-            "Context:",
-            f"- cwd: {workdir}",
-            f"- os: {os.name}",
-        ]
-        try:
-            lines.append(f"- project_root: {workdir.resolve()}")
-        except Exception:
-            pass
-        lines.append(self._environment_context_block(workdir))
-        env_session = os.getenv("C0D3R_SESSION_ID")
-        session_id = session_id or (env_session.strip() if env_session else None)
-        bundle = self._load_summary_bundle(session_id=session_id) if session_id else {"summary": "", "key_points": []}
-        summary = str(bundle.get("summary") or "").strip()
-        if summary:
-            lines.append("Rolling summary:\n" + summary)
-            key_points = self._key_points_block(bundle.get("key_points") or summary)
-            if key_points:
-                lines.append(key_points)
-        if self._auto_context_commands_enabled():
-            try:
-                from services.framework_catalog import detect_frameworks
-                frameworks = detect_frameworks(workdir)
-                if frameworks:
-                    lines.append(f"- frameworks: {', '.join(frameworks)}")
-                else:
-                    lines.append("- frameworks: (none detected)")
-            except Exception:
-                lines.append("- frameworks: (unknown)")
-            # Parallelize independent context probes.
-            tasks = []
-            # tasks.append(("git_status", lambda: run_command("git status -sb", cwd=workdir)))
-            # tasks.append(("git_root", lambda: run_command("git rev-parse --show-toplevel", cwd=workdir)))
-            def _ls_cmd() -> str:
-                if os.name == "nt":
-                    if shutil.which("pwsh") or shutil.which("powershell"):
-                        return "Get-ChildItem -Name"
-                    return f'{sys.executable} -c "import os;print(\'\\n\'.join(os.listdir(\'.\')))"'
-                if shutil.which("ls"):
-                    return "ls -1"
-                return f'{sys.executable} -c "import os;print(\'\\n\'.join(os.listdir(\'.\')))"'
-            # tasks.append(("ls", lambda: run_command(_ls_cmd(), cwd=workdir)))
-            results = self._run_parallel_tasks([(name, fn) for name, fn in tasks], max_workers=3)
-            result_map = {name: res for name, res in results}
-            if "git_status" in result_map:
-                code, stdout, stderr = result_map["git_status"]
-                if stdout.strip():
-                    lines.append("git status -sb:")
-                    lines.append(stdout.strip()[:2000])
-                if stderr.strip():
-                    lines.append("git status stderr:")
-                    lines.append(stderr.strip()[:500])
-            if "git_root" in result_map:
-                code, stdout, stderr = result_map["git_root"]
-                if stdout.strip():
-                    lines.append(f"repo root: {stdout.strip()}")
-            if "ls" in result_map:
-                code, stdout, stderr = result_map["ls"]
-                if stdout.strip():
-                    lines.append("top-level files:")
-                    lines.append("\n".join(stdout.strip().splitlines()[:80]))
-        return "\n".join(lines)
-        
-    def _step_2_inject_context(self):
-        context = self._build_context_block(Path.cwd())
-        print(f"{sys.argv[0]} {context}")
-    def _step_3_orchestration(self):
-        # Placeholder for the main orchestration logic of the process flow.
-        pass
-    
-    def main(self):
-        self._step_2_inject_context()
-    
-if __name__ == "__main__":
-    process_flow = ProcessFlow(userRequest="Example request")
-    process_flow.main()
+            # Show in TUI
+            if self.tui:
+                self.tui.write_user(raw)
+
+            # Step 2 ──────────────────────────────────────────────────
+            if self.usage:
+                self.usage.set_status("planning", "building context")
+            augmented = self.step_2_inject_context(raw)
+            if self.usage:
+                self.usage.add_input(augmented)
+
+            # Step 3 / 3A ─────────────────────────────────────────────
+            if self.usage:
+                self.usage.set_status("executing", "orchestrating")
+            results, tree = self.step_3_orchestrate(raw)
+
+            # Show task tree in TUI
+            if self.tui:
+                self.tui.write_line(f"\n{tree.context_summary()}\n")
+
+            # Output ──────────────────────────────────────────────────
+            output_parts: list[str] = []
+            for r in results:
+                if r.output:
+                    output_parts.append(r.output)
+                    if self.tui:
+                        self.tui.write_final(r.output)
+                    else:
+                        print(r.output)
+                if not r.success and r.error:
+                    err = f"[error in {r.step_id}] {r.error}"
+                    if self.tui:
+                        self.tui.write_line(err)
+                    else:
+                        print(err, file=sys.stderr)
+
+            # Track output tokens
+            if self.usage:
+                self.usage.add_output("\n".join(output_parts))
+
+            # Update memory
+            self._update_memory(raw, results, tree)
+
+            # Header refresh
+            if self.usage:
+                self.usage.set_status("idle")
+            if self.header:
+                self.header.update()
+
+            if single_shot:
+                if self.tui:
+                    self.tui.stop()
+                return 0
