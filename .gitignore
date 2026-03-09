@@ -98,4 +98,4 @@ heartbeat_*.json
 kuzu_*/
 *.kuzu/
 # Generated pair assignment files
-base_pair_provider_assignment.json
+data/base_pair_provider_assignment.json
