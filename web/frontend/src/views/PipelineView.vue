@@ -498,15 +498,17 @@ onMounted(() => {
   border-color: rgba(52, 211, 153, 0.5);
 }
 .progress-node.done .dot {
-  background: rgba(52, 211, 153, 0.3);
-  border-color: rgba(52, 211, 153, 0.7);
+  background: #34d399;
+  border-color: #34d399;
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
 }
 .progress-node.active {
   border-color: rgba(250, 204, 21, 0.6);
 }
 .progress-node.active .dot {
-  background: rgba(250, 204, 21, 0.25);
-  border-color: rgba(250, 204, 21, 0.8);
+  background: #facc15;
+  border-color: #facc15;
+  box-shadow: 0 0 6px rgba(250, 204, 21, 0.6);
 }
 
 .stage-card {

@@ -31,12 +31,12 @@ class FeedbackSeverity:
 def status_light(severity: str) -> str:
     level = (severity or "").lower()
     if level == FeedbackSeverity.INFO:
-        return "🟢"
+        return "[OK]"
     if level == FeedbackSeverity.WARNING:
-        return "🟠"
+        return "[WARN]"
     if level == FeedbackSeverity.CRITICAL:
-        return "🔴"
-    return "⚪"
+        return "[CRIT]"
+    return "[--]"
 
 
 @dataclass

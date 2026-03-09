@@ -32,6 +32,33 @@ def _read_meminfo() -> Optional[float]:
 
 
 def _sysconf_mem() -> Optional[float]:
+    # Windows: use ctypes to query physical memory.
+    if os.name == "nt":
+        try:
+            import ctypes
+            import ctypes.wintypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.wintypes.DWORD),
+                    ("dwMemoryLoad", ctypes.wintypes.DWORD),
+                    ("ullTotalPhys", ctypes.c_uint64),
+                    ("ullAvailPhys", ctypes.c_uint64),
+                    ("ullTotalPageFile", ctypes.c_uint64),
+                    ("ullAvailPageFile", ctypes.c_uint64),
+                    ("ullTotalVirtual", ctypes.c_uint64),
+                    ("ullAvailVirtual", ctypes.c_uint64),
+                    ("ullAvailExtendedVirtual", ctypes.c_uint64),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(stat)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return stat.ullTotalPhys / (1024 ** 3)
+        except Exception:
+            pass
+        return None
+    # Linux/macOS: use sysconf.
     try:
         pages = os.sysconf("SC_PHYS_PAGES")  # type: ignore[attr-defined]
         page_size = os.sysconf("SC_PAGE_SIZE")  # type: ignore[attr-defined]

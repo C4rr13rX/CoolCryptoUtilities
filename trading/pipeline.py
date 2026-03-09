@@ -735,7 +735,7 @@ class TrainingPipeline:
             self._save_state()
 
             if self.active_accuracy >= 0.99 and self._active_model is not None:
-                print("[training] active model already at ≥99% accuracy; pausing candidate search.")
+                print("[training] active model already at >=99% accuracy; pausing candidate search.")
                 finalize_experiment("paused", {"reason": "active_at_target", "active_accuracy": float(self.active_accuracy)})
                 return {
                     "iteration": self.iteration,
