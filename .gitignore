@@ -97,3 +97,5 @@ heartbeat_*.json
 # Kuzu graph database files
 kuzu_*/
 *.kuzu/
+# Generated pair assignment files
+base_pair_provider_assignment.json

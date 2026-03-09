@@ -1258,232 +1258,416 @@
     "0x36938d1419b717c97ebdb273702806ca73f89a4c": {
       "symbol": "CFI-WETH",
       "index": 139,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:50.573049+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:50.573049+00:00"
     },
     "0x05c024b441d2c288c2729b484bd4bcef3596aa51": {
       "symbol": "OSAK-WETH",
       "index": 140,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:54.030708+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:54.030708+00:00"
     },
     "0xecfe2c3c1ac0a5a59227a01f3dd7044159b11a57": {
       "symbol": "RAMP-WETH",
       "index": 141,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:57.509926+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:57.509926+00:00"
     },
     "0x4ff4c7c8754127cc097910cf9d80400adef5b65d": {
       "symbol": "WETH-4CHAN",
       "index": 142,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:00.975066+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:00.975066+00:00"
     },
     "0xa2b04f8133fc25887a436812eae384e32a8a84f2": {
       "symbol": "WETH-COTI",
       "index": 143,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:04.512304+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:04.512304+00:00"
     },
     "0xdeba8fd61c1c87b6321a501ebb19e61e610421bf": {
       "symbol": "BOOE-WETH",
       "index": 144,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:07.652490+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:07.652490+00:00"
     },
     "0x21ffaa1c83946a89bef4d639f71d070c868b8694": {
       "symbol": "CSWAP-WETH",
       "index": 145,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:10.761607+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:10.761607+00:00"
     },
     "0x3185626c14acb9531d19560decb9d3e5e80681b1": {
       "symbol": "XRT-WETH",
       "index": 146,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:14.091028+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:14.091028+00:00"
     },
     "0xc3576f38c32e95e36bbd8d91e6cbe646a3723110": {
       "symbol": "WETH-PHIL",
       "index": 147,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:17.242954+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:17.242954+00:00"
     },
     "0x3da1313ae46132a397d90d95b1424a9a7e3e0fce": {
       "symbol": "WETH-CRV",
       "index": 148,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:20.619210+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:20.619210+00:00"
     },
     "0x85aa97537837514a9229fcaeb66eeef7242122bf": {
       "symbol": "TGC-WETH",
       "index": 149,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:23.804260+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:23.804260+00:00"
     },
     "0x4dd26482738be6c06c31467a19dcda9ad781e8c4": {
       "symbol": "API3-WETH",
       "index": 150,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:27.157763+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:27.157763+00:00"
     },
     "0xac336936f2f0c2ab0c8dece3a027445323e8a244": {
       "symbol": "PUSSY-WETH",
       "index": 151,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:30.748828+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:30.748828+00:00"
     },
     "0x4fda00d490c1c05ff15d7313d1cebe9c711e434b": {
       "symbol": "WHALE-WETH",
       "index": 152,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:34.110261+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:34.110261+00:00"
     },
     "0x684b00a5773679f88598a19976fbeb25a68e9a5f": {
       "symbol": "EXRD-USDC",
       "index": 153,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:37.453964+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:37.453964+00:00"
     },
     "0xe45b4a84e0ad24b8617a489d743c52b84b7acebe": {
       "symbol": "AGIX-WETH",
       "index": 154,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:41.054248+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:41.054248+00:00"
     },
     "0x9345c3e50f31f18a68c5bd210cce6f2083ec6943": {
       "symbol": "SMILEY-WETH",
       "index": 155,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:44.642142+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:44.642142+00:00"
     },
     "0xf22fdd2be7c6da9788e4941a6ffc78ca99d7b15c": {
       "symbol": "KIBSHI-WETH",
       "index": 156,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:48.097676+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:48.097676+00:00"
     },
     "0x99dfde431b40321a35deb6aeb55cf338ddd6eccd": {
       "symbol": "UFT-WETH",
       "index": 157,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:51.656324+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:51.656324+00:00"
     },
     "0x672fefac7f6e3017d9a2f1c14fe048191a24ce14": {
       "symbol": "WETH-HEMULE",
       "index": 158,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:55.149824+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:55.149824+00:00"
     },
     "0xccb63225a7b19dcf66717e4d40c9a72b39331d61": {
       "symbol": "MC-WETH",
       "index": 159,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:22:58.454492+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:27:58.454492+00:00"
     },
     "0x63a151d042dc870fb1b3f0c72cbbdd53a85898f6": {
       "symbol": "FIGHT-WETH",
       "index": 160,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:01.828088+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:01.828088+00:00"
     },
     "0x051ef36e55875c08e4efaea6072c6d0f66fb0b9f": {
       "symbol": "WETH-PALM",
       "index": 161,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:05.238892+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:05.238892+00:00"
     },
     "0x3854612b93b140726167cca5418b01e832515d42": {
       "symbol": "HIGH-WETH",
       "index": 162,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:08.691461+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:08.691461+00:00"
     },
     "0x6ec94f50cadcc79984463688de42a0ca696ec2db": {
       "symbol": "WHITE-USDC",
       "index": 163,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:12.252506+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:12.252506+00:00"
     },
     "0xfe9e7931e55c514c33d489c88582fa36e84bd8e3": {
       "symbol": "ORDS-WETH",
       "index": 164,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:15.707503+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:15.707503+00:00"
     },
     "0x1f964ff83c54ce447adae5cb93f9ec17018bf55b": {
       "symbol": "WETH-BEZOGE",
       "index": 165,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:19.138425+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:19.138425+00:00"
     },
     "0x2049df3435bdbb36d22f98fcd2e5027049a1f3ce": {
       "symbol": "M87-WETH",
       "index": 166,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:22.597212+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:22.597212+00:00"
     },
     "0x8296d84e911e0c1f827e1e7d4b50c2568e807b36": {
       "symbol": "BIAO-WETH",
       "index": 167,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:25.962773+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:25.962773+00:00"
     },
     "0x9c2b19dbdfad3f283c0b96c5546d91a275778d91": {
       "symbol": "WETH-MCC",
       "index": 168,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:29.286268+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:29.286268+00:00"
     },
     "0x9c4cc862f51b1ba90485de3502aa058ca4331f32": {
       "symbol": "CELL-WETH",
       "index": 169,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:32.749912+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:32.749912+00:00"
     },
     "0x811cfb75567a252bea23474e2ccd1286927bfe0a": {
       "symbol": "FJO-WETH",
       "index": 170,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:36.125593+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:36.125593+00:00"
     },
     "0x06cd6245156c3608ae67d690c125e86a8bc6a88c": {
       "symbol": "OMIKAMI-USDC",
       "index": 171,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:39.485221+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:39.485221+00:00"
     },
     "0xd18748b9839b0081a867a1a871d5b562b2ec9884": {
       "symbol": "POND-USDC",
       "index": 172,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:42.754162+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:42.754162+00:00"
     },
     "0xeaabb2ee89221455302d9ffb5325689ff8f0c37b": {
       "symbol": "IC-WETH",
       "index": 173,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:46.069695+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:46.069695+00:00"
     },
     "0x966053ca4fca049173eb1f27e4cb168ccb794534": {
       "symbol": "VLT-WETH",
       "index": 174,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:51.689652+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:51.689652+00:00"
     },
     "0x8867f20c1c63baccec7617626254a060eeb0e61e": {
       "symbol": "PHA-WETH",
       "index": 175,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:23:58.013380+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:28:58.013380+00:00"
     },
     "0xf6c4e4f339912541d3f8ed99dba64a1372af5e5b": {
       "symbol": "USDT-HEZ",
       "index": 176,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:04.194092+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:04.194092+00:00"
     },
     "0xac86903cdda380f20a06cc8a2dea7749f1558c68": {
       "symbol": "WETH-RAIL",
       "index": 177,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:10.496967+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:10.496967+00:00"
     },
     "0xf7ef5352de45a20d8c8565cd94a4bd6c8831f749": {
       "symbol": "LINU-WETH",
       "index": 178,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:16.696574+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:16.696574+00:00"
     },
     "0x1bfffb738d69167d5592160a47d5404a3cf5a846": {
       "symbol": "KEX-WETH",
       "index": 179,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:22.827785+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:22.827785+00:00"
     },
     "0x2d27cae0c7e88de9b85b3e44ea37b9cb70ca745f": {
       "symbol": "WETH-SMI",
       "index": 180,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:29.002373+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:29.002373+00:00"
     },
     "0x97c4adc5d28a86f9470c70dd91dc6cc2f20d2d4d": {
       "symbol": "FRAX-USDC",
       "index": 181,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:35.153932+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:35.153932+00:00"
     },
     "0x79dd15ad871b0fe18040a52f951d757ef88cfe72": {
       "symbol": "KNDX-WETH",
       "index": 182,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:41.462707+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:41.462707+00:00"
     },
     "0x1ca4713fc4a95f76fcb498b2a5fe8759c53df1a1": {
       "symbol": "WETH-GEN",
       "index": 183,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:47.528853+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:47.528853+00:00"
     },
     "0xf66369997ae562bc9eec2ab9541581252f9ca383": {
       "symbol": "PERP-WETH",
       "index": 184,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:24:50.937942+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:29:50.937942+00:00"
     },
     "0xd9848413a0569359e4a1a7adce7d270badc6c3e9": {
       "symbol": "TRWA-WETH",
