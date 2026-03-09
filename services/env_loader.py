@@ -75,11 +75,15 @@ def _maybe_enable_sqlite_fallback() -> None:
 
 
 class EnvLoader:
-    """Robust .env loader you can import anywhere."""
+    """
+    Environment loader.  Primary source is Django SecureVault (encrypted DB).
+    .env files are deprecated and only loaded as a last-resort fallback when
+    SecureVault is unreachable (e.g. first-time setup before DB exists).
+    Set ALLOW_DOTENV_FALLBACK=1 to explicitly permit .env file loading.
+    """
     @staticmethod
     def load() -> None:
         testing = is_test_env()
-        # ensure the fallback shim is allowed to touch .env files
         os.environ.setdefault(_ALLOW_FLAG, "1")
         if testing:
             os.environ.setdefault("DJANGO_DB_VENDOR", "sqlite")
@@ -93,54 +97,11 @@ class EnvLoader:
             if path_str not in sys.path:
                 sys.path.insert(0, path_str)
 
-        loaded = False
-
-        # 1) try an auto-discovered .env in current working dir
-        path = find_dotenv(usecwd=True)
-        if path:
-            try:
-                load_dotenv(path, override=False)
-                loaded = True
-            except Exception:
-                pass
-
-        # 2) common fallbacks
-        cands: List[Path] = []
-        for p in (
-            Path.cwd() / ".env",
-            Path(sys.argv[0]).resolve().parent / ".env" if sys.argv and sys.argv[0] else None,
-            Path(__file__).resolve().parent / ".env" if "__file__" in globals() else None,
-            Path.home() / ".env",
-        ):
-            if p:
-                cands.append(p)
-
-        # 2a) load_dotenv on first readable candidate
-        for p in cands:
-            try:
-                if p.is_file():
-                    load_dotenv(p, override=False)
-                    loaded = True
-                    break
-            except Exception:
-                pass
-
-        # 2b) last-resort: parse and set os.environ without load_dotenv
-        for p in cands:
-            try:
-                if p.is_file():
-                    for k, v in (dotenv_values(p) or {}).items():
-                        os.environ.setdefault(k, v or "")
-                    loaded = True
-                    break
-            except Exception:
-                pass
-
         if not testing:
             _maybe_enable_sqlite_fallback()
 
-        # 3) hydrate from secure settings (Postgres-backed secrets) if available.
-        #    Do this once per process to avoid repeated DB hits.
+        # PRIMARY: hydrate from SecureVault (Django DB encrypted secrets).
+        vault_ok = False
         if not testing and os.environ.get(_SECURE_ENV_FLAG) != "1":
             try:
                 from services.secure_settings import build_process_env
@@ -149,11 +110,55 @@ class EnvLoader:
                 os.environ.update(env)
                 os.environ[_SECURE_ENV_FLAG] = "1"
                 _debug_env(env)
+                vault_ok = True
             except Exception:
-                # Silent fail: fallback to plain .env-only mode
                 pass
 
+        # FALLBACK: only load .env files if vault failed and fallback is allowed.
+        if not vault_ok and _bool_env(os.getenv("ALLOW_DOTENV_FALLBACK", "1")):
+            _load_dotenv_fallback()
+
         _apply_default_env()
+
+
+def _load_dotenv_fallback() -> None:
+    """Legacy .env file loader — used only when SecureVault is unavailable."""
+    # 1) try an auto-discovered .env in current working dir
+    path = find_dotenv(usecwd=True)
+    if path:
+        try:
+            load_dotenv(path, override=False)
+            return
+        except Exception:
+            pass
+
+    # 2) common fallbacks
+    cands: List[Path] = []
+    for p in (
+        Path.cwd() / ".env",
+        Path(sys.argv[0]).resolve().parent / ".env" if sys.argv and sys.argv[0] else None,
+        Path(__file__).resolve().parent / ".env" if "__file__" in globals() else None,
+        Path.home() / ".env",
+    ):
+        if p:
+            cands.append(p)
+
+    for p in cands:
+        try:
+            if p.is_file():
+                load_dotenv(p, override=False)
+                return
+        except Exception:
+            pass
+
+    for p in cands:
+        try:
+            if p.is_file():
+                for k, v in (dotenv_values(p) or {}).items():
+                    os.environ.setdefault(k, v or "")
+                return
+        except Exception:
+            pass
 
 
 def _apply_default_env() -> None:
@@ -162,6 +167,20 @@ def _apply_default_env() -> None:
     env files are minimal. Only applies when values are missing.
     """
     defaults = {
+        # --- Core operational defaults (formerly in .env) ---
+        "PRIMARY_CHAIN": "base",
+        "PRIMARY_SYMBOL": "WETH-USDC",
+        "ENABLE_LIVE_TRADING": "0",
+        "REQUIRE_READY_BEFORE_STREAM": "0",
+        "LIVE_ALLOW_MINI_READY": "1",
+        "OHLCV_CEX_FALLBACK": "1",
+        "PREFER_FREE_RPC": "1",
+        "MARKET_ENDPOINT_INCLUDE": "binance,coinbase,coingecko,bitstamp,okx,kucoin",
+        "TRAIN_LIGHTWEIGHT": "1",
+        "TRAIN_BATCH_SIZE": "16",
+        "NEWS_SKIP_ON_COLD_START": "1",
+        "GHOST_COLD_START_BYPASS": "1",
+        # --- Infrastructure ---
         "ALCHEMY_TIMEOUT_SEC": "10",
         "HTTP_TIMEOUT_SEC": "8",
         "TX_TIMEOUT_SEC": "120",

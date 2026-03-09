@@ -35,6 +35,7 @@ from keras.models import Model
 from keras.regularizers import l2
 
 
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
 class TimeFeatureLayer(tf.keras.layers.Layer):
     def call(self, inputs):
         hour, dow = inputs
@@ -73,6 +74,7 @@ class StateSaver(Callback):
 # ---------------------------------------------------------------------
 # Learnable exponential decay across time steps (for sentiment)
 # ---------------------------------------------------------------------
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
 class ExponentialDecay(tf.keras.layers.Layer):
     def __init__(self, length, **kwargs):
         super().__init__(**kwargs)
@@ -91,6 +93,11 @@ class ExponentialDecay(tf.keras.layers.Layer):
         weights = exp_vals / tf.reduce_sum(exp_vals)
         weights = tf.reshape(weights, (1, self.length, 1))
         return inputs * weights
+
+    def get_config(self):
+        config = super().get_config()
+        config["length"] = self.length
+        return config
 
 
 _GAUSS_EPS = tf.constant(1e-6, dtype=tf.float32)

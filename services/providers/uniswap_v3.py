@@ -17,6 +17,11 @@ UNI_V3: Dict[str, Dict[str, str]] = {
         "QUOTER_V2":   "0x61fFE014bA17989E743c5F6cB21bF9697530B21e",
         "WETH":        "0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2",
     },
+    "base": {
+        "SWAP_ROUTER": "0x2626664c2603336E57B271c5C0b26F421741e481",  # SwapRouter02 on Base
+        "QUOTER_V2":   "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",  # QuoterV2 on Base
+        "WETH":        "0x4200000000000000000000000000000000000006",
+    },
     "arbitrum": {
         "SWAP_ROUTER": "0x68b3465833FB72A70ecDF485E0e4C7bD8665Fc45",  # same bytecode on many L2s
         "QUOTER_V1":   "0x0000000000000000000000000000000000000000",  # set real address if you want V1 on Arbitrum

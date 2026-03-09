@@ -284,7 +284,27 @@ def _ensure_ohlcv(chain: str, symbol: str, data_root: Optional[Path] = None) -> 
                 _db.set_control_flag(f"ohlcv_ready::{chain.lower()}::{symbol.upper()}", "1")
             except Exception:
                 pass
-        return ready
+            return ready
+    # Fallback: try CEX download (Binance/CoinGecko) when on-chain data unavailable
+    try:
+        from services.cex_ohlcv_fallback import download_pair, save_ohlcv
+        source, rows = download_pair(symbol_u, days_back=90)
+        if rows:
+            idx = int(next(
+                (m.get("index", 0) for m in pairs.values() if str(m.get("symbol", "")).upper() == symbol_u),
+                9999,
+            ))
+            root = data_root or Path(os.getenv("HISTORICAL_DATA_ROOT", "data/historical_ohlcv"))
+            path = save_ohlcv(rows, symbol_u, idx, chain=chain, output_root=root)
+            if path:
+                log_message("pair-select", f"CEX fallback saved {symbol_u}: {len(rows)} candles from {source}")
+                try:
+                    _db.set_control_flag(f"ohlcv_ready::{chain.lower()}::{symbol_u}", "1")
+                except Exception:
+                    pass
+                return True
+    except Exception as exc:
+        log_message("pair-select", f"CEX fallback failed for {symbol_u}: {exc}", severity="warning")
     return False
 
 

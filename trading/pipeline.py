@@ -3090,18 +3090,29 @@ class TrainingPipeline:
             health_score = 0.0
         if concentration_block:
             health_score = min(health_score, 0.35)
-        ready = (
-            len(trades) >= min_trades
-            and win_rate >= min_win_rate
-            and avg_profit >= min_margin
-            and profit_factor >= min_profit_factor
-            and tail_risk <= tail_guard
-            and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
-            and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
-            and (loss_streak_guard <= 0 or max_loss_streak <= loss_streak_guard)
-            and not stale_samples
-            and not concentration_block
+        # Cold-start bypass: when zero ghost trades exist, the system is in
+        # bootstrap mode.  Allow ghost validation to pass so the stream can
+        # start and begin generating ghost trades for real evaluation.
+        cold_start = len(trades) == 0
+        cold_start_allowed = (
+            os.getenv("GHOST_COLD_START_BYPASS", "1").lower() in {"1", "true", "yes", "on"}
         )
+        if cold_start and cold_start_allowed:
+            ready = True
+            reason = "cold_start_bootstrap"
+        else:
+            ready = (
+                len(trades) >= min_trades
+                and win_rate >= min_win_rate
+                and avg_profit >= min_margin
+                and profit_factor >= min_profit_factor
+                and tail_risk <= tail_guard
+                and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
+                and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
+                and (loss_streak_guard <= 0 or max_loss_streak <= loss_streak_guard)
+                and not stale_samples
+                and not concentration_block
+            )
         fast_track_enabled = (os.getenv("GHOST_FAST_TRACK_ENABLED", "0") or "0").lower() in {"1", "true", "yes", "on"}
         fast_track_min_trades = int(os.getenv("GHOST_FAST_TRACK_MIN_TRADES", str(max(10, min_trades // 2))))
         fast_track_min_trades = max(5, min(fast_track_min_trades, min_trades))
@@ -3122,7 +3133,8 @@ class TrainingPipeline:
             and not stale_samples
             and not concentration_block
         )
-        reason = ""
+        if not (cold_start and cold_start_allowed):
+            reason = ""
         if not ready and fast_track_enabled and fast_track_ready:
             ready = True
             reason = "fast_track"

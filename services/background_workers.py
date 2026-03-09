@@ -109,8 +109,15 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     max_pairs = int(os.getenv("DOWNLOAD_MAX_PAIRS", "256"))
     if max_pairs > 0:
         incomplete = incomplete[:max_pairs]
-    if not incomplete:
-        return
+
+    # If all on-chain pairs are completed/skipped or CEX fallback is enabled,
+    # use the CEX OHLCV fallback to download from Binance/CoinGecko.
+    cex_fallback = os.getenv("OHLCV_CEX_FALLBACK", "0").lower() in {"1", "true", "yes", "on"}
+    if not incomplete or cex_fallback:
+        _try_cex_fallback(chain)
+        if not incomplete:
+            return
+
     max_parallel = max(1, int(os.getenv("DOWNLOAD_MAX_PARALLEL", "1")))
     env = os.environ.copy()
     env["CHAIN_NAME"] = chain
@@ -124,6 +131,23 @@ def _run_download(chain: str, assignment_path: Path) -> None:
             proc.wait()
     except Exception as exc:
         log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")
+
+
+def _try_cex_fallback(chain: str) -> None:
+    """Run CEX OHLCV fallback if the historical data directory is empty or sparse."""
+    ohlcv_dir = DATA_ROOT / "historical_ohlcv" / chain
+    existing_count = len(list(ohlcv_dir.glob("*.json"))) if ohlcv_dir.exists() else 0
+    min_threshold = int(os.getenv("CEX_FALLBACK_MIN_FILES", "5"))
+    if existing_count >= min_threshold:
+        return
+    try:
+        from services.cex_ohlcv_fallback import run_cex_fallback_cycle
+        days = int(os.getenv("CEX_FALLBACK_DAYS", "90"))
+        max_pairs = int(os.getenv("CEX_FALLBACK_MAX_PAIRS", "20"))
+        log_message("download-worker", f"CEX fallback: {chain} has {existing_count} files, bootstrapping...")
+        run_cex_fallback_cycle(chain=chain, days_back=days, max_pairs=max_pairs)
+    except Exception as exc:
+        log_message("download-worker", f"CEX fallback error for {chain}: {exc}", severity="error")
 
 
 class DownloadWorker:

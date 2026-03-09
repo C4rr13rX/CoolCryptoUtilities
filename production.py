@@ -112,6 +112,7 @@ class ProductionManager:
             self._set_active_flag(True)
             return
         self._stop.clear()
+        self._wallet_bootstrap = self._try_wallet_bootstrap()
         self._startup_prewarm = self._prewarm_pipeline()
         self._startup_prewarm_reported = False
         self.supervisor.build()
@@ -542,6 +543,32 @@ class ProductionManager:
             return False
         return result["ok"]
 
+    def _try_wallet_bootstrap(self) -> Dict[str, Any]:
+        """
+        Auto-discover wallet holdings and generate tradeable pairs on startup.
+        Runs before supervisor.build() so watchlists are populated from wallet.
+        Skipped if no MNEMONIC/PRIVATE_KEY is configured or if disabled via env.
+        """
+        if os.getenv("SKIP_WALLET_BOOTSTRAP", "0").lower() in {"1", "true", "yes", "on"}:
+            return {"skipped": True, "reason": "disabled"}
+        mnemonic = os.getenv("MNEMONIC", "").strip()
+        pk = os.getenv("PRIVATE_KEY", "").strip()
+        if not mnemonic and not pk:
+            log_message("production", "wallet bootstrap skipped: no MNEMONIC or PRIVATE_KEY configured", severity="info")
+            return {"skipped": True, "reason": "no_wallet_credentials"}
+        try:
+            from services.wallet_bootstrap import auto_bootstrap
+            result = auto_bootstrap()
+            log_message("production", "wallet bootstrap complete", details={
+                "pairs": result.get("pairs_generated", []),
+                "total_usd": result.get("total_usd", 0),
+                "elapsed": result.get("elapsed_sec"),
+            })
+            return result
+        except Exception as exc:
+            log_message("production", f"wallet bootstrap failed (non-fatal): {exc}", severity="warning")
+            return {"skipped": True, "reason": f"error: {exc}"}
+
     def _prewarm_pipeline(self) -> Dict[str, Any]:
         skip_default = "1" if self.pipeline.system_profile.memory_pressure else "0"
         if (os.getenv("SKIP_PREWARM") or skip_default).lower() in {"1", "true", "yes", "on"}:
@@ -607,6 +634,7 @@ class ProductionManager:
     def _ensure_secure_env(cls) -> None:
         if cls._env_loaded:
             return
+        # EnvLoader.load() hydrates from SecureVault (primary) with .env fallback.
         try:
             EnvLoader.load()
         except Exception:
@@ -622,11 +650,17 @@ class ProductionManager:
                 pass
         except Exception:
             pass
+        # If EnvLoader already hydrated from vault, just derive stream env and log.
+        # Otherwise try one more time directly.
         try:
-            env = build_process_env()
-            derived = cls._derive_stream_env(env)
-            env.update(derived)
-            os.environ.update(env)
+            if os.getenv("SECURE_ENV_HYDRATED") != "1":
+                env = build_process_env()
+                derived = cls._derive_stream_env(env)
+                env.update(derived)
+                os.environ.update(env)
+                os.environ["SECURE_ENV_HYDRATED"] = "1"
+            else:
+                env = {k: os.environ[k] for k in os.environ if not k.startswith("_")}
             cls._debug_env(env)
             print("[production] env hydrated; wss template", env.get("MARKET_WS_TEMPLATE"), "wss", env.get("GLOBAL_WSS_URL") or env.get("BASE_WSS_URL"))
             chain_label = (env.get("PRIMARY_CHAIN") or os.getenv("PRIMARY_CHAIN", "base")).upper()

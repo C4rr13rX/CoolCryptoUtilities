@@ -1522,33 +1522,81 @@ class HistoricalDataLoader:
         cache_dir.mkdir(parents=True, exist_ok=True)
         since_ts = max(0, self.ohlc_start_ts - self.news_horizon)
 
+        # On cold start, only load cached news to avoid blocking startup
+        # with expensive network I/O.  News will be enriched on subsequent cycles.
+        cold_start_fast = os.getenv("NEWS_SKIP_ON_COLD_START", "0").lower() in {"1", "true", "yes", "on"}
+
         frames: List[pd.DataFrame] = []
 
-        cc_df = self._load_cryptocompare_news(cache_dir / "cryptocompare_news.parquet", since_ts)
-        if cc_df is not None:
-            frames.append(cc_df)
+        # These functions will try to download from network if caches don't exist.
+        # On cold start, only load from existing caches (no network I/O).
+        if cold_start_fast:
+            for parquet_path in [
+                cache_dir / "cryptocompare_news.parquet",
+                Path("data/news/cryptonews.parquet"),
+                Path("data/arweave_mirror_news.parquet"),
+                cache_dir / "rss_news.parquet",
+                Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet")),
+                cache_dir / "cryptopanic_news.parquet",
+            ]:
+                if parquet_path.exists():
+                    try:
+                        df = pd.read_parquet(parquet_path)
+                        if not df.empty:
+                            frames.append(df)
+                    except Exception:
+                        pass
+        else:
+            cc_df = self._load_cryptocompare_news(cache_dir / "cryptocompare_news.parquet", since_ts)
+            if cc_df is not None:
+                frames.append(cc_df)
 
-        hf_df = self._load_cryptonews_dataset(Path("data/news/cryptonews.parquet"), since_ts)
-        if hf_df is not None:
-            frames.append(hf_df)
+            hf_df = self._load_cryptonews_dataset(Path("data/news/cryptonews.parquet"), since_ts)
+            if hf_df is not None:
+                frames.append(hf_df)
 
-        arweave_df = self._load_arweave_news(Path("data/arweave_mirror_news.parquet"), since_ts)
-        if arweave_df is not None:
-            frames.append(arweave_df)
+            arweave_df = self._load_arweave_news(Path("data/arweave_mirror_news.parquet"), since_ts)
+            if arweave_df is not None:
+                frames.append(arweave_df)
 
-        rss_df = self._load_rss_news(cache_dir / "rss_news.parquet", since_ts)
-        if rss_df is not None:
-            frames.append(rss_df)
+        # RSS/ethical/CryptoPanic involve network I/O — defer on cold start
+        if not cold_start_fast:
+            rss_df = self._load_rss_news(cache_dir / "rss_news.parquet", since_ts)
+            if rss_df is not None:
+                frames.append(rss_df)
 
-        ethical_path = Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))
-        self._ensure_ethical_news_cache(ethical_path, since_ts)
-        ethical_df = self._load_ethical_news(ethical_path, since_ts)
-        if ethical_df is not None:
-            frames.append(ethical_df)
+            ethical_path = Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))
+            self._ensure_ethical_news_cache(ethical_path, since_ts)
+            ethical_df = self._load_ethical_news(ethical_path, since_ts)
+            if ethical_df is not None:
+                frames.append(ethical_df)
 
-        cryptopanic_df = self._load_cryptopanic_news(cache_dir / "cryptopanic_news.parquet", since_ts)
-        if cryptopanic_df is not None:
-            frames.append(cryptopanic_df)
+            cryptopanic_df = self._load_cryptopanic_news(cache_dir / "cryptopanic_news.parquet", since_ts)
+            if cryptopanic_df is not None:
+                frames.append(cryptopanic_df)
+        else:
+            # Still load from existing parquet caches if available (no network)
+            rss_cache = cache_dir / "rss_news.parquet"
+            if rss_cache.exists():
+                try:
+                    rss_df = pd.read_parquet(rss_cache)
+                    if not rss_df.empty:
+                        frames.append(rss_df)
+                except Exception:
+                    pass
+            ethical_path = Path(os.getenv("ETHICAL_NEWS_PATH", "data/news/ethical_news.parquet"))
+            if ethical_path.exists():
+                ethical_df = self._load_ethical_news(ethical_path, since_ts)
+                if ethical_df is not None:
+                    frames.append(ethical_df)
+            cp_cache = cache_dir / "cryptopanic_news.parquet"
+            if cp_cache.exists():
+                try:
+                    cp_df = pd.read_parquet(cp_cache)
+                    if not cp_df.empty:
+                        frames.append(cp_df)
+                except Exception:
+                    pass
 
         archive_path = Path(os.getenv("CRYPTOPANIC_ARCHIVE_PATH", "data/news/cryptopanic_archive.parquet"))
         if archive_path.exists():
@@ -1559,15 +1607,16 @@ class HistoricalDataLoader:
                     frames.append(archive_df)
             except Exception:
                 pass
-        try:
-            from services.news_router import FreeNewsRouter
+        if not cold_start_fast:
+            try:
+                from services.news_router import FreeNewsRouter
 
-            router = FreeNewsRouter()
-            window_df = router.window(start_ts=since_ts, end_ts=int(time.time()))
-            if window_df is not None and not window_df.empty:
-                frames.append(window_df)
-        except Exception:
-            pass
+                router = FreeNewsRouter()
+                window_df = router.window(start_ts=since_ts, end_ts=int(time.time()))
+                if window_df is not None and not window_df.empty:
+                    frames.append(window_df)
+            except Exception:
+                pass
 
         if not frames:
             # Attempt to bootstrap minimal news from local CSV/JSON if remote sources are unavailable
@@ -1626,6 +1675,12 @@ class HistoricalDataLoader:
 
     def _ensure_ethical_news_cache(self, path: Path, since_ts: int) -> None:
         refresh_interval = int(os.getenv("ETHICAL_NEWS_REFRESH_SEC", "1800"))
+        # During cold-start, skip expensive news crawling to avoid blocking
+        # startup for 5+ minutes.  News will be populated on the next cycle.
+        cold_start_skip = os.getenv("NEWS_SKIP_ON_COLD_START", "1").lower() in {"1", "true", "yes", "on"}
+        if cold_start_skip and not path.exists():
+            log_message("training", "skipping ethical news harvest on cold start (NEWS_SKIP_ON_COLD_START=1)", severity="info")
+            return
         now = time.time()
         if path.exists():
             try:
@@ -1858,10 +1913,11 @@ class HistoricalDataLoader:
                 df = None
         refresh_needed = df is None or df.empty or (df["timestamp"].min() > since_ts if df is not None else True)
         if refresh_needed:
+            rss_timeout = max(3, int(os.getenv("RSS_FEED_TIMEOUT", "8")))
             collected: List[Dict[str, Any]] = []
             for url in feed_urls:
                 try:
-                    resp = requests.get(url, timeout=20)
+                    resp = requests.get(url, timeout=rss_timeout)
                     resp.raise_for_status()
                     root = ET.fromstring(resp.content)
                 except Exception:

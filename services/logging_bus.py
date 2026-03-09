@@ -56,7 +56,10 @@ class LogBus:
             payload = f"[{stamp}] [{record.severity.upper()}] {record.source}: {record.message}"
             if record.details:
                 payload += f" -> {record.details}"
-            print(payload, file=sys.stdout, flush=True)
+            try:
+                print(payload, file=sys.stdout, flush=True)
+            except UnicodeEncodeError:
+                print(payload.encode("ascii", errors="replace").decode("ascii"), file=sys.stdout, flush=True)
             self._write_aggregate(payload)
             self._write_source_log(record.source, payload)
             write_db_log(record)
