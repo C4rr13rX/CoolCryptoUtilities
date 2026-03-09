@@ -17,6 +17,7 @@ class CoreConfig(AppConfig):
     _guardian_started = False
     _streams_started = False
     _cron_started = False
+    _production_started = False
 
     def ready(self):
         if getattr(settings, "TESTING", False):
@@ -52,6 +53,41 @@ class CoreConfig(AppConfig):
                 CoreConfig._streams_started = True
             except Exception:
                 pass
+
+        # Auto-start production manager when wallet credentials are available.
+        if (
+            not CoreConfig._production_started
+            and os.environ.get("PRODUCTION_AUTO_DISABLED") != "1"
+        ):
+            CoreConfig._production_started = True
+
+            def _production_bootstrap():
+                try:
+                    while not apps.ready:
+                        time.sleep(0.05)
+                    # Give guardian a moment to settle before spawning production.
+                    time.sleep(2.0)
+                    from services.guardian_status import snapshot_status
+                    state = snapshot_status()
+                    if state.get("production", {}).get("running"):
+                        return
+                    # Only auto-start if wallet credentials exist in SecureVault.
+                    from securevault.models import SecureSetting
+                    has_wallet = SecureSetting.objects.filter(
+                        name__in=["MNEMONIC", "PRIVATE_KEY"]
+                    ).exists()
+                    if not has_wallet:
+                        return
+                    from opsconsole.manager import manager as console_manager
+                    console_manager.start()
+                except Exception:
+                    CoreConfig._production_started = False
+
+            threading.Thread(
+                target=_production_bootstrap,
+                name="production-bootstrap",
+                daemon=True,
+            ).start()
 
         if os.environ.get("CRON_AUTO_DISABLED") == "1":
             return

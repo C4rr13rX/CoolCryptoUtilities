@@ -114,6 +114,9 @@ class WalletActionRunner:
         env = build_process_env(user)
         python_bin = _default_python()
         cmd = [python_bin, "-u", "main.py", "--action", action]
+        # Production manager must stay alive so its daemon threads survive.
+        if action == "start_production":
+            cmd.append("--stay-alive")
         if payload:
             cmd.extend(["--payload", json.dumps(payload)])
         log_lines: list[str] = []

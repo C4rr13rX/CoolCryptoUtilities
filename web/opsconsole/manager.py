@@ -14,7 +14,7 @@ from services.env_loader import resolve_python_bin
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PYTHON = resolve_python_bin()
-DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py", "--action", "start_production"]
+DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py", "--action", "start_production", "--stay-alive"]
 LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "console.log"
