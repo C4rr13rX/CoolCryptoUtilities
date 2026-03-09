@@ -1204,32 +1204,56 @@
     "0x33906431e44553411b8668543ffc20aaa24f75f9": {
       "symbol": "WETH-CHAIN",
       "index": 133,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:30.235781+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:30.235781+00:00"
     },
     "0xcc6f7439147338e0401a76db978d7d0ca6e5bfee": {
       "symbol": "WETH-SBR",
       "index": 134,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:33.649984+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:33.649984+00:00"
     },
     "0x3016a43b482d0480460f6625115bd372fe90c6bf": {
       "symbol": "SHIBDOGE-WETH",
       "index": 135,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:37.068468+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:37.068468+00:00"
     },
     "0xcffdded873554f362ac02f8fb1f02e5ada10516f": {
       "symbol": "COMP-WETH",
       "index": 136,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:40.529963+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:40.529963+00:00"
     },
     "0xc6e40537215c1e041616478d8cfe312b1847b997": {
       "symbol": "KEKEC-WETH",
       "index": 137,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:43.896069+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:43.896069+00:00"
     },
     "0x63f2a1b80af5b19da43ccccdf89b286155b92b7c": {
       "symbol": "WSB-WETH",
       "index": 138,
-      "completed": false
+      "completed": false,
+      "failures": 1,
+      "last_failure": "2026-03-09T04:21:47.284629+00:00",
+      "error": "non_uniswap_pool",
+      "deferred_until": "2026-03-09T04:26:47.284629+00:00"
     },
     "0x36938d1419b717c97ebdb273702806ca73f89a4c": {
       "symbol": "CFI-WETH",
