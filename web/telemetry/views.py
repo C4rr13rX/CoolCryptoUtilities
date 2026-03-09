@@ -128,6 +128,7 @@ class DashboardSummaryView(APIView):
         stable_bank = float(ghost_state.get("stable_bank", 0.0))
         total_profit = float(ghost_state.get("total_profit", 0.0))
 
+        live_readiness = _load_report(Path("data/reports/live_readiness.json"))
         summary = {
             "metrics_by_stage": list(metric_counts),
             "feedback_by_severity": list(feedback_counts),
@@ -138,6 +139,7 @@ class DashboardSummaryView(APIView):
             "active_advisories": active_advisories,
             "stable_bank": stable_bank,
             "total_profit": total_profit,
+            "live_readiness": live_readiness or {"ready": False},
         }
         return Response(summary, status=status.HTTP_200_OK)
 

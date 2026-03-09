@@ -19,6 +19,25 @@ LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "console.log"
 LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(512 * 1024 * 1024)))
+PID_PATH = REPO_ROOT / "runtime" / "production.pid"
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check whether a process with *pid* is still running."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        else:
+            os.kill(pid, 0)
+            return True
+    except (OSError, PermissionError):
+        return False
 
 
 class ConsoleProcessManager:
@@ -29,11 +48,42 @@ class ConsoleProcessManager:
         self._stdin_lock = threading.Lock()
         self._bootstrap_thread: Optional[threading.Thread] = None
 
+    def _read_pid(self) -> Optional[int]:
+        """Read a previously-written PID file and return the PID if alive."""
+        try:
+            if not PID_PATH.exists():
+                return None
+            pid = int(PID_PATH.read_text().strip())
+            if _is_pid_alive(pid):
+                return pid
+            PID_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+
+    def _write_pid(self, pid: int) -> None:
+        try:
+            PID_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PID_PATH.write_text(str(pid))
+        except Exception:
+            pass
+
+    def _clear_pid(self) -> None:
+        try:
+            PID_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def start(self, command: Optional[list[str]] = None, user=None) -> Dict[str, str]:
         cmd = command or DEFAULT_COMMAND
         with self._lock:
+            # Check in-memory handle first.
             if self._process and self._process.poll() is None:
                 return {"status": "running", "pid": str(self._process.pid)}
+            # Check PID file — guards against duplicate spawns across reloads.
+            existing_pid = self._read_pid()
+            if existing_pid:
+                return {"status": "running", "pid": str(existing_pid)}
             self._rotate_log_if_needed()
             logfile = LOG_PATH.open("a", encoding="utf-8")
             env = build_process_env(user)
@@ -55,12 +105,14 @@ class ConsoleProcessManager:
                 return {"status": "error", "message": str(exc)}
             self._process = proc
             self._started_at = time.time()
+            self._write_pid(proc.pid)
             logfile.close()
             return {"status": "started", "pid": str(proc.pid)}
 
     def stop(self, graceful_timeout: float = 5.0) -> Dict[str, str]:
         with self._lock:
             if not self._process or self._process.poll() is not None:
+                self._clear_pid()
                 return {"status": "stopped"}
             try:
                 os.killpg(os.getpgid(self._process.pid), signal.SIGINT)
@@ -79,11 +131,15 @@ class ConsoleProcessManager:
                     pass
             self._process = None
             self._started_at = None
+            self._clear_pid()
             return {"status": "stopped"}
 
     def status(self) -> Dict[str, Optional[str]]:
         with self._lock:
             if not self._process:
+                existing_pid = self._read_pid()
+                if existing_pid:
+                    return {"status": "running", "pid": str(existing_pid), "uptime": None}
                 return {"status": "idle", "pid": None, "uptime": None}
             running = self._process.poll() is None
             uptime = None

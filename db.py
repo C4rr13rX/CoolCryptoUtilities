@@ -72,7 +72,7 @@ class TradingDatabase:
             fallback = Path("trading_cache.db").absolute()
             fallback.parent.mkdir(parents=True, exist_ok=True)
             self.path = str(fallback)
-        raw_conn = sqlite3.connect(self.path, check_same_thread=False)
+        raw_conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         raw_conn.row_factory = sqlite3.Row
         self._conn = _LockedSqliteConnection(raw_conn, self._lock)
         self._init_schema()

@@ -194,6 +194,9 @@ else:
             "NAME": str(
                 Path(os.getenv("DJANGO_SQLITE_PATH", REPO_ROOT / "storage" / "trading_cache.db")).resolve()
             ),
+            "OPTIONS": {
+                "timeout": 30,
+            },
         }
     }
 
