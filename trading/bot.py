@@ -25,6 +25,7 @@ from trading.equilibrium import EquilibriumTracker
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
 from trading.opportunity import OpportunityTracker
+from services.logging_utils import log_message
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
@@ -213,6 +214,12 @@ class TradingBot:
         self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.9"))
         self.required_live_trades: int = int(os.getenv("LIVE_PROMOTION_MIN_TRADES", "120"))
         self.required_live_profit: float = float(os.getenv("LIVE_PROMOTION_MIN_PROFIT", "50.0"))
+        # Live circuit breaker: revert to ghost after consecutive losses or drawdown.
+        self._live_consecutive_losses: int = 0
+        self._live_total_pnl: float = 0.0
+        self._live_peak_pnl: float = 0.0
+        self._circuit_breaker_max_losses: int = int(os.getenv("LIVE_CIRCUIT_BREAKER_LOSSES", "5"))
+        self._circuit_breaker_max_drawdown: float = float(os.getenv("LIVE_CIRCUIT_BREAKER_DRAWDOWN", "0.25"))
         self.max_symbol_share: float = float(os.getenv("MAX_SYMBOL_SHARE", "0.25"))
         self.global_risk_budget: float = float(os.getenv("GLOBAL_RISK_BUDGET", "1.0"))
         self._horizon_metrics_interval: float = max(60.0, float(os.getenv("HORIZON_METRICS_INTERVAL", "300")))
@@ -2764,14 +2771,27 @@ class TradingBot:
                 pre_native = float(self.portfolio.get_native_balance(chain_name))
 
                 swapper = SwapService(self._bridge)
-                await asyncio.to_thread(
-                    swapper.swap,
-                    chain=chain_name,
-                    sell=quote_swap_token,
-                    buy=base_swap_token,
-                    amount_human=f"{quote_spend_target:.6f}",
-                    slippage_bps=slippage,
-                )
+                try:
+                    await asyncio.to_thread(
+                        swapper.swap,
+                        chain=chain_name,
+                        sell=quote_swap_token,
+                        buy=base_swap_token,
+                        amount_human=f"{quote_spend_target:.6f}",
+                        slippage_bps=slippage,
+                    )
+                except Exception as swap_exc:
+                    decision.update({
+                        "action": "enter",
+                        "status": "live-entry-failed",
+                        "reason": f"swap_error:{swap_exc}",
+                        "trade_id": trade_id,
+                        "wallet": "live",
+                        "session_id": self.ghost_session_id,
+                        "executed": False,
+                    })
+                    log_message("live-swap", f"entry swap failed: {swap_exc}", severity="error")
+                    return decision
                 await self._run_wallet_sync(reason="post-live-entry")
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
@@ -3140,14 +3160,27 @@ class TradingBot:
                 pre_native = float(self.portfolio.get_native_balance(chain_name))
 
                 swapper = SwapService(self._bridge)
-                await asyncio.to_thread(
-                    swapper.swap,
-                    chain=chain_name,
-                    sell=base_swap_token,
-                    buy=quote_swap_token,
-                    amount_human=f"{exit_size:.6f}",
-                    slippage_bps=slippage,
-                )
+                try:
+                    await asyncio.to_thread(
+                        swapper.swap,
+                        chain=chain_name,
+                        sell=base_swap_token,
+                        buy=quote_swap_token,
+                        amount_human=f"{exit_size:.6f}",
+                        slippage_bps=slippage,
+                    )
+                except Exception as swap_exc:
+                    decision.update({
+                        "action": "exit",
+                        "status": "live-exit-failed",
+                        "reason": f"swap_error:{swap_exc}",
+                        "trade_id": pos.get("trade_id"),
+                        "wallet": "live",
+                        "session_id": self.ghost_session_id,
+                        "executed": False,
+                    })
+                    log_message("live-swap", f"exit swap failed: {swap_exc}", severity="error")
+                    return decision
                 await self._run_wallet_sync(reason="post-live-exit")
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
@@ -3275,6 +3308,36 @@ class TradingBot:
                 return decision
             self.total_profit += profit
             self.realized_profit += profit
+            # --- Live circuit breaker: revert to ghost on sustained losses ---
+            if self.live_trading_enabled:
+                if profit > 0:
+                    self._live_consecutive_losses = 0
+                else:
+                    self._live_consecutive_losses += 1
+                self._live_total_pnl += profit
+                self._live_peak_pnl = max(self._live_peak_pnl, self._live_total_pnl)
+                drawdown = (self._live_peak_pnl - self._live_total_pnl) if self._live_peak_pnl > 0 else abs(self._live_total_pnl)
+                wallet_value = sum(self.sim_quote_balances.values()) or 1.0
+                drawdown_pct = drawdown / max(wallet_value, 1.0)
+                if (
+                    self._live_consecutive_losses >= self._circuit_breaker_max_losses
+                    or drawdown_pct >= self._circuit_breaker_max_drawdown
+                ):
+                    self.live_trading_enabled = False
+                    self._live_consecutive_losses = 0
+                    self._live_total_pnl = 0.0
+                    self._live_peak_pnl = 0.0
+                    log_message(
+                        "live-circuit-breaker",
+                        "reverted to ghost mode",
+                        severity="warning",
+                        details={
+                            "consecutive_losses": self._live_consecutive_losses,
+                            "drawdown_pct": round(drawdown_pct, 4),
+                            "live_pnl": round(self._live_total_pnl, 4),
+                            "symbol": symbol,
+                        },
+                    )
             brain_snapshot = pos.get("brain_snapshot") if isinstance(pos, dict) else None
             if isinstance(brain_snapshot, dict):
                 swarm_votes = brain_snapshot.get("swarm_votes") or []

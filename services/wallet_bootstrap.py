@@ -41,6 +41,38 @@ def _get_bridge():
         return None
 
 
+def _persist_balances(wallet_info: Dict[str, Any], chain: str = "base") -> None:
+    """Store scanned wallet holdings into the trading DB so readiness gates
+    can see them via ``db.fetch_balances_flat()``."""
+    try:
+        from db import get_db
+        db = get_db()
+        wallet_addr = (wallet_info.get("wallet") or "guardian").lower()
+        entries = []
+        now = time.time()
+        for h in wallet_info.get("holdings", []):
+            entries.append({
+                "wallet": "guardian",
+                "chain": chain.lower(),
+                "token": (h.get("address") or "native").lower(),
+                "balance_hex": "",
+                "asof_block": 0,
+                "ts": now,
+                "decimals": 18,
+                "quantity": str(h.get("quantity", 0)),
+                "usd_amount": h.get("usd", 0.0),
+                "symbol": h.get("symbol", ""),
+                "name": h.get("symbol", ""),
+                "updated_at": now,
+                "stale": 0,
+            })
+        if entries:
+            db.upsert_balances(entries)
+            log_message("wallet-bootstrap", f"persisted {len(entries)} balance rows for guardian")
+    except Exception as exc:
+        log_message("wallet-bootstrap", f"balance persist failed: {exc}", severity="warning")
+
+
 def scan_wallet_holdings(
     chain: str = PRIMARY_CHAIN,
     bridge=None,
@@ -285,6 +317,9 @@ def auto_bootstrap(
         # Step 2: Generate pairs from holdings
         pairs = generate_pairs_from_holdings(holdings, chain=chain)
         log_message("wallet-bootstrap", f"generated {len(pairs)} pairs from {len(holdings)} holdings (${total_usd:.2f})")
+
+    # Step 2b: Persist wallet balances to DB so readiness gates can see them
+    _persist_balances(wallet_info, chain=chain)
 
     # Step 3: Download OHLCV
     ohlcv_results = download_ohlcv_for_pairs(pairs, chain=chain, days_back=days_back)

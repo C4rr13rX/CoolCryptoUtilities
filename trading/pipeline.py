@@ -3279,22 +3279,29 @@ class TrainingPipeline:
         focus_fragment_ratio = (len(focus_dust_tokens) / focus_holdings) if focus_holdings else 0.0
         fragmented = len(focus_dust_tokens) >= 3 or focus_fragment_ratio >= 0.5
         fragmented_total = len(dust_tokens_total) >= 3 or (len(dust_tokens_total) / holdings_total if holdings_total else 0.0) >= 0.5
-        micro_mode = bool(allow_micro and focus_stable_usd >= micro_min_capital and focus_stable_usd < min_capital_usd)
+        # For micro wallets, total capital (stable + native) counts toward
+        # minimum thresholds so native-only wallets can still trade.
+        focus_total_usd = focus_stable_usd + focus_native_usd
+        micro_mode = bool(allow_micro and focus_total_usd >= micro_min_capital and focus_total_usd < min_capital_usd)
         effective_min_capital = micro_min_capital if micro_mode else min_capital_usd
         native_buffer_target = micro_native_buffer if micro_mode else native_buffer_default
-        native_buffer_gap = max(0.0, native_buffer_target - focus_native_usd)
+        # In micro mode with native-only wallet, native IS the capital — not starved.
+        has_native_capital = micro_mode and focus_native_usd >= micro_min_capital
+        native_buffer_gap = 0.0 if has_native_capital else max(0.0, native_buffer_target - focus_native_usd)
         native_starved = native_buffer_gap > 0.0
-        stable_deficit = max(0.0, effective_min_capital - focus_stable_usd)
+        capital_deficit = max(0.0, effective_min_capital - focus_total_usd)
         sparse_reasons: List[str] = []
         if focus_holdings == 0:
             sparse_reasons.append("focus_empty")
-        if stable_deficit > 0:
+        if capital_deficit > 0:
             sparse_reasons.append("stable_below_min")
         if native_starved:
             sparse_reasons.append("native_gas_low")
-        if fragmented:
+        # Fragmentation is informational when we have sufficient capital.
+        # A native-heavy wallet with dust tokens is normal, not a blocker.
+        if fragmented and capital_deficit > 0:
             sparse_reasons.append("fragmented")
-        sparse = bool(stable_deficit > 0 or fragmented or native_starved or focus_holdings == 0)
+        sparse = bool(capital_deficit > 0 or native_starved or focus_holdings == 0)
         micro_allowed = bool(micro_mode and not sparse)
         return {
             "wallet": wallet,
@@ -3319,7 +3326,7 @@ class TrainingPipeline:
             "focus_candidates": focus_candidates,
             "focus_holdings": focus_holdings,
             "holdings_total": holdings_total,
-            "stable_deficit_usd": stable_deficit,
+            "stable_deficit_usd": capital_deficit,
             "native_buffer_gap_usd": native_buffer_gap,
             "native_buffer_target_usd": native_buffer_target,
             "native_starved": native_starved,
