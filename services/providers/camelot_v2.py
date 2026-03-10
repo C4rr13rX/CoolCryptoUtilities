@@ -1,7 +1,9 @@
 from __future__ import annotations
-import os, time
+import logging, os, time
 from typing import Any, Dict, Optional, List, Tuple
 from web3 import Web3
+
+logger = logging.getLogger(__name__)
 
 # ---- V2 routers per chain (override via ENV: CAMELOT_V2_ROUTER_<CHAIN>) ----
 CAMELOT_V2_ROUTER: Dict[str, str] = {
@@ -92,13 +94,15 @@ class CamelotV2Local:
         try:
             out = router_quote.functions.getAmountsOut(int(amount_in), [t_in, t_out]).call()[-1]
             if int(out) > 0: paths.append(([t_in, t_out], int(out)))
-        except Exception: pass
+        except Exception as exc:
+            logger.debug("CamelotV2 direct route %s->%s failed: %s", t_in[:10], t_out[:10], exc)
         # via WNATIVE
         try:
             out1 = router_quote.functions.getAmountsOut(int(amount_in), [t_in, wnat]).call()[-1]
             out2 = router_quote.functions.getAmountsOut(int(out1), [wnat, t_out]).call()[-1]
             if int(out1) > 0 and int(out2) > 0: paths.append(([t_in, wnat, t_out], int(out2)))
-        except Exception: pass
+        except Exception as exc:
+            logger.debug("CamelotV2 wrapped route %s->WNAT->%s failed: %s", t_in[:10], t_out[:10], exc)
 
         if not paths:
             return {"__error__": "CamelotV2: no path (direct or via WNATIVE)"}

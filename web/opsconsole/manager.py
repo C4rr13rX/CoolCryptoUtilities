@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
@@ -11,6 +12,8 @@ from typing import Dict, Optional
 
 from services.secure_settings import build_process_env
 from services.env_loader import resolve_python_bin
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PYTHON = resolve_python_bin()
@@ -65,14 +68,14 @@ class ConsoleProcessManager:
         try:
             PID_PATH.parent.mkdir(parents=True, exist_ok=True)
             PID_PATH.write_text(str(pid))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("PID write failed (pid=%d): %s", pid, exc)
 
     def _clear_pid(self) -> None:
         try:
             PID_PATH.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("PID clear failed: %s", exc)
 
     def start(self, command: Optional[list[str]] = None, user=None) -> Dict[str, str]:
         cmd = command or DEFAULT_COMMAND

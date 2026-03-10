@@ -225,7 +225,8 @@ class HistoricalDataLoader:
                 meta.get("profile") or {},
                 meta.get("sample_meta") or {},
             )
-        except Exception:
+        except Exception as exc:
+            log_message("data_loader", f"disk cache read failed (deleting corrupt cache): {exc}", severity="warning")
             path.unlink(missing_ok=True)
             meta_path.unlink(missing_ok=True)
             return None
@@ -257,7 +258,8 @@ class HistoricalDataLoader:
             if sample_meta:
                 meta["sample_meta"] = sample_meta
             meta_path.write_text(json.dumps(meta), encoding="utf-8")
-        except Exception:
+        except Exception as exc:
+            log_message("data_loader", f"disk cache write failed: {exc}", severity="warning")
             path.unlink(missing_ok=True)
             meta_path.unlink(missing_ok=True)
 

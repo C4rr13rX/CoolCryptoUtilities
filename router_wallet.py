@@ -279,6 +279,36 @@ def _normalize_addr(a: str) -> str:
     if not s.startswith("0x"): s = "0x" + s
     return Web3.to_checksum_address(s)
 
+
+# ── Address safety ──────────────────────────────────────────────────
+_BLOCKED_RECIPIENTS = {
+    "0x0000000000000000000000000000000000000000",  # zero address
+    "0x000000000000000000000000000000000000dead",  # common burn
+    "0x0000000000000000000000000000000000000001",  # ecrecover precompile
+    "0x0000000000000000000000000000000000000002",  # sha256 precompile
+    "0x0000000000000000000000000000000000000003",  # ripemd160 precompile
+    "0x0000000000000000000000000000000000000004",  # identity precompile
+    "0x0000000000000000000000000000000000000005",  # modexp precompile
+    "0x0000000000000000000000000000000000000006",  # ecadd precompile
+    "0x0000000000000000000000000000000000000007",  # ecmul precompile
+    "0x0000000000000000000000000000000000000008",  # ecpairing precompile
+    "0x0000000000000000000000000000000000000009",  # blake2f precompile
+    "0xdead000000000000000000000000000000000000",  # alt burn
+}
+
+
+def validate_recipient(address: str) -> None:
+    """Raise ValueError if address is a known burn/dead/precompile address."""
+    if not address or len(address) != 42 or not address.startswith("0x"):
+        raise ValueError(f"Invalid recipient address format: {address!r}")
+    low = address.lower()
+    if low in _BLOCKED_RECIPIENTS:
+        raise ValueError(
+            f"Blocked recipient: {address} is a burn/dead/precompile address. "
+            f"Sending funds here would permanently destroy them."
+        )
+
+
 def _parse_watch_token_blob(blob: Optional[str]) -> Dict[str, List[str]]:
     """Parse WALLET_PINNED_TOKENS style env (chain:token,chain:0x...)."""
     result: Dict[str, List[str]] = {}
@@ -656,6 +686,7 @@ class UltraSwapBridge:
         w3 = self._w3(chain) if hasattr(self, "_w3") else self._rb__w3(chain)
         acct = self.acct
         to_cs = w3.to_checksum_address(to)
+        validate_recipient(to_cs)
         data_hex = data or "0x"
         val = int(value or 0)
 
@@ -729,6 +760,7 @@ class UltraSwapBridge:
             raise ValueError("0x tx missing 'to' or 'data'")
 
         to_cs = w3.to_checksum_address(to)
+        validate_recipient(to_cs)
         val   = int(value if not (isinstance(value, str) and value.startswith("0x")) else int(value, 16))
 
         tx = {
@@ -864,9 +896,12 @@ class UltraSwapBridge:
         Transfer ERC-20 `amount` (base units) to `to` on `chain`.
         Respects EIP-1559 fees and estimates gas when not provided.
         """
+        if int(amount) <= 0:
+            raise ValueError("send_erc20: amount must be > 0")
         w3 = self._w3(chain)
         token_cs = Web3.to_checksum_address(token)
         to_cs = Web3.to_checksum_address(to)
+        validate_recipient(to_cs)
         sender = self.acct.address
 
         fn = self._erc20(w3, token_cs).functions.transfer(to_cs, int(amount))

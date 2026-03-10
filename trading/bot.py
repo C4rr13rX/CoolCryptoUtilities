@@ -249,7 +249,8 @@ class TradingBot:
         try:
             if hasattr(self.scheduler, "filter_metrics"):
                 out = self.scheduler.filter_metrics()  # type: ignore[attr-defined]
-        except Exception:
+        except Exception as exc:
+            log_message("trading", f"filter_metrics failed: {exc}", severity="warning")
             out = []
         return out
 
@@ -260,7 +261,8 @@ class TradingBot:
         """
         try:
             eq = self.profit_equilibrium.snapshot()
-        except Exception:
+        except Exception as exc:
+            log_message("trading", f"equilibrium snapshot failed: {exc}", severity="warning")
             return
         brightness = float(eq.get("brightness", 0.0))
         trend = float(eq.get("trend", 0.0))
@@ -799,8 +801,8 @@ class TradingBot:
         if realized_returns:
             try:
                 self.swarm.learn(price_windows, sentiment_windows, realized_returns)
-            except Exception:
-                pass
+            except Exception as exc:
+                log_message("trading", f"swarm.learn failed: {exc}", severity="warning")
         opportunity_signal = None
         try:
             opportunity_signal = self.opportunity_tracker.evaluate(symbol, history_prices)
@@ -1017,8 +1019,8 @@ class TradingBot:
                 status="queued",
                 details=payload,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("savings", f"db.log_trade failed for savings_transfer: {exc}", severity="warning")
         try:
             self.metrics.feedback(
                 "savings",
@@ -1026,8 +1028,8 @@ class TradingBot:
                 label=event.reason,
                 details=payload,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("savings", f"metrics.feedback failed: {exc}", severity="warning")
         try:
             self.metrics.record(
                 MetricStage.SAVINGS,
@@ -1035,8 +1037,8 @@ class TradingBot:
                 category=event.mode,
                 meta=payload,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("savings", f"metrics.record failed: {exc}", severity="warning")
         print(
             f"[savings] mode={event.mode} token={event.token} amount={event.amount:.4f} equilibrium={event.equilibrium_score:.3f}"
         )
@@ -1050,14 +1052,14 @@ class TradingBot:
                 category=str(payload.get("mode") or "ghost"),
                 meta=payload,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("savings", f"checkpoint metrics failed: {exc}", severity="warning")
 
     def _log_savings_skip(self, payload: Dict[str, Any]) -> None:
         try:
             self.metrics.feedback("savings", severity=FeedbackSeverity.WARNING, label="checkpoint_skipped", details=payload)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("savings", f"savings skip log failed: {exc}", severity="warning")
 
     def _sync_checkpoint_ratio(self, *, equilibrium_ready: Optional[bool] = None) -> None:
         if equilibrium_ready is None:

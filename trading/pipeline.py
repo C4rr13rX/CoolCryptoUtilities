@@ -529,8 +529,8 @@ class TrainingPipeline:
             tmp_path = path.with_suffix(path.suffix + ".tmp")
             tmp_path.write_text(json.dumps(blob, indent=2), encoding="utf-8")
             os.replace(tmp_path, path)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("training", f"state persist failed: {exc}", severity="warning")
 
     def _active_approval(self, candidate_eval: Dict[str, float], active_eval: Dict[str, float]) -> bool:
         if os.getenv("DISABLE_ACTIVE_APPROVAL", "0").lower() in {"1", "true", "yes", "on"}:
@@ -574,14 +574,14 @@ class TrainingPipeline:
     def request_pause(self) -> None:
         try:
             self.db.set_control_flag(self._pause_flag_key, "1")
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("training", f"request_pause failed: {exc}", severity="warning")
 
     def clear_pause(self) -> None:
         try:
             self.db.clear_control_flag(self._pause_flag_key)
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("training", f"clear_pause failed: {exc}", severity="warning")
 
     def train_candidate(self) -> Optional[Dict[str, Any]]:
         lease = None
@@ -648,7 +648,8 @@ class TrainingPipeline:
                     "system_profile": dict(self.system_profile.__dict__),
                 },
             )
-        except Exception:
+        except Exception as exc:
+            log_message("training", f"experiment recording failed: {exc}", severity="warning")
             exp_id = None
 
         exp_finalized = False
@@ -659,8 +660,8 @@ class TrainingPipeline:
                 return
             try:
                 self.db.update_experiment(exp_id, status=status, results=results)
-            except Exception:
-                pass
+            except Exception as exc:
+                log_message("training", f"experiment finalize failed (id={exp_id}): {exc}", severity="warning")
             exp_finalized = True
 
         try:
@@ -985,8 +986,8 @@ class TrainingPipeline:
                         category="shadow_eval",
                         meta={"iteration": self.iteration, "shadow": shadow_eval},
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    log_message("training", f"shadow eval metrics record failed: {exc}", severity="warning")
                 self._persist_shadow_eval(shadow_eval)
             if promote:
                 if not evaluation:
@@ -1301,16 +1302,17 @@ class TrainingPipeline:
         try:
             shutil.copy2(versioned_path, tmp_path)
             os.replace(tmp_path, active_path)
-        except Exception:
+        except Exception as exc:
+            log_message("training", f"atomic model promote failed, direct save fallback: {exc}", severity="warning")
             try:
                 model.save(active_path, include_optimizer=False)
-            except Exception:
-                pass
+            except Exception as exc2:
+                log_message("training", f"model direct save also failed: {exc2}", severity="error")
             try:
                 if tmp_path.exists():
                     tmp_path.unlink()
-            except Exception:
-                pass
+            except Exception as exc3:
+                log_message("training", f"tmp cleanup failed: {exc3}", severity="warning")
         # Clean up challenger artifacts after successful promotion
         challenger_path.unlink(missing_ok=True)
         challenger_meta_path.unlink(missing_ok=True)
@@ -2128,7 +2130,8 @@ class TrainingPipeline:
         if not isinstance(profile, dict) or not profile:
             try:
                 profile = self.data_loader.horizon_profile()
-            except Exception:
+            except Exception as exc:
+                log_message("training", f"horizon_profile failed: {exc}", severity="warning")
                 profile = {}
         if not isinstance(profile, dict) or not profile:
             return {}
@@ -2380,8 +2383,8 @@ class TrainingPipeline:
                     category="horizon_deficit",
                     meta={"focus_assets": list(focus_assets or []), "iteration": self.iteration},
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("training", f"horizon deficit metrics failed: {exc}", severity="warning")
         adjustments = self.data_loader.rebalance_horizons(deficits, focus_assets)
         synthetic = self.data_loader.backfill_shortfall(deficits, focus_assets)
         if synthetic:

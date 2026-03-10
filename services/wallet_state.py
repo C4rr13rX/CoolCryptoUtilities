@@ -97,8 +97,8 @@ def _fetch_native_balance(wallet_addr: str, chain: str, bridge: UltraSwapBridge 
         try:
             w3 = bridge._w3(chain)
             return int(w3.eth.get_balance(wallet_addr)), "bridge"
-        except Exception:
-            pass
+        except Exception as exc:
+            wallet_log(f"bridge balance fetch failed for {chain}, falling back to public RPCs: {exc}", severity="warning")
     errors: List[str] = []
     for url in _rpc_candidates(chain):
         payload = {
@@ -773,12 +773,27 @@ def capture_wallet_state(
     _write_json("transfers", transfers_payload)
     _write_json("nfts", nfts_payload)
     _write_json("state", state)
+    # Also persist per-wallet state for multi-wallet support.
+    if wallet_addr:
+        _write_json(f"state_{wallet_addr.lower()}", state)
     return state
 
 
-def load_wallet_state() -> Dict[str, Any]:
+def load_wallet_state(wallet_address: Optional[str] = None) -> Dict[str, Any]:
+    """Load wallet state snapshot.
+
+    If *wallet_address* is given, try the per-wallet state file first
+    (written by ``capture_wallet_state``).  Falls back to the shared
+    ``state.json`` if the per-wallet file doesn't exist or doesn't match.
+    """
+    if wallet_address:
+        per_wallet = _read_json(f"state_{wallet_address.lower()}")
+        if per_wallet:
+            return per_wallet
     snapshot = _read_json("state")
     if snapshot:
+        if wallet_address and (snapshot.get("wallet") or "").lower() != wallet_address.lower():
+            return dict(DEFAULT_STATE)
         return snapshot
     balances = _read_json("balances") or {}
     transfers = _read_json("transfers") or {}

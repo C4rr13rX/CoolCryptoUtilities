@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(find /c/Users/Adam/Projects/CoolCryptoUtilities/trading -type f -name *.py)"
     ]
   }
 }

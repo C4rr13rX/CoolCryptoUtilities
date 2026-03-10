@@ -1,6 +1,6 @@
 from __future__ import annotations
 from web3 import Web3
-from router_wallet import UltraSwapBridge
+from router_wallet import UltraSwapBridge, validate_recipient
 from services.cli_utils import is_native, to_base_units, explorer_for
 
 class SendService:
@@ -10,6 +10,7 @@ class SendService:
         ch = chain.lower().strip()
         w3 = self.bridge._w3(ch)
         to_cs = w3.to_checksum_address(to)
+        validate_recipient(to_cs)
         if is_native(token):
             value = to_base_units(amount_human, 18)
             txh = self.bridge.send_prebuilt_tx(ch, to_cs, "0x", value=int(value), fee_scope="send")

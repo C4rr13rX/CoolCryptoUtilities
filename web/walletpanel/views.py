@@ -94,6 +94,23 @@ class WalletMnemonicView(APIView):
             SecureSetting.objects.filter(user=request.user, name="MNEMONIC", category=DEFAULT_CATEGORY).delete()
             return Response({"changed": True, "preview": ""}, status=status.HTTP_200_OK)
         value = str(mnemonic).strip()
+        # Validate BIP39 mnemonic (12, 15, 18, 21, or 24 words)
+        word_count = len(value.split())
+        if word_count not in (12, 15, 18, 21, 24):
+            return Response(
+                {"detail": f"Invalid mnemonic: expected 12, 15, 18, 21, or 24 words, got {word_count}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Verify it can derive an address
+        try:
+            from eth_account import Account
+            Account.enable_unaudited_hdwallet_features()
+            Account.from_mnemonic(value)
+        except Exception as exc:
+            return Response(
+                {"detail": f"Invalid mnemonic: {exc}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         _upsert_secret(request.user, "MNEMONIC", value)
         try:
             from services.internal_cron import cron_supervisor
@@ -237,7 +254,7 @@ class MultiWalletListView(APIView):
         per_wallet: list[Dict[str, Any]] = []
         for w in wallets:
             try:
-                state = load_wallet_state()
+                state = load_wallet_state(wallet_address=w.address)
                 if (state.get("wallet") or "").lower() == w.address.lower():
                     state["wallet_index"] = w.index
                     per_wallet.append(state)
