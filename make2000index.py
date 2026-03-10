@@ -196,6 +196,18 @@ def _fetch_top_symbols(limit: int) -> List[str]:
     return symbols[:limit]
 
 
+# DEXes that use the standard Uniswap token0()/token1() pool interface.
+# Pools from other DEXes (Curve, Balancer, DODO, etc.) use different
+# interfaces and will always fail resolve_pool_kind() — skip them at index time.
+_UNISWAP_COMPATIBLE_DEXIDS = frozenset({
+    "uniswap", "sushiswap", "pancakeswap", "quickswap", "camelot",
+    "trader-joe", "spookyswap", "spiritswap", "velodrome", "aerodrome",
+    "baseswap", "swapbased", "alienbase", "maverick", "thena",
+    "ramses", "chronos", "zyberswap", "arbidex", "woofi",
+    "solidly", "equalizer", "retro", "synthswap", "dackie",
+})
+
+
 def build_index_from_dexscreener(chain: str) -> dict:
     chain = chain.lower().strip()
     target = int(os.getenv("PAIR_INDEX_TARGET", str(_FALLBACK_PAIR_LIMIT)))
@@ -204,6 +216,7 @@ def build_index_from_dexscreener(chain: str) -> dict:
         return {}
     session = requests.Session()
     results: dict = {}
+    skipped_dexes: dict = {}
 
     def _score(entry: dict) -> float:
         volume = float(entry.get("volumeUsd24h") or entry.get("volumeUsd") or 0.0)
@@ -233,6 +246,10 @@ def build_index_from_dexscreener(chain: str) -> dict:
                 chain_id = str(entry.get("chainId") or entry.get("chain") or "").lower()
                 if chain_id != chain:
                     continue
+                dex_id = str(entry.get("dexId") or "").lower().strip()
+                if dex_id not in _UNISWAP_COMPATIBLE_DEXIDS:
+                    skipped_dexes[dex_id] = skipped_dexes.get(dex_id, 0) + 1
+                    continue
                 pair_addr = str(entry.get("pairAddress") or "").strip()
                 if not pair_addr:
                     continue
@@ -249,6 +266,9 @@ def build_index_from_dexscreener(chain: str) -> dict:
         if len(results) >= target:
             break
         time.sleep(_DEXSCREENER_BACKOFF + (0.1 * (symbol.__len__() % 3)))
+
+    if skipped_dexes:
+        print(f"[INFO] Skipped {sum(skipped_dexes.values())} non-Uniswap pools: {dict(sorted(skipped_dexes.items(), key=lambda kv: -kv[1]))}")
 
     ranked = sorted(results.items(), key=lambda kv: kv[1].get("score", 0), reverse=True)
     trimmed = ranked[:target]

@@ -15,7 +15,8 @@ from services.env_loader import EnvLoader
 EnvLoader.load()
 
 
-GUARDIAN_FLAG = "--guardian-off"
+GUARDIAN_ON_FLAG = "--guardian-on"
+GUARDIAN_OFF_FLAG = "--guardian-off"  # kept for backward compat
 GUARDIAN_ENV_VAR = "GUARDIAN_AUTO_DISABLED"
 PRODUCTION_FLAG = "--production-off"
 PRODUCTION_ENV_VAR = "PRODUCTION_AUTO_DISABLED"
@@ -32,6 +33,14 @@ def _consume_flag(argv: list[str], flag: str, env_var: str) -> None:
     os.environ[env_var] = "1"
 
 
+def _consume_enable_flag(argv: list[str], flag: str, env_var: str) -> None:
+    """Remove *flag* from argv and set *env_var* to ``0`` (meaning NOT disabled)."""
+    if flag not in argv:
+        return
+    argv.remove(flag)
+    os.environ[env_var] = "0"
+
+
 def _set_dev_defaults(argv: list[str]) -> None:
     if not any(arg in {"runserver", "reseat"} for arg in argv[1:]):
         return
@@ -44,7 +53,11 @@ def _set_dev_defaults(argv: list[str]) -> None:
 def main() -> None:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
     _set_dev_defaults(sys.argv)
-    _consume_flag(sys.argv, GUARDIAN_FLAG, GUARDIAN_ENV_VAR)
+    # Guardian is OFF by default — use --guardian-on to enable it.
+    # Legacy --guardian-off flag kept for backward compatibility.
+    _consume_enable_flag(sys.argv, GUARDIAN_ON_FLAG, GUARDIAN_ENV_VAR)
+    _consume_flag(sys.argv, GUARDIAN_OFF_FLAG, GUARDIAN_ENV_VAR)
+    os.environ.setdefault(GUARDIAN_ENV_VAR, "1")  # disabled unless --guardian-on
     _consume_flag(sys.argv, PRODUCTION_FLAG, PRODUCTION_ENV_VAR)
     try:
         from django.core.management import execute_from_command_line

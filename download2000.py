@@ -541,18 +541,57 @@ def parse_logs_v3_no_ts(logs, dec0, dec1, granularity_seconds):
         blocks_by_bar.setdefault(bar_slot, set()).add(blk_num)
     return records_by_bar, blocks_by_bar
 
+def _is_revert_error(exc: Exception) -> bool:
+    """Return True if the exception indicates a permanent contract-level revert
+    (method doesn't exist, wrong ABI, etc.) rather than a transient RPC/network error."""
+    msg = str(exc).lower()
+    revert_indicators = (
+        "execution reverted", "revert", "invalid opcode",
+        "out of gas", "bad instruction", "invalid jump",
+        "could not decode", "missing revert data",
+        "returned an empty", "0x", "abi", "decode",
+    )
+    transient_indicators = (
+        "timeout", "timed out", "connection", "connect",
+        "429", "rate limit", "too many requests",
+        "502", "503", "504", "server error",
+        "eof", "broken pipe", "reset by peer",
+    )
+    if any(t in msg for t in transient_indicators):
+        return False
+    return any(r in msg for r in revert_indicators)
+
+
 def resolve_pool_kind(pair_addr):
+    """Attempt to read token0/token1 from a pool contract.
+    Returns:
+      dict   — success: {kind, t0_raw, t1_raw, fee}
+      None   — transient error (worth retrying later)
+      False  — permanent incompatibility (never retry)
+    """
+    # Pre-check: does the address even have deployed code?
+    if not _has_code(pair_addr):
+        return False  # no contract at this address — permanent
+
+    # Try V2 interface
     try:
         pair_v2 = get_web3().eth.contract(address=pair_addr, abi=PAIR_ABI)
         t0_raw = limited(lambda: pair_v2.functions.token0().call())
         t1_raw = limited(lambda: pair_v2.functions.token1().call())
-    except Exception:
+    except Exception as exc_v2:
+        v2_permanent = _is_revert_error(exc_v2)
+        # Try V3 interface
         try:
             pair_v3 = get_web3().eth.contract(address=pair_addr, abi=V3_POOL_ABI)
             t0_raw = limited(lambda: pair_v3.functions.token0().call())
             t1_raw = limited(lambda: pair_v3.functions.token1().call())
-        except Exception:
-            return None
+        except Exception as exc_v3:
+            v3_permanent = _is_revert_error(exc_v3)
+            if v2_permanent and v3_permanent:
+                return False  # both interfaces permanently rejected
+            return None  # at least one was transient — worth retrying
+
+    # Determine if it's V3 (has fee()) or V2
     pool_kind = "v2"
     fee = None
     try:
@@ -619,9 +658,24 @@ def save_bars(filename, bars):
     os.replace(tmp, filename)
 
 def update_assignment(assignment, addr, **fields):
-    assignment["pairs"][addr].update(fields)
-    with open(PAIR_ASSIGNMENT_FILE, "w") as wf:
-        json.dump(assignment, wf, indent=2)
+    meta = assignment["pairs"][addr]
+    for k, v in fields.items():
+        if v is None:
+            meta.pop(k, None)
+        else:
+            meta[k] = v
+    tmp = PAIR_ASSIGNMENT_FILE + ".tmp"
+    for attempt in range(3):
+        try:
+            with open(tmp, "w") as wf:
+                json.dump(assignment, wf, indent=2)
+            os.replace(tmp, PAIR_ASSIGNMENT_FILE)
+            return
+        except OSError as exc:
+            if attempt < 2:
+                time.sleep(0.3 * (attempt + 1))
+            else:
+                raise
 
 
 def _is_deferred(meta: dict) -> bool:
@@ -705,6 +759,74 @@ def main():
     CHUNK_SIZE_BLOCKS = max(1, total_blocks // chunks_count)
     print(f"[INFO] Dynamic CHUNK_SIZE set to {CHUNK_SIZE_BLOCKS} blocks")
 
+    # --- GAP BACKFILL: retry previously failed block ranges ---
+    gap_pairs = [
+        (addr, m) for addr, m in assignment["pairs"].items()
+        if m.get("gap_ranges") and not m.get("skipped") and not _is_deferred(m)
+    ]
+    if gap_pairs:
+        print(f"[BACKFILL] {len(gap_pairs)} pairs have gaps to retry...")
+        for addr, gm in gap_pairs:
+            sym = gm["symbol"]
+            pair_dir = os.path.join(intermediate_dir, sym)
+            try:
+                pair_addr = Web3.to_checksum_address(addr)
+            except Exception:
+                continue
+            resolved = resolve_pool_kind(pair_addr)
+            if not resolved or resolved is False:
+                continue
+            pool_kind = resolved["kind"]
+            try:
+                t0 = Web3.to_checksum_address(resolved["t0_raw"])
+                t1 = Web3.to_checksum_address(resolved["t1_raw"])
+            except Exception:
+                continue
+            dec0 = safe_decimals(t0)
+            dec1 = safe_decimals(t1)
+            if dec0 is None or dec1 is None:
+                continue
+            if pool_kind == "v3":
+                pair = get_web3().eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+            else:
+                pair = get_web3().eth.contract(address=pair_addr, abi=PAIR_ABI)
+            ev = pair.events.Swap()
+            remaining_gaps = []
+            existing_chunks = sorted(Path(pair_dir).glob("chunk_*.json")) if os.path.exists(pair_dir) else []
+            chunk_idx = len(existing_chunks)
+            for gap_b, gap_e in gm["gap_ranges"]:
+                logs = fetch_chunk(ev, gap_b, gap_e, sym, chunk_idx, 0)
+                if logs:
+                    log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
+                    chunk_records_by_bar = {}
+                    chunk_blocks_by_bar = {}
+                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                        if pool_kind == "v3":
+                            futs = [ex.submit(parse_logs_v3_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
+                        else:
+                            futs = [ex.submit(parse_logs_v2_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
+                        for pf in as_completed(futs):
+                            try:
+                                recs, blks = pf.result()
+                                for bs, r in recs.items():
+                                    chunk_records_by_bar.setdefault(bs, []).extend(r)
+                                for bs, bl in blks.items():
+                                    chunk_blocks_by_bar.setdefault(bs, set()).update(bl)
+                            except Exception:
+                                pass
+                    save_intermediate_chunk(pair_dir, chunk_idx, chunk_records_by_bar, chunk_blocks_by_bar)
+                    chunk_idx += 1
+                    print(f"    [BACKFILL] {sym}: filled gap [{gap_b}->{gap_e}] ({len(logs)} logs)")
+                else:
+                    remaining_gaps.append([gap_b, gap_e])
+            if remaining_gaps:
+                update_assignment(assignment, addr, gap_ranges=remaining_gaps)
+            else:
+                # All gaps filled — clear gap_ranges
+                gm.pop("gap_ranges", None)
+                update_assignment(assignment, addr, gap_ranges=None)
+                print(f"    [BACKFILL] {sym}: all gaps filled!")
+
     pairs = [
         (addr, meta)
         for addr, meta in assignment["pairs"].items()
@@ -734,9 +856,17 @@ def main():
             continue
 
         resolved = resolve_pool_kind(pair_addr)
-        if not resolved:
-            print(f"   [WARN] {sym}: address {pair_addr} does not behave like a Uniswap pool: token0/token1 not readable. Deferring.")
-            defer_pair(assignment, addr, "non_uniswap_pool")
+        if resolved is False:
+            # Permanent: no contract code, or both V2/V3 interfaces reverted
+            print(f"   [SKIP] {sym}: {pair_addr} is permanently incompatible (not a Uniswap-style pool). Marking completed.")
+            meta_update = {"completed": True, "skipped": True, "error": "permanently_incompatible"}
+            update_assignment(assignment, addr, **meta_update)
+            skip_counts["non_uniswap_pool"] += 1
+            continue
+        if resolved is None:
+            # Transient: RPC timeout/rate-limit — worth retrying later
+            print(f"   [WARN] {sym}: {pair_addr} token0/token1 call failed (transient). Deferring.")
+            defer_pair(assignment, addr, "transient_rpc_error")
             skip_counts["non_uniswap_pool"] += 1
             continue
         pool_kind = resolved["kind"]
@@ -773,15 +903,14 @@ def main():
         update_assignment(assignment, addr, pool_type=pool_kind, fee=v3_fee)
 
         b = pair_start_blk
-        chunk_idx = 0
-        total_chunks = ((end_blk - b) + CHUNK_SIZE_BLOCKS - 1) // CHUNK_SIZE_BLOCKS
+        # Resume chunk index from existing intermediate files so we don't
+        # misalign block position with chunk numbering after a crash.
+        existing_chunks = sorted(Path(pair_dir).glob("chunk_*.json")) if os.path.exists(pair_dir) else []
+        chunk_idx = len(existing_chunks)
+        total_chunks = ((end_blk - b) + CHUNK_SIZE_BLOCKS - 1) // CHUNK_SIZE_BLOCKS + chunk_idx
+        skipped_ranges: list = []
         while b < end_blk:
             e_b = min(b + CHUNK_SIZE_BLOCKS, end_blk)
-            if os.path.exists(os.path.join(pair_dir, f"chunk_{chunk_idx:06d}.json")):
-                print(f"    Skipping previously processed chunk {chunk_idx+1}/{total_chunks}")
-                b = e_b
-                chunk_idx += 1
-                continue
 
             print(f"    [SCAN] Fetching chunk {chunk_idx+1}/{total_chunks} [{b}->{e_b}] for {sym}")
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
@@ -804,6 +933,10 @@ def main():
                         except Exception as e:
                             print(f"      Parse error: {e}. Skipping one batch.")
                 save_intermediate_chunk(pair_dir, chunk_idx, chunk_records_by_bar, chunk_blocks_by_bar)
+                update_assignment(assignment, addr, next_block=e_b)
+            elif logs is not None:
+                # fetch_chunk returned [] after exhausting retries — record the gap
+                skipped_ranges.append([b, e_b])
                 update_assignment(assignment, addr, next_block=e_b)
             else:
                 update_assignment(assignment, addr, next_block=e_b)
@@ -832,8 +965,109 @@ def main():
                 bars.append(aggregate_ohlcv_by_bar(records, ts))
         bars.sort(key=lambda x: x["timestamp"])
         save_bars(out, bars)
-        update_assignment(assignment, addr, completed=True)
+        # Persist any gap ranges so they can be backfilled on a future run
+        if skipped_ranges:
+            prev_gaps = meta.get("gap_ranges") or []
+            all_gaps = prev_gaps + skipped_ranges
+            print(f"    [GAP] {sym}: {len(skipped_ranges)} block ranges could not be fetched (total gaps: {len(all_gaps)})")
+            update_assignment(assignment, addr, completed=True, gap_ranges=all_gaps)
+        else:
+            update_assignment(assignment, addr, completed=True)
         print(f"    [DONE] Pair {sym} complete and saved.")
+
+    # --- UPDATE-TO-PRESENT pass: extend previously completed pairs to current block ---
+    completed_pairs = [
+        (addr, m) for addr, m in assignment["pairs"].items()
+        if m.get("completed") and not m.get("skipped")
+        and m.get("next_block") and int(m.get("next_block", 0)) < end_blk
+    ]
+    if completed_pairs:
+        print(f"\n[UPDATE] {len(completed_pairs)} completed pairs have new blocks to catch up on...")
+        for addr, meta in completed_pairs:
+            if _is_deferred(meta):
+                continue
+            sym = meta["symbol"]
+            idx_num = meta["index"]
+            catch_up_start = int(meta["next_block"])
+            blocks_behind = end_blk - catch_up_start
+            if blocks_behind < CHUNK_SIZE_BLOCKS:
+                continue  # not enough new blocks to bother
+            print(f"\n=== Updating {sym} ({blocks_behind} blocks behind) ===")
+            out = os.path.join(output_dir, f"{idx_num:04d}_{sym}.json")
+            pair_dir = os.path.join(intermediate_dir, sym)
+            try:
+                pair_addr = Web3.to_checksum_address(addr)
+            except Exception:
+                continue
+            resolved = resolve_pool_kind(pair_addr)
+            if not resolved or resolved is False:
+                continue
+            pool_kind = resolved["kind"]
+            t0_raw, t1_raw, v3_fee = resolved["t0_raw"], resolved["t1_raw"], resolved["fee"]
+            try:
+                t0 = Web3.to_checksum_address(t0_raw)
+                t1 = Web3.to_checksum_address(t1_raw)
+            except Exception:
+                continue
+            dec0 = safe_decimals(t0)
+            dec1 = safe_decimals(t1)
+            if dec0 is None or dec1 is None:
+                continue
+            if pool_kind == "v3":
+                pair = get_web3().eth.contract(address=pair_addr, abi=V3_POOL_ABI)
+            else:
+                pair = get_web3().eth.contract(address=pair_addr, abi=PAIR_ABI)
+            ev = pair.events.Swap()
+            b = catch_up_start
+            existing_chunks = sorted(Path(pair_dir).glob("chunk_*.json")) if os.path.exists(pair_dir) else []
+            chunk_idx = len(existing_chunks)
+            while b < end_blk:
+                e_b = min(b + CHUNK_SIZE_BLOCKS, end_blk)
+                logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, 0)
+                if logs:
+                    log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
+                    chunk_records_by_bar = {}
+                    chunk_blocks_by_bar = {}
+                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                        if pool_kind == "v3":
+                            futs = [ex.submit(parse_logs_v3_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
+                        else:
+                            futs = [ex.submit(parse_logs_v2_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
+                        for pf in as_completed(futs):
+                            try:
+                                recs_by_bar, blocks_by_bar = pf.result()
+                                for bar_slot, recs in recs_by_bar.items():
+                                    chunk_records_by_bar.setdefault(bar_slot, []).extend(recs)
+                                for bar_slot, blocks in blocks_by_bar.items():
+                                    chunk_blocks_by_bar.setdefault(bar_slot, set()).update(blocks)
+                            except Exception:
+                                pass
+                    save_intermediate_chunk(pair_dir, chunk_idx, chunk_records_by_bar, chunk_blocks_by_bar)
+                update_assignment(assignment, addr, next_block=e_b)
+                b = e_b
+                chunk_idx += 1
+            # Re-merge all intermediate data including new chunks
+            all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
+            min_block_per_bar = {bs: min(bl) for bs, bl in min_block_per_bar.items() if bl}
+            bar_slot_to_ts = {}
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                futs = {ex.submit(get_block_with_retry, block): bs for bs, block in min_block_per_bar.items()}
+                for pf in as_completed(futs):
+                    bs = futs[pf]
+                    try:
+                        blk = pf.result()
+                        bar_slot_to_ts[bs] = blk["timestamp"]
+                    except Exception:
+                        pass
+            bars = []
+            for bs, records in all_records_by_bar.items():
+                ts = bar_slot_to_ts.get(bs)
+                if ts is not None:
+                    bars.append(aggregate_ohlcv_by_bar(records, ts))
+            bars.sort(key=lambda x: x["timestamp"])
+            save_bars(out, bars)
+            update_assignment(assignment, addr, completed=True, next_block=end_blk)
+            print(f"    [DONE] {sym} updated to block {end_blk}")
 
     print("\n[DONE] All pairs complete.")
     print(

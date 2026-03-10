@@ -100,8 +100,7 @@ class MultiResolutionSwarm:
             x = self._features(prices, sentiments)
             expected = math.tanh(self.cells[label].predict(x))
             stats = self.stats[label]
-            accuracy = stats["correct"] / stats["total"]
-            confidence = 0.5 + 0.5 * math.tanh(accuracy * 2.0)
+            accuracy = stats["correct"] / max(1.0, stats["total"])
             energy = stats.get("energy", 1.0)
             mae = max(1e-6, stats.get("mae", 1.0))
             stability = 1.0 / (1.0 + mae)
@@ -134,8 +133,11 @@ class MultiResolutionSwarm:
             pred = self.cells[label].predict(x)
             correct = 1.0 if np.sign(pred) == np.sign(realized) else 0.0
             stats = self.stats[label]
-            stats["correct"] += correct
-            stats["total"] += 1.0
+            # Use exponential moving average for accuracy so recent performance
+            # is weighted more heavily than stale history.
+            acc_alpha = 0.05  # ~20-sample effective window
+            stats["correct"] = (1.0 - acc_alpha) * stats["correct"] + acc_alpha * correct
+            stats["total"] = (1.0 - acc_alpha) * stats["total"] + acc_alpha * 1.0
             energy = math.exp(-abs(pred - realized))
             alpha = self.energy_alpha
             stats["energy"] = (1.0 - alpha) * stats.get("energy", 1.0) + alpha * energy
@@ -143,6 +145,38 @@ class MultiResolutionSwarm:
             mae_alpha = self.mae_alpha
             stats["mae"] = (1.0 - mae_alpha) * stats.get("mae", error) + mae_alpha * error
             stats["realized"] = (1.0 - mae_alpha) * stats.get("realized", 0.0) + mae_alpha * realized
+
+    def aggregate_votes(self, votes: List[SwarmVote]) -> Tuple[float, float]:
+        """Return (weighted_expected_return, aggregate_confidence) from a list of votes.
+
+        Uses the internal accuracy/energy/stability weights so callers don't
+        need to replicate the weighting logic.  When horizons disagree on
+        direction the aggregate confidence is penalised proportionally to the
+        disagreement spread so callers can tighten thresholds automatically.
+        """
+        if not votes:
+            return 0.0, 0.0
+        w = self.weights()
+        numerator = 0.0
+        denom = 0.0
+        conf_num = 0.0
+        for vote in votes:
+            weight = w.get(vote.horizon, vote.confidence)
+            numerator += vote.expected_return * weight
+            conf_num += vote.confidence * weight
+            denom += weight
+        if denom <= 0:
+            return 0.0, 0.0
+        agg_return = numerator / denom
+        agg_conf = conf_num / denom
+        # Penalise confidence when horizons disagree on direction.
+        if len(votes) >= 2:
+            returns = [v.expected_return for v in votes]
+            spread = max(returns) - min(returns)
+            # spread of 2.0 is maximum possible (tanh range -1..+1)
+            disagreement = min(1.0, spread / 2.0)
+            agg_conf *= 1.0 - 0.5 * disagreement
+        return agg_return, agg_conf
 
     def diagnostics(self) -> List[Dict[str, float]]:
         diag: List[Dict[str, float]] = []

@@ -401,18 +401,26 @@ class InternalCronSupervisor:
         lookback_hours = int(news_cfg.get("lookback_hours") or 72)
         max_pages = news_cfg.get("max_pages")
         max_tokens = int(news_cfg.get("max_tokens") or 8)
-        tokens = context.get("candidates") or []
-        if tokens:
-            tokens = list(tokens)[:max_tokens]
-        if not tokens:
-            fallback = news_cfg.get("default_tokens") or ["BTC", "ETH", "USDC"]
-            tokens = list(fallback)[:max_tokens]
         try:
             from datetime import datetime, timedelta, timezone
             from services.news_lab import collect_news_for_terms
         except Exception as exc:  # pragma: no cover
             log_message(LOG_SOURCE, f"news collector unavailable: {exc}", severity="warning")
             return
+
+        # Build token list from: 1) discovery candidates, 2) actual downloaded
+        # symbols from assignment files, 3) hardcoded fallback.
+        tokens = list(context.get("candidates") or [])[:max_tokens]
+        if len(tokens) < max_tokens:
+            ohlcv_symbols = self._extract_downloaded_symbols(profile)
+            for sym in ohlcv_symbols:
+                if sym not in tokens:
+                    tokens.append(sym)
+                if len(tokens) >= max_tokens:
+                    break
+        if not tokens:
+            fallback = news_cfg.get("default_tokens") or ["BTC", "ETH", "USDC"]
+            tokens = list(fallback)[:max_tokens]
         if not tokens:
             return
         end = datetime.now(timezone.utc)
@@ -432,6 +440,44 @@ class InternalCronSupervisor:
             "news batch complete",
             details={"tokens": tokens, "articles": len(result.get("items", []))},
         )
+
+    def _extract_downloaded_symbols(self, profile: Dict[str, Any]) -> List[str]:
+        """Read symbols from assignment files that have been actively downloaded."""
+        import re
+        downloads_cfg = profile.get("downloads") or {}
+        chains = downloads_cfg.get("chains") or []
+        chains = [str(ch).lower().strip() for ch in chains if str(ch).strip()]
+        data_root = Path("data")
+        symbols: List[str] = []
+        seen: set = set()
+        for chain in chains:
+            assignment_path = data_root / f"{chain}_pair_provider_assignment.json"
+            if not assignment_path.exists():
+                continue
+            try:
+                with assignment_path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                continue
+            for _addr, meta in (data.get("pairs") or {}).items():
+                if not meta.get("completed") or meta.get("skipped"):
+                    continue
+                raw_sym = str(meta.get("symbol") or "")
+                # Split pair symbols like "USDC-WETH" into individual tokens
+                parts = re.split(r"[-_/]", raw_sym.upper())
+                for part in parts:
+                    part = part.strip()
+                    if not part or len(part) < 2 or part in seen:
+                        continue
+                    # Skip wrapped token prefixes, use base token
+                    if part.startswith("W") and len(part) > 2:
+                        base = part[1:]
+                        if base not in seen:
+                            seen.add(base)
+                            symbols.append(base)
+                    seen.add(part)
+                    symbols.append(part)
+        return symbols
 
     def _run_recommendations(self, profile: Dict[str, Any], context: Dict[str, Any]) -> None:
         rec_cfg = profile.get("recommendations") or {}

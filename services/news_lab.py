@@ -703,6 +703,63 @@ def collect_news_for_files(
             sentiment=entry.get("sentiment"),
         )
     _record_news_attempt(database, symbol_keys, start_dt, end_dt, items)
+
+    # --- GAP-FILL: retry days with sparse coverage ---
+    min_articles_per_day = int(os.getenv("NEWS_MIN_ARTICLES_PER_DAY", "2"))
+    max_gap_retries = int(os.getenv("NEWS_GAP_MAX_RETRIES", "2"))
+    items_by_day: Dict[str, int] = defaultdict(int)
+    for item in items:
+        try:
+            day = datetime.fromtimestamp(int(item["timestamp"]), tz=timezone.utc).date().isoformat()
+            items_by_day[day] += 1
+        except Exception:
+            pass
+    sparse_days: List[datetime] = []
+    for day_dt in _iter_days(start_dt, end_dt):
+        day_str = day_dt.date().isoformat()
+        count = items_by_day.get(day_str, 0)
+        if count >= min_articles_per_day:
+            continue
+        for key in symbol_keys:
+            entry = database.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
+            if int(entry.get("attempts", 0)) < max_gap_retries:
+                sparse_days.append(day_dt)
+                break
+    if sparse_days:
+        _trace("gap_fill_start", sparse_days=len(sparse_days))
+        gap_items: List[Dict[str, Any]] = []
+        for day_dt in sparse_days:
+            day_start = day_dt
+            day_end = day_dt + timedelta(days=1)
+            try:
+                gap_crawler = crawl_news(
+                    queries=query_terms or api_tokens,
+                    start=day_start,
+                    end=day_end,
+                    max_pages=50,
+                )
+                gap_formatted = _format_crawler_news(gap_crawler, seed_tokens=api_tokens)
+                for gf in gap_formatted:
+                    url = gf.get("url")
+                    title = gf.get("title")
+                    if url and url in seen_urls:
+                        continue
+                    if title and title in seen_titles:
+                        continue
+                    gap_items.append(gf)
+                    if url:
+                        seen_urls.add(url)
+                    if title:
+                        seen_titles.add(title)
+            except Exception:
+                pass
+        if gap_items:
+            _persist_free_news(gap_items)
+            items.extend(gap_items)
+            items.sort(key=lambda row: row["timestamp"], reverse=True)
+            _record_news_attempt(database, symbol_keys, start_dt, end_dt, gap_items)
+        _trace("gap_fill_complete", recovered=len(gap_items), sparse_days=len(sparse_days))
+
     payload = {
         "symbols": symbols,
         "tokens": api_tokens,
@@ -847,6 +904,64 @@ def collect_news_for_terms(
     )
 
     _record_news_attempt(database, symbol_keys, start, end, items)
+
+    # --- GAP-FILL: retry days with sparse coverage ---
+    min_articles_per_day = int(os.getenv("NEWS_MIN_ARTICLES_PER_DAY", "2"))
+    max_gap_retries = int(os.getenv("NEWS_GAP_MAX_RETRIES", "2"))
+    items_by_day: Dict[str, int] = defaultdict(int)
+    for item in items:
+        try:
+            day = datetime.fromtimestamp(int(item["timestamp"]), tz=timezone.utc).date().isoformat()
+            items_by_day[day] += 1
+        except Exception:
+            pass
+    sparse_days: List[datetime] = []
+    for day_dt in _iter_days(start, end):
+        day_str = day_dt.date().isoformat()
+        count = items_by_day.get(day_str, 0)
+        if count >= min_articles_per_day:
+            continue
+        # Check attempt count — don't keep retrying forever
+        for key in symbol_keys:
+            entry = database.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
+            if int(entry.get("attempts", 0)) < max_gap_retries:
+                sparse_days.append(day_dt)
+                break
+    if sparse_days:
+        _trace("gap_fill_start", sparse_days=len(sparse_days))
+        gap_items: List[Dict[str, Any]] = []
+        for day_dt in sparse_days:
+            day_start = day_dt
+            day_end = day_dt + timedelta(days=1)
+            try:
+                gap_crawler = crawl_news(
+                    queries=query_terms or api_tokens,
+                    start=day_start,
+                    end=day_end,
+                    max_pages=max_pages or 50,
+                )
+                gap_formatted = _format_crawler_news(gap_crawler, seed_tokens=api_tokens)
+                for gf in gap_formatted:
+                    url = gf.get("url")
+                    title = gf.get("title")
+                    if url and url in seen_urls:
+                        continue
+                    if title and title in seen_titles:
+                        continue
+                    gap_items.append(gf)
+                    if url:
+                        seen_urls.add(url)
+                    if title:
+                        seen_titles.add(title)
+            except Exception:
+                pass
+        if gap_items:
+            _persist_free_news(gap_items)
+            items.extend(gap_items)
+            items.sort(key=lambda row: row["timestamp"], reverse=True)
+            _record_news_attempt(database, symbol_keys, start, end, gap_items)
+        _trace("gap_fill_complete", recovered=len(gap_items), sparse_days=len(sparse_days))
+
     result = {
         "symbols": input_symbols or api_tokens,
         "tokens": api_tokens,

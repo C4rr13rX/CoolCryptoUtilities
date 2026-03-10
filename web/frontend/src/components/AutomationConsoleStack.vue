@@ -32,9 +32,21 @@ const guardianText = computed(() =>
   props.guardianLines?.length ? props.guardianLines.join('\n') : t('console.no_guardian_transcript')
 );
 
+/** Returns true when the element is scrolled within 60px of the bottom. */
+function isNearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+}
+
+/**
+ * Scroll to the very bottom.  When force=true we always scroll;
+ * otherwise we only scroll if the user is already near the bottom
+ * so they can scroll up to read history without being yanked back.
+ */
 function scrollToBottom(el: HTMLElement | null, force = false) {
   if (!el) return;
-  el.scrollTop = el.scrollHeight;
+  if (force || isNearBottom(el)) {
+    el.scrollTop = el.scrollHeight;
+  }
 }
 
 onMounted(() => {
@@ -46,12 +58,12 @@ onMounted(() => {
 
 watch(
   () => props.managerLines?.length || 0,
-  () => nextTick(() => scrollToBottom(managerEl.value, true)),
+  () => nextTick(() => scrollToBottom(managerEl.value)),
 );
 
 watch(
   () => props.guardianLines?.length || 0,
-  () => nextTick(() => scrollToBottom(guardianEl.value, true)),
+  () => nextTick(() => scrollToBottom(guardianEl.value)),
 );
 </script>
 

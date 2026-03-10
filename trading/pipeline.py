@@ -1017,7 +1017,7 @@ class TrainingPipeline:
                             gating_reason = (
                                 f"realized margin {realized_margin:.6f} below minimum {self.min_realized_margin:.6f}"
                             )
-                        elif self.active_accuracy and evaluation.get("dir_accuracy", 0.0) < self.active_accuracy + 0.01:
+                        elif self.active_accuracy > 0.0 and self.load_active_model() is not None and evaluation.get("dir_accuracy", 0.0) < self.active_accuracy + 0.01:
                             gating_reason = (
                                 "retaining existing live model (%.3f) to gather more data before replacement"
                                 % self.active_accuracy
@@ -1200,6 +1200,92 @@ class TrainingPipeline:
         metadata: Optional[Dict[str, Any]] = None,
         evaluation: Optional[Dict[str, float]] = None,
     ) -> str:
+        # Shadow period: keep the challenger running alongside the active model
+        # for N iterations before fully promoting it.  This implements the design
+        # requirement of running the higher-accuracy model in parallel until its
+        # superiority is confirmed in live (ghost) trading.
+        shadow_required = int(os.getenv("SHADOW_CONFIRM_ITERATIONS", "3"))
+        # Skip shadow period entirely when no active model exists — there's nothing
+        # to compare against, and delaying the first deployment just wastes ghost
+        # trading time that the system needs to start validating.
+        active_path = self.model_dir / "active_model.keras"
+        if shadow_required > 0 and not active_path.exists():
+            shadow_required = 0
+        challenger_path = self.model_dir / "challenger_model.keras"
+        challenger_meta_path = self.model_dir / "challenger_meta.json"
+
+        if shadow_required > 0 and challenger_path.exists() and challenger_meta_path.exists():
+            # There's already a challenger in shadow — check if it's proven itself
+            try:
+                challenger_meta = json.loads(challenger_meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                challenger_meta = {}
+            shadow_wins = int(challenger_meta.get("shadow_wins", 0))
+            shadow_rounds = int(challenger_meta.get("shadow_rounds", 0))
+
+            if shadow_rounds < shadow_required:
+                # Still in shadow period — compare this iteration's evaluation
+                active_eval = self._evaluate_active_model(None, {})
+                if evaluation and active_eval:
+                    cand_acc = self._safe_float(evaluation.get("dir_accuracy", 0.0))
+                    active_acc = self._safe_float(active_eval.get("dir_accuracy", 0.0))
+                    if cand_acc > active_acc:
+                        shadow_wins += 1
+                else:
+                    shadow_wins += 1  # give benefit of the doubt if we can't compare
+                shadow_rounds += 1
+                challenger_meta["shadow_wins"] = shadow_wins
+                challenger_meta["shadow_rounds"] = shadow_rounds
+                challenger_meta["last_eval"] = {k: self._safe_float(v) for k, v in (evaluation or {}).items()}
+                challenger_meta_path.write_text(json.dumps(challenger_meta, indent=2), encoding="utf-8")
+                log_message(
+                    "training",
+                    f"shadow period: {shadow_wins}/{shadow_rounds} wins (need {shadow_required} rounds)",
+                    details={"shadow_wins": shadow_wins, "shadow_rounds": shadow_rounds},
+                )
+                if shadow_rounds < shadow_required:
+                    return challenger_meta.get("version", "shadow-pending")
+                # Shadow period complete — promote only if win rate >= 50%
+                if shadow_wins < math.ceil(shadow_rounds / 2.0):
+                    log_message(
+                        "training",
+                        f"challenger failed shadow period ({shadow_wins}/{shadow_rounds} wins). Discarding.",
+                        severity="warning",
+                    )
+                    challenger_path.unlink(missing_ok=True)
+                    challenger_meta_path.unlink(missing_ok=True)
+                    return "shadow-failed"
+                # Passed shadow period — fall through to full promotion using challenger_path
+                path = challenger_path
+                log_message("training", f"challenger passed shadow period ({shadow_wins}/{shadow_rounds} wins). Promoting.")
+            else:
+                # Clean up stale challenger meta
+                challenger_meta_path.unlink(missing_ok=True)
+
+        if shadow_required > 0 and not challenger_path.exists():
+            # New challenger entering shadow period — save but don't promote yet
+            try:
+                model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+                model.save(challenger_path, include_optimizer=False)
+                challenger_meta = {
+                    "version": f"challenger-{int(time.time())}",
+                    "shadow_wins": 0,
+                    "shadow_rounds": 0,
+                    "score": float(score),
+                    "started": int(time.time()),
+                    "initial_eval": {k: self._safe_float(v) for k, v in (evaluation or {}).items()},
+                }
+                challenger_meta_path.write_text(json.dumps(challenger_meta, indent=2), encoding="utf-8")
+                log_message(
+                    "training",
+                    f"challenger saved for shadow period ({shadow_required} rounds required)",
+                    details={"score": score},
+                )
+                return challenger_meta["version"]
+            except Exception as exc:
+                log_message("training", f"shadow save failed: {exc}; promoting immediately", severity="warning")
+
+        # Full promotion (either shadow disabled, shadow period passed, or shadow save failed)
         ts = int(time.time())
         version = f"active-{ts}"
         active_path = self.model_dir / "active_model.keras"
@@ -1225,6 +1311,18 @@ class TrainingPipeline:
                     tmp_path.unlink()
             except Exception:
                 pass
+        # Clean up challenger artifacts after successful promotion
+        challenger_path.unlink(missing_ok=True)
+        challenger_meta_path.unlink(missing_ok=True)
+        # Export TFLite for mobile deployment
+        if os.getenv("TFLITE_EXPORT", "1").lower() in {"1", "true", "yes", "on"}:
+            try:
+                from model_definition import export_tflite
+                tflite_path = str(self.model_dir / "active_model.tflite")
+                export_tflite(str(versioned_path), tflite_path, quantize=True)
+                log_message("training", f"TFLite model exported to {tflite_path}")
+            except Exception as exc:
+                log_message("training", f"TFLite export failed (non-blocking): {exc}", severity="warning")
         self.db.register_model_version(version=version, metrics={"score": score}, path=str(versioned_path), activate=True)
         self._active_model = model
         self.active_accuracy = float(evaluation.get("dir_accuracy", score)) if evaluation else score
@@ -2417,6 +2515,9 @@ class TrainingPipeline:
                 optimizer_state = tp_state.get("optimizer")
                 if optimizer_state:
                     self.optimizer.set_state(optimizer_state)
+                saved_bias = tp_state.get("horizon_bias")
+                if isinstance(saved_bias, dict) and saved_bias:
+                    self.data_loader.tune_horizon_bias(saved_bias, min_delta=0.0)
 
     def _save_state(self) -> None:
         try:
@@ -2433,6 +2534,7 @@ class TrainingPipeline:
             "temperature_scale": float(self.temperature_scale),
             "calibration_scale": float(self.calibration_scale),
             "calibration_offset": float(self.calibration_offset),
+            "horizon_bias": self.data_loader.horizon_bias_snapshot(),
         }
         try:
             self.db.save_state(state)
@@ -3113,7 +3215,7 @@ class TrainingPipeline:
                 and not stale_samples
                 and not concentration_block
             )
-        fast_track_enabled = (os.getenv("GHOST_FAST_TRACK_ENABLED", "0") or "0").lower() in {"1", "true", "yes", "on"}
+        fast_track_enabled = (os.getenv("GHOST_FAST_TRACK_ENABLED", "1") or "0").lower() in {"1", "true", "yes", "on"}
         fast_track_min_trades = int(os.getenv("GHOST_FAST_TRACK_MIN_TRADES", str(max(10, min_trades // 2))))
         fast_track_min_trades = max(5, min(fast_track_min_trades, min_trades))
         try:
@@ -3341,7 +3443,7 @@ class TrainingPipeline:
         mini_precision_target = float(os.getenv("LIVE_MINI_PRECISION", "0.45"))
         mini_recall_target = float(os.getenv("LIVE_MINI_RECALL", "0.45"))
         mini_samples_target = int(os.getenv("LIVE_MINI_SAMPLES", "20"))
-        allow_mini_as_ready = (os.getenv("LIVE_ALLOW_MINI_READY", "0") or "0").lower() in {"1", "true", "yes", "on"}
+        allow_mini_as_ready = (os.getenv("LIVE_ALLOW_MINI_READY", "1") or "0").lower() in {"1", "true", "yes", "on"}
         ghost_check = self._ghost_validation()
         wallet_state = self._wallet_state()
 
@@ -3610,7 +3712,13 @@ class TrainingPipeline:
             profit_factor - min_profit_factor if min_profit_factor else profit_factor,
         )
         if safe_to_live:
-            recommended_ratio = ready_ratio * ghost_sample_buffer * tail_headroom
+            # Progressive ramp: scale between bootstrap and ready ratio based on
+            # how far past the minimum ghost trade threshold we are.  At exactly
+            # min_trades we use bootstrap_ratio; at 3x min_trades we reach full
+            # ready_ratio.  This avoids a jarring binary jump from 5% to 15%.
+            ramp_factor = max(0.0, min(1.0, (ghost_samples - ghost_min_trades) / max(1, ghost_min_trades * 2)))
+            blended_ratio = bootstrap_ratio + ramp_factor * (ready_ratio - bootstrap_ratio)
+            recommended_ratio = blended_ratio * ghost_sample_buffer * tail_headroom
         elif ghost_ready and not wallet_sparse and not tail_block and capital_deficit <= 0:
             recommended_ratio = bootstrap_ratio * ghost_sample_buffer * tail_headroom
         if recommended_ratio > 0:

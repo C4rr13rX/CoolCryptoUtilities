@@ -19,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUpdated, ref } from 'vue';
+import { computed, nextTick, onMounted, onUpdated, ref, watch } from 'vue';
 import StatusIndicator from './StatusIndicator.vue';
 import { t } from '@/i18n';
 
@@ -50,11 +50,23 @@ const statusDetail = computed(() => {
   return props.status.pid ? t('common.pid').replace('{count}', String(props.status.pid)) : '';
 });
 
-onUpdated(() => {
-  if (consoleBox.value) {
-    consoleBox.value.scrollTop = consoleBox.value.scrollHeight;
+function isNearBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+}
+
+function scrollToBottom(el: HTMLElement | null, force = false) {
+  if (!el) return;
+  if (force || isNearBottom(el)) {
+    el.scrollTop = el.scrollHeight;
   }
-});
+}
+
+onMounted(() => nextTick(() => scrollToBottom(consoleBox.value, true)));
+
+watch(
+  () => props.logs.length,
+  () => nextTick(() => scrollToBottom(consoleBox.value)),
+);
 </script>
 
 <style scoped>
@@ -67,6 +79,21 @@ onUpdated(() => {
 }
 .console-output {
   min-height: 260px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
+  padding: 0.8rem;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+}
+.console-output pre {
+  margin: 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: rgba(222, 239, 255, 0.9);
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .actions {
   display: flex;

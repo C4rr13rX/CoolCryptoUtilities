@@ -27,9 +27,14 @@ class Command(BaseCommand):
             help="Additional arguments to pass through to runserver (e.g. --runserver-args 0.0.0.0:8001)",
         )
         parser.add_argument(
+            "--guardian-on",
+            action="store_true",
+            help="Enable guardian auto-start (guardian is OFF by default).",
+        )
+        parser.add_argument(
             "--guardian-off",
             action="store_true",
-            help="Disable guardian/production auto-start even if enabled in settings.",
+            help="(Legacy) Explicitly disable guardian auto-start.",
         )
         parser.add_argument(
             "--production-off",
@@ -178,9 +183,11 @@ class Command(BaseCommand):
                 else:
                     raise
 
-        # Respect disable flags before Django finishes loading apps that auto-start services.
-        if options.get("guardian_off"):
-            os.environ["GUARDIAN_AUTO_DISABLED"] = "1"
+        # Guardian is OFF by default — only auto-start when --guardian-on is passed.
+        if options.get("guardian_on"):
+            os.environ["GUARDIAN_AUTO_DISABLED"] = "0"
+        elif options.get("guardian_off") or not options.get("guardian_on"):
+            os.environ.setdefault("GUARDIAN_AUTO_DISABLED", "1")
         if options.get("production_off"):
             os.environ["PRODUCTION_AUTO_DISABLED"] = "1"
 

@@ -95,8 +95,63 @@ def _ensure_assignment_template(chain: str, assignment_path: Path) -> Dict[str, 
 
 def _update_assignment(path: Path, assignment: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
-        json.dump(assignment, fh, indent=2)
+    tmp = path.with_suffix(".tmp")
+    for attempt in range(3):
+        try:
+            with tmp.open("w", encoding="utf-8") as fh:
+                json.dump(assignment, fh, indent=2)
+            tmp.replace(path)
+            return
+        except OSError:
+            if attempt < 2:
+                time.sleep(0.3 * (attempt + 1))
+            else:
+                raise
+
+
+def _collect_completed_symbols(assignment_path: Path) -> List[str]:
+    """Extract individual token symbols from completed (non-skipped) pairs."""
+    import re
+    data = _load_assignment(assignment_path)
+    if not data:
+        return []
+    symbols: List[str] = []
+    seen: set = set()
+    for _addr, meta in (data.get("pairs") or {}).items():
+        if not meta.get("completed") or meta.get("skipped"):
+            continue
+        raw = str(meta.get("symbol") or "")
+        for part in re.split(r"[-_/]", raw.upper()):
+            part = part.strip()
+            if not part or len(part) < 2 or part in seen:
+                continue
+            if part.startswith("W") and len(part) > 2:
+                base = part[1:]
+                if base not in seen:
+                    seen.add(base)
+                    symbols.append(base)
+            seen.add(part)
+            symbols.append(part)
+    return symbols
+
+
+def _trigger_news_for_symbols(symbols: List[str], lookback_hours: int = 72) -> None:
+    """Collect news for the given crypto symbols after a download cycle."""
+    if not symbols:
+        return
+    max_tokens = int(os.getenv("NEWS_POST_DOWNLOAD_MAX_TOKENS", "12"))
+    tokens = symbols[:max_tokens]
+    try:
+        from datetime import datetime, timedelta, timezone
+        from services.news_lab import collect_news_for_terms
+
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=lookback_hours)
+        result = collect_news_for_terms(tokens=tokens, start=start, end=end)
+        count = len(result.get("items", []))
+        log_message("download-worker", f"post-download news: {count} articles for {tokens[:5]}...")
+    except Exception as exc:
+        log_message("download-worker", f"post-download news error: {exc}", severity="warning")
 
 
 def _run_download(chain: str, assignment_path: Path) -> None:
@@ -116,6 +171,8 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     if not incomplete or cex_fallback:
         _try_cex_fallback(chain)
         if not incomplete:
+            # Even if all pairs are done, trigger news for completed symbols
+            _trigger_news_for_symbols(_collect_completed_symbols(assignment_path))
             return
 
     max_parallel = max(1, int(os.getenv("DOWNLOAD_MAX_PARALLEL", "1")))
@@ -131,6 +188,11 @@ def _run_download(chain: str, assignment_path: Path) -> None:
             proc.wait()
     except Exception as exc:
         log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")
+
+    # After downloads complete, trigger news collection for downloaded symbols
+    news_enabled = os.getenv("NEWS_AFTER_DOWNLOAD", "1").lower() not in {"0", "false", "no"}
+    if news_enabled:
+        _trigger_news_for_symbols(_collect_completed_symbols(assignment_path))
 
 
 def _try_cex_fallback(chain: str) -> None:

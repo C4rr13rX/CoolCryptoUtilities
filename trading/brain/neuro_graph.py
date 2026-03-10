@@ -25,7 +25,7 @@ class NeuroGraph:
     downstream components (swarm, scheduler) consume to bias decisions.
     """
 
-    def __init__(self, decay: float = 0.995, learning_rate: float = 0.05) -> None:
+    def __init__(self, decay: float = 0.985, learning_rate: float = 0.05) -> None:
         self.decay = float(decay)
         self.learning_rate = float(learning_rate)
         self._nodes: Dict[str, Node] = {}

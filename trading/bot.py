@@ -207,7 +207,7 @@ class TradingBot:
         self.gas_bridge_flat_fee: float = max(0.0, float(os.getenv("GAS_BRIDGE_FLAT_FEE_USD", "0.0")))
         self.gas_force_refill: bool = os.getenv("GAS_FORCE_REFILL", "1").lower() in {"1", "true", "yes", "on"}
         self._latency_samples: int = 0
-        self._enable_bg_refinement = os.getenv("ENABLE_BG_REFINEMENT", "0").lower() in {"1", "true", "yes", "on"}
+        self._enable_bg_refinement = os.getenv("ENABLE_BG_REFINEMENT", "1").lower() in {"1", "true", "yes", "on"}
         self._equilibrium_last_adjust = 0.0
         self.live_trading_enabled: bool = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
         self.auto_promote_live: bool = os.getenv("AUTO_PROMOTE_LIVE", "0").lower() in {"1", "true", "yes", "on"}
@@ -822,19 +822,11 @@ class TradingBot:
             swarm_votes = self.swarm.vote(price_windows, sentiment_windows)
         except Exception:
             swarm_votes = []
-        swarm_weights = {}
-        try:
-            swarm_weights = self.swarm.weights()
-        except Exception:
-            swarm_weights = {}
         if swarm_votes:
-            numerator = 0.0
-            denom = 0.0
-            for vote in swarm_votes:
-                weight = float(swarm_weights.get(vote.horizon, vote.confidence))
-                numerator += vote.expected_return * weight
-                denom += weight
-            swarm_bias = numerator / denom if denom else 0.0
+            try:
+                swarm_bias, _ = self.swarm.aggregate_votes(swarm_votes)
+            except Exception:
+                swarm_bias = 0.0
         else:
             swarm_bias = 0.0
         volatility = float(sample.get("rolling_volatility") or 0.0)
@@ -3566,10 +3558,15 @@ class TradingBot:
     async def _start_background_refinement(self, cadence: float = 900.0) -> None:
         if not self._enable_bg_refinement:
             return
+        fast_cadence = max(120.0, cadence / 3.0)
 
         async def _loop():
             while self._running:
-                await asyncio.sleep(cadence)
+                # Train more aggressively when no active model exists or ghost
+                # data is insufficient — this is the critical bootstrap phase.
+                has_model = (self.pipeline.model_dir / "active_model.keras").exists()
+                use_cadence = fast_cadence if not has_model else cadence
+                await asyncio.sleep(use_cadence)
                 try:
                     await asyncio.to_thread(self.pipeline.train_candidate)
                 except Exception as exc:

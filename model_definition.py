@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 
 # Force CPU execution to avoid CUDA driver warnings on machines without GPUs.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
@@ -327,6 +328,49 @@ def build_multimodal_model(
     )
 
     return model, headline_vec, full_vec, losses, loss_weights
+
+
+# ---------------------------------------------------------------------
+# TFLite export for mobile deployment
+# ---------------------------------------------------------------------
+
+
+def export_tflite(
+    model_path: str,
+    output_path: str = "models/active_model.tflite",
+    quantize: bool = True,
+) -> str:
+    """Convert a saved Keras model to TensorFlow Lite for mobile inference.
+
+    Args:
+        model_path: path to the .keras model file.
+        output_path: where to write the .tflite file.
+        quantize: if True, apply dynamic-range quantization (~2-3x size reduction).
+
+    Returns:
+        The output path on success.
+    """
+    custom_objects = {
+        "ExponentialDecay": ExponentialDecay,
+        "TimeFeatureLayer": TimeFeatureLayer,
+        "gaussian_nll_loss": gaussian_nll_loss,
+        "zero_loss": zero_loss,
+        "_slice_price_mu": _slice_price_mu,
+        "_slice_price_log_var": _slice_price_log_var,
+        "_identity": _identity,
+        "_compute_net_margin": _compute_net_margin,
+    }
+    model = tf.keras.models.load_model(model_path, custom_objects=custom_objects, compile=False)
+    converter = tf.lite.TFLiteConverter.from_keras_model(model)
+    if quantize:
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    tflite_bytes = converter.convert()
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(tflite_bytes)
+    size_mb = len(tflite_bytes) / (1024 * 1024)
+    print(f"Exported TFLite model to {out} ({size_mb:.1f} MB, quantize={quantize})")
+    return str(out)
 
 
 # ---------------------------------------------------------------------

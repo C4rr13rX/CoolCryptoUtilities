@@ -132,10 +132,19 @@ class BayesianBruteForceOptimizer:
         proposal: Dict[str, float] = {}
         exploration = self._effective_exploration()
         pool = self._elite_pool()
-        parent_a = pool[0] if pool else None
-        parent_b = self._pick_parent(pool[1:]) if len(pool) > 2 else (pool[1] if len(pool) == 2 else None)
+
+        # Tournament selection: pick 2 parents from random subsets of the elite pool
+        # to maintain genetic diversity instead of always using the top-1 parent.
+        parent_a = self._tournament_select(pool, k=max(2, len(pool) // 3)) if pool else None
+        remaining = [p for p in pool if p is not parent_a] if parent_a else pool
+        parent_b = self._tournament_select(remaining, k=max(2, len(remaining) // 3)) if remaining else None
 
         use_genetic = bool(parent_a and parent_b)
+
+        # Every Nth proposal, inject a fully random "immigrant" for diversity
+        diversity_interval = max(3, self.population_size)
+        force_random = (self._update_count > 0 and self._update_count % diversity_interval == 0)
+
         for name, state in self.params.items():
             lo, hi = state.bounds
             std = math.sqrt(max(state.variance, 1e-6))
@@ -145,7 +154,10 @@ class BayesianBruteForceOptimizer:
             if self.best_params and name in self.best_params:
                 base_val = float(self.best_params[name])
 
-            if use_genetic:
+            if force_random:
+                # Random immigrant: full uniform sample for diversity preservation
+                sample = self._rng.uniform(lo, hi)
+            elif use_genetic:
                 p1 = float((parent_a.get("params") or {}).get(name, base_val))
                 p2 = float((parent_b.get("params") or {}).get(name, base_val))
                 mix = self._rng.random()
@@ -161,6 +173,14 @@ class BayesianBruteForceOptimizer:
                 sample = self._rng.uniform(lo, hi)
             proposal[name] = max(min(sample, hi), lo)
         return proposal
+
+    def _tournament_select(self, pool: list, k: int = 2) -> Optional[Dict[str, Any]]:
+        """Select the best individual from a random tournament of k members."""
+        if not pool:
+            return None
+        k = min(k, len(pool))
+        tournament = self._rng.sample(pool, k) if k < len(pool) else list(pool)
+        return max(tournament, key=lambda row: float(row.get("score", -math.inf)))
 
     def _score_signals(self, signals: Dict[str, float]) -> float:
         composite = 0.0

@@ -121,6 +121,7 @@ class TradeDirective:
     expected_return: float
     reason: str
     tier: str = "T0"
+    tranches: List[Dict[str, float]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, float]:
         payload = asdict(self)
@@ -306,6 +307,7 @@ class BusScheduler:
         self._filter_metrics: List[Dict[str, Any]] = []
         self._metrics_collector = MetricsCollector(self.db)
         self._prefill_enabled = bool(prefill and not _is_test_env())
+        self._pending_retries: Deque[Dict[str, Any]] = deque(maxlen=32)
 
     def _threshold_env(
         self,
@@ -522,6 +524,11 @@ class BusScheduler:
                     size_quote = min(size_quote, max_allocation)
                 size_base = size_quote / max(last_price, 1e-9)
                 if size_base > 0:
+                    # Split order into volume-aware tranches
+                    size_base, tranches = self._split_into_tranches(
+                        state, size_base, last_price, last_volume, "enter"
+                    )
+                if size_base > 0:
                     target_price = last_price * (1.0 + max(expected - fee_rate, min_profit_floor))
                     directive = TradeDirective(
                         action="enter",
@@ -535,6 +542,7 @@ class BusScheduler:
                         expected_return=float(expected),
                         reason=f"forecast {best_long.label} {expected:.2%} w/ dir={direction_prob:.2f}",
                         tier=tier,
+                        tranches=tranches,
                     )
                     candidates.append(
                         {
@@ -585,6 +593,10 @@ class BusScheduler:
             if expected < -exit_loss_floor or direction_prob <= exit_dir_floor or net_margin < exit_net_margin_floor:
                 size_base = available_base * 0.5
                 if size_base > 0:
+                    size_base, exit_tranches = self._split_into_tranches(
+                        state, size_base, last_price, last_volume, "exit"
+                    )
+                if size_base > 0:
                     target_price = last_price * (1.0 + expected + fee_rate)
                     directive = TradeDirective(
                         action="exit",
@@ -598,6 +610,7 @@ class BusScheduler:
                         expected_return=float(expected),
                         reason=f"drawdown {best_short.label} {expected:.2%}",
                         tier=exit_tier,
+                        tranches=exit_tranches,
                     )
                     candidates.append(
                         {
@@ -1094,6 +1107,81 @@ class BusScheduler:
             },
         }
 
+    def _split_into_tranches(
+        self,
+        state: RouteState,
+        total_size: float,
+        last_price: float,
+        last_volume: float,
+        action: str,
+    ) -> Tuple[float, List[Dict[str, float]]]:
+        """
+        Split an order into volume-aware tranches (the 'bus passengers per stop' logic).
+
+        Each tranche represents a portion of the order that fits within the available
+        liquidity at a given price level. If the total order exceeds what the volume
+        can absorb in a single execution, we split into multiple smaller chunks that
+        should each execute with acceptable slippage.
+
+        Returns (adjusted_total_size, tranches).
+        """
+        if total_size <= 0 or last_price <= 0 or last_volume <= 0:
+            return (total_size, [])
+
+        # Estimate available depth from recent volume
+        # Use median volume over recent samples to avoid outliers
+        volumes = [vol for _, _, vol in state.samples if vol > 0]
+        if len(volumes) < 3:
+            return (total_size, [])
+        median_vol = float(np.median(volumes[-24:] if len(volumes) > 24 else volumes))
+
+        # Max single-execution size: fraction of the bar's volume that won't
+        # move the price excessively.  Default 2% of bar volume.
+        max_single_pct = float(os.getenv("BUS_MAX_VOLUME_PCT", "0.02"))
+        max_single_size = median_vol * max_single_pct
+
+        if max_single_size <= 0:
+            return (total_size, [])
+
+        order_value_usd = total_size * last_price
+
+        # If order fits in one tranche, no splitting needed
+        if total_size <= max_single_size:
+            return (total_size, [{"size": total_size, "price": last_price, "pct_of_bar_volume": total_size / median_vol}])
+
+        # Split into tranches, each <= max_single_size
+        # Apply increasing slippage cost per tranche (price impact)
+        slippage_per_tranche_bps = self.slippage_bps
+        tranches: List[Dict[str, float]] = []
+        remaining = total_size
+        tranche_idx = 0
+        max_tranches = int(os.getenv("BUS_MAX_TRANCHES", "5"))
+        cumulative_slippage = 0.0
+
+        while remaining > 0 and tranche_idx < max_tranches:
+            chunk = min(remaining, max_single_size)
+            # Each subsequent tranche faces more price impact
+            impact_bps = slippage_per_tranche_bps * (1.0 + 0.5 * tranche_idx)
+            impact_factor = impact_bps / 10000.0
+            if action == "enter":
+                tranche_price = last_price * (1.0 + impact_factor * (tranche_idx + 1))
+            else:
+                tranche_price = last_price * (1.0 - impact_factor * (tranche_idx + 1))
+            cumulative_slippage += chunk * impact_factor * (tranche_idx + 1)
+            tranches.append({
+                "size": float(chunk),
+                "price": float(tranche_price),
+                "impact_bps": float(impact_bps),
+                "pct_of_bar_volume": float(chunk / median_vol),
+                "tranche_idx": float(tranche_idx),
+            })
+            remaining -= chunk
+            tranche_idx += 1
+
+        # If we couldn't fit all the order, cap total size to what we scheduled
+        actual_total = sum(t["size"] for t in tranches)
+        return (actual_total, tranches)
+
     def filter_metrics(self) -> List[Dict[str, Any]]:
         """
         Expose recent filter decisions (spread/depth) for telemetry.
@@ -1111,3 +1199,67 @@ class BusScheduler:
             except Exception:
                 pass
         return metrics
+
+    # ------------------------------------------------------------------
+    # Partial-fill retry queue
+    # ------------------------------------------------------------------
+
+    def report_partial_fill(
+        self,
+        directive: TradeDirective,
+        executed_size: float,
+        executed_price: float,
+    ) -> None:
+        """Record a partial fill so the remaining amount can be retried."""
+        remaining = directive.size - executed_size
+        if remaining <= 0 or executed_size <= 0:
+            return
+        self._pending_retries.append({
+            "symbol": directive.symbol,
+            "action": directive.action,
+            "base_token": directive.base_token,
+            "quote_token": directive.quote_token,
+            "remaining_size": float(remaining),
+            "original_size": float(directive.size),
+            "target_price": float(directive.target_price),
+            "horizon": directive.horizon,
+            "confidence": float(directive.confidence),
+            "expected_return": float(directive.expected_return),
+            "reason": f"retry partial fill ({executed_size:.6f}/{directive.size:.6f})",
+            "tier": directive.tier,
+            "ts": time.time(),
+            "attempts": 0,
+        })
+
+    def pop_retry(self, symbol: str, action: str) -> Optional[TradeDirective]:
+        """Return a pending retry directive for *symbol*/*action* if one exists."""
+        max_age = float(os.getenv("RETRY_MAX_AGE_SEC", "3600"))
+        max_attempts = int(os.getenv("RETRY_MAX_ATTEMPTS", "3"))
+        now = time.time()
+        for idx, entry in enumerate(self._pending_retries):
+            if entry["symbol"] != symbol or entry["action"] != action:
+                continue
+            age = now - entry.get("ts", now)
+            attempts = int(entry.get("attempts", 0))
+            if age > max_age or attempts >= max_attempts:
+                del self._pending_retries[idx]
+                return None
+            entry["attempts"] = attempts + 1
+            del self._pending_retries[idx]
+            return TradeDirective(
+                action=entry["action"],
+                symbol=entry["symbol"],
+                base_token=entry["base_token"],
+                quote_token=entry["quote_token"],
+                size=float(entry["remaining_size"]),
+                target_price=float(entry["target_price"]),
+                horizon=entry["horizon"],
+                confidence=float(entry["confidence"]),
+                expected_return=float(entry["expected_return"]),
+                reason=entry.get("reason", "retry"),
+                tier=entry.get("tier", "T0"),
+            )
+        return None
+
+    def pending_retry_count(self) -> int:
+        return len(self._pending_retries)
