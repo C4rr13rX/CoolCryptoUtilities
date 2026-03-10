@@ -241,5 +241,8 @@ class Command(BaseCommand):
             try:
                 call_command("runserver", *runserver_args)
             finally:
+                # Stop all managed services (production, guardian, cron, streams).
+                from core.apps import _shutdown_all
+                _shutdown_all()
                 if worker_process and worker_process.poll() is None:
                     worker_process.terminate()
