@@ -272,7 +272,7 @@ def build_multimodal_model(
     asset_feat = Flatten(name="asset_flat")(asset_emb)
 
     merged = Concatenate(name="merge_all")([x, s, headline_feat, full_feat, t, time_f, asset_feat])
-    reg = l2(1e-5)
+    reg = l2(5e-4)
     d = Dense(hidden_1, activation="swish", kernel_regularizer=reg, name="h1")(merged)
     d = LayerNormalization(name="h1_norm")(d)
     d = Dropout(dropout_main, name="h1_do")(d)
@@ -310,11 +310,11 @@ def build_multimodal_model(
     }
     loss_weights = {
         "exit_conf": 0.5,
-        "price_mu": 0.0,
-        "price_log_var": 0.0,
+        "price_mu": 0.0,           # trained via price_gaussian (gaussian_nll_loss)
+        "price_log_var": 0.0,      # trained via price_gaussian (gaussian_nll_loss)
         "price_dir": 0.5,
         "net_margin": 1.0,
-        "net_pnl": 0.0,
+        "net_pnl": 0.25,           # small weight to train PnL prediction
         "tech_recon": 0.25,
         "price_gaussian": 1.0,
     }

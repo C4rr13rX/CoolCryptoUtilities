@@ -948,7 +948,7 @@ class TradingBot:
             "swarm_bias": swarm_bias,
             "swarm_strategy": best_strategy,
             "swarm_score": best_score,
-            "swarm_weights": swarm_weights,
+            "swarm_weights": self.swarm.weights(),
             "swarm_votes": [
                 {
                     "horizon": vote.horizon,

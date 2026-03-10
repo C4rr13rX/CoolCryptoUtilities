@@ -44,7 +44,12 @@ class Command(BaseCommand):
         parser.add_argument(
             "--branddozer-worker-off",
             action="store_true",
-            help="Disable BrandDozer background worker auto-start.",
+            help="(Legacy) Explicitly disable BrandDozer background worker.",
+        )
+        parser.add_argument(
+            "--branddozer-worker-on",
+            action="store_true",
+            help="Enable BrandDozer background worker auto-start (OFF by default).",
         )
         parser.add_argument(
             "--no-runserver",
@@ -210,7 +215,13 @@ class Command(BaseCommand):
         call_command("collectstatic", interactive=False, clear=True)
 
         worker_process = None
-        if not options.get("branddozer_worker_off") and os.environ.get("BRANDDOZER_WORKER_DISABLED") != "1":
+        # BrandDozer worker is OFF by default — only start with --branddozer-worker-on.
+        branddozer_enabled = (
+            options.get("branddozer_worker_on")
+            and not options.get("branddozer_worker_off")
+            and os.environ.get("BRANDDOZER_WORKER_DISABLED") != "1"
+        )
+        if branddozer_enabled:
             self.stdout.write(self.style.MIGRATE_HEADING("[6/7] Start BrandDozer worker"))
             worker_env = os.environ.copy()
             worker_env.setdefault("SECURE_VAULT_KEY_DIR", str(project_root / "storage" / "secure_vault"))

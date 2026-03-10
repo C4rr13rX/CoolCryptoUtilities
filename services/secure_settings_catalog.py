@@ -73,6 +73,16 @@ SECURE_SETTINGS_CATALOG: List[Dict[str, object]] = [
     {"name": "C0D3R_SESSION_REGION", "category": "default", "is_secret": False, "label": "c0d3r Session S3 Region"},
     {"name": "C0D3R_SESSION_PREFIX", "category": "default", "is_secret": False, "label": "c0d3r Session S3 Prefix"},
     {"name": "C0D3R_SESSION_MODE", "category": "default", "is_secret": False, "label": "c0d3r Session Storage Mode"},
+    # ── Stable Bank Notifications ────────────────────────────────────
+    {"name": "STABLE_BANK_NOTIFY_ENDPOINT", "category": "notifications", "is_secret": False, "label": "Stable Bank Notify API URL"},
+    {"name": "STABLE_BANK_NOTIFY_API_KEY", "category": "notifications", "is_secret": True, "label": "Stable Bank Notify API Key"},
+    {"name": "STABLE_BANK_NOTIFY_EMAIL", "category": "notifications", "is_secret": False, "label": "Stable Bank Alert Recipient Email"},
+    {"name": "STABLE_BANK_NOTIFY_SENDER", "category": "notifications", "is_secret": False, "label": "Stable Bank Alert Sender Email"},
+    {"name": "STABLE_BANK_THRESHOLD_USD", "category": "notifications", "is_secret": False, "label": "Stable Bank USD Threshold"},
+    # ── Multi-Wallet ───────────────────────────────────────────────────
+    {"name": "MULTI_WALLET_ENABLED", "category": "wallet", "is_secret": False, "label": "Multi-Wallet Auto-Creation Enabled"},
+    {"name": "MULTI_WALLET_THRESHOLD", "category": "wallet", "is_secret": False, "label": "Multi-Wallet Creation Threshold (USD)"},
+    {"name": "MULTI_WALLET_MAX_BALANCE", "category": "wallet", "is_secret": False, "label": "Multi-Wallet Max Balance Per Wallet (USD)"},
 ]
 
 CATALOG_LOOKUP = {

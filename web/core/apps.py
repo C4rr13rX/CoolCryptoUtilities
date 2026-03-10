@@ -27,23 +27,25 @@ class CoreConfig(AppConfig):
         cmd = sys.argv[1] if len(sys.argv) > 1 else ""
         if cmd == "runserver" and os.environ.get("RUN_MAIN") != "true":
             return
-        if os.environ.get("GUARDIAN_AUTO_DISABLED") == "1":
-            return
-        if CoreConfig._guardian_started:
-            return
-        CoreConfig._guardian_started = True
+        # Guardian bootstrap — only when explicitly enabled.
+        if os.environ.get("GUARDIAN_AUTO_DISABLED") != "1" and not CoreConfig._guardian_started:
+            CoreConfig._guardian_started = True
 
-        def _bootstrap():
-            try:
-                while not apps.ready:
-                    time.sleep(0.05)
-                from services.guardian_supervisor import guardian_supervisor
+            def _bootstrap():
+                import logging
+                logger = logging.getLogger("core.apps")
+                try:
+                    while not apps.ready:
+                        time.sleep(0.05)
+                    from services.guardian_supervisor import guardian_supervisor
 
-                guardian_supervisor.start_if_enabled()
-            except Exception:
-                CoreConfig._guardian_started = False
+                    guardian_supervisor.start_if_enabled()
+                    logger.info("guardian-bootstrap: started")
+                except Exception as exc:
+                    logger.error("guardian-bootstrap: failed -> %s", exc)
+                    CoreConfig._guardian_started = False
 
-        threading.Thread(target=_bootstrap, name="guardian-bootstrap", daemon=True).start()
+            threading.Thread(target=_bootstrap, name="guardian-bootstrap", daemon=True).start()
 
         if not CoreConfig._streams_started:
             try:
@@ -62,6 +64,8 @@ class CoreConfig(AppConfig):
             CoreConfig._production_started = True
 
             def _production_bootstrap():
+                import logging
+                logger = logging.getLogger("core.apps")
                 try:
                     while not apps.ready:
                         time.sleep(0.05)
@@ -70,6 +74,7 @@ class CoreConfig(AppConfig):
                     from services.guardian_status import snapshot_status
                     state = snapshot_status()
                     if state.get("production", {}).get("running"):
+                        logger.info("production-bootstrap: already running, skipping")
                         return
                     # Only auto-start if wallet credentials exist in SecureVault.
                     from securevault.models import SecureSetting
@@ -77,10 +82,14 @@ class CoreConfig(AppConfig):
                         name__in=["MNEMONIC", "PRIVATE_KEY"]
                     ).exists()
                     if not has_wallet:
+                        logger.info("production-bootstrap: no wallet credentials found, skipping")
                         return
                     from opsconsole.manager import manager as console_manager
-                    console_manager.start()
-                except Exception:
+                    result = console_manager.start()
+                    logger.info("production-bootstrap: started -> %s", result)
+                except Exception as exc:
+                    import traceback
+                    logger.error("production-bootstrap: failed -> %s\n%s", exc, traceback.format_exc())
                     CoreConfig._production_started = False
 
             threading.Thread(
@@ -96,13 +105,17 @@ class CoreConfig(AppConfig):
         CoreConfig._cron_started = True
 
         def _cron_bootstrap():
+            import logging
+            logger = logging.getLogger("core.apps")
             try:
                 while not apps.ready:
                     time.sleep(0.05)
                 from services.internal_cron import cron_supervisor
 
                 cron_supervisor.ensure_running()
-            except Exception:
+                logger.info("cron-bootstrap: started")
+            except Exception as exc:
+                logger.error("cron-bootstrap: failed -> %s", exc)
                 CoreConfig._cron_started = False
 
         threading.Thread(target=_cron_bootstrap, name="cron-bootstrap", daemon=True).start()

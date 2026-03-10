@@ -12,4 +12,8 @@ urlpatterns = [
     path("mnemonic/", views.WalletMnemonicView.as_view(), name="mnemonic"),
     path("state/", views.WalletStateSnapshotView.as_view(), name="state"),
     path("nfts/preferences/", views.WalletNftPreferenceView.as_view(), name="nft-preferences"),
+    path("transfers/", views.WalletTransfersView.as_view(), name="transfers"),
+    path("wallets/", views.MultiWalletListView.as_view(), name="wallets"),
+    path("wallets/create/", views.MultiWalletCreateView.as_view(), name="wallets-create"),
+    path("wallets/reveal/", views.WalletRevealMnemonicView.as_view(), name="wallets-reveal"),
 ]

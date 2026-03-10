@@ -23,10 +23,11 @@ from services.wallet_watch import (
 from services.usd_valuation import UsdValuation
 from router_wallet import CHAINS, CHAIN_NATIVE_SYMBOL, UltraSwapBridge
 
-STATE_DIR = Path("storage/wallet_state")
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+STATE_DIR = _PROJECT_ROOT / "storage" / "wallet_state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 NATIVE_TOKEN = "0x0000000000000000000000000000000000000000"
-OVERRIDES_PATH = Path(os.getenv("WALLET_BALANCE_OVERRIDES_PATH", "config/wallet_balance_overrides.json"))
+OVERRIDES_PATH = Path(os.getenv("WALLET_BALANCE_OVERRIDES_PATH", str(_PROJECT_ROOT / "config" / "wallet_balance_overrides.json")))
 DEFAULT_STATE = {
     "wallet": None,
     "updated_at": None,

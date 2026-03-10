@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+import re
+from datetime import datetime
+from typing import Any, Dict, List
 
 from django.db import transaction
 from rest_framework import status
@@ -13,6 +15,7 @@ from securevault.models import SecureSetting
 from services.secure_settings import encrypt_secret, mask_value
 from services.wallet_runner import wallet_runner
 from services.wallet_state import load_wallet_state
+from services.multi_wallet import multi_wallet_manager
 from .models import WalletNftPreference
 
 DEFAULT_CATEGORY = "default"
@@ -204,3 +207,288 @@ def _upsert_secret(user, name: str, value: str) -> None:
         setting.encapsulated_key = payload["encapsulated_key"]
         setting.nonce = payload["nonce"]
         setting.save()
+
+
+class MultiWalletListView(APIView):
+    """List all wallets with per-wallet state and aggregate summary."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        wallets = multi_wallet_manager.load_wallets(user=request.user)
+        if not wallets:
+            # Fall back to single-wallet mode.
+            snapshot = load_wallet_state()
+            return Response({
+                "wallet_count": 1 if snapshot.get("wallet") else 0,
+                "wallets": [{
+                    "index": 0,
+                    "wallet": snapshot.get("wallet"),
+                    "usd": (snapshot.get("totals") or {}).get("usd", 0),
+                    "updated_at": snapshot.get("updated_at"),
+                }] if snapshot.get("wallet") else [],
+                "totals": snapshot.get("totals", {"usd": 0}),
+                "balances": snapshot.get("balances", []),
+                "transfers": snapshot.get("transfers", {}),
+                "nfts": snapshot.get("nfts", []),
+                "config": _multi_wallet_config(),
+            }, status=status.HTTP_200_OK)
+
+        per_wallet: list[Dict[str, Any]] = []
+        for w in wallets:
+            try:
+                state = load_wallet_state()
+                if (state.get("wallet") or "").lower() == w.address.lower():
+                    state["wallet_index"] = w.index
+                    per_wallet.append(state)
+                else:
+                    per_wallet.append({
+                        "wallet_index": w.index,
+                        "wallet": w.address,
+                        "updated_at": None,
+                        "totals": {"usd": 0},
+                        "balances": [],
+                        "transfers": {},
+                        "nfts": [],
+                    })
+            except Exception:
+                per_wallet.append({
+                    "wallet_index": w.index,
+                    "wallet": w.address,
+                    "updated_at": None,
+                    "totals": {"usd": 0},
+                    "balances": [],
+                    "transfers": {},
+                    "nfts": [],
+                })
+
+        aggregate = multi_wallet_manager.aggregate_state(per_wallet)
+        aggregate["config"] = _multi_wallet_config()
+        return Response(aggregate, status=status.HTTP_200_OK)
+
+
+class MultiWalletCreateView(APIView):
+    """Manually create a new wallet."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        try:
+            wallet = multi_wallet_manager.create_wallet(user=request.user)
+            return Response({
+                "created": True,
+                "index": wallet.index,
+                "address": wallet.address,
+            }, status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            return Response(
+                {"detail": f"Failed to create wallet: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class WalletRevealMnemonicView(APIView):
+    """Reveal the full unencrypted mnemonic for a specific wallet index."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        wallet_index = request.data.get("wallet_index", 0)
+        try:
+            wallet_index = int(wallet_index)
+        except (TypeError, ValueError):
+            wallet_index = 0
+
+        from services.secure_settings import decrypt_secret
+
+        # Try MNEMONIC_N first, then fall back to MNEMONIC for index 0.
+        names = [f"MNEMONIC_{wallet_index}"]
+        if wallet_index == 0:
+            names.append("MNEMONIC")
+
+        for name in names:
+            setting = SecureSetting.objects.filter(
+                user=request.user, name=name, category=DEFAULT_CATEGORY,
+            ).first()
+            if setting and setting.is_secret:
+                try:
+                    value = decrypt_secret(
+                        setting.encapsulated_key,
+                        setting.ciphertext,
+                        setting.nonce,
+                    )
+                    return Response({
+                        "wallet_index": wallet_index,
+                        "mnemonic": value,
+                    }, status=status.HTTP_200_OK)
+                except Exception as exc:
+                    return Response(
+                        {"detail": f"Decryption failed: {exc}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
+        return Response(
+            {"detail": f"No mnemonic found for wallet {wallet_index}"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+
+class WalletTransfersView(APIView):
+    """Paginated, searchable transfers across all chains."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        snapshot = load_wallet_state()
+        raw_transfers: Dict[str, list] = snapshot.get("transfers") or {}
+
+        # Flatten all chains into a single list with chain name attached.
+        flat: List[Dict[str, Any]] = []
+        for chain, items in raw_transfers.items():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                entry = dict(item)
+                entry["chain"] = chain
+                flat.append(entry)
+
+        # Sorting
+        sort_order = str(request.query_params.get("sort", "desc")).lower()
+        reverse = sort_order != "asc"
+        flat.sort(key=lambda x: (x.get("block") or 0), reverse=reverse)
+
+        # Search / filter
+        search = str(request.query_params.get("search", "")).strip()
+        if search:
+            flat = _search_transfers(flat, search)
+
+        total = len(flat)
+
+        # Pagination
+        try:
+            offset = max(0, int(request.query_params.get("offset", 0)))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = min(200, max(1, int(request.query_params.get("limit", 50))))
+        except (TypeError, ValueError):
+            limit = 50
+
+        page = flat[offset:offset + limit]
+
+        # Discover chains dynamically
+        chains = sorted(raw_transfers.keys())
+
+        return Response({
+            "items": page,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "chains": chains,
+        }, status=status.HTTP_200_OK)
+
+
+def _search_transfers(items: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    """Filter transfers by query.  Detects date-like queries and matches
+    against ts/block fields; otherwise does a case-insensitive substring
+    match across all string values."""
+
+    # Try to detect a date query.
+    parsed_date = _parse_date_query(query)
+    if parsed_date:
+        start_ts, end_ts = parsed_date
+        results: List[Dict[str, Any]] = []
+        for item in items:
+            ts = item.get("ts")
+            if ts:
+                item_epoch = _snapshot_epoch(ts)
+                if start_ts <= item_epoch <= end_ts:
+                    results.append(item)
+            # If no ts, can't date-filter — skip.
+        return results
+
+    # General text search — check all string values.
+    q_lower = query.lower()
+    return [
+        item for item in items
+        if any(q_lower in str(v).lower() for v in item.values())
+    ]
+
+
+def _parse_date_query(query: str):
+    """Attempt to parse a date or date range from the query string.
+
+    Returns (start_epoch, end_epoch) or None if not a date query.
+    Handles formats like:
+      - "2025-03-01"
+      - "March 2025"
+      - "03/01/2025"
+      - "yesterday"
+      - "last week"
+    """
+    q = query.strip().lower()
+
+    # Relative dates
+    from datetime import timedelta
+    now = datetime.utcnow()
+    if q in ("today", "now"):
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return (start.timestamp(), now.timestamp())
+    if q == "yesterday":
+        start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start.replace(hour=23, minute=59, second=59)
+        return (start.timestamp(), end.timestamp())
+    if q in ("last week", "this week"):
+        start = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return (start.timestamp(), now.timestamp())
+    if q in ("last month", "this month"):
+        start = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return (start.timestamp(), now.timestamp())
+
+    # Month + Year: "March 2025", "mar 2025"
+    month_names = {
+        "jan": 1, "january": 1, "feb": 2, "february": 2,
+        "mar": 3, "march": 3, "apr": 4, "april": 4,
+        "may": 5, "jun": 6, "june": 6,
+        "jul": 7, "july": 7, "aug": 8, "august": 8,
+        "sep": 9, "september": 9, "oct": 10, "october": 10,
+        "nov": 11, "november": 11, "dec": 12, "december": 12,
+    }
+    m = re.match(r"^(\w+)\s+(\d{4})$", q)
+    if m:
+        month_str, year_str = m.group(1), m.group(2)
+        month_num = month_names.get(month_str)
+        if month_num:
+            import calendar
+            year = int(year_str)
+            last_day = calendar.monthrange(year, month_num)[1]
+            start = datetime(year, month_num, 1)
+            end = datetime(year, month_num, last_day, 23, 59, 59)
+            return (start.timestamp(), end.timestamp())
+
+    # Standard date formats
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d", "%m-%d-%Y", "%d-%m-%Y"):
+        try:
+            dt = datetime.strptime(q, fmt)
+            start = dt.replace(hour=0, minute=0, second=0)
+            end = dt.replace(hour=23, minute=59, second=59)
+            return (start.timestamp(), end.timestamp())
+        except ValueError:
+            continue
+
+    # Year only: "2025"
+    if re.match(r"^\d{4}$", q):
+        year = int(q)
+        start = datetime(year, 1, 1)
+        end = datetime(year, 12, 31, 23, 59, 59)
+        return (start.timestamp(), end.timestamp())
+
+    return None
+
+
+def _multi_wallet_config() -> Dict[str, Any]:
+    return {
+        "enabled": multi_wallet_manager.enabled(),
+        "threshold": multi_wallet_manager.threshold(),
+        "max_balance": multi_wallet_manager.max_balance(),
+    }

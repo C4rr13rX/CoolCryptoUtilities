@@ -834,10 +834,20 @@ class HistoricalDataLoader:
             if limit <= 0:
                 continue
 
+            # Pre-compute gap mask: detect where adjacent timestamps differ
+            # by more than 3x the median step (indicates missing data).
+            gap_threshold = step_seconds * 3 if step_seconds > 0 else 900
+            ts_diffs = np.diff(timestamps)
+
             for idx in range(0, limit, self._sampling_stride):
                 start = idx
                 end = idx + window_size
                 next_idx = end
+
+                # Skip samples that span a data gap (window or lookahead).
+                window_diffs = ts_diffs[start:next_idx]
+                if window_diffs.size > 0 and int(window_diffs.max()) > gap_threshold:
+                    continue
 
                 price_slice = closes[start:end]
                 vol_slice = net_volumes[start:end]
@@ -886,10 +896,13 @@ class HistoricalDataLoader:
 
                 current_price = float(price_slice[-1])
                 future_price = float(closes[next_idx])
-                if current_price > 0 and future_price > 0:
-                    ret = float(np.log(future_price) - np.log(current_price))
-                else:
-                    ret = 0.0
+                if current_price <= 0 or future_price <= 0:
+                    continue  # skip corrupt/zero-price samples entirely
+                if not (np.isfinite(current_price) and np.isfinite(future_price)):
+                    continue  # skip NaN/inf prices
+                ret = float(np.log(future_price) - np.log(current_price))
+                if not np.isfinite(ret):
+                    continue
                 mu = ret
 
                 sample_horizons = self._maybe_collect_horizon_metrics(
@@ -1234,8 +1247,12 @@ class HistoricalDataLoader:
         ]
         feature_vector.extend(advanced.values.get(name, 0.0) for name in advanced_feature_names())
         features = np.array(feature_vector, dtype=np.float32)
-        if np.isnan(features).any():
-            features = np.nan_to_num(features)
+        # Replace NaN/Inf with feature medians (not zero — zero biases features).
+        bad_mask = ~np.isfinite(features)
+        if bad_mask.any():
+            finite_vals = features[~bad_mask]
+            fill = float(np.median(finite_vals)) if finite_vals.size > 0 else 0.0
+            features[bad_mask] = fill
         return features
 
     def _estimate_ohlc_start(self) -> int:
@@ -1433,11 +1450,19 @@ class HistoricalDataLoader:
             return None
         if not isinstance(rows, list) or len(rows) <= 2:
             return None
-        closes = np.array([float(row.get("close", 0.0)) for row in rows], dtype=np.float32)
-        net_volumes = np.array([float(row.get("net_volume", 0.0)) for row in rows], dtype=np.float32)
-        buy_volumes = np.array([float(row.get("buy_volume", 0.0)) for row in rows], dtype=np.float32)
-        sell_volumes = np.array([float(row.get("sell_volume", 0.0)) for row in rows], dtype=np.float32)
-        timestamps = np.array([int(row.get("timestamp", 0)) for row in rows], dtype=np.int64)
+        # Filter out rows missing essential fields before building arrays.
+        valid_rows = [
+            r for r in rows
+            if "close" in r and "timestamp" in r
+            and float(r["close"]) > 0 and int(r["timestamp"]) > 0
+        ]
+        if len(valid_rows) <= 2:
+            return None
+        closes = np.array([float(r["close"]) for r in valid_rows], dtype=np.float32)
+        net_volumes = np.array([float(r.get("net_volume", 0.0)) for r in valid_rows], dtype=np.float32)
+        buy_volumes = np.array([float(r.get("buy_volume", 0.0)) for r in valid_rows], dtype=np.float32)
+        sell_volumes = np.array([float(r.get("sell_volume", 0.0)) for r in valid_rows], dtype=np.float32)
+        timestamps = np.array([int(r["timestamp"]) for r in valid_rows], dtype=np.int64)
         payload = {
             "closes": closes,
             "net_volumes": net_volumes,

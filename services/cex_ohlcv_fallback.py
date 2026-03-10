@@ -170,8 +170,9 @@ def _binance_klines_to_ohlcv(klines: List[List]) -> List[Dict[str, Any]]:
                 "low": float(k[3]),
                 "close": float(k[4]),
                 "net_volume": float(k[5]),
-                "buy_volume": float(k[9]) if len(k) > 9 else float(k[5]) * 0.5,
-                "sell_volume": max(0.0, float(k[5]) - float(k[9])) if len(k) > 9 else float(k[5]) * 0.5,
+                # k[9] = taker_buy_base_asset_volume (base currency volume bought)
+                "buy_volume": float(k[9]) if len(k) > 9 and float(k[9]) <= float(k[5]) else float(k[5]) * 0.5,
+                "sell_volume": max(0.0, float(k[5]) - float(k[9])) if len(k) > 9 and float(k[9]) <= float(k[5]) else float(k[5]) * 0.5,
                 "vwap": (float(k[2]) + float(k[3]) + float(k[4])) / 3.0,
             })
         except (IndexError, ValueError, TypeError):
@@ -320,13 +321,24 @@ def download_pair_coinbase(
         for candle in data:
             # Coinbase format: [time, low, high, open, close, volume]
             try:
+                vol = float(candle[5])
+                # Coinbase doesn't provide buy/sell split; estimate from
+                # candle direction — attribute more volume to the dominant side.
+                o, c = float(candle[3]), float(candle[4])
+                if o > 0 and c > 0:
+                    ratio = min(max((c - o) / o, -0.5), 0.5)  # clamp
+                    buy_frac = 0.5 + ratio  # bullish → more buy, bearish → more sell
+                else:
+                    buy_frac = 0.5
                 all_rows.append({
                     "timestamp": int(candle[0]),
-                    "open": float(candle[3]),
+                    "open": o,
                     "high": float(candle[2]),
                     "low": float(candle[1]),
-                    "close": float(candle[4]),
-                    "net_volume": float(candle[5]),
+                    "close": c,
+                    "net_volume": vol,
+                    "buy_volume": vol * buy_frac,
+                    "sell_volume": vol * (1.0 - buy_frac),
                 })
             except (IndexError, ValueError, TypeError):
                 continue
@@ -359,13 +371,21 @@ def _fetch_coingecko_ohlc(
     for candle in data:
         # CoinGecko OHLC: [timestamp_ms, open, high, low, close]
         try:
+            o, h, l, c = float(candle[1]), float(candle[2]), float(candle[3]), float(candle[4])
+            # CoinGecko doesn't include volume.  Estimate a synthetic proxy
+            # from candle range so downstream volume features aren't all zero.
+            spread = (h - l) / max(o, 1e-12)
+            synthetic_vol = spread * 1000.0  # scaled proxy
+            buy_frac = 0.5 + min(max((c - o) / max(o, 1e-12), -0.5), 0.5) if o > 0 else 0.5
             rows.append({
                 "timestamp": int(candle[0]) // 1000,
-                "open": float(candle[1]),
-                "high": float(candle[2]),
-                "low": float(candle[3]),
-                "close": float(candle[4]),
-                "net_volume": 0.0,  # CoinGecko OHLC doesn't include volume
+                "open": o,
+                "high": h,
+                "low": l,
+                "close": c,
+                "net_volume": synthetic_vol,
+                "buy_volume": synthetic_vol * buy_frac,
+                "sell_volume": synthetic_vol * (1.0 - buy_frac),
             })
         except (IndexError, ValueError, TypeError):
             continue

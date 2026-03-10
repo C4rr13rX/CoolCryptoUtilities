@@ -17,6 +17,8 @@ from services.idle_work import IdleWorkManager
 from services.heartbeat import HeartbeatFile
 from services.env_loader import EnvLoader
 from services.secure_settings import build_process_env
+from services.stable_bank_notify import notifier as _stable_bank_notifier
+from services.multi_wallet import multi_wallet_manager as _multi_wallet_mgr
 
 if TYPE_CHECKING:
     from trading.pipeline import TrainingPipeline
@@ -246,6 +248,31 @@ class ProductionManager:
                     "heavy_backlog_threshold": self._heavy_backlog_threshold,
                 },
             )
+            # ── Stable bank threshold notification ──────────────────
+            try:
+                from db import get_db
+                _db = get_db()
+                _state = _db.load_state() or {}
+                _ghost = _state.get("ghost_trading") or {}
+                _bank_usd = float(_ghost.get("stable_bank", 0.0))
+                if _bank_usd > 0:
+                    _stable_bank_notifier.check(_bank_usd)
+            except Exception:
+                pass  # notification is best-effort, never break the cycle
+            # ── Multi-wallet auto-creation ────────────────────────────
+            try:
+                if _multi_wallet_mgr.enabled():
+                    _mw_wallets = _multi_wallet_mgr.load_wallets()
+                    if _mw_wallets:
+                        _mw_balances: Dict[str, float] = {}
+                        for _mw in _mw_wallets:
+                            _mw_balances[_mw.address.lower()] = float(
+                                _ghost.get("stable_bank", 0.0)
+                            ) if _mw.index == 0 else 0.0
+                        _multi_wallet_mgr.check_and_create(_mw_balances)
+            except Exception:
+                pass  # multi-wallet is best-effort
+            # ────────────────────────────────────────────────────────
             if backlog >= self._max_pending:
                 self._backlog_strikes += 1
                 log_message(

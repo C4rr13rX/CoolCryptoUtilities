@@ -31,10 +31,11 @@ class LogBus:
         self._queue: queue.Queue[Optional[LogRecord]] = queue.Queue()
         self._thread = threading.Thread(target=self._loop, name="log-bus", daemon=True)
         self._thread.start()
-        log_path = Path(os.getenv("LOG_BUS_PATH", "logs/system.log"))
+        _project_root = Path(__file__).resolve().parents[1]
+        log_path = Path(os.getenv("LOG_BUS_PATH", str(_project_root / "logs" / "system.log")))
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_path = log_path
-        service_dir = Path(os.getenv("LOG_BUS_SERVICE_DIR", "logs/services"))
+        service_dir = Path(os.getenv("LOG_BUS_SERVICE_DIR", str(_project_root / "logs" / "services")))
         service_dir.mkdir(parents=True, exist_ok=True)
         self._service_dir = service_dir
         self._file_lock = Lock()

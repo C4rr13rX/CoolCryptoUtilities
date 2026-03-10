@@ -1,24 +1,60 @@
 <template>
   <div class="wallet-view">
+    <!-- Wallet Tabs -->
+    <section class="panel wallet-tabs-panel" v-if="wallet.walletCount > 1 || wallet.walletList.length > 1">
+      <div class="wallet-tab-bar">
+        <button
+          class="wallet-tab"
+          :class="{ active: wallet.activeWalletIndex === -1 }"
+          type="button"
+          @click="wallet.setActiveWallet(-1)"
+        >
+          All Wallets
+        </button>
+        <button
+          v-for="w in wallet.walletList"
+          :key="w.index"
+          class="wallet-tab"
+          :class="{ active: wallet.activeWalletIndex === w.index }"
+          type="button"
+          @click="wallet.setActiveWallet(w.index)"
+        >
+          Wallet {{ w.index }}
+        </button>
+        <button
+          class="wallet-tab create-tab"
+          type="button"
+          @click="handleCreateWallet"
+          :disabled="creatingWallet"
+        >
+          + New
+        </button>
+      </div>
+    </section>
+
     <section class="panel summary-panel">
       <header>
         <div>
-          <h2>{{ t('wallet.title') }}</h2>
-          <p class="caption">{{ wallet.snapshot?.wallet || t('wallet.no_wallet') }}</p>
+          <h2>{{ wallet.activeWalletIndex === -1 ? t('wallet.title') : `Wallet ${wallet.activeWalletIndex}` }}</h2>
+          <p class="caption">{{ activeWalletCaption }}</p>
         </div>
         <div class="summary-actions">
           <button class="btn" type="button" @click="wallet.autoRefresh" :disabled="wallet.running || wallet.autoRefreshing">
             {{ wallet.autoRefreshing || wallet.running ? t('common.refreshing') : t('wallet.auto_refresh') }}
           </button>
-          <button class="btn ghost" type="button" @click="wallet.fetchSnapshot" :disabled="wallet.snapshotLoading">
+          <button class="btn ghost" type="button" @click="refreshAll" :disabled="wallet.snapshotLoading || wallet.multiWalletLoading">
             {{ t('wallet.reload_snapshot') }}
           </button>
         </div>
       </header>
       <div class="summary-grid">
         <div>
-          <span class="label">{{ t('wallet.total_usd') }}</span>
-          <span class="value">{{ totalUsdDisplay }}</span>
+          <span class="label">{{ wallet.activeWalletIndex === -1 && wallet.walletCount > 1 ? 'Total USD (All Wallets)' : t('wallet.total_usd') }}</span>
+          <span class="value highlight">{{ currency(wallet.activeWalletUsd) }}</span>
+        </div>
+        <div v-if="wallet.activeWalletIndex === -1 && wallet.walletCount > 1">
+          <span class="label">Wallets</span>
+          <span class="value">{{ wallet.walletCount }}</span>
         </div>
         <div>
           <span class="label">{{ t('wallet.last_updated') }}</span>
@@ -27,6 +63,45 @@
         <div>
           <span class="label">{{ t('wallet.worker_status') }}</span>
           <span class="value">{{ workerSummary }}</span>
+        </div>
+      </div>
+      <!-- Reveal mnemonic button (per-wallet view) -->
+      <div class="reveal-row" v-if="wallet.activeWalletIndex >= 0">
+        <button class="btn ghost" type="button" @click="handleRevealMnemonic(wallet.activeWalletIndex)">
+          Reveal Recovery Phrase
+        </button>
+      </div>
+      <!-- Per-wallet breakdown when viewing All Wallets -->
+      <div class="wallet-breakdown" v-if="wallet.activeWalletIndex === -1 && wallet.walletList.length > 1">
+        <div class="breakdown-row" v-for="w in wallet.walletList" :key="w.index">
+          <span class="breakdown-label">
+            <button class="link-btn" type="button" @click="wallet.setActiveWallet(w.index)">
+              Wallet {{ w.index }}
+            </button>
+            <span class="breakdown-addr">{{ truncateAddress(w.wallet) }}</span>
+          </span>
+          <span class="breakdown-actions">
+            <button class="btn-tiny ghost" type="button" @click="handleRevealMnemonic(w.index)">Reveal</button>
+            <span class="breakdown-value">{{ currency(w.usd) }}</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Multi-wallet config info -->
+    <section class="panel config-panel" v-if="wallet.multiWalletConfig && wallet.activeWalletIndex === -1">
+      <div class="config-grid">
+        <div>
+          <span class="label">Auto-Create</span>
+          <span class="value">{{ wallet.multiWalletConfig.enabled ? 'Enabled' : 'Disabled' }}</span>
+        </div>
+        <div>
+          <span class="label">New Wallet Threshold</span>
+          <span class="value">{{ currency(wallet.multiWalletConfig.threshold) }}</span>
+        </div>
+        <div>
+          <span class="label">Max Per Wallet</span>
+          <span class="value">{{ currency(wallet.multiWalletConfig.max_balance) }}</span>
         </div>
       </div>
     </section>
@@ -79,13 +154,14 @@
       <header>
         <div>
           <h2>{{ t('wallet.token_balances') }}</h2>
-          <p class="caption">{{ t('wallet.balances_caption') }}</p>
+          <p class="caption">{{ wallet.activeWalletIndex === -1 && wallet.walletCount > 1 ? 'Aggregated across all wallets' : t('wallet.balances_caption') }}</p>
         </div>
       </header>
       <div class="table-scroll" v-if="walletBalances.length">
         <table>
           <thead>
             <tr>
+              <th v-if="wallet.activeWalletIndex === -1 && wallet.walletCount > 1">Wallet</th>
               <th>{{ t('common.chain') }}</th>
               <th>{{ t('wallet.token') }}</th>
               <th class="align-right">{{ t('wallet.quantity') }}</th>
@@ -93,7 +169,8 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in walletBalances" :key="row.chain + row.token">
+            <tr v-for="row in walletBalances" :key="(row.wallet_index ?? '') + row.chain + row.token">
+              <td v-if="wallet.activeWalletIndex === -1 && wallet.walletCount > 1">{{ row.wallet_index ?? 0 }}</td>
               <td>{{ row.chain }}</td>
               <td>{{ row.symbol }}</td>
               <td class="align-right">{{ formatNumber(row.quantity) }}</td>
@@ -111,23 +188,91 @@
           <h2>{{ t('wallet.recent_transfers') }}</h2>
           <p class="caption">{{ t('wallet.transfers_caption') }}</p>
         </div>
+        <button class="btn ghost" type="button" @click="openAllTransactions">
+          Show All Transactions
+        </button>
       </header>
       <div class="transfers-grid" v-if="transferEntries.length">
         <article v-for="[chain, items] in transferEntries" :key="chain" class="transfer-card">
           <header>
-            <strong>{{ chain }}</strong>
+            <strong>{{ chainDisplayName(chain) }}</strong>
+            <span class="transfer-count">{{ items.length }}</span>
           </header>
           <ul>
-            <li v-for="item in items" :key="item.hash + item.block">
+            <li v-for="item in items.slice(0, 5)" :key="item.hash + item.block">
               <span class="direction" :class="item.direction">{{ item.direction === 'in' ? t('wallet.in') : t('wallet.out') }}</span>
               <span class="amount">{{ formatValue(item.value) }}</span>
               <span class="hash">{{ truncateHash(item.hash) }}</span>
+            </li>
+            <li v-if="items.length > 5" class="more-link">
+              <button class="link-btn" type="button" @click="openAllTransactions">
+                +{{ items.length - 5 }} more
+              </button>
             </li>
           </ul>
         </article>
       </div>
       <p v-else class="empty-text">{{ t('wallet.no_transfers') }}</p>
     </section>
+
+    <!-- All Transactions Modal -->
+    <Teleport to="body">
+      <div v-if="txModalOpen" class="modal-overlay" @click.self="closeTxModal">
+        <div class="modal-card tx-modal">
+          <header class="modal-header">
+            <h3>All Transactions</h3>
+            <button class="modal-close" type="button" @click="closeTxModal">&times;</button>
+          </header>
+          <div class="tx-toolbar">
+            <input
+              v-model="txSearch"
+              class="tx-search-input"
+              type="text"
+              placeholder="Search transactions (hash, token, date, chain...)"
+              @input="debouncedTxSearch"
+            />
+            <button
+              class="btn-tiny"
+              type="button"
+              @click="toggleTxSort"
+            >
+              {{ txSort === 'desc' ? 'Latest First' : 'Earliest First' }}
+            </button>
+          </div>
+          <div class="tx-scroll" ref="txScrollRef" @scroll="handleTxScroll">
+            <table v-if="txItems.length" class="tx-table">
+              <thead>
+                <tr>
+                  <th>Chain</th>
+                  <th>Dir</th>
+                  <th>Value</th>
+                  <th>Token</th>
+                  <th>Block</th>
+                  <th>Hash</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(item, idx) in txItems" :key="idx">
+                  <td>{{ chainDisplayName(item.chain) }}</td>
+                  <td>
+                    <span class="direction" :class="item.direction">{{ item.direction === 'in' ? 'IN' : 'OUT' }}</span>
+                  </td>
+                  <td class="align-right">{{ formatValue(item.value) }}</td>
+                  <td class="token-cell">{{ truncateHash(item.token) }}</td>
+                  <td class="align-right">{{ item.block || '—' }}</td>
+                  <td class="hash">{{ truncateHash(item.hash) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else-if="!txLoading" class="empty-text" style="padding:2rem;text-align:center;">No transactions found.</p>
+            <div v-if="txLoading" class="tx-loading">Loading...</div>
+          </div>
+          <div class="tx-footer">
+            <span class="caption">{{ txItems.length }} of {{ txTotal }} transactions</span>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <section class="panel nft-panel">
       <header class="nft-header">
@@ -229,40 +374,72 @@
         </div>
       </form>
     </section>
-  </div>
-  <TradingStartupWizard
-    v-if="wizardSteps.length"
-    v-model:open="wizardOpen"
-    :steps="wizardSteps"
-    :title="t('wallet.wizard_title')"
-    :subtitle="t('wallet.wizard_subtitle')"
-    :eyebrow="t('wallet.wizard_eyebrow')"
-  >
-    <template #step-mnemonic>
-      <div class="wizard-field">
-        <label for="wizard-mnemonic">{{ t('wallet.wizard_recovery_phrase') }}</label>
-        <textarea
-          id="wizard-mnemonic"
-          v-model="wizardMnemonicInput"
-          rows="3"
-          :placeholder="t('wallet.mnemonic_placeholder')"
-        ></textarea>
-        <div class="wizard-actions">
-          <button class="btn" type="button" @click="saveWizardMnemonic" :disabled="!wizardMnemonicInput.trim()">
-            {{ t('wallet.save_phrase') }}
-          </button>
-          <button class="btn ghost" type="button" @click="clearWizardMnemonic">
-            {{ t('common.clear') }}
-          </button>
+
+    <TradingStartupWizard
+      v-if="wizardSteps.length"
+      v-model:open="wizardOpen"
+      :steps="wizardSteps"
+      :title="t('wallet.wizard_title')"
+      :subtitle="t('wallet.wizard_subtitle')"
+      :eyebrow="t('wallet.wizard_eyebrow')"
+    >
+      <template #step-mnemonic>
+        <div class="wizard-field">
+          <label for="wizard-mnemonic">{{ t('wallet.wizard_recovery_phrase') }}</label>
+          <textarea
+            id="wizard-mnemonic"
+            v-model="wizardMnemonicInput"
+            rows="3"
+            :placeholder="t('wallet.mnemonic_placeholder')"
+          ></textarea>
+          <div class="wizard-actions">
+            <button class="btn" type="button" @click="saveWizardMnemonic" :disabled="!wizardMnemonicInput.trim()">
+              {{ t('wallet.save_phrase') }}
+            </button>
+            <button class="btn ghost" type="button" @click="clearWizardMnemonic">
+              {{ t('common.clear') }}
+            </button>
+          </div>
+        </div>
+      </template>
+    </TradingStartupWizard>
+
+    <!-- Reveal Mnemonic Modal -->
+    <Teleport to="body">
+      <div v-if="revealModalOpen" class="modal-overlay" @click.self="closeRevealModal">
+        <div class="modal-card">
+          <header class="modal-header">
+            <h3>Recovery Phrase — Wallet {{ revealWalletIdx }}</h3>
+            <button class="modal-close" type="button" @click="closeRevealModal">&times;</button>
+          </header>
+          <div class="modal-body">
+            <p class="modal-warning">
+              Keep this recovery phrase safe. Anyone with access to it can control this wallet.
+            </p>
+            <div v-if="revealLoading" class="modal-loading">Decrypting...</div>
+            <div v-else-if="revealError" class="modal-error">{{ revealError }}</div>
+            <div v-else class="mnemonic-display">
+              <div class="mnemonic-words">
+                <span v-for="(word, i) in revealWords" :key="i" class="mnemonic-word">
+                  <span class="word-num">{{ i + 1 }}</span>
+                  {{ word }}
+                </span>
+              </div>
+              <button class="btn ghost" type="button" @click="copyMnemonic">
+                {{ copiedMnemonic ? 'Copied' : 'Copy to Clipboard' }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-    </template>
-  </TradingStartupWizard>
+    </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { fetchWalletNftPreferences, updateWalletNftPreferences } from '@/api';
+import { fetchWalletNftPreferences, updateWalletNftPreferences, revealWalletMnemonic, fetchWalletTransfers } from '@/api';
+import type { TransferItem } from '@/api';
 import { useDashboardStore } from '@/stores/dashboard';
 import { useWalletStore } from '@/stores/wallet';
 import AutomationConsoleStack from '@/components/AutomationConsoleStack.vue';
@@ -277,24 +454,54 @@ const activeAction = ref('');
 const statusTimer = ref<number>();
 const consoleTimer = ref<number>();
 const consoleBusy = ref(false);
+const creatingWallet = ref(false);
 const wizardOpen = ref(!sessionStorage.getItem('wallet-wizard-dismissed'));
 const wizardMnemonicInput = ref('');
 const nftTab = ref<'shown' | 'hidden'>('shown');
 const nftHidden = ref<Set<string>>(new Set());
 const nftSelectionShown = ref<Set<string>>(new Set());
 const nftSelectionHidden = ref<Set<string>>(new Set());
+// Reveal mnemonic modal state
+const revealModalOpen = ref(false);
+const revealWalletIdx = ref(0);
+const revealMnemonicValue = ref('');
+const revealLoading = ref(false);
+const revealError = ref('');
+const copiedMnemonic = ref(false);
+const revealWords = computed(() => revealMnemonicValue.value ? revealMnemonicValue.value.split(/\s+/) : []);
+
+// All Transactions modal state
+const txModalOpen = ref(false);
+const txItems = ref<TransferItem[]>([]);
+const txTotal = ref(0);
+const txLoading = ref(false);
+const txSort = ref<'asc' | 'desc'>('desc');
+const txSearch = ref('');
+const txOffset = ref(0);
+const txScrollRef = ref<HTMLElement | null>(null);
+const TX_PAGE_SIZE = 50;
+let txSearchTimer: ReturnType<typeof setTimeout> | null = null;
 
 const walletBalances = computed(() => wallet.balances);
 const transferEntries = computed(() => Object.entries(wallet.transfers || {}));
 const consoleLines = computed(() => dashboard.consoleLogs || []);
 const guardianConsole = computed(() => dashboard.guardianLogs || []);
-const totalUsdDisplay = computed(() => currency(wallet.snapshot?.totals?.usd || 0));
 const snapshotTimestamp = computed(() => wallet.snapshot?.updated_at || t('common.never'));
 const shownNfts = computed(() => wallet.nfts.filter((nft: any) => !nftHidden.value.has(nftKey(nft))));
 const hiddenNfts = computed(() => wallet.nfts.filter((nft: any) => nftHidden.value.has(nftKey(nft))));
 const activeNfts = computed(() => (nftTab.value === 'shown' ? shownNfts.value : hiddenNfts.value));
 const shownSelectionCount = computed(() => nftSelectionShown.value.size);
 const hiddenSelectionCount = computed(() => nftSelectionHidden.value.size);
+
+const activeWalletCaption = computed(() => {
+  if (wallet.activeWalletIndex === -1) {
+    if (wallet.walletCount > 1) {
+      return `${wallet.walletCount} wallets — aggregate view`;
+    }
+    return wallet.snapshot?.wallet || t('wallet.no_wallet');
+  }
+  return wallet.activeWalletAddress || t('wallet.no_wallet');
+});
 
 const workerSummary = computed(() => {
   if (wallet.running || wallet.autoRefreshing || wallet.status?.running) {
@@ -330,8 +537,6 @@ const wizardSteps = computed<WizardStep[]>(() => {
   const steps: WizardStep[] = [];
   const hasMnemonic = Boolean(wallet.mnemonicPreview);
 
-  // Only show wizard for the one true prerequisite: mnemonic must exist.
-  // Production running is an operational state, not a setup prerequisite.
   if (!hasMnemonic) {
     steps.push({
       id: 'mnemonic',
@@ -349,7 +554,6 @@ watch(wizardOpen, (open) => {
   if (!open) sessionStorage.setItem('wallet-wizard-dismissed', '1');
 });
 
-// Re-open wizard if mnemonic is cleared after dismissal
 watch(wizardSteps, (steps) => {
   if (steps.some((s) => s.tone === 'critical')) {
     sessionStorage.removeItem('wallet-wizard-dismissed');
@@ -380,7 +584,6 @@ async function submitAction(action: any) {
   try {
     await wallet.run(action.name, payload);
   } catch (error) {
-    // eslint-disable-next-line no-console
     console.warn('Wallet action failed', error);
   }
 }
@@ -408,13 +611,137 @@ async function clearWizardMnemonic() {
   await wallet.saveMnemonic(null);
 }
 
-async function startProduction() {
-  if (wallet.running) return;
+async function refreshAll() {
+  await wallet.fetchSnapshot();
+  await wallet.fetchMultiWallet();
+}
+
+async function handleCreateWallet() {
+  if (creatingWallet.value) return;
+  creatingWallet.value = true;
   try {
-    await wallet.run('start_production');
+    await wallet.createNewWallet();
   } catch (error) {
-    // eslint-disable-next-line no-console
-    console.warn('Failed to start production manager', error);
+    console.warn('Failed to create wallet', error);
+  } finally {
+    creatingWallet.value = false;
+  }
+}
+
+async function handleRevealMnemonic(walletIndex: number) {
+  revealWalletIdx.value = walletIndex;
+  revealMnemonicValue.value = '';
+  revealError.value = '';
+  copiedMnemonic.value = false;
+  revealLoading.value = true;
+  revealModalOpen.value = true;
+  try {
+    const result = await revealWalletMnemonic(walletIndex);
+    revealMnemonicValue.value = result.mnemonic || '';
+  } catch (error: any) {
+    revealError.value = error?.response?.data?.detail || error?.message || 'Failed to reveal mnemonic';
+  } finally {
+    revealLoading.value = false;
+  }
+}
+
+function closeRevealModal() {
+  revealModalOpen.value = false;
+  revealMnemonicValue.value = '';
+  revealError.value = '';
+  copiedMnemonic.value = false;
+}
+
+async function copyMnemonic() {
+  if (!revealMnemonicValue.value) return;
+  try {
+    await navigator.clipboard.writeText(revealMnemonicValue.value);
+    copiedMnemonic.value = true;
+    setTimeout(() => { copiedMnemonic.value = false; }, 2000);
+  } catch (error) {
+    console.warn('Clipboard copy failed', error);
+  }
+}
+
+const CHAIN_NAMES: Record<string, string> = {
+  ethereum: 'Ethereum',
+  polygon: 'Polygon',
+  base: 'Base',
+  arbitrum: 'Arbitrum',
+  optimism: 'Optimism',
+  avalanche: 'Avalanche',
+  bsc: 'BNB Chain',
+  fantom: 'Fantom',
+  zksync: 'zkSync',
+  linea: 'Linea',
+  scroll: 'Scroll',
+  blast: 'Blast',
+};
+
+function chainDisplayName(chain: string): string {
+  const lower = (chain || '').toLowerCase();
+  return CHAIN_NAMES[lower] || chain.charAt(0).toUpperCase() + chain.slice(1);
+}
+
+async function loadTxPage(reset = false) {
+  if (txLoading.value) return;
+  txLoading.value = true;
+  try {
+    const offset = reset ? 0 : txOffset.value;
+    const result = await fetchWalletTransfers({
+      offset,
+      limit: TX_PAGE_SIZE,
+      sort: txSort.value,
+      search: txSearch.value || undefined,
+    });
+    if (reset) {
+      txItems.value = result.items;
+    } else {
+      txItems.value = [...txItems.value, ...result.items];
+    }
+    txTotal.value = result.total;
+    txOffset.value = offset + result.items.length;
+  } catch (error) {
+    console.warn('Failed to load transactions', error);
+  } finally {
+    txLoading.value = false;
+  }
+}
+
+function openAllTransactions() {
+  txModalOpen.value = true;
+  txItems.value = [];
+  txTotal.value = 0;
+  txOffset.value = 0;
+  txSearch.value = '';
+  txSort.value = 'desc';
+  loadTxPage(true);
+}
+
+function closeTxModal() {
+  txModalOpen.value = false;
+  txItems.value = [];
+}
+
+function toggleTxSort() {
+  txSort.value = txSort.value === 'desc' ? 'asc' : 'desc';
+  loadTxPage(true);
+}
+
+function debouncedTxSearch() {
+  if (txSearchTimer) clearTimeout(txSearchTimer);
+  txSearchTimer = setTimeout(() => {
+    loadTxPage(true);
+  }, 350);
+}
+
+function handleTxScroll() {
+  const el = txScrollRef.value;
+  if (!el || txLoading.value) return;
+  if (txItems.value.length >= txTotal.value) return;
+  const threshold = 100;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < threshold) {
+    loadTxPage(false);
   }
 }
 
@@ -424,7 +751,6 @@ async function refreshConsoleLogs() {
   try {
     await dashboard.refreshConsole();
   } catch (error) {
-    // eslint-disable-next-line no-console
     console.warn('Failed to refresh console logs', error);
   } finally {
     consoleBusy.value = false;
@@ -435,6 +761,7 @@ onMounted(async () => {
   await Promise.all([
     wallet.refreshStatus(),
     wallet.fetchSnapshot(),
+    wallet.fetchMultiWallet(),
     wallet.loadMnemonicPreview(),
     dashboard.refreshConsole(),
   ]);
@@ -469,6 +796,7 @@ watch(
   (running, prev) => {
     if (prev && !running) {
       wallet.fetchSnapshot();
+      wallet.fetchMultiWallet();
     }
   }
 );
@@ -504,6 +832,11 @@ function formatValue(value: any) {
 function truncateHash(hash: string | undefined) {
   if (!hash) return t('common.unknown');
   return `${hash.slice(0, 6)}…${hash.slice(-4)}`;
+}
+
+function truncateAddress(addr: string | null | undefined) {
+  if (!addr) return '—';
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
 function parseTimestamp(value: unknown): number {
@@ -560,7 +893,7 @@ function pruneSelections() {
 async function loadNftPreferences() {
   try {
     const data = await fetchWalletNftPreferences();
-    const hiddenKeys = new Set((data.items || []).map((item) => nftKey(item)));
+    const hiddenKeys = new Set<string>((data.items || []).map((item: any) => nftKey(item)));
     nftHidden.value = hiddenKeys;
   } catch (error) {
     // ignore preference failures for now
@@ -622,6 +955,48 @@ async function showSelectedNfts() {
   color: rgba(255, 255, 255, 0.65);
 }
 
+/* ── Wallet Tab Bar ────────────────────────────────── */
+.wallet-tabs-panel {
+  padding: 0.8rem 1.2rem;
+}
+
+.wallet-tab-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.wallet-tab {
+  border-radius: 999px;
+  border: 1px solid rgba(111, 167, 255, 0.3);
+  background: transparent;
+  color: #f4f6fa;
+  padding: 0.5rem 1.2rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.wallet-tab:hover {
+  background: rgba(45, 117, 196, 0.18);
+}
+
+.wallet-tab.active {
+  background: rgba(45, 117, 196, 0.35);
+  border-color: rgba(45, 117, 196, 0.65);
+  font-weight: 600;
+}
+
+.wallet-tab.create-tab {
+  border-color: rgba(52, 211, 153, 0.4);
+  color: #34d399;
+}
+
+.wallet-tab.create-tab:hover {
+  background: rgba(52, 211, 153, 0.12);
+}
+
+/* ── Summary ────────────────────────────────────────── */
 .summary-actions {
   display: flex;
   gap: 0.6rem;
@@ -646,6 +1021,85 @@ async function showSelectedNfts() {
   font-weight: 600;
 }
 
+.summary-grid .value.highlight {
+  color: #34d399;
+  font-size: 1.4rem;
+}
+
+/* ── Wallet Breakdown (All Wallets view) ───────────── */
+.wallet-breakdown {
+  margin-top: 1rem;
+  border-top: 1px solid rgba(111, 167, 255, 0.12);
+  padding-top: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.3rem 0;
+}
+
+.breakdown-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.breakdown-addr {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: monospace;
+}
+
+.breakdown-value {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #6fa7ff;
+  cursor: pointer;
+  padding: 0;
+  font-size: 0.88rem;
+  text-decoration: underline;
+  text-decoration-color: rgba(111, 167, 255, 0.3);
+}
+
+.link-btn:hover {
+  color: #93c5fd;
+}
+
+/* ── Config Panel ───────────────────────────────────── */
+.config-panel {
+  padding: 0.8rem 1.2rem;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.8rem;
+}
+
+.config-grid .label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.config-grid .value {
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+/* ── Actions ────────────────────────────────────────── */
 .actions-panel .action-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -891,5 +1345,252 @@ async function showSelectedNfts() {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+/* ── Reveal Row ────────────────────────────────────── */
+.breakdown-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.btn-tiny {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid rgba(111, 167, 255, 0.3);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+}
+
+.btn-tiny:hover {
+  color: #f4f6fa;
+  border-color: rgba(111, 167, 255, 0.5);
+}
+
+.reveal-row {
+  margin-top: 0.8rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid rgba(111, 167, 255, 0.1);
+}
+
+/* ── Reveal Mnemonic Modal ─────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.modal-card {
+  background: #0e1a2d;
+  border: 1px solid rgba(111, 167, 255, 0.25);
+  border-radius: 20px;
+  max-width: 560px;
+  width: 90%;
+  padding: 0;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.2rem 1.5rem;
+  border-bottom: 1px solid rgba(111, 167, 255, 0.12);
+  margin-bottom: 0;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #f4f6fa;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1.6rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #f87171;
+}
+
+.modal-body {
+  padding: 1.2rem 1.5rem 1.5rem;
+}
+
+.modal-warning {
+  color: #fbbf24;
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 10px;
+}
+
+.modal-loading {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 2rem 0;
+}
+
+.modal-error {
+  color: #f87171;
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.mnemonic-display {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.mnemonic-words {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.mnemonic-word {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(111, 167, 255, 0.15);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 0.9rem;
+  color: #f4f6fa;
+}
+
+.word-num {
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.35);
+  min-width: 1.2rem;
+}
+
+/* ── Transfer card enhancements ──────────────────────── */
+.transfer-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.transfer-count {
+  font-size: 0.72rem;
+  background: rgba(111, 167, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+}
+
+.more-link {
+  text-align: center;
+  padding-top: 0.3rem;
+}
+
+/* ── All Transactions Modal ──────────────────────────── */
+.tx-modal {
+  max-width: 900px;
+  width: 95%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.tx-toolbar {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.8rem 1.5rem;
+  border-bottom: 1px solid rgba(111, 167, 255, 0.1);
+  align-items: center;
+}
+
+.tx-search-input {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid rgba(111, 167, 255, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f4f6fa;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.88rem;
+}
+
+.tx-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.tx-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+  max-height: calc(85vh - 180px);
+}
+
+.tx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.tx-table thead {
+  position: sticky;
+  top: 0;
+  background: #0e1a2d;
+  z-index: 1;
+}
+
+.tx-table th {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08rem;
+  color: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid rgba(111, 167, 255, 0.12);
+}
+
+.tx-table td {
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid rgba(111, 167, 255, 0.06);
+  color: #f4f6fa;
+}
+
+.tx-table tbody tr:hover {
+  background: rgba(45, 117, 196, 0.08);
+}
+
+.token-cell {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.tx-loading {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 1.5rem;
+}
+
+.tx-footer {
+  padding: 0.6rem 1.5rem;
+  border-top: 1px solid rgba(111, 167, 255, 0.1);
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

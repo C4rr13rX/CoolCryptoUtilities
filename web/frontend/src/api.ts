@@ -398,6 +398,74 @@ export async function updateWalletNftPreferences(payload: {
   return data as { items: WalletNftPreference[]; count: number };
 }
 
+export interface MultiWalletSummary {
+  index: number;
+  wallet: string | null;
+  usd: number;
+  updated_at: string | null;
+}
+
+export interface MultiWalletConfig {
+  enabled: boolean;
+  threshold: number;
+  max_balance: number;
+}
+
+export interface MultiWalletState {
+  wallet_count: number;
+  wallets: MultiWalletSummary[];
+  totals: { usd: number };
+  balances: Record<string, any>[];
+  transfers: Record<string, any>;
+  nfts: Record<string, any>[];
+  config: MultiWalletConfig;
+}
+
+export async function fetchMultiWalletState() {
+  const { data } = await api.get('/wallet/wallets/');
+  return data as MultiWalletState;
+}
+
+export async function createMultiWallet() {
+  const { data } = await api.post('/wallet/wallets/create/');
+  return data as { created: boolean; index: number; address: string };
+}
+
+export async function revealWalletMnemonic(walletIndex: number) {
+  const { data } = await api.post('/wallet/wallets/reveal/', { wallet_index: walletIndex });
+  return data as { wallet_index: number; mnemonic: string };
+}
+
+export interface TransferItem {
+  hash: string | null;
+  direction: string;
+  token: string | null;
+  value: string | null;
+  block: number | null;
+  ts: string | null;
+  chain: string;
+  from_addr?: string;
+  to_addr?: string;
+}
+
+export interface TransfersPage {
+  items: TransferItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  chains: string[];
+}
+
+export async function fetchWalletTransfers(params: {
+  offset?: number;
+  limit?: number;
+  sort?: 'asc' | 'desc';
+  search?: string;
+} = {}) {
+  const { data } = await api.get('/wallet/transfers/', { params });
+  return data as TransfersPage;
+}
+
 // ----------------------------- Address Book ---------------------------------
 export interface AddressBookEntry {
   id: number;
