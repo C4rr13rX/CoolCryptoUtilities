@@ -176,7 +176,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { fetchPipelineReadiness } from '@/api';
 import { useDashboardStore } from '@/stores/dashboard';
@@ -187,7 +187,7 @@ const store = useDashboardStore();
 const router = useRouter();
 const readinessPayload = ref<Record<string, any>>({});
 const readinessLoading = ref(false);
-const wizardOpen = ref(true);
+const wizardOpen = ref(!sessionStorage.getItem('pipeline-wizard-dismissed'));
 
 const stageSummary = computed(() => store.dashboard?.metrics_by_stage || []);
 const metrics = computed(() => (store.latestMetrics || []).slice(0, 20));
@@ -262,24 +262,34 @@ const wizardSteps = computed<WizardStep[]>(() => {
   const precision = Number(readiness.precision || readiness.mini_precision || 0);
   const recall = Number(readiness.recall || readiness.mini_recall || 0);
   const hasSignals = samples > 0 || precision > 0 || recall > 0;
-  const reason = String(readiness.reason || '');
-  const reasonLower = reason.toLowerCase();
-  const ghostReason = String(readiness.ghost_reason || '').trim();
+  // Detect that the system is actively processing — any dashboard data means
+  // the automation pipeline is running and these "missing" states are transient.
+  const hasAnyActivity = Boolean(
+    stageSummary.value.length || metrics.value.length || feedback.value.length
+    || ghostTrades.value.length || liveTrades.value.length
+    || readiness.iteration
+  );
 
+  // If there's no readiness report yet but the system shows activity,
+  // the pipeline is still bootstrapping — don't nag with wizard steps.
   if (!hasReadiness) {
-    steps.push({
-      id: 'readiness',
-      title: t('pipeline.wizard_readiness_title'),
-      description: t('pipeline.wizard_readiness_desc'),
-      detail: t('pipeline.wizard_readiness_detail'),
-      ctaLabel: t('pipeline.wizard_open_model_lab'),
-      ctaAction: () => router.push('/lab'),
-      tone: 'warning',
-    });
+    if (!hasAnyActivity) {
+      steps.push({
+        id: 'readiness',
+        title: t('pipeline.wizard_readiness_title'),
+        description: t('pipeline.wizard_readiness_desc'),
+        detail: t('pipeline.wizard_readiness_detail'),
+        ctaLabel: t('pipeline.wizard_open_model_lab'),
+        ctaAction: () => router.push('/lab'),
+        tone: 'warning',
+      });
+    }
     return steps;
   }
 
-  if (!hasSignals) {
+  // Skip signal/ghost/live-ready wizard steps when automation is actively
+  // collecting data — these are progress states, not missing prerequisites.
+  if (!hasSignals && !hasAnyActivity) {
     steps.push({
       id: 'signals',
       title: t('pipeline.wizard_signals_title'),
@@ -291,30 +301,7 @@ const wizardSteps = computed<WizardStep[]>(() => {
     });
   }
 
-  if (readiness.mini_ready === false) {
-    steps.push({
-      id: 'ghost',
-      title: t('pipeline.wizard_ghost_title'),
-      description: t('pipeline.wizard_ghost_desc'),
-      detail: readiness.mini_reason ? `${t('common.reason')}: ${formatReason(readiness.mini_reason)}` : undefined,
-      ctaLabel: t('pipeline.wizard_review_metrics'),
-      ctaAction: () => router.push('/telemetry'),
-      tone: 'warning',
-    });
-  }
-
-  if (readiness.ghost_ready === false || reasonLower.startsWith('ghost_')) {
-    steps.push({
-      id: 'ghost-health',
-      title: t('pipeline.wizard_ghost_health_title'),
-      description: t('pipeline.wizard_ghost_health_desc'),
-      detail: ghostReason ? `${t('common.reason')}: ${formatReason(ghostReason)}` : undefined,
-      ctaLabel: t('pipeline.wizard_open_ghost_logs'),
-      ctaAction: () => router.push('/guardian'),
-      tone: 'warning',
-    });
-  }
-
+  // Only show wallet funding step — this is a real blocker the user can act on.
   const walletState = readiness.wallet_state || {};
   if (walletState.sparse) {
     const detailParts: string[] = [];
@@ -344,19 +331,19 @@ const wizardSteps = computed<WizardStep[]>(() => {
     });
   }
 
-  if (readiness.ready === false && !reasonLower.startsWith('ghost_') && !reasonLower.startsWith('sparse_wallet')) {
-    steps.push({
-      id: 'live-ready',
-      title: t('pipeline.wizard_live_title'),
-      description: t('pipeline.wizard_live_desc'),
-      detail: reason ? `${t('common.reason')}: ${formatReason(reason)}` : undefined,
-      ctaLabel: t('pipeline.wizard_refresh_readiness'),
-      ctaAction: () => refreshAll(),
-      tone: 'info',
-    });
-  }
-
   return steps;
+});
+
+watch(wizardOpen, (open) => {
+  if (!open) sessionStorage.setItem('pipeline-wizard-dismissed', '1');
+});
+
+// Re-open wizard only for critical funding issues
+watch(wizardSteps, (steps) => {
+  if (steps.some((s) => s.tone === 'critical')) {
+    sessionStorage.removeItem('pipeline-wizard-dismissed');
+    wizardOpen.value = true;
+  }
 });
 
 async function loadReadiness() {

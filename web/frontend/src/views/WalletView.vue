@@ -277,7 +277,7 @@ const activeAction = ref('');
 const statusTimer = ref<number>();
 const consoleTimer = ref<number>();
 const consoleBusy = ref(false);
-const wizardOpen = ref(true);
+const wizardOpen = ref(!sessionStorage.getItem('wallet-wizard-dismissed'));
 const wizardMnemonicInput = ref('');
 const nftTab = ref<'shown' | 'hidden'>('shown');
 const nftHidden = ref<Set<string>>(new Set());
@@ -329,9 +329,9 @@ type WizardStep = {
 const wizardSteps = computed<WizardStep[]>(() => {
   const steps: WizardStep[] = [];
   const hasMnemonic = Boolean(wallet.mnemonicPreview);
-  const productionKnown = wallet.status !== null;
-  const productionRunning = Boolean(wallet.status?.production?.running);
 
+  // Only show wizard for the one true prerequisite: mnemonic must exist.
+  // Production running is an operational state, not a setup prerequisite.
   if (!hasMnemonic) {
     steps.push({
       id: 'mnemonic',
@@ -342,19 +342,19 @@ const wizardSteps = computed<WizardStep[]>(() => {
     });
   }
 
-  if (productionKnown && !productionRunning) {
-    steps.push({
-      id: 'production',
-      title: t('wallet.wizard_start_production_title'),
-      description: t('wallet.wizard_start_production_desc'),
-      detail: t('wallet.wizard_start_production_detail'),
-      ctaLabel: t('wallet.wizard_start_production_cta'),
-      ctaAction: () => startProduction(),
-      tone: 'warning',
-    });
-  }
-
   return steps;
+});
+
+watch(wizardOpen, (open) => {
+  if (!open) sessionStorage.setItem('wallet-wizard-dismissed', '1');
+});
+
+// Re-open wizard if mnemonic is cleared after dismissal
+watch(wizardSteps, (steps) => {
+  if (steps.some((s) => s.tone === 'critical')) {
+    sessionStorage.removeItem('wallet-wizard-dismissed');
+    wizardOpen.value = true;
+  }
 });
 
 function ensureForm(action: any) {
