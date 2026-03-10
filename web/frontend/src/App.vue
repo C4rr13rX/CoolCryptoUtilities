@@ -763,7 +763,7 @@ const formatSeverity = (value: string) => {
 };
 
 const resolveAppIntent = (routeName: string) => {
-  if (store.error || !store.serverOnline) return 'error';
+  if (!store.serverOnline) return 'error';
   const streamsCount = Object.keys(store.streams || {}).length;
   const metricsCount = store.latestMetrics?.length || 0;
   const feedbackCount = store.latestFeedback?.length || 0;

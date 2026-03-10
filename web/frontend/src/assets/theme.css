@@ -374,6 +374,9 @@ main.dashboard-content {
   text-transform: uppercase;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  white-space: nowrap;
+  min-width: fit-content;
+  font-size: clamp(0.55rem, 1.2vw, 0.85rem);
 }
 
 .btn:hover {
@@ -608,6 +611,14 @@ code {
 .glitch-pulse .nav-tile,
 .glitch-pulse .kpi-card {
   animation: glitch-flicker 200ms steps(2, end) both;
+}
+
+.header-actions {
+  flex-wrap: wrap;
+}
+
+header {
+  flex-wrap: wrap;
 }
 
 @media (max-width: 960px) {

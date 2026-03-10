@@ -64,17 +64,7 @@ export const useDashboardStore = defineStore('dashboard', {
       }
       this.loading = true;
       try {
-        const [
-          summary,
-          streams,
-          consoleStatus,
-          consoleLogs,
-          guardianLogsResp,
-          advisories,
-          trades,
-          feedback,
-          metrics,
-        ] = await Promise.all([
+        const results = await Promise.allSettled([
           fetchDashboardSummary(),
           fetchLatestStreams(),
           fetchConsoleStatus(),
@@ -85,8 +75,18 @@ export const useDashboardStore = defineStore('dashboard', {
           fetchFeedback(50),
           fetchMetrics(undefined, 50),
         ]);
+        const val = (i: number, fallback: any = null) => results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<any>).value : fallback;
+        const summary = val(0, this.dashboard);
+        const streams = val(1, this.streams);
+        const consoleStatus = val(2, this.consoleStatus);
+        const consoleLogs = val(3, { lines: [] });
+        const guardianLogsResp = val(4, { guardian_lines: [], production_lines: [] });
+        const advisories = val(5, null);
+        const trades = val(6, null);
+        const feedback = val(7, null);
+        const metrics = val(8, null);
         this.dashboard = summary || {};
-        this.streams = streams;
+        this.streams = streams || {};
         this.consoleStatus = consoleStatus;
         const guardianLines = guardianLogsResp.guardian_lines || guardianLogsResp.lines || [];
         const guardianProduction = guardianLogsResp.production_lines || [];
@@ -98,7 +98,10 @@ export const useDashboardStore = defineStore('dashboard', {
         this.recentTrades = trades?.results || trades || summary?.recent_trades || [];
         this.latestFeedback = feedback?.results || feedback || summary?.latest_feedback || [];
         this.latestMetrics = metrics?.results || metrics || summary?.latest_metrics || [];
-        this.error = null;
+        const anyFailed = results.some(r => r.status === 'rejected');
+        const allFailed = results.every(r => r.status === 'rejected');
+        this.serverOnline = !allFailed;
+        this.error = anyFailed && !allFailed ? 'Some endpoints unavailable' : allFailed ? 'Server offline' : null;
       } catch (error: any) {
         this.error = error?.message || 'Failed to refresh data';
       } finally {
@@ -112,19 +115,29 @@ export const useDashboardStore = defineStore('dashboard', {
       }
       this.lastConsoleAttempt = now;
       try {
-        const [consoleStatus, consoleLogs, guardianLogsResp] = await Promise.all([
+        const results = await Promise.allSettled([
           fetchConsoleStatus(),
           fetchConsoleLogs(200),
           fetchGuardianLogs(200),
         ]);
-        this.consoleStatus = consoleStatus;
+        const val = (i: number, fallback: any = null) => results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<any>).value : fallback;
+        const consoleStatus = val(0, this.consoleStatus);
+        const consoleLogs = val(1, { lines: [] });
+        const guardianLogsResp = val(2, { guardian_lines: [], production_lines: [] });
+        if (consoleStatus) this.consoleStatus = consoleStatus;
         const guardianLines = guardianLogsResp.guardian_lines || guardianLogsResp.lines || [];
         const guardianProduction = guardianLogsResp.production_lines || [];
         const consoleLineList = consoleLogs.lines || [];
         this.consoleLogs = guardianProduction.length ? guardianProduction : consoleLineList;
         this.guardianLogs = guardianLines;
-        this.error = null;
-        this.serverOnline = true;
+        const anySucceeded = results.some(r => r.status === 'fulfilled');
+        if (anySucceeded) {
+          this.serverOnline = true;
+          this.error = null;
+        } else {
+          this.serverOnline = false;
+          this.error = 'Console offline';
+        }
       } catch (err: any) {
         this.serverOnline = false;
         this.consoleStatus = { status: 'offline', pid: null, uptime: null };

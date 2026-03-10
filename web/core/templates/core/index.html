@@ -110,13 +110,14 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 1.25rem 1.75rem;
-        gap: 1.5rem;
+        padding: 0.6rem 1.25rem;
+        gap: 1rem;
         background: #020101;
         box-shadow: 0 10px 32px rgba(0, 0, 0, 0.38);
         position: sticky;
         top: 0;
         z-index: 100;
+        flex-wrap: wrap;
       }
       header.site-header .brand {
         display: flex;
@@ -126,11 +127,11 @@
         letter-spacing: 0.22rem;
       }
       header.site-header img {
-        height: 120px;
+        height: 56px;
       }
       header.site-header h1 {
         margin: 0;
-        font-size: 1.4rem;
+        font-size: 1.1rem;
         color: var(--accent-3);
       }
       header.site-header .lang-switcher {
@@ -290,6 +291,35 @@
         width: 100%;
         border-collapse: collapse;
         font-size: 0.92rem;
+      }
+      @media (max-width: 768px) {
+        header.site-header {
+          padding: 0.5rem 0.75rem;
+          gap: 0.5rem;
+        }
+        header.site-header img {
+          height: 36px;
+        }
+        header.site-header h1 {
+          font-size: 0.85rem;
+        }
+        header.site-header .brand {
+          gap: 0.5rem;
+        }
+        header.site-header .user-chip {
+          font-size: 0.7rem;
+        }
+        .lang-switcher {
+          gap: 0.3rem;
+        }
+        .lang-select {
+          font-size: 0.65rem;
+          padding: 0.25rem 0.5rem;
+        }
+        .fallback-grid {
+          grid-template-columns: 1fr;
+          padding: 1rem;
+        }
       }
       .fallback-panel th,
       .fallback-panel td {
