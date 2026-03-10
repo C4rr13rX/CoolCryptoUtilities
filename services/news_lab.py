@@ -121,6 +121,22 @@ BASE_CONTEXT_TOKENS: Dict[str, Sequence[str]] = {
     # --- Privacy ---
     "XMR": ["monero", "xmr price", "monero privacy"],
     "ZEC": ["zcash", "zec price", "zcash privacy"],
+    # --- Major missing tokens ---
+    "XRP": ["xrp", "ripple", "xrp price", "ripple lawsuit", "ripple sec", "xrp etf"],
+    "LTC": ["litecoin", "ltc price", "litecoin halving"],
+    "ALGO": ["algorand", "algo price", "algorand blockchain"],
+    "HBAR": ["hedera", "hbar price", "hedera hashgraph"],
+    "VET": ["vechain", "vet price", "vechain supply chain"],
+    "XLM": ["stellar", "xlm price", "stellar lumens"],
+    "ICP": ["internet computer", "icp price", "dfinity"],
+    "RUNE": ["thorchain", "rune price", "thorchain swap"],
+    "AERO": ["aerodrome", "aero price", "aerodrome base"],
+    "ENA": ["ethena", "ena price", "ethena usde"],
+    "W": ["wormhole", "wormhole bridge", "wormhole price"],
+    "JTO": ["jito", "jito solana", "jto price", "mev solana"],
+    "PYTH": ["pyth network", "pyth oracle", "pyth price"],
+    "STX": ["stacks", "stx price", "stacks bitcoin", "bitcoin smart contracts"],
+    "KAS": ["kaspa", "kas price", "kaspa mining"],
     # --- Macro / cross-cutting ---
     "WETH": ["ethereum", "eth price", "weth wrapped", "ethereum defi"],
     "WBTC": ["wrapped bitcoin", "wbtc", "bitcoin defi", "bitcoin bridge"],

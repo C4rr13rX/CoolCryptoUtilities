@@ -191,6 +191,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         r"(^|\.)ecb\.europa\.eu$",
         r"(^|\.)bis\.org$",
         r"(^|\.)imf\.org$",
+        # Reddit (public RSS feeds)
+        r"(^|\.)reddit\.com$",
+        # Yahoo Finance
+        r"(^|\.)yahoo\.com$",
     ],
     "include_patterns": [r".+"],
     "exclude_patterns": [
@@ -611,6 +615,7 @@ class PoliteCryptoCrawler:
         self.robots = RobotsPolicy(self.cfg)
         self.gate = HostGate(self.cfg)
         self.sem = asyncio.Semaphore(self.cfg["max_concurrency"])
+        self._google_news_headlines: List[CrawlResult] = []
 
     # ------------------------------------------------------------------
     # Public interface
@@ -631,6 +636,7 @@ class PoliteCryptoCrawler:
         if max_pages is not None:
             self.cfg["max_pages"] = max_pages
         try:
+            self._google_news_headlines = []
             await self._search(terms, start_ts, end_ts)
             results: List[CrawlResult] = []
             async with self._session() as session:
@@ -645,6 +651,9 @@ class PoliteCryptoCrawler:
                         if entry is not None:
                             results.append(entry)
                     collected += len(batch)
+            # Include Google News headlines that couldn't be URL-resolved
+            # (the headline+date is still valuable for ML training)
+            results.extend(self._google_news_headlines)
             return results
         finally:
             self.cfg["max_pages"] = prev
@@ -910,6 +919,12 @@ class PoliteCryptoCrawler:
             tasks.append(asyncio.create_task(self._search_bing_news_rss(session, queries, start_ts, end_ts)))
             # --- Sitemap discovery across allowed hosts ---
             tasks.append(asyncio.create_task(self._search_sitemaps(session, queries, start_ts, end_ts)))
+            # --- Reddit RSS (public, high volume crypto discussion) ---
+            tasks.append(asyncio.create_task(self._search_reddit_rss(session, queries, start_ts, end_ts)))
+            # --- Yahoo Finance news RSS ---
+            tasks.append(asyncio.create_task(self._search_yahoo_finance_rss(session, queries, start_ts, end_ts)))
+            # --- DuckDuckGo news (another free aggregator) ---
+            tasks.append(asyncio.create_task(self._search_duckduckgo_news(session, queries, start_ts, end_ts)))
 
             # Run all search tasks with a generous timeout — don't let slow sites block the whole crawl
             try:
@@ -1176,6 +1191,10 @@ class PoliteCryptoCrawler:
         """
         Google News provides a free RSS endpoint that returns up to ~100 results
         per query. No API key required. We extract links and filter to allowed hosts.
+
+        Google News article URLs require JS to resolve, so we also store results
+        directly from the feed metadata (title, date, source) for headlines that
+        match our query. These go into the URL queue as google_news_headline entries.
         """
         from urllib.parse import quote_plus
 
@@ -1198,53 +1217,72 @@ class PoliteCryptoCrawler:
                 pub_date = item.findtext("pubDate")
                 if not link:
                     continue
-                # Google News links are often redirects; the real URL is in the link
-                # Try to resolve or just take the link as-is
-                resolved = await self._resolve_google_news_link(session, link)
-                if not resolved:
-                    continue
-                normalized = _normalise(resolved)
-                host = urlparse(normalized).hostname or ""
-                if not host or not _host_allowed(host) or not _url_allowed(normalized):
-                    continue
                 hint_date = _parse_rss_timestamp(pub_date)
                 if hint_date and not _iso_in_window(hint_date, start_ts, end_ts):
                     continue
-                self.store.upsert_url(
-                    normalized, host,
-                    hint_date=hint_date,
+                # Try to decode the real URL from Google News base64
+                resolved = self._decode_google_news_url(link)
+                if resolved:
+                    normalized = _normalise(resolved)
+                    host = urlparse(normalized).hostname or ""
+                    if host and _host_allowed(host) and _url_allowed(normalized):
+                        self.store.upsert_url(
+                            normalized, host,
+                            hint_date=hint_date,
+                            query_match=f"google_news:{clean.lower()}",
+                        )
+                        continue
+                # Even if we can't resolve the URL, store the headline as a
+                # direct result — the title+date is valuable for ML training
+                # Extract source name from title format "Headline - SourceName"
+                source_name = "google_news"
+                if " - " in title:
+                    source_name = title.rsplit(" - ", 1)[-1].strip().lower().replace(" ", "_")
+                self._google_news_headlines.append(CrawlResult(
+                    url=link,
+                    title=title,
+                    description=None,
+                    detected_date=hint_date,
                     query_match=f"google_news:{clean.lower()}",
-                )
+                    source=source_name,
+                ))
             # Be polite to Google
             await asyncio.sleep(random.uniform(1.0, 2.5))
 
-    async def _resolve_google_news_link(
-        self,
-        session: aiohttp.ClientSession,
-        google_url: str,
-    ) -> Optional[str]:
-        """Try to resolve Google News redirect URL to the real article URL."""
+    @staticmethod
+    def _decode_google_news_url(google_url: str) -> Optional[str]:
+        """
+        Attempt to decode the real article URL from a Google News article URL.
+        Google News encodes URLs in a base64-like format in the path:
+        https://news.google.com/rss/articles/CBMi...
+        The encoded part often contains the real URL as a protobuf string.
+        """
+        import base64
         try:
-            async with async_timeout.timeout(10):
-                async with session.get(
-                    google_url,
-                    allow_redirects=False,
-                    headers={"User-Agent": self.cfg["user_agent"]},
-                ) as resp:
-                    if resp.status in (301, 302, 303, 307, 308):
-                        return resp.headers.get("Location")
-                    # If no redirect, try to parse from the response
-                    if resp.status == 200:
-                        text = await resp.text(errors="ignore")
-                        # Google News sometimes embeds the real URL
-                        match = re.search(r'<a[^>]+href="(https?://(?!news\.google\.com)[^"]+)"', text)
-                        if match:
-                            return match.group(1)
+            parsed = urlparse(google_url)
+            path = parsed.path
+            # Extract the article ID from /rss/articles/XXXXX or /articles/XXXXX
+            match = re.search(r'/(?:rss/)?articles/([A-Za-z0-9_-]+)', path)
+            if not match:
+                return None
+            article_id = match.group(1)
+            # Try standard base64 and URL-safe base64
+            for padding in range(4):
+                padded = article_id + "=" * padding
+                try:
+                    decoded = base64.urlsafe_b64decode(padded)
+                    # Look for URLs in the decoded bytes
+                    text = decoded.decode("utf-8", errors="ignore")
+                    url_match = re.search(r'(https?://[^\x00-\x1f\s"<>]+)', text)
+                    if url_match:
+                        candidate = url_match.group(1)
+                        # Validate it's a real URL, not a google internal one
+                        if "google.com" not in candidate and "." in candidate:
+                            return candidate
+                except Exception:
+                    continue
         except Exception:
             pass
-        # Fallback: try to extract URL from the Google News URL path
-        # Format: https://news.google.com/rss/articles/...
-        # Sometimes the URL itself is encoded in the path — not easily extractable
         return None
 
     async def _search_bing_news_rss(
@@ -1308,6 +1346,10 @@ class PoliteCryptoCrawler:
             "decrypt.co", "cryptoslate.com", "beincrypto.com",
             "ambcrypto.com", "cryptopotato.com", "bitcoinist.com",
             "newsbtc.com", "u.today", "crypto.news",
+            "coinedition.com", "finbold.com", "coingape.com",
+            "coinpedia.org", "cryptopolitan.com", "dailyhodl.com",
+            "zycrypto.com", "blockonomi.com", "cryptoglobe.com",
+            "thecoinrepublic.com", "thecryptobasic.com",
         ]
         sitemap_paths = [
             "/post-sitemap.xml",
@@ -1371,6 +1413,167 @@ class PoliteCryptoCrawler:
                         queued += 1
                 if found_sitemap:
                     break  # Found a sitemap for this host, don't try other paths
+
+    async def _search_reddit_rss(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        """
+        Reddit provides public RSS feeds for subreddits and search results.
+        No API key required. Great source of community sentiment and breaking news.
+        """
+        # Static subreddit feeds — always fetch these
+        subreddit_feeds = [
+            ("https://www.reddit.com/r/CryptoCurrency/hot/.rss?limit=100", "r_cryptocurrency"),
+            ("https://www.reddit.com/r/CryptoCurrency/new/.rss?limit=100", "r_cryptocurrency_new"),
+            ("https://www.reddit.com/r/Bitcoin/hot/.rss?limit=100", "r_bitcoin"),
+            ("https://www.reddit.com/r/ethereum/hot/.rss?limit=100", "r_ethereum"),
+            ("https://www.reddit.com/r/solana/hot/.rss?limit=50", "r_solana"),
+            ("https://www.reddit.com/r/cardano/hot/.rss?limit=50", "r_cardano"),
+            ("https://www.reddit.com/r/binance/hot/.rss?limit=50", "r_binance"),
+            ("https://www.reddit.com/r/Chainlink/hot/.rss?limit=50", "r_chainlink"),
+            ("https://www.reddit.com/r/cosmosnetwork/hot/.rss?limit=50", "r_cosmos"),
+            ("https://www.reddit.com/r/Polkadot/hot/.rss?limit=50", "r_polkadot"),
+            ("https://www.reddit.com/r/defi/hot/.rss?limit=50", "r_defi"),
+            ("https://www.reddit.com/r/CryptoMarkets/hot/.rss?limit=50", "r_cryptomarkets"),
+            ("https://www.reddit.com/r/altcoin/hot/.rss?limit=50", "r_altcoin"),
+            ("https://www.reddit.com/r/ethfinance/hot/.rss?limit=50", "r_ethfinance"),
+            ("https://www.reddit.com/r/Monero/hot/.rss?limit=50", "r_monero"),
+            ("https://www.reddit.com/r/dogecoin/hot/.rss?limit=50", "r_dogecoin"),
+            ("https://www.reddit.com/r/Arbitrum/hot/.rss?limit=50", "r_arbitrum"),
+            ("https://www.reddit.com/r/optimismCollective/hot/.rss?limit=50", "r_optimism"),
+            ("https://www.reddit.com/r/avax/hot/.rss?limit=50", "r_avax"),
+        ]
+        for feed_url, tag in subreddit_feeds:
+            await self._search_rss_feed(session, feed_url, queries, tag, start_ts, end_ts, max_items=80)
+            await asyncio.sleep(random.uniform(0.8, 1.5))
+
+        # Dynamic search feeds — search Reddit for each query term
+        from urllib.parse import quote_plus
+        for term in queries[:8]:  # Limit to avoid excessive requests
+            clean = term.strip()
+            if not clean:
+                continue
+            search_url = f"https://www.reddit.com/search/.rss?q={quote_plus(clean)}+crypto&sort=new&t=month&limit=50"
+            await self._search_rss_feed(session, search_url, queries, f"reddit_search:{clean.lower()}", start_ts, end_ts, max_items=50)
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+    async def _search_yahoo_finance_rss(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        """
+        Yahoo Finance provides RSS feeds for crypto news. No API key needed.
+        """
+        yahoo_feeds = [
+            ("https://finance.yahoo.com/rss/topfinstories", "yahoo_finance_top"),
+            ("https://finance.yahoo.com/rss/industry?s=crypto", "yahoo_crypto"),
+        ]
+        # Also search for specific tickers — Yahoo has per-ticker feeds
+        from urllib.parse import quote_plus
+        ticker_map = {
+            "BTC": "BTC-USD", "ETH": "ETH-USD", "SOL": "SOL-USD",
+            "ADA": "ADA-USD", "DOT": "DOT-USD", "AVAX": "AVAX-USD",
+            "LINK": "LINK-USD", "MATIC": "MATIC-USD", "ATOM": "ATOM-USD",
+            "UNI": "UNI-USD", "AAVE": "AAVE-USD", "DOGE": "DOGE-USD",
+            "SHIB": "SHIB-USD", "BNB": "BNB-USD", "XMR": "XMR-USD",
+        }
+        for query in queries:
+            upper = query.strip().upper()
+            if upper in ticker_map:
+                yahoo_feeds.append(
+                    (f"https://finance.yahoo.com/rss/headline?s={ticker_map[upper]}", f"yahoo_{upper.lower()}")
+                )
+        for feed_url, tag in yahoo_feeds:
+            try:
+                text = await self._get_text_unrestricted(session, feed_url, "finance.yahoo.com")
+                if not text:
+                    continue
+                root = ET.fromstring(text)
+            except Exception:
+                continue
+            for item in root.findall(".//item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                pub_date = item.findtext("pubDate")
+                if not link or not title:
+                    continue
+                summary = f"{title} {(item.findtext('description') or '')}".strip()
+                if not _renders_query_match(summary, queries):
+                    continue
+                normalized = _normalise(link)
+                host = urlparse(normalized).hostname or ""
+                if not host:
+                    continue
+                # Yahoo links go to finance.yahoo.com or external sources — allow both
+                if not _host_allowed(host):
+                    continue
+                hint_date = _parse_rss_timestamp(pub_date)
+                if hint_date and not _iso_in_window(hint_date, start_ts, end_ts):
+                    continue
+                self.store.upsert_url(normalized, host, hint_date=hint_date, query_match=tag)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+
+    async def _search_duckduckgo_news(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        """
+        DuckDuckGo Instant Answer API — returns structured results for some queries.
+        Falls back gracefully if blocked by bot detection.
+        """
+        from urllib.parse import quote_plus
+
+        for term in queries[:6]:
+            clean = term.strip()
+            if not clean:
+                continue
+            # DDG Instant Answer API (JSON, no API key)
+            api_url = f"https://api.duckduckgo.com/?q={quote_plus(clean)}+crypto&format=json&no_html=1&skip_disambig=1"
+            try:
+                text = await self._get_text_unrestricted(session, api_url, "api.duckduckgo.com")
+                if not text:
+                    continue
+                import json as _json
+                data = _json.loads(text)
+                # Extract related topics and results
+                for topic in (data.get("RelatedTopics") or []):
+                    if isinstance(topic, dict):
+                        url = topic.get("FirstURL", "")
+                        if url and url.startswith("http") and "duckduckgo.com" not in url:
+                            normalized = _normalise(url)
+                            host = urlparse(normalized).hostname or ""
+                            if host and _host_allowed(host) and _url_allowed(normalized):
+                                self.store.upsert_url(
+                                    normalized, host,
+                                    hint_date=None,
+                                    query_match=f"duckduckgo:{clean.lower()}",
+                                )
+                        # Nested topics
+                        for sub in (topic.get("Topics") or []):
+                            if isinstance(sub, dict):
+                                sub_url = sub.get("FirstURL", "")
+                                if sub_url and sub_url.startswith("http") and "duckduckgo.com" not in sub_url:
+                                    normalized = _normalise(sub_url)
+                                    host = urlparse(normalized).hostname or ""
+                                    if host and _host_allowed(host) and _url_allowed(normalized):
+                                        self.store.upsert_url(
+                                            normalized, host,
+                                            hint_date=None,
+                                            query_match=f"duckduckgo:{clean.lower()}",
+                                        )
+            except Exception:
+                continue
+            await asyncio.sleep(random.uniform(1.0, 2.0))
 
     async def _get_text_unrestricted(
         self,
