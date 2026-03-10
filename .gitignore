@@ -98,5 +98,6 @@ heartbeat_*.json
 kuzu_*/
 *.kuzu/
 # Generated pair assignment / intermediate data files
-data/*_pair_provider_assignment.json
+*_pair_provider_assignment.json
+*_pair_provider_assignment.json.tmp
 data/intermediate/
