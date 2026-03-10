@@ -147,6 +147,50 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         r"(^|\.)consensys\.net$",
         r"(^|\.)ledgerinsights\.com$",
         r"(^|\.)securities\.io$",
+        # Additional high-quality crypto news sources
+        r"(^|\.)watcher\.guru$",
+        r"(^|\.)cointrust\.com$",
+        r"(^|\.)bitcoinethereumnews\.com$",
+        r"(^|\.)cryptobriefing\.com$",
+        r"(^|\.)thedefiant\.io$",
+        r"(^|\.)web3isgoinggreat\.com$",
+        r"(^|\.)rekt\.news$",
+        r"(^|\.)defillama\.com$",
+        r"(^|\.)dune\.com$",
+        r"(^|\.)cointelegram\.com$",
+        r"(^|\.)tradingview\.com$",
+        r"(^|\.)investing\.com$",
+        r"(^|\.)marketwatch\.com$",
+        r"(^|\.)reuters\.com$",
+        r"(^|\.)bloomberg\.com$",
+        r"(^|\.)cnbc\.com$",
+        r"(^|\.)forbes\.com$",
+        r"(^|\.)business\.yahoo\.com$",
+        r"(^|\.)finance\.yahoo\.com$",
+        r"(^|\.)bbc\.com$",
+        r"(^|\.)theguardian\.com$",
+        r"(^|\.)nytimes\.com$",
+        r"(^|\.)wsj\.com$",
+        r"(^|\.)ft\.com$",
+        r"(^|\.)techcrunch\.com$",
+        r"(^|\.)theverge\.com$",
+        r"(^|\.)wired\.com$",
+        r"(^|\.)arstechnica\.com$",
+        r"(^|\.)protocol\.com$",
+        # Exchange and protocol blogs
+        r"(^|\.)blog\.uniswap\.org$",
+        r"(^|\.)medium\.com$",
+        r"(^|\.)mirror\.xyz$",
+        r"(^|\.)substack\.com$",
+        r"(^|\.)paragraph\.xyz$",
+        # Government / regulatory
+        r"(^|\.)sec\.gov$",
+        r"(^|\.)cftc\.gov$",
+        r"(^|\.)treasury\.gov$",
+        r"(^|\.)federalreserve\.gov$",
+        r"(^|\.)ecb\.europa\.eu$",
+        r"(^|\.)bis\.org$",
+        r"(^|\.)imf\.org$",
     ],
     "include_patterns": [r".+"],
     "exclude_patterns": [
@@ -155,8 +199,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         r".*#.*",
     ],
     "politeness": {"min_delay_sec": 0.5, "max_delay_sec": 4.0},
-    "wordpress": {"pages_per_term": 3, "per_page": 40},
-    "max_pages": 400,
+    "wordpress": {"pages_per_term": 6, "per_page": 100},
+    "max_pages": 800,
     "max_body_bytes": 2_000_000,
     "allowed_statuses": [200, 304],
     "cache_dir": Path("storage/news_cache"),
@@ -754,6 +798,17 @@ class PoliteCryptoCrawler:
                 ("https://blog.chainalysis.com/rss/", "chainalysis"),
                 ("https://www.cryptovibes.com/feed/", "cryptovibes"),
                 ("https://www.financemagnates.com/cryptocurrency/feed/", "financemagnates_crypto"),
+                # --- Mainstream financial news with crypto coverage ---
+                ("https://www.investing.com/rss/news_14.rss", "investing_crypto"),
+                ("https://www.cnbc.com/id/33002077/device/rss/rss.html", "cnbc_crypto"),
+                ("https://fortune.com/section/crypto/feed/", "fortune_crypto"),
+                ("https://techcrunch.com/category/cryptocurrency/feed/", "techcrunch_crypto"),
+                # --- Additional crypto-native sources ---
+                ("https://watcher.guru/news/feed", "watcherguru"),
+                ("https://rekt.news/feed/", "rekt"),
+                ("https://web3isgoinggreat.com/feed.xml", "web3great"),
+                # --- Government / regulatory RSS ---
+                ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=&dateb=&owner=include&count=40&search_text=&action=getcompany&output=atom", "sec_filings"),
             ]
             for feed_url, tag in rss_sources:
                 tasks.append(
@@ -833,6 +888,9 @@ class PoliteCryptoCrawler:
                 ("https://consensys.net/blog", "consensys_wp"),
                 ("https://www.cryptovibes.com", "cryptovibes_wp"),
                 ("https://www.financemagnates.com", "financemagnates_wp"),
+                ("https://watcher.guru/news", "watcherguru_wp"),
+                ("https://www.theblock.co", "theblock_wp"),
+                ("https://protos.com", "protos_wp"),
             ]
             for base_url, tag in wordpress_sources:
                 tasks.append(
@@ -847,7 +905,17 @@ class PoliteCryptoCrawler:
                         )
                     )
                 )
-            await asyncio.gather(*tasks)
+            # --- Aggregator search engines (highest volume) ---
+            tasks.append(asyncio.create_task(self._search_google_news_rss(session, queries, start_ts, end_ts)))
+            tasks.append(asyncio.create_task(self._search_bing_news_rss(session, queries, start_ts, end_ts)))
+            # --- Sitemap discovery across allowed hosts ---
+            tasks.append(asyncio.create_task(self._search_sitemaps(session, queries, start_ts, end_ts)))
+
+            # Run all search tasks with a generous timeout — don't let slow sites block the whole crawl
+            try:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=120)
+            except asyncio.TimeoutError:
+                pass  # Some search tasks may not finish — that's OK, we have what we have
 
     async def _search_bitcoinmagazine(
         self,
@@ -1040,22 +1108,42 @@ class PoliteCryptoCrawler:
             return
 
         count = 0
-        for item in root.findall(".//item"):
+        # Support both RSS <item> and Atom <entry> elements
+        atom_ns = "{http://www.w3.org/2005/Atom}"
+        items = root.findall(".//item")
+        if not items:
+            items = root.findall(f".//{atom_ns}entry")
+        if not items:
+            items = root.findall(".//entry")
+        for item in items:
             if count >= max_items:
                 break
-            title = (item.findtext("title") or "").strip()
-            description = (item.findtext("description") or "").strip()
+            title = (item.findtext("title") or item.findtext(f"{atom_ns}title") or "").strip()
+            description = (
+                item.findtext("description")
+                or item.findtext(f"{atom_ns}summary")
+                or item.findtext(f"{atom_ns}content")
+                or ""
+            ).strip()
             summary = f"{title} {description}".strip()
             matched = False
             if summary:
                 matched = _renders_query_match(summary, queries)
             if not matched:
-                categories = " ".join(cat.text or "" for cat in item.findall("category"))
+                categories = " ".join(
+                    (cat.text or cat.attrib.get("term", ""))
+                    for cat in list(item.findall("category")) + list(item.findall(f"{atom_ns}category"))
+                )
                 if categories:
                     matched = _renders_query_match(categories, queries)
             if not matched:
                 continue
+            # Extract link: RSS <link>, Atom <link href=...>
             link = (item.findtext("link") or "").strip()
+            if not link:
+                atom_link = item.find(f"{atom_ns}link")
+                if atom_link is not None:
+                    link = atom_link.attrib.get("href", "").strip()
             if not link:
                 atom_link = item.find("{http://www.w3.org/2005/Atom}link")
                 if atom_link is not None:
@@ -1068,7 +1156,7 @@ class PoliteCryptoCrawler:
                 continue
 
             hint_date = None
-            for tag in ("pubDate", "published", "updated"):
+            for tag in ("pubDate", "published", "updated", f"{atom_ns}published", f"{atom_ns}updated"):
                 raw_val = item.findtext(tag)
                 hint_date = _parse_rss_timestamp(raw_val)
                 if hint_date:
@@ -1077,6 +1165,236 @@ class PoliteCryptoCrawler:
                 continue
             self.store.upsert_url(normalized, host, hint_date=hint_date, query_match=query_tag)
             count += 1
+
+    async def _search_google_news_rss(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        """
+        Google News provides a free RSS endpoint that returns up to ~100 results
+        per query. No API key required. We extract links and filter to allowed hosts.
+        """
+        from urllib.parse import quote_plus
+
+        for term in queries:
+            clean = term.strip()
+            if not clean:
+                continue
+            # Google News RSS: returns results for query, can add crypto context
+            feed_url = f"https://news.google.com/rss/search?q={quote_plus(clean)}+crypto&hl=en-US&gl=US&ceid=US:en"
+            try:
+                text = await self._get_text_unrestricted(session, feed_url, "news.google.com")
+                if not text:
+                    continue
+                root = ET.fromstring(text)
+            except Exception:
+                continue
+            for item in root.findall(".//item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                pub_date = item.findtext("pubDate")
+                if not link:
+                    continue
+                # Google News links are often redirects; the real URL is in the link
+                # Try to resolve or just take the link as-is
+                resolved = await self._resolve_google_news_link(session, link)
+                if not resolved:
+                    continue
+                normalized = _normalise(resolved)
+                host = urlparse(normalized).hostname or ""
+                if not host or not _host_allowed(host) or not _url_allowed(normalized):
+                    continue
+                hint_date = _parse_rss_timestamp(pub_date)
+                if hint_date and not _iso_in_window(hint_date, start_ts, end_ts):
+                    continue
+                self.store.upsert_url(
+                    normalized, host,
+                    hint_date=hint_date,
+                    query_match=f"google_news:{clean.lower()}",
+                )
+            # Be polite to Google
+            await asyncio.sleep(random.uniform(1.0, 2.5))
+
+    async def _resolve_google_news_link(
+        self,
+        session: aiohttp.ClientSession,
+        google_url: str,
+    ) -> Optional[str]:
+        """Try to resolve Google News redirect URL to the real article URL."""
+        try:
+            async with async_timeout.timeout(10):
+                async with session.get(
+                    google_url,
+                    allow_redirects=False,
+                    headers={"User-Agent": self.cfg["user_agent"]},
+                ) as resp:
+                    if resp.status in (301, 302, 303, 307, 308):
+                        return resp.headers.get("Location")
+                    # If no redirect, try to parse from the response
+                    if resp.status == 200:
+                        text = await resp.text(errors="ignore")
+                        # Google News sometimes embeds the real URL
+                        match = re.search(r'<a[^>]+href="(https?://(?!news\.google\.com)[^"]+)"', text)
+                        if match:
+                            return match.group(1)
+        except Exception:
+            pass
+        # Fallback: try to extract URL from the Google News URL path
+        # Format: https://news.google.com/rss/articles/...
+        # Sometimes the URL itself is encoded in the path — not easily extractable
+        return None
+
+    async def _search_bing_news_rss(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        """
+        Bing News provides a free RSS feed for search results. No API key needed.
+        """
+        from urllib.parse import quote_plus
+
+        for term in queries:
+            clean = term.strip()
+            if not clean:
+                continue
+            feed_url = f"https://www.bing.com/news/search?q={quote_plus(clean)}+cryptocurrency&format=rss"
+            try:
+                text = await self._get_text_unrestricted(session, feed_url, "www.bing.com")
+                if not text:
+                    continue
+                root = ET.fromstring(text)
+            except Exception:
+                continue
+            for item in root.findall(".//item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                pub_date = item.findtext("pubDate")
+                if not link:
+                    continue
+                normalized = _normalise(link)
+                host = urlparse(normalized).hostname or ""
+                if not host or not _host_allowed(host) or not _url_allowed(normalized):
+                    continue
+                hint_date = _parse_rss_timestamp(pub_date)
+                if hint_date and not _iso_in_window(hint_date, start_ts, end_ts):
+                    continue
+                self.store.upsert_url(
+                    normalized, host,
+                    hint_date=hint_date,
+                    query_match=f"bing_news:{clean.lower()}",
+                )
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+    async def _search_sitemaps(
+        self,
+        session: aiohttp.ClientSession,
+        queries: Sequence[str],
+        start_ts: float,
+        end_ts: float,
+    ) -> None:
+        """
+        Crawl sitemaps of allowed hosts to find articles matching query terms.
+        Many crypto news sites publish sitemaps with date info, which is excellent
+        for historical coverage.
+        """
+        # High-priority hosts known to have good sitemaps with article URLs
+        sitemap_hosts = [
+            "decrypt.co", "cryptoslate.com", "beincrypto.com",
+            "ambcrypto.com", "cryptopotato.com", "bitcoinist.com",
+            "newsbtc.com", "u.today", "crypto.news",
+        ]
+        sitemap_paths = [
+            "/post-sitemap.xml",
+            "/news-sitemap.xml",
+            "/sitemap-news.xml",
+            "/sitemap.xml",
+        ]
+        for host in sitemap_hosts:
+            if not _host_allowed(host):
+                continue
+            found_sitemap = False
+            for path in sitemap_paths:
+                sitemap_url = f"https://{host}{path}"
+                text = await self._get_text(session, sitemap_url)
+                if not text:
+                    # Try www. variant
+                    sitemap_url = f"https://www.{host}{path}"
+                    text = await self._get_text(session, sitemap_url)
+                if not text:
+                    continue
+                found_sitemap = True
+                # Parse sitemap entries
+                entries = re.findall(r"(?is)<url>(.*?)</url>", text)
+                sub_sitemaps = re.findall(r"(?is)<sitemap>(.*?)</sitemap>", text)
+                # If this is a sitemap index, try to find the news sitemap
+                for sub_block in sub_sitemaps[:10]:
+                    loc = re.search(r"(?is)<loc>\s*(.*?)\s*</loc>", sub_block)
+                    if not loc:
+                        continue
+                    sub_url = loc.group(1).strip()
+                    # Prefer news or post sitemaps
+                    if any(kw in sub_url.lower() for kw in ("news", "post", "article", "blog")):
+                        sub_text = await self._get_text(session, sub_url)
+                        if sub_text:
+                            entries.extend(re.findall(r"(?is)<url>(.*?)</url>", sub_text))
+                # Process entries
+                queued = 0
+                for block in entries:
+                    if queued >= 500:
+                        break
+                    loc = re.search(r"(?is)<loc>\s*(.*?)\s*</loc>", block)
+                    if not loc:
+                        continue
+                    url = loc.group(1).strip()
+                    slug = url.lower()
+                    if not any(q.lower() in slug for q in queries):
+                        continue
+                    lastmod = None
+                    lm_match = re.search(r"(?is)<lastmod>\s*(.*?)\s*</lastmod>", block)
+                    if lm_match:
+                        lastmod = lm_match.group(1).strip()
+                    if lastmod and not _iso_in_window(lastmod, start_ts, end_ts):
+                        continue
+                    url_host = urlparse(url).hostname or ""
+                    if _host_allowed(url_host) and _url_allowed(url):
+                        self.store.upsert_url(
+                            _normalise(url), url_host,
+                            hint_date=lastmod,
+                            query_match=f"sitemap:{host}",
+                        )
+                        queued += 1
+                if found_sitemap:
+                    break  # Found a sitemap for this host, don't try other paths
+
+    async def _get_text_unrestricted(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        host: str,
+    ) -> Optional[str]:
+        """
+        Fetch text from a URL without checking the allowed_hosts list.
+        Used for aggregator endpoints (Google News, Bing News) that return links
+        to allowed hosts. We still respect robots.txt and rate limits.
+        """
+        await self.gate.wait(host, None)
+        try:
+            async with async_timeout.timeout(self.cfg["timeout_sec"]):
+                async with session.get(
+                    url,
+                    headers={"User-Agent": self.cfg["user_agent"]},
+                ) as resp:
+                    if resp.status != 200:
+                        return None
+                    return await resp.text(errors="ignore")
+        except Exception:
+            return None
 
     async def _get_text(self, session: aiohttp.ClientSession, url: str) -> Optional[str]:
         host = urlparse(url).hostname or ""

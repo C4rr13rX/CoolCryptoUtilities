@@ -3,6 +3,10 @@
     {
       "label": "sample_reports",
       "path": "docs/free_news_samples.json"
+    },
+    {
+      "label": "free_news_seed",
+      "path": "data/news/free_news.json"
     }
   ]
 }
