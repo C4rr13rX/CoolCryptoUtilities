@@ -478,8 +478,10 @@ class UltraSwapBridge:
                 return url
             # Ignore non-Alchemy RPCs accidentally placed in ALCHEMY_* vars.
             return ""
-        if ALCHEMY_API_KEY and chain in ALCHEMY_SLUGS:
-            return f"https://{ALCHEMY_SLUGS[chain]}.g.alchemy.com/v2/{ALCHEMY_API_KEY}"
+        # Read at call time so secure-settings injected after import are picked up.
+        api_key = (os.getenv("ALCHEMY_API_KEY") or "").strip()
+        if api_key and chain in ALCHEMY_SLUGS:
+            return f"https://{ALCHEMY_SLUGS[chain]}.g.alchemy.com/v2/{api_key}"
         return ""
 
     def _w3(self, chain: str) -> Web3:
