@@ -435,7 +435,8 @@ def build_index_from_dexscreener(chain: str) -> dict:
 # -----------------------------------------------------------------------
 def main():
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    if os.path.exists(OUTPUT_PATH):
+    force = os.getenv("FORCE_REBUILD_INDEX", "0").lower() in {"1", "true", "yes", "on"} or "--force" in sys.argv
+    if os.path.exists(OUTPUT_PATH) and not force:
         print(f"Output already exists, skipping fetch: {OUTPUT_PATH}")
         return
 

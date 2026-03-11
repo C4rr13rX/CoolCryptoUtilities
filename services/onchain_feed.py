@@ -90,6 +90,19 @@ class OnChainPairFeed:
         pair_address = None
         symbols_available = []
         target_parts = self._lookup_symbol.split("-") if "-" in self._lookup_symbol else [self._lookup_symbol]
+        # Also try reversed order (WETH-USDC should match USDC-WETH in index)
+        target_reversed = list(reversed(target_parts)) if len(target_parts) == 2 else target_parts
+
+        def _normalize_quote(q: str) -> str:
+            return q.replace("USDBC", "USDbC").replace("USDB", "USDbC").replace("USDC", "USDbC")
+
+        def _parts_match(index_parts: list, search_parts: list) -> bool:
+            if len(index_parts) != len(search_parts) or len(index_parts) != 2:
+                return False
+            if index_parts[0] == search_parts[0] and _normalize_quote(index_parts[1]) == _normalize_quote(search_parts[1]):
+                return True
+            return False
+
         for addr, info in index.items():
             sym = str(info.get("symbol", "")).upper()
             symbols_available.append(sym)
@@ -97,18 +110,9 @@ class OnChainPairFeed:
                 pair_address = Web3.to_checksum_address(addr)
                 break
             parts = sym.split("-") if "-" in sym else [sym]
-            if len(parts) == len(target_parts) == 2:
-                base_match = parts[0] == target_parts[0]
-                quote = parts[1]
-                normalized_quote = (
-                    quote.replace("USDBC", "USDbC")
-                    .replace("USDB", "USDbC")
-                    .replace("USDC", "USDbC")
-                )
-                quote_match = normalized_quote == target_parts[1]
-                if base_match and quote_match:
-                    pair_address = Web3.to_checksum_address(addr)
-                    break
+            if _parts_match(parts, target_parts) or _parts_match(parts, target_reversed):
+                pair_address = Web3.to_checksum_address(addr)
+                break
         if not pair_address:
             raise RuntimeError(
                 f"Pair {self._lookup_symbol} not found in pair index for {self.chain}. "
