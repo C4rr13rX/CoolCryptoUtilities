@@ -28,6 +28,7 @@ class TaskNode:
     status: str = "pending"            # pending | in_progress | completed | failed
     children: list[TaskNode] = field(default_factory=list)
     tool_outputs: list[dict] = field(default_factory=list)
+    MAX_TOOL_OUTPUTS: int = field(default=50, repr=False)
     parent_id: str | None = None
     created_at: float = field(default_factory=time.time)
     completed_at: float | None = None
@@ -80,6 +81,8 @@ class TaskNode:
             "result": result,
             "ts": time.time(),
         })
+        if len(self.tool_outputs) > self.MAX_TOOL_OUTPUTS:
+            self.tool_outputs = self.tool_outputs[-self.MAX_TOOL_OUTPUTS:]
 
     # ------------------------------------------------------------------
     # Serialisation

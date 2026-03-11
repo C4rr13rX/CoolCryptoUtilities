@@ -171,6 +171,9 @@ class UnboundedSolver:
         self._all_hypotheses: list[HypothesisEntry] = []
         self._all_research_links: list[str] = []
         self._all_anomalies: list[str] = []
+        self._MAX_HYPOTHESES = 200
+        self._MAX_LINKS = 500
+        self._MAX_ANOMALIES = 200
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -253,6 +256,8 @@ class UnboundedSolver:
         sub_questions = direct.get("sub_questions") or []
         anomalies = direct.get("anomalies") or []
         self._all_anomalies.extend(anomalies)
+        if len(self._all_anomalies) > self._MAX_ANOMALIES:
+            self._all_anomalies = self._all_anomalies[-self._MAX_ANOMALIES:]
 
         # If the AI couldn't even decompose, research and try again.
         if not sub_questions:
@@ -290,6 +295,8 @@ class UnboundedSolver:
                     for h in hypotheses
                 )
                 self._all_hypotheses.extend(hypotheses)
+                if len(self._all_hypotheses) > self._MAX_HYPOTHESES:
+                    self._all_hypotheses = self._all_hypotheses[-self._MAX_HYPOTHESES:]
 
                 # Try one more time with hypotheses as context.
                 hyp_context = child_context + "\n\nHypotheses:\n" + "\n".join(
@@ -410,7 +417,8 @@ class UnboundedSolver:
                     url = r.get("url", "")
                     if url:
                         node.research_links.append(url)
-                        self._all_research_links.append(url)
+                        if len(self._all_research_links) < self._MAX_LINKS:
+                            self._all_research_links.append(url)
             except Exception:
                 pass
 
@@ -780,7 +788,8 @@ class UnboundedSolver:
                 for r in result.get("results") or []:
                     url = r.get("url", "")
                     if url:
-                        self._all_research_links.append(url)
+                        if len(self._all_research_links) < self._MAX_LINKS:
+                            self._all_research_links.append(url)
             except Exception:
                 continue
         return "\n\n".join(notes)

@@ -97,7 +97,7 @@ class TradingBot:
         self.wins: int = 0
         self.max_trade_share: float = min(0.5, max(0.05, MAX_QUOTE_SHARE))
         self._transition_plan: Dict[str, Any] = {}
-        self._bus_actions: List[Dict[str, Any]] = []
+        self._bus_actions: deque = deque(maxlen=1000)
         self._last_bus_signature: Optional[str] = None
         self._savings_ready_ratio = float(os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15")))
         self._savings_bootstrap_ratio = float(

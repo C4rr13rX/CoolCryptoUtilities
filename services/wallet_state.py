@@ -682,7 +682,8 @@ def _collect_nfts(wallet: str, chains: Optional[Iterable[str]] = None, max_items
     session = requests.Session()
     session.headers.update({"accept": "application/json"})
     results: List[Dict[str, Any]] = []
-    for chain in chains_iter:
+    try:
+        for chain in chains_iter:
         slug = slug_map.get(chain)
         if not slug:
             continue
@@ -723,6 +724,8 @@ def _collect_nfts(wallet: str, chains: Optional[Iterable[str]] = None, max_items
             if not page_key:
                 break
             params["pageKey"] = page_key
+    finally:
+        session.close()
     return results
 
 

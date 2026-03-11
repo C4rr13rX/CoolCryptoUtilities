@@ -21,7 +21,7 @@ DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py", "--action", "start_productio
 LOG_DIR = REPO_ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "console.log"
-LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(512 * 1024 * 1024)))
+LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(50 * 1024 * 1024)))
 PID_PATH = REPO_ROOT / "runtime" / "production.pid"
 
 
@@ -50,6 +50,7 @@ class ConsoleProcessManager:
         self._started_at: Optional[float] = None
         self._stdin_lock = threading.Lock()
         self._bootstrap_thread: Optional[threading.Thread] = None
+        self._log_thread: Optional[threading.Thread] = None
 
     def _read_pid(self) -> Optional[int]:
         """Read a previously-written PID file and return the PID if alive."""
@@ -88,14 +89,13 @@ class ConsoleProcessManager:
             if existing_pid:
                 return {"status": "running", "pid": str(existing_pid)}
             self._rotate_log_if_needed()
-            logfile = LOG_PATH.open("a", encoding="utf-8")
             env = build_process_env(user)
             env.setdefault("WALLET_ALLOW_AUTOMATION", "1")
             try:
                 proc = subprocess.Popen(
                     cmd,
                     cwd=str(REPO_ROOT),
-                    stdout=logfile,
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.PIPE,
                     text=True,
@@ -104,12 +104,16 @@ class ConsoleProcessManager:
                     env=env,
                 )
             except Exception as exc:
-                logfile.close()
                 return {"status": "error", "message": str(exc)}
             self._process = proc
             self._started_at = time.time()
             self._write_pid(proc.pid)
-            logfile.close()
+            self._log_thread = threading.Thread(
+                target=self._log_writer,
+                args=(proc.stdout,),
+                daemon=True,
+            )
+            self._log_thread.start()
             return {"status": "started", "pid": str(proc.pid)}
 
     def stop(self, graceful_timeout: float = 5.0) -> Dict[str, str]:
@@ -177,6 +181,34 @@ class ConsoleProcessManager:
             except Exception as exc:
                 return {"status": "error", "message": str(exc)}
         return {"status": "sent"}
+
+    def _log_writer(self, pipe) -> None:
+        """Read subprocess output and write to log with active size-based rotation."""
+        f = None
+        try:
+            f = LOG_PATH.open("a", encoding="utf-8")
+            for line in iter(pipe.readline, ""):
+                if not line:
+                    break
+                f.write(line)
+                f.flush()
+                try:
+                    if f.tell() > LOG_MAX_BYTES:
+                        f.close()
+                        f = None
+                        self._rotate_log_if_needed()
+                        f = LOG_PATH.open("a", encoding="utf-8")
+                except OSError:
+                    pass
+        except Exception as exc:
+            logger.warning("log writer thread error: %s", exc)
+        finally:
+            if f and not f.closed:
+                f.close()
+            try:
+                pipe.close()
+            except Exception:
+                pass
 
     def _rotate_log_if_needed(self) -> None:
         if not LOG_PATH.exists():

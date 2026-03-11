@@ -645,6 +645,9 @@ class MarketDataStream:
                     },
                 )
                 now = time.time()
+                if now - self._last_gc >= self._GC_INTERVAL:
+                    self._gc_stale_tracking()
+                    self._last_gc = now
                 if self._offline_only:
                     if now - self._last_offline_only_log >= 60.0:
                         log_message(

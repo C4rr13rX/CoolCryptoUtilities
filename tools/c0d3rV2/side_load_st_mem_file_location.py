@@ -37,6 +37,8 @@ class STSideLoadedMemory:
     it already found.
     """
 
+    _MAX_CACHE_KEYS = 500
+
     def __init__(self, session_id: str, runtime_root: Path) -> None:
         self.session_id = session_id
         db_path = runtime_root / f"hazy_hash_st_{session_id}_db"
@@ -66,7 +68,12 @@ class STSideLoadedMemory:
         for path in paths:
             self._hash.record(path, ctx)
         # Also cache for instant re-lookup within the same session.
-        cached = self._cache.setdefault(query.lower().strip(), [])
+        key = query.lower().strip()
+        # Evict oldest entries if cache exceeds limit.
+        if key not in self._cache and len(self._cache) >= self._MAX_CACHE_KEYS:
+            oldest = next(iter(self._cache))
+            del self._cache[oldest]
+        cached = self._cache.setdefault(key, [])
         for p in paths:
             if p not in cached:
                 cached.append(p)
