@@ -188,11 +188,23 @@ class ConsoleProcessManager:
         f = None
         try:
             f = LOG_PATH.open("a", encoding="utf-8", errors="replace")
-            for line in iter(pipe.readline, ""):
+            while True:
+                try:
+                    line = pipe.readline()
+                except (UnicodeDecodeError, OSError):
+                    continue
                 if not line:
                     break
-                f.write(line)
-                f.flush()
+                try:
+                    f.write(line)
+                    f.flush()
+                except (UnicodeEncodeError, OSError):
+                    # Write a sanitized version
+                    try:
+                        f.write(line.encode("utf-8", errors="replace").decode("utf-8", errors="replace"))
+                        f.flush()
+                    except Exception:
+                        pass
                 try:
                     if f.tell() > LOG_MAX_BYTES:
                         f.close()
@@ -202,10 +214,16 @@ class ConsoleProcessManager:
                 except OSError:
                     pass
         except Exception as exc:
-            logger.warning("log writer thread error: %s", exc)
+            try:
+                logger.warning("log writer thread error: %s", exc)
+            except Exception:
+                pass
         finally:
             if f and not f.closed:
-                f.close()
+                try:
+                    f.close()
+                except Exception:
+                    pass
             try:
                 pipe.close()
             except Exception:

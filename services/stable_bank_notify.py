@@ -38,6 +38,7 @@ class StableBankNotifier:
     def __init__(self) -> None:
         self._last_notified_usd: float = 0.0
         self._last_notified_ts: float = 0.0
+        self._gas_unsat_cooldowns: dict[str, float] = {}
         self._lock = threading.Lock()
         self._load_state()
 
@@ -90,11 +91,87 @@ class StableBankNotifier:
 
             return sent
 
+    def notify_gas_unsat(
+        self,
+        *,
+        wallet_address: str,
+        chain: str,
+        native_symbol: str,
+        deficit_native: float,
+        deficit_usd: float,
+        native_price_usd: float,
+        total_available_usd: float,
+        recommendation: str = "",
+    ) -> bool:
+        """Send a gas UNSAT email notification. Returns True if sent."""
+        endpoint = os.environ.get("STABLE_BANK_NOTIFY_ENDPOINT", "").strip()
+        api_key = os.environ.get("STABLE_BANK_NOTIFY_API_KEY", "").strip()
+        recipient = os.environ.get("STABLE_BANK_NOTIFY_EMAIL", "").strip()
+        sender = os.environ.get("STABLE_BANK_NOTIFY_SENDER", "").strip()
+
+        if not endpoint or not api_key or not recipient:
+            return False
+
+        with self._lock:
+            now = time.time()
+            # Cooldown: don't spam for the same chain
+            last_key = f"gas_unsat_{chain}_{wallet_address}"
+            last_ts = self._gas_unsat_cooldowns.get(last_key, 0.0)
+            if now - last_ts < _COOLDOWN_SEC:
+                return False
+
+        try:
+            import urllib.request
+
+            payload = json.dumps({
+                "alert_type": "gas_unsat",
+                "recipient_email": recipient,
+                "sender_email": sender,
+                "wallet_address": wallet_address,
+                "chain": chain,
+                "native_symbol": native_symbol,
+                "deficit_native": round(deficit_native, 8),
+                "deficit_usd": round(deficit_usd, 2),
+                "native_price_usd": round(native_price_usd, 2),
+                "total_available_usd": round(total_available_usd, 2),
+                "recommendation": recommendation,
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                endpoint,
+                data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                status = resp.getcode()
+
+            if 200 <= status < 300:
+                with self._lock:
+                    self._gas_unsat_cooldowns[last_key] = now
+                logger.info(
+                    "Gas UNSAT notification sent: %s needs %.6f %s ($%.2f) on %s → %s",
+                    wallet_address, deficit_native, native_symbol, deficit_usd,
+                    chain, recipient,
+                )
+                return True
+
+            logger.warning("Gas UNSAT notification failed (HTTP %d)", status)
+            return False
+
+        except Exception as exc:
+            logger.warning("Gas UNSAT notification error: %s", exc)
+            return False
+
     def reset(self) -> None:
         """Reset notification state (e.g. when threshold is changed)."""
         with self._lock:
             self._last_notified_usd = 0.0
             self._last_notified_ts = 0.0
+            self._gas_unsat_cooldowns.clear()
             self._persist_state()
 
     # ── internals ────────────────────────────────────────────────────

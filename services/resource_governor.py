@@ -8,6 +8,7 @@ Design goals:
   - When pressure rises, smoothly back off — no cliff edges.
   - Trigger Python GC under memory pressure.
   - Provide a single source of truth for "how many workers can I use right now?"
+  - Never let the system reach the point of black-screen / OOM crash.
 """
 from __future__ import annotations
 
@@ -36,17 +37,20 @@ _RESERVE_CPU = float(os.getenv("GOVERNOR_RESERVE_CPU", "0.25"))
 _RESERVE_MEM = float(os.getenv("GOVERNOR_RESERVE_MEM", "0.30"))
 
 # Hard ceiling: never exceed this fraction no matter what.
-_HARD_CPU = float(os.getenv("GOVERNOR_HARD_CPU", "0.85"))
-_HARD_MEM = float(os.getenv("GOVERNOR_HARD_MEM", "0.88"))
+_HARD_CPU = float(os.getenv("GOVERNOR_HARD_CPU", "0.80"))
+_HARD_MEM = float(os.getenv("GOVERNOR_HARD_MEM", "0.82"))
 
 # Critical threshold — trigger emergency GC and pause new work.
-_CRITICAL_MEM = float(os.getenv("GOVERNOR_CRITICAL_MEM", "0.92"))
+_CRITICAL_MEM = float(os.getenv("GOVERNOR_CRITICAL_MEM", "0.88"))
+
+# Absolute emergency — start killing our own child processes.
+_EMERGENCY_MEM = float(os.getenv("GOVERNOR_EMERGENCY_MEM", "0.93"))
 
 # How often the background sampler runs (seconds).
-_SAMPLE_INTERVAL = float(os.getenv("GOVERNOR_SAMPLE_INTERVAL", "10"))
+_SAMPLE_INTERVAL = float(os.getenv("GOVERNOR_SAMPLE_INTERVAL", "5"))
 
 # Absolute bounds on the dynamic worker count.
-_MIN_WORKERS = int(os.getenv("GOVERNOR_MIN_WORKERS", "2"))
+_MIN_WORKERS = int(os.getenv("GOVERNOR_MIN_WORKERS", "1"))
 _MAX_WORKERS = int(os.getenv("GOVERNOR_MAX_WORKERS", "0"))  # 0 = auto
 
 
@@ -63,8 +67,9 @@ class ResourceGovernor:
         self._mem_available_mb: float = 0.0
         self._total_mem_mb: float = 0.0
         self._cpu_count: int = max(1, os.cpu_count() or 1)
-        self._max_workers_ceil = _MAX_WORKERS if _MAX_WORKERS > 0 else max(8, self._cpu_count)
+        self._max_workers_ceil = _MAX_WORKERS if _MAX_WORKERS > 0 else max(4, self._cpu_count)
         self._gc_triggered_at: float = 0.0
+        self._emergency_triggered_at: float = 0.0
         self._started = False
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -87,8 +92,11 @@ class ResourceGovernor:
         self._thread.start()
         self._started = True
         logger.info(
-            "resource governor started: cpus=%d reserve_cpu=%.0f%% reserve_mem=%.0f%% max_workers=%d",
-            self._cpu_count, _RESERVE_CPU * 100, _RESERVE_MEM * 100, self._max_workers_ceil,
+            "resource governor started: cpus=%d reserve_cpu=%.0f%% reserve_mem=%.0f%% "
+            "hard_mem=%.0f%% critical=%.0f%% emergency=%.0f%% max_workers=%d",
+            self._cpu_count, _RESERVE_CPU * 100, _RESERVE_MEM * 100,
+            _HARD_MEM * 100, _CRITICAL_MEM * 100, _EMERGENCY_MEM * 100,
+            self._max_workers_ceil,
         )
 
     def stop(self) -> None:
@@ -132,13 +140,73 @@ class ResourceGovernor:
             self._ema_mem = self._alpha * mem + (1 - self._alpha) * self._ema_mem
 
         # Emergency GC under critical memory pressure.
-        if mem >= _CRITICAL_MEM and (time.time() - self._gc_triggered_at) > 30:
+        if mem >= _CRITICAL_MEM and (time.time() - self._gc_triggered_at) > 15:
             self._gc_triggered_at = time.time()
             collected = gc.collect()
             logger.warning(
                 "CRITICAL memory pressure (%.1f%%) — forced GC collected %d objects",
                 mem * 100, collected,
             )
+
+        # Absolute emergency — try to free memory by clearing Python caches.
+        if mem >= _EMERGENCY_MEM and (time.time() - self._emergency_triggered_at) > 30:
+            self._emergency_triggered_at = time.time()
+            self._emergency_shed_load()
+
+    def _emergency_shed_load(self) -> None:
+        """Last resort: aggressively free memory to prevent OS-level OOM."""
+        logger.critical(
+            "EMERGENCY memory shed (%.1f%%) — clearing caches and killing workers",
+            self._mem * 100,
+        )
+        # Force all generations of GC
+        for gen in range(3):
+            gc.collect(gen)
+
+        # Try to trim linecache, functools caches, etc.
+        try:
+            import linecache
+            linecache.clearcache()
+        except Exception:
+            pass
+        try:
+            import importlib
+            importlib.invalidate_caches()
+        except Exception:
+            pass
+
+        # Kill our own child processes if memory is still critical
+        if psutil and self._mem >= _EMERGENCY_MEM:
+            try:
+                current = psutil.Process()
+                children = current.children(recursive=True)
+                # Kill the heaviest child first
+                children.sort(
+                    key=lambda p: p.memory_info().rss if p.is_running() else 0,
+                    reverse=True,
+                )
+                for child in children[:2]:  # at most 2
+                    try:
+                        mem_mb = child.memory_info().rss / (1024 * 1024)
+                        if mem_mb > 200:  # only kill if using > 200MB
+                            logger.critical(
+                                "EMERGENCY: killing child pid=%d (%s) using %.0fMB",
+                                child.pid, child.name(), mem_mb,
+                            )
+                            child.kill()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Internal helpers (no lock — caller reads snapshot values)
+    # ------------------------------------------------------------------
+
+    def _read_ema(self):
+        """Read smoothed values under lock, return (cpu_frac, mem_frac)."""
+        with self._lock:
+            return self._ema_cpu / 100.0, self._ema_mem
 
     # ------------------------------------------------------------------
     # Public queries — these are the API that components use
@@ -172,9 +240,7 @@ class ResourceGovernor:
         actual_floor = max(floor, _MIN_WORKERS) if floor else _MIN_WORKERS
         ceiling = min(base, self._max_workers_ceil)
 
-        with self._lock:
-            cpu = self._ema_cpu / 100.0   # 0-1
-            mem = self._ema_mem            # 0-1
+        cpu, mem = self._read_ema()
 
         # How much headroom do we have above our reserve?
         cpu_headroom = max(0.0, (1.0 - _RESERVE_CPU) - cpu)
@@ -190,24 +256,22 @@ class ResourceGovernor:
         workers = max(actual_floor, int(ceiling * scale))
 
         # Hard override: if we're above the hard ceiling, clamp to floor.
-        if cpu / 1.0 >= _HARD_CPU or mem >= _HARD_MEM:
+        if cpu >= _HARD_CPU or mem >= _HARD_MEM:
             workers = actual_floor
 
         return workers
 
     def should_pause(self) -> bool:
         """True if the system is under critical pressure — new work should wait."""
-        with self._lock:
-            return self._ema_mem >= _CRITICAL_MEM or self._ema_cpu / 100.0 >= _HARD_CPU
+        cpu, mem = self._read_ema()
+        return mem >= _CRITICAL_MEM or cpu >= _HARD_CPU
 
     def should_throttle(self) -> bool:
         """True if moderate pressure — work should slow down."""
-        with self._lock:
-            cpu = self._ema_cpu / 100.0
-            mem = self._ema_mem
+        cpu, mem = self._read_ema()
         return cpu >= (1.0 - _RESERVE_CPU) or mem >= (1.0 - _RESERVE_MEM)
 
-    def wait_if_pressured(self, label: str = "", max_wait: float = 30.0) -> float:
+    def wait_if_pressured(self, label: str = "", max_wait: float = 60.0) -> float:
         """
         Block until system pressure drops below the hard ceiling.
         Returns the total seconds waited (0 if no wait was needed).
@@ -217,8 +281,11 @@ class ResourceGovernor:
             if waited == 0.0:
                 logger.info("governor: pausing %s — system under pressure (cpu=%.0f%% mem=%.0f%%)",
                             label, self.cpu_percent, self.memory_percent * 100)
-            time.sleep(1.0)
-            waited += 1.0
+            time.sleep(2.0)
+            waited += 2.0
+            # Re-sample if the background thread isn't running
+            if not self._started:
+                self._sample()
         return waited
 
     def snapshot(self) -> dict:
@@ -228,6 +295,7 @@ class ResourceGovernor:
             mem = self._ema_mem
             avail = self._mem_available_mb
             total = self._total_mem_mb
+        # Call methods OUTSIDE the lock to avoid deadlock
         return {
             "cpu_percent": round(cpu, 1),
             "memory_percent": round(mem * 100, 1),
@@ -238,6 +306,9 @@ class ResourceGovernor:
             "should_pause": self.should_pause(),
             "reserve_cpu": _RESERVE_CPU,
             "reserve_mem": _RESERVE_MEM,
+            "hard_mem": _HARD_MEM,
+            "critical_mem": _CRITICAL_MEM,
+            "emergency_mem": _EMERGENCY_MEM,
         }
 
 

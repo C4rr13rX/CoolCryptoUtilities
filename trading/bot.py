@@ -2524,11 +2524,17 @@ class TradingBot:
                         if native_balance >= gas_required:
                             strategy = None
                 if native_balance < gas_required:
-                    strategy_severity = FeedbackSeverity.CRITICAL
+                    sat_status = (strategy or {}).get("sat_status", "UNSAT")
+                    # Only log as CRITICAL if truly UNSAT (no path to gas exists)
+                    if sat_status == "SAT":
+                        strategy_severity = FeedbackSeverity.WARNING
+                    else:
+                        strategy_severity = FeedbackSeverity.CRITICAL
                     details = {
                         "native_balance": native_balance,
                         "required": gas_required,
                         "chain": chain_name,
+                        "sat_status": sat_status,
                     }
                     if strategy:
                         details["strategy"] = strategy
@@ -2536,23 +2542,56 @@ class TradingBot:
                             remaining_gap = float(strategy.get("remaining_native_gap", 0.0) or 0.0)
                             if remaining_gap <= 1e-6:
                                 strategy_severity = FeedbackSeverity.WARNING
+                        recommendation = str(strategy.get("recommendation", ""))
                         message = (
-                            f"Native balance {native_balance:.6f} below required {gas_required:.6f} on {chain_name}."
+                            f"[{sat_status}] Native balance {native_balance:.6f} below required "
+                            f"{gas_required:.6f} on {chain_name}. {recommendation}"
                         )
                         self._record_advisory(
                             topic="gas_replenishment",
                             message=message,
                             severity=strategy_severity,
                             scope=f"{chain_name}:{symbol}",
-                            recommendation=str(strategy.get("recommendation", "")),
+                            recommendation=recommendation,
                             meta=strategy,
                         )
                     self.metrics.feedback(
                         "trading",
                         severity=strategy_severity,
-                        label="insufficient_gas",
+                        label=f"gas_{sat_status.lower()}",
                         details=details,
                     )
+                    # Send email notification for UNSAT so user knows exactly what to buy
+                    if sat_status == "UNSAT" and strategy:
+                        try:
+                            from services.stable_bank_notify import notifier as _gas_notifier
+                            wallet_addr = ""
+                            if self._bridge:
+                                try:
+                                    wallet_addr = self._bridge.get_address()
+                                except Exception:
+                                    pass
+                            native_sym = NATIVE_SYMBOL.get(chain_name.lower(), chain_name.upper())
+                            _gas_notifier.notify_gas_unsat(
+                                wallet_address=wallet_addr,
+                                chain=chain_name,
+                                native_symbol=native_sym,
+                                deficit_native=float(strategy.get("deficit_native", 0)),
+                                deficit_usd=float(strategy.get("deficit_native", 0)) * float(strategy.get("native_price_usd", 0)),
+                                native_price_usd=float(strategy.get("native_price_usd", 0)),
+                                total_available_usd=float(strategy.get("total_available_native", 0)) * float(strategy.get("native_price_usd", 0)),
+                                recommendation=str(strategy.get("recommendation", "")),
+                            )
+                        except Exception as notify_exc:
+                            try:
+                                self.metrics.feedback(
+                                    "trading",
+                                    severity=FeedbackSeverity.WARNING,
+                                    label="gas_unsat_notify_failed",
+                                    details={"error": str(notify_exc)},
+                                )
+                            except Exception:
+                                pass
                     return decision
             else:
                 sim_rebalanced = self._rebalance_sim_gas(
@@ -4152,43 +4191,63 @@ class TradingBot:
                 if remaining_native <= 0.0:
                     break
 
-        bridge_candidates = [
-            {"chain": other_chain, "native_balance": bal}
-            for other_chain, bal in self.portfolio.native_balances.items()
-            if other_chain != chain_l and bal > 0.0
-        ]
-        bridge_candidates.sort(key=lambda entry: entry["native_balance"], reverse=True)
+        # --- Cross-chain bridge candidates (SAT/UNSAT analysis) ---
+        bridge_candidates = []
+        bridge_native_available = 0.0
+        for other_chain, bal in self.portfolio.native_balances.items():
+            if other_chain == chain_l or bal <= 0.0:
+                continue
+            other_native_price = self._estimate_native_price(other_chain, route, price, symbol)
+            bal_usd = bal * other_native_price
+            # Also check stable tokens on other chains
+            other_stables_usd = 0.0
+            for (key_chain, sym_key), holding in self.portfolio.holdings.items():
+                if key_chain == other_chain and sym_key.upper() in self.stable_tokens:
+                    other_stables_usd += holding.usd
+            total_other_usd = bal_usd + other_stables_usd
+            if total_other_usd > 0:
+                bridge_candidates.append({
+                    "chain": other_chain,
+                    "native_balance": bal,
+                    "native_usd": round(bal_usd, 2),
+                    "stables_usd": round(other_stables_usd, 2),
+                    "total_usd": round(total_other_usd, 2),
+                    "bridge_native_equivalent": total_other_usd / max(native_price, 1e-9),
+                })
+                bridge_native_available += total_other_usd / max(native_price, 1e-9)
+        bridge_candidates.sort(key=lambda entry: entry["total_usd"], reverse=True)
 
         remaining_native_gap = max(0.0, remaining_native)
+
+        # SAT/UNSAT classification:
+        # SAT   = swap_plan covers the deficit OR swap_plan + bridge covers it
+        # UNSAT = even with all available assets across all chains, can't cover gas
+        total_available_native = native_from_swaps + bridge_native_available
+        sat_status = "SAT" if total_available_native >= remaining_native_gap * 0.9 else "UNSAT"
+
         bridge_fee_usd = self.gas_bridge_flat_fee if remaining_native_gap > 0.0 else 0.0
         total_replenish_cost_usd = estimated_gas_cost_usd + roundtrip_fee_usd + bridge_fee_usd
         profit_guard_passed = expected_profit_usd > (total_replenish_cost_usd * self.gas_profit_guard)
         force_rebalance = bool(swap_plan)
         signature = f"{chain_l}:{symbol}:{int(round(deficit * 1e6))}:{int(round(target_native * 1e6))}:{1 if profit_guard_passed else 0}"
 
-        if swap_plan and remaining_native_gap <= 1e-6:
+        if sat_status == "SAT" and swap_plan and remaining_native_gap <= 1e-6:
             primary_swap = swap_plan[0]
             spend_amount = float(primary_swap.get("spend_amount", primary_swap.get("spend_stable", 0.0)))
             spend_symbol = primary_swap.get("symbol")
-            if force_rebalance and not profit_guard_passed:
-                recommendation = (
-                    f"Auto-swap {spend_amount:.2f} {spend_symbol} to restore gas before resuming."
-                )
-            else:
-                recommendation = (
-                    f"Swap {spend_amount:.2f} {spend_symbol} to native to restore gas buffer."
-                )
-        elif swap_plan:
-            if force_rebalance and not profit_guard_passed:
-                recommendation = "Auto-swap available assets for native gas, then bridge or deposit remaining shortfall."
-            else:
-                recommendation = "Swap available assets for native gas, then bridge or deposit remaining shortfall."
-        elif not profit_guard_passed:
+            recommendation = f"SAT: Swap {spend_amount:.2f} {spend_symbol} to native to restore gas buffer."
+        elif sat_status == "SAT" and swap_plan:
+            recommendation = "SAT: Swap available assets for native gas, then bridge remaining from other chains."
+        elif sat_status == "SAT" and bridge_candidates:
+            best = bridge_candidates[0]
+            recommendation = f"SAT: Bridge from {best['chain']} (${best['total_usd']:.2f} available) to cover gas."
+        elif sat_status == "UNSAT":
             recommendation = (
-                "Predicted profit does not cover gas costs. Pause trade and replenish native balance before resuming."
+                f"UNSAT: Total available across all chains (${total_available_native * native_price:.2f}) "
+                f"cannot cover gas deficit (${deficit * native_price:.2f}). Deposit funds to continue."
             )
         else:
-            recommendation = "Bridge or deposit native tokens to replenish gas; no assets available on the active chain."
+            recommendation = "SAT: Swap or bridge available assets to restore gas."
 
         plan = {
             "chain": chain_l,
@@ -4209,6 +4268,8 @@ class TradingBot:
             "swap_plan": swap_plan,
             "bridge_candidates": bridge_candidates,
             "remaining_native_gap": remaining_native_gap,
+            "total_available_native": total_available_native,
+            "sat_status": sat_status,
             "available_quote": available_quote,
             "recommendation": recommendation,
             "signature": signature,

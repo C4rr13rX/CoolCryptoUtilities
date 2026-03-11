@@ -208,25 +208,109 @@ _UNISWAP_COMPATIBLE_DEXIDS = frozenset({
 })
 
 
+# Minimum thresholds to filter out scam/dead tokens
+_MIN_LIQUIDITY_USD = float(os.getenv("PAIR_INDEX_MIN_LIQUIDITY", "10000"))
+_MIN_VOLUME_24H_USD = float(os.getenv("PAIR_INDEX_MIN_VOLUME_24H", "1000"))
+_MIN_TX_COUNT_24H = int(os.getenv("PAIR_INDEX_MIN_TX_24H", "10"))
+
+# Scam token heuristics
+_SCAM_KEYWORDS = frozenset({
+    "honeypot", "scam", "rug", "test", "fake", "airdrop", "giveaway",
+    "elon", "trump2", "free", "moon1000x", "baby", "safemoon2", "rebase",
+})
+
+
+def _is_likely_scam(entry: dict) -> bool:
+    """Heuristic scam filter based on DexScreener metadata."""
+    base = entry.get("baseToken") or {}
+    quote = entry.get("quoteToken") or {}
+    base_sym = (base.get("symbol") or "").lower()
+    base_name = (base.get("name") or "").lower()
+
+    # Keyword check
+    for kw in _SCAM_KEYWORDS:
+        if kw in base_sym or kw in base_name:
+            return True
+
+    # Very low liquidity + high volume = likely wash trading
+    liq = float((entry.get("liquidity") or {}).get("usd", 0) or 0)
+    vol = float(entry.get("volume", {}).get("h24", 0) or 0)
+    if liq > 0 and vol > 0 and vol / liq > 50:
+        return True  # Volume is 50x liquidity — suspicious
+
+    # Token created in last 24h with very high volume
+    pair_created = entry.get("pairCreatedAt")
+    if pair_created:
+        try:
+            age_hours = (time.time() * 1000 - float(pair_created)) / (1000 * 3600)
+            if age_hours < 24 and vol > 100000:
+                return True  # brand new + huge volume = likely scam
+        except Exception:
+            pass
+
+    return False
+
+
+def _get_wallet_symbols(chain: str) -> List[str]:
+    """Read token symbols from the wallet's on-chain balances in the database."""
+    wallet_symbols: List[str] = []
+    try:
+        from db import DB
+        db = DB()
+        # Get all wallets from secure vault
+        rows = db.fetch_balances_flat(chains=[chain], include_zero=False)
+        for row in rows:
+            sym = (row["symbol"] if isinstance(row, dict) else row[5] or "").upper().strip()
+            if sym and sym not in wallet_symbols and len(sym) <= 10:
+                wallet_symbols.append(sym)
+    except Exception as exc:
+        print(f"[INFO] Could not read wallet balances for seeding: {exc}")
+    return wallet_symbols
+
+
 def build_index_from_dexscreener(chain: str) -> dict:
     chain = chain.lower().strip()
     target = int(os.getenv("PAIR_INDEX_TARGET", str(_FALLBACK_PAIR_LIMIT)))
-    symbols = _fetch_top_symbols(_FALLBACK_TOP_SYMBOLS)
+
+    # Seed symbols: wallet holdings first (highest priority), then top market symbols
+    wallet_syms = _get_wallet_symbols(chain)
+    market_syms = _fetch_top_symbols(_FALLBACK_TOP_SYMBOLS)
+    # Deduplicate while preserving wallet-first ordering
+    seen = set()
+    symbols: List[str] = []
+    for sym in wallet_syms + market_syms:
+        if sym not in seen:
+            seen.add(sym)
+            symbols.append(sym)
     if not symbols:
         return {}
+
+    if wallet_syms:
+        print(f"[INFO] Seeded with {len(wallet_syms)} wallet token(s): {wallet_syms[:20]}")
+
     session = requests.Session()
     results: dict = {}
     skipped_dexes: dict = {}
+    scam_filtered = 0
 
-    def _score(entry: dict) -> float:
-        volume = float(entry.get("volumeUsd24h") or entry.get("volumeUsd") or 0.0)
+    def _score(entry: dict, is_wallet_token: bool = False) -> float:
+        volume = float(entry.get("volume", {}).get("h24", 0)
+                       or entry.get("volumeUsd24h", 0)
+                       or entry.get("volumeUsd", 0)
+                       or 0.0)
         liquidity = 0.0
         liq = entry.get("liquidity") or {}
         try:
             liquidity = float(liq.get("usd") or 0.0)
         except Exception:
             liquidity = 0.0
-        return volume + (liquidity * 0.5)
+        base_score = volume + (liquidity * 0.5)
+        # Wallet tokens get a 3x priority boost
+        if is_wallet_token:
+            base_score *= 3.0
+        return base_score
+
+    wallet_sym_set = frozenset(s.upper() for s in wallet_syms)
 
     for symbol in symbols:
         try:
@@ -250,17 +334,48 @@ def build_index_from_dexscreener(chain: str) -> dict:
                 if dex_id not in _UNISWAP_COMPATIBLE_DEXIDS:
                     skipped_dexes[dex_id] = skipped_dexes.get(dex_id, 0) + 1
                     continue
+
+                # Scam filter
+                if _is_likely_scam(entry):
+                    scam_filtered += 1
+                    continue
+
+                # Minimum thresholds
+                liq_usd = float((entry.get("liquidity") or {}).get("usd", 0) or 0)
+                vol_24h = float(entry.get("volume", {}).get("h24", 0)
+                               or entry.get("volumeUsd24h", 0)
+                               or entry.get("volumeUsd", 0)
+                               or 0)
+                txns = entry.get("txns") or {}
+                tx_24h = int((txns.get("h24") or {}).get("buys", 0) or 0) + int((txns.get("h24") or {}).get("sells", 0) or 0)
+
+                base = entry.get("baseToken") or {}
+                quote = entry.get("quoteToken") or {}
+                base_sym = (base.get("symbol") or "").upper()
+                is_wallet = base_sym in wallet_sym_set
+
+                # Relax thresholds for wallet tokens (we want our own holdings)
+                if not is_wallet:
+                    if liq_usd < _MIN_LIQUIDITY_USD:
+                        continue
+                    if vol_24h < _MIN_VOLUME_24H_USD:
+                        continue
+                    if tx_24h < _MIN_TX_COUNT_24H:
+                        continue
+
                 pair_addr = str(entry.get("pairAddress") or "").strip()
                 if not pair_addr:
                     continue
-                base = entry.get("baseToken") or {}
-                quote = entry.get("quoteToken") or {}
                 sym = f"{base.get('symbol','')}-{quote.get('symbol','')}".strip("-")
-                score = _score(entry)
+                entry_score = _score(entry, is_wallet_token=is_wallet)
                 existing = results.get(pair_addr)
-                if existing and existing.get("score", 0) >= score:
+                if existing and existing.get("score", 0) >= entry_score:
                     continue
-                results[pair_addr] = {"symbol": sym or "UNKNOWN", "score": score}
+                results[pair_addr] = {
+                    "symbol": sym or "UNKNOWN",
+                    "score": entry_score,
+                    "source": "wallet" if is_wallet else "market",
+                }
             except Exception:
                 continue
         if len(results) >= target:
@@ -269,12 +384,20 @@ def build_index_from_dexscreener(chain: str) -> dict:
 
     if skipped_dexes:
         print(f"[INFO] Skipped {sum(skipped_dexes.values())} non-Uniswap pools: {dict(sorted(skipped_dexes.items(), key=lambda kv: -kv[1]))}")
+    if scam_filtered:
+        print(f"[INFO] Filtered {scam_filtered} likely-scam tokens")
 
     ranked = sorted(results.items(), key=lambda kv: kv[1].get("score", 0), reverse=True)
     trimmed = ranked[:target]
     index = {}
+    wallet_count = 0
     for idx, (addr, meta) in enumerate(trimmed):
-        index[addr] = {"index": idx, "symbol": meta.get("symbol", "UNKNOWN"), "source": "dexscreener"}
+        source = meta.get("source", "market")
+        index[addr] = {"index": idx, "symbol": meta.get("symbol", "UNKNOWN"), "source": source}
+        if source == "wallet":
+            wallet_count += 1
+
+    print(f"[INFO] Index: {len(index)} pairs ({wallet_count} from wallet, {len(index) - wallet_count} from market)")
     return index
 
 # -----------------------------------------------------------------------

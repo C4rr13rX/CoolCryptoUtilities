@@ -101,6 +101,15 @@ def _effective_workers() -> int:
         return governor.max_workers(base=MAX_WORKERS, floor=2)
     except Exception:
         return min(MAX_WORKERS, 8)
+
+def _wait_if_pressured(label: str = "download") -> None:
+    """Pause if system is under memory/CPU pressure to prevent OS lockup."""
+    try:
+        from services.resource_governor import governor
+        if governor._started:
+            governor.wait_if_pressured(label=label, max_wait=60.0)
+    except Exception:
+        pass
 ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
 LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
 RPC_CONNECT_TIMEOUT  = _int_env("RPC_CONNECT_TIMEOUT_SEC", 12)
@@ -917,6 +926,7 @@ def main():
     print(f"[START] Will process {len(pairs)} pairs...")
 
     for addr, meta in pairs:
+        _wait_if_pressured("download_pair")
         sym = meta["symbol"]
         idx = meta["index"]
         out = os.path.join(output_dir, f"{idx:04d}_{sym}.json")
@@ -1020,12 +1030,18 @@ def main():
         chunk_idx = len(existing_chunks)
         total_chunks = ((end_blk - b) + CHUNK_SIZE_BLOCKS - 1) // CHUNK_SIZE_BLOCKS + chunk_idx
         skipped_ranges: list = []
+        consecutive_zero_logs = int(meta.get("consecutive_zero_logs", 0))
+        max_zero_chunks = _int_env("MAX_ZERO_LOG_CHUNKS", 5)
+        total_logs_seen = 0
+        dead_pair = False
         while b < end_blk:
             e_b = min(b + CHUNK_SIZE_BLOCKS, end_blk)
 
             print(f"    [SCAN] Fetching chunk {chunk_idx+1}/{total_chunks} [{b}->{e_b}] for {sym}")
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
             if logs:
+                consecutive_zero_logs = 0
+                total_logs_seen += len(logs)
                 log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
                 chunk_records_by_bar = {}
                 chunk_blocks_by_bar = {}
@@ -1046,13 +1062,46 @@ def main():
                 save_intermediate_chunk(pair_dir, chunk_idx, chunk_records_by_bar, chunk_blocks_by_bar)
                 update_assignment(assignment, addr, next_block=e_b)
             elif logs is not None:
-                # fetch_chunk returned [] after exhausting retries — record the gap
+                # fetch_chunk returned [] — zero logs in this block range
+                consecutive_zero_logs += 1
+                if consecutive_zero_logs >= max_zero_chunks and total_logs_seen == 0:
+                    print(f"   [DEAD] {sym}: {consecutive_zero_logs} consecutive chunks with 0 logs. Dead pair — removing.")
+                    dead_pair = True
+                    break
                 skipped_ranges.append([b, e_b])
-                update_assignment(assignment, addr, next_block=e_b)
+                update_assignment(assignment, addr, next_block=e_b, consecutive_zero_logs=consecutive_zero_logs)
             else:
                 update_assignment(assignment, addr, next_block=e_b)
             b = e_b
             chunk_idx += 1
+
+        if dead_pair:
+            # Try to find a replacement pool
+            alt_addr = _find_alternative_pool(sym, chain)
+            if alt_addr:
+                try:
+                    alt_cs = Web3.to_checksum_address(alt_addr)
+                    alt_resolved = resolve_pool_kind(alt_cs)
+                    if alt_resolved and alt_resolved is not False:
+                        print(f"   [SWAP] {sym}: replacing dead pool {pair_addr} -> {alt_cs}")
+                        old_meta = dict(meta)
+                        old_meta.pop("completed", None)
+                        old_meta.pop("skipped", None)
+                        old_meta.pop("error", None)
+                        old_meta.pop("consecutive_zero_logs", None)
+                        old_meta["next_block"] = None
+                        old_meta["replaced_from"] = addr
+                        assignment["pairs"].pop(addr, None)
+                        assignment["pairs"][alt_addr] = old_meta
+                        update_assignment(assignment, alt_addr)
+                        continue  # skip to next pair
+                except Exception as exc:
+                    print(f"   [WARN] {sym}: alternative pool check failed: {exc}")
+            # No alternative found — mark completed/skipped
+            update_assignment(assignment, addr, completed=True, skipped=True, error="persistent_zero_logs")
+            skip_counts.setdefault("zero_logs", 0)
+            skip_counts["zero_logs"] += 1
+            continue
 
         print("    [SCAN] Merging intermediate data and fetching timestamps...")
         all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
