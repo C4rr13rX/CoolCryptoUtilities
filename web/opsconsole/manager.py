@@ -98,7 +98,8 @@ class ConsoleProcessManager:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.PIPE,
-                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     bufsize=1,
                     start_new_session=True,
                     env=env,
@@ -186,7 +187,7 @@ class ConsoleProcessManager:
         """Read subprocess output and write to log with active size-based rotation."""
         f = None
         try:
-            f = LOG_PATH.open("a", encoding="utf-8")
+            f = LOG_PATH.open("a", encoding="utf-8", errors="replace")
             for line in iter(pipe.readline, ""):
                 if not line:
                     break
@@ -197,7 +198,7 @@ class ConsoleProcessManager:
                         f.close()
                         f = None
                         self._rotate_log_if_needed()
-                        f = LOG_PATH.open("a", encoding="utf-8")
+                        f = LOG_PATH.open("a", encoding="utf-8", errors="replace")
                 except OSError:
                     pass
         except Exception as exc:
