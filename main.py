@@ -628,6 +628,12 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
             _bridge_quote(payload, bridge)
         return
     if action == "start_production":
+        # Start resource governor early — it must be running before anything heavy starts
+        try:
+            from services.resource_governor import governor
+            governor.start()
+        except Exception:
+            pass
         try:
             from production import ProductionManager
         except ImportError as exc:

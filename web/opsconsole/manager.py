@@ -189,19 +189,25 @@ class ConsoleProcessManager:
         try:
             f = LOG_PATH.open("a", encoding="utf-8", errors="replace")
             while True:
+                # Each iteration is fully guarded so the thread never dies
                 try:
                     line = pipe.readline()
-                except (UnicodeDecodeError, OSError):
+                except Exception:
+                    # Encoding errors, broken pipe, etc. — skip this line
                     continue
                 if not line:
                     break
                 try:
+                    # Sanitize: force through utf-8 replace to strip any bad chars
+                    if isinstance(line, bytes):
+                        line = line.decode("utf-8", errors="replace")
                     f.write(line)
                     f.flush()
-                except (UnicodeEncodeError, OSError):
-                    # Write a sanitized version
+                except Exception:
+                    # If write itself fails, try sanitized version
                     try:
-                        f.write(line.encode("utf-8", errors="replace").decode("utf-8", errors="replace"))
+                        safe = line.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+                        f.write(safe)
                         f.flush()
                     except Exception:
                         pass
@@ -211,7 +217,7 @@ class ConsoleProcessManager:
                         f = None
                         self._rotate_log_if_needed()
                         f = LOG_PATH.open("a", encoding="utf-8", errors="replace")
-                except OSError:
+                except Exception:
                     pass
         except Exception as exc:
             try:

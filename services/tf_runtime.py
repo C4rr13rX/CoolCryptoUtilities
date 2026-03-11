@@ -27,9 +27,17 @@ def configure_tensorflow(profile: Optional[SystemProfile] = None) -> None:
         tf.config.set_visible_devices([], "GPU")  # type: ignore[attr-defined]
     except Exception:
         pass
+    # Use governor-aware thread limit if available, else fall back to profile
+    tf_threads = profile.max_threads
     try:
-        tf.config.threading.set_intra_op_parallelism_threads(profile.max_threads)
-        tf.config.threading.set_inter_op_parallelism_threads(max(1, profile.max_threads // 2))
+        from services.resource_governor import governor, Priority
+        governor._sample()
+        tf_threads = governor.max_workers(base=profile.max_threads, floor=2, priority=Priority.NORMAL)
+    except Exception:
+        pass
+    try:
+        tf.config.threading.set_intra_op_parallelism_threads(tf_threads)
+        tf.config.threading.set_inter_op_parallelism_threads(max(1, tf_threads // 2))
     except Exception:
         pass
     try:

@@ -95,19 +95,19 @@ MAX_WORKERS          = _int_env("MAX_WORKERS", 30)
 def _effective_workers() -> int:
     """Return dynamic worker count, capped by MAX_WORKERS and system availability."""
     try:
-        from services.resource_governor import governor
+        from services.resource_governor import governor, Priority
         if not governor._started:
             governor.start()
-        return governor.max_workers(base=MAX_WORKERS, floor=2)
+        return governor.max_workers(base=MAX_WORKERS, floor=2, priority=Priority.NORMAL)
     except Exception:
         return min(MAX_WORKERS, 8)
 
 def _wait_if_pressured(label: str = "download") -> None:
     """Pause if system is under memory/CPU pressure to prevent OS lockup."""
     try:
-        from services.resource_governor import governor
+        from services.resource_governor import governor, Priority
         if governor._started:
-            governor.wait_if_pressured(label=label, max_wait=60.0)
+            governor.wait_if_pressured(label=label, max_wait=60.0, priority=Priority.NORMAL)
     except Exception:
         pass
 ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
@@ -1031,7 +1031,7 @@ def main():
         total_chunks = ((end_blk - b) + CHUNK_SIZE_BLOCKS - 1) // CHUNK_SIZE_BLOCKS + chunk_idx
         skipped_ranges: list = []
         consecutive_zero_logs = int(meta.get("consecutive_zero_logs", 0))
-        max_zero_chunks = _int_env("MAX_ZERO_LOG_CHUNKS", 5)
+        max_zero_chunks = _int_env("MAX_ZERO_LOG_CHUNKS", 3)  # aggressive: kill dead pairs fast
         total_logs_seen = 0
         dead_pair = False
         while b < end_blk:

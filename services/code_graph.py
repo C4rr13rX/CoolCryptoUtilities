@@ -529,6 +529,13 @@ def _empty_payload() -> Dict[str, object]:
 
 def _kickoff_background_build(file_paths: List[str], snapshot: Optional[List[Dict[str, object]]] = None) -> None:
     global _BUILD_PROCESS
+    # Code graph is LOW priority — skip entirely if system is pressured
+    try:
+        from services.resource_governor import governor, Priority
+        if not governor.can_spawn_subprocess() or governor.should_pause(Priority.LOW):
+            return
+    except Exception:
+        pass
     with _BUILD_LOCK:
         if _is_building():
             return

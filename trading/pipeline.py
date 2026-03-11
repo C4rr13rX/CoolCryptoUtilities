@@ -819,16 +819,31 @@ class TrainingPipeline:
                 batch_size = max(8, min(32, int(os.getenv("TRAIN_BATCH_SIZE", "16"))))
             except Exception:
                 batch_size = 16
+            # Dynamic resource-aware training parameters
+            try:
+                from services.resource_governor import governor, Priority
+                governor.wait_if_pressured(label="ml_training", max_wait=120.0, priority=Priority.NORMAL)
+                batch_size = governor.dynamic_batch_size(base=batch_size, floor=8)
+                prefetch = governor.dynamic_prefetch(base=4)
+            except Exception:
+                prefetch = tf.data.AUTOTUNE
             train_ds = (
                 tf.data.Dataset.from_tensor_slices((train_input_tensors, train_target_tensors, train_weight_tensors))
                 .batch(batch_size)
-                .prefetch(tf.data.AUTOTUNE)
+                .prefetch(prefetch if isinstance(prefetch, int) else tf.data.AUTOTUNE)
             )
             train_start = time.perf_counter()
             if os.getenv("TRAIN_LIGHTWEIGHT", "0").lower() in {"1", "true", "yes", "on"}:
                 epochs = min(epochs, 2)
             max_extra_epochs = int(os.getenv("TRAIN_MAX_EPOCHS_EXTRA", "1"))
             epochs = min(epochs + max_extra_epochs, max(epochs, 3))
+            # Reduce epochs under memory pressure
+            try:
+                from services.resource_governor import governor
+                if governor.should_throttle(Priority.NORMAL):
+                    epochs = min(epochs, 2)
+            except Exception:
+                pass
             history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
             train_duration = time.perf_counter() - train_start
             self.metrics.record(

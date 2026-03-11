@@ -217,6 +217,8 @@ _MIN_TX_COUNT_24H = int(os.getenv("PAIR_INDEX_MIN_TX_24H", "10"))
 _SCAM_KEYWORDS = frozenset({
     "honeypot", "scam", "rug", "test", "fake", "airdrop", "giveaway",
     "elon", "trump2", "free", "moon1000x", "baby", "safemoon2", "rebase",
+    "1000x", "100x", "ponzi", "pyramid", "clone", "wrapped2", "v2token",
+    "reward", "reflections", "autostake", "deflationary",
 })
 
 
@@ -245,8 +247,21 @@ def _is_likely_scam(entry: dict) -> bool:
             age_hours = (time.time() * 1000 - float(pair_created)) / (1000 * 3600)
             if age_hours < 24 and vol > 100000:
                 return True  # brand new + huge volume = likely scam
+            if age_hours < 72 and liq < 5000:
+                return True  # very new + very low liquidity
         except Exception:
             pass
+
+    # Buy/sell ratio heavily skewed (99% buys = honeypot bait)
+    txns = entry.get("txns") or {}
+    h24 = txns.get("h24") or {}
+    buys = int(h24.get("buys", 0) or 0)
+    sells = int(h24.get("sells", 0) or 0)
+    total_tx = buys + sells
+    if total_tx > 20 and sells > 0:
+        ratio = buys / max(1, sells)
+        if ratio > 20:
+            return True  # extremely one-sided — likely honeypot
 
     return False
 
@@ -308,6 +323,21 @@ def build_index_from_dexscreener(chain: str) -> dict:
         # Wallet tokens get a 3x priority boost
         if is_wallet_token:
             base_score *= 3.0
+        # Fee penalty: V3 pools with higher fee tiers get a score reduction
+        # (lower fees = better for trading profitability)
+        dex_id = str(entry.get("dexId") or "").lower()
+        labels = [str(l).lower() for l in (entry.get("labels") or [])]
+        if "v3" in dex_id or "v3" in " ".join(labels):
+            # DexScreener often includes fee in the pair URL or labels
+            fee_tier = 0.003  # default 0.3%
+            pair_url = str(entry.get("url") or "")
+            for known_fee in [0.0001, 0.0005, 0.001, 0.003, 0.01]:
+                if f"{int(known_fee * 1000000)}" in pair_url:
+                    fee_tier = known_fee
+                    break
+            # Reward lower fees: 0.01% fee gets 1.5x, 1% gets 0.7x
+            fee_mult = max(0.7, 1.5 - fee_tier * 80)
+            base_score *= fee_mult
         return base_score
 
     wallet_sym_set = frozenset(s.upper() for s in wallet_syms)

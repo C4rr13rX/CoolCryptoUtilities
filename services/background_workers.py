@@ -184,6 +184,15 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     script = Path(__file__).resolve().parents[1] / "download2000.py"
     try:
         for _ in range(max_parallel):
+            # Check if system has room for another subprocess
+            try:
+                from services.resource_governor import governor, Priority
+                governor.wait_if_pressured(label="download_spawn", max_wait=60.0, priority=Priority.NORMAL)
+                if not governor.can_spawn_subprocess():
+                    log_message("download-worker", "skipping download spawn — system under resource pressure")
+                    break
+            except Exception:
+                pass
             proc = subprocess.Popen([resolve_python_bin(), str(script)], env=env)
             proc.wait()
     except Exception as exc:

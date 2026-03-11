@@ -3608,6 +3608,16 @@ class TradingBot:
                 has_model = (self.pipeline.model_dir / "active_model.keras").exists()
                 use_cadence = fast_cadence if not has_model else cadence
                 await asyncio.sleep(use_cadence)
+                # Wait if system is under pressure before starting heavy training
+                try:
+                    from services.resource_governor import governor, Priority
+                    waited = governor.wait_if_pressured(
+                        label="bg_refinement", max_wait=120.0, priority=Priority.NORMAL,
+                    )
+                    if governor.should_pause(Priority.NORMAL):
+                        continue  # skip this cycle entirely
+                except Exception:
+                    pass
                 try:
                     await asyncio.to_thread(self.pipeline.train_candidate)
                 except Exception as exc:

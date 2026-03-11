@@ -546,8 +546,8 @@ class RealtimeBalanceRefresher:
         errors: List[str] = []
         workers = min(max(len(plan), 1), self.max_workers)
         try:
-            from services.resource_governor import governor
-            workers = min(workers, governor.max_workers(base=self.max_workers, floor=2))
+            from services.resource_governor import governor, Priority
+            workers = min(workers, governor.max_workers(base=self.max_workers, floor=2, priority=Priority.HIGH))
         except Exception:
             pass
         with ThreadPoolExecutor(max_workers=workers) as executor:

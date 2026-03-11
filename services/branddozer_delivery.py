@@ -2684,6 +2684,12 @@ class DeliveryOrchestrator:
                 except Exception as exc:
                     return item, "", str(exc)
 
+            # Dynamic parallelism based on system resources (LOW priority)
+            try:
+                from services.resource_governor import governor, Priority
+                parallelism = min(parallelism, governor.max_workers(base=parallelism, floor=1, priority=Priority.LOW))
+            except Exception:
+                pass
             with ThreadPoolExecutor(max_workers=max(1, parallelism)) as executor:
                 futures = {executor.submit(_task_runner, item): item for item in backlog_queue}
                 for future in as_completed(futures):
