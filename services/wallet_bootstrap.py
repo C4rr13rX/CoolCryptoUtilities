@@ -153,6 +153,28 @@ def scan_wallet_holdings(
     }
 
 
+def _load_index_symbols(chain: str) -> set:
+    """Return the set of normalised pair symbols available in the chain's pair index."""
+    try:
+        path = Path("data") / f"pair_index_{chain}.json"
+        if not path.exists():
+            return set()
+        import json as _json
+        raw = _json.loads(path.read_text(encoding="utf-8"))
+        symbols: set = set()
+        for info in raw.values():
+            sym = str(info.get("symbol", "")).upper()
+            if sym:
+                symbols.add(sym)
+                # Also add the reversed form so "WETH-USDC" matches "USDC-WETH"
+                parts = sym.split("-")
+                if len(parts) == 2:
+                    symbols.add(f"{parts[1]}-{parts[0]}")
+        return symbols
+    except Exception:
+        return set()
+
+
 def generate_pairs_from_holdings(
     holdings: List[Dict[str, Any]],
     chain: str = PRIMARY_CHAIN,
@@ -164,16 +186,26 @@ def generate_pairs_from_holdings(
       - Native (ETH/WETH) pairs with USDC
       - If user holds stables, they can buy WETH-USDC
       - Always include WETH-USDC as the anchor pair
+      - Only include pairs that actually exist in the chain's pair index
     """
     pairs: List[str] = []
     seen: set = set()
     has_stable = False
     has_native = False
+    index_symbols = _load_index_symbols(chain)
+    # Pairs with reliable CEX feeds (Binance/Coinbase) — always allowed
+    _CEX_ANCHORS = {"WETH-USDC", "WETH-USDT", "WBTC-USDC", "WBTC-USDT"}
 
     def _add(pair: str):
-        if pair not in seen:
-            pairs.append(pair)
-            seen.add(pair)
+        if pair in seen:
+            return
+        # If we have a pair index, only add pairs that exist on-chain
+        # (exception: anchor pairs have CEX feeds and don't need an on-chain pool)
+        if index_symbols and pair not in index_symbols and pair not in _CEX_ANCHORS:
+            log_message("bootstrap", f"skipping {pair}: not found in {chain} pair index", severity="debug")
+            return
+        pairs.append(pair)
+        seen.add(pair)
 
     # Always anchor with WETH-USDC
     _add("WETH-USDC")
