@@ -545,6 +545,11 @@ class RealtimeBalanceRefresher:
         updates: Dict[str, Dict[str, Dict[str, Any]]] = {}
         errors: List[str] = []
         workers = min(max(len(plan), 1), self.max_workers)
+        try:
+            from services.resource_governor import governor
+            workers = min(workers, governor.max_workers(base=self.max_workers, floor=2))
+        except Exception:
+            pass
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {executor.submit(self._fetch, item, wallet_addr): item for item in plan}
             for fut in as_completed(futures):

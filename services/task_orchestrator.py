@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from services.adaptive_control import AdaptiveLimiter
 from services.logging_utils import log_message
+from services.resource_governor import governor as _governor
 from services.system_profile import SystemProfile, detect_system_profile
 
 
@@ -207,6 +208,7 @@ class ParallelTaskManager:
             for dep in spec.depends_on:
                 self._wait_for_dependency(dep, cycle_id)
             self._acquire_slot()
+            _governor.wait_if_pressured(label=component, max_wait=30.0)
             if self.limiter:
                 self.limiter.before_task(component)
             self._update_state(cycle_id, component, status="running")

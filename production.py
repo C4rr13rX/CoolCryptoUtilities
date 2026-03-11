@@ -19,6 +19,7 @@ from services.env_loader import EnvLoader
 from services.secure_settings import build_process_env
 from services.stable_bank_notify import notifier as _stable_bank_notifier
 from services.multi_wallet import multi_wallet_manager as _multi_wallet_mgr
+from services.resource_governor import governor as _governor
 
 if TYPE_CHECKING:
     from trading.pipeline import TrainingPipeline
@@ -114,6 +115,7 @@ class ProductionManager:
             self._set_active_flag(True)
             return
         self._stop.clear()
+        _governor.start()
         self._wallet_bootstrap = self._try_wallet_bootstrap()
         self._startup_prewarm = self._prewarm_pipeline()
         self._startup_prewarm_reported = False
@@ -197,6 +199,7 @@ class ProductionManager:
                 log_message("production", "ghost supervisor loop stopped; ending cycle loop", severity="error")
                 self._stop.set()
                 break
+            _governor.wait_if_pressured(label="production_cycle", max_wait=60.0)
             cycle_id = str(int(time.time()))
             focus_assets, _ = self.pipeline.ghost_focus_assets()
             readiness = self.pipeline.live_readiness_report()

@@ -684,46 +684,46 @@ def _collect_nfts(wallet: str, chains: Optional[Iterable[str]] = None, max_items
     results: List[Dict[str, Any]] = []
     try:
         for chain in chains_iter:
-        slug = slug_map.get(chain)
-        if not slug:
-            continue
-        url = f"https://{slug}.g.alchemy.com/v2/{api_key}/getNFTs"
-        params = {"owner": wallet, "withMetadata": "true", "pageSize": 50}
-        fetched = 0
-        while fetched < max_items:
-            try:
-                resp = session.get(url, params=params, timeout=12)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception:
-                break
-            for nft in data.get("ownedNfts", []):
-                media = nft.get("media") or []
-                image = None
-                if media:
-                    image = media[0].get("gateway") or media[0].get("thumbnail") or media[0].get("raw")
-                if not image:
-                    meta = nft.get("metadata") or {}
-                    image = meta.get("image") or meta.get("image_url")
-                if image:
-                    image = _ipfs_to_https(str(image))
-                results.append(
-                    {
-                        "chain": chain,
-                        "contract": nft.get("contract", {}).get("address"),
-                        "token_id": nft.get("tokenId") or nft.get("id", {}).get("tokenId"),
-                        "title": nft.get("title") or (nft.get("contract") or {}).get("name"),
-                        "description": (nft.get("description") or ""),
-                        "image": image,
-                    }
-                )
-                fetched += 1
-                if fetched >= max_items:
+            slug = slug_map.get(chain)
+            if not slug:
+                continue
+            url = f"https://{slug}.g.alchemy.com/v2/{api_key}/getNFTs"
+            params = {"owner": wallet, "withMetadata": "true", "pageSize": 50}
+            fetched = 0
+            while fetched < max_items:
+                try:
+                    resp = session.get(url, params=params, timeout=12)
+                    resp.raise_for_status()
+                    data = resp.json()
+                except Exception:
                     break
-            page_key = data.get("pageKey")
-            if not page_key:
-                break
-            params["pageKey"] = page_key
+                for nft in data.get("ownedNfts", []):
+                    media = nft.get("media") or []
+                    image = None
+                    if media:
+                        image = media[0].get("gateway") or media[0].get("thumbnail") or media[0].get("raw")
+                    if not image:
+                        meta = nft.get("metadata") or {}
+                        image = meta.get("image") or meta.get("image_url")
+                    if image:
+                        image = _ipfs_to_https(str(image))
+                    results.append(
+                        {
+                            "chain": chain,
+                            "contract": nft.get("contract", {}).get("address"),
+                            "token_id": nft.get("tokenId") or nft.get("id", {}).get("tokenId"),
+                            "title": nft.get("title") or (nft.get("contract") or {}).get("name"),
+                            "description": (nft.get("description") or ""),
+                            "image": image,
+                        }
+                    )
+                    fetched += 1
+                    if fetched >= max_items:
+                        break
+                page_key = data.get("pageKey")
+                if not page_key:
+                    break
+                params["pageKey"] = page_key
     finally:
         session.close()
     return results

@@ -90,6 +90,16 @@ INTERMEDIATE_DIR_ENV = os.getenv("INTERMEDIATE_DIR", "").strip()
 YEARS_BACK           = _int_env("YEARS_BACK", 3)
 GRANULARITY_SECONDS  = _int_env("GRANULARITY_SECONDS", 60 * 5)   # 5 min
 MAX_WORKERS          = _int_env("MAX_WORKERS", 30)
+
+def _effective_workers() -> int:
+    """Return dynamic worker count, capped by MAX_WORKERS and system availability."""
+    try:
+        from services.resource_governor import governor
+        if not governor._started:
+            governor.start()
+        return governor.max_workers(base=MAX_WORKERS, floor=2)
+    except Exception:
+        return min(MAX_WORKERS, 8)
 ANKR_RPS_LIMIT       = _int_env("ANKR_RPS_LIMIT", 30)
 LOGS_PER_PARSE_BATCH = _int_env("LOGS_PER_PARSE_BATCH", 10)
 RPC_CONNECT_TIMEOUT  = _int_env("RPC_CONNECT_TIMEOUT_SEC", 12)
@@ -800,7 +810,7 @@ def main():
                     log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
                     chunk_records_by_bar = {}
                     chunk_blocks_by_bar = {}
-                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                    with ThreadPoolExecutor(max_workers=_effective_workers()) as ex:
                         if pool_kind == "v3":
                             futs = [ex.submit(parse_logs_v3_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
                         else:
@@ -918,7 +928,7 @@ def main():
                 log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
                 chunk_records_by_bar = {}
                 chunk_blocks_by_bar = {}
-                with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                with ThreadPoolExecutor(max_workers=_effective_workers()) as ex:
                     if pool_kind == "v3":
                         futs = [ex.submit(parse_logs_v3_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
                     else:
@@ -947,7 +957,7 @@ def main():
         all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
         min_block_per_bar = {bar_slot: min(blocks) for bar_slot, blocks in min_block_per_bar.items() if blocks}
         bar_slot_to_ts = {}
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        with ThreadPoolExecutor(max_workers=_effective_workers()) as ex:
             futs = {ex.submit(get_block_with_retry, block): bar_slot for bar_slot, block in min_block_per_bar.items()}
             for pf in as_completed(futs):
                 bar_slot = futs[pf]
@@ -1028,7 +1038,7 @@ def main():
                     log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
                     chunk_records_by_bar = {}
                     chunk_blocks_by_bar = {}
-                    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                    with ThreadPoolExecutor(max_workers=_effective_workers()) as ex:
                         if pool_kind == "v3":
                             futs = [ex.submit(parse_logs_v3_no_ts, batch, dec0, dec1, GRANULARITY_SECONDS) for batch in log_batches]
                         else:
@@ -1050,7 +1060,7 @@ def main():
             all_records_by_bar, min_block_per_bar = load_intermediate_chunks(pair_dir)
             min_block_per_bar = {bs: min(bl) for bs, bl in min_block_per_bar.items() if bl}
             bar_slot_to_ts = {}
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            with ThreadPoolExecutor(max_workers=_effective_workers()) as ex:
                 futs = {ex.submit(get_block_with_retry, block): bs for bs, block in min_block_per_bar.items()}
                 for pf in as_completed(futs):
                     bs = futs[pf]

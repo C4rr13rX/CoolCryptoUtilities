@@ -772,8 +772,13 @@ class MultiChainTokenPortfolio:
     # ---------------- Metadata ----------------
     def _get_metadata_bulk(self, chain: str, token_list: List[str], max_workers: int = 8) -> Dict[str, Dict[str, Any]]:
         def _default() -> Dict[str, Any]: return {"decimals": 18, "name": None, "symbol": None, "logo": None}
-        out: Dict[str, Dict[str, Any]] = {}; 
+        out: Dict[str, Dict[str, Any]] = {};
         if not token_list: return out
+        try:
+            from services.resource_governor import governor
+            max_workers = governor.max_workers(base=max_workers, floor=2)
+        except Exception:
+            pass
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futs = {ex.submit(self._safe_get_token_metadata, chain, addr): addr for addr in token_list}
             for fut in as_completed(futs):
