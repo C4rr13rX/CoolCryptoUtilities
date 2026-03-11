@@ -56,6 +56,13 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
         fields=[],
         category="maintenance",
     ),
+    "discover_tokens": WalletAction(
+        name="discover_tokens",
+        label="Discover Tokens",
+        description="Scan all chains for new tokens in your wallet (e.g. after a manual deposit). Uses Alchemy API.",
+        fields=[],
+        category="maintenance",
+    ),
     "refresh_transfers": WalletAction(
         name="refresh_transfers",
         label="Refresh Transfers",

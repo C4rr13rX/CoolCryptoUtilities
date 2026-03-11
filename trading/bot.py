@@ -187,6 +187,7 @@ class TradingBot:
         self._cache_transfers = CacheTransfers(db=self.db)
         self._bridge = self._init_bridge()
         self._wallet_sync_last_reason: Optional[str] = None
+        self._wallet_sync_last_ts: float = 0.0
         self._latency_window: deque = deque(maxlen=500)
         self._pending_queue: deque = deque(maxlen=int(os.getenv("STREAM_QUEUE_MAX", "8")))
         self._processing_sample: bool = False
@@ -431,7 +432,8 @@ class TradingBot:
         try:
             token_map = core_tokens_for_chain(chain_l)
             return token_map.get(symbol_u)
-        except Exception:
+        except Exception as exc:
+            log_message("trading", f"token address lookup failed for {symbol_u} on {chain_l}: {exc}", severity="debug")
             return None
 
     def _live_trades_dry_run(self) -> bool:
@@ -540,15 +542,20 @@ class TradingBot:
         fee_flat = float(os.getenv("BRIDGE_FEE_USD", "1.5") or 0.0)
         fee_ratio = float(os.getenv("BRIDGE_FEE_RATIO", "0.001") or 0.0)
         min_profit = float(os.getenv("BRIDGE_MIN_PROFIT_USD", "1.0") or 0.0)
+        # Only block bridging if we KNOW the profit won't cover fees.
+        # If expected_profit is 0 (no model yet / early ghost), allow bridging
+        # so the sim can keep trading and learning.
         if expected_profit_usd > 0.0 and expected_profit_usd < (fee_flat + min_profit):
             return 0.0, []
         chain_l = chain.lower()
         obtained = 0.0
         sources: List[Dict[str, Any]] = []
+        # Pull from ANY stable on other chains (not just the same quote token).
+        # Stables are ~1:1, so USDT on arbitrum can fund USDC on base.
         candidates = [
             ((c, sym), bal)
             for (c, sym), bal in self.sim_quote_balances.items()
-            if c != chain_l and sym == quote_u and bal > 0.0
+            if c != chain_l and sym in self.stable_tokens and bal > 0.0
         ]
         candidates.sort(key=lambda entry: entry[1], reverse=True)
         for (src_chain, sym), bal in candidates:
@@ -559,12 +566,11 @@ class TradingBot:
             if move <= 0.0:
                 continue
             fee = fee_flat + move * fee_ratio
-            if expected_profit_usd > 0.0 and (move - fee) <= 0.0:
-                continue
-            if expected_profit_usd > 0.0 and expected_profit_usd < fee + min_profit:
-                continue
             net = max(0.0, move - fee)
             if net <= 0.0:
+                continue
+            # Only enforce profit guard when we have a profit estimate
+            if expected_profit_usd > 0.0 and expected_profit_usd < fee + min_profit:
                 continue
             self.sim_quote_balances[(src_chain, sym)] = max(0.0, bal - move)
             dest_key = (chain_l, quote_u)
@@ -995,8 +1001,8 @@ class TradingBot:
                 category="brain_state",
                 meta={"symbol": symbol, "reflex_block": reflex_active},
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            log_message("trading", f"brain_state metrics record failed: {exc}", severity="debug")
         return brain_summary
 
     def _total_stable(self, chain: str) -> float:
@@ -1159,7 +1165,7 @@ class TradingBot:
                 dry_run=dry_run,
             )
             if not dry_run and result.get("ok"):
-                await self._run_wallet_sync(reason="post-bus-actions")
+                await self._run_wallet_sync(reason="post-bus-actions", discover=True)
             try:
                 self.apply_transition_plan(self.pipeline.ghost_live_transition_plan())
             except Exception:
@@ -1447,7 +1453,7 @@ class TradingBot:
             except RuntimeError:
                 loop = None
             if loop:
-                loop.create_task(self._run_wallet_sync(reason="post-gas-alert-rebalance"))
+                loop.create_task(self._run_wallet_sync(reason="post-gas-alert-rebalance", discover=True))
         else:
             self.metrics.feedback(
                 "trading",
@@ -1897,7 +1903,13 @@ class TradingBot:
             print(f"[trading-bot] unable to initialise UltraSwapBridge: {exc}")
             return None
 
-    async def _run_wallet_sync(self, *, reason: str) -> None:
+    async def _run_wallet_sync(self, *, reason: str, discover: bool = False) -> None:
+        """Refresh portfolio from local cache. Only hits external APIs when discover=True.
+
+        discover=True should only be set after a financial change (trade executed,
+        bridge, gas rebalance) or when the user explicitly requests it.  Pre-check
+        callers should leave it False so we never burn API credits just to *look*.
+        """
         if self._bridge is None:
             self._bridge = self._init_bridge()
         if self._bridge is None:
@@ -1906,20 +1918,22 @@ class TradingBot:
         start = time.time()
         errors: List[Tuple[str, str]] = []
 
-        async with self._wallet_sync_lock:
-            def _sync_work() -> List[Tuple[str, str]]:
-                local_errors: List[Tuple[str, str]] = []
-                try:
-                    self._cache_transfers.rebuild_incremental(self._bridge, chains)
-                except Exception as exc:
-                    local_errors.append(("transfers", str(exc)))
-                try:
-                    self._cache_balances.rebuild_all(self._bridge, chains)
-                except Exception as exc:
-                    local_errors.append(("balances", str(exc)))
-                return local_errors
+        if discover:
+            async with self._wallet_sync_lock:
+                def _sync_work() -> List[Tuple[str, str]]:
+                    local_errors: List[Tuple[str, str]] = []
+                    try:
+                        self._cache_transfers.rebuild_incremental(self._bridge, chains)
+                    except Exception as exc:
+                        local_errors.append(("transfers", str(exc)))
+                    try:
+                        self._cache_balances.rebuild_all(self._bridge, chains)
+                    except Exception as exc:
+                        local_errors.append(("balances", str(exc)))
+                    return local_errors
 
-            errors = await asyncio.to_thread(_sync_work)
+                errors = await asyncio.to_thread(_sync_work)
+            self._wallet_sync_last_ts = time.time()
 
         try:
             self.portfolio.refresh(force=True)
@@ -1931,6 +1945,7 @@ class TradingBot:
             "duration_sec": duration,
             "chain_count": len(chains),
             "errors": float(len(errors)),
+            "discovery": 1.0 if discover else 0.0,
         }
         self.metrics.record(
             MetricStage.LIVE_TRADING,
@@ -2423,7 +2438,13 @@ class TradingBot:
         if brain.get("opportunity"):
             decision["opportunity"] = brain["opportunity"]
         if chain_name != self.primary_chain:
-            required_float = float(os.getenv("CHAIN_EXPANSION_THRESHOLD", "2000"))
+            # Dynamic threshold: 20% of total portfolio value across all chains,
+            # with a minimum floor of $10 (so micro-portfolios can still trade)
+            total_portfolio = max(1.0, self.portfolio.total_value_usd())
+            required_float = max(
+                float(os.getenv("CHAIN_EXPANSION_MIN_FLOAT", "10")),
+                total_portfolio * float(os.getenv("CHAIN_EXPANSION_RATIO", "0.20")),
+            )
             if self.portfolio.stable_liquidity(self.primary_chain) < required_float:
                 decision["status"] = "hold-nonprimary"
                 decision["reason"] = "insufficient-float"
@@ -2518,7 +2539,7 @@ class TradingBot:
                             label=label,
                             details={"chain": chain_name, "strategy": strategy, "mode": "auto"},
                         )
-                        await self._run_wallet_sync(reason="post-gas-rebalance")
+                        await self._run_wallet_sync(reason="post-gas-rebalance", discover=True)
                         native_balance = self.portfolio.get_native_balance(chain_name)
                         available_quote = self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name)
                         if native_balance >= gas_required:
@@ -2635,9 +2656,11 @@ class TradingBot:
                     }
                 )
             else:
+                # Ghost mode: INFO (expected when sim balance depletes). Live: WARNING.
+                sev = FeedbackSeverity.INFO if not self.live_trading_enabled else FeedbackSeverity.WARNING
                 self.metrics.feedback(
                     "trading",
-                    severity=FeedbackSeverity.WARNING,
+                    severity=sev,
                     label="insufficient_quote",
                     details={"quote_token": quote_token, "available": available_quote, "price": price},
                 )
@@ -2825,7 +2848,7 @@ class TradingBot:
                     })
                     log_message("live-swap", f"entry swap failed: {swap_exc}", severity="error")
                     return decision
-                await self._run_wallet_sync(reason="post-live-entry")
+                await self._run_wallet_sync(reason="post-live-entry", discover=True)
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
                 post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
@@ -3214,7 +3237,7 @@ class TradingBot:
                     })
                     log_message("live-swap", f"exit swap failed: {swap_exc}", severity="error")
                     return decision
-                await self._run_wallet_sync(reason="post-live-exit")
+                await self._run_wallet_sync(reason="post-live-exit", discover=True)
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
                 post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
@@ -3730,9 +3753,6 @@ class TradingBot:
             total_spend_usd += spend_usd
             remaining_usd -= spend_usd
 
-        if not sources:
-            return None
-
         signature = f"{chain_l}:{quote_u}:{int(round(total_spend_usd * 100))}"
         now = time.time()
         cooldown = float(os.getenv("QUOTE_TOPUP_COOLDOWN", "45"))
@@ -3760,8 +3780,10 @@ class TradingBot:
         if remaining_usd > 0.0:
             plan["remaining_usd_gap"] = remaining_usd
         if quote_u in self.stable_tokens:
-            bridge_enabled = os.getenv("ENABLE_BRIDGE_TOPUP", "0").lower() in {"1", "true", "yes", "on"}
-            if bridge_enabled and remaining_usd > 0.0:
+            # Auto-enable bridge when same-chain sources are exhausted, or respect env override
+            bridge_enabled = os.getenv("ENABLE_BRIDGE_TOPUP", "auto").lower() in {"1", "true", "yes", "on", "auto"}
+            need_bridge = not sources or remaining_usd > 0.0
+            if bridge_enabled and need_bridge:
                 bridge_fee_flat = float(os.getenv("BRIDGE_FEE_USD", "1.5") or 0.0)
                 bridge_fee_ratio = float(os.getenv("BRIDGE_FEE_RATIO", "0.001") or 0.0)
                 min_profit = float(os.getenv("BRIDGE_MIN_PROFIT_USD", "1.0") or 0.0)
@@ -3788,6 +3810,9 @@ class TradingBot:
                     if bridge_sources:
                         plan["bridge_sources"] = bridge_sources
                         plan["bridge_quote_token"] = quote_u
+        # If we have neither same-chain sources nor bridge sources, nothing to do
+        if not sources and not plan.get("bridge_sources"):
+            return None
         return plan
 
     def _execute_quote_topup(self, *, chain: str, plan: Dict[str, Any]) -> bool:
@@ -3827,15 +3852,16 @@ class TradingBot:
                     label="quote_swap_failed",
                     details={"token": token, "amount": amount, "reason": str(exc)},
                 )
+        # Try bridge if same-chain swaps didn't fully cover the gap
         bridged = False
-        if not executed:
+        if plan.get("bridge_sources") and (not executed or plan.get("remaining_usd_gap", 0) > 0):
             bridged = self._execute_bridge_topup(chain=chain, plan=plan)
         return executed or bridged
 
     def _execute_bridge_topup(self, *, chain: str, plan: Dict[str, Any]) -> bool:
         if not plan or not plan.get("bridge_sources"):
             return False
-        if os.getenv("ENABLE_BRIDGE_TOPUP", "0").lower() not in {"1", "true", "yes", "on"}:
+        if os.getenv("ENABLE_BRIDGE_TOPUP", "auto").lower() not in {"1", "true", "yes", "on", "auto"}:
             return False
         if self._bridge is None:
             self._bridge = self._init_bridge()

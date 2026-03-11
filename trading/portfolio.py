@@ -187,6 +187,15 @@ class PortfolioState:
                 total += holding.quantity
         return total
 
+    def total_value_usd(self) -> float:
+        """Total portfolio value in USD across all chains (holdings + native)."""
+        total = 0.0
+        for holding in self.holdings.values():
+            total += holding.usd
+        for chain, bal_usd in self.native_usd.items():
+            total += bal_usd
+        return total
+
     def summary(self) -> Dict[str, float]:
         return {
             "wallet": self.wallet,

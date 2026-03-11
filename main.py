@@ -714,6 +714,17 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
             )
         else:
             _safe_run("refresh_balances_full", lambda: refetch_balances_parallel(bridge, list(CHAINS), force_refresh=True))
+    elif action == "discover_tokens":
+        chains = payload.get("chains")
+        chain_list = [_normalize_chain(ch) for ch in chains] if isinstance(chains, list) and chains else list(CHAINS)
+        _safe_run(
+            "discover_tokens",
+            lambda: refetch_balances_parallel(bridge, chain_list, force_refresh=True),
+        )
+        _safe_run(
+            "discover_tokens:transfers",
+            lambda: refetch_transfers_parallel(bridge, chain_list),
+        )
     elif action == "refresh_transfers":
         chains = payload.get("chains")
         if isinstance(chains, list) and chains:
@@ -748,7 +759,7 @@ if __name__ == "__main__":
             except json.JSONDecodeError as exc:
                 print(f"[wallet] Invalid payload JSON: {exc}")
                 sys.exit(2)
-        noncritical = {"balances", "refresh_balances", "refresh_balances_full", "refresh_transfers"}
+        noncritical = {"balances", "refresh_balances", "refresh_balances_full", "refresh_transfers", "discover_tokens"}
         try:
             run_action(args.action, payload_data, stay_alive=args.stay_alive)
         except Exception as exc:
