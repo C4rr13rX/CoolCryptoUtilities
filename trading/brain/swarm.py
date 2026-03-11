@@ -32,8 +32,21 @@ class LinearCell:
     def update(self, x: np.ndarray, y: float) -> None:
         pred = self.predict(x)
         err = pred - y
-        self.w -= self.lr * (err * x + self.l2 * self.w)
+        grad = err * x + self.l2 * self.w
+        # Clip gradients to prevent overflow / NaN explosion
+        grad_norm = float(np.linalg.norm(grad))
+        if grad_norm > 1.0:
+            grad = grad / grad_norm
+        err = max(-1.0, min(1.0, err))
+        self.w -= self.lr * grad
         self.bias -= self.lr * err
+        # Clamp weights to sane range — if anything went NaN, reset
+        if not np.all(np.isfinite(self.w)):
+            self.w = np.zeros_like(self.w)
+            self.bias = 0.0
+        else:
+            np.clip(self.w, -10.0, 10.0, out=self.w)
+            self.bias = max(-10.0, min(10.0, self.bias))
 
 
 class MultiResolutionSwarm:
@@ -58,23 +71,26 @@ class MultiResolutionSwarm:
 
     def _features(self, price_slice: np.ndarray, sentiment_slice: np.ndarray) -> np.ndarray:
         price = price_slice.astype(np.float64)
-        returns = np.diff(price)
+        mean_price = float(np.mean(price))
+        # Normalise price-derived features as fractions of mean price to keep
+        # all features in a comparable range and prevent gradient explosion.
+        scale = max(abs(mean_price), 1e-9)
+        returns = np.diff(price) / scale
         slope = 0.0
         if price.size > 1:
             x = np.arange(price.size)
-            slope = float(np.polyfit(x, price, 1)[0])
+            slope = float(np.polyfit(x, price / scale, 1)[0])
         vol = float(np.std(returns)) if returns.size else 0.0
-        mean_price = float(np.mean(price))
         last_ret = float(returns[-1]) if returns.size else 0.0
         sentiment_mean = float(np.mean(sentiment_slice)) if sentiment_slice.size else 0.0
         sentiment_last = float(sentiment_slice[-1]) if sentiment_slice.size else 0.0
         window = max(1, min(price.size, 5))
-        ema_fast = price[-1] - float(np.mean(price[-window:]))
-        ema_slow = price[-1] - float(np.mean(price))
+        ema_fast = (price[-1] - float(np.mean(price[-window:]))) / scale
+        ema_slow = (price[-1] - mean_price) / scale
         drift = float(np.mean(returns)) if returns.size else 0.0
         return np.array(
             [
-                mean_price,
+                0.0,  # was mean_price (raw USD) — replaced with zero to keep dim stable
                 slope,
                 vol,
                 last_ret,
