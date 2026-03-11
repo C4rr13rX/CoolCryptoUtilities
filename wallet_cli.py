@@ -452,7 +452,7 @@ def _prompt_recipient(bridge: UltraSwapBridge, chain: str) -> str:
     while True:
         addr = input("Recipient address (0x...): ").strip()
         if not _is_valid_address(addr):
-            print("❌ Not a valid EVM address. Try again.")
+            print("[ERR] Not a valid EVM address. Try again.")
             continue
         cs = _checksum(addr)
         print(f"Address looks valid for EVM. Chain selected: {chain}.")
@@ -469,10 +469,10 @@ def _prompt_token_or_native(bridge: UltraSwapBridge, chain: str) -> tuple[str, b
         if kind in ("token", "t"):
             tok = input("Token contract address (0x...): ").strip()
             if not _is_valid_address(tok):
-                print("❌ Not a valid address.")
+                print("[ERR] Not a valid address.")
                 continue
             if not _token_exists_on_chain(bridge, chain, tok):
-                print("❌ That contract does not exist on this chain (wrong chain or not deployed).")
+                print("[ERR] That contract does not exist on this chain (wrong chain or not deployed).")
                 continue
             return (_checksum(tok), False)
         print("Please type 'native' or 'token'.")
@@ -526,7 +526,7 @@ def _send_flow():
     try:
         w3 = _rpc_for(bridge, ch, timeout=max(5.0, float(os.getenv('ALCHEMY_TIMEOUT_SEC', '10'))))
     except Exception as e:
-        print(f"❌ RPC init failed: {e!r}")
+        print(f"[ERR] RPC init failed: {e!r}")
         return
     sender = bridge.acct.address
 
@@ -538,7 +538,7 @@ def _send_flow():
     try:
         value = _parse_amount(amt, 18 if is_native else tok_dec)
     except Exception:
-        print("❌ Could not parse amount.")
+        print("[ERR] Could not parse amount.")
         return
 
     # Address book lookup (chain+recipient)
@@ -558,7 +558,7 @@ def _send_flow():
     if is_native:
         ok, gas_est, reason = _native_can_receive(bridge, ch, sender, to, value)
         if not ok:
-            print("❌ Preflight: recipient likely cannot receive plain ETH (non-payable or reverts).")
+            print("[ERR] Preflight: recipient likely cannot receive plain ETH (non-payable or reverts).")
             if "execution reverted" in reason:
                 print(f"Reason: {reason}")
             print("Tip: For protocol addresses, use their deposit/call flow or send WETH (ERC-20).")
@@ -645,13 +645,13 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
         proceed = _confirm(
             f"Proceed? Tip={Web3.from_wei(q['tip'],'gwei'):.3f} gwei, "
             f"MaxFee={Web3.from_wei(q['max'],'gwei'):.3f} gwei, "
-            f"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
-            f"Total≈{_wei_to_eth(q['total_est'])} ETH")
+            f"Gas={q['gas_est']}, Fee~{_wei_to_eth(q['fee_est'])} ETH, "
+            f"Total~{_wei_to_eth(q['total_est'])} ETH")
     else:
         proceed = _confirm(
             f"Proceed? GasPrice={Web3.from_wei(q['gas_price'],'gwei'):.3f} gwei, "
-            f"Gas={q['gas_est']}, Fee≈{_wei_to_eth(q['fee_est'])} ETH, "
-            f"Total≈{_wei_to_eth(q['total_est'])} ETH")
+            f"Gas={q['gas_est']}, Fee~{_wei_to_eth(q['fee_est'])} ETH, "
+            f"Total~{_wei_to_eth(q['total_est'])} ETH")
     if not proceed:
         print("Cancelled.")
         return
@@ -674,7 +674,7 @@ Total   : {_wei_to_eth(q['total_est'])} ETH
             print("Dry-run only: bridge send functions not implemented.")
             return
     except Exception as e:
-        print(f"❌ send failed before broadcast: {e!r}")
+        print(f"[ERR] send failed before broadcast: {e!r}")
         return
 
     # Normalize and show explorer link
@@ -746,10 +746,10 @@ def _swap_flow():
     try:
         total_amount = _parse_amount(amt_str, 18 if sell_is_native else sell_dec)
     except Exception:
-        print("❌ Could not parse amount.")
+        print("[ERR] Could not parse amount.")
         return
     if int(total_amount) <= 0:
-        print("❌ Amount must be > 0.")
+        print("[ERR] Amount must be > 0.")
         return
     if os.getenv("DEBUG_SWAP","0")=="1":
         try:
@@ -843,7 +843,7 @@ def _swap_flow():
         try:
             txh = bridge.send_swap_via_0x(ch, quote_obj, **kwargs)
         except Exception as e:
-            print(f"❌ swap send failed: {e!r}")
+            print(f"[ERR] swap send failed: {e!r}")
             try:
                 bps = int(os.getenv("SWAP_SLIPPAGE_BPS","100"))
             except Exception:
@@ -893,7 +893,7 @@ def _swap_flow():
         try:
             txh = bridge.approve_erc20(ch, token_addr, allowance_target, amt_to_approve, gas=60000)
         except Exception as e:
-            print(f"❌ approve failed: {e!r}")
+            print(f"[ERR] approve failed: {e!r}")
             return False
         url = EXPLORER_TX.get(ch)
         print(f"Approve TX: {txh}")
@@ -992,7 +992,7 @@ def _swap_flow():
             splits_tried += 1
 
         if success_route is None:
-            print("❌ No route even after chunk fallback.")
+            print("[ERR] No route even after chunk fallback.")
             return
 
         # Compute number of chunks as ceil(total/test)
@@ -1022,7 +1022,7 @@ def _swap_flow():
                 print('Spender:', spender, ('('+alias+')' if alias else ''))
                 try:
                     need_raw = int(this_amt)
-                    print('Need allowance (raw):', need_raw, '≈', _human(need_raw))
+                    print('Need allowance (raw):', need_raw, '~', _human(need_raw))
                 except Exception:
                     pass
                 ## -- end spender diag --
@@ -1103,7 +1103,7 @@ def _swap_flow():
             s1_out = int(two_1.get("buyAmount") or 0)
             two_2 = _quote("ETH", buy_id, int(s1_out * 0.99))
             if "__error__" in two_2:
-                print(f"❌ step2 quote failed: {two_2['__error__']}")
+                print(f"[ERR] step2 quote failed: {two_2['__error__']}")
                 return
             txh2, ok2 = _execute(two_2)
             if not ok2:
@@ -1135,7 +1135,7 @@ def _bridge_flow():
     print("Destination chains:", ", ".join(allowed))
     dst_chain = input("Destination chain: ").strip().lower()
     if dst_chain not in allowed:
-        print(f"❌ Destination chain not configured. Allowed: {', '.join(allowed)}")
+        print(f"[ERR] Destination chain not configured. Allowed: {', '.join(allowed)}")
         return
     print("Asset to bridge:")
     token, is_native = _prompt_token_or_native(bridge, src_chain)
@@ -1144,7 +1144,7 @@ def _bridge_flow():
         dec = 18 if is_native else _erc20_decimals(bridge, src_chain, token, default=18)
         raw_amt = _parse_amount(amt, dec)
     except Exception:
-        print("❌ Could not parse amount.")
+        print("[ERR] Could not parse amount.")
         return
     print("\n--- Review ---")
     print(f"From : {src_chain}")
@@ -1161,7 +1161,7 @@ def _bridge_flow():
         else:
             print("Dry-run only: bridge.bridge not implemented.")
     except Exception as e:
-        print(f"❌ bridge failed: {e!r}")
+        print(f"[ERR] bridge failed: {e!r}")
 
 def _menu():
     bridge = UltraSwapBridge()

@@ -2145,7 +2145,7 @@ class TradingBot:
                     self.portfolio.refresh()
                     summary = self.portfolio.summary()
                     print(
-                        "[portfolio] wallet=%s stable≈%.2f native≈%.4f holdings=%d"
+                        "[portfolio] wallet=%s stable~%.2f native~%.4f holdings=%d"
                         % (
                             summary.get("wallet"),
                             summary.get("stable_usd", 0.0),

@@ -90,7 +90,7 @@ def action_show_balances():
                 except Exception:
                     pass
             print("\n=== Portfolio snapshot ===")
-            print(f"TOTAL ≈ ${total:.2f}")
+            print(f"TOTAL ~ ${total:.2f}")
     
             if res.flagged:
                 print("\n-- Flagged (dropped) --")

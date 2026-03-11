@@ -56,7 +56,7 @@ class BridgeService:
         pv = self.core.quote(src_chain, dst_chain, token, dst_tok, amt, slippage=slip)
         print(
             f"[bridge/quote] {src_chain}:{token} -> {dst_chain}:{dst_tok} "
-            f"amt={amt} (minOut≈{pv.to_amount_min:.6g}) gas≈${(pv.gas_usd or 0):.2f}"
+            f"amt={amt} (minOut~{pv.to_amount_min:.6g}) gas~${(pv.gas_usd or 0):.2f}"
         )
         return {
             "from_chain": pv.from_chain,

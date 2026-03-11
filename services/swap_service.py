@@ -128,7 +128,7 @@ class SwapService:
         # Approvals first
         spender = uq.get("allowanceTarget") or uq.get("spender")
         if spender and not self._ensure_allowance(chain, sell, spender, int(sell_raw)):
-            print("❌ approval failed")
+            print("[ERR] approval failed")
             return False
 
         # Preflight (estimate_gas) – tolerate missing gas in tx
@@ -215,9 +215,9 @@ class SwapService:
             return False
         spender = q.get("allowanceTarget")
         if spender and not self._ensure_allowance(chain, sell_token, spender, sell_raw):
-            print("❌ approval failed"); return False
+            print("[ERR] approval failed"); return False
         tx = q.get("tx") or {}
-        print(f"[{name}] to={tx.get('to')} value={tx.get('value',0)} gas≈{tx.get('gas',0)}")
+        print(f"[{name}] to={tx.get('to')} value={tx.get('value',0)} gas~{tx.get('gas',0)}")
         h, ok = self._send(
             chain,
             to=tx["to"],
@@ -345,7 +345,7 @@ class SwapService:
         dec = self._decimals(ch, sell)
         sell_raw = to_base_units(amount_human, dec)
         if sell_raw <= 0:
-            print("❌ sellAmount must be > 0"); return
+            print("[ERR] sellAmount must be > 0"); return
 
         _ro = (os.getenv("ROUTE_ONLY", "").strip().lower())
 
@@ -365,7 +365,7 @@ class SwapService:
                 tx = q0.get("tx") or {}
                 spender = q0.get("allowanceTarget")
                 if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
-                    print("❌ approval failed"); return
+                    print("[ERR] approval failed"); return
 
                 # Preflight (estimate_gas)
                 val_raw = tx.get("value") or 0
@@ -377,7 +377,7 @@ class SwapService:
                 if not self._preflight_estimate(ch, to=tx.get("to"), data=tx.get("data"), value=val_int, gas=gas_hint):
                     print("[0x] preflight (estimate_gas) failed"); return
 
-                print(f"[0x] to={tx.get('to')} value={val_int} gas≈{gas_hint or 'est.'}")
+                print(f"[0x] to={tx.get('to')} value={val_int} gas~{gas_hint or 'est.'}")
                 txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
                 print(f"[0x] broadcast tx={txh}")
 
@@ -411,10 +411,10 @@ class SwapService:
                     assume_needs_approval=True  # WETH approval to router is normally needed
                 )
                 if sell_raw_adj <= 0:
-                    print("❌ Not enough native to cover gas after reserve; aborting"); return
+                    print("[ERR] Not enough native to cover gas after reserve; aborting"); return
 
                 if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                    print("❌ auto-wrap failed"); return
+                    print("[ERR] auto-wrap failed"); return
 
                 sell = wn
                 sell_raw = int(sell_raw_adj)  # downstream uses adjusted amount
@@ -431,7 +431,7 @@ class SwapService:
                 print("[UniswapV3] failed.")
             except Exception as e:
                 print(f"[UniswapV3] error: {e!r}")
-            print("❌ All routes failed.")
+            print("[ERR] All routes failed.")
             return
 
         # =========================
@@ -451,9 +451,9 @@ class SwapService:
                         assume_needs_approval=True
                     )
                     if sell_raw_adj <= 0:
-                        print("❌ Not enough native to cover gas after reserve; aborting"); return
+                        print("[ERR] Not enough native to cover gas after reserve; aborting"); return
                     if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                        print("❌ auto-wrap failed"); return
+                        print("[ERR] auto-wrap failed"); return
                     sell_raw = int(sell_raw_adj)
                 sell = wn
 
@@ -467,7 +467,7 @@ class SwapService:
                 print("[CamelotV2] failed.")
             except Exception as e:
                 print(f"[CamelotV2] error: {e!r}")
-            print("❌ All routes failed.")
+            print("[ERR] All routes failed.")
             return
 
         # =========================
@@ -487,9 +487,9 @@ class SwapService:
                         assume_needs_approval=True
                     )
                     if sell_raw_adj <= 0:
-                        print("❌ Not enough native to cover gas after reserve; aborting"); return
+                        print("[ERR] Not enough native to cover gas after reserve; aborting"); return
                     if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                        print("❌ auto-wrap failed"); return
+                        print("[ERR] auto-wrap failed"); return
                     sell_raw = int(sell_raw_adj)
                 sell = wn
 
@@ -503,7 +503,7 @@ class SwapService:
                 print("[SushiV2] failed.")
             except Exception as e:
                 print(f"[SushiV2] error: {e!r}")
-            print("❌ All routes failed.")
+            print("[ERR] All routes failed.")
             return
 
         # =========================
@@ -522,7 +522,7 @@ class SwapService:
             tx = q0.get("tx") or {}
             spender = q0.get("allowanceTarget")
             if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
-                print("❌ approval failed"); raise RuntimeError("approval failed")
+                print("[ERR] approval failed"); raise RuntimeError("approval failed")
 
             val_raw = tx.get("value") or 0
             val_int = int(val_raw, 16) if isinstance(val_raw, str) and str(val_raw).startswith("0x") else int(val_raw)
@@ -532,7 +532,7 @@ class SwapService:
             if not self._preflight_estimate(ch, to=tx.get("to"), data=tx.get("data"), value=val_int, gas=gas_hint):
                 raise RuntimeError("0x preflight failed (estimate_gas)")
 
-            print(f"[0x] to={tx.get('to')} value={val_int} gas≈{gas_hint or 'est.'}")
+            print(f"[0x] to={tx.get('to')} value={val_int} gas~{gas_hint or 'est.'}")
             txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
             print(f"[0x] broadcast tx={txh}")
             try:
@@ -559,9 +559,9 @@ class SwapService:
                     assume_needs_approval=True
                 )
                 if sell_raw_adj <= 0:
-                    print("❌ Not enough native to cover gas after reserve; aborting"); return
+                    print("[ERR] Not enough native to cover gas after reserve; aborting"); return
                 if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                    print("❌ auto-wrap failed"); return
+                    print("[ERR] auto-wrap failed"); return
                 sell_raw = int(sell_raw_adj)
             sell = wn
 
@@ -604,4 +604,4 @@ class SwapService:
         except Exception as e:
             print(f"[SushiV2] failed: {e!r}")
 
-        print("❌ All routes failed.")
+        print("[ERR] All routes failed.")
