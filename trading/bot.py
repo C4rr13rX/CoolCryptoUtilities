@@ -109,6 +109,7 @@ class TradingBot:
         self.sim_quote_balances: Dict[Tuple[str, str], float] = {}
         self.sim_native_balances: Dict[str, float] = {}
         self._sim_initial_pool: float = 0.0
+        self._insufficient_quote_last_ts: float = 0.0
         self.ghost_session_id: int = 1
         self.active_exposure: Dict[str, float] = {}
         self.graph = NeuroGraph()
@@ -2128,6 +2129,10 @@ class TradingBot:
             if len(self._buffer) < self.window_size:
                 return
 
+            # Check sim bankroll reset on every cycle (not just after exits)
+            # so depleted balances don't deadlock the bot.
+            self._check_sim_restart()
+
             sample_ts = now
             signature = (sample.get("symbol", ""), sample_ts)
             if signature == self._last_sample_signature:
@@ -2657,13 +2662,17 @@ class TradingBot:
                 )
             else:
                 # Ghost mode: INFO (expected when sim balance depletes). Live: WARNING.
-                sev = FeedbackSeverity.INFO if not self.live_trading_enabled else FeedbackSeverity.WARNING
-                self.metrics.feedback(
-                    "trading",
-                    severity=sev,
-                    label="insufficient_quote",
-                    details={"quote_token": quote_token, "available": available_quote, "price": price},
-                )
+                # Cooldown: only emit once per 60s to avoid log spam when bankroll is depleted.
+                _now = time.time()
+                if _now - self._insufficient_quote_last_ts >= 60.0:
+                    self._insufficient_quote_last_ts = _now
+                    sev = FeedbackSeverity.INFO if not self.live_trading_enabled else FeedbackSeverity.WARNING
+                    self.metrics.feedback(
+                        "trading",
+                        severity=sev,
+                        label="insufficient_quote",
+                        details={"quote_token": quote_token, "available": available_quote, "price": price},
+                    )
             return decision
 
         should_enter = False
