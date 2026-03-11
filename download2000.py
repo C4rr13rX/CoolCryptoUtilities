@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, UTC
 from threading import Thread, Semaphore
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from web3 import Web3
+import requests
 
 # ---------- .env loader ----------
 from dotenv_fallback import load_dotenv, find_dotenv, dotenv_values
@@ -667,6 +668,77 @@ def save_bars(filename, bars):
         json.dump(bars, f, indent=2)
     os.replace(tmp, filename)
 
+# DEXes that use the standard Uniswap token0()/token1() pool interface.
+_UNISWAP_COMPATIBLE_DEXIDS = frozenset({
+    "uniswap", "sushiswap", "pancakeswap", "quickswap", "camelot",
+    "trader-joe", "spookyswap", "spiritswap", "velodrome", "aerodrome",
+    "baseswap", "swapbased", "alienbase", "maverick", "thena",
+    "ramses", "chronos", "zyberswap", "arbidex", "woofi",
+    "solidly", "equalizer", "retro", "synthswap", "dackie",
+})
+
+
+def _find_alternative_pool(sym: str, chain: str) -> Optional[str]:
+    """
+    Search DexScreener for an alternative Uniswap-compatible pool for a token pair.
+    Returns the new pool address if found, or None.
+    """
+    parts = sym.split("-")
+    if len(parts) < 2:
+        return None
+    # Search for both tokens to find matching pools
+    query = parts[0] if parts[0] != "WETH" else parts[1]
+    try:
+        resp = requests.get(
+            "https://api.dexscreener.com/latest/dex/search",
+            params={"q": query},
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            return None
+        payload = resp.json() or {}
+    except Exception:
+        return None
+
+    candidates = []
+    for entry in payload.get("pairs") or []:
+        try:
+            chain_id = str(entry.get("chainId") or entry.get("chain") or "").lower()
+            if chain_id != chain:
+                continue
+            dex_id = str(entry.get("dexId") or "").lower().strip()
+            if dex_id not in _UNISWAP_COMPATIBLE_DEXIDS:
+                continue
+            base = entry.get("baseToken") or {}
+            quote = entry.get("quoteToken") or {}
+            base_sym = (base.get("symbol") or "").upper()
+            quote_sym = (quote.get("symbol") or "").upper()
+            entry_sym = f"{base_sym}-{quote_sym}"
+            # Match the token pair (in either order)
+            pair_set = {p.upper() for p in parts}
+            entry_set = {base_sym, quote_sym}
+            if pair_set != entry_set:
+                continue
+            pair_addr = str(entry.get("pairAddress") or "").strip()
+            if not pair_addr:
+                continue
+            volume = float(entry.get("volume", {}).get("h24", 0) or 0)
+            liquidity = float((entry.get("liquidity") or {}).get("usd", 0) or 0)
+            score = volume + liquidity * 0.5
+            candidates.append((pair_addr, entry_sym, dex_id, score))
+        except Exception:
+            continue
+
+    if not candidates:
+        return None
+
+    # Pick the best by score
+    candidates.sort(key=lambda c: c[3], reverse=True)
+    best_addr, best_sym, best_dex, best_score = candidates[0]
+    print(f"   [REPLACE] Found alternative pool: {best_addr} ({best_dex}, score={best_score:.0f})")
+    return best_addr
+
+
 def update_assignment(assignment, addr, **fields):
     meta = assignment["pairs"][addr]
     for k, v in fields.items():
@@ -867,12 +939,41 @@ def main():
 
         resolved = resolve_pool_kind(pair_addr)
         if resolved is False:
-            # Permanent: no contract code, or both V2/V3 interfaces reverted
-            print(f"   [SKIP] {sym}: {pair_addr} is permanently incompatible (not a Uniswap-style pool). Marking completed.")
-            meta_update = {"completed": True, "skipped": True, "error": "permanently_incompatible"}
-            update_assignment(assignment, addr, **meta_update)
-            skip_counts["non_uniswap_pool"] += 1
-            continue
+            # Permanent: no contract code, or both V2/V3 interfaces reverted.
+            # Try to find an alternative Uniswap-compatible pool for the same pair.
+            alt_addr = _find_alternative_pool(sym, chain)
+            if alt_addr:
+                try:
+                    alt_cs = Web3.to_checksum_address(alt_addr)
+                    alt_resolved = resolve_pool_kind(alt_cs)
+                    if alt_resolved and alt_resolved is not False:
+                        print(f"   [SWAP] {sym}: replacing {pair_addr} -> {alt_cs}")
+                        # Remove old entry, add new one with same metadata
+                        old_meta = dict(meta)
+                        old_meta.pop("completed", None)
+                        old_meta.pop("skipped", None)
+                        old_meta.pop("error", None)
+                        old_meta["next_block"] = None  # restart from beginning for new pool
+                        old_meta["replaced_from"] = addr
+                        assignment["pairs"].pop(addr, None)
+                        assignment["pairs"][alt_addr] = old_meta
+                        update_assignment(assignment, alt_addr)
+                        # Re-set loop variables for this iteration
+                        addr = alt_addr
+                        pair_addr = alt_cs
+                        resolved = alt_resolved
+                    else:
+                        print(f"   [SKIP] {sym}: alternative {alt_cs} also incompatible.")
+                        resolved = False
+                except Exception as exc:
+                    print(f"   [SKIP] {sym}: alternative pool check failed: {exc}")
+                    resolved = False
+            if resolved is False:
+                print(f"   [SKIP] {sym}: {pair_addr} is permanently incompatible (not a Uniswap-style pool). No alternative found.")
+                meta_update = {"completed": True, "skipped": True, "error": "permanently_incompatible"}
+                update_assignment(assignment, addr, **meta_update)
+                skip_counts["non_uniswap_pool"] += 1
+                continue
         if resolved is None:
             # Transient: RPC timeout/rate-limit — worth retrying later
             print(f"   [WARN] {sym}: {pair_addr} token0/token1 call failed (transient). Deferring.")
