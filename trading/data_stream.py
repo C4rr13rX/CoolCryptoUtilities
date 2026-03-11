@@ -590,8 +590,40 @@ class MarketDataStream:
         self._dns_log_by_symbol[self._dns_log_symbol] = now
         return True
 
+    # ── Periodic memory cleanup ────────────────────────────────────
+    _GC_INTERVAL = 300.0  # 5 minutes
+    _GC_STALE_AGE = 600.0  # 10 minutes
+
+    def _gc_stale_tracking(self) -> None:
+        """Purge stale entries from tracking dicts to prevent unbounded growth."""
+        now = time.time()
+        cutoff = now - self._GC_STALE_AGE
+        # Domain outage: remove entries whose outage window has passed
+        for d in [k for k, v in self._domain_outage_until.items() if v < now]:
+            self._domain_outage_until.pop(d, None)
+            self._domain_outage_failures.pop(d, None)
+            self._domain_outage_reason.pop(d, None)
+        # Endpoint backoff: remove expired backoffs
+        for k in [k for k, v in self._endpoint_backoff_until.items() if v < now]:
+            self._endpoint_backoff_until.pop(k, None)
+        for k in [k for k, v in self._endpoint_network_backoff_until.items() if v < now]:
+            self._endpoint_network_backoff_until.pop(k, None)
+            self._endpoint_network_failures.pop(k, None)
+        # Recent price by source: keep only entries from last 10 minutes
+        for k in [k for k, (_, ts) in self._recent_price_by_source.items() if ts < cutoff]:
+            self._recent_price_by_source.pop(k, None)
+        for k in [k for k, (_, ts) in self._last_emitted_by_source.items() if ts < cutoff]:
+            self._last_emitted_by_source.pop(k, None)
+        # Source bias/var: cap at 200 entries (keep most recent by key)
+        for d in (self._source_bias, self._source_var):
+            if len(d) > 200:
+                excess = len(d) - 200
+                for k in list(d)[:excess]:
+                    del d[k]
+
     async def start(self) -> None:
         self._stop_event.clear()
+        self._last_gc = time.time()
         if self._http_session is None:
             self._http_session = aiohttp.ClientSession()
         self._debug("start", extra={"url_set": bool(self.url), "template": bool(self._template), "subscribe": bool(self.subscribe_template)})
