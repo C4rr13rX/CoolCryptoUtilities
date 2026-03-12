@@ -126,6 +126,7 @@ INSTALLED_APPS = [
     "branddozer.apps.BranddozerConfig",
     "u53rxr080t.apps.U53rxr080tConfig",
     "investigations.apps.InvestigationsConfig",
+    "delegation.apps.DelegationConfig",
 ]
 
 MIDDLEWARE = [

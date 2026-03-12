@@ -1020,3 +1020,56 @@ export async function fetchSystemLogs(component?: string, limit = 100) {
   const { data } = await api.get('logs/', { params });
   return data as { components?: string[]; logs?: Record<string, any[]>; items?: any[] };
 }
+
+// ---------------------------------------------------------------------------
+// Delegation Service
+// ---------------------------------------------------------------------------
+
+export async function fetchDelegationSummary() {
+  const { data } = await api.get('/delegation/summary/');
+  return data;
+}
+
+export async function fetchDelegationHosts() {
+  const { data } = await api.get('/delegation/hosts/');
+  return data;
+}
+
+export async function createDelegationHost(payload: { name: string; host: string; port: number }) {
+  const { data } = await api.post('/delegation/hosts/', payload);
+  return data;
+}
+
+export async function updateDelegationHost(id: number, payload: Record<string, any>) {
+  const { data } = await api.patch(`/delegation/hosts/${id}/`, payload);
+  return data;
+}
+
+export async function deleteDelegationHost(id: number) {
+  await api.delete(`/delegation/hosts/${id}/`);
+}
+
+export async function regenerateHostToken(id: number) {
+  const { data } = await api.post(`/delegation/hosts/${id}/regenerate-token/`);
+  return data;
+}
+
+export async function pairDelegationHost(id: number) {
+  const { data } = await api.post(`/delegation/hosts/${id}/pair/`);
+  return data;
+}
+
+export async function fetchDelegationTasks(params?: { host?: number; status?: string; type?: string; limit?: number }) {
+  const { data } = await api.get('/delegation/tasks/', { params });
+  return data;
+}
+
+export async function fetchDelegationLogs(params?: { host?: number; limit?: number }) {
+  const { data } = await api.get('/delegation/logs/', { params });
+  return data;
+}
+
+export async function fetchTaskResourceProfiles() {
+  const { data } = await api.get('/delegation/profiles/');
+  return data;
+}

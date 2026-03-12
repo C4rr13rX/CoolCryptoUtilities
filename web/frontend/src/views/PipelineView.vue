@@ -164,6 +164,95 @@
         </ul>
       </article>
     </section>
+    <!-- Delegation Hosts -->
+    <section class="panel delegation-panel">
+      <header>
+        <h2>Delegation Hosts</h2>
+        <div style="display:flex;gap:0.5rem;align-items:center;">
+          <span class="caption">{{ delegationHosts.length }} hosts | {{ delegationOnline }} online | {{ delegationHeadroom }} slots free</span>
+          <button type="button" class="btn btn-sm" @click="showAddHost = true">+ Add Host</button>
+        </div>
+      </header>
+
+      <!-- Add host form -->
+      <div v-if="showAddHost" class="add-host-form">
+        <input v-model="newHost.name" placeholder="Name (e.g. Living Room PC)" class="input" />
+        <input v-model="newHost.host" placeholder="IP or hostname" class="input" />
+        <input v-model.number="newHost.port" placeholder="Port" class="input" type="number" style="width:100px;" />
+        <button type="button" class="btn" @click="addHost" :disabled="!newHost.name || !newHost.host">Create</button>
+        <button type="button" class="btn btn-muted" @click="showAddHost = false">Cancel</button>
+        <div v-if="pairingToken" class="pairing-token">
+          API Token (copy to host): <code>{{ pairingToken }}</code>
+        </div>
+      </div>
+
+      <!-- Host cards -->
+      <div class="host-grid">
+        <article v-for="host in delegationHosts" :key="host.id" class="host-card" :class="host.status">
+          <div class="host-header">
+            <strong>{{ host.name }}</strong>
+            <span class="badge" :class="host.status">{{ host.status }}</span>
+          </div>
+          <div class="host-meta">
+            <span>{{ host.host }}:{{ host.port }}</span>
+            <span v-if="host.device_type">{{ host.device_type }}</span>
+            <span v-if="host.os_name">{{ host.os_name }}</span>
+          </div>
+          <div v-if="host.status === 'online'" class="host-resources">
+            <div class="resource-bar">
+              <label>CPU</label>
+              <div class="bar"><div class="fill" :style="{ width: host.cpu_percent + '%' }"></div></div>
+              <span>{{ host.cpu_percent }}%</span>
+            </div>
+            <div class="resource-bar">
+              <label>MEM</label>
+              <div class="bar"><div class="fill" :style="{ width: host.memory_percent + '%' }"></div></div>
+              <span>{{ host.memory_percent }}%</span>
+            </div>
+            <div class="host-tasks-info">
+              Tasks: {{ host.active_tasks }}/{{ host.max_concurrent_tasks }}
+              <span v-if="host.headroom > 0" class="headroom">{{ host.headroom }} available</span>
+            </div>
+          </div>
+          <div v-if="host.last_error" class="host-error">{{ host.last_error }}</div>
+          <div class="host-actions">
+            <button v-if="host.status === 'pairing'" type="button" class="btn btn-sm" @click="pairHost(host.id)">Pair Now</button>
+            <button type="button" class="btn btn-sm btn-muted" @click="toggleHost(host)">{{ host.enabled ? 'Disable' : 'Enable' }}</button>
+            <button type="button" class="btn btn-sm btn-danger" @click="removeHost(host.id)">Remove</button>
+          </div>
+        </article>
+        <article v-if="!delegationHosts.length" class="host-card empty">
+          <p>No delegation hosts configured. Click "+ Add Host" to register a remote machine.</p>
+        </article>
+      </div>
+
+      <!-- Recent delegated tasks -->
+      <div v-if="delegationTasks.length" class="delegation-tasks">
+        <h3>Recent Delegated Tasks</h3>
+        <table class="table compact">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Host</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>CPU Peak</th>
+              <th>Mem Peak</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="task in delegationTasks.slice(0, 10)" :key="task.id" :class="task.status">
+              <td>{{ task.task_type }}</td>
+              <td>{{ task.host_name }}</td>
+              <td><span class="badge" :class="task.status">{{ task.status }}</span></td>
+              <td>{{ task.duration_seconds ? task.duration_seconds.toFixed(1) + 's' : '-' }}</td>
+              <td>{{ task.peak_cpu_percent ? task.peak_cpu_percent.toFixed(0) + '%' : '-' }}</td>
+              <td>{{ task.peak_memory_mb ? task.peak_memory_mb.toFixed(0) + 'MB' : '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
   <TradingStartupWizard
     v-if="wizardSteps.length"
@@ -178,7 +267,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { fetchPipelineReadiness } from '@/api';
+import {
+  fetchPipelineReadiness,
+  fetchDelegationSummary,
+  createDelegationHost,
+  updateDelegationHost,
+  deleteDelegationHost,
+} from '@/api';
 import { useDashboardStore } from '@/stores/dashboard';
 import TradingStartupWizard from '@/components/TradingStartupWizard.vue';
 import { t } from '@/i18n';
@@ -188,6 +283,69 @@ const router = useRouter();
 const readinessPayload = ref<Record<string, any>>({});
 const readinessLoading = ref(false);
 const wizardOpen = ref(!sessionStorage.getItem('pipeline-wizard-dismissed'));
+
+// Delegation state
+const delegationHosts = ref<any[]>([]);
+const delegationTasks = ref<any[]>([]);
+const showAddHost = ref(false);
+const pairingToken = ref('');
+const newHost = ref({ name: '', host: '', port: 7782 });
+const delegationOnline = computed(() => delegationHosts.value.filter((h: any) => h.status === 'online').length);
+const delegationHeadroom = computed(() => delegationHosts.value.reduce((sum: number, h: any) => sum + (h.headroom || 0), 0));
+
+async function loadDelegation() {
+  try {
+    const data = await fetchDelegationSummary();
+    delegationHosts.value = data.hosts || [];
+    delegationTasks.value = data.recent_tasks || [];
+  } catch {
+    // delegation panel is non-critical
+  }
+}
+
+async function addHost() {
+  try {
+    const result = await createDelegationHost({
+      name: newHost.value.name,
+      host: newHost.value.host,
+      port: newHost.value.port,
+    });
+    pairingToken.value = result.api_token || '';
+    newHost.value = { name: '', host: '', port: 7782 };
+    await loadDelegation();
+  } catch (e: any) {
+    console.warn('Failed to add host', e);
+  }
+}
+
+async function pairHost(id: number) {
+  try {
+    // Pairing is handled by the backend delegation client
+    // For now just reload to pick up status changes
+    await loadDelegation();
+  } catch {
+    // ignore
+  }
+}
+
+async function toggleHost(host: any) {
+  try {
+    await updateDelegationHost(host.id, { enabled: !host.enabled });
+    await loadDelegation();
+  } catch {
+    // ignore
+  }
+}
+
+async function removeHost(id: number) {
+  if (!confirm('Remove this delegation host?')) return;
+  try {
+    await deleteDelegationHost(id);
+    await loadDelegation();
+  } catch {
+    // ignore
+  }
+}
 
 const stageSummary = computed(() => store.dashboard?.metrics_by_stage || []);
 const metrics = computed(() => (store.latestMetrics || []).slice(0, 20));
@@ -360,7 +518,7 @@ async function loadReadiness() {
 }
 
 async function refreshAll() {
-  await Promise.all([store.refreshAll(), loadReadiness()]);
+  await Promise.all([store.refreshAll(), loadReadiness(), loadDelegation()]);
 }
 
 function formatReason(value: string) {
@@ -374,6 +532,7 @@ function formatUsd(value: number) {
 
 onMounted(() => {
   loadReadiness();
+  loadDelegation();
 });
 </script>
 
@@ -652,5 +811,154 @@ time {
   time {
     grid-column: span 2;
   }
+}
+
+/* Delegation panel */
+.delegation-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.add-host-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.75rem 0;
+}
+
+.add-host-form .input {
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-input, #1a1d23);
+  border: 1px solid var(--border-color, #333);
+  color: inherit;
+  border-radius: 4px;
+}
+
+.pairing-token {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: var(--bg-alert, #1c2a1c);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.pairing-token code {
+  word-break: break-all;
+  user-select: all;
+  color: #8cf;
+}
+
+.host-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.host-card {
+  padding: 0.75rem;
+  background: var(--bg-card, #161920);
+  border: 1px solid var(--border-color, #2a2d35);
+  border-radius: 6px;
+}
+
+.host-card.online { border-left: 3px solid #4caf50; }
+.host-card.offline { border-left: 3px solid #777; opacity: 0.7; }
+.host-card.pairing { border-left: 3px solid #ff9800; }
+.host-card.error { border-left: 3px solid #f44336; }
+.host-card.empty { opacity: 0.6; text-align: center; }
+
+.host-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.host-meta {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.host-resources {
+  margin-top: 0.5rem;
+}
+
+.resource-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.resource-bar label {
+  width: 2.5rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.resource-bar .bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-input, #222);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.resource-bar .fill {
+  height: 100%;
+  background: #6fa7ff;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.host-tasks-info {
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.headroom { color: #4caf50; margin-left: 0.5rem; }
+
+.host-error {
+  font-size: 0.75rem;
+  color: #f44336;
+  margin-top: 0.25rem;
+}
+
+.host-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.btn-sm {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.btn-danger {
+  color: #f44336;
+  border-color: #f44336;
+}
+
+.btn-muted {
+  opacity: 0.7;
+}
+
+.delegation-tasks {
+  margin-top: 1rem;
+}
+
+.delegation-tasks h3 {
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
 }
 </style>
