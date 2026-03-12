@@ -20,6 +20,7 @@ from services.secure_settings import build_process_env
 from services.stable_bank_notify import notifier as _stable_bank_notifier
 from services.multi_wallet import multi_wallet_manager as _multi_wallet_mgr
 from services.resource_governor import governor as _governor, Priority as _Priority
+from services.delegation_client import DelegationClient
 
 if TYPE_CHECKING:
     from trading.pipeline import TrainingPipeline
@@ -108,6 +109,14 @@ class ProductionManager:
         self._task_backoff_until: Dict[str, float] = {}
         self._task_threads: Dict[str, threading.Thread] = {}
         self._task_thread_start: Dict[str, float] = {}
+        # Delegation — offload tasks to remote Revenir service hosts
+        self._delegation_enabled = os.getenv("DELEGATION_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+        self._delegation_client: Optional[DelegationClient] = None
+        # Task types eligible for delegation (heavy or parallelisable)
+        self._delegatable_tasks = {
+            "data_ingest", "news_enrichment", "dataset_warmup",
+            "candidate_training", "background_refresh",
+        }
 
     def start(self) -> None:
         if self.is_running:
@@ -116,6 +125,19 @@ class ProductionManager:
             return
         self._stop.clear()
         _governor.start()
+        # Start delegation client if enabled and hosts exist
+        if self._delegation_enabled:
+            try:
+                env = {k: os.environ.get(k, "") for k in [
+                    "ALCHEMY_API_KEY", "ANKR_API_KEY", "THEGRAPH_API_KEY",
+                    "CRYPTOPANIC_API_KEY",
+                ]}
+                self._delegation_client = DelegationClient(secure_env=env)
+                self._delegation_client.start()
+                log_message("production", "delegation client started")
+            except Exception as exc:
+                log_message("production", f"delegation client failed to start: {exc}", severity="warning")
+                self._delegation_client = None
         self._wallet_bootstrap = self._try_wallet_bootstrap()
         self._startup_prewarm = self._prewarm_pipeline()
         self._startup_prewarm_reported = False
@@ -158,6 +180,9 @@ class ProductionManager:
         if self._cycle_thread:
             self._cycle_thread.join(timeout=timeout)
         self.task_manager.stop()
+        if self._delegation_client:
+            self._delegation_client.stop()
+            self._delegation_client = None
         self._loop = None
         self._loop_thread = None
         self._cycle_thread = None
@@ -340,6 +365,16 @@ class ProductionManager:
                     severity="info",
                     details={"heavy_backlog_threshold": self._heavy_backlog_threshold},
                 )
+            # ── Delegation offload ──────────────────────────────────
+            # When backlog is building up or resources are pressured, try to
+            # offload eligible tasks to remote delegation hosts.
+            self._try_delegate_tasks(
+                cycle_id=cycle_id,
+                focus_assets=focus_assets,
+                backlog=backlog,
+                heavy_backlog=heavy_backlog,
+            )
+            # ────────────────────────────────────────────────────────
             if self._stop.wait(self._cycle_interval):
                 break
             self._backlog_strikes = max(0, self._backlog_strikes - 1)
@@ -485,6 +520,94 @@ class ProductionManager:
         worked = self.idle_worker.run_next_job()
         if not worked:
             log_message("idle-work", "no background job ready this cycle", severity="info")
+
+    # ------------------------------------------------------------------
+    # Delegation
+    # ------------------------------------------------------------------
+
+    def _try_delegate_tasks(
+        self,
+        cycle_id: str,
+        focus_assets: Optional[Sequence[str]],
+        backlog: int,
+        heavy_backlog: bool,
+    ) -> None:
+        """
+        Offload eligible tasks to remote delegation hosts when:
+        - delegation client is running and hosts are available
+        - local backlog is building up OR resources are pressured
+        """
+        if not self._delegation_client:
+            return
+
+        # Only delegate when there's pressure on the local system
+        should_delegate = (
+            heavy_backlog
+            or backlog >= max(3, self._max_pending // 3)
+            or _governor.should_throttle(_Priority.NORMAL)
+        )
+        if not should_delegate:
+            return
+
+        _TASK_TO_DIRECTIVE = {
+            "data_ingest": "ingest",
+            "news_enrichment": "news",
+            "dataset_warmup": "dataset",
+            "candidate_training": "training",
+            "background_refresh": "background",
+        }
+
+        delegated_count = 0
+        for task_type in self._delegatable_tasks:
+            directive_key = _TASK_TO_DIRECTIVE.get(task_type, task_type)
+            if not self._task_directives.get(directive_key, False):
+                continue
+
+            payload = self._build_delegation_payload(task_type, focus_assets)
+            try:
+                tid = self._delegation_client.dispatch(task_type, payload)
+                if tid:
+                    delegated_count += 1
+                    log_message(
+                        "production",
+                        f"delegated {task_type} to remote host",
+                        details={"task_id": tid[:8], "cycle": cycle_id},
+                    )
+            except Exception as exc:
+                log_message(
+                    "production",
+                    f"delegation dispatch failed for {task_type}: {exc}",
+                    severity="warning",
+                )
+
+        if delegated_count:
+            log_message(
+                "production",
+                f"cycle {cycle_id}: delegated {delegated_count} tasks to remote hosts",
+                details={"backlog": backlog, "heavy_backlog": heavy_backlog},
+            )
+
+    def _build_delegation_payload(
+        self, task_type: str, focus_assets: Optional[Sequence[str]]
+    ) -> Dict[str, Any]:
+        """Build the payload dict sent to a delegation host for a given task type."""
+        payload: Dict[str, Any] = {}
+        if focus_assets:
+            payload["focus_assets"] = list(focus_assets[:20])
+        payload["iteration"] = self.pipeline.iteration
+
+        if task_type == "data_ingest":
+            payload["action"] = "download_cycle"
+        elif task_type == "news_enrichment":
+            payload["action"] = "reinforce_news"
+        elif task_type == "dataset_warmup":
+            payload["action"] = "warm_cache"
+        elif task_type == "candidate_training":
+            payload["action"] = "train_candidate"
+        elif task_type == "background_refresh":
+            payload["action"] = "idle_job"
+
+        return payload
 
     # ------------------------------------------------------------------
     # Helpers
