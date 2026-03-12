@@ -101,10 +101,19 @@ class GuardianLogView(APIView):
             if not path.exists():
                 continue
             try:
-                with path.open("r", encoding="utf-8", errors="ignore") as handle:
-                    entries = handle.readlines()
+                size = path.stat().st_size
+                chunk_size = min(size, limit * 512)
+                with path.open("rb") as fh:
+                    fh.seek(max(0, size - chunk_size))
+                    if fh.tell() != 0:
+                        fh.readline()  # discard partial first line
+                    raw = fh.read()
+                lines = [
+                    line.rstrip("\n")
+                    for line in raw.decode("utf-8", errors="replace").splitlines()
+                ]
+                if lines:
+                    return lines[-limit:]
             except Exception:
                 continue
-            if entries:
-                return [line.rstrip("\n") for line in entries[-limit:]]
         return []

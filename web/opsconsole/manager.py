@@ -163,9 +163,23 @@ class ConsoleProcessManager:
     def tail(self, lines: int = 200) -> list[str]:
         if not LOG_PATH.exists():
             return []
-        with LOG_PATH.open("r", encoding="utf-8", errors="ignore") as handle:
-            dq: deque[str] = deque(handle, maxlen=lines)
-        return list(dq)
+        # Read from the end of the file to avoid loading the entire (potentially
+        # multi-GB) log into memory — the old deque approach iterated every line.
+        try:
+            size = LOG_PATH.stat().st_size
+        except OSError:
+            return []
+        # Read a generous chunk from the tail; 512 bytes/line is plenty.
+        chunk_size = min(size, lines * 512)
+        result_lines: list[str] = []
+        with LOG_PATH.open("rb") as fh:
+            fh.seek(max(0, size - chunk_size))
+            if fh.tell() != 0:
+                fh.readline()  # discard partial first line
+            raw = fh.read()
+        for line in raw.decode("utf-8", errors="replace").splitlines():
+            result_lines.append(line)
+        return result_lines[-lines:]
 
     def send(self, command: str) -> Dict[str, str]:
         payload = (command or "").strip()
