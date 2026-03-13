@@ -213,15 +213,23 @@ BINANCE_MARKETS: Set[Tuple[str, str]] = {
     ("ETH", "BTC"),
     ("LINK", "USDT"),
     ("LINK", "USDC"),
+    ("LINK", "ETH"),
     ("SHIB", "USDT"),
     ("UNI", "USDT"),
+    ("UNI", "ETH"),
     ("AAVE", "USDT"),
+    ("AAVE", "ETH"),
     ("DOGE", "USDT"),
     ("SOL", "USDT"),
     ("AVAX", "USDT"),
     ("ARB", "USDT"),
     ("OP", "USDT"),
     ("PEPE", "USDT"),
+    ("MKR", "ETH"),
+    ("COMP", "ETH"),
+    ("SNX", "ETH"),
+    ("SUSHI", "ETH"),
+    ("CRV", "ETH"),
 }
 
 # Kraken uses X-prefixed tickers for legacy assets
@@ -232,7 +240,7 @@ _KRAKEN_SYMBOL_MAP = {
     "MKR": "MKR", "COMP": "COMP", "SNX": "SNX", "LDO": "LDO",
     "SUSHI": "SUSHI", "CRV": "CRV", "MATIC": "MATIC",
 }
-_KRAKEN_QUOTE_MAP = {"USD": "USD", "USDT": "USDT", "USDC": "USDC"}
+_KRAKEN_QUOTE_MAP = {"USD": "USD", "USDT": "USDT", "USDC": "USDC", "ETH": "ETH", "BTC": "XBT"}
 
 # Endpoint controls (env override; defaults exclude noisiest WS providers)
 _DEFAULT_ENDPOINT_EXCLUDE: Set[str] = {"mexc", "dexscreener"}
@@ -428,6 +436,10 @@ class MarketDataStream:
         rest_base, rest_quote = _split_symbol(self.symbol)
         self._rest_base, self._rest_quote, self._rest_inverted = _preferred_market_pair(rest_base, rest_quote)
         self.endpoints = self._build_endpoints()
+        # Cross-pairs (ETH/BTC-quoted) have fewer reliable exchange listings;
+        # accept single-source consensus to avoid long warmup failure loops.
+        if self._rest_quote in _HIGH_VALUE_TOKENS and self._rest_quote not in _STABLE_TOKEN_PRICE:
+            self.consensus_sources = 1
         self._endpoint_scores: Dict[str, float] = {ep.name: 0.0 for ep in self.endpoints}
         self._endpoint_order = {ep.name: idx for idx, ep in enumerate(self.endpoints)}
         self._endpoint_health: Dict[str, EndpointHealth] = {ep.name: EndpointHealth() for ep in self.endpoints}
@@ -2021,7 +2033,7 @@ class MarketDataStream:
                 )
             )
         okx_quote = quote.upper()
-        if okx_quote in {"USDT", "USDC", "USD"} and _endpoint_allowed("okx"):
+        if okx_quote in {"USDT", "USDC", "USD", "ETH", "BTC"} and _endpoint_allowed("okx"):
             endpoints.append(
                 Endpoint(
                     name="okx",
@@ -2057,7 +2069,7 @@ class MarketDataStream:
                 )
             )
         # --- Bybit: WS v5 + REST (globally accessible, no geo-blocking for market data) ---
-        if quote.upper() in {"USDT", "USDC"} and _endpoint_allowed("bybit"):
+        if quote.upper() in {"USDT", "USDC", "ETH", "BTC"} and _endpoint_allowed("bybit"):
             bybit_symbol = f"{base.upper()}{quote.upper()}"
             endpoints.append(
                 Endpoint(
