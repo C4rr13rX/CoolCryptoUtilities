@@ -323,6 +323,27 @@ class TradingBot:
         self.sim_native_balances = {chain.lower(): max(balance, 0.1) for chain, balance in self.portfolio.native_balances.items()}
         self.sim_native_balances.setdefault(self.primary_chain.lower(), 0.5)
         self._sim_initial_pool = sum(self.sim_quote_balances.values())
+        # If no stables in the wallet, seed the sim bankroll from total
+        # portfolio value (including native assets) so ghost trading can
+        # function.  Without this the sim deadlocks at $0 forever.
+        if self._sim_initial_pool < 1.0:
+            total_value = self.portfolio.total_value_usd()
+            if total_value > 1.0:
+                self.sim_quote_balances[key] = total_value
+                self._sim_initial_pool = total_value
+                log_message(
+                    "ghost",
+                    f"no stable balance; seeding sim bankroll from portfolio value ${total_value:.2f}",
+                )
+            else:
+                # Absolute minimum floor so the sim can at least attempt trades
+                min_floor = float(os.getenv("SIM_MIN_BANKROLL", "10.0"))
+                self.sim_quote_balances[key] = min_floor
+                self._sim_initial_pool = min_floor
+                log_message(
+                    "ghost",
+                    f"empty portfolio; using minimum sim bankroll ${min_floor:.2f}",
+                )
         if self._sim_initial_pool > self._peak_equity:
             self._peak_equity = self._sim_initial_pool
         self.ghost_session_id = max(1, self.ghost_session_id)
@@ -708,11 +729,16 @@ class TradingBot:
             return
         total = sum(self.sim_quote_balances.values())
         if self._sim_initial_pool <= 0:
-            self._sim_initial_pool = total
+            # Pool was never seeded — reinitialise fully so the sim can trade.
+            log_message("ghost", "sim pool is zero; reinitialising balances")
+            self._init_sim_balances()
             return
         threshold = float(os.getenv("SIM_BALANCE_RESET_RATIO", "0.1"))
         if total <= self._sim_initial_pool * threshold:
-            print("[ghost] simulated bankroll depleted; resetting simulation state.")
+            log_message(
+                "ghost",
+                f"simulated bankroll depleted (${total:.4f} / ${self._sim_initial_pool:.2f}); resetting",
+            )
             self._init_sim_balances()
             self.positions.clear()
             self.ghost_session_id += 1
@@ -2661,10 +2687,11 @@ class TradingBot:
                     }
                 )
             else:
-                # Ghost mode: INFO (expected when sim balance depletes). Live: WARNING.
-                # Cooldown: only emit once per 60s to avoid log spam when bankroll is depleted.
+                # Ghost mode: expected when sim balance depletes — log sparingly.
+                # Live: more urgent, log every 60s. Ghost: every 5 min.
                 _now = time.time()
-                if _now - self._insufficient_quote_last_ts >= 60.0:
+                _cooldown = 60.0 if self.live_trading_enabled else 300.0
+                if _now - self._insufficient_quote_last_ts >= _cooldown:
                     self._insufficient_quote_last_ts = _now
                     sev = FeedbackSeverity.INFO if not self.live_trading_enabled else FeedbackSeverity.WARNING
                     self.metrics.feedback(
