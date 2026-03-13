@@ -186,14 +186,53 @@ COINGECKO_IDS = {
     "SPX": "spx6900",
     "UNI": "uniswap",
     "PEPE": "pepe",
+    "LINK": "chainlink",
+    "SHIB": "shiba-inu",
+    "AAVE": "aave",
+    "MATIC": "matic-network",
+    "ARB": "arbitrum",
+    "OP": "optimism",
+    "SOL": "solana",
+    "DOGE": "dogecoin",
+    "AVAX": "avalanche-2",
+    "CRV": "curve-dao-token",
+    "MKR": "maker",
+    "COMP": "compound-governance-token",
+    "SNX": "havven",
+    "SUSHI": "sushi",
+    "LDO": "lido-dao",
+    "RPL": "rocket-pool",
+    "CBBTC": "coinbase-wrapped-btc",
 }
 
 BINANCE_MARKETS: Set[Tuple[str, str]] = {
     ("ETH", "USDT"),
     ("ETH", "USDC"),
-    ("BTC", "USDT"),  # allows BTC/USDT feeds when needed
+    ("BTC", "USDT"),
+    ("BTC", "USDC"),
     ("ETH", "BTC"),
+    ("LINK", "USDT"),
+    ("LINK", "USDC"),
+    ("SHIB", "USDT"),
+    ("UNI", "USDT"),
+    ("AAVE", "USDT"),
+    ("DOGE", "USDT"),
+    ("SOL", "USDT"),
+    ("AVAX", "USDT"),
+    ("ARB", "USDT"),
+    ("OP", "USDT"),
+    ("PEPE", "USDT"),
 }
+
+# Kraken uses X-prefixed tickers for legacy assets
+_KRAKEN_SYMBOL_MAP = {
+    "ETH": "ETH", "BTC": "XBT", "LINK": "LINK", "SHIB": "SHIB",
+    "DOGE": "XDG", "SOL": "SOL", "AVAX": "AVAX", "UNI": "UNI",
+    "AAVE": "AAVE", "PEPE": "PEPE", "ARB": "ARB", "OP": "OP",
+    "MKR": "MKR", "COMP": "COMP", "SNX": "SNX", "LDO": "LDO",
+    "SUSHI": "SUSHI", "CRV": "CRV", "MATIC": "MATIC",
+}
+_KRAKEN_QUOTE_MAP = {"USD": "USD", "USDT": "USDT", "USDC": "USDC"}
 
 # Endpoint controls (env override; defaults exclude noisiest WS providers)
 _DEFAULT_ENDPOINT_EXCLUDE: Set[str] = {"mexc", "dexscreener"}
@@ -1807,6 +1846,45 @@ class MarketDataStream:
         return rendered
 
     def _normalize_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # --- Kraken v2: {"channel":"ticker","type":"update","data":[{...}]} ---
+        if payload.get("channel") == "ticker" and payload.get("type") in ("update", "snapshot"):
+            items = payload.get("data")
+            if isinstance(items, list) and items:
+                item = items[0]
+                price = _safe_float(item.get("last"))
+                volume = _safe_float(item.get("volume"))
+                if not price or price <= 0:
+                    return None
+                price = self._normalize_live_price(price)
+                if not price or price <= 0 or not self._validate_price(price):
+                    return None
+                return {
+                    "ts": time.time(),
+                    "symbol": self.symbol,
+                    "chain": self.chain,
+                    "price": price,
+                    "volume": volume,
+                    "raw": payload,
+                }
+        # --- Bybit v5: {"topic":"tickers.ETHUSDT","data":{...}} ---
+        if isinstance(payload.get("topic"), str) and payload["topic"].startswith("tickers."):
+            bdata = payload.get("data")
+            if isinstance(bdata, dict):
+                price = _safe_float(bdata.get("lastPrice"))
+                volume = _safe_float(bdata.get("volume24h") or bdata.get("turnover24h"))
+                if not price or price <= 0:
+                    return None
+                price = self._normalize_live_price(price)
+                if not price or price <= 0 or not self._validate_price(price):
+                    return None
+                return {
+                    "ts": time.time(),
+                    "symbol": self.symbol,
+                    "chain": self.chain,
+                    "price": price,
+                    "volume": volume,
+                    "raw": payload,
+                }
         # Uniswap-style streaming payloads often have nested "data" nodes
         data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
         price = _safe_float(payload.get("price") or payload.get("p"))
@@ -1960,6 +2038,57 @@ class MarketDataStream:
                     ws_template=None,
                     subscribe_template=None,
                     rest_template=f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={base.upper()}-{kucoin_quote}",
+                )
+            )
+        # --- Kraken: WS v2 + REST (no geo-blocking, wide token support) ---
+        kraken_base = _KRAKEN_SYMBOL_MAP.get(base)
+        kraken_quote = _KRAKEN_QUOTE_MAP.get(quote)
+        if kraken_base and kraken_quote and _endpoint_allowed("kraken"):
+            kraken_pair = f"{kraken_base}/{kraken_quote}"
+            endpoints.append(
+                Endpoint(
+                    name="kraken",
+                    ws_template="wss://ws.kraken.com/v2",
+                    subscribe_template=json.dumps({
+                        "method": "subscribe",
+                        "params": {"channel": "ticker", "symbol": [kraken_pair]},
+                    }),
+                    rest_template=f"https://api.kraken.com/0/public/Ticker?pair={kraken_base}{kraken_quote}",
+                )
+            )
+        # --- Bybit: WS v5 + REST (globally accessible, no geo-blocking for market data) ---
+        if quote.upper() in {"USDT", "USDC"} and _endpoint_allowed("bybit"):
+            bybit_symbol = f"{base.upper()}{quote.upper()}"
+            endpoints.append(
+                Endpoint(
+                    name="bybit",
+                    ws_template="wss://stream.bybit.com/v5/public/spot",
+                    subscribe_template=json.dumps({
+                        "op": "subscribe",
+                        "args": [f"tickers.{bybit_symbol}"],
+                    }),
+                    rest_template=f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={bybit_symbol}",
+                )
+            )
+        # --- GeckoTerminal: DEX on-chain price data via REST (no API key needed) ---
+        _gecko_chain_map = {
+            "base": "base", "ethereum": "eth", "arbitrum": "arbitrum",
+            "optimism": "optimism", "polygon": "polygon_pos",
+        }
+        gecko_chain_slug = _gecko_chain_map.get(
+            (os.getenv("PRIMARY_CHAIN") or "base").lower()
+        )
+        if gecko_chain_slug and _endpoint_allowed("geckoterminal"):
+            gecko_search = f"{base.upper()}%2F{quote.upper()}"
+            endpoints.append(
+                Endpoint(
+                    name="geckoterminal",
+                    ws_template=None,
+                    subscribe_template=None,
+                    rest_template=(
+                        f"https://api.geckoterminal.com/api/v2/search/pools"
+                        f"?query={gecko_search}&network={gecko_chain_slug}&page=1"
+                    ),
                 )
             )
         return endpoints
@@ -3258,21 +3387,19 @@ def _binance_symbol(base: str, quote: str) -> Optional[str]:
 
 def _to_coinbase(token: str) -> Optional[str]:
     mapping = {
-        "ETH": "ETH",
-        "BTC": "BTC",
-        "USDT": "USDT",
-        "USDC": "USDC",
-        "DAI": "DAI",
+        "ETH": "ETH", "BTC": "BTC", "USDT": "USDT", "USDC": "USDC",
+        "DAI": "DAI", "LINK": "LINK", "SHIB": "SHIB", "UNI": "UNI",
+        "AAVE": "AAVE", "COMP": "COMP", "MKR": "MKR", "SNX": "SNX",
+        "SUSHI": "SUSHI", "CRV": "CRV", "LDO": "LDO", "DOGE": "DOGE",
+        "SOL": "SOL", "AVAX": "AVAX", "ARB": "ARB", "OP": "OP",
+        "PEPE": "PEPE", "MATIC": "MATIC", "RPL": "RPL", "CBBTC": "CBBTC",
     }
     return mapping.get(token)
 
 
 def _to_coinbase_quote(token: str) -> Optional[str]:
     mapping = {
-        "USD": "USD",
-        "USDT": "USDT",
-        "USDC": "USDC",
-        "EUR": "EUR",
+        "USD": "USD", "USDT": "USDT", "USDC": "USDC", "EUR": "EUR",
     }
     return mapping.get(token)
 
@@ -3297,6 +3424,8 @@ def _render_rest(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
         return endpoint.rest_template
     if endpoint.name == "kucoin":
         return endpoint.rest_template
+    if endpoint.name in ("kraken", "bybit", "geckoterminal"):
+        return endpoint.rest_template
     return endpoint.rest_template
 
 
@@ -3310,6 +3439,8 @@ def _render_ws(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
         return endpoint.ws_template
     if endpoint.name == "coingecko":
         return None
+    if endpoint.name in ("kraken", "bybit"):
+        return endpoint.ws_template
     return endpoint.ws_template
 
 
@@ -3340,6 +3471,33 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
             data = payload.get("data") or {}
             price = float(data.get("price") or data.get("bestAsk") or 0)
             return price if price > 0 else None
+        if name == "kraken":
+            result = payload.get("result")
+            if isinstance(result, dict):
+                for _pair_key, info in result.items():
+                    last_trade = info.get("c") or info.get("a")
+                    if isinstance(last_trade, list) and last_trade:
+                        price = float(last_trade[0])
+                        return price if price > 0 else None
+            return None
+        if name == "bybit":
+            result = payload.get("result")
+            if isinstance(result, dict):
+                items = result.get("list") or []
+                if items:
+                    price = float(items[0].get("lastPrice") or items[0].get("ask1Price") or 0)
+                    return price if price > 0 else None
+            return None
+        if name == "geckoterminal":
+            data = payload.get("data") or []
+            if isinstance(data, list) and data:
+                attrs = data[0].get("attributes") or {}
+                price = _safe_float(attrs.get("base_token_price_usd"))
+                if price > 0:
+                    return price
+                price = _safe_float(attrs.get("base_token_price_native_currency"))
+                return price if price > 0 else None
+            return None
         if name == "mexc":
             price = float(payload.get("price") or 0)
             return price if price > 0 else None

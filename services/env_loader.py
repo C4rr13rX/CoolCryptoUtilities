@@ -300,19 +300,21 @@ def _derive_stream_env(env: dict) -> dict:
         if not updates:
             # Public fallback if no Alchemy key/slug available
             public_rpcs = cfg.get("public_rpcs") or []
+            public_wss = cfg.get("public_wss") or []
             if public_rpcs:
                 rpc = str(public_rpcs[0]).strip()
                 if rpc:
-                    wss = rpc.replace("https://", "wss://").replace("http://", "ws://") if rpc.startswith("http") else ""
                     chain_prefix = chain.upper()
                     updates.setdefault(f"{chain_prefix}_RPC_URL", rpc)
-                    if wss:
-                        updates.setdefault(f"{chain_prefix}_WSS_URL", wss)
                     updates.setdefault("GLOBAL_RPC_URL", rpc)
-                    if wss:
-                        updates.setdefault("GLOBAL_WSS_URL", wss)
                     if env_alc:
                         updates.setdefault(env_alc, rpc)
+            if public_wss:
+                wss = str(public_wss[0]).strip()
+                if wss:
+                    chain_prefix = chain.upper()
+                    updates.setdefault(f"{chain_prefix}_WSS_URL", wss)
+                    updates.setdefault("GLOBAL_WSS_URL", wss)
     except Exception:
         return updates
     return updates

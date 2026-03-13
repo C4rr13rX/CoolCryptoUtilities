@@ -55,6 +55,9 @@ class OnChainPairFeed:
         env_prefix = self.chain.upper()
         self.wss_url = os.getenv(f"{env_prefix}_WSS_URL") or os.getenv("GLOBAL_WSS_URL")
         self.rpc_url = os.getenv(f"{env_prefix}_RPC_URL") or os.getenv("GLOBAL_RPC_URL")
+        # Build list of fallback WSS URLs from CHAIN_CONFIG
+        self._wss_urls = self._gather_wss_urls()
+        self._wss_index = 0
         self._session: Optional[aiohttp.ClientSession] = None
         self._http_web3: Optional[Web3] = None
         self._pair_address: Optional[str] = None
@@ -70,6 +73,30 @@ class OnChainPairFeed:
             except Exception as exc:
                 print(f"[onchain-feed] unable to initialise metadata for {self.symbol}: {exc}")
                 self.available = False
+
+    def _gather_wss_urls(self) -> list:
+        """Collect all WSS URLs: env override first, then public_wss from CHAIN_CONFIG."""
+        urls = []
+        if self.wss_url:
+            urls.append(self.wss_url)
+        try:
+            from balances import CHAIN_CONFIG
+            cfg = CHAIN_CONFIG.get(self.chain, {})
+            for url in cfg.get("public_wss", []):
+                if url and url not in urls:
+                    urls.append(url)
+        except Exception:
+            pass
+        return urls
+
+    def _next_wss_url(self) -> Optional[str]:
+        """Rotate to the next WSS URL on connection failure."""
+        if not self._wss_urls:
+            return None
+        self._wss_index = (self._wss_index + 1) % len(self._wss_urls)
+        url = self._wss_urls[self._wss_index]
+        self.wss_url = url
+        return url
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -162,14 +189,25 @@ class OnChainPairFeed:
         if not self.available or not self._pair_address:
             return
         backoff = 5.0
+        consecutive_failures = 0
         while not self._stop.is_set():
             try:
                 await self._stream_once(emitter)
                 backoff = 5.0
+                consecutive_failures = 0
             except asyncio.CancelledError:
                 break
             except Exception as exc:
-                print(f"[onchain-feed] stream error for {self.symbol}: {exc}")
+                consecutive_failures += 1
+                old_url = self.wss_url
+                # Rotate to next WSS endpoint after 2 consecutive failures
+                if consecutive_failures >= 2 and len(self._wss_urls) > 1:
+                    next_url = self._next_wss_url()
+                    print(f"[onchain-feed] {self.symbol}: rotating WSS {old_url} -> {next_url}")
+                    consecutive_failures = 0
+                    backoff = 5.0
+                else:
+                    print(f"[onchain-feed] stream error for {self.symbol} on {old_url}: {exc}")
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=backoff)
                 except asyncio.TimeoutError:

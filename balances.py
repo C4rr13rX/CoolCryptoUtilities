@@ -89,6 +89,10 @@ CHAIN_CONFIG = {
             "https://eth.llamarpc.com",
             "https://rpc.flashbots.net",
         ],
+        "public_wss": [
+            "wss://ethereum-rpc.publicnode.com",
+            "wss://eth.drpc.org",
+        ],
     },
     "base": {
         "alchemy_slug": "base-mainnet",
@@ -103,6 +107,10 @@ CHAIN_CONFIG = {
             "https://1rpc.io/base",
             "https://base.drpc.org",
         ],
+        "public_wss": [
+            "wss://base-rpc.publicnode.com",
+            "wss://base.drpc.org",
+        ],
     },
     "arbitrum": {
         "alchemy_slug": "arb-mainnet",
@@ -114,6 +122,10 @@ CHAIN_CONFIG = {
         "public_rpcs": [
             "https://arb1.arbitrum.io/rpc",
             "https://arbitrum.drpc.org",
+        ],
+        "public_wss": [
+            "wss://arbitrum-one-rpc.publicnode.com",
+            "wss://arbitrum.drpc.org",
         ],
     },
     "optimism": {
@@ -127,6 +139,10 @@ CHAIN_CONFIG = {
             "https://mainnet.optimism.io",
             "https://optimism.drpc.org",
         ],
+        "public_wss": [
+            "wss://optimism-rpc.publicnode.com",
+            "wss://optimism.drpc.org",
+        ],
     },
     "polygon": {
         "alchemy_slug": "polygon-mainnet",
@@ -138,6 +154,10 @@ CHAIN_CONFIG = {
         "public_rpcs": [
             "https://polygon-rpc.com",
             "https://polygon.drpc.org",
+        ],
+        "public_wss": [
+            "wss://polygon-bor-rpc.publicnode.com",
+            "wss://polygon.drpc.org",
         ],
     },
 }
