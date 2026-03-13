@@ -735,9 +735,35 @@ class TradingBot:
             return
         threshold = float(os.getenv("SIM_BALANCE_RESET_RATIO", "0.1"))
         if total <= self._sim_initial_pool * threshold:
+            # Record a session summary before resetting so we know what happened
+            session_summary = {
+                "session_id": self.ghost_session_id,
+                "initial_pool": self._sim_initial_pool,
+                "final_balance": total,
+                "total_trades": self.total_trades,
+                "wins": self.wins,
+                "total_profit": self.total_profit,
+                "realized_profit": self.realized_profit,
+                "open_positions": len(self.positions),
+                "positions": {
+                    sym: {
+                        "entry_price": p.get("entry_price"),
+                        "size": p.get("size"),
+                        "entry_ts": p.get("entry_ts"),
+                    }
+                    for sym, p in self.positions.items()
+                },
+            }
             log_message(
                 "ghost",
-                f"simulated bankroll depleted (${total:.4f} / ${self._sim_initial_pool:.2f}); resetting",
+                f"session {self.ghost_session_id} depleted "
+                f"(${total:.4f} / ${self._sim_initial_pool:.2f}); resetting",
+                details=session_summary,
+            )
+            self.metrics.record(
+                MetricStage.GHOST_TRADING,
+                session_summary,
+                category="session_reset",
             )
             self._init_sim_balances()
             self.positions.clear()
