@@ -59,6 +59,10 @@ class DelegationClient:
     def start(self) -> None:
         """Start heartbeat and result polling threads."""
         self._stop.clear()
+
+        # Rehydrate pending tasks from DB so results survive restarts
+        self._rehydrate_pending()
+
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop, daemon=True, name="delegation-heartbeat"
         )
@@ -69,6 +73,41 @@ class DelegationClient:
         )
         self._result_thread.start()
         logger.info("delegation client started")
+
+    def _rehydrate_pending(self) -> None:
+        """Reload unfinished tasks from DB so we resume polling after restart."""
+        try:
+            _, DelegatedTask, _, _ = _get_db()
+            unfinished = DelegatedTask.objects.filter(
+                status__in=[
+                    DelegatedTask.Status.QUEUED,
+                    DelegatedTask.Status.SENT,
+                    DelegatedTask.Status.RUNNING,
+                ],
+            ).select_related("host")
+
+            count = 0
+            for t in unfinished:
+                if not t.remote_task_id:
+                    # Legacy task without remote ID — can't poll, mark failed
+                    t.status = DelegatedTask.Status.FAILED
+                    t.error_message = "Lost on restart (no remote_task_id)"
+                    t.save()
+                    continue
+                with self._lock:
+                    self._pending_polls[t.remote_task_id] = {
+                        "host_id": t.host_id,
+                        "host_addr": t.host.host,
+                        "host_port": t.host.port,
+                        "host_token": t.host.api_token,
+                        "db_task_id": t.id,
+                        "submitted_at": t.sent_at.timestamp() if t.sent_at else t.created_at.timestamp(),
+                    }
+                count += 1
+            if count:
+                logger.info("rehydrated %d pending tasks from database", count)
+        except Exception as exc:
+            logger.warning("failed to rehydrate pending tasks: %s", exc)
 
     def stop(self) -> None:
         self._stop.set()
@@ -195,6 +234,7 @@ class DelegationClient:
         # Create DB record
         db_task = DelegatedTask.objects.create(
             host=host,
+            remote_task_id=task_id,
             task_type=task_type,
             payload=payload,
             api_keys_sent=list(api_keys.keys()),
@@ -333,11 +373,13 @@ class DelegationClient:
                     token=info["host_token"],
                 )
                 if not resp:
-                    # Check timeout (10 minutes default)
-                    if time.time() - info["submitted_at"] > 600:
+                    # Check timeout — generous for rehydrated tasks
+                    elapsed = time.time() - info["submitted_at"]
+                    timeout = float(os.getenv("DELEGATION_TASK_TIMEOUT", "3600"))
+                    if elapsed > timeout:
                         self._finalize_task(task_id, info, {
                             "status": "timeout",
-                            "error": "Task timed out after 600s",
+                            "error": f"Task timed out after {elapsed:.0f}s",
                         })
                     continue
 

@@ -15,8 +15,10 @@ pyvenv.cfg
 **/.venv/
 storage/
 *.db
+*.sqlite3
 models/
 *.log
+temp_*.ps1
 
 .backup_*/
 *.patch

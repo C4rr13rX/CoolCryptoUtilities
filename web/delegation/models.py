@@ -93,6 +93,11 @@ class DelegatedTask(models.Model):
         BACKGROUND_REFRESH = "background_refresh", "Background Refresh"
 
     host = models.ForeignKey(DelegationHost, on_delete=models.CASCADE, related_name="tasks")
+    remote_task_id = models.CharField(
+        max_length=64, blank=True, default="",
+        db_index=True,
+        help_text="UUID sent to the remote host — used to poll for results",
+    )
     task_type = models.CharField(max_length=32, choices=TaskType.choices)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
 

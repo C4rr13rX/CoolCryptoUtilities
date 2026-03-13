@@ -256,20 +256,37 @@ class TaskExecutor:
                 self._send_callback(result)
 
     def _send_callback(self, result: TaskResult) -> None:
-        """POST result back to the main R3v3n!R server."""
-        try:
-            import urllib.request
-            data = json.dumps(result.to_dict()).encode("utf-8")
-            req = urllib.request.Request(
-                self._callback_url,
-                data=data,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {self._api_token}",
-                },
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                logger.info("callback sent for task %s: %d", result.task_id[:8], resp.status)
-        except Exception as exc:
-            logger.warning("callback failed for task %s: %s", result.task_id[:8], exc)
+        """POST result back to the main server with retry + backoff."""
+        import urllib.request
+
+        max_retries = 5
+        backoff = 5.0  # seconds
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                data = json.dumps(result.to_dict()).encode("utf-8")
+                req = urllib.request.Request(
+                    self._callback_url,
+                    data=data,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {self._api_token}",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    logger.info("callback sent for task %s: %d", result.task_id[:8], resp.status)
+                return  # success
+            except Exception as exc:
+                logger.warning(
+                    "callback attempt %d/%d failed for task %s: %s",
+                    attempt, max_retries, result.task_id[:8], exc,
+                )
+                if attempt < max_retries:
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 120)  # cap at 2 minutes
+
+        logger.error(
+            "callback exhausted retries for task %s — result saved to disk",
+            result.task_id[:8],
+        )
