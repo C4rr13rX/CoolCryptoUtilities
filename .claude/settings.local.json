@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(python -c \":*)",
-      "Bash(find /c/Users/Adam/Projects/CoolCryptoUtilities/trading -type f -name *.py)"
+      "Bash(find /c/Users/Adam/Projects/CoolCryptoUtilities/trading -type f -name *.py)",
+      "Bash(wmic logicaldisk:*)",
+      "Bash(powershell -Command \"\\(Get-ChildItem -Path ''C:\\\\Users\\\\Adam\\\\Projects\\\\CoolCryptoUtilities'' -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum\\).Sum / 1GB\")",
+      "Bash(powershell -Command \"[math]::Round\\(\\(Get-PSDrive C\\).Free / 1GB, 2\\)\")",
+      "Bash(powershell -Command \"Get-ChildItem -Path ''C:\\\\Users\\\\Adam\\\\Projects\\\\CoolCryptoUtilities'' -Directory | ForEach-Object { $size = \\(Get-ChildItem -Path $_FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum\\).Sum; [PSCustomObject]@{Name=$_Name; SizeGB=[math]::Round\\($size/1GB,2\\)} } | Sort-Object SizeGB -Descending | Format-Table -AutoSize\")"
     ]
   }
 }

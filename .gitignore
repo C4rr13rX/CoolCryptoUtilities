@@ -103,3 +103,6 @@ kuzu_*/
 *_pair_provider_assignment.json
 *_pair_provider_assignment.json.tmp
 data/intermediate/
+# One-off migration scripts
+migrate_to_d_drive.ps1
+extend_disk0.bat
