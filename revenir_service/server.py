@@ -137,6 +137,7 @@ class RevenirHandler(BaseHTTPRequestHandler):
             "resources": snap,
             "max_concurrent_tasks": app.executor.max_concurrent,
             "active_tasks": app.executor.active_count,
+            "available_slots": app.executor.available_slots,
             "active_task_list": app.executor.active_tasks(),
             "capabilities": app.device_info.get("capabilities", []),
             "uptime_seconds": round(time.time() - app.start_time, 1),

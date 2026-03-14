@@ -2999,6 +2999,7 @@ class TradingBot:
                 exposure_delta = base_received * price
                 self.active_exposure[symbol] = self.active_exposure.get(symbol, 0.0) + exposure_delta
                 self._tune_allocation(symbol, positive=True, negative=False)
+                self.scheduler.record_trade(symbol, "enter", executed_entry_price, base_received)
 
                 entry_metrics = {
                     "direction_prob": direction_prob,
@@ -3135,6 +3136,7 @@ class TradingBot:
                 "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
                 % (symbol, trade_size, price, direction_prob, margin, entry_reason)
             )
+            self.scheduler.record_trade(symbol, "enter", price, trade_size)
             quote_spent = trade_size * price
             self._adjust_quote_balance(chain_name, quote_token, -quote_spent)
             self._consume_sim_gas(chain_name, gas_required)
@@ -3595,6 +3597,7 @@ class TradingBot:
                 "%s exit %s size=%.6f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
                 % (log_prefix, symbol, exit_size, exit_price_effective, profit, checkpoint, self.stable_bank, reason or "exit")
             )
+            self.scheduler.record_trade(symbol, "exit", exit_price_effective, exit_size)
             if self.live_trading_enabled:
                 try:
                     self.record_fill(

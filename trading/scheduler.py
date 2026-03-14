@@ -133,6 +133,15 @@ class TradeDirective:
 
 
 @dataclass
+class TradeHistoryEntry:
+    """Records a completed trade direction for directional constraint enforcement."""
+    action: str  # "enter" (buy) or "exit" (sell)
+    price: float
+    timestamp: float
+    size: float = 0.0
+
+
+@dataclass
 class RouteState:
     symbol: str
     base_token: str
@@ -145,6 +154,9 @@ class RouteState:
     cached_signals: Optional[List[HorizonSignal]] = None
     forecast_signature: Optional[Tuple[int, float, float]] = None
     pending_predictions: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=2048))
+    last_filter_reason: str = ""
+    evaluation_count: int = 0
+    trade_history: Deque[TradeHistoryEntry] = field(default_factory=lambda: deque(maxlen=100))
 
 
 class TridentUSSATSolver:
@@ -252,6 +264,17 @@ class TridentUSSATSolver:
         direction_prob = float(meta.get("direction_prob", 0.5))
         if confidence <= 0.0 or direction_prob <= 0.0:
             return False
+        # Directional trade history constraint: if last completed trade was
+        # a buy (enter), next must be a sell (exit), and vice versa.
+        # Prevents "bought low to sell high, then bought low again" anti-pattern.
+        trade_history: Optional[Deque] = context.get("trade_history")
+        if trade_history and len(trade_history) > 0:
+            last_trade = trade_history[-1]
+            last_action = getattr(last_trade, "action", None) or last_trade.get("action", "") if isinstance(last_trade, dict) else ""
+            if last_action == "enter" and directive.action == "enter":
+                return False  # already bought, must sell first
+            if last_action == "exit" and directive.action == "exit":
+                return False  # already sold, must buy first
         return True
 
     def _strategies(self) -> Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], float]]:
@@ -374,8 +397,10 @@ class BusScheduler:
     ) -> Optional[TradeDirective]:
         """Update internal state with the latest sample and return a directive."""
         state = self._update_state(sample)
+        state.evaluation_count += 1
         signals = self._forecast(state)
         if not signals:
+            state.last_filter_reason = "no_forecast_signals"
             return None
 
         last_price = state.samples[-1][1]
@@ -404,6 +429,7 @@ class BusScheduler:
         # crude gas safety
         if native_balance < min_native:
             self._emit_gas_alert(chain_name, native_balance)
+            state.last_filter_reason = f"gas_too_low ({native_balance:.4f} < {min_native:.4f})"
             return None
 
         best_long = max(signals, key=self._score_signal)
@@ -417,6 +443,7 @@ class BusScheduler:
             "fee_rate": fee_rate,
             "risk_budget": risk_budget,
             "direction_prob": direction_prob,
+            "trade_history": state.trade_history,
         }
 
         money_button = self._money_button_candidate(
@@ -437,9 +464,11 @@ class BusScheduler:
             candidates.append(money_button)
         # Pause if recent data is too sparse
         if len(state.samples) < 12:
+            state.last_filter_reason = f"warming_up ({len(state.samples)}/12 samples)"
             return None
         gap_cutoff = state.samples[-1][0] - state.samples[0][0]
         if gap_cutoff > self.history_limit_sec * 1.5 and len(state.samples) < state.samples.maxlen * 0.5:
+            state.last_filter_reason = "sparse_history (gap too large for sample count)"
             return None
         # crude spread/depth checks: skip if implied spread too high or volume too low
         implied_spread = abs(self._bias(state)) if hasattr(self, "_bias") else 0.0
@@ -455,6 +484,7 @@ class BusScheduler:
                     "ts": time.time(),
                 }
             )
+            state.last_filter_reason = f"spread ({implied_spread:.4f} > {self.spread_floor:.4f})"
             return None
         if last_volume * last_price < self.depth_floor_usd:
             if self._log_filters:
@@ -468,6 +498,7 @@ class BusScheduler:
                     "ts": time.time(),
                 }
             )
+            state.last_filter_reason = f"depth ({last_volume*last_price:.2f} < {self.depth_floor_usd:.2f})"
             return None
         # Enter: use quote asset to buy base
         if available_quote > 0:
@@ -628,14 +659,28 @@ class BusScheduler:
                     )
 
         if not candidates:
+            state.last_filter_reason = "no_candidates (thresholds not met)"
             return None
         chosen = self._trident.select(candidates, context)
         if chosen:
+            state.last_filter_reason = ""
             state.last_directive = chosen
             return chosen
         fallback = max(candidates, key=lambda cand: cand.get("score", 0.0))
         state.last_directive = fallback["directive"]
         return fallback["directive"]
+
+    def record_trade(self, symbol: str, action: str, price: float, size: float = 0.0) -> None:
+        """Record a completed trade for directional constraint enforcement."""
+        state = self.routes.get(symbol)
+        if state is None:
+            return
+        state.trade_history.append(TradeHistoryEntry(
+            action=action,
+            price=price,
+            timestamp=time.time(),
+            size=size,
+        ))
 
     def set_bucket_bias(self, bucket_bias: Dict[str, float]) -> None:
         if not bucket_bias:
@@ -654,17 +699,31 @@ class BusScheduler:
     def snapshot(self) -> List[Dict[str, float]]:
         out: List[Dict[str, float]] = []
         for state in self.routes.values():
-            if not state.samples:
-                continue
-            price = state.samples[-1][1]
+            has_samples = bool(state.samples)
+            has_directive = state.last_directive is not None
+            if has_directive:
+                status = "active"
+            elif has_samples:
+                status = "warming"
+            else:
+                status = "waiting"
+            price = state.samples[-1][1] if has_samples else 0.0
             summary = {
                 "symbol": state.symbol,
+                "status": status,
                 "price": price,
-                "history_points": len(state.samples),
+                "history_points": len(state.samples) if has_samples else 0,
                 "last_update": state.last_update,
+                "evaluation_count": state.evaluation_count,
+                "last_filter_reason": state.last_filter_reason,
             }
             if state.last_directive:
                 summary["last_directive"] = state.last_directive.to_dict()
+            if state.trade_history:
+                last_trade = state.trade_history[-1]
+                summary["last_trade_action"] = last_trade.action
+                summary["last_trade_price"] = last_trade.price
+                summary["expected_next"] = "exit" if last_trade.action == "enter" else "enter"
             out.append(summary)
         return out
 

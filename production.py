@@ -133,6 +133,7 @@ class ProductionManager:
                     "CRYPTOPANIC_API_KEY",
                 ]}
                 self._delegation_client = DelegationClient(secure_env=env)
+                self._delegation_client.on_result(self._handle_delegation_result)
                 self._delegation_client.start()
                 log_message("production", "delegation client started")
             except Exception as exc:
@@ -533,20 +534,11 @@ class ProductionManager:
         heavy_backlog: bool,
     ) -> None:
         """
-        Offload eligible tasks to remote delegation hosts when:
-        - delegation client is running and hosts are available
-        - local backlog is building up OR resources are pressured
+        Greedily fill remote hosts with delegatable tasks. Always attempts
+        delegation when there are pending tasks and remote hosts are reachable —
+        no longer gates on heavy_backlog.
         """
         if not self._delegation_client:
-            return
-
-        # Only delegate when there's pressure on the local system
-        should_delegate = (
-            heavy_backlog
-            or backlog >= max(3, self._max_pending // 3)
-            or _governor.should_throttle(_Priority.NORMAL)
-        )
-        if not should_delegate:
             return
 
         _TASK_TO_DIRECTIVE = {
@@ -555,36 +547,91 @@ class ProductionManager:
             "dataset_warmup": "dataset",
             "candidate_training": "training",
             "background_refresh": "background",
+            "ghost_trading": "ghost_trading",
+            "ghost_metrics": "ghost_metrics",
         }
 
-        delegated_count = 0
+        # Build a priority queue of tasks to delegate
+        # Priority: candidate_training > data_ingest > ghost_trading > ghost_metrics > rest
+        _TASK_PRIORITY = {
+            "candidate_training": 0,
+            "data_ingest": 1,
+            "ghost_trading": 2,
+            "ghost_metrics": 3,
+            "dataset_warmup": 4,
+            "news_enrichment": 5,
+            "background_refresh": 6,
+        }
+        eligible_tasks = []
         for task_type in self._delegatable_tasks:
             directive_key = _TASK_TO_DIRECTIVE.get(task_type, task_type)
             if not self._task_directives.get(directive_key, False):
                 continue
+            eligible_tasks.append(task_type)
+        eligible_tasks.sort(key=lambda t: _TASK_PRIORITY.get(t, 99))
+
+        if not eligible_tasks:
+            return
+
+        # Query available capacity across all hosts
+        try:
+            hosts = self._delegation_client.get_available_hosts()
+        except Exception:
+            hosts = []
+        if not hosts:
+            return
+
+        total_available = sum(h.get("headroom", 0) for h in hosts)
+        if total_available <= 0:
+            return
+
+        # Greedy fill: keep dispatching until hosts are full or we run out of tasks
+        delegated_count = 0
+        slots_remaining = total_available
+        task_idx = 0
+        max_dispatch_per_cycle = max(total_available, 10)
+
+        while slots_remaining > 0 and delegated_count < max_dispatch_per_cycle:
+            if task_idx >= len(eligible_tasks):
+                # Wrap around to dispatch more of the same types if slots remain
+                # (e.g. multiple candidate_training tasks in parallel)
+                if delegated_count == 0:
+                    break  # No tasks were dispatched at all, stop
+                task_idx = 0
+                # Don't loop forever — only re-dispatch if there's real work
+                if delegated_count >= len(eligible_tasks) * 2:
+                    break
+
+            task_type = eligible_tasks[task_idx]
+            task_idx += 1
 
             payload = self._build_delegation_payload(task_type, focus_assets)
             try:
                 tid = self._delegation_client.dispatch(task_type, payload)
                 if tid:
                     delegated_count += 1
+                    slots_remaining -= 1
                     log_message(
                         "production",
                         f"delegated {task_type} to remote host",
                         details={"task_id": tid[:8], "cycle": cycle_id},
                     )
+                else:
+                    # Host returned None — likely full, stop trying this round
+                    slots_remaining = 0
             except Exception as exc:
                 log_message(
                     "production",
                     f"delegation dispatch failed for {task_type}: {exc}",
                     severity="warning",
                 )
+                slots_remaining = 0  # Stop on error
 
         if delegated_count:
             log_message(
                 "production",
                 f"cycle {cycle_id}: delegated {delegated_count} tasks to remote hosts",
-                details={"backlog": backlog, "heavy_backlog": heavy_backlog},
+                details={"backlog": backlog, "total_available": total_available},
             )
 
     def _build_delegation_payload(
@@ -608,6 +655,178 @@ class ProductionManager:
             payload["action"] = "idle_job"
 
         return payload
+
+    # ------------------------------------------------------------------
+    # Delegation result ingestion
+    # ------------------------------------------------------------------
+
+    def _handle_delegation_result(
+        self, task_id: str, task_type: str, status: str, result: Optional[Dict[str, Any]]
+    ) -> None:
+        """Callback fired when a delegated task completes. Ingests results back
+        into the local pipeline."""
+        if status != "completed" or not result:
+            log_message(
+                "production",
+                f"delegation result: {task_type} {status}",
+                severity="warning" if status == "failed" else "info",
+                details={"task_id": task_id[:8], "error": (result or {}).get("error")},
+            )
+            return
+
+        try:
+            handler = self._RESULT_HANDLERS.get(task_type)
+            if handler:
+                handler(self, task_id, result)
+            else:
+                log_message("production", f"no result handler for {task_type}", severity="debug")
+        except Exception as exc:
+            log_message(
+                "production",
+                f"result ingestion failed for {task_type}: {exc}",
+                severity="warning",
+                details={"task_id": task_id[:8]},
+            )
+
+    def _ingest_candidate_training(self, task_id: str, result: Dict[str, Any]) -> None:
+        """Import a remotely-trained model candidate into the local pipeline."""
+        if not result.get("trained"):
+            return
+
+        model_file = result.get("model_file")
+        evaluation = result.get("evaluation", {})
+        score = result.get("score", 0.0)
+        params = result.get("params", {})
+
+        log_message(
+            "production",
+            f"received trained model from delegation: score={score:.4f}",
+            details={"task_id": task_id[:8], "params": params, "model_file": model_file},
+        )
+
+        # If a model file was returned, attempt to fetch it from the remote
+        if model_file and self._delegation_client:
+            try:
+                self._fetch_result_file(task_id, model_file, "models")
+            except Exception as exc:
+                log_message("production", f"model file transfer failed: {exc}", severity="warning")
+
+        # Record evaluation for the optimizer
+        if evaluation and hasattr(self.pipeline, 'optimizer'):
+            signals = result.get("signals", {})
+            if signals:
+                try:
+                    self.pipeline.optimizer.update(
+                        params,
+                        score,
+                        signals=signals,
+                    )
+                    log_message("production", "remote training result fed to optimizer")
+                except Exception as exc:
+                    log_message("production", f"optimizer update from remote failed: {exc}", severity="warning")
+
+    def _ingest_data_ingest(self, task_id: str, result: Dict[str, Any]) -> None:
+        """Merge remotely downloaded OHLCV data into local data store."""
+        details = result.get("details", [])
+        pairs_with_data = [d for d in details if d.get("records", 0) > 0]
+
+        if pairs_with_data:
+            log_message(
+                "production",
+                f"data ingest complete: {len(pairs_with_data)} pairs with data",
+                details={"task_id": task_id[:8], "total": result.get("pairs_processed", 0)},
+            )
+            # Fetch result files from remote
+            for d in pairs_with_data:
+                fname = d.get("file")
+                if fname and self._delegation_client:
+                    try:
+                        self._fetch_result_file(task_id, fname, "data/historical_ohlcv")
+                    except Exception:
+                        pass
+
+    def _ingest_ghost_metrics(self, task_id: str, result: Dict[str, Any]) -> None:
+        """Record ghost trading metrics from remote computation."""
+        metrics = result.get("metrics", {})
+        if not metrics:
+            return
+
+        log_message(
+            "production",
+            f"ghost metrics received: {metrics.get('total_trades', 0)} trades, "
+            f"win_rate={metrics.get('win_rate', 0):.2%}",
+            details={"task_id": task_id[:8], "metrics": metrics},
+        )
+
+        # Feed metrics to pipeline if available
+        if hasattr(self.pipeline, 'metrics'):
+            try:
+                self.pipeline.metrics.record(
+                    MetricStage.GHOST_TRADING,
+                    {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))},
+                    category="delegation_aggregate",
+                    meta={"task_id": task_id[:8], "source": "delegation"},
+                )
+            except Exception:
+                pass
+
+    def _ingest_ghost_trading(self, task_id: str, result: Dict[str, Any]) -> None:
+        """Record ghost trading simulation results."""
+        summary = result.get("summary", {})
+        trades = result.get("trades", [])
+
+        if not summary and not trades:
+            return
+
+        log_message(
+            "production",
+            f"ghost trading sim: {summary.get('total_trades', 0)} trades, "
+            f"win_rate={summary.get('win_rate', 0):.2%}, "
+            f"total_profit={summary.get('total_profit', 0):.4f}",
+            details={"task_id": task_id[:8]},
+        )
+
+    def _ingest_background_refresh(self, task_id: str, result: Dict[str, Any]) -> None:
+        """Handle background refresh results."""
+        job_type = result.get("job_type", "unknown")
+        log_message(
+            "production",
+            f"background refresh ({job_type}) complete",
+            details={"task_id": task_id[:8], "result": result},
+        )
+
+    def _fetch_result_file(self, task_id: str, filename: str, dest_subdir: str) -> Optional[Path]:
+        """Download a result file from the remote host that completed the task."""
+        if not self._delegation_client:
+            return None
+
+        try:
+            from web.delegation.models import DelegatedTask
+            db_task = DelegatedTask.objects.filter(task_id=task_id).first()
+            if not db_task or not db_task.host:
+                return None
+
+            host = db_task.host
+            url_path = f"/tasks/{task_id}/files/{filename}"
+            data = self._delegation_client._http_get(host.host, host.port, url_path, host.api_token)
+            if data and isinstance(data, bytes):
+                dest_dir = Path(dest_subdir)
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = dest_dir / filename
+                dest.write_bytes(data)
+                log_message("production", f"downloaded result file: {filename}")
+                return dest
+        except Exception as exc:
+            log_message("production", f"file download failed: {exc}", severity="warning")
+        return None
+
+    _RESULT_HANDLERS = {
+        "candidate_training": _ingest_candidate_training,
+        "data_ingest": _ingest_data_ingest,
+        "ghost_metrics": _ingest_ghost_metrics,
+        "ghost_trading": _ingest_ghost_trading,
+        "background_refresh": _ingest_background_refresh,
+    }
 
     # ------------------------------------------------------------------
     # Helpers

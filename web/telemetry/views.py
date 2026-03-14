@@ -185,11 +185,32 @@ class BusScheduleView(APIView):
             bus_actions = transition.get("bus_actions") if isinstance(transition, dict) else []
 
         ghost_schedule = []
+        route_diagnostics = []
         if isinstance(scheduler, list):
             for entry in scheduler:
                 if not isinstance(entry, dict):
                     continue
+                route_status = entry.get("status", "unknown")
                 directive = entry.get("last_directive")
+
+                # Include diagnostic info for all routes (active, warming, waiting)
+                diag = {
+                    "symbol": entry.get("symbol"),
+                    "status": route_status,
+                    "history_points": entry.get("history_points", 0),
+                    "evaluation_count": entry.get("evaluation_count", 0),
+                    "last_filter_reason": entry.get("last_filter_reason", ""),
+                    "price": _safe_float(entry.get("price")),
+                    "updated_at": entry.get("last_update"),
+                }
+                # Include trade direction info if available
+                if entry.get("last_trade_action"):
+                    diag["last_trade_action"] = entry.get("last_trade_action")
+                    diag["last_trade_price"] = _safe_float(entry.get("last_trade_price"))
+                    diag["expected_next"] = entry.get("expected_next")
+                route_diagnostics.append(diag)
+
+                # Build ghost schedule from routes with directives
                 if not isinstance(directive, dict):
                     continue
                 size = _safe_float(directive.get("size"))
@@ -211,6 +232,12 @@ class BusScheduleView(APIView):
                 )
         ghost_schedule.sort(key=lambda item: item.get("usd_value", 0.0), reverse=True)
         ghost_schedule = ghost_schedule[:16]
+
+        # Summarize route statuses for quick overview
+        status_counts = {}
+        for diag in route_diagnostics:
+            s = diag.get("status", "unknown")
+            status_counts[s] = status_counts.get(s, 0) + 1
 
         live_schedule = []
         if isinstance(bus_actions, list):
@@ -264,7 +291,10 @@ class BusScheduleView(APIView):
             "summary": {
                 "bus_actions_pending": bool(risk_flags.get("bus_actions_pending")) if isinstance(risk_flags, dict) else False,
                 "bus_action_count": len(bus_actions) if isinstance(bus_actions, list) else 0,
+                "route_status_counts": status_counts,
+                "total_routes": len(route_diagnostics),
             },
+            "route_diagnostics": route_diagnostics[:30],
         }
         return Response(payload, status=status.HTTP_200_OK)
 

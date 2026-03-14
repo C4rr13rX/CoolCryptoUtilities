@@ -145,17 +145,14 @@ class TrainingPipeline:
             os.environ.setdefault("TRAIN_LIGHTWEIGHT", "1")
             os.environ.setdefault("TRAIN_BATCH_SIZE", "12")
         self.db = db or get_db()
-        self.model_templates = ["tiny", "base", "robust"]
-        if self.system_profile.memory_pressure or self.system_profile.is_low_power:
-            # keep template search small on low-power hosts
-            self.model_templates = ["tiny", "base"]
-        base_search = {
-            "learning_rate": (1e-5, 5e-4),
-            "epochs": (1.0, 4.0),
-        }
-        if self.system_profile.memory_pressure or self.system_profile.is_low_power:
-            base_search["epochs"] = (1.0, 2.0)
-        base_search["template_idx"] = (0, float(len(self.model_templates) - 1))
+        # Maturity phase controls template/LR exploration breadth.
+        # Phase 1 (conservative): single best template, narrow LR — get ONE working model
+        # Phase 2 (baseline): two templates, moderate LR — after first promotion
+        # Phase 3 (exploration): all templates, full LR — after sustained profitability
+        self._maturity_phase: int = 1
+        self._promotion_count: int = 0
+        self._all_templates = ["tiny", "base", "robust"]
+        self._apply_maturity_constraints()
         self.optimizer = optimizer or BayesianBruteForceOptimizer(base_search)
         self.model_dir = model_dir or Path(os.getenv("MODEL_DIR", "models"))
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -443,6 +440,59 @@ class TrainingPipeline:
         if drift > 0.1 and "robust" in self.model_templates:
             return "robust"
         return choice
+
+    def _apply_maturity_constraints(self) -> None:
+        """Adjust templates and search bounds based on maturity phase."""
+        if self._maturity_phase == 1:
+            # Conservative: only "tiny" template, narrow LR
+            self.model_templates = ["tiny"]
+            base_search = {
+                "learning_rate": (5e-5, 3e-4),
+                "epochs": (1.0, 3.0),
+                "template_idx": (0.0, 0.0),
+            }
+        elif self._maturity_phase == 2:
+            # Baseline: "tiny" + "base", moderate LR
+            self.model_templates = ["tiny", "base"]
+            base_search = {
+                "learning_rate": (1e-5, 4e-4),
+                "epochs": (1.0, 4.0),
+                "template_idx": (0.0, 1.0),
+            }
+        else:
+            # Exploration: all templates, full range
+            self.model_templates = [t for t in self._all_templates]
+            if self.system_profile.memory_pressure or self.system_profile.is_low_power:
+                self.model_templates = ["tiny", "base"]
+            base_search = {
+                "learning_rate": (1e-5, 5e-4),
+                "epochs": (1.0, 4.0),
+                "template_idx": (0.0, float(len(self.model_templates) - 1)),
+            }
+            if self.system_profile.memory_pressure or self.system_profile.is_low_power:
+                base_search["epochs"] = (1.0, 2.0)
+
+        # Update optimizer bounds if it exists
+        if hasattr(self, 'optimizer'):
+            for name, (lo, hi) in base_search.items():
+                if name in self.optimizer.params:
+                    self.optimizer.params[name].bounds = (lo, hi)
+
+    def _advance_maturity_phase(self) -> None:
+        """Called after a successful model promotion. Advances to next phase."""
+        self._promotion_count += 1
+        old_phase = self._maturity_phase
+        if self._promotion_count >= 1 and self._maturity_phase == 1:
+            self._maturity_phase = 2
+        elif self._promotion_count >= 3 and self._maturity_phase == 2:
+            self._maturity_phase = 3
+        if self._maturity_phase != old_phase:
+            self._apply_maturity_constraints()
+            log_message(
+                "pipeline",
+                f"maturity phase advanced: {old_phase} -> {self._maturity_phase} "
+                f"(promotions: {self._promotion_count})",
+            )
 
     def _evaluate_active_model(
         self,
@@ -1368,6 +1418,7 @@ class TrainingPipeline:
             )
         if evaluation:
             self._print_ghost_summary(evaluation)
+        self._advance_maturity_phase()
         self._save_state()
         return version
 
@@ -2536,6 +2587,9 @@ class TrainingPipeline:
                 saved_bias = tp_state.get("horizon_bias")
                 if isinstance(saved_bias, dict) and saved_bias:
                     self.data_loader.tune_horizon_bias(saved_bias, min_delta=0.0)
+                self._maturity_phase = int(tp_state.get("maturity_phase", 1))
+                self._promotion_count = int(tp_state.get("promotion_count", 0))
+                self._apply_maturity_constraints()
 
     def _save_state(self) -> None:
         try:
@@ -2553,6 +2607,8 @@ class TrainingPipeline:
             "calibration_scale": float(self.calibration_scale),
             "calibration_offset": float(self.calibration_offset),
             "horizon_bias": self.data_loader.horizon_bias_snapshot(),
+            "maturity_phase": self._maturity_phase,
+            "promotion_count": self._promotion_count,
         }
         try:
             self.db.save_state(state)
@@ -2642,7 +2698,7 @@ class TrainingPipeline:
             ghost_pred_margin = 0.0
             ghost_real_margin = 0.0
             ghost_win_rate = 0.0
-        thresholds = [0.3, 0.4, 0.5, 0.6, 0.7]
+        thresholds = [0.5, 0.55, 0.6, 0.65, 0.7]
 
         summary = {
             "dir_accuracy": dir_accuracy,
@@ -4253,6 +4309,7 @@ class TrainingPipeline:
             _add(key, evaluation.get(key))
         _add("ghost_win_rate", evaluation.get("ghost_win_rate", evaluation.get("ghost_win_rate_best")))
         _add("ghost_win_rate_best", evaluation.get("ghost_win_rate_best"))
+        _add("false_positive_rate", evaluation.get("false_positive_rate_best", evaluation.get("false_positive_rate")))
         _add("ghost_realized_margin_best", evaluation.get("ghost_realized_margin_best"))
         _add("ghost_pred_margin_best", evaluation.get("ghost_pred_margin_best"))
         _add("ghost_trades_best", evaluation.get("ghost_trades_best"))

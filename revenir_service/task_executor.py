@@ -57,13 +57,14 @@ class TaskExecutor:
         self,
         work_dir: Path,
         monitor: ResourceMonitor,
-        max_concurrent: int = 2,
+        max_concurrent: int = 0,  # 0 = auto (based on CPU count)
         callback_url: str = "",
         api_token: str = "",
     ) -> None:
         self._work_dir = work_dir
         self._monitor = monitor
-        self._max_concurrent = max_concurrent
+        self._base_max_concurrent = max_concurrent
+        self._max_concurrent = max_concurrent or self._compute_max_concurrent()
         self._callback_url = callback_url
         self._api_token = api_token
         self._lock = threading.Lock()
@@ -73,24 +74,57 @@ class TaskExecutor:
         (self._work_dir / "tasks").mkdir(exist_ok=True)
         (self._work_dir / "results").mkdir(exist_ok=True)
 
+    def _compute_max_concurrent(self) -> int:
+        """Dynamically compute max concurrent tasks based on CPU count and pressure."""
+        try:
+            import multiprocessing
+            cpu_count = multiprocessing.cpu_count()
+        except Exception:
+            cpu_count = 2
+        base = max(2, cpu_count)
+        snap = self._monitor.snapshot()
+        cpu_pct = snap.get("cpu_percent", 0)
+        mem_pct = snap.get("memory_percent", 0)
+        # Scale down from base as pressure increases
+        if cpu_pct > 85 or mem_pct > 85:
+            return max(1, base // 4)
+        elif cpu_pct > 70 or mem_pct > 70:
+            return max(1, base // 2)
+        elif cpu_pct > 50 or mem_pct > 50:
+            return max(2, int(base * 0.75))
+        return base
+
     @property
     def active_count(self) -> int:
         with self._lock:
             return len(self._active)
 
     @property
+    def available_slots(self) -> int:
+        """How many more tasks can be accepted right now."""
+        if self._monitor.should_pause:
+            return 0
+        effective = self._compute_max_concurrent() if not self._base_max_concurrent else self._max_concurrent
+        with self._lock:
+            return max(0, effective - len(self._active))
+
+    @property
     def max_concurrent(self) -> int:
+        if not self._base_max_concurrent:
+            self._max_concurrent = self._compute_max_concurrent()
         return self._max_concurrent
 
     @max_concurrent.setter
     def max_concurrent(self, value: int) -> None:
+        self._base_max_concurrent = value
         self._max_concurrent = max(1, value)
 
     def can_accept(self) -> bool:
         if self._monitor.should_pause:
             return False
+        effective = self._compute_max_concurrent() if not self._base_max_concurrent else self._max_concurrent
         with self._lock:
-            return len(self._active) < self._max_concurrent
+            return len(self._active) < effective
 
     def submit(self, task_id: str, task_type: str, payload: Dict, env_keys: Dict[str, str]) -> bool:
         """Submit a task for execution. Returns False if at capacity."""

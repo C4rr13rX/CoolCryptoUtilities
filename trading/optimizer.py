@@ -33,6 +33,7 @@ DEFAULT_SIGNAL_SPECS: Dict[str, SignalSpec] = {
     "positive_ratio": SignalSpec(weight=0.05, goal="max", clip=(0.0, 1.0)),
     "avg_duration_sec": SignalSpec(weight=0.05, goal="min"),
     "ghost_trades_best": SignalSpec(weight=0.05, goal="max"),
+    "false_positive_rate": SignalSpec(weight=0.30, goal="min", clip=(0.0, 1.0)),
 }
 
 
