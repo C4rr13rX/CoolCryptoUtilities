@@ -10,6 +10,7 @@ from typing import Any, Callable, Deque, Dict, Iterable, List, Optional, Sequenc
 
 import numpy as np
 from trading.metrics import MetricsCollector, MetricStage
+from trading.cdcl_solver import CDCLTradingSolver
 
 from db import get_db, TradingDatabase
 from trading.data_stream import _split_symbol
@@ -321,7 +322,7 @@ class BusScheduler:
         self._gas_alert_cb: Optional[Callable[[str, float], None]] = None
         self._last_gas_alert_ts: float = 0.0
         self._gas_alert_interval: float = 180.0
-        self._trident = TridentUSSATSolver()
+        self._trident = CDCLTradingSolver()
         self.gas_roundtrip_fee = float(os.getenv("SCHEDULER_GAS_ROUNDTRIP_RATIO", os.getenv("GAS_ROUNDTRIP_FEE_RATIO", "0.0025")))
         self.slippage_bps = int(os.getenv("SCHEDULER_SLIPPAGE_BPS", "50"))
         self.spread_floor = float(os.getenv("SCHEDULER_SPREAD_FLOOR", "0.002"))
@@ -444,6 +445,7 @@ class BusScheduler:
             "risk_budget": risk_budget,
             "direction_prob": direction_prob,
             "trade_history": state.trade_history,
+            "available_capital": available_quote,
         }
 
         money_button = self._money_button_candidate(
@@ -726,6 +728,17 @@ class BusScheduler:
                 summary["expected_next"] = "exit" if last_trade.action == "enter" else "enter"
             out.append(summary)
         return out
+
+    def cdcl_status(self) -> Dict[str, Any]:
+        """Expose CDCL solver diagnostics: SAT rate, clause failures, no-goods."""
+        return self._trident.status()
+
+    def last_unsat_reason(self) -> Optional[str]:
+        """Return the reason from the last UNSAT result, or None if last call was SAT."""
+        unsat = self._trident.last_unsat
+        if unsat is None:
+            return None
+        return f"{unsat.clause}: {unsat.resolution}"
 
     # ------------------------------------------------------------------
     # Internal helpers

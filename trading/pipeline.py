@@ -152,7 +152,7 @@ class TrainingPipeline:
         self._maturity_phase: int = 1
         self._promotion_count: int = 0
         self._all_templates = ["tiny", "base", "robust"]
-        self._apply_maturity_constraints()
+        base_search = self._apply_maturity_constraints()
         self.optimizer = optimizer or BayesianBruteForceOptimizer(base_search)
         self.model_dir = model_dir or Path(os.getenv("MODEL_DIR", "models"))
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -441,7 +441,7 @@ class TrainingPipeline:
             return "robust"
         return choice
 
-    def _apply_maturity_constraints(self) -> None:
+    def _apply_maturity_constraints(self) -> dict:
         """Adjust templates and search bounds based on maturity phase."""
         if self._maturity_phase == 1:
             # Conservative: only "tiny" template, narrow LR
@@ -477,6 +477,7 @@ class TrainingPipeline:
             for name, (lo, hi) in base_search.items():
                 if name in self.optimizer.params:
                     self.optimizer.params[name].bounds = (lo, hi)
+        return base_search
 
     def _advance_maturity_phase(self) -> None:
         """Called after a successful model promotion. Advances to next phase."""
@@ -1512,6 +1513,8 @@ class TrainingPipeline:
             sample_count = int(inputs["price_vol_input"].shape[0])
             asset_ids = inputs["asset_id_input"].reshape(-1)
             asset_diversity = int(len(np.unique(asset_ids)))
+            # Push OHLCV samples to W1z4rD Vision Node for Hebbian training (best-effort, non-blocking)
+            self._wizard_push_ohlcv(inputs, focus_assets=focus_assets)
             price_slice = inputs["price_vol_input"][..., 0]
             price_volatility = float(np.std(price_slice, axis=1).mean()) if sample_count else 0.0
             headlines_flat = inputs["headline_text"].reshape(-1)
@@ -2566,6 +2569,54 @@ class TrainingPipeline:
         if mean_weight > 0:
             weights = weights / mean_weight
         return weights.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # W1z4rD Vision Node integration
+    # ------------------------------------------------------------------
+
+    def _wizard_push_ohlcv(
+        self,
+        inputs: Dict[str, Any],
+        *,
+        focus_assets: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Push OHLCV samples to W1z4rD neuro/train (best-effort, swallows all errors)."""
+        try:
+            from trading.wizard_trainer import get_trainer
+            trainer = get_trainer()
+            if not trainer.is_online():
+                return
+            price_vol = inputs.get("price_vol_input")
+            asset_ids = inputs.get("asset_id_input")
+            if price_vol is None or asset_ids is None:
+                return
+            asset_lexicon = getattr(self.data_loader, "asset_lexicon", {})
+            # Send up to 32 samples per asset, using first price column as close price
+            idx_to_sym = {int(k): str(v) for k, v in asset_lexicon.items()} if asset_lexicon else {}
+            seen_syms: set = set()
+            flat_ids = asset_ids.reshape(-1)
+            price_flat = price_vol[..., 0].reshape(len(flat_ids), -1) if price_vol.ndim >= 2 else None
+            vol_flat = price_vol[..., 1].reshape(len(flat_ids), -1) if price_vol.shape[-1] >= 2 else None
+            for row_idx, asset_id in enumerate(flat_ids[:256]):
+                sym = idx_to_sym.get(int(asset_id), f"asset_{asset_id}")
+                if sym in seen_syms:
+                    continue
+                seen_syms.add(sym)
+                if price_flat is not None:
+                    prices = [(float(i), float(p), float(vol_flat[row_idx, i]) if vol_flat is not None else 0.0)
+                              for i, p in enumerate(price_flat[row_idx]) if float(p) > 0]
+                    if prices:
+                        trainer.push_ohlcv_batch(sym, prices, max_items=32)
+        except Exception:
+            pass  # W1z4rD training is always best-effort
+
+    def wizard_query_regime(self, symbol: str, current_price: float) -> Optional[str]:
+        """Query W1z4rD for a market-regime context string for the given symbol."""
+        try:
+            from trading.wizard_trainer import get_trainer
+            return get_trainer().query_regime(symbol, current_price)
+        except Exception:
+            return None
 
     def _load_state(self) -> None:
         try:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -206,6 +206,10 @@ class BayesianBruteForceOptimizer:
             composite_score += self._score_signals(signals)
             self.signal_history.append({"signals": dict(signals), "score": composite_score})
             self.signal_history = self.signal_history[-256:]
+            # Adaptive signal weight update: signals that correlated with
+            # above-average scores get a small weight boost; below-average get penalized.
+            if len(self.signal_history) >= 16:
+                self._adapt_signal_weights()
         if composite_score > self.best_score:
             self.best_score = composite_score
             self.best_params = dict(params)
@@ -232,6 +236,74 @@ class BayesianBruteForceOptimizer:
             state.variance = max(min(state.variance, (hi - lo) ** 2), 1e-6)
         self._update_count += 1
         return composite_score
+
+    def _adapt_signal_weights(self, *, lr: float = 0.04, min_weight: float = 0.01) -> None:
+        """
+        Adjust signal_specs weights based on observed correlation with score.
+
+        For each signal that appeared in the last N history entries, we compute
+        whether higher signal values corresponded to higher composite scores.
+        Signals that are currently predictive get a small weight increase;
+        unpredictive or inversely-correlated signals get a small decrease.
+
+        This runs every update that has enough history — the living-organism
+        equivalent of the system tuning its own attention to what matters.
+        """
+        window = self.signal_history[-64:]
+        scores = [float(entry.get("score", 0.0)) for entry in window]
+        score_mean = sum(scores) / max(len(scores), 1)
+        score_std = max(1e-6, math.sqrt(sum((s - score_mean) ** 2 for s in scores) / max(len(scores), 1)))
+
+        signal_corr: Dict[str, Tuple[float, int]] = {}  # name → (sum_corr, count)
+        for entry, score in zip(window, scores):
+            sigs = entry.get("signals") or {}
+            z_score = (score - score_mean) / score_std
+            for name, val in sigs.items():
+                if val is None:
+                    continue
+                try:
+                    v = float(val)
+                except (TypeError, ValueError):
+                    continue
+                spec = self.signal_specs.get(name)
+                if spec is None:
+                    continue
+                if spec.clip:
+                    lo, hi = spec.clip
+                    v = max(min(v, hi), lo)
+                # Normalize signal value to [-1, +1] range using clip bounds or raw
+                lo_v, hi_v = (spec.clip or (v - 1.0, v + 1.0))
+                span = max(hi_v - lo_v, 1e-9)
+                v_norm = ((v - lo_v) / span) * 2.0 - 1.0
+                # Flip sign for "min" goals (lower is better → we want anticorrelation)
+                if spec.goal == "min":
+                    v_norm = -v_norm
+                corr = v_norm * z_score
+                prev_sum, prev_count = signal_corr.get(name, (0.0, 0))
+                signal_corr[name] = (prev_sum + corr, prev_count + 1)
+
+        # Apply weight updates — only small nudges, no dramatic swings
+        total_weight_before = sum(s.weight for s in self.signal_specs.values())
+        for name, (corr_sum, count) in signal_corr.items():
+            if count < 8 or name not in self.signal_specs:
+                continue
+            avg_corr = corr_sum / count  # avg_corr ∈ [-1, +1] roughly
+            spec = self.signal_specs[name]
+            # Nudge: positive corr → slight weight increase, negative → decrease
+            delta = lr * avg_corr * spec.weight
+            new_weight = max(min_weight, spec.weight + delta)
+            spec.weight = new_weight
+
+        # Renormalize to keep total weight ≈ same as before
+        total_weight_after = sum(s.weight for s in self.signal_specs.values())
+        if total_weight_after > 0 and total_weight_before > 0:
+            scale = total_weight_before / total_weight_after
+            for spec in self.signal_specs.values():
+                spec.weight = max(min_weight, spec.weight * scale)
+
+    def signal_weight_summary(self) -> Dict[str, float]:
+        """Return current signal weights for diagnostic display."""
+        return {name: round(spec.weight, 4) for name, spec in self.signal_specs.items()}
 
     # ------------------------------------------------------------------
     # Persistence helpers

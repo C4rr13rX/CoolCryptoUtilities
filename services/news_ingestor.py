@@ -43,7 +43,138 @@ DEFAULT_SOURCES: Sequence[NewsSource] = (
     NewsSource(name="World Bank Blogs", url="https://blogs.worldbank.org/feed", topics=("MACRO", "DEVELOPMENT")),
     NewsSource(name="Financial Stability Board", url="https://www.fsb.org/feed/press/", topics=("REGULATION", "MACRO")),
     NewsSource(name="Chainalysis Insights", url="https://blog.chainalysis.com/feed", topics=("RISK", "ONCHAIN")),
+    # Additional sources
+    NewsSource(name="Bitcoin Magazine", url="https://bitcoinmagazine.com/feed", topics=("BTC", "MINING", "LIGHTNING")),
+    NewsSource(name="DeFi Llama Blog", url="https://defillama.com/blog/rss.xml", topics=("DEFI", "TVL", "PROTOCOL")),
+    NewsSource(name="Messari", url="https://messari.io/rss/news.xml", topics=("MARKETS", "RESEARCH", "ONCHAIN")),
+    NewsSource(name="Dune Analytics Blog", url="https://dune.com/blog/rss.xml", topics=("ONCHAIN", "ANALYTICS")),
+    NewsSource(name="Bankless", url="https://bankless.ghost.io/rss/", topics=("ETH", "DEFI", "STAKING")),
+    NewsSource(name="The Block", url="https://www.theblock.co/rss.xml", topics=("BTC", "ETH", "MARKETS", "REGULATION")),
+    NewsSource(name="CryptoSlate", url="https://cryptoslate.com/feed/", topics=("ALTCOIN", "MARKETS", "NFT")),
+    NewsSource(name="Protos", url="https://protos.com/feed/", topics=("MARKETS", "REGULATION", "STABLECOIN")),
+    NewsSource(name="SEC Press Releases", url="https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&dateb=&owner=include&count=20&search_text=&output=atom", topics=("REGULATION", "SEC", "ENFORCEMENT")),
 )
+
+# Token synonym map: expand common ticker variants to canonical form for better matching.
+# Key = variant (lowercase), value = canonical token(s) to add.
+TOKEN_SYNONYMS: Dict[str, List[str]] = {
+    "weth": ["eth", "ethereum"],
+    "wbtc": ["btc", "bitcoin"],
+    "eth": ["ethereum"],
+    "btc": ["bitcoin"],
+    "matic": ["polygon"],
+    "pol": ["polygon"],
+    "sol": ["solana"],
+    "bnb": ["binance"],
+    "avax": ["avalanche"],
+    "link": ["chainlink"],
+    "uni": ["uniswap"],
+    "aave": ["aavefinance"],
+    "arb": ["arbitrum"],
+    "op": ["optimism"],
+    "steth": ["eth", "lido", "staking"],
+    "reth": ["eth", "rocketpool", "staking"],
+    "cbeth": ["eth", "coinbase", "staking"],
+    "usdc": ["stablecoin", "usd", "circle"],
+    "usdt": ["stablecoin", "usd", "tether"],
+    "dai": ["stablecoin", "usd", "makerdao"],
+    "frax": ["stablecoin", "usd"],
+    "defi": ["decentralizedfinance"],
+    "l2": ["layer2", "rollup"],
+    "nft": ["nonfungible", "collectible"],
+    "cbdc": ["centralbank", "digitalcurrency"],
+    "dex": ["decentralizedexchange", "swap"],
+    "cex": ["centralizedexchange", "exchange"],
+    "tvl": ["totalvaluelocked", "defi"],
+    "yield": ["apr", "apy", "farming"],
+}
+
+
+def _expand_token_synonyms(tokens: Set[str]) -> Set[str]:
+    """Return the input token set expanded with synonyms from TOKEN_SYNONYMS."""
+    expanded = set(tokens)
+    for tok in list(tokens):
+        for synonym in TOKEN_SYNONYMS.get(tok.lower(), []):
+            expanded.add(synonym.lower())
+    return expanded
+
+
+# ---------------------------------------------------------------------------
+# Lightweight rule-based sentiment scorer (no external NLP dependency)
+# ---------------------------------------------------------------------------
+
+_POSITIVE_WORDS = frozenset(
+    "surge surging rally rallied breakout bullish buy buying adoption growth approve approved "
+    "launch launched partner partnership upgrade upgraded integrat integrate invest investment "
+    "profit profitable record high all-time gain gains win winner recovery recover milestone "
+    "accelerat expand expansion institutional adoption strong outperform positive boost "
+    "reward rewards staking yield airdrop grant approve legitimize mainstream".split()
+)
+_NEGATIVE_WORDS = frozenset(
+    "crash crashing dump dumping hack hacked exploit exploited drain drained bear bearish "
+    "sell selling ban banned restrict restricted fine fined penalt penalty lawsuit sue sued "
+    "lose loss losing decline declining fall falling drop dropping plunge plunging breach "
+    "fail failure bankrupt liquidat liquidation insolvenc insolvent fraud scam rug rugpull "
+    "sanction sanctioned attack attacked vulnerability exposure delayed delay cancel cancelled "
+    "suspend suspended withdraw withdrawal negative weak worse worst risk risky concern warning "
+    "slump slumping collapse collapsing volatility doubt uncertain uncertainty fear".split()
+)
+_INTENSIFIERS = frozenset("major massive severe extreme unprecedented record significant sharply rapidly quickly".split())
+_NEGATORS = frozenset("not no never neither nor without hardly barely scarcely".split())
+
+
+def score_sentiment(text: str) -> Tuple[str, float]:
+    """
+    Return (label, score) where label ∈ {"positive","negative","neutral"} and
+    score ∈ [-1, +1].  Uses a simple bag-of-words with negation handling.
+    No external dependencies required.
+    """
+    words = re.findall(r"[a-z]+", text.lower())
+    pos = 0.0
+    neg = 0.0
+    intensifier_active = False
+    negation_active = False
+    negation_window = 0
+
+    for word in words:
+        if word in _INTENSIFIERS:
+            intensifier_active = True
+            continue
+        if word in _NEGATORS:
+            negation_active = True
+            negation_window = 4
+            continue
+        boost = 1.5 if intensifier_active else 1.0
+        intensifier_active = False
+        if negation_window > 0:
+            negation_window -= 1
+        else:
+            negation_active = False
+
+        is_pos = word in _POSITIVE_WORDS
+        is_neg = word in _NEGATIVE_WORDS
+        if is_pos:
+            if negation_active:
+                neg += boost
+            else:
+                pos += boost
+        if is_neg:
+            if negation_active:
+                pos += boost * 0.5
+            else:
+                neg += boost
+
+    total = pos + neg
+    if total < 1.0:
+        return "neutral", 0.0
+    raw = (pos - neg) / total  # [-1, +1]
+    if raw > 0.15:
+        label = "positive"
+    elif raw < -0.15:
+        label = "negative"
+    else:
+        label = "neutral"
+    return label, round(raw, 3)
 
 
 class EthicalNewsIngestor:
@@ -92,6 +223,8 @@ class EthicalNewsIngestor:
         deadline: Optional[float] = None,
     ) -> List[dict]:
         keyword_set = {token.lower() for token in tokens if token}
+        # Expand with synonyms so "WETH" searches also match "ETH" articles
+        keyword_set_expanded = _expand_token_synonyms(keyword_set)
         rows: List[dict] = []
         for source in self.sources:
             if deadline and (deadline - time.time()) <= 0:
@@ -101,7 +234,7 @@ class EthicalNewsIngestor:
                 remaining = max(0.0, deadline - time.time())
                 if remaining < 0.25:
                     break
-            source_keywords = keyword_set | {topic.lower() for topic in getattr(source, "topics", []) if topic}
+            source_keywords = keyword_set_expanded | {topic.lower() for topic in getattr(source, "topics", []) if topic}
             timeout = None
             if remaining is not None:
                 timeout = max(0.5, min(self._request_timeout, remaining))
@@ -121,12 +254,14 @@ class EthicalNewsIngestor:
                 selected_tokens = self._select_tokens(article_tokens, source_keywords)
                 if not selected_tokens:
                     continue
+                sentiment_label, sentiment_score = score_sentiment(body)
                 rows.append(
                     {
                         "timestamp": int(ts),
                         "headline": title[:256] or summary[:256],
                         "article": summary or title,
-                        "sentiment": "neutral",
+                        "sentiment": sentiment_label,
+                        "sentiment_score": sentiment_score,
                         "tokens": sorted(selected_tokens),
                         "source": source.name,
                         "url": entry.get("link"),
@@ -297,7 +432,7 @@ class EthicalNewsIngestor:
 
     def _extract_tokens(self, text: str) -> Set[str]:
         tokens = set(re.findall(r"[A-Za-z0-9]{3,}", text.lower()))
-        return tokens
+        return _expand_token_synonyms(tokens)
 
     def _select_tokens(self, article_tokens: Set[str], keyword_set: Set[str]) -> Set[str]:
         if keyword_set:
