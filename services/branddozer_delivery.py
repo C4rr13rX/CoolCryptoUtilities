@@ -25,6 +25,7 @@ from django.db import close_old_connections, DatabaseError, OperationalError, co
 from django.utils import timezone
 
 from tools.ai_session import get_session_class, settings_for_role, session_provider_from_context
+from tools.c0d3rV2.delivery_runner import run_delivery_turn as _c0d3rv2_run
 from services.branddozer_ui import UISnapshotResult, capture_ui_screenshots
 from services.branddozer_jobs import update_job
 from services.branddozer_github import publish_project
@@ -163,32 +164,31 @@ def _normalize_reasoning(value: Optional[str]) -> Optional[str]:
     return _REASONING_MAP.get(key, str(value).strip())
 
 
+def _is_bedrock_provider(provider: str) -> bool:
+    return provider.strip().lower() in {"c0d3r", "coder", "bedrock"}
+
+
 def _is_codex_provider(provider: str) -> bool:
-    return provider.strip().lower() not in {"c0d3r", "coder", "bedrock"}
+    # Codex CLI removed — always False so legacy codex-specific checks are no-ops.
+    return False
+
 
 
 def _session_settings_for_run(run: DeliveryRun, role: str) -> Dict[str, Any]:
     """
-    Merge role defaults with run overrides while forcing full agent access.
+    Merge role defaults with run overrides.
     """
     provider = session_provider_from_context(run.context or {})
     settings = settings_for_role(provider, role)
     ctx = run.context or {}
-    if provider in {"c0d3r", "coder", "bedrock"}:
-        model = (ctx.get("c0d3r_model") or ctx.get("model") or "").strip()
-        reasoning = _normalize_reasoning(ctx.get("c0d3r_reasoning") or ctx.get("reasoning_effort"))
-    else:
-        model = (ctx.get("codex_model") or ctx.get("model") or "").strip()
-        reasoning = _normalize_reasoning(ctx.get("codex_reasoning") or ctx.get("reasoning_effort"))
+    model = (ctx.get("c0d3r_model") or ctx.get("model") or ctx.get("codex_model") or "").strip()
+    reasoning = _normalize_reasoning(
+        ctx.get("c0d3r_reasoning") or ctx.get("reasoning_effort") or ctx.get("codex_reasoning")
+    )
     if model:
         settings["model"] = model
     if reasoning:
         settings["reasoning_effort"] = reasoning
-    if provider not in {"c0d3r", "coder", "bedrock"}:
-        # Enforce full agent access regardless of overrides for Codex CLI.
-        settings["sandbox_mode"] = "danger-full-access"
-        settings["approval_policy"] = "never"
-        settings["bypass_sandbox_confirm"] = True
     return settings
 
 
@@ -588,7 +588,7 @@ def _codex_quota_exhausted(text: str) -> Optional[str]:
     ]
     for marker in markers:
         if marker in lowered:
-            return f"Codex unavailable: {marker}"
+            return f"AI provider unavailable: {marker}"
     return None
 
 def _codex_refusal(text: str) -> Optional[str]:
@@ -615,17 +615,17 @@ def _codex_refusal(text: str) -> Optional[str]:
     ]
     for marker in markers:
         if marker in lowered:
-            return f"Codex refusal detected: {marker}"
+            return f"AI provider refusal detected: {marker}"
     return None
 
 
 def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], reason: str) -> None:
     note = reason[:400]
-    _set_run_note(run, "Codex paused", note)
+    _set_run_note(run, "AI provider paused", note)
     run.status = "blocked"
     run.error = note
     context = dict(run.context or {})
-    context["codex_paused"] = {
+    context["ai_paused"] = {
         "reason": note,
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "session": str(session.id) if session else None,
@@ -636,7 +636,7 @@ def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], r
         _append_session_log(session, note)
         session.status = "blocked"
         session.save(update_fields=["status"])
-    title = "Codex credits exhausted"
+    title = "AI provider quota exhausted"
     exists = (
         BacklogItem.objects.filter(run=run, source="system", title=title)
         .exclude(status="done")
@@ -648,8 +648,8 @@ def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], r
             run=run,
             kind="risk",
             title=title,
-            description="Codex reported insufficient quota/credits. Add credits and resume the run.",
-            acceptance_criteria=["Credits restored", "Delivery run resumed and Codex sessions succeed"],
+            description="AI provider reported insufficient quota/credits. Add credits or switch providers and resume the run.",
+            acceptance_criteria=["Credits restored", "Delivery run resumed and AI sessions succeed"],
             priority=1,
             estimate_points=1,
             status="blocked",
@@ -659,9 +659,9 @@ def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], r
 
 def _handle_codex_refusal(run: DeliveryRun, session: Optional[DeliverySession], reason: str, *, block: bool = True) -> None:
     note = reason[:400]
-    _set_run_note(run, "Codex refusal", note)
+    _set_run_note(run, "AI provider refusal", note)
     context = dict(run.context or {})
-    context.setdefault("codex_refusals", []).append(
+    context.setdefault("ai_refusals", []).append(
         {"reason": note, "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "session": str(session.id) if session else None}
     )
     run.context = context
@@ -676,7 +676,7 @@ def _handle_codex_refusal(run: DeliveryRun, session: Optional[DeliverySession], 
         if block:
             session.status = "blocked"
             session.save(update_fields=["status"])
-    title = "Codex refused prompt"
+    title = "AI provider refused prompt"
     exists = (
         BacklogItem.objects.filter(run=run, source="system", title=title)
         .exclude(status="done")
@@ -688,8 +688,8 @@ def _handle_codex_refusal(run: DeliveryRun, session: Optional[DeliverySession], 
             run=run,
             kind="risk",
             title=title,
-            description="Codex declined to act on a prompt. Adjust prompt/scope and retry.",
-            acceptance_criteria=["Prompt adjusted and Codex completes task", "Run resumed"],
+            description="AI provider declined to act on a prompt. Adjust prompt/scope and retry.",
+            acceptance_criteria=["Prompt adjusted and AI provider completes task", "Run resumed"],
             priority=2,
             estimate_points=1,
             status="blocked" if block else "todo",
@@ -716,23 +716,23 @@ def _cleanup_run_sessions(run: DeliveryRun, reason: str = "stale session cleanup
 
 def _codex_budget_ok(run: DeliveryRun) -> Tuple[bool, Optional[str]]:
     provider = session_provider_from_context(run.context or {})
-    if not _is_codex_provider(provider):
+    if not _is_bedrock_provider(provider):
         return True, None
     usage = get_codex_usage()
     ctx = dict(run.context or {})
-    ctx["codex_usage"] = usage
+    ctx["ai_usage"] = usage
     run.context = ctx
     run.save(update_fields=["context"])
     reason = None
     five_remain = usage.get("five_hour_remaining_pct")
     if five_remain is not None and five_remain < CODEX_MIN_5H_REMAIN:
-        reason = f"Codex 5h window low ({five_remain}%)"
+        reason = f"AI provider 5h window low ({five_remain}%)"
     week_remain = usage.get("week_remaining_pct")
     if reason is None and week_remain is not None and week_remain < CODEX_MIN_WEEK_REMAIN:
-        reason = f"Codex weekly low ({week_remain}%)"
+        reason = f"AI provider weekly quota low ({week_remain}%)"
     credits = usage.get("credits_remaining")
     if reason is None and credits is not None and credits < CODEX_MIN_CREDITS:
-        reason = f"Codex credits low ({credits})"
+        reason = f"AI provider credits low ({credits})"
     return reason is None, reason
 
 def _estimate_eta_minutes(run: DeliveryRun, backlog: Optional[List[BacklogItem]] = None) -> int:
@@ -826,13 +826,12 @@ def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
             **ai_settings,
         )
         output = codex.send(prompt, stream=True)
-        if _is_codex_provider(provider):
-            exhausted = _codex_quota_exhausted(output)
-            refusal = _codex_refusal(output)
-            if exhausted:
-                _pause_run_for_codex(run, session, exhausted)
-            elif refusal:
-                _handle_codex_refusal(run, session, refusal, block=False)
+        exhausted = _codex_quota_exhausted(output)
+        refusal = _codex_refusal(output)
+        if exhausted:
+            _pause_run_for_codex(run, session, exhausted)
+        elif refusal:
+            _handle_codex_refusal(run, session, refusal, block=False)
         DeliveryArtifact.objects.create(
             project=run.project,
             run=run,
@@ -1783,29 +1782,40 @@ class DeliveryOrchestrator:
         max_iters = int(os.getenv("BRANDDOZER_SOLO_MAX_ITERS", "12"))
         plan = _load_solo_plan(run.id)
         if not plan:
-            _append_session_log(session, "Generating solo plan.")
+            _append_session_log(session, "Generating solo plan via C0d3rV2 agent.")
             plan_prompt = (
                 "You are the solo delivery agent. Create a step-by-step plan to complete the project in this repo. "
                 "Return ONLY JSON with keys: plan (list of steps), next_step, done (bool), summary, suggestions. "
                 "Each step should be short and testable. Include a smoke-test step when feasible.\n"
                 f"User prompt:\n{run.prompt}\n"
             )
-            output = codex.send(plan_prompt, stream=True)
-            if _is_codex_provider(provider):
-                exhausted = _codex_quota_exhausted(output)
-                if exhausted:
-                    _pause_run_for_codex(run, session, exhausted)
-                    session.status = "blocked"
-                    session.completed_at = timezone.now()
-                    session.save(update_fields=["status", "completed_at"])
-                    raise StopDelivery(exhausted)
-                refusal = _codex_refusal(output)
-                if refusal:
-                    _handle_codex_refusal(run, session, refusal)
-                    session.status = "blocked"
-                    session.completed_at = timezone.now()
-                    session.save(update_fields=["status", "completed_at"])
-                    raise StopDelivery(refusal)
+            system_ctx = (
+                f"Project: {run.project.name}\n"
+                f"Workdir: {root}\n"
+                f"Run ID: {run.id}\n"
+                f"Provider: {provider}\n"
+            )
+            output = _c0d3rv2_run(
+                plan_prompt,
+                session_key=f"branddozer:{run.id}:plan",
+                workdir=root,
+                backend=provider if provider in ("wizard", "bedrock", "c0d3r", "coder") else "wizard",
+                system_context=system_ctx,
+            )
+            exhausted = _codex_quota_exhausted(output)
+            if exhausted:
+                _pause_run_for_codex(run, session, exhausted)
+                session.status = "blocked"
+                session.completed_at = timezone.now()
+                session.save(update_fields=["status", "completed_at"])
+                raise StopDelivery(exhausted)
+            refusal = _codex_refusal(output)
+            if refusal:
+                _handle_codex_refusal(run, session, refusal)
+                session.status = "blocked"
+                session.completed_at = timezone.now()
+                session.save(update_fields=["status", "completed_at"])
+                raise StopDelivery(refusal)
             payload = _extract_json_payload(output)
             steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps"))
             plan = {
@@ -2074,7 +2084,7 @@ class DeliveryOrchestrator:
                     _append_session_log(orchestrator_session, "Throttling new work (homeostasis signal)")
             ok_budget, budget_reason = _codex_budget_ok(run)
             if not ok_budget:
-                raise StopDelivery(budget_reason or "Codex budget low")
+                raise StopDelivery(budget_reason or "AI provider quota low")
 
             if self._dod_satisfied(run):
                 _append_session_log(orchestrator_session, "Definition of Done satisfied. Preparing release candidate.")
@@ -2596,7 +2606,7 @@ class DeliveryOrchestrator:
         _cleanup_run_sessions(run, reason="new sprint execution")
         ok_budget, budget_reason = _codex_budget_ok(run)
         if not ok_budget:
-            _set_run_note(run, "Paused", budget_reason or "Codex budget low")
+            _set_run_note(run, "Paused", budget_reason or "AI provider quota low")
             raise StopDelivery(budget_reason or "Codex budget low")
         offline_mode = (os.getenv("BRANDDOZER_OFFLINE_MODE") or "0").lower() in {"1", "true", "yes", "on"}
         session = DeliverySession.objects.create(
@@ -2711,7 +2721,7 @@ class DeliveryOrchestrator:
                             kind="bug",
                             title=f"Session failed: {backlog_item.title[:60]}",
                             description=error,
-                            acceptance_criteria=["Codex session completes successfully"],
+                            acceptance_criteria=["AI session completes successfully"],
                             priority=1,
                             estimate_points=2,
                             status="todo",
@@ -2752,7 +2762,7 @@ class DeliveryOrchestrator:
                             run=run,
                             kind="bug",
                             title=f"No changes produced: {backlog_item.title[:60]}",
-                            description="Codex session did not return any code diff.",
+                            description="AI session did not return any code diff.",
                             acceptance_criteria=["Code changes are produced", "Diff applies cleanly"],
                             priority=2,
                             estimate_points=1,
@@ -3050,7 +3060,7 @@ class DeliveryOrchestrator:
             _append_session_log(session, "Offline mode: skipping UX audit and recording placeholder.")
             payload = {
                 "status": "skipped",
-                "notes": "Offline mode or Codex unavailable; UX audit placeholder recorded.",
+                "notes": "Offline mode or AI provider unavailable; UX audit placeholder recorded.",
                 "backlog": [],
                 "issues": [],
                 "gate_summary": gate_summary,

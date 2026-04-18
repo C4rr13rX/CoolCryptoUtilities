@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 
 from openai import OpenAI
 
-from services.u53_agent import send_codex_update
+from services.u53_agent import send_agent_update
 from services.guardian_status import enqueue_slot, snapshot_status
 from .models import AgentSession, Finding, Task
 
@@ -173,7 +173,7 @@ class FindingView(APIView):
             context=payload.get("context") or {},
         )
         try:
-            send_codex_update(f"[UX robot] {finding.title}", payload.get("summary") or "")
+            send_agent_update(f"[UX robot] {finding.title}")
         except Exception:
             pass
         return Response({"id": str(finding.id)}, status=status.HTTP_201_CREATED)

@@ -38,9 +38,10 @@ from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E4
 from .models import C0d3rWebSession, C0d3rWebMessage, SystemLog
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
-LEGACY_TRANSCRIPT = Path("codex_transcripts/guardian-session.log")
-SNAPSHOT_ROOT = Path("runtime/code_graph/snapshots")
-C0D3R_TRANSCRIPTS = Path("runtime/c0d3r/web")
+LEGACY_TRANSCRIPT   = Path("runtime/guardian/transcripts/guardian-legacy.log")
+SNAPSHOT_ROOT       = Path("runtime/code_graph/snapshots")
+C0D3R_TRANSCRIPTS   = Path("runtime/c0d3r/web")
+# Legacy Bedrock session cache (kept for non-C0d3rV2 callers during transition)
 _C0D3R_SESSIONS: Dict[str, C0d3rSession] = {}
 
 def _load_report(path: Path) -> Dict[str, Any]:
@@ -885,6 +886,19 @@ class EquationSearchView(LoginRequiredMixin, View):
 
 
 class C0d3rRunView(LoginRequiredMixin, View):
+    """
+    POST /api/c0d3r/run/
+
+    Drives the C0d3rV2 agent for a single web turn.  The AI backend is the
+    W1z4rD Vision Node by default; falls back to AWS Bedrock if the node is
+    offline.  Codex CLI is no longer used.
+
+    Request body (JSON):
+      prompt       str   — user's request (required unless reset=true)
+      session_id   int   — existing session pk (optional)
+      reset        bool  — clear session and return (optional)
+      backend      str   — "wizard" (default) | "bedrock" | "openai"
+    """
     login_url = "core:index"
     http_method_names = ["post"]
 
@@ -893,12 +907,16 @@ class C0d3rRunView(LoginRequiredMixin, View):
             payload = json.loads(request.body.decode("utf-8")) if request.body else {}
         except Exception:
             payload = {}
-        prompt = str(payload.get("prompt") or "").strip()
-        reset = bool(payload.get("reset"))
-        research = bool(payload.get("research"))
+
+        prompt   = str(payload.get("prompt") or "").strip()
+        reset    = bool(payload.get("reset"))
+        backend  = str(payload.get("backend") or "wizard").lower().strip()
         session_id = payload.get("session_id")
+
         if not session_id and not reset and not prompt:
             return JsonResponse({"detail": "prompt is required"}, status=400)
+
+        # ── Resolve / create DB session record ────────────────────────────
         session_obj = None
         if session_id:
             try:
@@ -913,75 +931,82 @@ class C0d3rRunView(LoginRequiredMixin, View):
                 key_points=[],
                 last_active=timezone.now(),
             )
-        session_name = f"c0d3r-web-{request.user.id}-{session_obj.id}"
-        if isinstance(session_obj.metadata, dict):
-            cli_name = session_obj.metadata.get("cli_session_name")
-            if isinstance(cli_name, str) and cli_name.strip():
-                session_name = cli_name.strip()
-        session_key = f"user:{request.user.id}:session:{session_name}"
-        session = _C0D3R_SESSIONS.get(session_key)
+
+        session_key = f"c0d3rv2:user:{request.user.id}:session:{session_obj.id}"
+
+        # ── Handle reset ──────────────────────────────────────────────────
         if reset:
             C0d3rWebMessage.objects.filter(session=session_obj).delete()
-            session_obj.summary = ""
+            session_obj.summary   = ""
             session_obj.key_points = []
             session_obj.last_active = timezone.now()
             session_obj.save(update_fields=["summary", "key_points", "last_active", "updated_at"])
-            if session_key in _C0D3R_SESSIONS:
-                _C0D3R_SESSIONS.pop(session_key, None)
+            try:
+                from tools.c0d3rV2.web_runner import _FLOW_CACHE
+                _FLOW_CACHE.pop(session_key, None)
+            except Exception:
+                pass
             if not prompt:
                 return JsonResponse(
-                    {"output": "Session reset.", "model": "", "session_id": session_obj.id},
+                    {"output": "Session reset.", "model": "wizard-v1-local",
+                     "session_id": session_obj.id},
                     status=200,
                 )
-        if session is None:
-            settings = c0d3r_default_settings()
-            settings["research_report_enabled"] = False
-            for key in ("stream_default", "transcript_enabled", "event_store_enabled", "diagnostics_enabled"):
-                settings.pop(key, None)
-            transcript_dir = C0D3R_TRANSCRIPTS
-            if isinstance(session_obj.metadata, dict) and session_obj.metadata.get("cli_session_name"):
-                transcript_dir = Path("runtime/c0d3r/transcripts")
-            session = C0d3rSession(
-                session_name=session_name,
-                transcript_dir=transcript_dir,
-                stream_default=False,
+
+        # ── Build system context ──────────────────────────────────────────
+        context_chars  = _safe_int(os.getenv("C0D3R_WEB_CONTEXT_CHARS", "12000"),
+                                   12000, min_value=2000, max_value=20000)
+        system_context = _build_c0d3r_context(
+            session_obj, request=request, prompt=prompt, max_chars=context_chars
+        )
+
+        # ── Run C0d3rV2 agent ─────────────────────────────────────────────
+        try:
+            from tools.c0d3rV2.web_runner import run as c0d3rv2_run, probe_wizard_node
+            output = c0d3rv2_run(
+                prompt,
+                session_key=session_key,
                 workdir=ROOT,
-                transcript_enabled=False,
-                event_store_enabled=False,
-                diagnostics_enabled=False,
-                db_sync_enabled=False,
-                **settings,
+                backend=backend,
+                system_context=system_context,
             )
-            _C0D3R_SESSIONS[session_key] = session
-        context_chars = _safe_int(os.getenv("C0D3R_WEB_CONTEXT_CHARS", "12000"), 12000, min_value=2000, max_value=20000)
-        system_context = _build_c0d3r_context(session_obj, request=request, prompt=prompt, max_chars=context_chars)
-        try:
-            output = session.send(prompt, stream=False, verbose=False, research_override=research, system=system_context)
         except Exception as exc:
-            return JsonResponse({"detail": f"c0d3r failed: {exc}"}, status=500)
-        model = ""
+            return JsonResponse({"detail": f"c0d3rv2 failed: {exc}"}, status=500)
+
+        # Determine which model/backend actually served the response.
         try:
-            model = session._c0d3r.ensure_model()
+            from tools.c0d3rV2.web_runner import _FLOW_CACHE
+            flow = _FLOW_CACHE.get(session_key)
+            model_id = (
+                flow.session.get_model_id()
+                if flow and hasattr(flow.session, "get_model_id")
+                else "wizard-v1-local"
+            )
         except Exception:
-            model = ""
+            model_id = "wizard-v1-local"
+
+        # ── Persist messages ──────────────────────────────────────────────
         C0d3rWebMessage.objects.create(
-            session=session_obj,
-            role="user",
-            content=prompt,
-            metadata={"research": research},
+            session=session_obj, role="user", content=prompt, metadata={},
         )
         C0d3rWebMessage.objects.create(
-            session=session_obj,
-            role="c0d3r",
-            content=output,
-            model_id=model,
+            session=session_obj, role="c0d3r", content=output, model_id=model_id,
         )
-        session_obj.model_id = model
+        session_obj.model_id    = model_id
         session_obj.last_active = timezone.now()
-        _update_c0d3r_summary(session_obj, user_text=prompt, assistant_text=output, c0d3r_session=session)
-        session_obj.save(update_fields=["model_id", "last_active", "summary", "key_points", "updated_at"])
+
+        # Use a lightweight Bedrock session just for the summary update, if
+        # configured — otherwise skip it (wizard handles memory internally).
+        try:
+            _update_c0d3r_summary(session_obj, user_text=prompt, assistant_text=output,
+                                  c0d3r_session=None)
+        except Exception:
+            pass
+
+        session_obj.save(update_fields=["model_id", "last_active", "summary",
+                                        "key_points", "updated_at"])
         return JsonResponse(
-            {"output": output, "model": model, "session_id": session_obj.id},
+            {"output": output, "model": model_id, "session_id": session_obj.id},
             status=200,
         )
 

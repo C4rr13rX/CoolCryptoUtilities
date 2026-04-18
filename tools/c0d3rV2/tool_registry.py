@@ -220,6 +220,83 @@ class MatrixSearchTool(Tool):
         return _matrix_search(query, limit=int(params.get("limit", 12)))
 
 
+class FileReadTool(Tool):
+    """Read a file from the workspace."""
+
+    name = "file_read"
+    description = (
+        "Read the contents of a file at the given path.  Use this to inspect "
+        "source code, config files, logs, or any text file before making changes.  "
+        "Returns the file contents and line count.  "
+        "Params: {path: str, offset?: int, limit?: int}"
+    )
+
+    def __init__(self, workdir: str | Path) -> None:
+        self._workdir = Path(workdir)
+
+    def execute(self, params: dict) -> dict:
+        raw = str(params.get("path", ""))
+        if not raw:
+            return {"error": "No path provided"}
+        path = Path(raw) if Path(raw).is_absolute() else self._workdir / raw
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        except FileNotFoundError:
+            return {"error": f"File not found: {path}"}
+        except Exception as exc:
+            return {"error": str(exc)}
+        offset = int(params.get("offset") or 0)
+        limit = int(params.get("limit") or 0)
+        chunk = lines[offset:offset + limit] if limit else lines[offset:]
+        return {"content": "".join(chunk), "total_lines": len(lines), "offset": offset}
+
+
+class FileWriteTool(Tool):
+    """Write or patch a file in the workspace."""
+
+    name = "file_write"
+    description = (
+        "Write content to a file in the workspace.  Use this to create new files, "
+        "overwrite existing files, or apply a targeted patch (replace old_string "
+        "with new_string).  All paths are relative to the project workdir unless "
+        "absolute.  For patches, provide old_string + new_string.  For full writes, "
+        "provide content only.  "
+        "Params: {path: str, content?: str, old_string?: str, new_string?: str, "
+        "create_dirs?: bool}"
+    )
+
+    def __init__(self, workdir: str | Path) -> None:
+        self._workdir = Path(workdir)
+
+    def execute(self, params: dict) -> dict:
+        raw = str(params.get("path", ""))
+        if not raw:
+            return {"error": "No path provided"}
+        path = Path(raw) if Path(raw).is_absolute() else self._workdir / raw
+        if params.get("create_dirs", True):
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Patch mode: replace old_string with new_string
+        old = params.get("old_string")
+        new = params.get("new_string")
+        if old is not None and new is not None:
+            if not path.exists():
+                return {"error": f"File not found for patching: {path}"}
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if old not in text:
+                return {"error": f"old_string not found in {path}", "preview": text[:500]}
+            patched = text.replace(str(old), str(new), 1)
+            path.write_text(patched, encoding="utf-8")
+            return {"status": "patched", "path": str(path)}
+
+        # Full write mode
+        content = params.get("content")
+        if content is None:
+            return {"error": "Provide content (full write) or old_string+new_string (patch)"}
+        path.write_text(str(content), encoding="utf-8")
+        return {"status": "written", "path": str(path), "bytes": len(str(content).encode())}
+
+
 class UnboundedSolverTool(Tool):
     """Solve unbounded problems via the environmental equation matrix."""
 

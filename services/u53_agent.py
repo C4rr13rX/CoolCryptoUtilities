@@ -5,10 +5,10 @@ from typing import Optional
 from tools.ai_session import get_session_class, default_settings, session_provider_from_context
 
 
-def send_codex_update(message: str, *, session_name: str = "u53rxr080t") -> str:
+def send_agent_update(message: str, *, session_name: str = "u53rxr080t") -> str:
     """
-    Forward a message to the Codex CLI for UX automation loops. This borrows the
-    same harness used by BrandDozer to stream transcripts into runtime/branddozer/transcripts.
+    Forward a message to the AI agent (wizard/bedrock) for UX automation loops.
+    Streams transcripts into runtime/u53rxr080t/transcripts.
     """
     provider = session_provider_from_context({})
     SessionClass = get_session_class(provider)

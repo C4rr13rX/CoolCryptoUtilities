@@ -266,14 +266,14 @@ class SprintItem(models.Model):
 
 class DeliverySession(models.Model):
     """
-    CodexSession records for Orchestrator/PM/Integrator/Dev workers.
+    C0d3rV2 session records for Orchestrator/PM/Integrator/Dev workers.
     """
 
     ROLE_CHOICES = [
         ("orchestrator", "Orchestrator"),
         ("pm", "Project Manager Session"),
         ("integrator", "Integrator/Release Session"),
-        ("dev", "CodexSession"),
+        ("dev", "C0d3rV2Session"),
         ("qa", "QA"),
         ("ux_audit", "UX Audit"),
     ]
