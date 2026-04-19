@@ -137,11 +137,11 @@ ROLE_MODEL_MAP = {
 }
 
 ROLE_FALLBACK_MODEL = {
-    "planner": "anthropic.claude-3-7-sonnet-20250219-v1:0",
-    "manager": "anthropic.claude-3-7-sonnet-20250219-v1:0",
-    "auditor": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "qa": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "worker": "anthropic.claude-3-5-haiku-20241022-v1:0",
+    "planner": "anthropic.claude-opus-4-20250514-v1:0",
+    "manager": "anthropic.claude-opus-4-20250514-v1:0",
+    "auditor": "anthropic.claude-sonnet-4-20250514-v1:0",
+    "qa": "anthropic.claude-sonnet-4-20250514-v1:0",
+    "worker": "anthropic.claude-sonnet-4-20250514-v1:0",
 }
 
 
