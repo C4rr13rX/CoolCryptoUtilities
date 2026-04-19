@@ -71,6 +71,8 @@
               <span v-if="msg.confidenceTier" class="chip" :class="`chip-tier-${msg.confidenceTier}`">
                 {{ msg.confidenceTier }}
               </span>
+              <span v-if="isJsonResponse(msg.text)" class="chip chip-json">JSON output</span>
+              <span v-if="isJsonResponse(msg.text)" class="chip chip-training-note" title="Node is still being trained on general knowledge. JSON responses will reduce as training completes.">Training bias</span>
             </div>
 
             <div class="bubble-text" v-html="renderMarkdown(msg.text)" />
@@ -456,8 +458,23 @@ function fileIcon(name: string): string {
   return map[ext] || '📁'
 }
 
+function isJsonResponse(text: string): boolean {
+  const t = text.trim().replace(/\.$/, '') // strip trailing dot the node sometimes adds
+  if (!t.startsWith('{') && !t.startsWith('[')) return false
+  try { JSON.parse(t); return true } catch { return false }
+}
+
 function renderMarkdown(text: string): string {
-  // Minimal markdown: bold, italic, code, code blocks, line breaks
+  // If the whole response is JSON, pretty-print it in a code block
+  const stripped = text.trim().replace(/\.$/, '')
+  if (isJsonResponse(stripped)) {
+    try {
+      const pretty = JSON.stringify(JSON.parse(stripped), null, 2)
+      const escaped = pretty.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      return `<pre class="json-block"><code>${escaped}</code></pre>`
+    } catch {}
+  }
+  // Normal markdown
   return text
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
@@ -669,6 +686,16 @@ function renderMarkdown(text: string): string {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 .bubble-text :deep(a) { color: #5aa6ff; }
+.bubble-text :deep(.json-block) {
+  background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(130,80,255,0.2);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  overflow-x: auto;
+  font-size: 0.78rem;
+  margin: 0.25rem 0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
 
 /* Meta chips */
 .bubble-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
@@ -690,6 +717,8 @@ function renderMarkdown(text: string): string {
 .chip-tier-uncertain   { background: rgba(182, 204, 255, 0.07); color: rgba(182, 204, 255, 0.5); border: 1px solid rgba(182, 204, 255, 0.12); }
 .chip-tier-offline     { background: rgba(255, 90, 95, 0.12); color: #ff5a5f; border: 1px solid rgba(255, 90, 95, 0.25); }
 .chip-tier-error       { background: rgba(255, 90, 95, 0.12); color: #ff5a5f; border: 1px solid rgba(255, 90, 95, 0.25); }
+.chip-json             { background: rgba(130, 80, 255, 0.12); color: #a880ff; border: 1px solid rgba(130, 80, 255, 0.25); }
+.chip-training-note    { background: rgba(255, 90, 95, 0.08); color: rgba(255, 140, 100, 0.8); border: 1px solid rgba(255, 90, 95, 0.18); cursor: help; }
 
 /* Activated concepts */
 .concepts { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; align-items: center; }
