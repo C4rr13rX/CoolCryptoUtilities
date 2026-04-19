@@ -26,22 +26,32 @@ MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
 # ---------------------------------------------------------------------------
 
 def _wizard_ask(text: str, session_id: str = "") -> dict:
-    """POST to /neuro/ask; always returns a dict."""
+    """POST to /neuro/pipeline; always returns a dict."""
     payload = json.dumps({
         "text": text,
         "session_id": session_id or str(uuid.uuid4()),
+        "hops": 3,
         "top_k": 30,
-        "min_strength": 0.05,
     }).encode()
     req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/neuro/ask",
+        f"{WIZARD_ENDPOINT}/neuro/pipeline",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=WIZARD_TIMEOUT) as resp:
-            return json.loads(resp.read())
+            data = json.loads(resp.read())
+            # Normalise pipeline response shape to match what the view expects.
+            # /neuro/pipeline returns `answer` at top level; older /neuro/ask
+            # returned `answer` inside `activated_concepts` — keep compat.
+            if "answer" not in data:
+                data["answer"] = ""
+            if "confidence_tier" not in data:
+                data["confidence_tier"] = data.get("confidence_tier", "low")
+            if "activated_concepts" not in data:
+                data["activated_concepts"] = []
+            return data
     except urllib.error.URLError as exc:
         return {"error": str(exc), "answer": "", "hypothesis": True,
                 "confidence_tier": "offline", "activated_concepts": []}
