@@ -104,7 +104,12 @@ def main(argv: list[str] | None = None) -> int:
         FileLocateTool,
         MatrixSearchTool,
         VMPlaygroundTool,
+        FileReadTool,
+        FileWriteTool,
+        UnboundedSolverTool,
+        MathGroundingTool,
     )
+    from unbounded_solver import UnboundedSolver
     from process_flow import ProcessFlow
     from helpers import _runtime_root, _init_heartbeat
 
@@ -135,13 +140,23 @@ def main(argv: list[str] | None = None) -> int:
     st_memory = STSideLoadedMemory(session_id, runtime_root)
     lt_side_memory = LTSideLoadedMemory(runtime_root)
 
+    # Shared web-search instance (reused by solver so research feeds the matrix)
+    web_search = WebSearch(session)
+
+    # Unbounded solver (session + web_search so it can research sub-questions)
+    solver = UnboundedSolver(session, web_search)
+
     # Tool registry
     tools = ToolRegistry()
     tools.register(ExecutorTool(executor))
-    tools.register(WebSearchTool(WebSearch(session)))
+    tools.register(FileReadTool(workdir))
+    tools.register(FileWriteTool(workdir))
+    tools.register(WebSearchTool(web_search))
     tools.register(MemorySearchTool(lt_memory))
     tools.register(FileLocateTool(st_memory, lt_side_memory))
     tools.register(MatrixSearchTool())
+    tools.register(UnboundedSolverTool(solver))
+    tools.register(MathGroundingTool(solver))
     tools.register(VMPlaygroundTool(VMPlayground(session, executor)))
 
     # Usage tracking + header

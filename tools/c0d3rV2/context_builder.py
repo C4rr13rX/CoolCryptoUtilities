@@ -228,9 +228,30 @@ class ContextBuilder:
             return ""
         lines = ["[Available Tools]"]
         for tool in self.tool_descriptions:
-            lines.append(
-                f"- {tool.get('name', '?')}: {tool.get('description', '')}"
-            )
+            name = tool.get("name", "?")
+            desc = tool.get("description", "")
+            use_when = tool.get("use_when", "")
+            params = tool.get("params", {})
+            lines.append(f"\n### {name}")
+            lines.append(desc)
+            if use_when:
+                lines.append(f"Scope: {use_when}")
+            if params:
+                param_lines = ", ".join(
+                    f"{k}: {v}" for k, v in params.items()
+                )
+                lines.append(f"Params: {{{param_lines}}}")
+        lines.append(
+            "\nTool selection rules:\n"
+            "  1. memory_search first — check past sessions before any research.\n"
+            "  2. file_locate before file_read/write/executor when path is unknown.\n"
+            "  3. file_read before file_write — always read before editing.\n"
+            "  4. web_search → equation_matrix for science/math problems.\n"
+            "  5. math_grounding at start of any numeric/scientific task.\n"
+            "  6. unbounded_solver only when normal tools would give up.\n"
+            "  7. vm_playground for sandboxed/risky/GUI execution.\n"
+            "  8. executor for running things; file_write for editing things."
+        )
         return "\n".join(lines)
 
     # ------------------------------------------------------------------

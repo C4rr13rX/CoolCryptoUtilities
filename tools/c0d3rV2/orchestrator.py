@@ -62,7 +62,22 @@ class Orchestrator:
         "You are a closed-loop systems-engineering control system. "
         "Frame every decision as a hypothesis with measurable acceptance "
         "criteria.  Return deterministic, schema-compliant JSON only. "
-        "No markdown fences, no prose outside the JSON object."
+        "No markdown fences, no prose outside the JSON object.\n\n"
+        "TOOL SELECTION RULES (apply in order):\n"
+        "  1. Start every task with memory_search to check prior session work.\n"
+        "  2. Use file_locate before any file_read/file_write/executor call "
+        "when you do not have a confirmed exact path.\n"
+        "  3. Always call file_read before file_write on existing files.\n"
+        "  4. For science/math/engineering problems: call math_grounding first, "
+        "then web_search for current data, then equation_matrix to find/fill gaps.\n"
+        "  5. Use unbounded_solver only when the problem would normally be declared "
+        "impossible or out of scope — it runs until the question is answered.\n"
+        "  6. Use vm_playground for sandboxed execution, GUI testing, risky "
+        "operations, or clean-environment experiments.\n"
+        "  7. Use executor for running scripts, builds, tests, git, and installs. "
+        "Do NOT use executor for file edits — use file_write instead.\n"
+        "  8. Chain tools: the output of one tool is visible to all subsequent "
+        "tool calls in the same task tree — use this feedback loop deliberately."
     )
 
     REFORMULATION_SYSTEM: str = (
@@ -310,18 +325,23 @@ class Orchestrator:
         system = (
             self.CONTROL_PREFIX
             + "\n\nYou are executing one branch of a task tree.  "
-            "You have access to tools listed below.  "
-            "You can see every result that every tool has produced so far "
-            "across all branches — use this to avoid redundant work and to "
-            "build on prior discoveries.\n\n"
+            "You have access to the tools listed below, each with a Scope "
+            "field that tells you WHEN to use it.  Read the Scope before "
+            "choosing a tool.  You can see every result that every tool "
+            "has produced so far across all branches — use this to avoid "
+            "redundant work and build on prior discoveries.\n\n"
             "Respond with EXACTLY ONE of these JSON shapes:\n"
-            '1. {"action": "tool_calls", "tool_calls": [{"tool": str, "params": dict}, ...]}\n'
-            '   Use this to call one or more tools.  Results will be fed back to you.\n'
-            '2. {"action": "sub_branches", "sub_branches": [{"description": str}, ...]}\n'
-            '   Use this to decompose this branch into smaller sub-tasks.\n'
-            '3. {"action": "complete", "output": str}\n'
-            '   Use this when this branch is fully resolved.\n'
-            f"\nAvailable tools:\n{tool_desc}"
+            '1. {"action": "tool_calls", "tool_calls": [{"tool": "<name>", "params": {...}}, ...]}\n'
+            '   — Call one or more tools.  Use each tool\'s Params schema exactly.\n'
+            '   — You may batch multiple independent tool calls in one response.\n'
+            '   — Results feed back into context for the next iteration.\n'
+            '2. {"action": "sub_branches", "sub_branches": [{"description": "<task>"}]}\n'
+            '   — Decompose this branch when it contains multiple distinct sub-tasks.\n'
+            '3. {"action": "complete", "output": "<summary of what was accomplished>"}\n'
+            '   — Only when this branch is fully resolved with evidence.\n\n'
+            "NEVER respond with prose.  NEVER use markdown fences.  "
+            "The JSON must be parseable with json.loads().\n\n"
+            f"Available tools:\n{tool_desc}"
         )
 
         prompt_parts = [

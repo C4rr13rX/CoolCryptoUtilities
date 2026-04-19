@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 
@@ -14,9 +15,18 @@ class Tool:
         """Run the tool with the given params and return a result dict."""
         raise NotImplementedError(f"{type(self).__name__}.execute not implemented")
 
+    # Subclasses set these for structured context injection.
+    use_when: str = ""
+    params_schema: dict = {}
+
     def schema(self) -> dict:
-        """Return a description dict for injection into model context."""
-        return {"name": self.name, "description": self.description}
+        """Return a structured description dict for injection into model context."""
+        d: dict = {"name": self.name, "description": self.description}
+        if self.use_when:
+            d["use_when"] = self.use_when
+        if self.params_schema:
+            d["params"] = self.params_schema
+        return d
 
 
 # ------------------------------------------------------------------
@@ -31,9 +41,16 @@ class ExecutorTool(Tool):
     description = (
         "Run a terminal command (PowerShell, cmd, or bash).  Use this to "
         "execute code, install packages, run tests, inspect files, or perform "
-        "any OS-level operation.  Returns stdout, stderr, and return code.  "
-        "Params: {command: str}"
+        "any OS-level operation.  Returns stdout, stderr, and return code."
     )
+    use_when = (
+        "Use for: running scripts, installing packages, running tests/linters, "
+        "git operations, building projects, starting/stopping services, "
+        "or any OS-level task.  Prefer file_read/file_write for reading/editing "
+        "source files — reserve executor for running things.  When you need a "
+        "path first, call file_locate before this."
+    )
+    params_schema = {"command": "str — the shell command to execute"}
 
     def __init__(self, executor: Any) -> None:
         self._executor = executor
@@ -52,12 +69,17 @@ class WebSearchTool(Tool):
     name = "web_search"
     description = (
         "Search the web at human pace using DuckDuckGo and return "
-        "AI-summarized results.  Use this when you need current information, "
-        "documentation, research papers, or authoritative references that "
-        "go beyond your training data.  Results feed back into context so "
-        "other tools (e.g. equation_matrix) can build on them.  "
-        "Params: {query: str}"
+        "AI-summarized results.  Results feed back into context so "
+        "other tools (e.g. equation_matrix) can build on them."
     )
+    use_when = (
+        "Use for: current documentation, API references, research papers, "
+        "news, prices, package versions, or any information newer than training "
+        "data.  Call this BEFORE equation_matrix or unbounded_solver when you "
+        "need up-to-date source material to fill knowledge gaps.  Also use to "
+        "verify assumptions before writing code."
+    )
+    params_schema = {"query": "str — the search query"}
 
     def __init__(self, web_search: Any) -> None:
         self._ws = web_search
@@ -75,10 +97,16 @@ class MemorySearchTool(Tool):
     name = "memory_search"
     description = (
         "Search the long-term memory store for past interactions, code, "
-        "and decisions matching a keyword query.  Use this to recall prior "
-        "context, avoid repeating work, or build on previous findings.  "
-        "Params: {query: str}"
+        "and decisions matching a keyword query."
     )
+    use_when = (
+        "Use FIRST at the start of any task to check whether similar work was "
+        "done in a prior session — avoids repeating research or re-solving "
+        "already-solved problems.  Also use when the user references 'last time' "
+        "or 'the version we built' or any prior work.  Call before web_search "
+        "to exhaust local knowledge first."
+    )
+    params_schema = {"query": "str — keyword or phrase to search past sessions"}
 
     def __init__(self, lt_memory: Any) -> None:
         self._mem = lt_memory
@@ -97,21 +125,23 @@ class FileLocateTool(Tool):
     name = "file_locate"
     description = (
         "Find likely file and directory locations using Hazy Hash — a "
-        "Kuzu-backed contextual approximation system inspired by how "
-        "human brains recall locations.  Instead of scanning the entire "
-        "file system, this tool narrows the search using context: which "
-        "machine, which user, which project area, past session history, "
-        "and query similarity.  It returns ranked candidate paths.  "
-        "Use this FIRST before running expensive file searches or directory "
-        "traversals.  If a project or file was accessed in any past session, "
-        "this tool can approximate where it is even without an exact name "
-        "match (e.g. finding 'N0M4n5L4nD' when searching for 'No Mans Land').  "
-        "The tool searches both session-scoped (ST) memory for files found "
-        "this session, and cross-session (LT) memory for historical patterns.  "
-        "You make the final disambiguation — the tool provides candidates "
-        "with scores and reasons.  "
-        "Params: {query: str, cwd: str, project_root: str, detailed: bool}"
+        "Kuzu-backed contextual approximation system.  Searches both this "
+        "session (ST) and all prior sessions (LT).  Returns ranked candidate "
+        "paths even with approximate or misspelled names."
     )
+    use_when = (
+        "Use BEFORE file_read, file_write, or executor whenever you do not "
+        "have an exact confirmed file path.  Works with approximate names "
+        "(e.g. 'No Mans Land' finds 'N0M4n5L4nD').  Always prefer this over "
+        "running 'find' or 'ls -r' — it is faster and context-aware.  If "
+        "detailed=True you get scores and reasons per candidate."
+    )
+    params_schema = {
+        "query": "str — file or directory name (approximate OK)",
+        "cwd": "str — current working directory (optional)",
+        "project_root": "str — project root hint (optional)",
+        "detailed": "bool — return scored candidates with reasons (default false)",
+    }
 
     def __init__(self, st_memory: Any, lt_memory: Any | None = None) -> None:
         self._st = st_memory
@@ -157,23 +187,30 @@ class MatrixSearchTool(Tool):
 
     name = "equation_matrix"
     description = (
-        "Search the environmental equation matrix for relevant equations "
-        "across physics, engineering, and mathematics domains.  Equations "
-        "have plain-English labels, domain tags, variable lists, confidence "
-        "scores, and connections to other equations.  Use this when facing "
-        "unbounded problems: research equations that govern the problem "
-        "domain, find which equations integrate and which don't (gaps "
-        "represent where new physics is needed).  "
-        "Accelerated by Kuzu graph traversal when available.\n"
-        "Actions:\n"
-        "  search — search by text, label, or variable (query: str)\n"
-        "  by_discipline — list equations in a discipline (discipline: str)\n"
-        "  by_variables — find equations using specific variables (variables: [str])\n"
-        "  find_gaps — find unbridged gaps between two disciplines "
-        "(discipline_a: str, discipline_b: str)\n"
-        "  linked — get all equations linked to one (eq_id: int)\n"
-        "Params: {action: str, query: str, discipline: str, ...}"
+        "Search the environmental equation matrix — a graph of equations "
+        "across physics, engineering, and mathematics with plain-English "
+        "labels, domain tags, variable lists, confidence scores, and "
+        "cross-equation links.  Accelerated by Kuzu graph traversal."
     )
+    use_when = (
+        "Use when: facing a technical/scientific/mathematical problem, "
+        "verifying a formula, finding what equations govern a domain, or "
+        "discovering gaps between two disciplines (gaps = where new physics "
+        "or novel solutions are needed).  Call AFTER web_search has pulled "
+        "source material so the matrix has been recently enriched.  For "
+        "truly unknown problems use unbounded_solver instead — it drives "
+        "this tool automatically."
+    )
+    params_schema = {
+        "action": "str — one of: search | by_discipline | by_variables | find_gaps | linked",
+        "query": "str — text/label/variable search (action=search)",
+        "discipline": "str — domain name e.g. thermodynamics (action=by_discipline)",
+        "variables": "[str] — variable symbols e.g. ['E','m','c'] (action=by_variables)",
+        "discipline_a": "str — first domain (action=find_gaps)",
+        "discipline_b": "str — second domain (action=find_gaps)",
+        "eq_id": "int — equation id (action=linked)",
+        "limit": "int — max results (default 12)",
+    }
 
     def execute(self, params: dict) -> dict:
         action = str(params.get("action", "search")).strip()
@@ -225,11 +262,21 @@ class FileReadTool(Tool):
 
     name = "file_read"
     description = (
-        "Read the contents of a file at the given path.  Use this to inspect "
-        "source code, config files, logs, or any text file before making changes.  "
-        "Returns the file contents and line count.  "
-        "Params: {path: str, offset?: int, limit?: int}"
+        "Read the contents of a file at the given path.  Returns file "
+        "contents, total line count, and the starting offset."
     )
+    use_when = (
+        "Use BEFORE file_write or any code edit — always read first so "
+        "you have the current content.  Use for inspecting source code, "
+        "configs, logs, or data files.  If you don't know the exact path, "
+        "call file_locate first.  Use offset+limit to read large files in "
+        "chunks rather than loading everything."
+    )
+    params_schema = {
+        "path": "str — absolute or workdir-relative file path",
+        "offset": "int — line number to start from (optional, default 0)",
+        "limit": "int — number of lines to read (optional, 0 = all)",
+    }
 
     def __init__(self, workdir: str | Path) -> None:
         self._workdir = Path(workdir)
@@ -256,14 +303,23 @@ class FileWriteTool(Tool):
 
     name = "file_write"
     description = (
-        "Write content to a file in the workspace.  Use this to create new files, "
-        "overwrite existing files, or apply a targeted patch (replace old_string "
-        "with new_string).  All paths are relative to the project workdir unless "
-        "absolute.  For patches, provide old_string + new_string.  For full writes, "
-        "provide content only.  "
-        "Params: {path: str, content?: str, old_string?: str, new_string?: str, "
-        "create_dirs?: bool}"
+        "Write content to a file, or apply a targeted patch by replacing "
+        "old_string with new_string.  Creates parent directories automatically."
     )
+    use_when = (
+        "Use for all source code edits, config changes, and new file creation.  "
+        "ALWAYS call file_read first so you have the exact current content before "
+        "patching.  Prefer patch mode (old_string + new_string) over full rewrites "
+        "for existing files — it is safer and produces a clear diff.  "
+        "old_string must be unique in the file."
+    )
+    params_schema = {
+        "path": "str — absolute or workdir-relative file path",
+        "content": "str — full file content (full-write mode)",
+        "old_string": "str — exact text to replace (patch mode)",
+        "new_string": "str — replacement text (patch mode)",
+        "create_dirs": "bool — create parent dirs if missing (default true)",
+    }
 
     def __init__(self, workdir: str | Path) -> None:
         self._workdir = Path(workdir)
@@ -302,26 +358,25 @@ class UnboundedSolverTool(Tool):
 
     name = "unbounded_solver"
     description = (
-        "Resolve problems the AI declares 'impossible' or 'out of scope' "
-        "by recursively decomposing them into answerable sub-questions "
-        "and filling the environmental equation matrix.\n"
-        "The solver has NO predefined disciplines, NO cycle caps, NO "
-        "equation limits.  The problem defines the disciplines.  It runs "
-        "until the original question is answered — even if that means "
-        "answering questions to questions to questions, then propagating "
-        "answers back up.\n"
-        "Process:\n"
-        "  1. Can we answer the question? If yes, done.\n"
-        "  2. If no: what sub-questions must be answered first?\n"
-        "  3. Research each, convert to equations, ingest into matrix.\n"
-        "  4. Recurse into each sub-question.\n"
-        "  5. When all children answered, attempt parent again.\n"
-        "  6. If still stuck, generate hypotheses to bridge the gap.\n"
-        "  7. Continue until root question is answered.\n"
-        "Use this for unbounded problems: FTL travel, novel physics, "
-        "cross-disciplinary synthesis.  It does NOT give up.\n"
-        "Params: {prompt: str, ai_response: str}"
+        "Resolve problems the AI would normally declare 'impossible' or "
+        "'out of scope' by recursively decomposing them into sub-questions, "
+        "researching each, converting findings to equations, and propagating "
+        "answers back up until the root question is answered.  No discipline "
+        "caps, no cycle limits — it runs until solved."
     )
+    use_when = (
+        "Use when: the task involves novel physics, cross-disciplinary synthesis, "
+        "or any domain where the model would normally say 'I don't know' or "
+        "'that is impossible'.  Pass the original prompt AND the AI's uncertain/"
+        "refusing response as ai_response — the solver treats that refusal as a "
+        "map of knowledge gaps to fill.  DO NOT use for straightforward coding "
+        "or file tasks — use executor/file_write for those.  This tool is for "
+        "research-grade problems that require recursive equation-backed reasoning."
+    )
+    params_schema = {
+        "prompt": "str — the original user question or problem statement",
+        "ai_response": "str — the AI's uncertain or refusing response (the gap map)",
+    }
 
     def __init__(self, solver: Any) -> None:
         self._solver = solver
@@ -353,15 +408,24 @@ class MathGroundingTool(Tool):
 
     name = "math_grounding"
     description = (
-        "Convert a natural language request into mathematical form: "
-        "extract variables, unknowns, equations, and constraints.  "
-        "Research missing constants via web search, then solve with SymPy.  "
-        "Returns a grounding block with equations, solutions, and gap "
-        "fill steps that can be injected into subsequent requests.  "
-        "Use this to mathematically scope any problem before attempting "
-        "a solution.\n"
-        "Params: {prompt: str}"
+        "Convert a natural language request into mathematical form: extract "
+        "variables, unknowns, equations, and constraints; research missing "
+        "constants via web search; solve with SymPy.  Returns a grounding "
+        "block that scopes the problem mathematically."
     )
+    use_when = (
+        "Use at the START of any task involving measurement, optimization, "
+        "simulation, engineering calculation, physics, finance modeling, or "
+        "anything with numeric relationships.  Call this BEFORE attempting "
+        "a solution — it identifies what is known, what is unknown, and "
+        "what equations govern the system.  The grounding block it returns "
+        "should be included in the context for all subsequent tool calls "
+        "on the same task.  Not needed for pure text/code tasks with no "
+        "numeric or scientific component."
+    )
+    params_schema = {
+        "prompt": "str — the problem statement in plain English",
+    }
 
     def __init__(self, solver: Any) -> None:
         self._solver = solver
@@ -382,38 +446,30 @@ class VMPlaygroundTool(Tool):
 
     name = "vm_playground"
     description = (
-        "Boot, control, and run experiments inside isolated VirtualBox "
-        "virtual machines.  Use this to test applications, run commands in "
-        "a sandboxed environment, test GUI redesigns on free operating "
-        "systems (Ubuntu, Kali, Parrot), and validate changes before "
-        "applying them to the host.  "
-        "Actions (pass as 'action' param):\n"
-        "  status — VirtualBox install info, VM list, disk, catalog\n"
-        "  catalog — list available OS images\n"
-        "  bootstrap — install VirtualBox if missing; or with image_id + vm_name runs full autopilot\n"
-        "  autopilot — end-to-end: fetch image → create VM → unattended install → SSH → ready\n"
-        "  fetch_image — download an OS ISO (image_id, url?)\n"
-        "  create — create a VM (name, image_path, os_type, memory_mb, cpus, disk_gb)\n"
-        "  delete — delete a VM (name)\n"
-        "  start — start a VM (name, headless?)\n"
-        "  stop — stop a VM (name, force?)\n"
-        "  reset — hard-reset a VM (name)\n"
-        "  exec — run a command via SSH (name, command, timeout_s?)\n"
-        "  guest_exec — run via VBoxManage guestcontrol, no SSH needed (name, command)\n"
-        "  screenshot — capture VM display as PNG (name, path?)\n"
-        "  type — type text into VM keyboard (name, text)\n"
-        "  keys — send key combos like ctrl+alt+t (name, sequence list)\n"
-        "  mouse — send mouse event (name, x, y, buttons, screen_w?, screen_h?)\n"
-        "  wait_ready — wait for VM to be fully ready (name, timeout_s?, require_user?)\n"
-        "  wait_ssh — wait for SSH access (name, timeout_s?)\n"
-        "  resume_or_recover — resume stopped/aborted VM with auto-recovery (name)\n"
-        "  obstacle_course — run a scripted multi-step sequence (steps list)\n"
-        "  run_experiment — AI-driven experiment loop (name, task, max_steps?)\n"
-        "  health — health snapshot (name)\n"
-        "  tail_logs — VM lab log tail (lines?)\n"
-        "  unattended — start unattended OS install (name, iso_path, password, ...)\n"
-        "Params: {action: str, name: str, ...action-specific keys}"
+        "Boot, control, and run experiments inside isolated VirtualBox VMs.  "
+        "Test applications, run sandboxed commands, validate GUI changes, "
+        "and run AI-driven experiment loops — all without touching the host."
     )
+    use_when = (
+        "Use when: you need to test something destructive or risky without "
+        "touching the host system; when validating GUI or OS-level changes; "
+        "when running untrusted code; when the task says 'test in a clean "
+        "environment'; or when running a multi-step experiment that could "
+        "corrupt system state.  For simple script execution use executor.  "
+        "Start with action=status to see what VMs exist, then action=start "
+        "or action=autopilot for a fresh OS."
+    )
+    params_schema = {
+        "action": (
+            "str — status | catalog | bootstrap | autopilot | fetch_image | "
+            "create | delete | start | stop | reset | exec | guest_exec | "
+            "screenshot | type | keys | mouse | wait_ready | wait_ssh | "
+            "resume_or_recover | obstacle_course | run_experiment | health | "
+            "tail_logs | unattended"
+        ),
+        "name": "str — VM name",
+        "...": "action-specific keys — see description",
+    }
 
     def __init__(self, vm_playground: Any) -> None:
         self._vm = vm_playground
