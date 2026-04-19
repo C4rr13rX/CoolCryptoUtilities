@@ -59,6 +59,8 @@ urlpatterns = [
     path("investigations", views.InvestigationsPageView.as_view()),
     path("logs/", views.LogsPageView.as_view(), name="logs"),
     path("logs", views.LogsPageView.as_view()),
+    path("wizard-chat/", views.WizardChatPageView.as_view(), name="wizard-chat"),
+    path("wizard-chat", views.WizardChatPageView.as_view()),
     path("api/codegraph/", views.CodeGraphDataView.as_view(), name="codegraph-data"),
     path("api/codegraph", views.CodeGraphDataView.as_view()),
     path("api/codegraph/snapshots/", views.CodeGraphSnapshotView.as_view(), name="codegraph-snapshots"),

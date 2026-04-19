@@ -361,6 +361,10 @@ class LogsPageView(BaseSecureView):
     initial_route = "logs"
 
 
+class WizardChatPageView(BaseSecureView):
+    initial_route = "wizard-chat"
+
+
 class ApiDiagView(View):
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
         try:

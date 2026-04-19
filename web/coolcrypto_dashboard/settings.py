@@ -127,6 +127,7 @@ INSTALLED_APPS = [
     "u53rxr080t.apps.U53rxr080tConfig",
     "investigations.apps.InvestigationsConfig",
     "delegation.apps.DelegationConfig",
+    "wizard_chat.apps.WizardChatConfig",
 ]
 
 MIDDLEWARE = [

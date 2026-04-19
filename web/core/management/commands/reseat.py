@@ -196,8 +196,40 @@ class Command(BaseCommand):
         if options.get("production_off"):
             os.environ["PRODUCTION_AUTO_DISABLED"] = "1"
 
+        def check_and_repair_db():
+            """Detect a corrupt SQLite database and back it up so migrations can recreate it."""
+            from django.conf import settings
+            db_cfg = settings.DATABASES.get("default", {})
+            if db_cfg.get("ENGINE", "").endswith("sqlite3"):
+                db_path = Path(str(db_cfg.get("NAME", "")))
+                if db_path.exists() and str(db_path) != ":memory:":
+                    import sqlite3
+                    ok = False
+                    try:
+                        con = sqlite3.connect(str(db_path))
+                        result = con.execute("PRAGMA integrity_check").fetchone()
+                        con.close()
+                        ok = (result and result[0] == "ok")
+                    except Exception:
+                        ok = False
+                    if not ok:
+                        import datetime
+                        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        backup = db_path.with_name(f"{db_path.stem}.bak_corrupt_{stamp}{db_path.suffix}")
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f"[db-repair] Corrupt SQLite detected at {db_path}. "
+                                f"Backing up to {backup} and starting fresh."
+                            )
+                        )
+                        try:
+                            db_path.rename(backup)
+                        except Exception as exc:
+                            self.stdout.write(self.style.ERROR(f"[db-repair] Could not rename: {exc}"))
+
         ensure_venv()
         ensure_python_deps()
+        check_and_repair_db()
         call_command("check")
 
         self.stdout.write(self.style.MIGRATE_HEADING("[2/7] Frontend build"))

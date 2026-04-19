@@ -22,6 +22,7 @@ import CronView from '@/views/CronView.vue';
 import InvestigationsView from '@/views/InvestigationsView.vue';
 import LogsView from '@/views/LogsView.vue';
 import BusScheduleView from '@/views/BusScheduleView.vue';
+import WizardChatView from '@/views/WizardChatView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -147,6 +148,12 @@ const routes: RouteRecordRaw[] = [
     name: 'bus',
     component: BusScheduleView,
     meta: { title: 'Bus Scheduler' },
+  },
+  {
+    path: '/wizard-chat',
+    name: 'wizard-chat',
+    component: WizardChatView,
+    meta: { title: 'W1z4rD Chat' },
   },
 ];
 
