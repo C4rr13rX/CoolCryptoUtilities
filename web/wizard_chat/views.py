@@ -1,6 +1,7 @@
 """wizard_chat/views.py — API backend for the W1z4rD Vision multimodal chat."""
 from __future__ import annotations
 
+import concurrent.futures
 import io
 import json
 import os
@@ -11,13 +12,16 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 WIZARD_ENDPOINT = os.getenv("WIZARD_NODE_URL", "http://localhost:8090").rstrip("/")
-WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "30"))
+WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "8"))
+WEB_SEARCH_TIMEOUT = float(os.getenv("WIZARD_WEB_SEARCH_TIMEOUT_S", "3"))
 MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
 
 
@@ -274,16 +278,22 @@ class WizardChatMessageView(View):
             parts.append(text)
         full_prompt = "\n\n".join(parts)
 
-        node_up = _node_online()
         wizard_data = _wizard_ask(full_prompt, session_id)
 
-        # Auto web-search when hypothesis/offline
+        # Derive online status from the response — no separate health ping needed.
+        node_up = wizard_data.get("confidence_tier") not in ("offline", "error")
+
+        # Auto web-search when hypothesis/offline — run in a thread so it can't
+        # block longer than WEB_SEARCH_TIMEOUT seconds regardless of DDG latency.
         web_snippet = ""
         is_hypothesis = bool(wizard_data.get("hypothesis", False)) or not (wizard_data.get("answer") or "").strip()
         if is_hypothesis and node_up:
-            # Use the user's text (not the full prompt with attachments) as the search query
             search_query = text if text else full_prompt[:200]
-            web_snippet = _web_search(search_query)
+            fut = _thread_pool.submit(_web_search, search_query)
+            try:
+                web_snippet = fut.result(timeout=WEB_SEARCH_TIMEOUT)
+            except Exception:
+                web_snippet = ""
 
         result = _build_answer(wizard_data, web_snippet, full_prompt)
         result["node_online"] = node_up
