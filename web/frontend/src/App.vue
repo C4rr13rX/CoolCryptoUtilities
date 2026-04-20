@@ -817,6 +817,7 @@ const resolveAppIntent = (routeName: string) => {
 const navItems = computed(() => {
   const items = [
     { route: 'dashboard', path: '/', label: t('nav.overview'), icon: 'overview' },
+    { route: 'wizard-chat', path: '/wizard-chat', label: t('nav.wizard_chat'), icon: 'brain' },
     { route: 'organism', path: '/organism', label: t('nav.organism'), icon: 'organism' },
     { route: 'pipeline', path: '/pipeline', label: t('nav.pipeline'), icon: 'pipeline' },
     { route: 'bus', path: '/bus', label: t('nav.bus'), icon: 'rocket' },
@@ -838,7 +839,6 @@ const navItems = computed(() => {
     { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar' },
     { route: 'u53rxr080t', path: '/u53rxr080t', label: t('nav.u53rxr080t'), icon: 'radar' },
     { route: 'branddozer', path: '/branddozer', label: t('nav.branddozer'), icon: 'lab' },
-    { route: 'wizard-chat', path: '/wizard-chat', label: t('nav.wizard_chat'), icon: 'brain' },
   ];
   return items.map((item) => ({
     ...item,
