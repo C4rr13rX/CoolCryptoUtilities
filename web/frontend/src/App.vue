@@ -64,7 +64,7 @@
         </div>
       </header>
       <section class="content__body" :class="{ 'glitch-pulse': glitchActive }">
-        <div ref="contentRef" class="content__viewport">
+        <div ref="contentRef" class="content__viewport" :class="{ 'content__viewport--immersive': isImmersiveRoute }">
           <RouterView v-slot="{ Component }">
             <component :is="Component" :key="route.fullPath" />
           </RouterView>
@@ -92,6 +92,7 @@ const route = useRoute();
 const router = useRouter();
 const sidebarOpen = ref(false);
 const isSolo = computed(() => route.meta?.layout === 'solo');
+const isImmersiveRoute = computed(() => ['wizard-chat'].includes(route.name as string));
 const glitchActive = ref(false);
 const sidebarRef = ref<HTMLElement | null>(null);
 const contentRef = ref<HTMLElement | null>(null);
@@ -1146,6 +1147,11 @@ const totalProfitDisplay = computed(() =>
   align-items: stretch;
   overflow-y: auto;
   padding-right: 0.25rem;
+}
+
+.content__viewport--immersive {
+  overflow: hidden;
+  padding-right: 0;
 }
 
 .content__viewport > * {

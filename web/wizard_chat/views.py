@@ -34,8 +34,8 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
     payload = json.dumps({
         "text": text,
         "session_id": session_id or str(uuid.uuid4()),
-        "hops": 3,
-        "top_k": 30,
+        "hops": 2,
+        "top_k": 20,
     }).encode()
     req = urllib.request.Request(
         f"{WIZARD_ENDPOINT}/neuro/pipeline",
@@ -65,26 +65,66 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
 
 
 def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
-    """POST a corrected QA pair to /qa/ingest for training."""
-    candidate = {
-        "qa_id": str(uuid.uuid4()),
-        "question": question,
-        "answer": answer,
-        "book_id": f"wizard_chat_{session_id[:8] if session_id else 'manual'}",
-        "confidence": 0.95,
-        "evidence": "User-corrected answer from wizard chat",
-        "review_status": "approved",
-    }
-    payload = json.dumps({"candidates": [candidate]}).encode()
-    req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/qa/ingest",
-        data=payload,
+    """
+    Train the Hebbian graph with a Q→A correction.
+    Uses /media/train_sequence (temporal STDP Q@t=0 → A@t=1) so the
+    correction actually updates inference weights, not just the QA store.
+    Also records a zero-surprise episode for episodic consolidation.
+    """
+    import base64
+
+    def _text_b64(s: str) -> str:
+        return base64.b64encode(s.encode("utf-8")).decode("ascii")
+
+    def _spans(text: str, role: str, y: float, idx: int, total: int) -> list:
+        return [{"text": text, "role": role, "bold": False, "italic": False,
+                 "size_ratio": 1.0, "x_frac": 0.5, "y_frac": y,
+                 "seq_index": idx, "seq_total": total}]
+
+    seq_payload = json.dumps({
+        "session_id": session_id or str(uuid.uuid4()),
+        "base_lr": 0.14,
+        "tau_secs": 2.0,
+        "frames": [
+            {"modality": "text", "t_secs": 0.0, "lr_scale": 1.0,
+             "data_b64": _text_b64(question), "text": question,
+             "spans": _spans(question, "body", 0.0, 0, 2)},
+            {"modality": "text", "t_secs": 1.0, "lr_scale": 1.0,
+             "data_b64": _text_b64(answer), "text": answer,
+             "spans": _spans(answer, "body", 1.0, 1, 2)},
+        ],
+    }).encode()
+
+    seq_req = urllib.request.Request(
+        f"{WIZARD_ENDPOINT}/media/train_sequence",
+        data=seq_payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+
+    ep_payload = json.dumps({
+        "context_labels": [f"txt:word_{w}" for w in question.lower().split()[:12]],
+        "predicted": question,
+        "actual":    answer,
+        "streams":   [],
+        "surprise":  0.0,
+    }).encode()
+    ep_req = urllib.request.Request(
+        f"{WIZARD_ENDPOINT}/neuro/record_episode",
+        data=ep_payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return {"ok": True, "response": json.loads(resp.read())}
+        with urllib.request.urlopen(seq_req, timeout=20) as resp:
+            seq_result = json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(ep_req, timeout=5) as _:
+                pass
+        except Exception:
+            pass  # episode recording is best-effort
+        return {"ok": True, "response": seq_result}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -283,11 +323,13 @@ class WizardChatMessageView(View):
         # Derive online status from the response — no separate health ping needed.
         node_up = wizard_data.get("confidence_tier") not in ("offline", "error")
 
-        # Auto web-search when hypothesis/offline — run in a thread so it can't
-        # block longer than WEB_SEARCH_TIMEOUT seconds regardless of DDG latency.
+        # Web-search only when the node returned NO answer at all — if there's
+        # any Hebbian output (even uncertain), show it immediately without waiting
+        # for an external search to complete.
         web_snippet = ""
         is_hypothesis = bool(wizard_data.get("hypothesis", False)) or not (wizard_data.get("answer") or "").strip()
-        if is_hypothesis and node_up:
+        answer_empty = not (wizard_data.get("answer") or "").strip()
+        if answer_empty and node_up:
             search_query = text if text else full_prompt[:200]
             fut = _thread_pool.submit(_web_search, search_query)
             try:
