@@ -12,4 +12,6 @@ urlpatterns = [
     path("train", views.WizardChatTrainView.as_view()),
     path("status/", views.WizardChatStatusView.as_view(), name="status"),
     path("status", views.WizardChatStatusView.as_view()),
+    path("pools/", views.WizardChatPoolsView.as_view(), name="pools"),
+    path("pools", views.WizardChatPoolsView.as_view()),
 ]

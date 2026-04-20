@@ -393,3 +393,130 @@ class WizardChatStatusView(View):
                 "error": str(exc),
                 "health": {},
             })
+
+
+def _node_fetch(path: str, timeout: float = 5.0) -> dict:
+    """GET from the wizard node; returns {} on error."""
+    try:
+        with urllib.request.urlopen(f"{WIZARD_ENDPOINT}{path}", timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return {}
+
+
+def _qa_query(pool_name: str = "knowledge", top_k: int = 50) -> dict:
+    payload = json.dumps({"query": "", "top_k": top_k, "pool": pool_name}).encode()
+    req = urllib.request.Request(
+        f"{WIZARD_ENDPOINT}/qa/query",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=6) as r:
+            return json.loads(r.read())
+    except Exception:
+        return {}
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class WizardChatPoolsView(View):
+    """
+    GET /api/wizard-chat/pools/          — discover + return all pool data
+    GET /api/wizard-chat/pools/?pool=qa  — single pool by key
+
+    Returns { pools: { <key>: { label, type, data, count } }, discovered: [...keys] }
+    """
+
+    # All endpoints to probe; each produces one or more named pools.
+    _POOL_ENDPOINTS = [
+        ("neuro_snapshot",  "GET",  "/neuro/snapshot",    None),
+        ("knowledge",       "GET",  "/knowledge/queue",   None),
+        ("equations",       "GET",  "/equations/report",  None),
+        ("streaming_labels","GET",  "/streaming/labels",  None),
+        ("subnet_report",   "GET",  "/streaming/subnets", None),
+        ("causal_graph",    "GET",  "/causal/graph",      None),
+        ("health",          "GET",  "/health",            None),
+    ]
+
+    def get(self, request):
+        only = request.GET.get("pool")  # optional filter
+
+        def _fetch_one(endpoint_key, method, path, payload):
+            if method == "GET":
+                return endpoint_key, _node_fetch(path, timeout=6)
+            payload_bytes = json.dumps(payload).encode() if payload else b"{}"
+            req = urllib.request.Request(
+                f"{WIZARD_ENDPOINT}{path}",
+                data=payload_bytes,
+                headers={"Content-Type": "application/json"},
+                method=method,
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=6) as r:
+                    return endpoint_key, json.loads(r.read())
+            except Exception:
+                return endpoint_key, {}
+
+        # Submit all in parallel
+        endpoint_list = [
+            e for e in self._POOL_ENDPOINTS if not only or e[0] == only
+        ]
+        # Always include both QA pools (knowledge + corrections)
+        qa_futures = {}
+        if not only or only in ("qa_knowledge", "qa_corrections"):
+            qa_futures["qa_knowledge"]    = _thread_pool.submit(_qa_query, "knowledge", 50)
+            qa_futures["qa_corrections"]  = _thread_pool.submit(_qa_query, "corrections", 50)
+
+        futs = {key: _thread_pool.submit(_fetch_one, key, m, p, body)
+                for key, m, p, body in endpoint_list}
+
+        raw: dict[str, dict] = {}
+        for key, fut in futs.items():
+            try:
+                _, data = fut.result(timeout=7)
+                raw[key] = data
+            except Exception:
+                raw[key] = {}
+
+        for key, fut in qa_futures.items():
+            try:
+                raw[key] = fut.result(timeout=7)
+            except Exception:
+                raw[key] = {}
+
+        # Shape into named pool entries with metadata
+        pools: dict[str, dict] = {}
+
+        def _add(key: str, label: str, pool_type: str, data: dict, count_hint=None):
+            if not data:
+                return
+            count = count_hint
+            if count is None:
+                for field in ("total", "count", "pairs_ingested", "size", "length"):
+                    if isinstance(data.get(field), int):
+                        count = data[field]
+                        break
+            pools[key] = {"label": label, "type": pool_type, "data": data, "count": count}
+
+        _add("qa_knowledge",    "QA — Knowledge",     "qa",         raw.get("qa_knowledge", {}),
+             len(raw.get("qa_knowledge", {}).get("matches") or []))
+        _add("qa_corrections",  "QA — Corrections",   "qa",         raw.get("qa_corrections", {}),
+             len(raw.get("qa_corrections", {}).get("matches") or []))
+        _add("knowledge",       "Knowledge Docs",      "knowledge",  raw.get("knowledge", {}),
+             len(raw.get("knowledge", {}).get("queue") or []))
+        _add("equations",       "Equations (EEM)",     "equations",  raw.get("equations", {}))
+        _add("neuro_snapshot",  "Hebbian State",       "neuro",      raw.get("neuro_snapshot", {}))
+        _add("streaming_labels","Streaming Labels",    "labels",     raw.get("streaming_labels", {}))
+        _add("subnet_report",   "Subnet Report",       "subnets",    raw.get("subnet_report", {}))
+        _add("causal_graph",    "Causal Graph",        "causal",     raw.get("causal_graph", {}))
+
+        # Expose pool stats from health endpoint as a meta pool
+        health = raw.get("health", {})
+        if health:
+            _add("node_health", "Node Health", "meta", health)
+
+        return JsonResponse({
+            "pools":      pools,
+            "discovered": list(pools.keys()),
+        })
