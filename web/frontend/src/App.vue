@@ -799,6 +799,8 @@ const resolveAppIntent = (routeName: string) => {
     case 'datalab':
     case 'lab':
       return metricsCount ? 'ok' : 'warn';
+    case 'wizard-chat':
+      return store.serverOnline ? 'ok' : 'warn';
     case 'integrations':
     case 'settings':
     case 'addressbook':
@@ -836,6 +838,7 @@ const navItems = computed(() => {
     { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar' },
     { route: 'u53rxr080t', path: '/u53rxr080t', label: t('nav.u53rxr080t'), icon: 'radar' },
     { route: 'branddozer', path: '/branddozer', label: t('nav.branddozer'), icon: 'lab' },
+    { route: 'wizard-chat', path: '/wizard-chat', label: t('nav.wizard_chat'), icon: 'brain' },
   ];
   return items.map((item) => ({
     ...item,
