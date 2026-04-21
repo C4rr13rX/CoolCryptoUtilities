@@ -36,15 +36,14 @@ TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
 # ---------------------------------------------------------------------------
 
 def _wizard_ask(text: str, session_id: str = "") -> dict:
-    """POST to /neuro/pipeline; always returns a dict."""
+    """POST to /chat (neuro_ask); always returns a normalised dict."""
     payload = json.dumps({
         "text": text,
         "session_id": session_id or str(uuid.uuid4()),
-        "hops": 2,
         "top_k": 20,
     }).encode()
     req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/neuro/pipeline",
+        f"{WIZARD_ENDPOINT}/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -52,16 +51,19 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
     try:
         with urllib.request.urlopen(req, timeout=WIZARD_TIMEOUT) as resp:
             data = json.loads(resp.read())
-            # Normalise pipeline response shape to match what the view expects.
-            # /neuro/pipeline returns `answer` at top level; older /neuro/ask
-            # returned `answer` inside `activated_concepts` — keep compat.
-            if "answer" not in data:
-                data["answer"] = ""
-            if "confidence_tier" not in data:
-                data["confidence_tier"] = data.get("confidence_tier", "low")
-            if "activated_concepts" not in data:
-                data["activated_concepts"] = []
-            return data
+        # /chat returns `word_activations` — map to `activated_concepts` for
+        # downstream display code which was written against /neuro/pipeline.
+        if "activated_concepts" not in data:
+            wa = data.get("word_activations") or []
+            data["activated_concepts"] = [
+                f"txt:word_{w['word']}" for w in wa if isinstance(w, dict) and w.get("word")
+            ]
+        if "answer" not in data:
+            data["answer"] = ""
+        # /chat uses null for empty answer; normalise to "".
+        if data.get("answer") is None:
+            data["answer"] = ""
+        return data
     except urllib.error.URLError as exc:
         return {"error": str(exc), "answer": "", "hypothesis": True,
                 "confidence_tier": "offline", "activated_concepts": []}
