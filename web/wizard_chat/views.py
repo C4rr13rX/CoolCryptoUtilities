@@ -24,6 +24,12 @@ WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "8"))
 WEB_SEARCH_TIMEOUT = float(os.getenv("WIZARD_WEB_SEARCH_TIMEOUT_S", "3"))
 MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
 
+# Human corrections use higher LR + multiple passes so the Hebbian association
+# actually dominates over the background noise from general training.
+TRAIN_REPEATS = 5    # sequential STDP passes per correction
+TRAIN_LR      = 0.40 # vs 0.14 for background; corrections are deliberate
+TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,10 +72,15 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
 
 def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
     """
-    Train the Hebbian graph with a Q→A correction.
-    Uses /media/train_sequence (temporal STDP Q@t=0 → A@t=1) so the
-    correction actually updates inference weights, not just the QA store.
-    Also records a zero-surprise episode for episodic consolidation.
+    Train the Hebbian graph with a Q->A human correction.
+
+    Runs TRAIN_REPEATS sequential train_sequence passes (fresh session_id each
+    time so STDP doesn't suppress re-activation), then fires record_episode with
+    TRAIN_SURPRISE > 0 to trigger neuromodulator-gated LTP amplification, and
+    finally ingests a knowledge document for structured recall.
+
+    One pass at base_lr=0.14 barely moves weights; 5 passes at 0.40 creates
+    an association that competes with background noise from general training.
     """
     import base64
 
@@ -81,52 +92,70 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
                  "size_ratio": 1.0, "x_frac": 0.5, "y_frac": y,
                  "seq_index": idx, "seq_total": total}]
 
-    seq_payload = json.dumps({
-        "session_id": session_id or str(uuid.uuid4()),
-        "base_lr": 0.14,
-        "tau_secs": 2.0,
-        "frames": [
-            {"modality": "text", "t_secs": 0.0, "lr_scale": 1.0,
-             "data_b64": _text_b64(question), "text": question,
-             "spans": _spans(question, "body", 0.0, 0, 2)},
-            {"modality": "text", "t_secs": 1.0, "lr_scale": 1.0,
-             "data_b64": _text_b64(answer), "text": answer,
-             "spans": _spans(answer, "body", 1.0, 1, 2)},
-        ],
-    }).encode()
+    def _post(path: str, payload: bytes, timeout: float) -> dict:
+        req = urllib.request.Request(
+            f"{WIZARD_ENDPOINT}{path}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
 
-    seq_req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/media/train_sequence",
-        data=seq_payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    errors: list[str] = []
+    last_seq_result: dict = {}
 
+    # --- STDP passes -----------------------------------------------------------
+    for _ in range(TRAIN_REPEATS):
+        sid = str(uuid.uuid4())  # fresh each pass — prevents STDP suppression
+        seq_payload = json.dumps({
+            "session_id": sid,
+            "base_lr":    TRAIN_LR,
+            "tau_secs":   2.0,
+            "frames": [
+                {"modality": "text", "t_secs": 0.0, "lr_scale": 1.0,
+                 "data_b64": _text_b64(question), "text": question,
+                 "spans": _spans(question, "body", 0.0, 0, 2)},
+                {"modality": "text", "t_secs": 1.0, "lr_scale": 1.0,
+                 "data_b64": _text_b64(answer), "text": answer,
+                 "spans": _spans(answer, "body", 1.0, 1, 2)},
+            ],
+        }).encode()
+        try:
+            last_seq_result = _post("/media/train_sequence", seq_payload, timeout=20)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    # --- Episodic consolidation (best-effort, once) ----------------------------
     ep_payload = json.dumps({
         "context_labels": [f"txt:word_{w}" for w in question.lower().split()[:12]],
         "predicted": question,
         "actual":    answer,
         "streams":   [],
-        "surprise":  0.0,
+        "surprise":  TRAIN_SURPRISE,
     }).encode()
-    ep_req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/neuro/record_episode",
-        data=ep_payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(seq_req, timeout=20) as resp:
-            seq_result = json.loads(resp.read())
-        try:
-            with urllib.request.urlopen(ep_req, timeout=5) as _:
-                pass
-        except Exception:
-            pass  # episode recording is best-effort
-        return {"ok": True, "response": seq_result}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        _post("/neuro/record_episode", ep_payload, timeout=6)
+    except Exception:
+        pass
+
+    # --- Knowledge document (best-effort, structured recall) -------------------
+    know_payload = json.dumps({
+        "document": {
+            "title":  question[:80],
+            "body":   f"Q: {question}\nA: {answer}",
+            "source": "wizard_chat_correction",
+            "tags":   ["correction", "human_feedback"],
+        }
+    }).encode()
+    try:
+        _post("/knowledge/ingest", know_payload, timeout=6)
+    except Exception:
+        pass
+
+    if errors and not last_seq_result:
+        return {"ok": False, "error": errors[-1], "repeats": TRAIN_REPEATS}
+    return {"ok": True, "repeats": TRAIN_REPEATS, "response": last_seq_result}
 
 
 def _web_search(query: str) -> str:

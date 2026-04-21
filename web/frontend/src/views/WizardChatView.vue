@@ -157,7 +157,9 @@
                       <span class="inline-answer-hint">Ctrl+Enter to submit</span>
                     </div>
                     <div v-if="inlineAnswerResults[msg.id]" class="inline-answer-result" :class="inlineAnswerResults[msg.id].ok ? 'ok' : 'err'">
-                      {{ inlineAnswerResults[msg.id].ok ? '✓ Node trained successfully' : `✗ ${inlineAnswerResults[msg.id].error}` }}
+                      {{ inlineAnswerResults[msg.id].ok
+                        ? `✓ Trained — ${inlineAnswerResults[msg.id].repeats ?? 5} STDP passes at high LR + episode + knowledge doc`
+                        : `✗ ${inlineAnswerResults[msg.id].error}` }}
                     </div>
                   </div>
                 </transition>
@@ -460,7 +462,7 @@ const inspectorData = ref<InspectorData | null>(null)
 // Inline answer state
 const inlineAnswerMsgId    = ref<string | null>(null)
 const inlineAnswerTexts    = ref<Record<string, string>>({})
-const inlineAnswerResults  = ref<Record<string, { ok: boolean; error?: string }>>({})
+const inlineAnswerResults  = ref<Record<string, { ok: boolean; error?: string; repeats?: number }>>({})
 const inlineAnswerSubmitting = ref<Record<string, boolean>>({})
 
 // Pools state — fully dynamic, any number of pools
@@ -722,11 +724,10 @@ async function submitInlineAnswer(msg: Message) {
       body: JSON.stringify({ question, answer, session_id: sessionId.value }),
     })
     const d = await r.json()
-    inlineAnswerResults.value[msg.id] = { ok: d.ok, error: d.error }
+    inlineAnswerResults.value[msg.id] = { ok: d.ok, error: d.error, repeats: d.repeats }
     if (d.ok) {
-      // Mark the bubble as no longer a hypothesis
       msg.isHypothesis = false
-      setTimeout(() => { inlineAnswerMsgId.value = null; delete inlineAnswerTexts.value[msg.id]; delete inlineAnswerResults.value[msg.id] }, 2000)
+      setTimeout(() => { inlineAnswerMsgId.value = null; delete inlineAnswerTexts.value[msg.id]; delete inlineAnswerResults.value[msg.id] }, 2500)
     }
   } catch (err) {
     inlineAnswerResults.value[msg.id] = { ok: false, error: String(err) }
