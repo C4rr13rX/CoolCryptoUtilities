@@ -36,14 +36,15 @@ TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
 # ---------------------------------------------------------------------------
 
 def _wizard_ask(text: str, session_id: str = "") -> dict:
-    """POST to /chat (neuro_ask); always returns a normalised dict."""
+    """POST to /neuro/ask; always returns a normalised dict."""
     payload = json.dumps({
         "text": text,
         "session_id": session_id or str(uuid.uuid4()),
+        "hops": 2,
         "top_k": 20,
     }).encode()
     req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/chat",
+        f"{WIZARD_ENDPOINT}/neuro/ask",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -51,7 +52,7 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
     try:
         with urllib.request.urlopen(req, timeout=WIZARD_TIMEOUT) as resp:
             data = json.loads(resp.read())
-        # /chat returns `word_activations` — map to `activated_concepts` for
+        # /neuro/ask returns `word_activations` — map to `activated_concepts` for
         # downstream display code which was written against /neuro/pipeline.
         if "activated_concepts" not in data:
             wa = data.get("word_activations") or []
@@ -60,7 +61,7 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
             ]
         if "answer" not in data:
             data["answer"] = ""
-        # /chat uses null for empty answer; normalise to "".
+        # /neuro/ask uses null for empty answer; normalise to "".
         if data.get("answer") is None:
             data["answer"] = ""
         return data
