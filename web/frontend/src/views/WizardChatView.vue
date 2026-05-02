@@ -359,6 +359,27 @@
          FLOATING INPUT BAR
     ═══════════════════════════════════════════════════════ -->
     <div class="input-bar">
+      <!-- Agent-mode toggles (localhost-only) -->
+      <div class="agent-toggles" :class="{ active: agentMode }">
+        <label class="agent-toggle">
+          <input type="checkbox" v-model="agentMode" @change="onAgentModeChange" />
+          <span class="agent-toggle-text">
+            <span class="agent-toggle-glyph">⚙</span> Agent mode
+          </span>
+        </label>
+        <label v-if="agentMode" class="agent-toggle agent-toggle-admin"
+               :title="elevationMethod ? `Elevation method: ${elevationMethod}` : ''">
+          <input type="checkbox" v-model="allowAdmin" />
+          <span class="agent-toggle-text">
+            <span class="agent-toggle-glyph">🛡</span> Allow admin
+            <span v-if="allowAdmin && elevationMethod" class="elev-method">({{ elevationMethod }})</span>
+          </span>
+        </label>
+        <span v-if="agentMode" class="agent-warn">
+          Local shell access · admin commands prompt the OS for credentials each time
+        </span>
+      </div>
+
       <div v-if="stagedFiles.length" class="staged-files">
         <div v-for="(sf, i) in stagedFiles" :key="sf.name + i" class="staged-chip" :class="{ uploading: sf.uploading, error: sf.error }">
           <span>{{ fileIcon(sf.name) }}</span>
@@ -458,6 +479,14 @@ const sessionId       = ref(crypto.randomUUID())
 const headerOpen    = ref(false)
 const inspectorOpen = ref(false)
 const inspectorData = ref<InspectorData | null>(null)
+
+// Agent mode — when on, messages route through C0d3rV2 with shell tools.
+// allowAdmin enables the shell_admin tool which triggers OS-native auth
+// dialogs (UAC / polkit / osascript) for elevated commands.
+const agentMode      = ref(false)
+const allowAdmin     = ref(false)
+const elevationMethod = ref<string>('')
+const agentResetPending = ref(false)
 
 // Inline answer state
 const inlineAnswerMsgId    = ref<string | null>(null)
@@ -664,31 +693,80 @@ async function sendMessage() {
   await scrollToBottom(); autoResize()
 
   try {
-    const r = await fetch('/api/wizard-chat/message/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, session_id: sessionId.value, attachment_texts: attachments.map(a => `[File: ${a.name}]\n${a.text}`) }),
-    })
-    const d = await r.json()
-    nodeOnline.value = d.node_online ?? nodeOnline.value
+    if (agentMode.value) {
+      // Agent mode → C0d3rV2 with shell tools.  Localhost-only on the
+      // server side; the toggle in the UI is the user's explicit opt-in.
+      const composedPrompt = attachments.length
+        ? [text, ...attachments.map(a => `[File: ${a.name}]\n${a.text}`)].filter(Boolean).join('\n\n')
+        : text
+      const r = await fetch('/api/wizard-chat/agent/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: composedPrompt,
+          session_id: sessionId.value,
+          allow_admin: allowAdmin.value,
+          reset: agentResetPending.value,
+        }),
+      })
+      agentResetPending.value = false
+      const d = await r.json()
+      if (!r.ok) {
+        messages.value.push({
+          id: crypto.randomUUID(), role: 'wizard',
+          text: `[Agent error] ${d.error || r.statusText}`,
+          confidenceTier: 'error',
+        })
+      } else {
+        messages.value.push({
+          id: crypto.randomUUID(), role: 'wizard',
+          text: d.answer || '(agent returned no output)',
+          confidenceTier: d.admin_enabled ? 'agent-admin' : 'agent',
+          rawResponse: d,
+        })
+      }
+    } else {
+      const r = await fetch('/api/wizard-chat/message/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, session_id: sessionId.value, attachment_texts: attachments.map(a => `[File: ${a.name}]\n${a.text}`) }),
+      })
+      const d = await r.json()
+      nodeOnline.value = d.node_online ?? nodeOnline.value
 
-    const media = extractMediaFromResponse(d)
-    messages.value.push({
-      id: crypto.randomUUID(), role: 'wizard',
-      text: d.answer || '(no response)',
-      isHypothesis: d.is_hypothesis,
-      confidenceTier: d.confidence_tier,
-      hebbianPeak: d.hebbian_peak,
-      webUsed: d.web_used,
-      concepts: d.concepts || [],
-      media: media.length ? media : undefined,
-      rawResponse: d,
-    })
+      const media = extractMediaFromResponse(d)
+      messages.value.push({
+        id: crypto.randomUUID(), role: 'wizard',
+        text: d.answer || '(no response)',
+        isHypothesis: d.is_hypothesis,
+        confidenceTier: d.confidence_tier,
+        hebbianPeak: d.hebbian_peak,
+        webUsed: d.web_used,
+        concepts: d.concepts || [],
+        media: media.length ? media : undefined,
+        rawResponse: d,
+      })
+    }
   } catch (err) {
     messages.value.push({ id: crypto.randomUUID(), role: 'wizard', text: `Error: ${err}`, isHypothesis: true, confidenceTier: 'error' })
   } finally {
     loading.value = false
     await scrollToBottom()
+  }
+}
+
+async function onAgentModeChange() {
+  // Force a fresh agent flow on the server when the user toggles ON, so
+  // any stale tool registry from a previous session is rebuilt.
+  agentResetPending.value = true
+  if (agentMode.value && !elevationMethod.value) {
+    try {
+      const r = await fetch('/api/wizard-chat/agent/info/')
+      if (r.ok) {
+        const d = await r.json()
+        elevationMethod.value = d.elevation_method || 'unavailable'
+      }
+    } catch { /* non-fatal */ }
   }
 }
 
@@ -1173,6 +1251,18 @@ function renderMarkdown(text: string): string {
 .staged-status.err { color: #ff5a5f; }
 .staged-remove { background: none; border: none; cursor: pointer; color: currentColor; padding: 0 0.1rem; font-size: 0.82rem; opacity: 0.55; }
 .staged-remove:hover { opacity: 1; }
+.agent-toggles { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; padding: 0.3rem 0.5rem 0.45rem; font-size: 0.72rem; color: rgba(182,204,255,0.5); }
+.agent-toggles.active { color: rgba(255,209,128,0.85); }
+.agent-toggle { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; user-select: none; }
+.agent-toggle input { accent-color: #ffaa55; cursor: pointer; }
+.agent-toggle-text { display: inline-flex; align-items: center; gap: 0.3rem; }
+.agent-toggle-glyph { font-size: 0.85rem; opacity: 0.85; }
+.agent-toggle-admin { color: rgba(255,140,140,0.85); }
+.agent-toggle-admin input { accent-color: #ff5a5f; }
+.elev-method { font-size: 0.65rem; opacity: 0.65; font-family: 'JetBrains Mono', monospace; }
+.agent-warn { font-size: 0.66rem; color: rgba(255,209,128,0.55); font-style: italic; }
+.chip-tier-agent { background: rgba(255,170,85,0.12); color: #ffaa55; border: 1px solid rgba(255,170,85,0.25); }
+.chip-tier-agent-admin { background: rgba(255,90,95,0.12); color: #ff7f7f; border: 1px solid rgba(255,90,95,0.3); }
 .input-row { display: flex; align-items: flex-end; gap: 0.45rem; background: rgba(182,204,255,0.04); border: 1px solid rgba(182,204,255,0.12); border-radius: 14px; padding: 0.35rem 0.45rem; transition: border-color 0.15s; }
 .input-row:focus-within { border-color: rgba(90,166,255,0.3); }
 .hidden-input { display: none; }
