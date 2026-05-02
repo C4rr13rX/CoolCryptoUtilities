@@ -150,6 +150,11 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
             errors.append(str(exc))
 
     # --- Episodic consolidation (best-effort, once) ----------------------------
+    # /neuro/record_episode only writes to the episodic store — it does
+    # NOT fire dopamine.  For neuromodulator-gated LTP capture we now
+    # call /neuro/reinforce, which fires the dopamine pulse + flush
+    # sequence on the trace tags the train_sequence calls above just
+    # left behind.  Both calls are best-effort.
     ep_payload = json.dumps({
         "context_labels": [f"txt:word_{w}" for w in question.lower().split()[:12]],
         "predicted": question,
@@ -159,6 +164,12 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
     }).encode()
     try:
         _post("/neuro/record_episode", ep_payload, timeout=6)
+    except Exception:
+        pass
+    try:
+        _post("/neuro/reinforce",
+              json.dumps({"confidence": TRAIN_SURPRISE}).encode(),
+              timeout=6)
     except Exception:
         pass
 
