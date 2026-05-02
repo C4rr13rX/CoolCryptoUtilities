@@ -36,15 +36,22 @@ TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
 # ---------------------------------------------------------------------------
 
 def _wizard_ask(text: str, session_id: str = "") -> dict:
-    """POST to /neuro/ask; always returns a normalised dict."""
+    """POST to /chat; always returns a normalised dict.
+
+    /chat routes through multi_pool first (where Phase 29 concept bindings
+    live) and falls back to the slow-pool char_chain decoder when
+    multi_pool confidence is below threshold.  Previously this called
+    /neuro/ask which is slow-pool-only and never benefits from multi_pool
+    even after the curriculum's concept-binding phase finishes.
+    """
     payload = json.dumps({
         "text": text,
         "session_id": session_id or str(uuid.uuid4()),
         "hops": 2,
-        "top_k": 20,
+        "min_strength": 0.05,
     }).encode()
     req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/neuro/ask",
+        f"{WIZARD_ENDPOINT}/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -52,8 +59,7 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
     try:
         with urllib.request.urlopen(req, timeout=WIZARD_TIMEOUT) as resp:
             data = json.loads(resp.read())
-        # /neuro/ask returns `word_activations` — map to `activated_concepts` for
-        # downstream display code which was written against /neuro/pipeline.
+        # /chat / /neuro/ask shape normalisation for the downstream display.
         if "activated_concepts" not in data:
             wa = data.get("word_activations") or []
             data["activated_concepts"] = [
@@ -61,9 +67,23 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
             ]
         if "answer" not in data:
             data["answer"] = ""
-        # /neuro/ask uses null for empty answer; normalise to "".
         if data.get("answer") is None:
             data["answer"] = ""
+        # /chat reports `decoder` = "multi_pool" when the concept-binding
+        # path was confident enough, "char_chain" when it fell through to
+        # the slow pool, or "eem" when the equation matrix supplied the
+        # answer.  Map that to the legacy hypothesis/tier flags the chat
+        # UI already renders so users see the same UNCERTAIN badge for
+        # char_chain fallbacks as before.
+        decoder = data.get("decoder")
+        if decoder and "hypothesis" not in data:
+            data["hypothesis"] = decoder == "char_chain"
+        if decoder and "confidence_tier" not in data:
+            data["confidence_tier"] = {
+                "multi_pool": "high",
+                "eem":        "medium",
+                "char_chain": "low",
+            }.get(decoder, "low")
         return data
     except urllib.error.URLError as exc:
         return {"error": str(exc), "answer": "", "hypothesis": True,
