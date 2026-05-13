@@ -134,6 +134,7 @@ MIDDLEWARE = [
     "core.middleware.DynamicOriginMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -335,6 +336,24 @@ STATICFILES_DIRS = [
     BASE_DIR / "static",
     BASE_DIR / "frontend" / "dist",
 ]
+
+_DEBUG_MODE = os.getenv("DJANGO_DEBUG", "0") == "1"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if _DEBUG_MODE
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        ),
+    },
+}
+
+# In DEBUG, fall back to STATICFILES_DIRS so we don't require collectstatic.
+WHITENOISE_USE_FINDERS = _DEBUG_MODE
+WHITENOISE_MIMETYPES = {
+    ".webmanifest": "application/manifest+json",
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

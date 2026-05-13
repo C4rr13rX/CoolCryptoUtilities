@@ -42,6 +42,9 @@ psycopg[binary]>=3.1.0
 # Production WSGI server — launch_revenir.ps1 uses this instead of
 # manage.py runserver so the panel survives long-running use.
 waitress>=3.0
+# Static-file serving for waitress — Django's runserver auto-serves /static/
+# but pure WSGI servers don't, so whitenoise middleware handles it.
+whitenoise>=6.6
 
 # AWS
 boto3>=1.28.0

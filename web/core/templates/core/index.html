@@ -7,7 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% if initial_route == "branddozer_solo" %}BrandDozer{% else %}R3V3N!R Control Tower{% endif %}</title>
-    <link rel="icon" href="{% static 'assets/logo.png' %}?v={{ asset_version }}" />
+    <link rel="icon" href="{% static 'assets/favicon.ico' %}?v={{ asset_version }}" sizes="any" />
+    <link rel="icon" href="{% static 'assets/icon-192.png' %}?v={{ asset_version }}" type="image/png" />
+    <link rel="apple-touch-icon" href="{% static 'assets/icon-192.png' %}?v={{ asset_version }}" />
+    <link rel="manifest" href="{% static 'site.webmanifest' %}" />
+    <meta name="theme-color" content="#7fb0ff" />
     {% if serve_vite %}
       <script type="module">
         const DEV_ORIGIN = "{{ vite_dev_server }}";
