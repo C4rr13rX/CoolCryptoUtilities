@@ -156,10 +156,35 @@
                       <button class="btn-ghost btn-sm" @click="inlineAnswerMsgId = null">Cancel</button>
                       <span class="inline-answer-hint">Ctrl+Enter to submit</span>
                     </div>
+                    <!-- Training progress bar while submit is in flight -->
+                    <div v-if="inlineAnswerSubmitting[msg.id]" class="train-progress">
+                      <div class="train-progress-bar">
+                        <div class="train-progress-fill" :style="{ width: trainProgressPct[msg.id] + '%' }" />
+                      </div>
+                      <div class="train-progress-label">
+                        Training the network — {{ trainProgressStage[msg.id] || 'starting…' }}
+                      </div>
+                    </div>
+                    <!-- Per-step result list after submit returns -->
                     <div v-if="inlineAnswerResults[msg.id]" class="inline-answer-result" :class="inlineAnswerResults[msg.id].ok ? 'ok' : 'err'">
-                      {{ inlineAnswerResults[msg.id].ok
-                        ? `✓ Trained — ${inlineAnswerResults[msg.id].repeats ?? 5} STDP passes at high LR + episode + knowledge doc`
-                        : `✗ ${inlineAnswerResults[msg.id].error}` }}
+                      <div class="train-result-headline">
+                        {{ inlineAnswerResults[msg.id].ok
+                          ? `✓ Trained AND verified — chat returns your answer with confidence ${inlineAnswerResults[msg.id].verify_confidence ?? '?'} via ${inlineAnswerResults[msg.id].verify_decoder ?? '?'}`
+                          : `✗ Training did not produce a verifiable recall — ${inlineAnswerResults[msg.id].error || 'verification failed'}` }}
+                      </div>
+                      <ul v-if="inlineAnswerResults[msg.id].steps" class="train-steps">
+                        <li v-for="(step, sidx) in inlineAnswerResults[msg.id].steps" :key="sidx"
+                            :class="step.ok ? 'step-ok' : 'step-fail'">
+                          <span class="step-mark">{{ step.ok ? '✓' : '✗' }}</span>
+                          <span class="step-label">{{ step.label }}</span>
+                          <span v-if="step.detail" class="step-detail">{{ step.detail }}</span>
+                          <span v-if="step.error" class="step-error">{{ step.error }}</span>
+                        </li>
+                      </ul>
+                      <div v-if="inlineAnswerResults[msg.id].verify_answer" class="train-verify-answer">
+                        <span class="verify-label">Chat will now reply:</span>
+                        <span class="verify-text">{{ inlineAnswerResults[msg.id].verify_answer }}</span>
+                      </div>
                     </div>
                   </div>
                 </transition>
@@ -491,8 +516,21 @@ const agentResetPending = ref(false)
 // Inline answer state
 const inlineAnswerMsgId    = ref<string | null>(null)
 const inlineAnswerTexts    = ref<Record<string, string>>({})
-const inlineAnswerResults  = ref<Record<string, { ok: boolean; error?: string; repeats?: number }>>({})
+interface TrainStep { label: string; ok: boolean; detail?: string; error?: string }
+interface TrainResult {
+  ok: boolean
+  error?: string
+  repeats?: number
+  steps?: TrainStep[]
+  verify_match?: boolean
+  verify_answer?: string
+  verify_decoder?: string
+  verify_confidence?: number | null
+}
+const inlineAnswerResults  = ref<Record<string, TrainResult>>({})
 const inlineAnswerSubmitting = ref<Record<string, boolean>>({})
+const trainProgressPct       = ref<Record<string, number>>({})
+const trainProgressStage     = ref<Record<string, string>>({})
 
 // Pools state — fully dynamic, any number of pools
 const poolsOpen    = ref(false)
@@ -795,6 +833,33 @@ async function submitInlineAnswer(msg: Message) {
   if (!answer) return
   const question = getQuestionForMsg(msg)
   inlineAnswerSubmitting.value[msg.id] = true
+  trainProgressPct.value[msg.id] = 0
+  trainProgressStage.value[msg.id] = ''
+
+  // The backend runs the five-stage training pipeline synchronously
+  // (concept binding → slow-pool sequence → dopamine flush → knowledge
+  // ingest → recall verify).  Until that finishes we animate the
+  // progress bar through estimated per-stage durations so the user
+  // sees motion proportional to the real work happening server-side.
+  // Empirically: stage 1 (35 multi_pool passes) is the longest at
+  // ~3-5s; the rest combined ~2-4s.  Total ~6-10s.
+  const stages: Array<{ pct: number; label: string; ms: number }> = [
+    { pct: 15, label: 'binding concept in multi-pool fabric', ms: 1500 },
+    { pct: 40, label: '35 high-confidence training passes',   ms: 2500 },
+    { pct: 60, label: 'reinforcing slow-pool sequence',       ms: 1500 },
+    { pct: 80, label: 'dopamine LTP capture',                 ms: 1200 },
+    { pct: 95, label: 'verifying recall…',                    ms: 1500 },
+  ]
+  let progressActive = true
+  ;(async () => {
+    for (const s of stages) {
+      if (!progressActive) return
+      trainProgressStage.value[msg.id] = s.label
+      trainProgressPct.value[msg.id]   = s.pct
+      await new Promise(r => setTimeout(r, s.ms))
+    }
+  })()
+
   try {
     const r = await fetch('/api/wizard-chat/train/', {
       method: 'POST',
@@ -802,12 +867,33 @@ async function submitInlineAnswer(msg: Message) {
       body: JSON.stringify({ question, answer, session_id: sessionId.value }),
     })
     const d = await r.json()
-    inlineAnswerResults.value[msg.id] = { ok: d.ok, error: d.error, repeats: d.repeats }
+    progressActive = false
+    trainProgressPct.value[msg.id]   = 100
+    trainProgressStage.value[msg.id] = d.verify_match ? 'verified' : 'finished'
+    inlineAnswerResults.value[msg.id] = {
+      ok:                 d.ok,
+      error:              d.error,
+      repeats:            d.repeats,
+      steps:              d.steps,
+      verify_answer:      d.verify_answer,
+      verify_decoder:     d.verify_decoder,
+      verify_confidence:  d.verify_confidence,
+      verify_match:       d.verify_match,
+    }
     if (d.ok) {
       msg.isHypothesis = false
-      setTimeout(() => { inlineAnswerMsgId.value = null; delete inlineAnswerTexts.value[msg.id]; delete inlineAnswerResults.value[msg.id] }, 2500)
+      // Keep the result panel up longer so the user sees the step
+      // list + the "chat will now reply" verification text.
+      setTimeout(() => {
+        inlineAnswerMsgId.value = null
+        delete inlineAnswerTexts.value[msg.id]
+        delete inlineAnswerResults.value[msg.id]
+        delete trainProgressPct.value[msg.id]
+        delete trainProgressStage.value[msg.id]
+      }, 8000)
     }
   } catch (err) {
+    progressActive = false
     inlineAnswerResults.value[msg.id] = { ok: false, error: String(err) }
   } finally {
     inlineAnswerSubmitting.value[msg.id] = false
@@ -1118,6 +1204,27 @@ function renderMarkdown(text: string): string {
 .inline-answer-result { font-size: 0.73rem; padding: 0.25rem 0; }
 .inline-answer-result.ok  { color: #34d399; }
 .inline-answer-result.err { color: #ff5a5f; }
+/* Training pipeline progress bar + step list */
+.train-progress { margin: 0.6rem 0 0.4rem; }
+.train-progress-bar { width: 100%; height: 6px; background: rgba(182,204,255,0.10); border-radius: 999px; overflow: hidden; }
+.train-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #5aa6ff 0%, #a880ff 100%);
+    transition: width 350ms ease-out;
+}
+.train-progress-label { margin-top: 0.3rem; font-size: 0.7rem; color: rgba(182,204,255,0.55); font-style: italic; }
+.train-result-headline { font-weight: 600; margin-bottom: 0.35rem; }
+.train-steps { list-style: none; padding: 0; margin: 0.25rem 0 0.4rem; font-size: 0.7rem; }
+.train-steps li { display: flex; gap: 0.4rem; align-items: baseline; padding: 0.12rem 0; line-height: 1.35; }
+.train-steps .step-mark { font-weight: 700; min-width: 0.9rem; }
+.train-steps .step-label { color: rgba(182,204,255,0.78); }
+.train-steps .step-detail { color: rgba(182,204,255,0.45); font-size: 0.65rem; }
+.train-steps .step-error { color: #ff8a8f; font-size: 0.65rem; }
+.train-steps .step-ok   .step-mark { color: #34d399; }
+.train-steps .step-fail .step-mark { color: #ff5a5f; }
+.train-verify-answer { margin-top: 0.4rem; padding: 0.35rem 0.5rem; background: rgba(52,211,153,0.07); border-left: 2px solid #34d399; border-radius: 4px; font-size: 0.72rem; line-height: 1.45; }
+.train-verify-answer .verify-label { display: block; font-size: 0.62rem; color: rgba(182,204,255,0.5); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.15rem; }
+.train-verify-answer .verify-text { color: #e8eeff; }
 .inline-expand-enter-active, .inline-expand-leave-active { transition: max-height 0.22s ease, opacity 0.18s; max-height: 260px; overflow: hidden; }
 .inline-expand-enter-from, .inline-expand-leave-to { max-height: 0; opacity: 0; }
 

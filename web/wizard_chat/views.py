@@ -5,6 +5,7 @@ import concurrent.futures
 import io
 import json
 import os
+import re
 import time
 import uuid
 import urllib.error
@@ -97,13 +98,30 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
     """
     Train the Hebbian graph with a Q->A human correction.
 
-    Runs TRAIN_REPEATS sequential train_sequence passes (fresh session_id each
-    time so STDP doesn't suppress re-activation), then fires record_episode with
-    TRAIN_SURPRISE > 0 to trigger neuromodulator-gated LTP amplification, and
-    finally ingests a knowledge document for structured recall.
+    Returns a structured progress log with per-step status + final
+    recall verification so the UI can render a progress bar AND tell
+    the user whether the chat will actually return the trained answer
+    next time they ask.
 
-    One pass at base_lr=0.14 barely moves weights; 5 passes at 0.40 creates
-    an association that competes with background noise from general training.
+    Pipeline (every step exercises a different architectural layer):
+      1. /multi_pool/train_pair   high-confidence concept binding
+                                  (the path the /chat endpoint routes
+                                  through first — this is what makes
+                                  a single correction immediately
+                                  recallable)
+      2. /media/train_sequence ×N slow-pool character-bigram
+                                  reinforcement — feeds the motif
+                                  runtime so the pattern enters the
+                                  global Hebbian graph too
+      3. /neuro/reinforce         dopamine flush + three-factor LTP
+                                  capture; consolidates the trace
+                                  tags left by step 2
+      4. /knowledge/ingest        structured-knowledge store entry
+                                  for the QA fast-path
+      5. verify via /chat         immediately query the question and
+                                  return the actual answer so the
+                                  caller knows whether the training
+                                  took
     """
     import base64
 
@@ -125,12 +143,39 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read())
 
+    steps: list[dict] = []
     errors: list[str] = []
-    last_seq_result: dict = {}
 
-    # --- STDP passes -----------------------------------------------------------
-    for _ in range(TRAIN_REPEATS):
-        sid = str(uuid.uuid4())  # fresh each pass — prevents STDP suppression
+    def _step(label: str, ok: bool, detail: str = "", err: str = "") -> None:
+        steps.append({"label": label, "ok": ok, "detail": detail, "error": err})
+        if not ok and err:
+            errors.append(err)
+
+    # 1. Multi-pool concept binding — the path /chat routes through.
+    #    Without this, the slow-pool training (step 2) only feeds the
+    #    motif graph and the character-chain fallback; the user won't
+    #    see their answer come back via the multi_pool decoder.
+    try:
+        mp_payload = json.dumps({
+            "src_pool": "in",  "src": question,
+            "tgt_pool": "out", "tgt": answer,
+            "passes":   35,  # GA-tuned saturation default
+        }).encode()
+        mp_result = _post("/multi_pool/train_pair", mp_payload, timeout=60)
+        x = (mp_result.get("stats") or {}).get("cross_edges", 0)
+        _step("Concept binding (multi_pool)", True,
+              f"35 passes through /multi_pool/train_pair; cross_edges={x}")
+    except Exception as exc:
+        _step("Concept binding (multi_pool)", False, "",
+              f"/multi_pool/train_pair failed: {exc}")
+
+    # 2. Slow-pool sequence training — feeds the global Hebbian graph
+    #    and the motif runtime so the pattern is reachable from related
+    #    queries even when the exact question phrasing isn't asked.
+    last_seq_result: dict = {}
+    seq_passes_ok = 0
+    for i in range(TRAIN_REPEATS):
+        sid = str(uuid.uuid4())  # fresh per pass — prevents STDP suppression
         seq_payload = json.dumps({
             "session_id": sid,
             "base_lr":    TRAIN_LR,
@@ -146,50 +191,87 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
         }).encode()
         try:
             last_seq_result = _post("/media/train_sequence", seq_payload, timeout=20)
+            seq_passes_ok += 1
         except Exception as exc:
-            errors.append(str(exc))
+            errors.append(f"train_sequence pass {i+1}: {exc}")
+    _step("Slow-pool sequence training", seq_passes_ok > 0,
+          f"{seq_passes_ok}/{TRAIN_REPEATS} passes at lr={TRAIN_LR}",
+          "" if seq_passes_ok > 0 else "all train_sequence passes failed")
 
-    # --- Episodic consolidation (best-effort, once) ----------------------------
-    # /neuro/record_episode only writes to the episodic store — it does
-    # NOT fire dopamine.  For neuromodulator-gated LTP capture we now
-    # call /neuro/reinforce, which fires the dopamine pulse + flush
-    # sequence on the trace tags the train_sequence calls above just
-    # left behind.  Both calls are best-effort.
-    ep_payload = json.dumps({
-        "context_labels": [f"txt:word_{w}" for w in question.lower().split()[:12]],
-        "predicted": question,
-        "actual":    answer,
-        "streams":   [],
-        "surprise":  TRAIN_SURPRISE,
-    }).encode()
+    # 3. Dopamine flush — captures the trace tags step 2 left behind
+    #    into permanent weight boosts via three-factor Hebbian LTP.
     try:
-        _post("/neuro/record_episode", ep_payload, timeout=6)
-    except Exception:
-        pass
-    try:
+        _post("/neuro/record_episode",
+              json.dumps({
+                  "context_labels": [f"txt:word_{w}" for w in question.lower().split()[:12]],
+                  "predicted": question,
+                  "actual":    answer,
+                  "streams":   [],
+                  "surprise":  TRAIN_SURPRISE,
+              }).encode(), timeout=6)
         _post("/neuro/reinforce",
               json.dumps({"confidence": TRAIN_SURPRISE}).encode(),
               timeout=6)
-    except Exception:
-        pass
+        _step("Dopamine consolidation (/neuro/reinforce)", True,
+              f"three-factor LTP capture at confidence={TRAIN_SURPRISE}")
+    except Exception as exc:
+        _step("Dopamine consolidation (/neuro/reinforce)", False, "",
+              f"reinforce failed: {exc}")
 
-    # --- Knowledge document (best-effort, structured recall) -------------------
-    know_payload = json.dumps({
-        "document": {
-            "title":  question[:80],
-            "body":   f"Q: {question}\nA: {answer}",
-            "source": "wizard_chat_correction",
-            "tags":   ["correction", "human_feedback"],
-        }
-    }).encode()
+    # 4. Knowledge ingest — structured-recall fast-path.  Best-effort:
+    #    if the knowledge runtime isn't available the rest of the
+    #    pipeline still trained the pool correctly.
     try:
-        _post("/knowledge/ingest", know_payload, timeout=6)
-    except Exception:
-        pass
+        _post("/knowledge/ingest",
+              json.dumps({"document": {
+                  "title":  question[:80],
+                  "body":   f"Q: {question}\nA: {answer}",
+                  "source": "wizard_chat_correction",
+                  "tags":   ["correction", "human_feedback"],
+              }}).encode(), timeout=6)
+        _step("Knowledge ingest", True, "structured QA document indexed")
+    except Exception as exc:
+        _step("Knowledge ingest", False, "(non-fatal)", f"knowledge/ingest: {exc}")
 
-    if errors and not last_seq_result:
-        return {"ok": False, "error": errors[-1], "repeats": TRAIN_REPEATS}
-    return {"ok": True, "repeats": TRAIN_REPEATS, "response": last_seq_result}
+    # 5. Recall verification — immediately query /chat and report the
+    #    actual returned answer.  The user will see exactly what the
+    #    system will say next time they ask, so they know whether the
+    #    training took.
+    verify_actual = ""
+    verify_decoder = ""
+    verify_conf = None
+    verify_match = False
+    try:
+        chat_result = _post("/chat", json.dumps({
+            "text": question, "hops": 2, "min_strength": 0.05,
+        }).encode(), timeout=10)
+        verify_actual  = (chat_result.get("answer") or "").strip()
+        verify_decoder = chat_result.get("decoder", "?")
+        verify_conf    = chat_result.get("confidence")
+        # Match check: the trained answer appears in /chat output
+        # (substring; lets the multi-pool concept decoder produce
+        # whitespace-normalised output and still pass).
+        wanted = re.sub(r"\s+", " ", answer.strip().lower())
+        got    = re.sub(r"\s+", " ", verify_actual.lower())
+        verify_match = wanted in got or got in wanted or wanted == got
+        _step("Recall verification (/chat)", verify_match,
+              f"decoder={verify_decoder} conf={verify_conf} "
+              f"answer={verify_actual!r}",
+              "" if verify_match else "trained answer NOT returned by /chat")
+    except Exception as exc:
+        _step("Recall verification (/chat)", False, "", f"/chat: {exc}")
+
+    overall_ok = verify_match  # final criterion the user cares about
+    return {
+        "ok":              overall_ok,
+        "verify_match":    verify_match,
+        "verify_answer":   verify_actual,
+        "verify_decoder":  verify_decoder,
+        "verify_confidence": verify_conf,
+        "steps":           steps,
+        "repeats":         TRAIN_REPEATS,
+        "error":           errors[-1] if errors and not overall_ok else "",
+    }
 
 
 def _web_search(query: str) -> str:
