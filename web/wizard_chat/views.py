@@ -1,6 +1,7 @@
 """wizard_chat/views.py — API backend for the W1z4rD Vision multimodal chat."""
 from __future__ import annotations
 
+import base64
 import concurrent.futures
 import io
 import json
@@ -30,6 +31,60 @@ MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
 TRAIN_REPEATS = 5    # sequential STDP passes per correction
 TRAIN_LR      = 0.40 # vs 0.14 for background; corrections are deliberate
 TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
+
+
+# ── /sensor/observe routing for uploaded files ──────────────────────────────
+
+
+def _sensor_kind_for_file(
+    name: str, content_type: str, raw: bytes, extracted_text: str,
+) -> tuple[str | None, dict]:
+    """Decide which /sensor/observe `kind` to send a file under, and
+    build the body dict.  Returns (kind, body) or (None, {}) to skip.
+
+    Mapping:
+      image/*  → kind=image,   bytes_b64=<raw>
+      audio/*  → kind=audio,   bytes_b64=<raw>   (encoder expects WAV)
+      pdf/*    → kind=pdf_text, text=<extracted_text>
+      text/*   → kind=text,    text=<extracted_text>
+      else     → None (skip — node has no encoder for it)
+    """
+    ct = (content_type or "").lower()
+    lname = name.lower()
+    if ct.startswith("image/") or lname.endswith((".jpg", ".jpeg", ".png",
+                                                   ".bmp", ".gif", ".webp")):
+        return "image", {"bytes_b64": base64.b64encode(raw).decode("ascii")}
+    if ct.startswith("audio/") or lname.endswith((".wav",)):
+        return "audio", {"bytes_b64": base64.b64encode(raw).decode("ascii")}
+    if ct == "application/pdf" or lname.endswith(".pdf"):
+        if extracted_text:
+            return "pdf_text", {"text": extracted_text}
+        return None, {}
+    if ct.startswith("text/") or lname.endswith((".txt", ".md", ".csv", ".log")):
+        if extracted_text:
+            return "text", {"text": extracted_text}
+        return None, {}
+    return None, {}
+
+
+def _post_sensor_observe(kind: str, body: dict, timeout: float = 15.0
+                          ) -> tuple[bool, str]:
+    """POST one observation to the node.  Returns (ok, error_msg)."""
+    body = {"kind": kind, **body}
+    try:
+        raw = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{WIZARD_ENDPOINT}/sensor/observe",
+            data=raw, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            r.read()
+        return True, ""
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}"
+    except Exception as e:
+        return False, str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -577,12 +632,31 @@ class WizardChatUploadView(View):
             try:
                 data = f.read()
                 text = _extract_file_text(f.name, data, f.content_type or "")
+                # Route raw bytes to the node's /sensor/observe so the
+                # corresponding modality pool gets trained.  Text-only
+                # files (PDFs, plaintext) go to pdf_text/keyboard_text;
+                # images go to image_pixels; audio to audio_features.
+                # The extracted text is still returned to the frontend
+                # so the chat prompt can be augmented with it — but the
+                # original bytes also reach the node now.
+                sensor_kind, sensor_body = _sensor_kind_for_file(
+                    f.name, f.content_type or "", data, text,
+                )
+                sensor_ok = False
+                sensor_err = ""
+                if sensor_kind is not None:
+                    sensor_ok, sensor_err = _post_sensor_observe(
+                        sensor_kind, sensor_body,
+                    )
                 results.append({
                     "name": f.name,
                     "text": text,
                     "size": size,
                     "type": f.content_type or "",
                     "error": False,
+                    "sensor_kind":  sensor_kind,
+                    "sensor_ok":    sensor_ok,
+                    "sensor_error": sensor_err,
                 })
             except Exception as exc:
                 results.append({
