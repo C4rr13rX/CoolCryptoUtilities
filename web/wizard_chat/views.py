@@ -221,15 +221,38 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
     # 4. Knowledge ingest — structured-recall fast-path.  Best-effort:
     #    if the knowledge runtime isn't available the rest of the
     #    pipeline still trained the pool correctly.
+    #
+    #    Schema MUST match `KnowledgeDocument` in
+    #    crates/core/src/streaming/knowledge.rs:
+    #      { doc_id: str (required), source: str (required),
+    #        title: Optional[str], text_blocks: [TextBlock] }
+    #    where TextBlock = { block_id, text, ... }.
+    #    Wrong schema (e.g. {body, tags}) returns HTTP 422 and the
+    #    step shows a non-fatal red X.
     try:
+        doc_id = "wizard-chat-" + uuid.uuid4().hex[:16]
         _post("/knowledge/ingest",
               json.dumps({"document": {
-                  "title":  question[:80],
-                  "body":   f"Q: {question}\nA: {answer}",
-                  "source": "wizard_chat_correction",
-                  "tags":   ["correction", "human_feedback"],
+                  "doc_id":  doc_id,
+                  "source":  "wizard_chat_correction",
+                  "title":   question[:80],
+                  "text_blocks": [
+                      {"block_id": doc_id + "-q",
+                       "text": f"Question: {question}",
+                       "section": "question",
+                       "order": 0,
+                       "source": "wizard_chat",
+                       "confidence": 1.0},
+                      {"block_id": doc_id + "-a",
+                       "text": f"Answer: {answer}",
+                       "section": "answer",
+                       "order": 1,
+                       "source": "wizard_chat",
+                       "confidence": 1.0},
+                  ],
               }}).encode(), timeout=6)
-        _step("Knowledge ingest", True, "structured QA document indexed")
+        _step("Knowledge ingest", True,
+              f"doc_id={doc_id} indexed with Q + A text_blocks")
     except Exception as exc:
         _step("Knowledge ingest", False, "(non-fatal)", f"knowledge/ingest: {exc}")
 
