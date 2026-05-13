@@ -162,47 +162,56 @@ def _build_shell_tools(workdir: Path, session_key: str) -> tuple[Any, Any]:
 # ── Flow construction ───────────────────────────────────────────────────────
 
 def _make_session(backend: str, session_key: str) -> Any:
-    """Same backend selection as web_runner._make_session — wizard first,
-    bedrock fallback, openai when key is set.  Duplicated here to avoid
-    coupling the agent flow to the read-only flow's import paths."""
-    backend = (backend or "wizard").lower().strip()
-    if backend in ("openai", "gpt", "openai_api"):
+    """Cascading backend selection: wizard → bedrock → claude → openai.
+
+    Wizard-chat agent mode is normally hard-pinned to the wizard node by
+    the view layer; this function still honours an explicit backend
+    override so a developer testing the C0d3rV2 orchestrator path
+    end-to-end (e.g. with a burner OpenAI key) can do so without
+    bypassing the agent endpoint entirely.
+    """
+    from tools.ai_session import resolve_with_fallback
+    chosen = resolve_with_fallback(backend)
+
+    if chosen == "openai":
         from tools.openai_session import OpenAISession
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError(
-                "OPENAI_API_KEY env var is not set — cannot use openai backend."
-            )
         return OpenAISession(
             session_name=f"agent-{session_key[:16]}",
             transcript_dir=_RUNTIME_ROOT / "transcripts",
             transcript_enabled=False,
         )
-    if backend == "wizard":
-        from tools.wizard_session import WizardSession
-        probe = WizardSession.probe()
-        if probe["online"]:
-            return WizardSession(
-                session_name=f"agent-{session_key[:16]}",
-                transcript_dir=_RUNTIME_ROOT / "transcripts",
-            )
-        backend = "bedrock"
-    if backend in ("bedrock", "c0d3r", "coder"):
-        from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
-        settings = c0d3r_default_settings()
-        for key in ("stream_default", "transcript_enabled", "event_store_enabled",
-                    "diagnostics_enabled", "research_report_enabled"):
-            settings.pop(key, None)
-        return C0d3rSession(
-            session_name=f"c0d3rv2-agent-{session_key[:16]}",
+
+    if chosen == "claude":
+        from tools.claude_session import ClaudeSession
+        return ClaudeSession(
+            session_name=f"agent-{session_key[:16]}",
             transcript_dir=_RUNTIME_ROOT / "transcripts",
-            stream_default=False,
             transcript_enabled=False,
-            event_store_enabled=False,
-            diagnostics_enabled=False,
-            db_sync_enabled=False,
-            **settings,
         )
-    raise ValueError(f"Unknown backend: {backend!r}.")
+
+    if chosen == "wizard":
+        from tools.wizard_session import WizardSession
+        return WizardSession(
+            session_name=f"agent-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+        )
+
+    # bedrock fallback
+    from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
+    settings = c0d3r_default_settings()
+    for key in ("stream_default", "transcript_enabled", "event_store_enabled",
+                "diagnostics_enabled", "research_report_enabled"):
+        settings.pop(key, None)
+    return C0d3rSession(
+        session_name=f"c0d3rv2-agent-{session_key[:16]}",
+        transcript_dir=_RUNTIME_ROOT / "transcripts",
+        stream_default=False,
+        transcript_enabled=False,
+        event_store_enabled=False,
+        diagnostics_enabled=False,
+        db_sync_enabled=False,
+        **settings,
+    )
 
 
 def _build_flow(session_key: str, workdir: Path, backend: str,

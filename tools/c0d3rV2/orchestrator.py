@@ -283,6 +283,30 @@ class Orchestrator:
                     node.complete()
                 break
 
+            # --- Direct conversational answer -------------------------
+            # Used when the branch is a question the model can answer
+            # without any tool, OR when the model explicitly declines to
+            # use a tool and wants to explain why.  Either way we surface
+            # the text instead of swallowing it.
+            elif action_type == "answer":
+                output = (action.get("output") or "").strip()
+                reason = (action.get("reason") or "").strip()
+                if not output and reason:
+                    output = reason
+                elif output and reason:
+                    output = f"{output}\n\n[reason: {reason}]"
+                if output:
+                    node.add_tool_output("answer", {"text": output, "reason": reason})
+                node.complete()
+                results.append(StepResult(
+                    step_id=node.id,
+                    description=node.scientific_form or node.description,
+                    output=output or "[no answer text returned]",
+                    success=True,
+                    attempts=iteration,
+                ))
+                break
+
             # --- Completion -------------------------------------------
             elif action_type == "complete":
                 output = action.get("output", "")
@@ -296,6 +320,27 @@ class Orchestrator:
                     success=True,
                     attempts=iteration,
                 ))
+                break
+
+            # --- Unknown / malformed action ---------------------------
+            # The model emitted something we don't recognise.  Surface
+            # whatever text it returned rather than silently dropping
+            # the turn — at minimum the user should see what the model
+            # tried to say.
+            else:
+                raw_text = (action.get("output") or action.get("text")
+                            or action.get("message") or "").strip()
+                if raw_text:
+                    node.add_tool_output("fallback_text", {"text": raw_text,
+                                                              "action": action_type})
+                    results.append(StepResult(
+                        step_id=node.id,
+                        description=node.scientific_form or node.description,
+                        output=raw_text,
+                        success=True,
+                        attempts=iteration,
+                    ))
+                node.complete()
                 break
 
         # Safety net: if we exhausted iterations, mark done.
@@ -337,10 +382,13 @@ class Orchestrator:
             '   — Results feed back into context for the next iteration.\n'
             '2. {"action": "sub_branches", "sub_branches": [{"description": "<task>"}]}\n'
             '   — Decompose this branch when it contains multiple distinct sub-tasks.\n'
-            '3. {"action": "complete", "output": "<summary of what was accomplished>"}\n'
-            '   — Only when this branch is fully resolved with evidence.\n\n'
-            "NEVER respond with prose.  NEVER use markdown fences.  "
-            "The JSON must be parseable with json.loads().\n\n"
+            '3. {"action": "answer", "output": "<direct answer text>", "reason": "<why no tool was needed>"}\n'
+            '   — Use when the branch is a question you can answer from context (rolling chat history, your own knowledge) with no tool required, OR when you have considered the tools and none is appropriate.  Always include BOTH output (the actual answer the user should see) and reason (one short sentence on why no tool was used).  Never leave both empty.\n'
+            '4. {"action": "complete", "output": "<summary of what was accomplished>"}\n'
+            '   — Only when this branch is fully resolved with tool-produced evidence.  If you have no evidence and only opinions, use action=answer instead.\n\n'
+            "NEVER respond with prose outside the JSON.  NEVER use markdown fences.  "
+            "The JSON must be parseable with json.loads().  "
+            "If you genuinely have nothing to say, still emit action=answer with output explaining that, rather than action=complete with empty output.\n\n"
             f"Available tools:\n{tool_desc}"
         )
 

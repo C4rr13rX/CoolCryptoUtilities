@@ -43,9 +43,13 @@ class WizardChatAgentView(View):
                             Each elevated call still requires the user to
                             authenticate at the OS auth dialog.
       reset: bool         — start a fresh agent flow for this session.
-      backend: str        — "wizard" (default) or "bedrock".
     }
-    Returns: {answer, session_id, admin_enabled, elevation_method}
+    The backend is hard-pinned to the W1z4rD node; any `backend` field
+    in the request body is ignored.  Other AI backends are reachable via
+    tools/c0d3rV2 directly, not through this endpoint.
+
+    Returns: {answer, session_id, admin_enabled, elevation_method,
+              active_topic, turn_count}
     """
 
     def post(self, request):
@@ -63,7 +67,14 @@ class WizardChatAgentView(View):
         session_id = body.get("session_id") or str(uuid.uuid4())
         allow_admin = bool(body.get("allow_admin", False))
         reset = bool(body.get("reset", False))
-        backend = body.get("backend") or "wizard"
+
+        # Agent mode in wizard-chat is intentionally pinned to the W1z4rD
+        # node — this endpoint exists to showcase the wizard node driving
+        # C0d3rV2.  Routing it through any other backend would defeat the
+        # purpose.  Developers who need to test C0d3rV2 against other
+        # backends should call tools/c0d3rV2 directly, not this view.
+        # An explicit `backend` field in the request body is ignored.
+        backend = "wizard"
 
         if not text:
             return JsonResponse({"error": "text required"}, status=400)

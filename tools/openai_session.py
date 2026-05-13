@@ -80,10 +80,12 @@ class OpenAISession:
     def _ensure_client(self) -> None:
         if self._client is not None:
             return
-        if not os.getenv("OPENAI_API_KEY"):
+        api_key = _resolve_openai_key()
+        if not api_key:
             raise RuntimeError(
-                "OPENAI_API_KEY env var is not set.  Set it in the shell "
-                "or in CoolCryptoUtilities/.env before using OpenAISession."
+                "OPENAI_API_KEY not found in the secure vault and env var "
+                "is unset.  Store it via the securevault UI or set it in "
+                "the shell before using OpenAISession."
             )
         try:
             from openai import OpenAI  # type: ignore
@@ -92,7 +94,7 @@ class OpenAISession:
                 "openai package not installed.  `pip install openai>=1.0`"
             ) from exc
         self._OpenAI = OpenAI
-        self._client = OpenAI(timeout=self.timeout_s)
+        self._client = OpenAI(api_key=api_key, timeout=self.timeout_s)
 
     def _maybe_log_transcript(self, prompt: str, system: str, reply: str) -> None:
         if not self.transcript_enabled or self.transcript_dir is None:
@@ -196,12 +198,13 @@ class OpenAISession:
         """Quick health probe so callers can decide whether to fall
         back to another backend.  Returns dict with online / model /
         error keys, matching WizardSession.probe()."""
-        if not os.getenv("OPENAI_API_KEY"):
-            return {"online": False, "error": "OPENAI_API_KEY not set",
+        api_key = _resolve_openai_key()
+        if not api_key:
+            return {"online": False, "error": "OPENAI_API_KEY not in vault or env",
                     "model":  DEFAULT_MODEL}
         try:
             from openai import OpenAI  # type: ignore
-            client = OpenAI(timeout=5)
+            client = OpenAI(api_key=api_key, timeout=5)
             # Cheap call: list one model.  If the SDK / key works, this
             # responds quickly.  Don't hit /completions just to probe.
             _ = next(iter(client.models.list().data), None)
@@ -210,3 +213,16 @@ class OpenAISession:
         except Exception as exc:
             return {"online": False, "error": str(exc),
                     "model":  DEFAULT_MODEL}
+
+
+def _resolve_openai_key() -> str:
+    """Vault first, env fallback.  Lazy import so module load doesn't
+    require Django to be importable in tooling contexts."""
+    try:
+        from tools.secret_vault import get_secret  # type: ignore
+        val = get_secret("OPENAI_API_KEY")
+        if val:
+            return val
+    except Exception:
+        pass
+    return os.getenv("OPENAI_API_KEY", "")

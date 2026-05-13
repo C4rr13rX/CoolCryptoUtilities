@@ -72,65 +72,54 @@ def _make_session(backend: str, session_key: str) -> Any:
     """
     Create an AI session for the given backend preference.
 
-    Priority:
-      1. "wizard"  → WizardSession at WIZARD_NODE_URL (default localhost:8090)
-      2. "bedrock" → C0d3rSession (AWS Bedrock)
-      3. "openai"  → OpenAISession (requires OPENAI_API_KEY)
-
-    If wizard is chosen but the node probe fails, falls back to bedrock.
+    Cascading fallback when the request is "auto" or the preferred
+    backend is unavailable: wizard → bedrock → claude → openai.
     """
-    backend = (backend or "wizard").lower().strip()
+    from tools.ai_session import resolve_with_fallback
+    chosen = resolve_with_fallback(backend)
 
-    if backend in ("openai", "gpt", "openai_api"):
+    if chosen == "openai":
         from tools.openai_session import OpenAISession
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError(
-                "OPENAI_API_KEY env var is not set — cannot use openai backend. "
-                "Set it in CoolCryptoUtilities/.env or in the shell."
-            )
         return OpenAISession(
             session_name=f"c0d3rv2-web-{session_key[:16]}",
             transcript_dir=_RUNTIME_ROOT / "transcripts",
             transcript_enabled=False,
         )
 
-    if backend == "wizard":
-        from tools.wizard_session import WizardSession
-        probe = WizardSession.probe()
-        if probe["online"]:
-            return WizardSession(
-                session_name=f"web-{session_key[:16]}",
-                transcript_dir=_RUNTIME_ROOT / "transcripts",
-            )
-        # Node offline — fall through to bedrock with a warning in the log.
-        print(
-            f"[c0d3rv2-web] W1z4rD node offline ({probe['error']}); "
-            "falling back to Bedrock.",
-            flush=True,
+    if chosen == "claude":
+        from tools.claude_session import ClaudeSession
+        return ClaudeSession(
+            session_name=f"c0d3rv2-web-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            transcript_enabled=False,
         )
-        backend = "bedrock"
 
-    if backend in ("bedrock", "c0d3r", "coder"):
-        try:
-            from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
-            settings = c0d3r_default_settings()
-            for key in ("stream_default", "transcript_enabled", "event_store_enabled",
-                        "diagnostics_enabled", "research_report_enabled"):
-                settings.pop(key, None)
-            return C0d3rSession(
-                session_name=f"c0d3rv2-web-{session_key[:16]}",
-                transcript_dir=_RUNTIME_ROOT / "transcripts",
-                stream_default=False,
-                transcript_enabled=False,
-                event_store_enabled=False,
-                diagnostics_enabled=False,
-                db_sync_enabled=False,
-                **settings,
-            )
-        except Exception as exc:
-            raise RuntimeError(f"C0d3rV2 web runner: no AI backend available — {exc}") from exc
+    if chosen == "wizard":
+        from tools.wizard_session import WizardSession
+        return WizardSession(
+            session_name=f"web-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+        )
 
-    raise ValueError(f"Unknown backend: {backend!r}. Choose wizard, bedrock, or openai.")
+    # bedrock (default fallback when nothing else available)
+    try:
+        from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings
+        settings = c0d3r_default_settings()
+        for key in ("stream_default", "transcript_enabled", "event_store_enabled",
+                    "diagnostics_enabled", "research_report_enabled"):
+            settings.pop(key, None)
+        return C0d3rSession(
+            session_name=f"c0d3rv2-web-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            stream_default=False,
+            transcript_enabled=False,
+            event_store_enabled=False,
+            diagnostics_enabled=False,
+            db_sync_enabled=False,
+            **settings,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"C0d3rV2 web runner: no AI backend available — {exc}") from exc
 
 
 def run(
