@@ -15,6 +15,10 @@ urlpatterns = [
     path("status", views.WizardChatStatusView.as_view()),
     path("pools/", views.WizardChatPoolsView.as_view(), name="pools"),
     path("pools", views.WizardChatPoolsView.as_view()),
+    # Rolling-context snapshot endpoint — UI uses this to show the
+    # "active topic" chip and to inspect what the backend sees.
+    path("session/", views.WizardChatSessionView.as_view(), name="session"),
+    path("session",  views.WizardChatSessionView.as_view()),
     # ── Agent mode (localhost-only; uses C0d3rV2 with shell tools) ─────────
     path("agent/", agent_views.WizardChatAgentView.as_view(), name="agent"),
     path("agent", agent_views.WizardChatAgentView.as_view()),

@@ -477,13 +477,27 @@ class WizardChatMessageView(View):
         if not text and not attachment_texts:
             return JsonResponse({"error": "No message content"}, status=400)
 
-        # Build full prompt
+        # Rolling conversation context — prepended to the prompt so the
+        # backend sees what we've been working on, what the active topic
+        # is, and the last N turns verbatim.  Without this every /chat
+        # call is a goldfish.
+        from .conversation import STORE as CONV_STORE
+        if text:
+            CONV_STORE.append_turn(session_id, "user", text)
+        context_blob = CONV_STORE.build_context_blob(session_id)
+
+        # Build full prompt: context blob (if any) + attachments + new turn.
         parts = []
+        if context_blob:
+            parts.append(context_blob)
         if attachment_texts:
             for i, at in enumerate(attachment_texts, 1):
                 parts.append(f"[Attachment {i}]\n{at[:6000]}")
+        # The user's bare turn is already embedded in the context blob;
+        # append a "Now answer:" cue plus the bare text so the backend
+        # knows what to respond to (not just summarise).
         if text:
-            parts.append(text)
+            parts.append(f"[Now answer concisely]\n{text}")
         full_prompt = "\n\n".join(parts)
 
         wizard_data = _wizard_ask(full_prompt, session_id)
@@ -508,7 +522,31 @@ class WizardChatMessageView(View):
         result = _build_answer(wizard_data, web_snippet, full_prompt)
         result["node_online"] = node_up
         result["session_id"] = session_id
+        # Record the wizard's response into the rolling context so the
+        # next turn sees it.  Use the final composed answer (after
+        # web-snippet augmentation), not the raw node response.
+        answer_to_store = (result.get("answer") or "").strip()
+        if answer_to_store:
+            CONV_STORE.append_turn(session_id, "wizard", answer_to_store)
+        # Expose the active topic + turn count so the UI can render
+        # a "what we're working on" chip.
+        snap = CONV_STORE.snapshot(session_id)
+        result["active_topic"] = snap["active_topic"]
+        result["turn_count"]   = snap["turn_count"]
         return JsonResponse(result)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class WizardChatSessionView(View):
+    """GET /api/wizard-chat/session/?session_id=... — current rolling
+    context snapshot (active topic, summary, turn count, last N turns)."""
+
+    def get(self, request):
+        from .conversation import STORE as CONV_STORE
+        sid = request.GET.get("session_id", "").strip()
+        if not sid:
+            return JsonResponse({"error": "session_id required"}, status=400)
+        return JsonResponse(CONV_STORE.snapshot(sid))
 
 
 @method_decorator(csrf_exempt, name="dispatch")

@@ -69,6 +69,12 @@ class WizardChatAgentView(View):
             return JsonResponse({"error": "text required"}, status=400)
 
         from . import agent_runner
+        from .conversation import STORE as CONV_STORE
+
+        # Rolling context for the agent — same store as regular chat so
+        # an agent turn sees prior wizard-chat exchanges and vice versa.
+        CONV_STORE.append_turn(session_id, "user", text)
+        context_blob = CONV_STORE.build_context_blob(session_id)
 
         try:
             answer = agent_runner.run(
@@ -77,6 +83,7 @@ class WizardChatAgentView(View):
                 backend=backend,
                 reset=reset,
                 allow_admin=allow_admin,
+                system_context=context_blob,
             )
         except Exception as exc:
             return JsonResponse({
@@ -84,11 +91,17 @@ class WizardChatAgentView(View):
                 "session_id": session_id,
             }, status=500)
 
+        if answer and answer.strip():
+            CONV_STORE.append_turn(session_id, "wizard", answer.strip())
+        snap = CONV_STORE.snapshot(session_id)
+
         return JsonResponse({
             "answer": answer,
             "session_id": session_id,
             "admin_enabled": allow_admin,
             "elevation_method": agent_runner.elevation_method(),
+            "active_topic": snap["active_topic"],
+            "turn_count": snap["turn_count"],
         })
 
 

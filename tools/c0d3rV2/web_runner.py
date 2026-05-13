@@ -75,11 +75,24 @@ def _make_session(backend: str, session_key: str) -> Any:
     Priority:
       1. "wizard"  → WizardSession at WIZARD_NODE_URL (default localhost:8090)
       2. "bedrock" → C0d3rSession (AWS Bedrock)
-      3. "openai"  → C0d3rSession with OpenAI-compatible settings (future)
+      3. "openai"  → OpenAISession (requires OPENAI_API_KEY)
 
     If wizard is chosen but the node probe fails, falls back to bedrock.
     """
     backend = (backend or "wizard").lower().strip()
+
+    if backend in ("openai", "gpt", "openai_api"):
+        from tools.openai_session import OpenAISession
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY env var is not set — cannot use openai backend. "
+                "Set it in CoolCryptoUtilities/.env or in the shell."
+            )
+        return OpenAISession(
+            session_name=f"c0d3rv2-web-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            transcript_enabled=False,
+        )
 
     if backend == "wizard":
         from tools.wizard_session import WizardSession

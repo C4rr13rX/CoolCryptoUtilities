@@ -20,6 +20,7 @@ from typing import Any, Dict, Type
 
 from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings, c0d3r_settings_for_role
 from tools.wizard_session import WizardSession
+from tools.openai_session import OpenAISession
 
 
 _BEDROCK_ALIASES = {"c0d3r", "coder", "bedrock"}
@@ -51,7 +52,9 @@ def session_provider_from_context(ctx: Dict[str, Any] | None = None) -> str:
 
 def get_session_class(provider: str) -> Type:
     norm = _normalise(provider or "wizard")
-    if norm in _BEDROCK_ALIASES or norm in _OPENAI_ALIASES:
+    if norm in _OPENAI_ALIASES:
+        return OpenAISession
+    if norm in _BEDROCK_ALIASES:
         return C0d3rSession
     # wizard is default; also catches unknown values
     return WizardSession
@@ -59,7 +62,11 @@ def get_session_class(provider: str) -> Type:
 
 def default_settings(provider: str) -> Dict[str, Any]:
     norm = _normalise(provider or "wizard")
-    if norm in _BEDROCK_ALIASES or norm in _OPENAI_ALIASES:
+    if norm in _OPENAI_ALIASES:
+        # OpenAISession reads OPENAI_MODEL / TEMPERATURE / etc from env;
+        # no settings object needed at construction time.
+        return {}
+    if norm in _BEDROCK_ALIASES:
         return c0d3r_default_settings()
     # WizardSession accepts no special settings object — return empty dict
     return {}
@@ -67,7 +74,9 @@ def default_settings(provider: str) -> Dict[str, Any]:
 
 def settings_for_role(provider: str, role: str | None = None) -> Dict[str, Any]:
     norm = _normalise(provider or "wizard")
-    if norm in _BEDROCK_ALIASES or norm in _OPENAI_ALIASES:
+    if norm in _OPENAI_ALIASES:
+        return {}  # OpenAISession is role-agnostic; model is env-controlled
+    if norm in _BEDROCK_ALIASES:
         return c0d3r_settings_for_role(role)
     # Wizard roles all share the same session (node handles all requests)
     return {}

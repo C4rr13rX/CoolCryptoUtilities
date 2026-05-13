@@ -163,9 +163,20 @@ def _build_shell_tools(workdir: Path, session_key: str) -> tuple[Any, Any]:
 
 def _make_session(backend: str, session_key: str) -> Any:
     """Same backend selection as web_runner._make_session — wizard first,
-    bedrock fallback.  Duplicated here to avoid coupling the agent flow to
-    the read-only flow's import paths."""
+    bedrock fallback, openai when key is set.  Duplicated here to avoid
+    coupling the agent flow to the read-only flow's import paths."""
     backend = (backend or "wizard").lower().strip()
+    if backend in ("openai", "gpt", "openai_api"):
+        from tools.openai_session import OpenAISession
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY env var is not set — cannot use openai backend."
+            )
+        return OpenAISession(
+            session_name=f"agent-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            transcript_enabled=False,
+        )
     if backend == "wizard":
         from tools.wizard_session import WizardSession
         probe = WizardSession.probe()
