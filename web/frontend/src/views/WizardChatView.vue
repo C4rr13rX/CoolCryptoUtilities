@@ -782,24 +782,32 @@ onMounted(() => {
   const escHandler = (e: KeyboardEvent) => {
     if (e.key === 'Escape' && isFullscreen.value) {
       isFullscreen.value = false
+      document.body.style.overflow = ''
+      document.body.classList.remove('wizard-fs')
     }
   }
   window.addEventListener('keydown', escHandler)
   onBeforeUnmount(() => {
     clearInterval(iv)
     window.removeEventListener('keydown', escHandler)
-    // Always release body scroll lock on unmount so leaving the
-    // page via router-link doesn't leave the document stuck.
+    // Always release body scroll lock + class on unmount so leaving
+    // the page via router-link doesn't leave the document stuck.
     document.body.style.overflow = ''
+    document.body.classList.remove('wizard-fs')
   })
 })
 
 /** Toggle the panel between in-flow and viewport-filling modes.
  *  Locks body scroll while in fullscreen so the page underneath
- *  can't be scrolled by mouse wheel or trackpad over the chat. */
+ *  can't be scrolled by mouse wheel or trackpad over the chat.
+ *  Also stamps `body.wizard-fs` so the Django template's
+ *  `<header.site-header>` swings up out of view — without that the
+ *  outer R3V3N!R bar would sit above the panel because it has its
+ *  own stacking context outside the Vue app. */
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value
   document.body.style.overflow = isFullscreen.value ? 'hidden' : ''
+  document.body.classList.toggle('wizard-fs', isFullscreen.value)
 }
 
 // ---------------------------------------------------------------------------
@@ -1289,17 +1297,20 @@ function renderMarkdown(text: string): string {
               0 30px 80px rgba(0, 0, 0, 0.65);
 }
 
-/* Fullscreen toggle button. */
+/* Fullscreen toggle button — sized to match the slim top-bar
+   profile so it sits flush with the other chips. */
 .fs-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
+  width: 20px; height: 20px;
   background: rgba(127, 176, 255, 0.05);
   border: 1px solid rgba(127, 176, 255, 0.18);
-  border-radius: 5px;
+  border-radius: 4px;
   color: rgba(198, 216, 255, 0.75);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
 }
+.fs-btn svg { display: block; }
 .fs-btn:hover {
   background: rgba(127, 176, 255, 0.10);
   color: #c6d8ff;
@@ -1311,29 +1322,35 @@ function renderMarkdown(text: string): string {
 }
 
 /* ── Top bar ── */
+/* Slim profile: ~half the original strip height.  Padding and font
+   sizes shrink in proportion so every chip / button still fits on
+   one row at common widths.  Expanded body retains roomy spacing
+   for readability. */
 .top-bar { flex-shrink: 0; border-bottom: 1px solid rgba(182,204,255,0.08); background: rgba(6,10,17,0.95); }
 .top-bar__strip {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0.55rem 1.25rem; cursor: pointer; user-select: none; gap: 0.75rem;
+  padding: 0.25rem 0.85rem; cursor: pointer; user-select: none; gap: 0.5rem;
+  min-height: 28px;
 }
 .top-bar__strip:hover { background: rgba(182,204,255,0.03); }
-.top-bar__title { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; color: #c6d8ff; display: flex; align-items: center; gap: 0.4rem; }
-.top-bar__glyph { font-size: 1rem; color: #5aa6ff; }
-.top-bar__right { display: flex; align-items: center; gap: 0.6rem; }
-.node-badge { display: flex; align-items: center; gap: 0.3rem; font-size: 0.67rem; padding: 0.18rem 0.55rem; border-radius: 20px; border: 1px solid rgba(182,204,255,0.1); }
+.top-bar__title { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; color: #c6d8ff; display: flex; align-items: center; gap: 0.3rem; }
+.top-bar__glyph { font-size: 0.85rem; color: #5aa6ff; }
+.top-bar__right { display: flex; align-items: center; gap: 0.4rem; }
+.node-badge { display: flex; align-items: center; gap: 0.25rem; font-size: 0.6rem; padding: 0.1rem 0.4rem; border-radius: 18px; border: 1px solid rgba(182,204,255,0.1); line-height: 1; }
 .node-label { display: none; }
 .top-bar.expanded .node-label { display: inline; }
 .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 .node-badge.online  { color: #34d399; border-color: rgba(52,211,153,0.3); }
 .node-badge.offline { color: #ff5a5f; border-color: rgba(255,90,95,0.3); }
 .node-badge.checking { color: #f6b143; border-color: rgba(246,177,67,0.3); }
-.hyp-badge { font-size: 0.65rem; font-weight: 700; background: rgba(246,177,67,0.15); color: #f6b143; border: 1px solid rgba(246,177,67,0.3); border-radius: 20px; padding: 0.15rem 0.5rem; }
-.toggle-arrow { font-size: 1rem; color: rgba(182,204,255,0.4); transform: rotate(90deg); transition: transform 0.2s; }
+.hyp-badge { font-size: 0.58rem; font-weight: 700; background: rgba(246,177,67,0.15); color: #f6b143; border: 1px solid rgba(246,177,67,0.3); border-radius: 18px; padding: 0.08rem 0.4rem; line-height: 1; }
+.toggle-arrow { font-size: 0.85rem; color: rgba(182,204,255,0.4); transform: rotate(90deg); transition: transform 0.2s; }
 .toggle-arrow.open { transform: rotate(-90deg); }
 .pools-btn {
   background: rgba(90,166,255,0.08); border: 1px solid rgba(90,166,255,0.2);
-  border-radius: 6px; color: #5aa6ff; cursor: pointer; font-size: 0.67rem;
-  padding: 0.18rem 0.5rem; font-family: inherit; letter-spacing: 0.04em;
+  border-radius: 5px; color: #5aa6ff; cursor: pointer; font-size: 0.6rem;
+  padding: 0.1rem 0.4rem; font-family: inherit; letter-spacing: 0.04em;
+  line-height: 1.25;
   transition: background 0.15s;
 }
 .pools-btn:hover { background: rgba(90,166,255,0.18); }

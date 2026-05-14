@@ -122,7 +122,25 @@
         top: 0;
         z-index: 100;
         flex-wrap: wrap;
+        /* Swing-up out of view when the wizard-chat takes fullscreen.
+           cubic-bezier with overshoot mid-curve gives the slight
+           "swing" feel rather than a flat linear retract. */
+        transform-origin: top center;
+        transition:
+          transform 420ms cubic-bezier(.6, -0.25, .25, 1.4),
+          opacity   220ms ease-out 80ms,
+          margin    420ms cubic-bezier(.6, -0.25, .25, 1.4);
       }
+      body.wizard-fs header.site-header {
+        transform: translateY(-110%) rotateX(45deg);
+        opacity: 0;
+        pointer-events: none;
+        /* Pull the layout down so the wizard-chat panel can claim the
+           reclaimed space.  Negative margin equal to estimated header
+           height collapses the gap. */
+        margin-top: -200px;
+      }
+      body.wizard-fs footer.site-footer { display: none; }
       header.site-header .brand {
         display: flex;
         align-items: center;
