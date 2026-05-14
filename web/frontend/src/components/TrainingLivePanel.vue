@@ -25,8 +25,8 @@
         <span v-if="recentActivity" class="tp-livedot" />
       </span>
       <div class="tp-meta">
-        <span class="tp-chip" v-if="brain?.multi_pool">
-          {{ totalNeurons }} neurons · {{ brain.multi_pool.cross_edges ?? 0 }} edges
+        <span class="tp-chip" v-if="totalNeurons > 0">
+          {{ totalNeurons }} neurons · {{ totalCrossEdges }} edges
         </span>
         <span class="tp-chip" v-if="events.length">
           {{ events.length }} event{{ events.length === 1 ? '' : 's' }}
@@ -43,7 +43,7 @@
           <div class="tp-section__label">
             Pools
             <span class="tp-section__hint">
-              {{ activePoolCount }}/{{ poolEntries.length }} active · {{ brain?.multi_pool?.cross_edges ?? 0 }} cross-edges
+              {{ activePoolCount }}/{{ poolEntries.length }} active · {{ totalCrossEdges }} cross-edges
             </span>
           </div>
           <div class="pool-grid">
@@ -52,12 +52,20 @@
               :key="p.id"
               class="pool-tile"
               :class="{ empty: p.count === 0, hot: hotPools.has(p.id) }"
+              :title="`${p.id}: ${p.atoms} atoms · ${p.concepts} concepts · ${p.exc} exc / ${p.inh} inh synapses`"
             >
               <div class="pool-tile__head">
                 <span class="pool-tile__name">{{ poolLabel(p.id) }}</span>
                 <span class="pool-tile__count">{{ p.count }}</span>
               </div>
               <div class="pool-tile__role">{{ poolRole(p.id) }}</div>
+              <div class="pool-tile__breakdown" v-if="p.atoms + p.concepts > 0">
+                <span class="pt-atoms">{{ p.atoms }}a</span>
+                <span class="pt-concepts">{{ p.concepts }}c</span>
+                <span v-if="p.exc > 0 || p.inh > 0" class="pt-syn">
+                  {{ p.exc }}e / {{ p.inh }}i
+                </span>
+              </div>
               <div class="pool-tile__bar">
                 <span :style="{ width: poolFillPct(p.count) + '%' }" />
               </div>
@@ -204,6 +212,10 @@ interface Event {
 const open = ref(true)
 const events = ref<Event[]>([])
 const brain  = ref<any>(null)
+// Richer per-pool stats from /multi_pool/stats — atoms vs concepts,
+// exc/inh synapses, cross-edge fan-out per pool.  Independent of
+// `brain` so an older node that only serves /brain still renders.
+const mpStats = ref<any>(null)
 const sinceTs = ref<string>('')
 const hotPools = ref<Set<string>>(new Set())
 const recentActivity = ref(false)
@@ -243,22 +255,64 @@ function poolFillPct(n: number): number {
   return Math.min(100, Math.round((Math.log10(n + 1) / Math.log10(501)) * 100))
 }
 
+// Pool entries surface BOTH atoms and concepts.  `count` is kept as
+// `atoms + concepts` so the existing UI bits (fill-bar log scale, hot
+// pool detection, graph nodes) still work; atoms/concepts are also
+// exposed separately for the per-pool detail badges.
 const poolEntries = computed(() => {
+  const stats = mpStats.value
+  if (stats?.pools?.length) {
+    const order = ['keyboard_text', 'image_pixels', 'audio_features',
+                    'pdf_text', 'screen_frames', 'video_frames', 'in', 'out']
+    const byId = new Map<string, any>(stats.pools.map((p: any) => [p.pool, p]))
+    const out: Array<{ id: string; count: number; atoms: number; concepts: number;
+                       exc: number; inh: number }> = []
+    for (const id of order) {
+      const p = byId.get(id)
+      if (p) {
+        out.push({
+          id, count: (p.atoms || 0) + (p.concepts || 0),
+          atoms: p.atoms || 0, concepts: p.concepts || 0,
+          exc: p.exc_synapses || 0, inh: p.inh_synapses || 0,
+        })
+        byId.delete(id)
+      }
+    }
+    for (const p of byId.values()) {
+      out.push({
+        id: p.pool, count: (p.atoms || 0) + (p.concepts || 0),
+        atoms: p.atoms || 0, concepts: p.concepts || 0,
+        exc: p.exc_synapses || 0, inh: p.inh_synapses || 0,
+      })
+    }
+    return out
+  }
+  // Legacy /brain fallback (atoms-and-concepts collapsed into one count)
   const p = brain.value?.multi_pool?.pools || {}
   const order = ['in', 'out', 'keyboard_text', 'image_pixels', 'audio_features',
                   'pdf_text', 'screen_frames', 'video_frames']
-  const out: Array<{ id: string; count: number }> = []
+  const out: Array<{ id: string; count: number; atoms: number; concepts: number;
+                     exc: number; inh: number }> = []
   for (const id of order) {
-    if (id in p) out.push({ id, count: Number(p[id]) || 0 })
+    if (id in p) out.push({ id, count: Number(p[id]) || 0,
+      atoms: Number(p[id]) || 0, concepts: 0, exc: 0, inh: 0 })
   }
   for (const [id, c] of Object.entries(p)) {
-    if (!order.includes(id)) out.push({ id, count: Number(c) || 0 })
+    if (!order.includes(id)) out.push({ id, count: Number(c) || 0,
+      atoms: Number(c) || 0, concepts: 0, exc: 0, inh: 0 })
   }
   return out
 })
 
+// Total atom + concept counts (across all pools).  Used in the header
+// chip; preserves the existing "{N} neurons" framing.
 const totalNeurons = computed(() =>
   poolEntries.value.reduce((a, b) => a + b.count, 0))
+// Aggregate cross-edge count: prefer the new totals (which include
+// self-loop within-pool routes), fall back to /brain.cross_edges.
+const totalCrossEdges = computed<number>(() =>
+  Number(mpStats.value?.totals?.cross_pool_edges
+    ?? brain.value?.multi_pool?.cross_edges ?? 0))
 
 const activePoolCount = computed(() =>
   poolEntries.value.filter(p => p.count > 0).length)
@@ -376,7 +430,8 @@ async function poll() {
     const r = await fetch(url.toString())
     if (!r.ok) return
     const d = await r.json()
-    brain.value = d.brain || brain.value
+    brain.value   = d.brain || brain.value
+    mpStats.value = d.multi_pool_stats || mpStats.value
     if (Array.isArray(d.events) && d.events.length) {
       // Append + cap to 200 to keep DOM cheap.
       events.value.push(...d.events)
@@ -536,6 +591,16 @@ onBeforeUnmount(() => {
 }
 .pool-tile.empty .pool-tile__count { color: rgba(198, 216, 255, 0.4); }
 .pool-tile__role { font-size: 0.6rem; color: rgba(198, 216, 255, 0.4); }
+.pool-tile__breakdown {
+  font-size: 0.6rem;
+  display: flex;
+  gap: 0.45rem;
+  margin: 0.2rem 0 0.25rem;
+  font-variant-numeric: tabular-nums;
+}
+.pool-tile__breakdown .pt-atoms    { color: #7fc8ff; }
+.pool-tile__breakdown .pt-concepts { color: #b6e5d2; font-weight: 600; }
+.pool-tile__breakdown .pt-syn      { color: rgba(198,216,255,0.45); margin-left: auto; }
 .pool-tile__bar {
   height: 3px; background: rgba(127, 176, 255, 0.08); border-radius: 2px;
   overflow: hidden;

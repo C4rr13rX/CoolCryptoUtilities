@@ -80,18 +80,36 @@
               </div>
             </div>
 
-            <!-- Multi-pool fabric: per-pool neuron counts + cross-edges -->
-            <div class="stat-section" v-if="brainPools.length">
+            <!-- Multi-pool fabric: per-pool atoms / concepts / synapses + cross-edges -->
+            <div class="stat-section" v-if="mpPools.length || mpTotals.atoms > 0">
               <div class="stat-section__label">
                 Multi-pool fabric
-                <span class="stat-section__hint">{{ brainCrossEdges }} cross-edges</span>
+                <span class="stat-section__hint">
+                  {{ mpTotals.atoms }} atoms · {{ mpTotals.concepts }} concepts ·
+                  {{ mpTotals.cross_pool_edges }} cross-edges ·
+                  {{ mpTotals.exc_synapses }} exc / {{ mpTotals.inh_synapses }} inh synapses
+                </span>
               </div>
               <div class="stat-row">
-                <span v-for="p in brainPools" :key="p.id"
+                <span v-for="p in mpPools" :key="p.pool"
                       class="stat-chip pool-chip"
-                      :class="{ empty: p.count === 0, dense: p.count > 100 }">
-                  <span class="kv-key">{{ p.id }}</span>
-                  <span class="kv-val">{{ p.count }}</span>
+                      :class="{ empty: p.atoms === 0 && p.concepts === 0, dense: p.concepts > 50 }"
+                      :title="poolChipTitle(p)">
+                  <span class="kv-key">{{ p.pool }}</span>
+                  <span class="kv-val">
+                    <span class="pool-atoms">{{ p.atoms }}a</span>
+                    <span class="pool-concepts">{{ p.concepts }}c</span>
+                  </span>
+                </span>
+              </div>
+              <div v-if="mpCrossEdges.length" class="stat-row stat-row-cross">
+                <span class="stat-section__hint">routes:</span>
+                <span v-for="c in mpCrossEdges" :key="c.src + '→' + c.tgt"
+                      class="stat-chip cross-edge-chip"
+                      :class="{ 'self-loop': c.src === c.tgt }"
+                      :title="c.src + ' → ' + c.tgt + ': ' + c.edges + ' edges'">
+                  <span class="kv-key">{{ c.src === c.tgt ? c.src + ' ↻' : c.src + '→' + c.tgt }}</span>
+                  <span class="kv-val">{{ c.edges }}</span>
                 </span>
               </div>
             </div>
@@ -608,6 +626,10 @@ const nodeHealthData  = ref<Record<string, unknown>>({})
 // Brain snapshot — populated by /api/wizard-chat/status/ alongside health.
 // Drives the rich stats strip (pools, cross-edges, neuromodulators, motifs).
 const brainData       = ref<Record<string, any>>({})
+// Full status response, kept verbatim so computed bindings can pull
+// from `multi_pool_stats` (new, richer per-pool breakdown) and any
+// future top-level fields Django adds without another fetch.
+const wizardStatus    = ref<Record<string, any>>({})
 const hypothesisQueue = ref<HypothesisItem[]>([])
 const sessionId       = ref(crypto.randomUUID())
 
@@ -673,27 +695,112 @@ const nodeStatusClass = computed(() => ({
 }))
 
 // Rich brain-derived stats for the top status strip.
-const brainPools = computed(() => {
-  const p = brainData.value?.multi_pool?.pools || {}
-  // Order: in/out first (legacy), then modality pools.  Hides any pool
-  // with 0 neurons after we've shown at least one non-zero pool, so
-  // an empty fresh node still renders something but a trained node
-  // doesn't waste space on never-touched pools.
-  const order = ['in', 'out', 'keyboard_text', 'image_pixels', 'audio_features',
-                  'pdf_text', 'screen_frames', 'video_frames']
-  const entries: Array<{ id: string; count: number }> = []
-  for (const id of order) {
-    if (id in p) entries.push({ id, count: Number(p[id]) || 0 })
+// Reads from the new /multi_pool/stats endpoint (richer per-pool
+// breakdown: atoms / concepts / exc-syn / inh-syn / cross fan-out).
+// Falls back to the legacy /brain.multi_pool.pools shape so an older
+// node that hasn't rebuilt against the new endpoint still renders.
+interface MpPoolEntry {
+  pool: string
+  atoms: number
+  concepts: number
+  exc_synapses: number
+  inh_synapses: number
+  within_pool_total: number
+  cross_outgoing: Record<string, number>
+  cross_incoming: Record<string, number>
+}
+interface MpStats {
+  pools: MpPoolEntry[]
+  totals: {
+    pool_count: number
+    atoms: number
+    concepts: number
+    exc_synapses: number
+    inh_synapses: number
+    within_pool_total: number
+    cross_pool_edges: number
   }
-  // Append any non-standard pools registered at runtime.
-  for (const [id, count] of Object.entries(p)) {
-    if (!order.includes(id)) entries.push({ id, count: Number(count) || 0 })
-  }
-  return entries
+  cross_pool_edges: Array<{ src: string; tgt: string; edges: number }>
+}
+
+const mpStatsData = computed<MpStats | null>(() => {
+  const raw = (wizardStatus.value as any)?.multi_pool_stats
+  if (raw && raw.pools) return raw as MpStats
+  return null
 })
 
-const brainCrossEdges = computed<number>(() =>
-  Number(brainData.value?.multi_pool?.cross_edges ?? 0))
+const mpPools = computed<MpPoolEntry[]>(() => {
+  const stats = mpStatsData.value
+  if (stats?.pools?.length) {
+    // Preferred order: modality pools first (the ones that actually
+    // hold trained content under the new architecture), then legacy
+    // in/out, then any custom pools registered at runtime.
+    const order = ['keyboard_text', 'image_pixels', 'audio_features',
+                    'pdf_text', 'screen_frames', 'video_frames', 'in', 'out']
+    const byId = new Map(stats.pools.map(p => [p.pool, p]))
+    const out: MpPoolEntry[] = []
+    for (const id of order) {
+      const p = byId.get(id)
+      if (p) { out.push(p); byId.delete(id) }
+    }
+    for (const p of byId.values()) out.push(p)
+    return out
+  }
+  // Legacy fallback: /brain.multi_pool.pools = {id: count}.  Project
+  // into the new shape with all-other-fields zero so the UI still
+  // renders something on an old node.
+  const legacy = brainData.value?.multi_pool?.pools || {}
+  return Object.entries(legacy).map(([id, count]) => ({
+    pool: id,
+    atoms: Number(count) || 0,
+    concepts: 0,
+    exc_synapses: 0,
+    inh_synapses: 0,
+    within_pool_total: 0,
+    cross_outgoing: {},
+    cross_incoming: {},
+  } as MpPoolEntry))
+})
+
+const mpTotals = computed(() => {
+  const stats = mpStatsData.value
+  if (stats?.totals) return stats.totals
+  // Legacy fallback
+  return {
+    pool_count:        Object.keys(brainData.value?.multi_pool?.pools || {}).length,
+    atoms:             0,
+    concepts:          0,
+    exc_synapses:      0,
+    inh_synapses:      0,
+    within_pool_total: 0,
+    cross_pool_edges:  Number(brainData.value?.multi_pool?.cross_edges ?? 0),
+  }
+})
+
+const mpCrossEdges = computed(() => {
+  const stats = mpStatsData.value
+  return stats?.cross_pool_edges || []
+})
+
+function poolChipTitle(p: MpPoolEntry): string {
+  const parts: string[] = [
+    `${p.pool}:`,
+    `  ${p.atoms} atoms · ${p.concepts} concepts`,
+    `  ${p.exc_synapses} exc / ${p.inh_synapses} inh within-pool synapses`,
+  ]
+  const out = Object.entries(p.cross_outgoing || {})
+  if (out.length) parts.push(`  cross-out: ${out.map(([k, v]) => `${k}=${v}`).join(', ')}`)
+  const inc = Object.entries(p.cross_incoming || {})
+  if (inc.length) parts.push(`  cross-in:  ${inc.map(([k, v]) => `${k}=${v}`).join(', ')}`)
+  return parts.join('\n')
+}
+
+// Kept for backward compat with anything else in the template still
+// reading these — points at the new totals where possible.
+const brainPools = computed(() => mpPools.value.map(p => ({
+  id: p.pool, count: p.atoms + p.concepts,
+})))
+const brainCrossEdges = computed<number>(() => mpTotals.value.cross_pool_edges)
 
 const brainNeuromods = computed(() => {
   const nm = brainData.value?.neuromodulators || {}
@@ -820,6 +927,7 @@ async function checkNodeStatus() {
     nodeOnline.value     = d.online
     nodeHealthData.value = d.health || {}
     brainData.value      = d.brain  || {}
+    wizardStatus.value   = d
   } catch { nodeOnline.value = false }
 }
 
@@ -1395,6 +1503,27 @@ function renderMarkdown(text: string): string {
   border-color: rgba(80, 200, 160, 0.25);
 }
 .pool-chip.dense .kv-val { color: #b6e5d2; }
+.pool-chip .pool-atoms     { color: #7fc8ff; margin-right: 0.25rem; }
+.pool-chip .pool-concepts  { color: #b6e5d2; font-weight: 700; }
+
+/* Cross-edge route chips: routes row sits below pool row */
+.stat-row-cross {
+  margin-top: 0.2rem;
+  border-top: 1px dashed rgba(127,176,255,0.08);
+  padding-top: 0.2rem;
+}
+.cross-edge-chip {
+  font-size: 0.6rem;
+  background: rgba(140, 110, 200, 0.07);
+  border-color: rgba(140, 110, 200, 0.20);
+}
+.cross-edge-chip.self-loop {
+  /* within-pool concept→concept (same-modality paired training) */
+  background: rgba(80, 200, 160, 0.08);
+  border-color: rgba(80, 200, 160, 0.30);
+}
+.cross-edge-chip .kv-val { color: #c98cff; }
+.cross-edge-chip.self-loop .kv-val { color: #b6e5d2; }
 
 /* Neuromodulator chip with mini fill-bar */
 .neuromod-chip { padding-right: 0.3rem; }

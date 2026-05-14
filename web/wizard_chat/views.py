@@ -654,13 +654,23 @@ class WizardChatTrainingLiveView(View):
                 brain = json.loads(r.read())
         except Exception:
             pass
+        # Richer per-pool stats so the live panel can show atoms vs
+        # concepts and within-pool synapses — the live tiles use this
+        # to size + colour-code each pool.
+        multi_pool_stats: dict = {}
+        try:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=3) as r:
+                multi_pool_stats = json.loads(r.read())
+        except Exception:
+            pass
 
         latest_ts = events[-1].get("ts", "") if events else since_ts
         return JsonResponse({
-            "brain":        brain,
-            "events":       events,
-            "latest_ts":    latest_ts,
-            "events_count": len(events),
+            "brain":            brain,
+            "multi_pool_stats": multi_pool_stats,
+            "events":           events,
+            "latest_ts":        latest_ts,
+            "events_count":     len(events),
         })
 
     @staticmethod
@@ -818,6 +828,7 @@ class WizardChatStatusView(View):
                 "error": str(exc),
                 "health": {},
                 "brain": {},
+                "multi_pool_stats": {},
             })
         brain = {}
         try:
@@ -825,11 +836,21 @@ class WizardChatStatusView(View):
                 brain = json.loads(r.read())
         except Exception:
             pass
+        # Fetch the richer per-pool breakdown from /multi_pool/stats so the
+        # UI status strip can show atoms vs concepts, exc/inh synapses,
+        # and cross-edge fan-out per pool — the data /brain doesn't carry.
+        multi_pool_stats: dict = {}
+        try:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=4) as r:
+                multi_pool_stats = json.loads(r.read())
+        except Exception:
+            pass
         return JsonResponse({
             "online": True,
             "endpoint": WIZARD_ENDPOINT,
             "health": health,
             "brain": brain,
+            "multi_pool_stats": multi_pool_stats,
         })
 
 
