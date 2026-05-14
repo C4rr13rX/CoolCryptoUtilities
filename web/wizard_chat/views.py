@@ -646,20 +646,16 @@ class WizardChatTrainingLiveView(View):
         limit = max(1, min(self.MAX_LIMIT, limit))
 
         events = self._read_events_tail(_TRAINING_EVENTS_PATH, limit, since_ts)
-        # Brain snapshot — keep this cheap.  If the node is down, just
-        # return events; the UI can still show recent history.
+        # Generous timeouts under training contention — see status view.
         brain = {}
         try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=3) as r:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=10) as r:
                 brain = json.loads(r.read())
         except Exception:
             pass
-        # Richer per-pool stats so the live panel can show atoms vs
-        # concepts and within-pool synapses — the live tiles use this
-        # to size + colour-code each pool.
         multi_pool_stats: dict = {}
         try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=3) as r:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=10) as r:
                 multi_pool_stats = json.loads(r.read())
         except Exception:
             pass
@@ -830,18 +826,21 @@ class WizardChatStatusView(View):
                 "brain": {},
                 "multi_pool_stats": {},
             })
+        # Generous timeouts: under heavy training load (drive_corpora
+        # POSTing observations several times per second) the node's
+        # inner lock can hold for >4s and both /brain and stats fetches
+        # would time out, leaving the UI with empty payloads.  10s is
+        # well under any reasonable polling cadence and covers the
+        # worst observed contention.
         brain = {}
         try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=4) as r:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=10) as r:
                 brain = json.loads(r.read())
         except Exception:
             pass
-        # Fetch the richer per-pool breakdown from /multi_pool/stats so the
-        # UI status strip can show atoms vs concepts, exc/inh synapses,
-        # and cross-edge fan-out per pool — the data /brain doesn't carry.
         multi_pool_stats: dict = {}
         try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=4) as r:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=10) as r:
                 multi_pool_stats = json.loads(r.read())
         except Exception:
             pass
