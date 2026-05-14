@@ -128,7 +128,9 @@
           <div class="tp-section__label">
             Concept graph
             <span class="tp-section__hint">
-              one node per concept neuron · lines are cross-pool edges
+              sample of concept neurons per pool ·
+              {{ graphNodes.length }} nodes / {{ graphEdges.length }} edges shown
+              (of {{ mpTotals.concepts }} concepts · {{ totalCrossEdges }} routes)
             </span>
           </div>
           <div class="graph-wrap">
@@ -138,14 +140,21 @@
               :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`"
               preserveAspectRatio="xMidYMid meet"
             >
-              <!-- Cross-pool edges -->
-              <line
-                v-for="(e, i) in graphEdges"
-                :key="'e' + i"
-                :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
-                class="graph-edge"
-                :class="{ inh: e.inh }"
-              />
+              <!-- Cross-pool edges: lines for cross-modal, arcs for
+                   within-pool (same-modality paired training) -->
+              <template v-for="(e, i) in graphEdges" :key="'e' + i">
+                <path v-if="e.arc"
+                  :d="`M ${e.x1} ${e.y1} Q ${(e.x1+e.x2)/2} ${Math.min(e.y1,e.y2)-18} ${e.x2} ${e.y2}`"
+                  class="graph-edge graph-edge-arc"
+                  :class="{ inh: e.inh }"
+                  fill="none"
+                />
+                <line v-else
+                  :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
+                  class="graph-edge"
+                  :class="{ inh: e.inh }"
+                />
+              </template>
               <!-- Concept nodes -->
               <g v-for="(n, i) in graphNodes" :key="'n' + i" :transform="`translate(${n.x},${n.y})`">
                 <circle
@@ -314,6 +323,13 @@ const totalCrossEdges = computed<number>(() =>
   Number(mpStats.value?.totals?.cross_pool_edges
     ?? brain.value?.multi_pool?.cross_edges ?? 0))
 
+// Totals exposed to the template (concepts, atoms, synapses…) so the
+// graph subtitle can frame "X of Y shown" honestly without recomputing.
+const mpTotals = computed(() => mpStats.value?.totals || {
+  atoms: 0, concepts: 0, exc_synapses: 0, inh_synapses: 0,
+  cross_pool_edges: 0, within_pool_total: 0, pool_count: 0,
+})
+
 const activePoolCount = computed(() =>
   poolEntries.value.filter(p => p.count > 0).length)
 
@@ -322,14 +338,18 @@ const reversedEvents = computed(() => [...events.value].reverse())
 // ── Concept-graph layout ─────────────────────────────────────────
 //
 // We arrange registered pools horizontally; each pool's concept
-// neurons are spread vertically inside its column.  Edges are drawn
-// between concepts in different pools (cross-pool).  For brevity we
-// only show up to MAX_NODES_PER_POOL per pool.
+// neurons are spread across the pool's region in a wrapped grid.
+// Within-pool concept→concept edges (self-loop cross_for(p,p) — the
+// same-modality paired-training routes) appear as arcs inside the
+// region; cross-pool edges as straight lines between regions.  Node
+// count is sampled (we don't try to render every concept), but we
+// scale density to the actual edge count from /multi_pool/stats so
+// the visualization grows with the training.
 
-const MAX_NODES_PER_POOL = 6
+const MAX_NODES_PER_POOL = 36   // wrapped grid, max ~6×6 per pool
 
 const graphPoolAxis = computed(() => {
-  const cols = poolEntries.value.filter(p => p.count > 0)
+  const cols = poolEntries.value.filter(p => p.concepts > 0)
   if (!cols.length) return []
   const dx = GRAPH_W / (cols.length + 1)
   return cols.map((p, i) => ({ id: p.id, x: dx * (i + 1), y: GRAPH_H - 8 }))
@@ -343,53 +363,106 @@ interface GraphNode {
   r: number
 }
 
+// Wrap N nodes into a centred grid inside a column of width `colW`
+// and height `colH`.  Returns absolute (cx, cy) positions.
+function gridLayout(n: number, colCx: number, colCy: number,
+                     colW: number, colH: number): Array<{x:number;y:number}> {
+  if (n <= 0) return []
+  const cols = Math.max(1, Math.ceil(Math.sqrt(n * (colW / Math.max(1, colH)))))
+  const rows = Math.max(1, Math.ceil(n / cols))
+  const xStep = colW / (cols + 1)
+  const yStep = colH / (rows + 1)
+  const x0 = colCx - colW / 2
+  const y0 = colCy - colH / 2
+  const out: Array<{x:number;y:number}> = []
+  for (let i = 0; i < n; i++) {
+    const r = Math.floor(i / cols)
+    const c = i % cols
+    out.push({ x: x0 + xStep * (c + 1), y: y0 + yStep * (r + 1) })
+  }
+  return out
+}
+
 const graphNodes = computed<GraphNode[]>(() => {
-  const cols = poolEntries.value.filter(p => p.count > 0)
+  // Show pools that have concept neurons — that's what the graph
+  // visualizes, not raw atoms.
+  const cols = poolEntries.value.filter(p => p.concepts > 0)
   const nodes: GraphNode[] = []
   if (!cols.length) return nodes
-  const dx = GRAPH_W / (cols.length + 1)
+  const dx = GRAPH_W / cols.length
+  const colW = dx * 0.85
+  const colH = GRAPH_H - 50
+  const colCy = (GRAPH_H - 18) / 2
   for (let ci = 0; ci < cols.length; ci++) {
-    const { id, count } = cols[ci]
-    const shown = Math.min(count, MAX_NODES_PER_POOL)
-    const x = dx * (ci + 1)
+    const { id, concepts } = cols[ci]
+    const shown = Math.min(concepts, MAX_NODES_PER_POOL)
+    const colCx = dx * ci + dx / 2
+    const positions = gridLayout(shown, colCx, colCy, colW, colH)
+    const isHot = hotPools.value.has(id)
     for (let i = 0; i < shown; i++) {
-      const y = 30 + ((GRAPH_H - 80) / Math.max(1, shown)) * i + 10
       nodes.push({
         pool: id,
         label: id.slice(0, 1).toUpperCase() + (i + 1),
-        x, y,
-        r: hotPools.value.has(id) ? 7.5 : 5,
+        x: positions[i].x,
+        y: positions[i].y,
+        r: isHot ? 4.5 : 3.2,
       })
     }
   }
   return nodes
 })
 
-// Edges: connect every visible node in pool A to every visible node
-// in pool B when there's at least one cross-edge in the brain
-// snapshot.  We don't have per-pair edge counts in /brain (just total),
-// so we draw a soft mesh between adjacent pool columns.
-interface GraphEdge { x1: number; y1: number; x2: number; y2: number; inh: boolean }
+interface GraphEdge { x1: number; y1: number; x2: number; y2: number;
+                       inh: boolean; arc: boolean }
 
 const graphEdges = computed<GraphEdge[]>(() => {
-  const cols = poolEntries.value.filter(p => p.count > 0)
-  if (cols.length < 2 || !brain.value?.multi_pool?.cross_edges) return []
-  const edges: GraphEdge[] = []
+  const cols = poolEntries.value.filter(p => p.concepts > 0)
+  const stats = mpStats.value
+  const routes = stats?.cross_pool_edges as
+    Array<{src: string; tgt: string; edges: number}> | undefined
+  if (!cols.length || !routes || !routes.length) return []
+
+  // Group nodes by pool for quick lookup.
   const nodesByPool: Record<string, GraphNode[]> = {}
   for (const n of graphNodes.value) {
     nodesByPool[n.pool] = nodesByPool[n.pool] || []
     nodesByPool[n.pool].push(n)
   }
-  for (let a = 0; a < cols.length; a++) {
-    for (let b = a + 1; b < cols.length; b++) {
-      const aNodes = nodesByPool[cols[a].id] || []
-      const bNodes = nodesByPool[cols[b].id] || []
-      for (let i = 0; i < Math.min(aNodes.length, bNodes.length); i++) {
+
+  // Edges-to-draw budget proportional to log(actual_edges).  This way
+  // a route with 100 cross-edges looks denser than one with 5 without
+  // exploding the DOM at 100k edges.
+  const edges: GraphEdge[] = []
+  const MAX_EDGES_PER_ROUTE = 40
+  for (const route of routes) {
+    const aNodes = nodesByPool[route.src] || []
+    const bNodes = nodesByPool[route.tgt] || []
+    if (!aNodes.length || !bNodes.length) continue
+    const density = Math.min(MAX_EDGES_PER_ROUTE,
+      Math.max(2, Math.round(Math.log10(Math.max(1, route.edges)) * 6)))
+    if (route.src === route.tgt) {
+      // Self-loop: draw arcs between concept pairs within the same
+      // pool.  Pick `density` random pairs (deterministic by index).
+      for (let k = 0; k < density && k < aNodes.length - 1; k++) {
+        const i = k % aNodes.length
+        const j = (k * 3 + 1) % aNodes.length
+        if (i === j) continue
+        edges.push({
+          x1: aNodes[i].x, y1: aNodes[i].y,
+          x2: aNodes[j].x, y2: aNodes[j].y,
+          inh: false,
+          arc: true,
+        })
+      }
+    } else {
+      // Cross-pool: straight lines between matched-index nodes.
+      const n = Math.min(density, aNodes.length, bNodes.length)
+      for (let i = 0; i < n; i++) {
         edges.push({
           x1: aNodes[i].x, y1: aNodes[i].y,
           x2: bNodes[i].x, y2: bNodes[i].y,
-          inh: (i % 5 === 4),    // visual indication only — we don't
-                                  // yet have per-edge sign in /brain
+          inh: (i % 7 === 6),  // 1 in 7 visually marked inhibitory
+          arc: false,
         })
       }
     }
@@ -668,10 +741,17 @@ onBeforeUnmount(() => {
 .graph-edge {
   stroke: rgba(127, 176, 255, 0.18);
   stroke-width: 0.6;
+  fill: none;
 }
 .graph-edge.inh {
   stroke: rgba(255, 130, 130, 0.28);
   stroke-dasharray: 2 2;
+}
+/* Within-pool concept→concept routes (same-modality paired training)
+   render as arcs in green so they're visually distinct from straight
+   cross-modal lines. */
+.graph-edge-arc {
+  stroke: rgba(80, 200, 160, 0.24);
 }
 .graph-node {
   fill: rgba(127, 176, 255, 0.40);
