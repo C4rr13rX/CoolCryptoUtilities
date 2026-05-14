@@ -800,6 +800,52 @@ class WizardChatTrainView(View):
 
 
 @method_decorator(csrf_exempt, name="dispatch")
+class WizardChatTopologyView(View):
+    """GET /api/wizard-chat/topology/ — thin proxy to the node's
+    /multi_pool/topology endpoint.  Used by the brain-viz to draw
+    the (sampled) fabric skeleton: concept neurons + signed cross-
+    pool edges (including within-pool self-loop routes from same-
+    modality paired training).
+
+    Pass-through query params: max_per_pool, max_edges.
+    """
+    def get(self, request):
+        qs = request.META.get("QUERY_STRING", "")
+        url = f"{WIZARD_ENDPOINT}/multi_pool/topology"
+        if qs:
+            url = f"{url}?{qs}"
+        try:
+            with urllib.request.urlopen(url, timeout=12) as r:
+                body = json.loads(r.read())
+        except Exception as exc:
+            return JsonResponse({"error": str(exc), "nodes": [], "edges": []})
+        return JsonResponse(body)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class WizardChatActivityView(View):
+    """GET /api/wizard-chat/activity/?since_seq=N — thin proxy to the
+    node's /multi_pool/activity endpoint.  Polled at ~1Hz by the
+    brain-viz to ingest fire/train events as pulses along axons.
+
+    The node-side push is lock-skipping (try_lock on a separate
+    mutex from the inner state lock), so this endpoint cannot back-
+    pressure training.
+    """
+    def get(self, request):
+        qs = request.META.get("QUERY_STRING", "")
+        url = f"{WIZARD_ENDPOINT}/multi_pool/activity"
+        if qs:
+            url = f"{url}?{qs}"
+        try:
+            with urllib.request.urlopen(url, timeout=8) as r:
+                body = json.loads(r.read())
+        except Exception as exc:
+            return JsonResponse({"error": str(exc), "head": 0, "events": []})
+        return JsonResponse(body)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
 class WizardChatStatusView(View):
     """GET /api/wizard-chat/status/ — node health + brain snapshot.
 

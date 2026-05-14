@@ -123,68 +123,16 @@
           </div>
         </section>
 
-        <!-- ─── Concept graph sketch ────────────────────────────── -->
+        <!-- ─── Live brain visualization (canvas) ───────────────── -->
         <section class="tp-section">
           <div class="tp-section__label">
-            Concept graph
+            Brain
             <span class="tp-section__hint">
-              sample of concept neurons per pool ·
-              {{ graphNodes.length }} nodes / {{ graphEdges.length }} edges shown
-              (of {{ mpTotals.concepts }} concepts · {{ totalCrossEdges }} routes)
+              live concept-neuron sample · pulses fire along axons as
+              the node trains and recalls — looking into the fabric
             </span>
           </div>
-          <div class="graph-wrap">
-            <svg
-              ref="svgEl"
-              class="graph-svg"
-              :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <!-- Cross-pool edges: lines for cross-modal, arcs for
-                   within-pool (same-modality paired training) -->
-              <template v-for="(e, i) in graphEdges" :key="'e' + i">
-                <path v-if="e.arc"
-                  :d="`M ${e.x1} ${e.y1} Q ${(e.x1+e.x2)/2} ${Math.min(e.y1,e.y2)-18} ${e.x2} ${e.y2}`"
-                  class="graph-edge graph-edge-arc"
-                  :class="{ inh: e.inh }"
-                  fill="none"
-                />
-                <line v-else
-                  :x1="e.x1" :y1="e.y1" :x2="e.x2" :y2="e.y2"
-                  class="graph-edge"
-                  :class="{ inh: e.inh }"
-                />
-              </template>
-              <!-- Concept nodes -->
-              <g v-for="(n, i) in graphNodes" :key="'n' + i" :transform="`translate(${n.x},${n.y})`">
-                <circle
-                  :r="n.r"
-                  class="graph-node"
-                  :class="`pool-${n.pool}`"
-                />
-                <text class="graph-node__label" :y="n.r + 11">
-                  {{ n.label }}
-                </text>
-              </g>
-              <!-- Pool axis labels -->
-              <text
-                v-for="(p, i) in graphPoolAxis"
-                :key="'pa' + i"
-                :x="p.x"
-                :y="p.y"
-                class="graph-pool-label"
-                text-anchor="middle"
-              >
-                {{ poolLabel(p.id) }}
-              </text>
-            </svg>
-            <p class="graph-hint">
-              Nodes represent CONCEPT neurons (not raw atoms).  Lines are
-              cross-pool synaptic weights — dashed lines mark inhibitory
-              edges.  This is a coarse visualization of fabric topology,
-              not every neuron and connection.
-            </p>
-          </div>
+          <BrainCanvas />
         </section>
 
       </div>
@@ -195,6 +143,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import BrainCanvas from './BrainCanvas.vue'
 
 interface Event {
   ts: string
