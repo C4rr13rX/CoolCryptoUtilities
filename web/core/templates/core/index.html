@@ -114,8 +114,10 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        /* 5 px top/bottom puts the logo just shy of the chrome edge
-           so it dominates the header band.  Half the prior height. */
+        /* Deterministic 60 px band with 5 px clearance top and bottom.
+           Using `height` (not just padding) plus `box-sizing: border-
+           box` locks the band so a wide brand inner column can't
+           stretch the header taller than expected. */
         padding: 5px 1.25rem;
         gap: 1rem;
         background: #020101;
@@ -124,7 +126,11 @@
         top: 0;
         z-index: 100;
         flex-wrap: nowrap;
-        min-height: 0;
+        height: 60px;
+        min-height: 60px;
+        max-height: 60px;
+        box-sizing: border-box;
+        overflow: hidden;
         /* Swing-up out of view when the wizard-chat takes fullscreen.
            cubic-bezier with overshoot mid-curve gives the slight
            "swing" feel rather than a flat linear retract. */
@@ -132,7 +138,9 @@
         transition:
           transform 420ms cubic-bezier(.6, -0.25, .25, 1.4),
           opacity   220ms ease-out 80ms,
-          margin    420ms cubic-bezier(.6, -0.25, .25, 1.4);
+          margin    420ms cubic-bezier(.6, -0.25, .25, 1.4),
+          height    420ms cubic-bezier(.6, -0.25, .25, 1.4),
+          max-height 420ms cubic-bezier(.6, -0.25, .25, 1.4);
       }
       body.wizard-fs header.site-header {
         transform: translateY(-110%) rotateX(45deg);
