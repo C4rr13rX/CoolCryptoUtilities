@@ -19,6 +19,12 @@ urlpatterns = [
     # "active topic" chip and to inspect what the backend sees.
     path("session/", views.WizardChatSessionView.as_view(), name="session"),
     path("session",  views.WizardChatSessionView.as_view()),
+    # Live training feed — tails the training_events.jsonl from the
+    # W1z4rD node + bundles the current brain snapshot.  Polled by the
+    # bottom-of-chat training panel.
+    path("training/live/", views.WizardChatTrainingLiveView.as_view(),
+         name="training_live"),
+    path("training/live",  views.WizardChatTrainingLiveView.as_view()),
     # ── Agent mode (localhost-only; uses C0d3rV2 with shell tools) ─────────
     path("agent/", agent_views.WizardChatAgentView.as_view(), name="agent"),
     path("agent", agent_views.WizardChatAgentView.as_view()),

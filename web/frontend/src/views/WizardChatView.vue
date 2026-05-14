@@ -34,10 +34,72 @@
         <div v-if="headerOpen" class="top-bar__body">
           <div class="top-bar__meta">
             <p class="meta-sub">Multimodal neural fabric — pure Hebbian inference</p>
-            <div class="node-detail" v-if="Object.keys(nodeHealthData).length">
-              <span v-for="(v, k) in nodeHealthData" :key="k" class="node-kv">
-                <span class="kv-key">{{ k }}</span><span class="kv-val">{{ v }}</span>
-              </span>
+
+            <!-- Node identity + uptime -->
+            <div class="stat-section" v-if="nodeOnline">
+              <div class="stat-section__label">Node</div>
+              <div class="stat-row">
+                <span class="stat-chip">
+                  <span class="kv-key">id</span>
+                  <span class="kv-val mono">{{ nodeHealthData?.node_id || '—' }}</span>
+                </span>
+                <span class="stat-chip">
+                  <span class="kv-key">uptime</span>
+                  <span class="kv-val">{{ nodeUptimeFmt }}</span>
+                </span>
+                <span class="stat-chip">
+                  <span class="kv-key">status</span>
+                  <span class="kv-val">{{ nodeHealthData?.status || '—' }}</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Multi-pool fabric: per-pool neuron counts + cross-edges -->
+            <div class="stat-section" v-if="brainPools.length">
+              <div class="stat-section__label">
+                Multi-pool fabric
+                <span class="stat-section__hint">{{ brainCrossEdges }} cross-edges</span>
+              </div>
+              <div class="stat-row">
+                <span v-for="p in brainPools" :key="p.id"
+                      class="stat-chip pool-chip"
+                      :class="{ empty: p.count === 0, dense: p.count > 100 }">
+                  <span class="kv-key">{{ p.id }}</span>
+                  <span class="kv-val">{{ p.count }}</span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Neuromodulators (4-axis) -->
+            <div class="stat-section" v-if="brainData?.neuromodulators">
+              <div class="stat-section__label">Neuromodulators</div>
+              <div class="stat-row">
+                <span v-for="nm in brainNeuromods" :key="nm.key"
+                      class="stat-chip neuromod-chip"
+                      :class="`nm-${nm.key.toLowerCase()}`"
+                      :title="nm.label">
+                  <span class="kv-key">{{ nm.key }}</span>
+                  <span class="kv-val">{{ nm.value.toFixed(2) }}</span>
+                  <span class="nm-bar"><span class="nm-fill" :style="{ width: Math.min(100, nm.value * 100) + '%' }" /></span>
+                </span>
+              </div>
+            </div>
+
+            <!-- Motif hierarchy -->
+            <div class="stat-section" v-if="brainMotifs.total > 0 || Object.keys(brainMotifs.by_level).length">
+              <div class="stat-section__label">
+                Motif hierarchy
+                <span class="stat-section__hint">{{ brainMotifs.total }} total / {{ brainMotifs.attractors }} attractors</span>
+              </div>
+              <div class="stat-row">
+                <span v-for="(count, level) in brainMotifs.by_level" :key="level" class="stat-chip">
+                  <span class="kv-key">L{{ level }}</span>
+                  <span class="kv-val">{{ count }}</span>
+                </span>
+                <span v-if="!Object.keys(brainMotifs.by_level).length" class="stat-empty">
+                  no motifs yet — accumulates as training emits recurring label sequences
+                </span>
+              </div>
             </div>
           </div>
           <div v-if="hypothesisQueue.length" class="hypothesis-panel">
@@ -65,6 +127,13 @@
 
       <!-- Chat thread -->
       <div ref="threadEl" class="chat-thread">
+        <!-- Translucent audio-driven luminance overlay.  Click-through;
+             reads spectrum from any <audio>/<video> elements rendered
+             inside this thread (wizard replies, attachments).  Subtle
+             when silent, brightens with voice loudness, has soft
+             vertical bands keyed to the FFT spectrum — a phonetic
+             "light through fog" feel. -->
+        <AudioVisualizerOverlay />
         <div class="thread-inner">
 
           <div v-if="!messages.length" class="empty-state">
@@ -381,6 +450,16 @@
     </div><!-- /content-area -->
 
     <!-- ═══════════════════════════════════════════════════════
+         LIVE TRAINING PANEL (collapsible, black background)
+         Polls /api/wizard-chat/training/live every 2 s and shows
+         per-pool tiles, the activity stream, and a concept-graph
+         sketch.  Mounted between the chat area and the composer so
+         users can see what the node is learning right now without
+         leaving the conversation.
+    ═══════════════════════════════════════════════════════ -->
+    <TrainingLivePanel />
+
+    <!-- ═══════════════════════════════════════════════════════
          FLOATING INPUT BAR
     ═══════════════════════════════════════════════════════ -->
     <div class="input-bar">
@@ -461,6 +540,8 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import AudioVisualizerOverlay from '@/components/AudioVisualizerOverlay.vue'
+import TrainingLivePanel from '@/components/TrainingLivePanel.vue'
 
 interface Attachment { name: string; text: string; size: number; type: string; error?: boolean }
 interface StagedFile { name: string; text: string; size: number; uploading: boolean; error: boolean; file: File }
@@ -498,6 +579,9 @@ const dragging        = ref(false)
 const stagedFiles     = ref<StagedFile[]>([])
 const nodeOnline      = ref<boolean | null>(null)
 const nodeHealthData  = ref<Record<string, unknown>>({})
+// Brain snapshot — populated by /api/wizard-chat/status/ alongside health.
+// Drives the rich stats strip (pools, cross-edges, neuromodulators, motifs).
+const brainData       = ref<Record<string, any>>({})
 const hypothesisQueue = ref<HypothesisItem[]>([])
 const sessionId       = ref(crypto.randomUUID())
 
@@ -557,6 +641,55 @@ const nodeStatusClass = computed(() => ({
   offline:  nodeOnline.value === false,
   checking: nodeOnline.value === null,
 }))
+
+// Rich brain-derived stats for the top status strip.
+const brainPools = computed(() => {
+  const p = brainData.value?.multi_pool?.pools || {}
+  // Order: in/out first (legacy), then modality pools.  Hides any pool
+  // with 0 neurons after we've shown at least one non-zero pool, so
+  // an empty fresh node still renders something but a trained node
+  // doesn't waste space on never-touched pools.
+  const order = ['in', 'out', 'keyboard_text', 'image_pixels', 'audio_features',
+                  'pdf_text', 'screen_frames', 'video_frames']
+  const entries: Array<{ id: string; count: number }> = []
+  for (const id of order) {
+    if (id in p) entries.push({ id, count: Number(p[id]) || 0 })
+  }
+  // Append any non-standard pools registered at runtime.
+  for (const [id, count] of Object.entries(p)) {
+    if (!order.includes(id)) entries.push({ id, count: Number(count) || 0 })
+  }
+  return entries
+})
+
+const brainCrossEdges = computed<number>(() =>
+  Number(brainData.value?.multi_pool?.cross_edges ?? 0))
+
+const brainNeuromods = computed(() => {
+  const nm = brainData.value?.neuromodulators || {}
+  return [
+    { key: 'DA',  label: 'dopamine',       value: Number(nm.dopamine       ?? 0) },
+    { key: 'NE',  label: 'norepinephrine', value: Number(nm.norepinephrine ?? 0) },
+    { key: 'ACh', label: 'acetylcholine',  value: Number(nm.acetylcholine  ?? 0) },
+    { key: '5HT', label: 'serotonin',      value: Number(nm.serotonin      ?? 0) },
+  ]
+})
+
+const brainMotifs = computed(() => {
+  const m = brainData.value?.motifs || {}
+  return {
+    total:      Number(m.total ?? 0),
+    attractors: Number(m.attractor_count ?? 0),
+    by_level:   m.by_level || {},
+  }
+})
+
+const nodeUptimeFmt = computed(() => {
+  const s = Number(nodeHealthData.value?.uptime_secs ?? 0)
+  if (s < 60)   return `${s}s`
+  if (s < 3600) return `${Math.floor(s/60)}m ${s%60}s`
+  return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`
+})
 
 // Per-pool data helpers
 function getPoolEntries(poolKey: string): any[] {
@@ -625,6 +758,7 @@ async function checkNodeStatus() {
     const d = await r.json()
     nodeOnline.value     = d.online
     nodeHealthData.value = d.health || {}
+    brainData.value      = d.brain  || {}
   } catch { nodeOnline.value = false }
 }
 
@@ -1122,6 +1256,57 @@ function renderMarkdown(text: string): string {
 .node-kv { font-size: 0.67rem; background: rgba(182,204,255,0.05); border: 1px solid rgba(182,204,255,0.1); border-radius: 5px; padding: 0.15rem 0.45rem; }
 .kv-key { color: rgba(182,204,255,0.45); margin-right: 0.3rem; }
 .kv-val { color: #c6d8ff; }
+.kv-val.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.62rem; }
+
+/* Rich stats sections in the expanded top-bar body. */
+.stat-section { display: flex; flex-direction: column; gap: 0.3rem; }
+.stat-section__label {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: rgba(182,204,255,0.5); display: flex; align-items: center; gap: 0.5rem;
+}
+.stat-section__hint {
+  font-size: 0.6rem; color: rgba(182,204,255,0.35); text-transform: none;
+  letter-spacing: 0; font-weight: normal;
+}
+.stat-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.stat-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.67rem;
+  background: rgba(127, 176, 255, 0.06);
+  border: 1px solid rgba(127, 176, 255, 0.13);
+  border-radius: 5px;
+  padding: 0.18rem 0.45rem;
+}
+.stat-chip .kv-key { color: rgba(182,204,255,0.55); margin-right: 0; }
+.stat-chip .kv-val { color: #c6d8ff; font-weight: 600; }
+
+/* Pool chip: density-coded background so non-zero pools stand out. */
+.pool-chip.empty {
+  opacity: 0.45;
+  background: rgba(127, 176, 255, 0.03);
+}
+.pool-chip.dense {
+  background: rgba(80, 200, 160, 0.10);
+  border-color: rgba(80, 200, 160, 0.25);
+}
+.pool-chip.dense .kv-val { color: #b6e5d2; }
+
+/* Neuromodulator chip with mini fill-bar */
+.neuromod-chip { padding-right: 0.3rem; }
+.nm-bar {
+  display: inline-block; width: 36px; height: 4px;
+  background: rgba(127, 176, 255, 0.10); border-radius: 2px; overflow: hidden;
+  margin-left: 0.1rem;
+}
+.nm-fill { display: block; height: 100%; background: currentColor; }
+.nm-da  { color: #ffb87f; }   /* dopamine: warm */
+.nm-ne  { color: #f06070; }   /* norepinephrine: red */
+.nm-ach { color: #7fc8ff; }   /* acetylcholine: cyan */
+.nm-5ht { color: #c98cff; }   /* serotonin: violet */
+
+.stat-empty {
+  font-size: 0.62rem; color: rgba(182,204,255,0.35); font-style: italic;
+}
 .hyp-header { font-size: 0.75rem; color: #f6b143; display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.4rem; }
 .hypothesis-panel { display: flex; flex-direction: column; gap: 0.65rem; }
 .hypothesis-item { display: flex; flex-direction: column; gap: 0.3rem; }
@@ -1137,7 +1322,7 @@ function renderMarkdown(text: string): string {
 
 /* ── Content area ── */
 .content-area { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.chat-thread { flex: 1 1 0; overflow-y: auto; min-height: 0; scroll-behavior: smooth; }
+.chat-thread { flex: 1 1 0; overflow-y: auto; min-height: 0; scroll-behavior: smooth; position: relative; }
 .chat-thread::-webkit-scrollbar { width: 4px; }
 .chat-thread::-webkit-scrollbar-track { background: transparent; }
 .chat-thread::-webkit-scrollbar-thumb { background: rgba(182,204,255,0.12); border-radius: 2px; }

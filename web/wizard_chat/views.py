@@ -604,6 +604,104 @@ class WizardChatSessionView(View):
         return JsonResponse(CONV_STORE.snapshot(sid))
 
 
+# Path of the W1z4rD node's training event log.  The runner writes
+# every benchmark + train_start/train_end + regression_alert event
+# here as JSONL.  Configurable via env so the UI follows the same
+# convention as the runner (W1Z4RD_TRAINING_EVENTS).
+import os as _os
+_TRAINING_EVENTS_PATH = _os.environ.get(
+    "W1Z4RD_TRAINING_EVENTS",
+    str(_os.environ.get("W1Z4RDV1510N_DATA_DIR", "D:/w1z4rdv1510n-data"))
+    + "/training/training_events.jsonl",
+)
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class WizardChatTrainingLiveView(View):
+    """GET /api/wizard-chat/training/live/?since_ts=...&limit=80
+
+    Returns the most recent training events + a brain snapshot so the
+    UI's bottom-of-chat panel can render per-pool tiles AND a scrolling
+    list of training activity without two separate fetches.
+
+    Query params:
+      since_ts:  ISO8601 timestamp — only return events strictly after this
+      limit:     max events returned (default 80, capped at 500)
+
+    Response:
+      brain:        current /brain snapshot
+      events:       array of event dicts, OLDEST → NEWEST
+      latest_ts:    ISO8601 of the newest event returned, for next-poll cursor
+      events_count: int
+    """
+
+    MAX_LIMIT = 500
+
+    def get(self, request):
+        since_ts = (request.GET.get("since_ts") or "").strip()
+        try:
+            limit = int(request.GET.get("limit") or "80")
+        except ValueError:
+            limit = 80
+        limit = max(1, min(self.MAX_LIMIT, limit))
+
+        events = self._read_events_tail(_TRAINING_EVENTS_PATH, limit, since_ts)
+        # Brain snapshot — keep this cheap.  If the node is down, just
+        # return events; the UI can still show recent history.
+        brain = {}
+        try:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=3) as r:
+                brain = json.loads(r.read())
+        except Exception:
+            pass
+
+        latest_ts = events[-1].get("ts", "") if events else since_ts
+        return JsonResponse({
+            "brain":        brain,
+            "events":       events,
+            "latest_ts":    latest_ts,
+            "events_count": len(events),
+        })
+
+    @staticmethod
+    def _read_events_tail(path: str, limit: int, since_ts: str) -> list[dict]:
+        """Read the last N events (or events after since_ts) from the JSONL log.
+        Robust to a missing file (returns empty)."""
+        try:
+            import pathlib
+            p = pathlib.Path(path)
+            if not p.exists():
+                return []
+            # Tail: read up to 2 MB from the end and parse lines.  The
+            # training event log is small (typical event << 1 KB) so
+            # this is bounded.  Larger logs: switch to a true reverse
+            # reader, but 2 MB covers months of typical activity.
+            size = p.stat().st_size
+            with p.open("rb") as fh:
+                if size > 2_000_000:
+                    fh.seek(-2_000_000, _os.SEEK_END)
+                    fh.readline()  # discard partial line
+                raw = fh.read().decode("utf-8", errors="replace")
+        except Exception:
+            return []
+        events: list[dict] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if since_ts and ev.get("ts", "") <= since_ts:
+                continue
+            events.append(ev)
+        # Cap to last `limit`.
+        if len(events) > limit:
+            events = events[-limit:]
+        return events
+
+
 @method_decorator(csrf_exempt, name="dispatch")
 class WizardChatUploadView(View):
     """
@@ -697,24 +795,42 @@ class WizardChatTrainView(View):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class WizardChatStatusView(View):
-    """GET /api/wizard-chat/status/ — node health + training stats."""
+    """GET /api/wizard-chat/status/ — node health + brain snapshot.
+
+    Returns:
+      online:     bool — node reachable
+      endpoint:   str  — wizard node URL
+      health:     dict — node's /health response (uptime, node_id, status)
+      brain:      dict — node's /brain response (pools, cross_edges,
+                          neuromodulators, motifs, feedback_recipes).
+                          Used by the UI's top status strip to show rich
+                          live state without an extra round-trip.
+    """
 
     def get(self, request):
         try:
             with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/health", timeout=5) as r:
                 health = json.loads(r.read())
-            return JsonResponse({
-                "online": True,
-                "endpoint": WIZARD_ENDPOINT,
-                "health": health,
-            })
         except Exception as exc:
             return JsonResponse({
                 "online": False,
                 "endpoint": WIZARD_ENDPOINT,
                 "error": str(exc),
                 "health": {},
+                "brain": {},
             })
+        brain = {}
+        try:
+            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=4) as r:
+                brain = json.loads(r.read())
+        except Exception:
+            pass
+        return JsonResponse({
+            "online": True,
+            "endpoint": WIZARD_ENDPOINT,
+            "health": health,
+            "brain": brain,
+        })
 
 
 def _node_fetch(path: str, timeout: float = 5.0) -> dict:
