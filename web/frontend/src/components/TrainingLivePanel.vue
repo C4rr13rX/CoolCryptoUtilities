@@ -422,6 +422,12 @@ onBeforeUnmount(() => {
   background: #000;
   color: #c6d8ff;
   border-top: 1px solid rgba(127, 176, 255, 0.10);
+  /* Keep the panel from being squeezed by sibling flex pressure —
+     it owns its own height (collapsed = strip only, expanded = up
+     to the max-height on .tp-body) and never overlaps the input
+     bar below it. */
+  flex-shrink: 0;
+  display: flex; flex-direction: column;
 }
 
 .tp-strip {
@@ -467,7 +473,15 @@ onBeforeUnmount(() => {
 .tp-body {
   padding: 0.55rem 1.1rem 1.0rem;
   display: flex; flex-direction: column; gap: 1.1rem;
+  /* Cap expanded height to 38% of viewport so even a long activity
+     list never pushes the chat composer offscreen.  Scroll inside
+     this container instead. */
+  max-height: 38vh;
+  overflow-y: auto;
 }
+.tp-body::-webkit-scrollbar { width: 4px; }
+.tp-body::-webkit-scrollbar-track { background: transparent; }
+.tp-body::-webkit-scrollbar-thumb { background: rgba(127, 176, 255, 0.18); border-radius: 2px; }
 
 .tp-section { display: flex; flex-direction: column; gap: 0.35rem; }
 .tp-section__label {

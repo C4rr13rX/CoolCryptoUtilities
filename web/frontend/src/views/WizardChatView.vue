@@ -1,6 +1,7 @@
 <template>
   <div
     class="wizard-chat"
+    :class="{ 'is-fullscreen': isFullscreen }"
     @dragenter.prevent="dragging = true"
     @dragover.prevent
     @dragleave="onDragLeave"
@@ -26,6 +27,31 @@
           <span v-if="hypothesisQueue.length" class="hyp-badge">
             {{ hypothesisQueue.length }} hyp
           </span>
+          <button
+            class="fs-btn"
+            :title="isFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'"
+            @click.stop="toggleFullscreen"
+          >
+            <!-- Two SVGs: expand corners (when not fullscreen) /
+                  contract corners (when fullscreen).  Inline so the
+                  bundle doesn't need an extra asset round-trip. -->
+            <svg v-if="!isFullscreen" width="14" height="14" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 9V4h5"/>
+              <path d="M20 9V4h-5"/>
+              <path d="M4 15v5h5"/>
+              <path d="M20 15v5h-5"/>
+            </svg>
+            <svg v-else width="14" height="14" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 4v5H4"/>
+              <path d="M15 4v5h5"/>
+              <path d="M9 20v-5H4"/>
+              <path d="M15 20v-5h5"/>
+            </svg>
+          </button>
           <span class="toggle-arrow" :class="{ open: headerOpen }">›</span>
         </div>
       </div>
@@ -588,6 +614,10 @@ const sessionId       = ref(crypto.randomUUID())
 const headerOpen    = ref(false)
 const inspectorOpen = ref(false)
 const inspectorData = ref<InspectorData | null>(null)
+// Fullscreen state — when true, the wizard-chat root pins itself
+// to `position: fixed; inset: 0; z-index: 9000;` so it covers every
+// surrounding panel of the host app.  Esc exits, button toggles.
+const isFullscreen  = ref(false)
 
 // Agent mode — when on, messages route through C0d3rV2 with shell tools.
 // allowAdmin enables the shell_admin tool which triggers OS-native auth
@@ -746,8 +776,31 @@ const activePool = computed(() => poolsData.value?.[poolsTab.value])
 onMounted(() => {
   checkNodeStatus()
   const iv = setInterval(checkNodeStatus, 30_000)
-  onBeforeUnmount(() => clearInterval(iv))
+  // Esc exits fullscreen so users can collapse without hunting for
+  // the toggle button.  Window listener (not capture) so chat input
+  // textareas still see their own keystrokes.
+  const escHandler = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && isFullscreen.value) {
+      isFullscreen.value = false
+    }
+  }
+  window.addEventListener('keydown', escHandler)
+  onBeforeUnmount(() => {
+    clearInterval(iv)
+    window.removeEventListener('keydown', escHandler)
+    // Always release body scroll lock on unmount so leaving the
+    // page via router-link doesn't leave the document stuck.
+    document.body.style.overflow = ''
+  })
 })
+
+/** Toggle the panel between in-flow and viewport-filling modes.
+ *  Locks body scroll while in fullscreen so the page underneath
+ *  can't be scrolled by mouse wheel or trackpad over the chat. */
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value
+  document.body.style.overflow = isFullscreen.value ? 'hidden' : ''
+}
 
 // ---------------------------------------------------------------------------
 // Node status
@@ -1220,6 +1273,41 @@ function renderMarkdown(text: string): string {
   color: var(--accent-3, #b6ccff);
   font-family: inherit;
   overflow: hidden; position: relative;
+}
+
+/* Fullscreen mode: pin the entire panel to the viewport.  All inner
+   sections (top-bar, content-area, training panel, input bar) keep
+   their flex relationships so the chat thread grows and the input
+   bar stays anchored at the bottom edge. */
+.wizard-chat.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw; height: 100vh;
+  z-index: 9000;
+  border-radius: 0;
+  box-shadow: 0 0 0 1px rgba(127, 176, 255, 0.10),
+              0 30px 80px rgba(0, 0, 0, 0.65);
+}
+
+/* Fullscreen toggle button. */
+.fs-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  background: rgba(127, 176, 255, 0.05);
+  border: 1px solid rgba(127, 176, 255, 0.18);
+  border-radius: 5px;
+  color: rgba(198, 216, 255, 0.75);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.fs-btn:hover {
+  background: rgba(127, 176, 255, 0.10);
+  color: #c6d8ff;
+  border-color: rgba(127, 176, 255, 0.35);
+}
+.fs-btn:focus-visible {
+  outline: 1px solid rgba(127, 176, 255, 0.55);
+  outline-offset: 1px;
 }
 
 /* ── Top bar ── */
