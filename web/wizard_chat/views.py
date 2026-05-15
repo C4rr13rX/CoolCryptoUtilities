@@ -64,7 +64,10 @@ def _node_refresher_loop() -> None:
                     _node_cache[path] = (time.time(), data)
             except Exception:
                 pass
-            time.sleep(3.0)
+            # Each fetch holds the node's inner Mutex (esp. /brain which
+            # iterates the motif layer).  Longer inter-path delay so
+            # drive_corpora's training POSTs get more clock time.
+            time.sleep(8.0)
 
 
 def _ensure_node_refresher() -> None:
