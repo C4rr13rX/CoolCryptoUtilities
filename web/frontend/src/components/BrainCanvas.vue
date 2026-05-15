@@ -397,9 +397,12 @@ onMounted(async () => {
   resizeObs = new ResizeObserver(() => resizeCanvas())
   if (wrapEl.value) resizeObs.observe(wrapEl.value)
 
+  // Initial topology fetch is the only blocking moment; then we just
+  // stream activity at a relaxed cadence so we don't saturate the
+  // waitress thread pool or the node's inner lock.
   await pollTopology()
-  topoPollIv = window.setInterval(pollTopology, 6000)
-  actPollIv  = window.setInterval(pollActivity,  700)
+  topoPollIv = window.setInterval(pollTopology, 15000)
+  actPollIv  = window.setInterval(pollActivity,  1500)
   rafId = requestAnimationFrame(tick)
 })
 

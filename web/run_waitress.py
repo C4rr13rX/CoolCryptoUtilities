@@ -50,7 +50,13 @@ os.environ.setdefault("GUARDIAN_AUTO_DISABLED", "1")
 def main() -> int:
     host    = os.environ.get("WAITRESS_HOST", "127.0.0.1")
     port    = int(os.environ.get("WAITRESS_PORT", "8000"))
-    threads = int(os.environ.get("WAITRESS_THREADS", "8"))
+    # 24 threads (was 8) — the SPA polls multiple endpoints in parallel
+    # (status 5s, training/live 2s, activity ~1.5s, topology 15s) and
+    # each Django request blocks on the W1z4rD node which can take
+    # 1-3 s under training-load lock contention.  With 8 threads,
+    # waitress saturated and the task queue piled up >16 deep before
+    # the SPA UI became unresponsive.
+    threads = int(os.environ.get("WAITRESS_THREADS", "24"))
 
     # Late import so any settings/env tweaks above land first.
     from coolcrypto_dashboard.wsgi import application

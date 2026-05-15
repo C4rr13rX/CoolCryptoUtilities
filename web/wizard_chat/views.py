@@ -16,6 +16,117 @@ from typing import Any
 
 _thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
+# ────────────────────────────────────────────────────────────────────
+# Process-wide TTL cache for node fetches.  Multiple SPA tabs polling
+# /api/wizard-chat/status/, /training/live/, /topology/ at overlapping
+# cadences would otherwise each trigger a node round-trip and pile up
+# on the inner state lock (which is also held by training).  The cache
+# lets concurrent pollers share one fetch.  Tiny TTL — fresh enough for
+# a live panel but coarse enough that 8 parallel polls only cost ONE
+# node round-trip.
+# ────────────────────────────────────────────────────────────────────
+import threading as _threading
+_node_cache_lock = _threading.Lock()
+_node_cache: dict[str, tuple[float, dict]] = {}
+_node_refresher_started = False
+_node_refresher_lock = _threading.Lock()
+_node_refresher_paths: list[tuple[str, float]] = [
+    ("/health",            5.0),
+    ("/brain",             5.0),
+    ("/multi_pool/stats",  5.0),
+]
+# Per-path Event for the in-flight fetch.  Singleflight: when a
+# request arrives and the cache is stale, EXACTLY one thread does
+# the upstream fetch.  Every other concurrent caller waits on the
+# Event, then reads the freshly-populated cache.  Without this, 8
+# concurrent SPA polls all see "miss" simultaneously and each kicks
+# off its own node round-trip — collapsing waitress thread pool
+# while every fetch serializes on the node's inner lock.
+_node_inflight: dict[str, _threading.Event] = {}
+
+def _node_refresher_loop() -> None:
+    """Single background thread that walks the slow status fetches at
+    a relaxed cadence (one path every ~3 s, so the full set cycles
+    every ~9 s).  Each fetch runs in this thread — urllib releases
+    the GIL during I/O so it doesn't block waitress request threads.
+
+    The refresher's job is to keep the cache POPULATED, not to keep
+    it strictly fresh.  Stale-while-revalidate in `_node_fetch_cached`
+    means request threads always read the cache instantly, even if
+    the value is stale; the background thread does the heavy lifting.
+    """
+    while True:
+        for path, _ in _node_refresher_paths:
+            try:
+                with urllib.request.urlopen(f"{WIZARD_ENDPOINT}{path}", timeout=30) as r:
+                    data = json.loads(r.read())
+                with _node_cache_lock:
+                    _node_cache[path] = (time.time(), data)
+            except Exception:
+                pass
+            time.sleep(3.0)
+
+
+def _ensure_node_refresher() -> None:
+    """Idempotent — first request that touches the cache spins up the
+    background refresher.  We don't start it at module import because
+    Django manage.py / migrate also imports this module and shouldn't
+    leave a daemon thread behind."""
+    global _node_refresher_started
+    with _node_refresher_lock:
+        if _node_refresher_started:
+            return
+        t = _threading.Thread(target=_node_refresher_loop,
+                                name="wizard-node-cache-refresher",
+                                daemon=True)
+        t.start()
+        _node_refresher_started = True
+
+
+def _node_fetch_cached(path: str, ttl: float = 1.5, timeout: float = 10.0) -> dict:
+    """GET path on the wizard node — stale-while-revalidate semantics.
+    Request threads never block on an upstream fetch.  If the cache
+    has ANY value (fresh or stale), return it immediately.  If the
+    value is stale beyond `ttl`, the background refresher will pick
+    it up on its next pass.  If the cache is empty (cold start), we
+    do a singleflight fetch with a short timeout so the first request
+    after Django boot doesn't return totally empty data.
+    """
+    with _node_cache_lock:
+        entry = _node_cache.get(path)
+    # Any cached value — return it immediately.  Even if stale (refresher
+    # will pick it up).  Keeps request threads off the slow node path.
+    if entry is not None:
+        return entry[1]
+    # COLD: no entry at all.  Singleflight a single short fetch so the
+    # first request post-boot has something to show, then waiters share.
+    key = path
+    with _node_cache_lock:
+        inflight = _node_inflight.get(key)
+        if inflight is not None:
+            wait_for = inflight
+        else:
+            wait_for = None
+            _node_inflight[key] = _threading.Event()
+
+    if wait_for is not None:
+        wait_for.wait(timeout=timeout + 1.0)
+        with _node_cache_lock:
+            entry = _node_cache.get(key)
+        return entry[1] if entry else {}
+
+    try:
+        with urllib.request.urlopen(f"{WIZARD_ENDPOINT}{path}", timeout=timeout) as r:
+            data = json.loads(r.read())
+    except Exception:
+        data = {}
+    with _node_cache_lock:
+        _node_cache[key] = (time.time(), data)
+        ev = _node_inflight.pop(key, None)
+    if ev is not None:
+        ev.set()
+    return data
+
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -645,21 +756,12 @@ class WizardChatTrainingLiveView(View):
             limit = 80
         limit = max(1, min(self.MAX_LIMIT, limit))
 
+        _ensure_node_refresher()
         events = self._read_events_tail(_TRAINING_EVENTS_PATH, limit, since_ts)
-        # Generous timeouts under training contention — see status view.
-        brain = {}
-        try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=10) as r:
-                brain = json.loads(r.read())
-        except Exception:
-            pass
-        multi_pool_stats: dict = {}
-        try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=10) as r:
-                multi_pool_stats = json.loads(r.read())
-        except Exception:
-            pass
-
+        # Shared TTL cache with the status view — same node round-trips,
+        # same data, no duplicate work when both endpoints poll.
+        brain            = _node_fetch_cached("/brain",            ttl=10.0, timeout=15.0)
+        multi_pool_stats = _node_fetch_cached("/multi_pool/stats", ttl=5.0,  timeout=12.0)
         latest_ts = events[-1].get("ts", "") if events else since_ts
         return JsonResponse({
             "brain":            brain,
@@ -860,36 +962,28 @@ class WizardChatStatusView(View):
     """
 
     def get(self, request):
-        try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/health", timeout=5) as r:
-                health = json.loads(r.read())
-        except Exception as exc:
+        # Spin up the background cache refresher on first use.  Once
+        # running it polls the slow node endpoints every ~2 s on its
+        # OWN thread, so request handlers always hit cache.  Cold
+        # request cost drops from 15+ s (under training load) to ~5 ms.
+        _ensure_node_refresher()
+        # Short timeouts on cold-cache fetches.  Stale-while-revalidate
+        # in `_node_fetch_cached` makes warm fetches instant, but the
+        # very first call after Django boot has to wait for SOMETHING.
+        # 3-4 s is plenty: if the node is too slow even for that, we
+        # return empty payloads and the background refresher will
+        # populate the cache for the SPA's next poll (5 s later).
+        health = _node_fetch_cached("/health", ttl=2.0, timeout=3.0)
+        if not health:
             return JsonResponse({
                 "online": False,
                 "endpoint": WIZARD_ENDPOINT,
-                "error": str(exc),
                 "health": {},
                 "brain": {},
                 "multi_pool_stats": {},
             })
-        # Generous timeouts: under heavy training load (drive_corpora
-        # POSTing observations several times per second) the node's
-        # inner lock can hold for >4s and both /brain and stats fetches
-        # would time out, leaving the UI with empty payloads.  10s is
-        # well under any reasonable polling cadence and covers the
-        # worst observed contention.
-        brain = {}
-        try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/brain", timeout=10) as r:
-                brain = json.loads(r.read())
-        except Exception:
-            pass
-        multi_pool_stats: dict = {}
-        try:
-            with urllib.request.urlopen(f"{WIZARD_ENDPOINT}/multi_pool/stats", timeout=10) as r:
-                multi_pool_stats = json.loads(r.read())
-        except Exception:
-            pass
+        brain            = _node_fetch_cached("/brain",            ttl=10.0, timeout=4.0)
+        multi_pool_stats = _node_fetch_cached("/multi_pool/stats", ttl=5.0,  timeout=4.0)
         return JsonResponse({
             "online": True,
             "endpoint": WIZARD_ENDPOINT,

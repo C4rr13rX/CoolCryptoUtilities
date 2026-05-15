@@ -123,16 +123,26 @@
           </div>
         </section>
 
-        <!-- ─── Live brain visualization (canvas) ───────────────── -->
+        <!-- ─── Live brain visualization (canvas, lazy) ─────────── -->
+        <!-- Lazy-mounted: only fetches /topology + /activity once the
+             user clicks "Show".  Until then the section is collapsed
+             and zero polls run, so the SPA boot and waitress thread
+             pool stay quiet. -->
         <section class="tp-section">
           <div class="tp-section__label">
             Brain
-            <span class="tp-section__hint">
-              live concept-neuron sample · pulses fire along axons as
-              the node trains and recalls — looking into the fabric
+            <span class="tp-section__hint" v-if="!brainOpen">
+              click to start the live concept-neuron view
             </span>
+            <span class="tp-section__hint" v-else>
+              live concept-neuron sample · pulses fire along axons as
+              the node trains and recalls
+            </span>
+            <button class="tp-toggle-btn" @click="brainOpen = !brainOpen">
+              {{ brainOpen ? 'Hide' : 'Show' }}
+            </button>
           </div>
-          <BrainCanvas />
+          <BrainCanvas v-if="brainOpen" />
         </section>
 
       </div>
@@ -168,6 +178,9 @@ interface Event {
 }
 
 const open = ref(true)
+// Brain-viz mounts lazily: zero topology / activity polls until the
+// user opens it.  Defaults closed so the SPA boot is light.
+const brainOpen = ref(false)
 const events = ref<Event[]>([])
 const brain  = ref<any>(null)
 // Richer per-pool stats from /multi_pool/stats — atoms vs concepts,
@@ -569,6 +582,21 @@ onBeforeUnmount(() => {
 .tp-section__hint {
   font-size: 0.6rem; text-transform: none; letter-spacing: 0;
   color: rgba(198, 216, 255, 0.35); font-weight: normal;
+}
+.tp-toggle-btn {
+  margin-left: auto;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  background: rgba(127, 176, 255, 0.12);
+  border: 1px solid rgba(127, 176, 255, 0.25);
+  color: rgba(198, 216, 255, 0.75);
+  border-radius: 4px;
+  padding: 0.18rem 0.55rem;
+  cursor: pointer;
+}
+.tp-toggle-btn:hover {
+  background: rgba(127, 176, 255, 0.20);
+  color: #c6d8ff;
 }
 
 .tp-empty {
