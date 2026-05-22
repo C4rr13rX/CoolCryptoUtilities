@@ -136,6 +136,11 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 WIZARD_ENDPOINT = os.getenv("WIZARD_NODE_URL", "http://localhost:8090").rstrip("/")
+# Override JUST the /chat endpoint to route through the new brain crate
+# at port 8095 (w1z4rd_brain_server).  Everything else (sensor/observe,
+# /multi_pool/*, /qa/query, etc.) still hits the legacy node.  Empty
+# string = use WIZARD_ENDPOINT for /chat as well.
+WIZARD_BRAIN_CHAT_URL = os.getenv("WIZARD_BRAIN_CHAT_URL", "http://localhost:8095").rstrip("/")
 WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "8"))
 WEB_SEARCH_TIMEOUT = float(os.getenv("WIZARD_WEB_SEARCH_TIMEOUT_S", "3"))
 MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
@@ -220,8 +225,9 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
         "hops": 2,
         "min_strength": 0.05,
     }).encode()
+    chat_base = WIZARD_BRAIN_CHAT_URL or WIZARD_ENDPOINT
     req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/chat",
+        f"{chat_base}/chat",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",

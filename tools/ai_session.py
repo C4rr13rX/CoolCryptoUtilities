@@ -4,7 +4,11 @@ Provider routing for all AI sessions across the site.
 
 Supported providers (set via BRANDDOZER_SESSION_PROVIDER env or
 context["session_provider"]):
-  wizard   — W1z4rD Vision Node at localhost:8090 (DEFAULT, preferred)
+  wizard   — W1z4rDV1510n brain server at localhost:8095 (DEFAULT,
+             preferred).  May be a §18 cluster head; the brain
+             transparently uses the ring.  Override URL via
+             WIZARD_BRAIN_URL / WIZARD_BRAIN_CHAT_URL.  Legacy
+             port-8090 node still supported via LEGACY_NEURO_API=1.
   bedrock  — AWS Bedrock (Anthropic Claude via boto3)
   c0d3r    — alias for bedrock
   coder    — alias for bedrock

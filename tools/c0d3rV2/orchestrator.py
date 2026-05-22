@@ -424,9 +424,27 @@ class Orchestrator:
 
         try:
             raw = self.session.send(prompt=prompt, stream=False, system=system)
-            return self._safe_json(raw or "")
         except Exception:
             return None
+        parsed = self._safe_json(raw or "")
+        if parsed is not None:
+            return parsed
+        # Hebbian recall backends (W1z4rD brain) often return prose rather
+        # than JSON.  Surface that text as a direct answer instead of
+        # silently dropping the turn.  Sentinels like
+        # "[wizard-brain unavailable: ...]" / "[wizard-brain OOG]" /
+        # "[wizard-brain hypothesis]" indicate the brain has nothing
+        # useful — flag as no_recall so the caller can escalate to tools.
+        text = (raw or "").strip()
+        if not text:
+            return None
+        low = text.lower()
+        if low.startswith(("[wizard-brain unavailable", "[wizard-brain error",
+                           "[wizard-brain oog", "[wizard-brain hypothesis")):
+            return {"action": "answer", "output": text,
+                    "reason": "brain returned no grounded recall"}
+        return {"action": "answer", "output": text,
+                "reason": "non-JSON response surfaced verbatim"}
 
     # ------------------------------------------------------------------
     # Tool dispatch

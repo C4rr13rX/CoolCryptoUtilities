@@ -3,10 +3,20 @@
 Creates an AI session for the V2 orchestration engine.  The session
 must expose a send(prompt, stream=False, system='') → str interface.
 
-Backend priority (CLI --backend flag or WIZARD_NODE_URL env):
-  1. wizard   — W1z4rD Vision Node (default, localhost:8090)
-  2. bedrock  — AWS Bedrock via C0d3rSession
+Backend priority (CLI --backend flag or env):
+  1. wizard   — W1z4rDV1510n brain server (default, localhost:8095).
+                Set WIZARD_BRAIN_URL / WIZARD_BRAIN_CHAT_URL to override.
+                The brain may be a §18 cluster head; it transparently
+                pools state across N hosts.  Legacy port-8090
+                neuro-node still supported via LEGACY_NEURO_API=1.
+  2. bedrock  — AWS Bedrock via C0d3rSession (fallback when brain
+                offline or for tasks needing transformer-style generation).
   3. openai   — future (maps to bedrock for now)
+
+The wizard backend is the strategic choice: as the brain trains on
+engineering/research corpora (the user's stated agent goal), it
+replaces external APIs.  Bedrock is the operational fallback while
+the brain catches up.
 """
 from __future__ import annotations
 
