@@ -3,20 +3,32 @@
 Creates an AI session for the V2 orchestration engine.  The session
 must expose a send(prompt, stream=False, system='') → str interface.
 
+C0d3rV2 is the AGENT — it orchestrates tool use, planning, and
+multi-step task execution.  It is NOT a backend; it consumes one.
+The backend is the LLM that actually generates each step.
+
 Backend priority (CLI --backend flag or env):
-  1. wizard   — W1z4rDV1510n brain server (default, localhost:8095).
-                Set WIZARD_BRAIN_URL / WIZARD_BRAIN_CHAT_URL to override.
-                The brain may be a §18 cluster head; it transparently
-                pools state across N hosts.  Legacy port-8090
-                neuro-node still supported via LEGACY_NEURO_API=1.
-  2. bedrock  — AWS Bedrock via C0d3rSession (fallback when brain
+  1. wizard   — W1z4rDV1510n merged main node at localhost:8090,
+                routed through /brain/chat (the Phase A-E substrate
+                mounted alongside the legacy Web3 + cluster + wallet
+                stack).  DEFAULT.  Set WIZARD_BRAIN_URL or
+                WIZARD_BRAIN_CHAT_URL to override.  The standalone
+                w1z4rd_brain_server binary at :8095 still works for
+                backward compat — point WIZARD_BRAIN_CHAT_URL there
+                if you prefer the isolated brain process.  The brain
+                may be a §18 cluster head; it transparently pools
+                state across N hosts.  Legacy port-8090 /neuro/ask is
+                still reachable via LEGACY_NEURO_API=1.
+  2. bedrock  — AWS Bedrock via C0d3rSession (fallback when wizard
                 offline or for tasks needing transformer-style generation).
-  3. openai   — future (maps to bedrock for now)
+  3. claude   — Anthropic API direct (third fallback).
+  4. openai   — OpenAI API (last resort).
 
 The wizard backend is the strategic choice: as the brain trains on
-engineering/research corpora (the user's stated agent goal), it
-replaces external APIs.  Bedrock is the operational fallback while
-the brain catches up.
+engineering/research corpora, it replaces external APIs.  Bedrock /
+claude / openai are the operational fallbacks while the brain catches
+up.  This file is the session-factory layer; the cascading
+availability check lives in `tools.ai_session.resolve_with_fallback`.
 """
 from __future__ import annotations
 

@@ -5,10 +5,12 @@ simple synchronous run(prompt) → str interface suitable for calling from a
 Django view.
 
 The runner creates a lightweight ProcessFlow:
-  - AI backend: WizardSession (brain server at localhost:8095) by
-    default; falls back to Bedrock C0d3rSession if the brain server is
-    unset or offline.  The brain may be a §18 cluster head — the same
-    URL transparently uses the ring.
+  - AI backend: WizardSession against the merged W1z4rDV1510n main
+    node (localhost:8090 by default, routed through /brain/chat) by
+    default; falls back to Bedrock C0d3rSession if the wizard node
+    is unset or offline.  Subsequent fallbacks: Claude (Anthropic
+    API) and OpenAI.  The brain may be a §18 cluster head — the
+    same URL transparently uses the ring.
   - Tools available in web context: web_search, memory_search,
     equation_matrix.  The executor and vm_playground tools are omitted
     because they could allow arbitrary shell execution via the web UI.

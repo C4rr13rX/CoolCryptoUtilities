@@ -1,11 +1,29 @@
 """trading/wizard_trainer.py — W1z4rD Vision Node integration for OHLCV training.
 
-Formats OHLCV price + volume data as natural-language text and pushes it to the
-W1z4rD node's /neuro/train endpoint so the Hebbian neural fabric can learn
-market-domain associations (price levels, trend names, volatility vocabulary).
+Formats OHLCV price + volume data as natural-language text and pushes it to
+the W1z4rD merged main node so the Hebbian brain substrate can learn
+market-domain associations (price levels, trend names, volatility vocabulary)
+under the same cross-pool pipeline used for every other corpus.
 
-Also supports querying the node for a market-regime context string that the
-pipeline can inject into news sentiment scoring.
+Two modes (per `WIZARD_USE_BRAIN_PREFIX`):
+  * BRAIN MODE (default, "1") — push texts via the canonical Phase A-E
+    surface:
+        POST /brain/observe {pool_id: 1, frame: <b64url(text)>}     # text pool
+        POST /brain/tick                                             # close moment
+    Regime queries hit POST /brain/integrate with the formatted query
+    text observed into the text pool.  This routes the training through
+    the same substrate the wizard chat / C0d3rV2 agent uses, so
+    market vocabulary integrates with the rest of the brain's
+    knowledge graph (EEM facts, hypothesis queue, etc.).
+  * LEGACY MODE ("0") — push via POST /neuro/train and query via
+    POST /neuro/query (the legacy crates/core NeuroRuntime path).
+    Kept so existing trading-pipeline state on legacy fabric
+    snapshots stays trainable while the brain catches up.
+
+The trading server doesn't have to be running for this module to be
+importable; it just sits idle until the trading pipeline begins
+processing OHLCV data, at which point push_ohlcv_batch / query_regime
+fire over HTTP.
 
 Usage:
     from trading.wizard_trainer import WizardTrainer
@@ -18,6 +36,7 @@ Usage:
 """
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
@@ -32,6 +51,18 @@ _WIZARD_ENDPOINT = os.getenv("WIZARD_NODE_URL", "http://localhost:8090")
 _TRAIN_BATCH_MAX = int(os.getenv("WIZARD_TRAIN_BATCH_MAX", "64"))
 # TTL for probing the node; skip training if offline
 _PROBE_CACHE_TTL = 60.0
+
+# Standard pool ids (must match brain_api.rs constants).
+_POOL_TEXT   = 1
+_POOL_ACTION = 4
+
+
+def _brain_mode() -> bool:
+    """True (default) -> route training through /brain/observe + /brain/tick.
+    False -> legacy /neuro/train.  Same env-var convention as wizard_session.
+    """
+    raw = os.getenv("WIZARD_USE_BRAIN_PREFIX", "1").strip().lower()
+    return raw not in {"0", "false", "no"}
 
 
 class WizardTrainer:
@@ -197,6 +228,61 @@ class WizardTrainer:
             return None
         base = symbol.split("/")[0].upper()
         query = f"{base} market regime price {current_price:.6g}"
+
+        if _brain_mode():
+            return self._query_regime_brain(query, timeout)
+        return self._query_regime_legacy(query, timeout)
+
+    def _query_regime_brain(self, query: str, timeout: float) -> Optional[str]:
+        """Brain substrate route: observe the query into POOL_TEXT,
+        then POST /brain/integrate to get the trained regime
+        text decoded from POOL_ACTION.  The answer comes back
+        base64url-encoded in the canonical /brain/integrate
+        response shape (see brain_api.rs::h_integrate)."""
+        try:
+            frame = base64.urlsafe_b64encode(
+                query.encode("utf-8")
+            ).decode("ascii").rstrip("=")
+            observe_url = f"{self._endpoint}/brain/observe"
+            observe_payload = json.dumps({
+                "pool_id": _POOL_TEXT,
+                "frame":   frame,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                observe_url, data=observe_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                resp.read()
+
+            integrate_url = f"{self._endpoint}/brain/integrate"
+            integrate_payload = json.dumps({
+                "query_pool":  _POOL_TEXT,
+                "target_pool": _POOL_ACTION,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                integrate_url, data=integrate_payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            answer_b64 = data.get("answer")
+            if not answer_b64:
+                return None
+            pad = "=" * (-len(answer_b64) % 4)
+            try:
+                return base64.urlsafe_b64decode(answer_b64 + pad).decode(
+                    "utf-8", errors="replace").strip() or None
+            except Exception:
+                return None
+        except Exception:
+            return None
+
+    def _query_regime_legacy(self, query: str, timeout: float) -> Optional[str]:
+        """Legacy /neuro/query path on the crates/core NeuroRuntime
+        fabric."""
         try:
             url = f"{self._endpoint}/neuro/query"
             payload = json.dumps({"query": query, "top_k": 3}).encode("utf-8")
@@ -223,6 +309,55 @@ class WizardTrainer:
     def _push_texts(self, texts: List[str]) -> int:
         if not texts:
             return 0
+        if _brain_mode():
+            return self._push_texts_brain(texts)
+        return self._push_texts_legacy(texts)
+
+    def _push_texts_brain(self, texts: List[str]) -> int:
+        """Route each text into the brain substrate as one observe
+        cycle: observe → tick.  No advance_tick between observes in
+        a single text, so each text is one moment fingerprint.
+        Counts texts successfully pushed; on transport error marks
+        the node offline so the next probe re-checks."""
+        observe_url = f"{self._endpoint}/brain/observe"
+        tick_url    = f"{self._endpoint}/brain/tick"
+        pushed = 0
+        for text in texts:
+            try:
+                frame = base64.urlsafe_b64encode(
+                    text.encode("utf-8")
+                ).decode("ascii").rstrip("=")
+                payload = json.dumps({
+                    "pool_id": _POOL_TEXT,
+                    "frame":   frame,
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    observe_url, data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    resp.read()
+                tick_req = urllib.request.Request(
+                    tick_url, data=b"",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(tick_req, timeout=5) as resp:
+                    resp.read()
+                pushed += 1
+            except urllib.error.URLError:
+                self._online = False
+                self._probe_ts = 0.0
+                break
+            except Exception:
+                continue
+        return pushed
+
+    def _push_texts_legacy(self, texts: List[str]) -> int:
+        """Legacy /neuro/train path (crates/core NeuroRuntime).  Kept
+        for back-compat with corpora already trained on the legacy
+        fabric snapshot."""
         url = f"{self._endpoint}/neuro/train"
         payload = json.dumps({"texts": texts}).encode("utf-8")
         try:

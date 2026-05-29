@@ -48,20 +48,42 @@ from typing import Any, Callable, Optional, Sequence
 
 
 def _wizard_endpoint() -> str:
-    """Brain-server URL, configurable via env.
+    """Wizard Node URL, configurable via env.
 
-    Default: http://localhost:8095 (the new W1z4rDV1510n brain server).
-    Legacy: WIZARD_NODE_URL (port 8090, /neuro/ask) is honoured for
-    backward compat — set WIZARD_BRAIN_URL or WIZARD_NODE_URL.  The
-    Django wizard_chat app uses WIZARD_BRAIN_CHAT_URL; that takes
-    precedence if set.
+    Default: http://localhost:8090 (the merged W1z4rDV1510n main node
+    binary, which mounts the Phase A-E brain substrate under /brain/*
+    alongside the existing Web3 / cluster / wallet stack).  The
+    canonical chat endpoint is /brain/chat — selected by
+    `_wizard_chat_path()` below.
+
+    Backward compat: pointing this at http://localhost:8095 (the
+    standalone w1z4rd_brain_server binary) still works — that binary
+    keeps a top-level /chat endpoint that mirrors /brain/chat.  Set
+    WIZARD_USE_BRAIN_PREFIX=0 in that case so the path stays /chat
+    instead of /brain/chat.  The legacy port-8090 /neuro/ask is still
+    reachable via LEGACY_NEURO_API=1.
     """
     return (
         os.getenv("WIZARD_BRAIN_CHAT_URL")
         or os.getenv("WIZARD_BRAIN_URL")
         or os.getenv("WIZARD_NODE_URL")
-        or "http://localhost:8095"
+        or "http://localhost:8090"
     )
+
+
+def _wizard_chat_path() -> str:
+    """Path component for chat requests.
+
+    Default: /brain/chat (the merged main node's canonical chat
+    surface — routes through the Phase A-E brain substrate).
+    Override with WIZARD_USE_BRAIN_PREFIX=0 to use /chat instead
+    (which is what the standalone brain_server binary exposes at
+    the top level).
+    """
+    raw = os.getenv("WIZARD_USE_BRAIN_PREFIX", "1").strip().lower()
+    if raw in {"0", "false", "no"}:
+        return "/chat"
+    return "/brain/chat"
 
 
 def _wizard_timeout() -> float:
@@ -167,11 +189,19 @@ class WizardSession:
     # ------------------------------------------------------------------
 
     def _call_node(self, text: str) -> str:
-        """Call POST /chat (or legacy /neuro/ask) and extract the answer.
+        """Call POST /brain/chat (or fallbacks) and extract the answer.
 
-        Endpoint selection per `LEGACY_NEURO_API` env var.  Default
-        targets the new brain server at port 8095; set
-        `LEGACY_NEURO_API=1` to fall back to the legacy port-8090 node.
+        Endpoint selection:
+          * default — POST `{endpoint}/brain/chat` on the merged main
+            node at :8090.  The /brain/* router is the Phase A-E
+            substrate; /chat there returns the same shape this client
+            already consumes ({reply, answer, decoder, predictions,
+            grounding, ...}).
+          * WIZARD_USE_BRAIN_PREFIX=0 — fall back to top-level /chat,
+            for clients still hitting the standalone brain_server
+            binary on :8095.
+          * LEGACY_NEURO_API=1 — fall back to /neuro/ask on the
+            legacy core NeuroRuntime path.
         """
         import urllib.request
         import urllib.error
@@ -185,8 +215,7 @@ class WizardSession:
                 "min_strength": 0.05,
             }).encode()
         else:
-            # New brain-server contract — /chat takes just {"text": ...}.
-            url = f"{self.endpoint}/chat"
+            url = f"{self.endpoint}{_wizard_chat_path()}"
             payload = json.dumps({"text": text}).encode()
 
         req = urllib.request.Request(
@@ -201,9 +230,10 @@ class WizardSession:
         except urllib.error.URLError as exc:
             return (
                 f"[wizard-brain unavailable: {exc}] "
-                f"The brain server is not running at {self.endpoint}. "
-                "Start it with: w1z4rd_brain_server.exe "
-                "(W1Z4RDV1510N_DATA_DIR=... W1Z4RD_BRAIN_PORT=8095)"
+                f"The Wizard Node is not running at {self.endpoint}. "
+                "Start it from D:\\Projects\\W1z4rDV1510n with: "
+                "./bin/w1z4rd_node.exe --config node_config.json "
+                "api --addr 127.0.0.1:8090"
             )
         except Exception as exc:
             return f"[wizard-brain error: {exc}]"

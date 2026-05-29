@@ -136,11 +136,26 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 WIZARD_ENDPOINT = os.getenv("WIZARD_NODE_URL", "http://localhost:8090").rstrip("/")
-# Override JUST the /chat endpoint to route through the new brain crate
-# at port 8095 (w1z4rd_brain_server).  Everything else (sensor/observe,
-# /multi_pool/*, /qa/query, etc.) still hits the legacy node.  Empty
-# string = use WIZARD_ENDPOINT for /chat as well.
-WIZARD_BRAIN_CHAT_URL = os.getenv("WIZARD_BRAIN_CHAT_URL", "http://localhost:8095").rstrip("/")
+# Chat now routes through the canonical /brain/chat surface on the
+# merged main node (the Phase A-E substrate is mounted under /brain/*
+# alongside the legacy /neuro, /multi_pool, /sensor, etc. routes).
+# Empty WIZARD_BRAIN_CHAT_URL = use WIZARD_ENDPOINT.  Point this at
+# http://localhost:8095 if you're running the standalone
+# w1z4rd_brain_server binary instead.  Everything else
+# (/sensor/observe, /multi_pool/*, /qa/query, etc.) still goes to
+# WIZARD_ENDPOINT directly.
+WIZARD_BRAIN_CHAT_URL = os.getenv("WIZARD_BRAIN_CHAT_URL",
+                                  "http://localhost:8090").rstrip("/")
+# Path component for the chat call.  Default /brain/chat hits the
+# canonical Phase A-E surface on the main node.  Set
+# WIZARD_USE_BRAIN_PREFIX=0 to fall back to top-level /chat (which is
+# what the standalone brain_server binary exposes).
+WIZARD_BRAIN_CHAT_PATH = (
+    "/chat"
+    if os.getenv("WIZARD_USE_BRAIN_PREFIX", "1").strip().lower()
+        in {"0", "false", "no"}
+    else "/brain/chat"
+)
 WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "8"))
 WEB_SEARCH_TIMEOUT = float(os.getenv("WIZARD_WEB_SEARCH_TIMEOUT_S", "3"))
 MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
@@ -227,7 +242,7 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
     }).encode()
     chat_base = WIZARD_BRAIN_CHAT_URL or WIZARD_ENDPOINT
     req = urllib.request.Request(
-        f"{chat_base}/chat",
+        f"{chat_base}{WIZARD_BRAIN_CHAT_PATH}",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",

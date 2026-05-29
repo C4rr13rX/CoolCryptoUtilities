@@ -4,16 +4,24 @@ Provider routing for all AI sessions across the site.
 
 Supported providers (set via BRANDDOZER_SESSION_PROVIDER env or
 context["session_provider"]):
-  wizard   — W1z4rDV1510n brain server at localhost:8095 (DEFAULT,
-             preferred).  May be a §18 cluster head; the brain
-             transparently uses the ring.  Override URL via
-             WIZARD_BRAIN_URL / WIZARD_BRAIN_CHAT_URL.  Legacy
-             port-8090 node still supported via LEGACY_NEURO_API=1.
-  bedrock  — AWS Bedrock (Anthropic Claude via boto3)
-  c0d3r    — alias for bedrock
-  coder    — alias for bedrock
-  claude   — Anthropic API direct (ClaudeSession)
-  openai   — OpenAI API (OpenAISession) — last resort
+  wizard   — W1z4rDV1510n merged main node at localhost:8090 routed
+             through /brain/chat (the Phase A–E substrate is mounted
+             under /brain/* on the main node).  DEFAULT, preferred.
+             Override URL via WIZARD_BRAIN_URL / WIZARD_BRAIN_CHAT_URL.
+             The standalone w1z4rd_brain_server (port :8095) is still
+             accepted for backward compat; set WIZARD_BRAIN_CHAT_URL
+             accordingly if you're running it.  Legacy port-8090
+             /neuro/ask is still reachable via LEGACY_NEURO_API=1.
+  bedrock  — AWS Bedrock (Anthropic Claude via boto3 — C0d3rSession is
+             the wrapper class; this is JUST the LLM backend, not the
+             C0d3rV2 agent).
+  c0d3r    — The C0d3rV2 AGENT.  Not an LLM backend — an agent that
+             orchestrates work.  Defaults its OWN backend chain
+             starting at wizard, so requesting provider="c0d3r"
+             resolves to the wizard-first cascade.
+  coder    — Alias for c0d3r (same agent reference).
+  claude   — Anthropic API direct (ClaudeSession).
+  openai   — OpenAI API (OpenAISession) — last resort.
 
 Preferred fallback order when none is specified or when `auto` is
 requested: wizard → bedrock → claude → openai.
@@ -42,8 +50,18 @@ def _import_c0d3r():
     return C0d3rSession, c0d3r_default_settings, c0d3r_settings_for_role
 
 
-_BEDROCK_ALIASES = {"c0d3r", "coder", "bedrock"}
-_WIZARD_ALIASES  = {"wizard", "w1z4rd", "wizard_node", "local"}
+_BEDROCK_ALIASES = {"bedrock"}
+# C0d3rV2 is the AGENT, not an LLM backend.  When the user requests
+# "c0d3r" or "coder" as a provider, they mean "use the C0d3rV2 agent,"
+# which itself runs its own backend cascade starting from wizard.  So
+# at the session-factory level we resolve c0d3r/coder to the wizard
+# backend — the agent's preferred LLM — rather than to the Bedrock
+# wrapper class.  Agent-mode routing in wizard_chat/agent_runner.py is
+# what actually invokes the C0d3rV2 orchestrator; this factory just
+# answers "which LLM session class do we construct for that provider
+# string?"
+_WIZARD_ALIASES  = {"wizard", "w1z4rd", "wizard_node", "local",
+                    "c0d3r", "coder"}
 _CLAUDE_ALIASES  = {"claude", "anthropic", "claude_api"}
 _OPENAI_ALIASES  = {"openai", "gpt", "openai_api"}
 
