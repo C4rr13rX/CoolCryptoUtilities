@@ -264,8 +264,30 @@ class ConsoleProcessManager:
         rotated = LOG_PATH.with_name(f"console-{timestamp}.log")
         try:
             LOG_PATH.rename(rotated)
-        except OSError:
             return
+        except OSError:
+            pass
+        # Windows fallback: rename failed because another writer holds
+        # the handle (typical for the production subprocess's stdout
+        # pipe).  Truncate in place to a small tail snippet so disk
+        # usage actually shrinks; without this the file grew to 1.8 GB
+        # while rotation kept silently no-op'ing.
+        try:
+            keep_bytes = max(64 * 1024, LOG_MAX_BYTES // 100)
+            with LOG_PATH.open("rb") as fh:
+                fh.seek(max(0, size - keep_bytes))
+                tail = fh.read()
+            with LOG_PATH.open("r+b") as fh:
+                fh.seek(0)
+                fh.truncate()
+                fh.write(b"# in-place rotated %s (rename blocked)\n"
+                         % time.strftime("%Y-%m-%d %H:%M:%S").encode())
+                fh.write(tail)
+        except OSError as exc:
+            try:
+                logger.warning("console.log rotation failed: %s", exc)
+            except Exception:
+                pass
 
 
 manager = ConsoleProcessManager()

@@ -1467,16 +1467,27 @@ class MarketDataStream:
             await self._refresh_market_snapshots()
         if not cooldown_only and self._consensus_failures % 4 == 0:
             self._grow_rest_interval(reason="consensus_failure")
-            log_message(
-                "market-stream",
-                "consensus failure throttling REST polls",
-                severity="warning",
-                details={
-                    "symbol": self.symbol,
-                    "rest_interval": self.rest_poll_interval,
-                    "failures": self._consensus_failures,
-                },
-            )
+            # Cooldown: only emit this warning at most once per 5 min
+            # per symbol.  The throttle itself is self-healing (REST
+            # interval doubles on repeated failures), so logging every
+            # 26 s on a stuck symbol like LINK-WETH (no CEX consensus
+            # pair available) just clutters the log without surfacing
+            # anything new.  The metrics.feedback CRITICAL above still
+            # fires so dashboards see the underlying signal.
+            now = time.time()
+            last_logged = getattr(self, "_consensus_warn_ts", 0.0)
+            if (now - last_logged) >= 300.0:
+                self._consensus_warn_ts = now
+                log_message(
+                    "market-stream",
+                    "consensus failure throttling REST polls",
+                    severity="warning",
+                    details={
+                        "symbol": self.symbol,
+                        "rest_interval": self.rest_poll_interval,
+                        "failures": self._consensus_failures,
+                    },
+                )
         return used_fallback
 
     def _fallback_consensus_price(self) -> Optional[float]:
