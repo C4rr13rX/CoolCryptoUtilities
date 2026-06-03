@@ -44,13 +44,69 @@ _MODEL_DEFS = None
 _CUSTOM_OBJECTS = None
 
 
-def _get_model_defs():
-    global _MODEL_DEFS
-    if _MODEL_DEFS is None:
-        import model_definition as md
+_MODEL_DEFS_FAILED_AT: float = 0.0
+_MODEL_DEFS_BACKOFF_SEC: float = 300.0
+_MODEL_DEFS_LOGGED: bool = False
 
+
+def _get_model_defs():
+    """Import + validate model_definition.
+
+    `model_definition.py` imports tensorflow at module level.  When TF
+    DLL load fails on Windows the module imports partially — no
+    exception is raised but `build_multimodal_model` and friends are
+    missing.  Without validation the caller hits AttributeError on
+    every market-stream callback (thousands per minute, console.log
+    grew to 1.8 GB before this was caught).
+
+    This function:
+      - imports once + caches on success
+      - on failure, sets a 300 s backoff so retries don't spam
+      - logs the failure at WARNING ONCE per backoff window
+      - returns None when unavailable so callers can early-exit
+    """
+    global _MODEL_DEFS, _MODEL_DEFS_FAILED_AT, _MODEL_DEFS_LOGGED
+    if _MODEL_DEFS is not None:
+        return _MODEL_DEFS
+    import time as _t
+    if _MODEL_DEFS_FAILED_AT and (_t.time() - _MODEL_DEFS_FAILED_AT) < _MODEL_DEFS_BACKOFF_SEC:
+        return None
+    try:
+        import model_definition as md
+        # Required surface — if any is missing the module is broken.
+        required = ("build_multimodal_model", "ExponentialDecay", "TimeFeatureLayer",
+                    "gaussian_nll_loss", "zero_loss")
+        missing = [a for a in required if not hasattr(md, a)]
+        if missing:
+            raise AttributeError(f"model_definition missing: {missing}")
         _MODEL_DEFS = md
-    return _MODEL_DEFS
+        _MODEL_DEFS_FAILED_AT = 0.0
+        _MODEL_DEFS_LOGGED = False
+        return _MODEL_DEFS
+    except Exception as exc:
+        _MODEL_DEFS_FAILED_AT = _t.time()
+        if not _MODEL_DEFS_LOGGED:
+            _MODEL_DEFS_LOGGED = True
+            try:
+                from services.logging_utils import log_message
+                log_message(
+                    "training",
+                    f"model_definition unavailable (TF broken?); suppressing for {int(_MODEL_DEFS_BACKOFF_SEC)}s: {exc}",
+                    severity="warning",
+                )
+            except Exception:
+                pass
+        return None
+
+
+def model_defs_available() -> bool:
+    """Non-importing check used by callbacks to skip cleanly."""
+    if _MODEL_DEFS is not None:
+        return True
+    import time as _t
+    if _MODEL_DEFS_FAILED_AT and (_t.time() - _MODEL_DEFS_FAILED_AT) < _MODEL_DEFS_BACKOFF_SEC:
+        return False
+    return _get_model_defs() is not None
 
 
 def _custom_objects():
@@ -361,6 +417,8 @@ class TrainingPipeline:
         template_idx = max(0, min(template_idx, len(self.model_templates) - 1))
         template_choice = self._select_model_template(template_idx)
         md = _get_model_defs()
+        if md is None:
+            raise RuntimeError("model_definition unavailable (TF / DLL load failed)")
         model, headline_vec, full_vec, losses, loss_weights = md.build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
@@ -442,6 +500,8 @@ class TrainingPipeline:
 
     def _rebuild_model_with_asset_vocab(self, asset_vocab_size: int, source_model: tf.keras.Model) -> tf.keras.Model:
         md = _get_model_defs()
+        if md is None:
+            raise RuntimeError("model_definition unavailable (TF / DLL load failed)")
         new_model, _, _, _, _ = md.build_multimodal_model(
             window_size=self.window_size,
             tech_count=self.tech_count,
@@ -870,6 +930,8 @@ class TrainingPipeline:
                     details={"required": required_vocab, "loader_vocab": loader_vocab},
                 )
             md = _get_model_defs()
+            if md is None:
+                raise RuntimeError("model_definition unavailable (TF / DLL load failed)")
             model, headline_vec, full_vec, losses, loss_weights = md.build_multimodal_model(
                 window_size=self.window_size,
                 tech_count=self.tech_count,

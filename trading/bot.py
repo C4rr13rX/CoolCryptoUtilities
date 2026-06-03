@@ -2210,7 +2210,25 @@ class TradingBot:
                 return
             self._last_sample_signature = signature
 
-            model = self.pipeline.ensure_active_model()
+            # Short-circuit the TF prediction path when model_definition
+            # is unavailable (DLL OOM / missing module).  The market-
+            # stream callback used to crash here on every tick, spamming
+            # `module 'model_definition' has no attribute
+            # 'build_multimodal_model'` into console.log.  Brain-feeder
+            # + non-TF strategies (money-button, brain-regime) keep
+            # running because they don't pass through this callback.
+            try:
+                from trading.pipeline import model_defs_available
+                if not model_defs_available():
+                    return
+            except Exception:
+                pass
+            try:
+                model = self.pipeline.ensure_active_model()
+            except Exception as _exc:
+                # Logged once via _get_model_defs's WARNING; suppress
+                # the per-callback spam here.
+                return
             if now >= self._portfolio_next_refresh:
                 try:
                     self.portfolio.refresh()
