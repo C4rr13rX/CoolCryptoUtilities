@@ -40,6 +40,8 @@ import base64
 import json
 import math
 import os
+import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -75,6 +77,21 @@ class WizardTrainer:
         self._endpoint = endpoint.rstrip("/")
         self._online: Optional[bool] = None
         self._probe_ts: float = 0.0
+        # Non-blocking regime cache.  Strategies in the scheduler call
+        # cached_regime() instead of query_regime() so the brain HTTP
+        # round-trip never blocks trade evaluation.  Background daemons
+        # refresh entries on a per-symbol cooldown.
+        self._regime_lock = threading.Lock()
+        self._regime_cache: Dict[str, "BrainSignal"] = {}
+        self._regime_inflight: Dict[str, float] = {}  # symbol -> launch ts
+        try:
+            self._regime_ttl = float(os.getenv("WIZARD_REGIME_TTL_SEC", "20"))
+        except Exception:
+            self._regime_ttl = 20.0
+        try:
+            self._regime_timeout = float(os.getenv("WIZARD_REGIME_TIMEOUT_SEC", "1.5"))
+        except Exception:
+            self._regime_timeout = 1.5
 
     # ------------------------------------------------------------------
     # Node health
@@ -377,6 +394,123 @@ class WizardTrainer:
             return 0
         except Exception:
             return 0
+
+
+# ---------------------------------------------------------------------
+# Brain signal cache (non-blocking parallel-strategy plumbing)
+# ---------------------------------------------------------------------
+
+class BrainSignal:
+    """Parsed regime answer that the scheduler can consume directly.
+
+    `direction_prob` is bull-leaning probability in [0, 1].
+    `confidence` is the brain's own [0, 1] confidence (when surfaced
+    by /brain/integrate) or a regime-keyword-derived proxy.
+    `regime_text` is the raw decoded answer for logs/UI.
+    `ts` is the unix time the signal was produced.
+    """
+
+    __slots__ = ("symbol", "direction_prob", "confidence", "regime_text", "ts")
+
+    def __init__(self, symbol: str, direction_prob: float, confidence: float,
+                 regime_text: str, ts: float) -> None:
+        self.symbol = symbol
+        self.direction_prob = float(max(0.0, min(1.0, direction_prob)))
+        self.confidence = float(max(0.0, min(1.0, confidence)))
+        self.regime_text = regime_text
+        self.ts = float(ts)
+
+    def is_fresh(self, ttl: float) -> bool:
+        return (time.time() - self.ts) <= ttl
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "symbol":          self.symbol,
+            "direction_prob":  self.direction_prob,
+            "confidence":      self.confidence,
+            "regime_text":     self.regime_text,
+            "ts":              self.ts,
+        }
+
+
+_BULL_TOKENS = {"bull", "bullish", "uptrend", "rally", "long", "buy", "breakout",
+                "rising", "strong", "accumulat", "support"}
+_BEAR_TOKENS = {"bear", "bearish", "downtrend", "sell", "short", "breakdown",
+                "falling", "weak", "distribut", "resistance", "reject"}
+
+
+def _parse_regime_text(text: str) -> Tuple[float, float]:
+    """Cheap regex tally of bull vs bear keywords.
+
+    Returns (direction_prob, confidence) in [0,1].  Direction is 0.5
+    when no keywords match (neutral); confidence is the share of
+    matched tokens (a proxy for how on-topic the brain's reply was).
+    """
+    if not text:
+        return 0.5, 0.0
+    blob = text.lower()
+    bull = sum(1 for tok in _BULL_TOKENS if tok in blob)
+    bear = sum(1 for tok in _BEAR_TOKENS if tok in blob)
+    total = bull + bear
+    if total == 0:
+        return 0.5, 0.0
+    direction = bull / total
+    # Total keyword density (capped at 1.0) is the confidence proxy.
+    # A two-word reply with one bull token => conf 0.5; longer/denser
+    # replies trend higher.
+    word_count = max(1, len(re.findall(r"\w+", blob)))
+    density = min(1.0, total / max(1.0, word_count / 4.0))
+    return direction, density
+
+
+def _trainer_cached_regime(self, symbol: str, current_price: float
+                           ) -> Optional[BrainSignal]:
+    """Non-blocking cache read.  Returns the latest fresh BrainSignal
+    for `symbol`, or None.  Spawns a background refresher when the
+    cached entry is stale and no fetch is already in-flight."""
+    now = time.time()
+    with self._regime_lock:
+        cached = self._regime_cache.get(symbol)
+        inflight_ts = self._regime_inflight.get(symbol, 0.0)
+        fresh = cached is not None and cached.is_fresh(self._regime_ttl)
+        # Refresh if stale AND no fetch in the last 2*TTL window.
+        should_refresh = (not fresh) and (now - inflight_ts) > (2.0 * self._regime_ttl)
+        if should_refresh:
+            self._regime_inflight[symbol] = now
+    if should_refresh:
+        # Spawn a daemon thread; never blocks the caller.
+        t = threading.Thread(
+            target=self._refresh_regime,
+            args=(symbol, float(current_price)),
+            daemon=True,
+            name=f"brain-regime-{symbol}",
+        )
+        t.start()
+    return cached if cached and cached.is_fresh(self._regime_ttl) else None
+
+
+def _trainer_refresh_regime(self, symbol: str, current_price: float) -> None:
+    """Background refresher.  Runs in a daemon thread."""
+    try:
+        text = self.query_regime(symbol, current_price, timeout=self._regime_timeout)
+        if not text:
+            return
+        direction, confidence = _parse_regime_text(text)
+        signal = BrainSignal(symbol, direction, confidence, text, time.time())
+        with self._regime_lock:
+            self._regime_cache[symbol] = signal
+    except Exception:
+        # best-effort: failures are silent so they don't spam logs
+        pass
+    finally:
+        with self._regime_lock:
+            self._regime_inflight.pop(symbol, None)
+
+
+# Bind the cache helpers to the class without polluting the dataclass-style
+# block above (they reference instance fields added in __init__).
+WizardTrainer.cached_regime = _trainer_cached_regime   # type: ignore[attr-defined]
+WizardTrainer._refresh_regime = _trainer_refresh_regime  # type: ignore[attr-defined]
 
 
 # Module-level singleton so callers don't need to instantiate

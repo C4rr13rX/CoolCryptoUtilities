@@ -27,10 +27,33 @@ MIN_HOLDING_USD = float(os.getenv("BOOTSTRAP_MIN_HOLDING_USD", "0.50"))
 MIN_PORTFOLIO_USD = float(os.getenv("BOOTSTRAP_MIN_PORTFOLIO_USD", "1.00"))
 
 
-def _get_bridge():
-    """Lazy-load UltraSwapBridge — only if wallet credentials exist."""
+def _resolve_wallet_creds() -> Tuple[str, str]:
+    """Resolve (mnemonic, private_key), preferring env, then SecureVault.
+
+    Returns empty strings when nothing is configured.  This is the
+    single source of truth for "does the trading stack have a wallet."
+    """
     mnemonic = os.getenv("MNEMONIC", "").strip()
     pk = os.getenv("PRIVATE_KEY", "").strip()
+    if mnemonic or pk:
+        return mnemonic, pk
+    # Fall back to SecureVault — UI-stored mnemonics (MNEMONIC_0, ...)
+    # would otherwise leave the trading stack thinking the wallet is
+    # missing.
+    try:
+        from services.multi_wallet import MultiWalletManager
+        mgr = MultiWalletManager()
+        wallets = mgr.load_wallets()
+        if wallets:
+            return wallets[0].mnemonic, ""
+    except Exception as exc:
+        log_message("wallet-bootstrap", f"SecureVault mnemonic lookup failed: {exc}", severity="warning")
+    return "", ""
+
+
+def _get_bridge():
+    """Lazy-load UltraSwapBridge — only if wallet credentials exist."""
+    mnemonic, pk = _resolve_wallet_creds()
     if not mnemonic and not pk:
         return None
     try:

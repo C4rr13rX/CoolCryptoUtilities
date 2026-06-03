@@ -464,6 +464,25 @@ class BusScheduler:
         )
         if money_button:
             candidates.append(money_button)
+        # Brain strategy: read the latest cached regime signal for this
+        # symbol.  Always non-blocking — the brain refreshes in a daemon
+        # thread, so this call is a dict lookup.  Runs in parallel with
+        # money-button and the model-derived signals because none of
+        # them share state or take a lock against the others.
+        brain_candidate = self._brain_candidate(
+            state,
+            last_price=last_price,
+            portfolio=portfolio,
+            chain_name=chain_name,
+            fee_rate=fee_rate,
+            direction_prob=direction_prob,
+            confidence=confidence,
+            net_margin=net_margin,
+            risk_budget=risk_budget,
+            live_trading=live_trading,
+        )
+        if brain_candidate:
+            candidates.append(brain_candidate)
         # Pause if recent data is too sparse
         if len(state.samples) < 12:
             state.last_filter_reason = f"warming_up ({len(state.samples)}/12 samples)"
@@ -979,6 +998,116 @@ class BusScheduler:
             horizon_scale = min(1.0, signal.seconds / (12 * 3600))  # emphasize <= 12h windows
             signal.expected_return += direction * bias_strength * (0.5 + 0.5 * horizon_scale)
         return signals
+
+    def _brain_candidate(
+        self,
+        state: RouteState,
+        *,
+        last_price: float,
+        portfolio: PortfolioState,
+        chain_name: str,
+        fee_rate: float,
+        direction_prob: float,
+        confidence: float,
+        net_margin: float,
+        risk_budget: float,
+        live_trading: bool,
+    ) -> Optional[Dict[str, Any]]:
+        """Append a TradeDirective candidate driven by the W1z4rD brain's
+        cached regime read for this symbol.  Non-blocking: the brain
+        refresher is a daemon thread populating a cache, so this method
+        is a dict lookup + arithmetic.  Returns None when:
+            * env disables it (WIZARD_BRAIN_STRATEGY_ENABLED=0),
+            * the brain hasn't produced a fresh signal yet,
+            * the signal is too neutral or too low-confidence,
+            * live mode is on without WIZARD_BRAIN_STRATEGY_ALLOW_LIVE.
+        """
+        enabled = os.getenv("WIZARD_BRAIN_STRATEGY_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return None
+        if live_trading and os.getenv("WIZARD_BRAIN_STRATEGY_ALLOW_LIVE", "0").lower() not in {"1", "true", "yes", "on"}:
+            return None
+        if last_price <= 0:
+            return None
+        try:
+            from trading.wizard_trainer import get_trainer
+            trainer = get_trainer()
+            if not trainer.is_online():
+                return None
+            signal = trainer.cached_regime(state.symbol, last_price)
+        except Exception:
+            return None
+        if signal is None:
+            return None
+
+        try:
+            min_conf = float(os.getenv("WIZARD_BRAIN_MIN_CONFIDENCE", "0.25"))
+        except Exception:
+            min_conf = 0.25
+        try:
+            min_directional_edge = float(os.getenv("WIZARD_BRAIN_MIN_EDGE", "0.15"))
+        except Exception:
+            min_directional_edge = 0.15
+        if signal.confidence < min_conf:
+            return None
+        edge = abs(signal.direction_prob - 0.5)
+        if edge < min_directional_edge:
+            return None
+
+        # Bullish edge → enter long with quote balance; bearish edge →
+        # exit any base position back into quote.
+        bullish = signal.direction_prob > 0.5
+        available_quote = portfolio.get_quantity(state.quote_token, chain=chain_name)
+        available_base = portfolio.get_quantity(state.base_token, chain=chain_name)
+        from trading.constants import MAX_QUOTE_SHARE
+        if bullish:
+            if available_quote <= 0:
+                return None
+            share = max(0.05, min(MAX_QUOTE_SHARE,
+                                  edge * 2.0 * signal.confidence * risk_budget))
+            size = available_quote * share
+            target_price = last_price * (1.0 + 2.0 * edge * fee_rate * 50.0)
+            action = "enter"
+            expected_return = float(2.0 * edge * signal.confidence)
+        else:
+            if available_base <= 0:
+                return None
+            size = available_base * max(0.10, min(1.0, signal.confidence))
+            target_price = last_price * (1.0 - 2.0 * edge * fee_rate * 50.0)
+            action = "exit"
+            expected_return = float(-2.0 * edge * signal.confidence)
+
+        if size <= 0 or not math.isfinite(target_price) or target_price <= 0:
+            return None
+
+        directive = TradeDirective(
+            action=action,
+            symbol=state.symbol,
+            base_token=state.base_token,
+            quote_token=state.quote_token,
+            size=float(size),
+            target_price=float(target_price),
+            horizon="brain",
+            confidence=float(signal.confidence),
+            expected_return=expected_return,
+            reason=f"brain_regime dir={signal.direction_prob:.2f} conf={signal.confidence:.2f}",
+        )
+        # Score blends brain edge × confidence; the selector then
+        # compares this against money_button + model-derived candidates.
+        score = float(edge * 2.0 * signal.confidence)
+        return {
+            "directive": directive,
+            "score":     score,
+            "meta": {
+                "strategy":         "brain_regime",
+                "regime_text":      signal.regime_text[:160],
+                "direction_prob":   signal.direction_prob,
+                "brain_confidence": signal.confidence,
+                "model_direction":  direction_prob,
+                "model_confidence": confidence,
+                "model_net_margin": net_margin,
+            },
+        }
 
     def _money_button_candidate(
         self,

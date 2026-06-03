@@ -929,10 +929,14 @@ class ProductionManager:
         """
         if os.getenv("SKIP_WALLET_BOOTSTRAP", "0").lower() in {"1", "true", "yes", "on"}:
             return {"skipped": True, "reason": "disabled"}
-        mnemonic = os.getenv("MNEMONIC", "").strip()
-        pk = os.getenv("PRIVATE_KEY", "").strip()
+        try:
+            from services.wallet_bootstrap import _resolve_wallet_creds
+            mnemonic, pk = _resolve_wallet_creds()
+        except Exception:
+            mnemonic = os.getenv("MNEMONIC", "").strip()
+            pk = os.getenv("PRIVATE_KEY", "").strip()
         if not mnemonic and not pk:
-            log_message("production", "wallet bootstrap skipped: no MNEMONIC or PRIVATE_KEY configured", severity="info")
+            log_message("production", "wallet bootstrap skipped: no MNEMONIC or PRIVATE_KEY configured (checked env + SecureVault)", severity="info")
             return {"skipped": True, "reason": "no_wallet_credentials"}
         try:
             from services.wallet_bootstrap import auto_bootstrap
