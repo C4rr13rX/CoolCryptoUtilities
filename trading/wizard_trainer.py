@@ -441,6 +441,140 @@ class WizardTrainer:
 
 
 # ---------------------------------------------------------------------
+# Standalone OHLCV→brain feeder
+# ---------------------------------------------------------------------
+#
+# The TF training cycle is the only existing path that pushed OHLCV
+# samples to the brain.  When TF fails to load on Windows (DLL OOM,
+# missing dep, VC redist drift) the model build crashes BEFORE the
+# brain push fires — so the brain silently stops learning even though
+# the OHLCV corpus is up to date.
+#
+# This feeder is a thin background thread that doesn't import TF at
+# all: it walks `data/historical_ohlcv/{chain}/*.json`, picks the
+# tail N candles per file, and pushes them via push_ohlcv_batch on
+# a configurable cadence.  Always runs alongside the TF path; either
+# can fail independently without starving the other.
+
+_BRAIN_FEEDER_STATE: Dict[str, Any] = {
+    "thread": None,
+    "stop": False,
+    "last_run": 0.0,
+    "last_pushed": 0,
+}
+
+
+def _brain_feeder_loop(
+    chains: Sequence[str],
+    interval_sec: float,
+    tail_candles: int,
+    data_root: Optional[str],
+) -> None:
+    import json as _j
+    from pathlib import Path as _P
+    root = _P(data_root) if data_root else _P("data") / "historical_ohlcv"
+    while not _BRAIN_FEEDER_STATE.get("stop"):
+        try:
+            trainer = get_trainer()
+            if not trainer.is_online():
+                time.sleep(min(60.0, interval_sec))
+                continue
+            total_pushed = 0
+            for chain in chains:
+                cdir = root / chain
+                if not cdir.exists():
+                    continue
+                for jf in cdir.glob("*.json"):
+                    try:
+                        sym = jf.stem.split("_", 1)[-1]
+                        with jf.open("r", encoding="utf-8") as fh:
+                            rows = _j.load(fh)
+                        if not isinstance(rows, list) or not rows:
+                            continue
+                        tail = rows[-tail_candles:]
+                        samples = []
+                        for r in tail:
+                            try:
+                                ts = float(r.get("timestamp", 0))
+                                p = float(r.get("close", 0) or r.get("price", 0))
+                                v = float(r.get("net_volume", 0) or r.get("volume", 0))
+                                if p > 0:
+                                    samples.append((ts, p, v))
+                            except Exception:
+                                continue
+                        if samples:
+                            total_pushed += trainer.push_ohlcv_batch(sym, samples, max_items=32)
+                    except Exception:
+                        continue
+            _BRAIN_FEEDER_STATE["last_pushed"] = total_pushed
+            _BRAIN_FEEDER_STATE["last_run"] = time.time()
+        except Exception:
+            pass
+        # Sleep in 5s slices so stop is responsive
+        slept = 0.0
+        while slept < interval_sec and not _BRAIN_FEEDER_STATE.get("stop"):
+            time.sleep(5.0)
+            slept += 5.0
+
+
+def start_brain_feeder(
+    *,
+    chains: Sequence[str] = ("base",),
+    interval_sec: Optional[float] = None,
+    tail_candles: Optional[int] = None,
+    data_root: Optional[str] = None,
+) -> bool:
+    """Start the background OHLCV→brain feeder.
+
+    Idempotent — calling more than once is a no-op (returns False).
+    Returns True on first start, False if already running or disabled.
+    Tune via env:
+      WIZARD_BRAIN_FEEDER_ENABLED  (default 1)
+      WIZARD_BRAIN_FEEDER_INTERVAL (default 120 sec)
+      WIZARD_BRAIN_FEEDER_TAIL     (default 16 candles per file per cycle)
+    """
+    if os.getenv("WIZARD_BRAIN_FEEDER_ENABLED", "1").lower() in {"0", "false", "no"}:
+        return False
+    if _BRAIN_FEEDER_STATE.get("thread") is not None:
+        t = _BRAIN_FEEDER_STATE["thread"]
+        if t.is_alive():
+            return False
+    if interval_sec is None:
+        try:
+            interval_sec = float(os.getenv("WIZARD_BRAIN_FEEDER_INTERVAL", "120"))
+        except Exception:
+            interval_sec = 120.0
+    if tail_candles is None:
+        try:
+            tail_candles = int(os.getenv("WIZARD_BRAIN_FEEDER_TAIL", "16"))
+        except Exception:
+            tail_candles = 16
+    _BRAIN_FEEDER_STATE["stop"] = False
+    t = threading.Thread(
+        target=_brain_feeder_loop,
+        args=(list(chains), float(interval_sec), int(tail_candles), data_root),
+        daemon=True,
+        name="wizard-brain-feeder",
+    )
+    t.start()
+    _BRAIN_FEEDER_STATE["thread"] = t
+    return True
+
+
+def stop_brain_feeder() -> None:
+    _BRAIN_FEEDER_STATE["stop"] = True
+
+
+def brain_feeder_status() -> Dict[str, Any]:
+    t = _BRAIN_FEEDER_STATE.get("thread")
+    return {
+        "running":     bool(t and t.is_alive()),
+        "last_run":    _BRAIN_FEEDER_STATE.get("last_run", 0.0),
+        "last_pushed": _BRAIN_FEEDER_STATE.get("last_pushed", 0),
+    }
+
+
+# ---------------------------------------------------------------------
 # Brain signal cache (non-blocking parallel-strategy plumbing)
 # ---------------------------------------------------------------------
 
@@ -565,4 +699,12 @@ def get_trainer() -> WizardTrainer:
     global _default_trainer
     if _default_trainer is None:
         _default_trainer = WizardTrainer()
+        # Auto-start the OHLCV→brain feeder so the brain keeps learning
+        # even when the TF training cycle is broken (DLL OOM / model
+        # build failure).  Idempotent.  Disable with
+        # WIZARD_BRAIN_FEEDER_ENABLED=0 if it ever conflicts.
+        try:
+            start_brain_feeder(chains=("base", "arbitrum", "optimism", "polygon"))
+        except Exception:
+            pass
     return _default_trainer

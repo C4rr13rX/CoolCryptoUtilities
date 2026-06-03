@@ -227,6 +227,17 @@ class TrainingPipeline:
         self.tech_count = 35
         self.data_loader = HistoricalDataLoader()
         self.data_loader.apply_system_profile(self.system_profile)
+        # Kick off the OHLCV→brain feeder eagerly so the brain keeps
+        # learning even when TF model build fails (DLL OOM / missing
+        # deps / Windows redist drift).  Idempotent + daemon thread;
+        # disable with WIZARD_BRAIN_FEEDER_ENABLED=0.  Decoupled from
+        # the TF training loop on purpose: brain training must never
+        # be a slave to model build success.
+        try:
+            from trading.wizard_trainer import get_trainer
+            get_trainer()
+        except Exception:
+            pass
         self.iteration: int = 0
         self.active_accuracy: float = 0.0
         self.target_positive_floor = float(os.getenv("TRAIN_POSITIVE_FLOOR", "0.15"))
