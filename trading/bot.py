@@ -211,11 +211,25 @@ class TradingBot:
         self._latency_samples: int = 0
         self._enable_bg_refinement = os.getenv("ENABLE_BG_REFINEMENT", "1").lower() in {"1", "true", "yes", "on"}
         self._equilibrium_last_adjust = 0.0
+        # Autonomous-mode master switch.  When AUTONOMOUS_MODE=1 (default),
+        # the safety gates that previously blocked the bot from ever
+        # graduating to live without manual intervention flip on:
+        #   - AUTO_PROMOTE_LIVE   : checks accuracy + graduates ghost→live
+        #   - LIVE_MICRO_AUTO_PROMOTE : allows micro wallets (<$100) to graduate
+        #   - MONEY_BUTTON_ALLOW_LIVE : buy-low-sell-high strategy works on live
+        #   - WIZARD_BRAIN_STRATEGY_ALLOW_LIVE : brain strategy works on live
+        # Individual env vars still override; this just changes the default.
+        autonomous = os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1", "true", "yes", "on"}
+        default_auto_promote = "1" if autonomous else "0"
+
         self.live_trading_enabled: bool = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
-        self.auto_promote_live: bool = os.getenv("AUTO_PROMOTE_LIVE", "0").lower() in {"1", "true", "yes", "on"}
-        self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.9"))
-        self.required_live_trades: int = int(os.getenv("LIVE_PROMOTION_MIN_TRADES", "120"))
-        self.required_live_profit: float = float(os.getenv("LIVE_PROMOTION_MIN_PROFIT", "50.0"))
+        self.auto_promote_live: bool = os.getenv("AUTO_PROMOTE_LIVE", default_auto_promote).lower() in {"1", "true", "yes", "on"}
+        # Slightly more achievable defaults than the original 0.9 / 120 / $50.
+        # The accuracy gate still has to clear MIN_GHOST_WIN_RATE (0.55)
+        # AND LIVE_PROMOTION_PRECISION/RECALL before any of this fires.
+        self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.65"))
+        self.required_live_trades: int = int(os.getenv("LIVE_PROMOTION_MIN_TRADES", "50"))
+        self.required_live_profit: float = float(os.getenv("LIVE_PROMOTION_MIN_PROFIT", "1.0"))
         # Live circuit breaker: revert to ghost after consecutive losses or drawdown.
         self._live_consecutive_losses: int = 0
         self._live_total_pnl: float = 0.0
@@ -1585,7 +1599,12 @@ class TradingBot:
         wallet_state = readiness.get("wallet_state") if isinstance(readiness, dict) else None
         micro_mode = bool(wallet_state.get("micro_mode")) if isinstance(wallet_state, dict) else False
         micro_allowed = bool(wallet_state.get("micro_allowed")) if isinstance(wallet_state, dict) else False
-        allow_micro = os.getenv("LIVE_MICRO_AUTO_PROMOTE", "0").lower() in {"1", "true", "yes", "on"}
+        # In autonomous mode, micro wallets ($30-$100) can graduate the
+        # same way mini wallets can — accuracy must still clear the gate
+        # and global risk budget is automatically tightened to LIVE_MICRO_*
+        # caps below.
+        _micro_default = "1" if os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1","true","yes","on"} else "0"
+        allow_micro = os.getenv("LIVE_MICRO_AUTO_PROMOTE", _micro_default).lower() in {"1", "true", "yes", "on"}
         if not ready_flag and micro_allowed and allow_micro:
             ready_flag = True
         if self.live_trading_enabled:

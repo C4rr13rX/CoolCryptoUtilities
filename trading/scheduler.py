@@ -1025,7 +1025,8 @@ class BusScheduler:
         enabled = os.getenv("WIZARD_BRAIN_STRATEGY_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
         if not enabled:
             return None
-        if live_trading and os.getenv("WIZARD_BRAIN_STRATEGY_ALLOW_LIVE", "0").lower() not in {"1", "true", "yes", "on"}:
+        _br_live_default = "1" if os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1","true","yes","on"} else "0"
+        if live_trading and os.getenv("WIZARD_BRAIN_STRATEGY_ALLOW_LIVE", _br_live_default).lower() not in {"1", "true", "yes", "on"}:
             return None
         if last_price <= 0:
             return None
@@ -1128,7 +1129,12 @@ class BusScheduler:
         enabled = os.getenv("MONEY_BUTTON_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
         if not enabled:
             return None
-        if live_trading and os.getenv("MONEY_BUTTON_ALLOW_LIVE", "0").lower() not in {"1", "true", "yes", "on"}:
+        # In autonomous mode the money-button buy-low-sell-high strategy
+        # is allowed on live by default; it still goes through the
+        # readiness gate + per-trade verification + risk caps before
+        # any swap actually executes.
+        _mb_live_default = "1" if os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1","true","yes","on"} else "0"
+        if live_trading and os.getenv("MONEY_BUTTON_ALLOW_LIVE", _mb_live_default).lower() not in {"1", "true", "yes", "on"}:
             return None
         if last_price <= 0:
             return None
