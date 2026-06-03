@@ -102,15 +102,18 @@ CHAIN_CONFIG = {
         "env_infura_url": None,
         "infura_base": None,
         "public_rpcs": [
-            # ANKR first — user's free-tier carrier while Alchemy is unavailable.
-            "https://rpc.ankr.com/base",
-            "https://mainnet.base.org",
+            # publicnode is the verified-working free tier (no API key);
+            # confirmed via direct probe to return live block numbers and
+            # balances.  drpc + 1rpc + the official Base RPC follow as
+            # fallbacks.  rpc.ankr.com/base was previously listed first
+            # but now returns 401 without an ANKR_API_KEY, so it is
+            # appended only when that key is in env.
             "https://base-rpc.publicnode.com",
-            "https://1rpc.io/base",
             "https://base.drpc.org",
+            "https://1rpc.io/base",
+            "https://mainnet.base.org",
         ],
         "public_wss": [
-            "wss://rpc.ankr.com/base/ws",
             "wss://base-rpc.publicnode.com",
             "wss://base.drpc.org",
         ],

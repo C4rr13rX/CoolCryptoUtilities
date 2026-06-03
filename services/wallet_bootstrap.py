@@ -27,6 +27,180 @@ MIN_HOLDING_USD = float(os.getenv("BOOTSTRAP_MIN_HOLDING_USD", "0.50"))
 MIN_PORTFOLIO_USD = float(os.getenv("BOOTSTRAP_MIN_PORTFOLIO_USD", "1.00"))
 
 
+_STABLE_USD = {"USDC", "USDBC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "FRAX", "LUSD"}
+
+# Binance public ticker covers the big liquid pairs; no key required.
+_BINANCE_SYM = {
+    "ETH": "ETHUSDT", "WETH": "ETHUSDT",
+    "BTC": "BTCUSDT", "WBTC": "BTCUSDT",
+    "MATIC": "MATICUSDT", "WMATIC": "MATICUSDT",
+    "LINK": "LINKUSDT", "AAVE": "AAVEUSDT",
+    "ARB": "ARBUSDT", "OP": "OPUSDT",
+    "BNB": "BNBUSDT", "WBNB": "BNBUSDT",
+    "AVAX": "AVAXUSDT", "WAVAX": "AVAXUSDT",
+    "CBETH": "CBETHUSDT",  # may or may not be listed; will fall through
+}
+
+# Coinbase exchange-rates endpoint takes a single base currency; we
+# iterate per-symbol but it's free, fast, and returns USD pegs even for
+# the stablecoins (a useful cross-check).
+_COINBASE_SYM = {
+    "ETH": "ETH", "WETH": "ETH",
+    "BTC": "BTC", "WBTC": "BTC",
+    "USDC": "USDC", "USDBC": "USDC", "USDT": "USDT", "DAI": "DAI",
+    "MATIC": "MATIC", "LINK": "LINK", "AAVE": "AAVE",
+    "ARB": "ARB", "OP": "OP", "BNB": "BNB", "AVAX": "AVAX",
+    "CBETH": "CBETH",
+}
+
+# CoinGecko id map — kept as a last-resort because the free tier
+# aggressively rate-limits (429), but it has the broadest symbol
+# coverage so we keep it in the cascade.
+_COINGECKO_ID = {
+    "ETH": "ethereum", "WETH": "ethereum",
+    "USDC": "usd-coin", "USDBC": "bridged-usd-coin-base",
+    "USDT": "tether", "DAI": "dai",
+    "WBTC": "wrapped-bitcoin", "BTC": "bitcoin",
+    "MATIC": "matic-network", "WMATIC": "matic-network",
+    "LINK": "chainlink", "AAVE": "aave",
+    "CBETH": "coinbase-wrapped-staked-eth",
+    "ARB": "arbitrum", "OP": "optimism",
+    "BNB": "binancecoin", "WBNB": "binancecoin",
+    "AVAX": "avalanche-2", "WAVAX": "avalanche-2",
+}
+
+
+def _binance_price(sym: str, timeout: float) -> Optional[float]:
+    import urllib.request as _ur, json as _j
+    ticker = _BINANCE_SYM.get(sym)
+    if not ticker:
+        return None
+    try:
+        req = _ur.Request(
+            f"https://api.binance.com/api/v3/ticker/price?symbol={ticker}",
+            headers={"User-Agent": "w1z4rd-bootstrap/1.0"})
+        with _ur.urlopen(req, timeout=timeout) as r:
+            data = _j.loads(r.read())
+        return float(data.get("price"))
+    except Exception:
+        return None
+
+
+def _coinbase_price(sym: str, timeout: float) -> Optional[float]:
+    import urllib.request as _ur, json as _j
+    base = _COINBASE_SYM.get(sym)
+    if not base:
+        return None
+    try:
+        req = _ur.Request(
+            f"https://api.coinbase.com/v2/exchange-rates?currency={base}",
+            headers={"User-Agent": "w1z4rd-bootstrap/1.0"})
+        with _ur.urlopen(req, timeout=timeout) as r:
+            data = _j.loads(r.read())
+        rates = (data.get("data") or {}).get("rates") or {}
+        usd = rates.get("USD")
+        return float(usd) if usd is not None else None
+    except Exception:
+        return None
+
+
+def _coingecko_prices(symbols: List[str], timeout: float = 4.0) -> Dict[str, float]:
+    """Last-resort batch CoinGecko query.  Returns {} on 429 / error."""
+    import urllib.request as _ur, urllib.parse as _up, json as _j
+    ids: List[str] = []
+    seen_ids: set = set()
+    upper_syms: List[Tuple[str, str]] = []
+    for s in symbols:
+        u = (s or "").upper()
+        if u in _COINGECKO_ID:
+            cid = _COINGECKO_ID[u]
+            if cid not in seen_ids:
+                ids.append(cid); seen_ids.add(cid)
+            upper_syms.append((u, cid))
+    if not ids:
+        return {}
+    try:
+        url = ("https://api.coingecko.com/api/v3/simple/price?"
+               + _up.urlencode({"ids": ",".join(ids), "vs_currencies": "usd"}))
+        req = _ur.Request(url, headers={"User-Agent": "w1z4rd-bootstrap/1.0"})
+        with _ur.urlopen(req, timeout=timeout) as r:
+            data = _j.loads(r.read())
+        out: Dict[str, float] = {}
+        for u, cid in upper_syms:
+            v = (data.get(cid) or {}).get("usd")
+            if v is not None:
+                out[u] = float(v)
+        return out
+    except Exception:
+        return {}
+
+
+def _resolve_prices(symbols: List[str], timeout: float = 4.0) -> Dict[str, float]:
+    """Multi-source USD price resolver.  Cascade:
+        1. Stablecoins → $1.00 (peg).
+        2. Binance public ticker — fast, deep, no key.
+        3. Coinbase exchange rates — covers cbETH / OP / ARB etc.
+        4. CoinGecko batch — catches niche tokens not on Binance/Coinbase.
+    Returns {SYMBOL: usd_price}.  Failures simply skip; never raises.
+    """
+    out: Dict[str, float] = {}
+    pending: List[str] = []
+    for raw in symbols:
+        sym = (raw or "").upper()
+        if not sym:
+            continue
+        if sym in _STABLE_USD:
+            out[sym] = 1.0
+            continue
+        pending.append(sym)
+    if not pending:
+        return out
+    for sym in list(pending):
+        v = _binance_price(sym, timeout)
+        if v is not None and v > 0:
+            out[sym] = v
+            pending.remove(sym)
+    if pending:
+        for sym in list(pending):
+            v = _coinbase_price(sym, timeout)
+            if v is not None and v > 0:
+                out[sym] = v
+                pending.remove(sym)
+    if pending:
+        gecko = _coingecko_prices(pending, timeout=timeout)
+        out.update(gecko)
+    return out
+
+
+def _fill_usd_prices(holdings: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], float]:
+    """Backfill `usd` on each holding using CoinGecko when missing or zero.
+
+    Returns (holdings_with_usd, total_usd).  Holdings are mutated in
+    place; total_usd is the recomputed sum so callers can replace any
+    stale total they may have computed before pricing came back.
+    """
+    needed: List[str] = []
+    for h in holdings:
+        try:
+            if float(h.get("usd") or 0.0) <= 0 and float(h.get("quantity") or 0.0) > 0:
+                needed.append(str(h.get("symbol") or ""))
+        except Exception:
+            continue
+    prices = _resolve_prices(list({s for s in needed if s}))
+    total = 0.0
+    for h in holdings:
+        try:
+            qty = float(h.get("quantity") or 0.0)
+            sym = str(h.get("symbol") or "").upper()
+            current_usd = float(h.get("usd") or 0.0)
+            if current_usd <= 0 and qty > 0 and sym in prices:
+                h["usd"] = qty * prices[sym]
+            total += float(h.get("usd") or 0.0)
+        except Exception:
+            continue
+    return holdings, total
+
+
 def _resolve_wallet_creds() -> Tuple[str, str]:
     """Resolve (mnemonic, private_key), preferring env, then SecureVault.
 
@@ -163,8 +337,23 @@ def scan_wallet_holdings(
         })
         total_usd += holding.usd
 
+    # Backfill USD via CoinGecko for any holding the upstream balance
+    # fetcher left at $0 — this is the bug the user reported: balances
+    # were correct but the pipeline reported total_usd=0 because the
+    # Alchemy pricing call silently failed (no key / 401 / 402).  The
+    # fallback runs unconditionally so it ALSO fixes future cache-priced
+    # rows that drift to zero.
+    holdings, total_usd = _fill_usd_prices(holdings)
+    # native_usd is computed from a single native row above, so re-derive
+    # it from the now-priced holdings to keep them consistent.
+    native_usd = 0.0
+    for h in holdings:
+        if h.get("address") == "native":
+            native_usd = float(h.get("usd") or 0.0)
+            break
+
     # Sort by USD value descending
-    holdings.sort(key=lambda h: h["usd"], reverse=True)
+    holdings.sort(key=lambda h: h.get("usd", 0.0), reverse=True)
 
     return {
         "wallet": wallet_addr or portfolio.wallet,
