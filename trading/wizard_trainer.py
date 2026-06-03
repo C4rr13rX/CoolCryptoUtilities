@@ -200,6 +200,50 @@ class WizardTrainer:
 
         return self._push_texts(texts)
 
+    def push_news_batch(
+        self,
+        items: List[Dict[str, Any]],
+        *,
+        max_items: int = 200,
+    ) -> int:
+        """Push news articles into the brain as text observations.
+
+        Each item is reduced to `[NEWS][SYMBOL] title — sentiment` so
+        the brain's text pool sees the headline next to symbol context.
+        Returns the count actually pushed.  When `items` is large we
+        downsample to `max_items` evenly so a 3-year-spanning corpus
+        load still completes in seconds.
+        """
+        if not self.is_online():
+            return 0
+        if not items:
+            return 0
+        if len(items) > max_items:
+            step = len(items) / max_items
+            items = [items[int(i * step)] for i in range(max_items)]
+        texts: List[str] = []
+        for it in items:
+            try:
+                title = str(it.get("title") or it.get("headline") or "").strip()
+                if not title:
+                    continue
+                tokens = it.get("tokens") or it.get("symbols") or []
+                if isinstance(tokens, (list, tuple)):
+                    sym_str = ",".join(str(t).upper() for t in tokens if t)[:80]
+                else:
+                    sym_str = str(tokens).upper()[:80]
+                sentiment = it.get("sentiment") or ""
+                source = it.get("source") or ""
+                head = f"[NEWS] [{sym_str}] " if sym_str else "[NEWS] "
+                tail = f" :: {sentiment}" if sentiment else ""
+                src = f" ({source})" if source else ""
+                texts.append((head + title + src + tail)[:480])
+            except Exception:
+                continue
+        if not texts:
+            return 0
+        return self._push_texts(texts)
+
     def push_market_summary(
         self,
         symbol: str,

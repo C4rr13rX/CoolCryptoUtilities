@@ -406,6 +406,30 @@ def download_pair_coingecko(
     return _fetch_coingecko_ohlc(base_id, vs_currency=vs, days=days)
 
 
+def _adaptive_granularity(days_back: int) -> Tuple[int, str]:
+    """Pick a (seconds, binance-label) granularity that keeps each
+    pair's candle count well under 50k so a 3-year backfill finishes
+    in minutes, not hours, while still leaving enough resolution for
+    short-horizon predictors.
+        ≤ 90 days  →   5 minutes
+        ≤ 365 days →  15 minutes
+        ≤ 730 days →  30 minutes
+        >  730 days →   1 hour
+    Override with CEX_FALLBACK_GRANULARITY (seconds).
+    """
+    override = os.getenv("CEX_FALLBACK_GRANULARITY")
+    if override:
+        try:
+            sec = int(override)
+            return sec, {300: "5m", 900: "15m", 1800: "30m", 3600: "1h"}.get(sec, "1h")
+        except Exception:
+            pass
+    if days_back <= 90:    return 300, "5m"
+    if days_back <= 365:   return 900, "15m"
+    if days_back <= 730:   return 1800, "30m"
+    return 3600, "1h"
+
+
 def download_pair(
     symbol: str,
     *,
@@ -413,30 +437,31 @@ def download_pair(
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Download OHLCV for a pair symbol (e.g., "WETH-USDC").
-    Tries Binance first, falls back to CoinGecko.
+    Tries Coinbase first (US-accessible), then Binance, then CoinGecko.
     Returns (source, rows).
     """
     parts = symbol.upper().replace("/", "-").split("-")
     if len(parts) != 2:
         return ("error", [])
     base, quote = parts
+    gran_sec, bin_label = _adaptive_granularity(days_back)
 
     # Try Coinbase first (US-accessible, good granularity)
-    rows = download_pair_coinbase(base, quote, days_back=days_back)
+    rows = download_pair_coinbase(base, quote, days_back=days_back, granularity=gran_sec)
     if rows:
-        log_message("cex-fallback", f"Coinbase: {len(rows)} candles for {symbol}")
+        log_message("cex-fallback", f"Coinbase: {len(rows)} candles for {symbol} ({days_back}d × {gran_sec}s)")
         return ("coinbase", rows)
 
     # Try Binance (best granularity, may be geo-restricted)
-    rows = download_pair_binance(base, quote, days_back=days_back)
+    rows = download_pair_binance(base, quote, days_back=days_back, interval=bin_label)
     if rows:
-        log_message("cex-fallback", f"Binance: {len(rows)} candles for {symbol}")
+        log_message("cex-fallback", f"Binance: {len(rows)} candles for {symbol} ({days_back}d × {bin_label})")
         return ("binance", rows)
 
     # Fallback to CoinGecko (always available, lower granularity)
     rows = download_pair_coingecko(base, quote, days=days_back)
     if rows:
-        log_message("cex-fallback", f"CoinGecko: {len(rows)} candles for {symbol}")
+        log_message("cex-fallback", f"CoinGecko: {len(rows)} candles for {symbol} ({days_back}d)")
         return ("coingecko", rows)
 
     return ("none", [])
@@ -503,22 +528,28 @@ def bootstrap_core_pairs(
         except Exception:
             pass
 
+    refresh_hours = float(os.getenv("CEX_FALLBACK_REFRESH_HOURS", "12"))
     for i, symbol in enumerate(target_pairs):
         symbol_u = symbol.upper()
         index_num = pair_indices.get(symbol_u, 9000 + i)
 
-        # Check if data already exists
+        # Check if data already exists AND is fresh.  We re-fetch when
+        # the newest candle is older than refresh_hours so the corpus
+        # tracks current market regime, not a 3-month-old snapshot.
         out_dir = root / chain
         existing = list(out_dir.glob(f"*_{symbol_u}.json")) if out_dir.exists() else []
         if existing:
-            # Verify it has actual data
             try:
                 with existing[0].open("r", encoding="utf-8") as fh:
                     data = json.load(fh)
                 if isinstance(data, list) and len(data) > 10:
-                    results["skipped"] += 1
-                    results["pairs"][symbol_u] = "exists"
-                    continue
+                    last_ts = data[-1].get("timestamp") if isinstance(data[-1], dict) else None
+                    if isinstance(last_ts, (int, float)):
+                        age_h = (time.time() - float(last_ts)) / 3600.0
+                        if age_h < refresh_hours:
+                            results["skipped"] += 1
+                            results["pairs"][symbol_u] = f"fresh:{int(age_h)}h"
+                            continue
             except Exception:
                 pass
 

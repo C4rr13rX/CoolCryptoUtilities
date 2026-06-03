@@ -135,11 +135,20 @@ def _collect_completed_symbols(assignment_path: Path) -> List[str]:
     return symbols
 
 
-def _trigger_news_for_symbols(symbols: List[str], lookback_hours: int = 72) -> None:
-    """Collect news for the given crypto symbols after a download cycle."""
+def _trigger_news_for_symbols(symbols: List[str], lookback_hours: Optional[int] = None) -> None:
+    """Collect news for the given crypto symbols after a download cycle.
+
+    Reach is configurable: by default we ask for 30 days (720h) of news
+    per symbol so the brain has enough cross-OHLCV context to learn
+    correlations, not just yesterday's headlines.  Bump
+    NEWS_POST_DOWNLOAD_LOOKBACK_HOURS to fetch wider windows; bump
+    NEWS_POST_DOWNLOAD_MAX_TOKENS to scan more symbols per cycle.
+    """
     if not symbols:
         return
-    max_tokens = int(os.getenv("NEWS_POST_DOWNLOAD_MAX_TOKENS", "12"))
+    if lookback_hours is None:
+        lookback_hours = int(os.getenv("NEWS_POST_DOWNLOAD_LOOKBACK_HOURS", "720"))
+    max_tokens = int(os.getenv("NEWS_POST_DOWNLOAD_MAX_TOKENS", "24"))
     tokens = symbols[:max_tokens]
     try:
         from datetime import datetime, timedelta, timezone
@@ -148,8 +157,21 @@ def _trigger_news_for_symbols(symbols: List[str], lookback_hours: int = 72) -> N
         end = datetime.now(timezone.utc)
         start = end - timedelta(hours=lookback_hours)
         result = collect_news_for_terms(tokens=tokens, start=start, end=end)
-        count = len(result.get("items", []))
-        log_message("download-worker", f"post-download news: {count} articles for {tokens[:5]}...")
+        items = result.get("items") or []
+        count = len(items)
+        log_message("download-worker", f"post-download news: {count} articles for {tokens[:5]}... (lookback {lookback_hours}h)")
+        # Also push news into the W1z4rD brain so it learns
+        # news↔OHLCV correlations alongside the price-text training.
+        # Best-effort; brain may be offline.
+        if items and os.getenv("WIZARD_NEWS_TO_BRAIN", "1").lower() not in {"0", "false", "no"}:
+            try:
+                from trading.wizard_trainer import get_trainer
+                trainer = get_trainer()
+                if trainer.is_online() and hasattr(trainer, "push_news_batch"):
+                    pushed = trainer.push_news_batch(items, max_items=int(os.getenv("WIZARD_NEWS_MAX_PER_CYCLE", "200")))
+                    log_message("download-worker", f"pushed {pushed} news items to W1z4rD brain")
+            except Exception as exc_n:
+                log_message("download-worker", f"brain news push skipped: {exc_n}", severity="info")
     except Exception as exc:
         log_message("download-worker", f"post-download news error: {exc}", severity="warning")
 
@@ -165,9 +187,15 @@ def _run_download(chain: str, assignment_path: Path) -> None:
     if max_pairs > 0:
         incomplete = incomplete[:max_pairs]
 
-    # If all on-chain pairs are completed/skipped or CEX fallback is enabled,
-    # use the CEX OHLCV fallback to download from Binance/CoinGecko.
-    cex_fallback = os.getenv("OHLCV_CEX_FALLBACK", "0").lower() in {"1", "true", "yes", "on"}
+    # On Base + Polygon + other L2s, the on-chain block-scanner
+    # (download2000.py) is slow and produces lots of "0 logs" noise on
+    # thinly-traded pools — the CEX cascade (Coinbase → Binance →
+    # CoinGecko) has full multi-year history for the same symbols and
+    # is FAR cheaper.  Use it as the primary path unless explicitly
+    # disabled; the on-chain scanner stays available for chains where
+    # the CEX cascade can't reach (set OHLCV_CEX_FALLBACK=0 to force).
+    cex_default = "1" if chain.lower() in {"base", "arbitrum", "optimism", "polygon"} else "0"
+    cex_fallback = os.getenv("OHLCV_CEX_FALLBACK", cex_default).lower() in {"1", "true", "yes", "on"}
     if not incomplete or cex_fallback:
         _try_cex_fallback(chain)
         if not incomplete:
@@ -205,17 +233,45 @@ def _run_download(chain: str, assignment_path: Path) -> None:
 
 
 def _try_cex_fallback(chain: str) -> None:
-    """Run CEX OHLCV fallback if the historical data directory is empty or sparse."""
+    """Run CEX OHLCV fallback if the historical data is missing, sparse,
+    or stale.  We refresh whenever:
+      * the dir has fewer than CEX_FALLBACK_MIN_FILES (default 5) files,
+      * OR the newest file's last candle is older than
+        CEX_FALLBACK_MAX_STALE_HOURS (default 12h) and refresh is on.
+    """
     ohlcv_dir = DATA_ROOT / "historical_ohlcv" / chain
-    existing_count = len(list(ohlcv_dir.glob("*.json"))) if ohlcv_dir.exists() else 0
+    files = list(ohlcv_dir.glob("*.json")) if ohlcv_dir.exists() else []
+    existing_count = len(files)
     min_threshold = int(os.getenv("CEX_FALLBACK_MIN_FILES", "5"))
-    if existing_count >= min_threshold:
+    refresh_enabled = os.getenv("CEX_FALLBACK_REFRESH", "1").lower() in {"1", "true", "yes", "on"}
+    stale_hours = float(os.getenv("CEX_FALLBACK_MAX_STALE_HOURS", "12"))
+    needs_refresh = False
+    if refresh_enabled and files:
+        import json as _j, time as _t
+        newest_ts = 0
+        for p in files:
+            try:
+                with p.open("r", encoding="utf-8") as fh:
+                    rows = _j.load(fh)
+                if isinstance(rows, list) and rows:
+                    last = rows[-1].get("timestamp")
+                    if isinstance(last, (int, float)) and last > newest_ts:
+                        newest_ts = int(last)
+            except Exception:
+                continue
+        if newest_ts > 0 and (_t.time() - newest_ts) > (stale_hours * 3600):
+            needs_refresh = True
+            log_message("download-worker", f"CEX fallback: {chain} OHLCV is stale by {(_t.time()-newest_ts)/3600:.1f}h, refreshing")
+    if existing_count >= min_threshold and not needs_refresh:
         return
     try:
         from services.cex_ohlcv_fallback import run_cex_fallback_cycle
-        days = int(os.getenv("CEX_FALLBACK_DAYS", "90"))
-        max_pairs = int(os.getenv("CEX_FALLBACK_MAX_PAIRS", "20"))
-        log_message("download-worker", f"CEX fallback: {chain} has {existing_count} files, bootstrapping...")
+        # User asked for 3-year reach (~1095 days) as the corpus
+        # backbone.  Binance/Coinbase serve it without auth; CoinGecko
+        # falls back at 4h granularity beyond 30 days.
+        days = int(os.getenv("CEX_FALLBACK_DAYS", "1095"))
+        max_pairs = int(os.getenv("CEX_FALLBACK_MAX_PAIRS", "40"))
+        log_message("download-worker", f"CEX fallback: {chain} has {existing_count} files, bootstrapping {days}d × {max_pairs} pairs...")
         run_cex_fallback_cycle(chain=chain, days_back=days, max_pairs=max_pairs)
     except Exception as exc:
         log_message("download-worker", f"CEX fallback error for {chain}: {exc}", severity="error")
