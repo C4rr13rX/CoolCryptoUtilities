@@ -105,24 +105,77 @@ def _format_horizon_label(seconds: int) -> str:
 
 
 _TF_MODULE = None
+_TF_LOAD_FAILED_AT: float = 0.0
+_TF_LOAD_BACKOFF_SEC: float = 300.0  # 5 min
+_TF_LOAD_LOGGED: bool = False
 
 
 def _load_tf():
-    global _TF_MODULE
-    if _TF_MODULE is None:
+    """Lazy TensorFlow import with failure caching.
+
+    On Windows, the TF C++ runtime occasionally fails to load with
+    `ERROR_NOT_ENOUGH_MEMORY` even when RAM is available (working-set
+    quirk / DLL allocation).  Without caching, every market-stream
+    callback retries the import and floods the log with the same
+    stack trace, while the callback itself never returns useful work.
+
+    First failure is logged once at WARNING; subsequent calls return
+    None for _TF_LOAD_BACKOFF_SEC seconds.  Callers must tolerate a
+    None return and degrade gracefully (skip prediction, keep the
+    pipeline alive for OHLCV / news / brain ingest).
+    """
+    global _TF_MODULE, _TF_LOAD_FAILED_AT, _TF_LOAD_LOGGED
+    if _TF_MODULE is not None:
+        return _TF_MODULE
+    import time as _t
+    if _TF_LOAD_FAILED_AT and (_t.time() - _TF_LOAD_FAILED_AT) < _TF_LOAD_BACKOFF_SEC:
+        return None
+    try:
         configure_tensorflow()
         import tensorflow as tf  # type: ignore
-
         _TF_MODULE = tf
-    return _TF_MODULE
+        _TF_LOAD_FAILED_AT = 0.0
+        _TF_LOAD_LOGGED = False
+        return _TF_MODULE
+    except Exception as exc:
+        _TF_LOAD_FAILED_AT = _t.time()
+        if not _TF_LOAD_LOGGED:
+            _TF_LOAD_LOGGED = True
+            try:
+                from services.logging_utils import log_message
+                log_message(
+                    "tf-runtime",
+                    f"TensorFlow unavailable, suppressing retries for {int(_TF_LOAD_BACKOFF_SEC)}s: {exc}",
+                    severity="warning",
+                )
+            except Exception:
+                pass
+        return None
 
 
 class _LazyTensorFlow:
     def __getattr__(self, name):
-        return getattr(_load_tf(), name)
+        mod = _load_tf()
+        if mod is None:
+            raise RuntimeError(
+                "TensorFlow unavailable — pipeline degraded to no-prediction mode "
+                "until the next load attempt"
+            )
+        return getattr(mod, name)
 
 
 tf = _LazyTensorFlow()
+
+
+def tf_available() -> bool:
+    """Cheap, non-importing health check used by callbacks that should
+    silently skip ML work when TF can't load."""
+    if _TF_MODULE is not None:
+        return True
+    import time as _t
+    if _TF_LOAD_FAILED_AT and (_t.time() - _TF_LOAD_FAILED_AT) < _TF_LOAD_BACKOFF_SEC:
+        return False
+    return _load_tf() is not None
 
 
 class TrainingPipeline:

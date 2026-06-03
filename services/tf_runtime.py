@@ -18,6 +18,16 @@ def configure_tensorflow(profile: Optional[SystemProfile] = None) -> None:
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
     os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+    # On Windows, the TF C++ runtime occasionally throws
+    # `ERROR_NOT_ENOUGH_MEMORY` on DLL load even with plenty of free
+    # RAM.  Clamping the OpenMP + MKL thread pools shrinks the
+    # per-thread allocation TF requests at import time and usually
+    # makes the DLL load succeed.  Users can override the cap by
+    # exporting these env vars explicitly before launch.
+    os.environ.setdefault("OMP_NUM_THREADS", "2")
+    os.environ.setdefault("MKL_NUM_THREADS", "2")
+    os.environ.setdefault("TF_NUM_INTEROP_THREADS", "2")
+    os.environ.setdefault("TF_NUM_INTRAOP_THREADS", "2")
     profile = profile or detect_system_profile()
     try:
         import tensorflow as tf  # noqa: F401
