@@ -2210,6 +2210,20 @@ class TradingBot:
                 return
             self._last_sample_signature = signature
 
+            # Live-tick → brain push.  Runs BEFORE the TF gate so the
+            # brain keeps learning from live market data even when TF
+            # prediction is broken.  Throttled per-symbol so a high-
+            # frequency tick stream doesn't slam the brain endpoint.
+            try:
+                from trading.wizard_trainer import push_live_tick
+                push_live_tick(
+                    sample.get("symbol", ""),
+                    float(sample.get("price", 0) or 0),
+                    float(sample.get("volume", 0) or sample.get("net_volume", 0) or 0),
+                    ts=now,
+                )
+            except Exception:
+                pass
             # Short-circuit the TF prediction path when model_definition
             # is unavailable (DLL OOM / missing module).  The market-
             # stream callback used to crash here on every tick, spamming

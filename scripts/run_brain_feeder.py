@@ -19,8 +19,15 @@ sys.path.insert(0, str(ROOT))
 
 # Sensible defaults; override via env before launch.
 os.environ.setdefault("WIZARD_BRAIN_FEEDER_ENABLED", "1")
-os.environ.setdefault("WIZARD_BRAIN_FEEDER_INTERVAL", "120")
-os.environ.setdefault("WIZARD_BRAIN_FEEDER_TAIL", "16")
+# 60s interval, 64-candle window: pushes ~64×26 = ~1.7k OHLCV observes
+# per cycle + news from the same window → news↔price co-firing in the
+# brain's text pool every minute.  Cursor advances 64 rows per cycle
+# per pair, walking the 26k-candle 3-year corpus over ~7 hours then
+# wrapping to newest — so the brain re-trains continuously and stays
+# current while also seeing the deep historical context.
+os.environ.setdefault("WIZARD_BRAIN_FEEDER_INTERVAL", "60")
+os.environ.setdefault("WIZARD_BRAIN_FEEDER_TAIL", "64")
+os.environ.setdefault("WIZARD_BRAIN_FEEDER_NEWS_PER_WINDOW", "8")
 
 from trading.wizard_trainer import (  # noqa: E402
     get_trainer,

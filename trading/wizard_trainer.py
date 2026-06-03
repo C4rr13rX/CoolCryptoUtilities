@@ -295,6 +295,62 @@ class WizardTrainer:
             return self._query_regime_brain(query, timeout)
         return self._query_regime_legacy(query, timeout)
 
+    def predict_horizon(
+        self,
+        symbol: str,
+        current_price: float,
+        *,
+        target_margin: float = 0.02,
+        horizon_hours: float = 4.0,
+        timeout: float = 2.0,
+    ) -> Optional[Dict[str, Any]]:
+        """Ask the brain whether `symbol` is likely to rise by at least
+        `target_margin` within `horizon_hours` from `current_price`.
+
+        Returns a dict with keys:
+          - direction_prob:  0..1 probability the move happens
+          - target_price:    current_price * (1 + target_margin)
+          - horizon_hours:   echoed input
+          - regime_text:     raw brain answer for transparency
+          - confidence:      [0,1] proxy from keyword density
+        Or None if the brain is offline or returned nothing.
+
+        This is the "buy low, expect to sell high at +M% within T"
+        question wrapped as a brain query.  Consumers can iterate over
+        a grid of (margin, horizon) tuples to find the brain's
+        preferred trade.
+        """
+        if not self.is_online():
+            return None
+        if not (current_price and current_price > 0):
+            return None
+        base = symbol.split("/")[0].split("-")[0].upper()
+        target_price = float(current_price) * (1.0 + float(target_margin))
+        h = float(horizon_hours)
+        query = (
+            f"{base} price {current_price:.6g}. "
+            f"Will {base} reach {target_price:.6g} within {h:.1f} hours? "
+            f"Trend? Volatility?"
+        )
+        text = (self._query_regime_brain(query, timeout)
+                if _brain_mode() else self._query_regime_legacy(query, timeout))
+        if not text:
+            return None
+        try:
+            direction, confidence = _parse_regime_text(text)
+        except Exception:
+            direction, confidence = 0.5, 0.0
+        return {
+            "symbol":         symbol,
+            "current_price":  float(current_price),
+            "target_price":   target_price,
+            "target_margin":  float(target_margin),
+            "horizon_hours":  h,
+            "direction_prob": float(direction),
+            "confidence":     float(confidence),
+            "regime_text":    text,
+        }
+
     def _query_regime_brain(self, query: str, timeout: float) -> Optional[str]:
         """Brain substrate route: observe the query into POOL_TEXT,
         then POST /brain/integrate to get the trained regime
@@ -464,15 +520,92 @@ _BRAIN_FEEDER_STATE: Dict[str, Any] = {
 }
 
 
+# Per-file cursor: how far back in history we've already streamed.
+# A cycle advances the cursor by `window_candles` per pass so the brain
+# eventually sees the full corpus, not just the tail forever.  Stored in
+# _BRAIN_FEEDER_STATE["cursors"] = { (chain, sym): rows_streamed }.
+_BRAIN_FEEDER_STATE["cursors"] = {}
+
+
+def _build_training_package(
+    *,
+    chain: str,
+    sym: str,
+    rows: List[Dict[str, Any]],
+    cursor: int,
+    window_candles: int,
+    news_lookback_hours: float,
+) -> Tuple[List[Tuple[float, float, float]], List[Dict[str, Any]], int]:
+    """Construct a (ohlcv_samples, news_items, next_cursor) bundle.
+
+    The user's "training package" concept: the brain should see a
+    coherent window of price action AND any news from the same time
+    period in the same cycle, so it can learn news↔price correlations.
+
+    cursor is rows-from-newest (0 = most recent).  Each cycle we
+    advance cursor by window_candles so the brain eventually walks the
+    full corpus backwards in time.
+    """
+    n = len(rows)
+    if n == 0 or cursor >= n:
+        return [], [], 0  # wrap to start of newest
+    end_idx = n - cursor
+    start_idx = max(0, end_idx - window_candles)
+    window = rows[start_idx:end_idx]
+    samples: List[Tuple[float, float, float]] = []
+    for r in window:
+        try:
+            ts = float(r.get("timestamp", 0))
+            p = float(r.get("close", 0) or r.get("price", 0))
+            v = float(r.get("net_volume", 0) or r.get("volume", 0))
+            if p > 0:
+                samples.append((ts, p, v))
+        except Exception:
+            continue
+    # News for the same time window (best-effort).
+    news_items: List[Dict[str, Any]] = []
+    if samples:
+        try:
+            from datetime import datetime, timezone, timedelta
+            from services.news_lab import collect_news_for_terms
+            window_end = datetime.fromtimestamp(samples[-1][0], tz=timezone.utc)
+            window_start = window_end - timedelta(hours=news_lookback_hours)
+            base_sym = sym.split("-", 1)[0]
+            result = collect_news_for_terms(
+                tokens=[base_sym], start=window_start, end=window_end)
+            news_items = result.get("items") or []
+        except Exception:
+            pass
+    next_cursor = cursor + window_candles
+    if next_cursor >= n:
+        next_cursor = 0  # wrap so the brain re-trains on newest data eventually
+    return samples, news_items, next_cursor
+
+
 def _brain_feeder_loop(
     chains: Sequence[str],
     interval_sec: float,
     tail_candles: int,
     data_root: Optional[str],
 ) -> None:
+    """Indefinite training-package feeder.
+
+    Each cycle, for each (chain, symbol):
+      1. Build a price+news bundle for the next historical window.
+      2. Push the OHLCV samples to the brain's text pool.
+      3. Push the news headlines to the same text pool — same cycle,
+         so Hebbian co-firing wires the news↔price association.
+      4. Advance the cursor; wrap to newest when we've covered the
+         corpus so the brain stays current with the latest tail.
+    """
     import json as _j
     from pathlib import Path as _P
     root = _P(data_root) if data_root else _P("data") / "historical_ohlcv"
+    try:
+        news_per_window = int(os.getenv("WIZARD_BRAIN_FEEDER_NEWS_PER_WINDOW", "16"))
+        news_lookback_h = float(os.getenv("WIZARD_BRAIN_FEEDER_NEWS_LOOKBACK_H", "72"))
+    except Exception:
+        news_per_window, news_lookback_h = 16, 72.0
     while not _BRAIN_FEEDER_STATE.get("stop"):
         try:
             trainer = get_trainer()
@@ -480,6 +613,7 @@ def _brain_feeder_loop(
                 time.sleep(min(60.0, interval_sec))
                 continue
             total_pushed = 0
+            cursors = _BRAIN_FEEDER_STATE["cursors"]
             for chain in chains:
                 cdir = root / chain
                 if not cdir.exists():
@@ -491,19 +625,21 @@ def _brain_feeder_loop(
                             rows = _j.load(fh)
                         if not isinstance(rows, list) or not rows:
                             continue
-                        tail = rows[-tail_candles:]
-                        samples = []
-                        for r in tail:
-                            try:
-                                ts = float(r.get("timestamp", 0))
-                                p = float(r.get("close", 0) or r.get("price", 0))
-                                v = float(r.get("net_volume", 0) or r.get("volume", 0))
-                                if p > 0:
-                                    samples.append((ts, p, v))
-                            except Exception:
-                                continue
+                        key = (chain, sym)
+                        cursor = int(cursors.get(key, 0))
+                        samples, news_items, next_cursor = _build_training_package(
+                            chain=chain, sym=sym, rows=rows,
+                            cursor=cursor,
+                            window_candles=tail_candles,
+                            news_lookback_hours=news_lookback_h,
+                        )
+                        cursors[key] = next_cursor
                         if samples:
-                            total_pushed += trainer.push_ohlcv_batch(sym, samples, max_items=32)
+                            total_pushed += trainer.push_ohlcv_batch(
+                                sym, samples, max_items=max(tail_candles, 32))
+                        if news_items:
+                            total_pushed += trainer.push_news_batch(
+                                news_items, max_items=news_per_window)
                     except Exception:
                         continue
             _BRAIN_FEEDER_STATE["last_pushed"] = total_pushed
@@ -563,6 +699,58 @@ def start_brain_feeder(
 
 def stop_brain_feeder() -> None:
     _BRAIN_FEEDER_STATE["stop"] = True
+
+
+# ---------------------------------------------------------------------
+# Live-tick path
+# ---------------------------------------------------------------------
+#
+# The historical feeder above walks the OHLCV files on disk.  For live
+# market data — the price ticks coming in over websocket / REST — we
+# need a separate, lightweight path that pushes each tick to the brain
+# as it arrives.  This used to ride on the TF prediction callback, but
+# that path is gated on TF being loadable; when TF is broken we lost
+# all live ingestion.  The live-tick path here has zero TF dependency.
+
+_LIVE_TICK_STATE: Dict[str, Any] = {
+    "buffers": {},          # symbol -> list of recent ticks
+    "last_pushed_ts": {},   # symbol -> last brain-push timestamp
+}
+
+
+def push_live_tick(
+    symbol: str,
+    price: float,
+    volume: float = 0.0,
+    ts: Optional[float] = None,
+    *,
+    min_interval_sec: float = 5.0,
+) -> bool:
+    """Push a single live market tick to the brain.
+
+    Throttled per-symbol so a 100ms tick stream doesn't slam /brain/observe.
+    Per-symbol cooldown defaults to 5s; tune via WIZARD_LIVE_TICK_MIN_SEC.
+    Returns True if a sample was pushed.
+    """
+    if not symbol or not (price and price > 0):
+        return False
+    try:
+        cooldown = float(os.getenv("WIZARD_LIVE_TICK_MIN_SEC", str(min_interval_sec)))
+    except Exception:
+        cooldown = min_interval_sec
+    now_ts = float(ts) if ts is not None else time.time()
+    last = _LIVE_TICK_STATE["last_pushed_ts"].get(symbol, 0.0)
+    if (now_ts - last) < cooldown:
+        return False
+    try:
+        trainer = get_trainer()
+        if not trainer.is_online():
+            return False
+        trainer.push_ohlcv_batch(symbol, [(now_ts, float(price), float(volume))], max_items=1)
+        _LIVE_TICK_STATE["last_pushed_ts"][symbol] = now_ts
+        return True
+    except Exception:
+        return False
 
 
 def brain_feeder_status() -> Dict[str, Any]:
