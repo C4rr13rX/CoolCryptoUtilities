@@ -102,12 +102,15 @@ CHAIN_CONFIG = {
         "env_infura_url": None,
         "infura_base": None,
         "public_rpcs": [
+            # ANKR first — user's free-tier carrier while Alchemy is unavailable.
+            "https://rpc.ankr.com/base",
             "https://mainnet.base.org",
             "https://base-rpc.publicnode.com",
             "https://1rpc.io/base",
             "https://base.drpc.org",
         ],
         "public_wss": [
+            "wss://rpc.ankr.com/base/ws",
             "wss://base-rpc.publicnode.com",
             "wss://base.drpc.org",
         ],

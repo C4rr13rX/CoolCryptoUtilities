@@ -84,7 +84,7 @@ import { useDashboardStore } from '@/stores/dashboard';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
 import { initDomTranslation, setLanguage, t } from '@/i18n';
-import { runGuardianJob } from '@/api';
+// runGuardianJob import removed with maybePingGuardian; restore if popup is re-enabled.
 
 const store = useDashboardStore();
 const uiSettings = useUiSettingsStore();
@@ -616,22 +616,10 @@ const buildGuardianPrompt = (label: string, intent: string) => {
   ].join(' ');
 };
 
-const maybePingGuardian = async (label: string, intent: string) => {
-  if (!isBlinking(intent)) return;
-  const now = Date.now();
-  const last = guardianPingHistory.get(label) || 0;
-  if (now - last < 30000) return;
-  const shouldSend = window.confirm(
-    `${label} is reporting ${intent.toUpperCase()}. Send a one-time Guardian diagnostic?`
-  );
-  if (!shouldSend) return;
-  guardianPingHistory.set(label, now);
-  try {
-    await runGuardianJob({ prompt: buildGuardianPrompt(label, intent), save_default: false });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('Guardian ping failed', err);
-  }
+const maybePingGuardian = async (_label: string, _intent: string) => {
+  // Guardian confirm() popup disabled — blinks are advisory only.
+  // Re-enable by restoring the prior window.confirm + runGuardianJob flow.
+  return;
 };
 
 const goTo = async (item: { path: string; label: string; intent: string }) => {

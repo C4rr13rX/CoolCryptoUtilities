@@ -88,7 +88,8 @@ class WizardTrainer:
             url = f"{self._endpoint}/health"
             with urllib.request.urlopen(url, timeout=3) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="replace"))
-            self._online = bool(data.get("status") in ("ok", "online") or data.get("version"))
+            status_raw = str(data.get("status") or "").strip().lower()
+            self._online = bool(status_raw in ("ok", "online") or data.get("version") or data.get("node_id"))
         except Exception:
             self._online = False
         self._probe_ts = now
