@@ -504,7 +504,11 @@ def _tokens_from_text(text: str, token_map: Dict[str, str], seed_tokens: Sequenc
     for keyword, token in token_map.items():
         if keyword and keyword in haystack:
             tokens.add(token)
-    for raw in re.findall(r"\\$?[A-Za-z0-9]{2,12}", text or ""):
+    # Match crypto cashtags ($BTC) or plain tickers (BTC); the optional
+    # leading $ is literal — earlier code had `\\$?` which under Python
+    # 3.13's stricter parser became "literal backslash, optional EOS"
+    # and raised PatternError("nothing to repeat at position 3").
+    for raw in re.findall(r"\$?[A-Za-z0-9]{2,12}", text or ""):
         normalized = _normalize_token(raw)
         if not normalized:
             continue
