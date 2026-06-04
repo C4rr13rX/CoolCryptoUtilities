@@ -599,10 +599,19 @@ def _free_router_items(
             continue
         headline = str(row.get("headline") or "").strip()
         article = str(row.get("article") or "").strip()
-        tokens_row = row.get("tokens") or []
+        # pandas round-trips list-typed columns as numpy arrays whose
+        # truthiness raises; coerce explicitly.
+        _tokens_raw = row.get("tokens")
+        if _tokens_raw is None:
+            tokens_row = []
+        else:
+            try:
+                tokens_row = list(_tokens_raw)
+            except Exception:
+                tokens_row = []
         if isinstance(tokens_row, set):
             tokens_row = sorted(tokens_row)
-        if not headline or not article or not tokens_row:
+        if not headline or not article or len(tokens_row) == 0:
             continue
         items.append(
             {
@@ -744,12 +753,45 @@ def collect_news_for_files(
         crawler_items = []
         _trace("crawler_error", level="error", error=str(exc))
 
-    total_attempted = len(crypto_items) + len(crawler_items)
+    # Tier 1-6 ingestor block: pull from the expanded NewsSource list
+    # (RSS + Reddit + HackerNews Algolia + Nitter + RSSHub) so the news
+    # corpus reflects the full 142-source surface, not just CryptoPanic
+    # + the polite crawler.  Keyless — no API tokens required.
+    ingestor_items: List[Dict[str, Any]] = []
+    try:
+        from services.news_ingestor import EthicalNewsIngestor
+        _trace("ingestor_start", source_count="default")
+        ing = EthicalNewsIngestor()
+        rows = ing.harvest(
+            tokens=api_tokens,
+            start_ts=int(start_dt.timestamp()),
+            end_ts=int(end_dt.timestamp()),
+        )
+        for r in rows:
+            ingestor_items.append({
+                "title":     r.get("headline") or "",
+                "summary":   r.get("article") or "",
+                "url":       r.get("url"),
+                "origin":    r.get("source") or "ingestor",
+                "source":    r.get("source") or "ingestor",
+                "timestamp": int(r.get("timestamp") or 0),
+                "sentiment": r.get("sentiment") or "neutral",
+                "sentiment_score": float(r.get("sentiment_score") or 0.0),
+                "tokens":    r.get("tokens") or [],
+            })
+        _trace("ingestor_complete", articles=len(ingestor_items))
+    except Exception as exc:
+        ingestor_items = []
+        _trace("ingestor_error", level="warning", error=str(exc))
+
+    total_attempted = len(crypto_items) + len(crawler_items) + len(ingestor_items)
     if crawler_items:
         _persist_free_news(crawler_items)
+    if ingestor_items:
+        _persist_free_news(ingestor_items)
     dedup_skipped = 0
     combined: Dict[str, Dict[str, Any]] = {}
-    for item in crypto_items + crawler_items:
+    for item in crypto_items + crawler_items + ingestor_items:
         url = item.get("url")
         title = item.get("title")
         if url and url in seen_urls:
@@ -951,10 +993,42 @@ def collect_news_for_terms(
     if crawler_items:
         _persist_free_news(crawler_items)
 
-    total_attempted = len(crypto_items) + len(crawler_items)
+    # Tier 1-6 ingestor block — pull from the expanded 142-source
+    # NewsSource list (RSS + Reddit + HackerNews + Nitter + RSSHub).
+    # No API tokens.  See _build_default_sources in news_ingestor.
+    ingestor_items: List[Dict[str, Any]] = []
+    try:
+        from services.news_ingestor import EthicalNewsIngestor
+        _trace("ingestor_start", source_count="default")
+        ing = EthicalNewsIngestor()
+        rows = ing.harvest(
+            tokens=api_tokens,
+            start_ts=int(start.timestamp()),
+            end_ts=int(end.timestamp()),
+        )
+        for r in rows:
+            ingestor_items.append({
+                "title":     r.get("headline") or "",
+                "summary":   r.get("article") or "",
+                "url":       r.get("url"),
+                "origin":    r.get("source") or "ingestor",
+                "source":    r.get("source") or "ingestor",
+                "timestamp": int(r.get("timestamp") or 0),
+                "sentiment": r.get("sentiment") or "neutral",
+                "sentiment_score": float(r.get("sentiment_score") or 0.0),
+                "tokens":    list(r.get("tokens") or []),
+            })
+        _trace("ingestor_complete", articles=len(ingestor_items))
+    except Exception as exc:
+        ingestor_items = []
+        _trace("ingestor_error", level="warning", error=str(exc))
+    if ingestor_items:
+        _persist_free_news(ingestor_items)
+
+    total_attempted = len(crypto_items) + len(crawler_items) + len(ingestor_items)
     dedup_skipped = 0
     combined: Dict[str, Dict[str, Any]] = {}
-    for item in crypto_items + crawler_items:
+    for item in crypto_items + crawler_items + ingestor_items:
         url = item.get("url")
         title = item.get("title")
         if url and url in seen_urls:
