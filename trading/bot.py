@@ -227,7 +227,7 @@ class TradingBot:
         # Slightly more achievable defaults than the original 0.9 / 120 / $50.
         # The accuracy gate still has to clear MIN_GHOST_WIN_RATE (0.55)
         # AND LIVE_PROMOTION_PRECISION/RECALL before any of this fires.
-        self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.65"))
+        self.required_live_win_rate: float = float(os.getenv("LIVE_PROMOTION_WIN_RATE", "0.70"))
         self.required_live_trades: int = int(os.getenv("LIVE_PROMOTION_MIN_TRADES", "50"))
         self.required_live_profit: float = float(os.getenv("LIVE_PROMOTION_MIN_PROFIT", "1.0"))
         # Live circuit breaker: revert to ghost after consecutive losses or drawdown.
