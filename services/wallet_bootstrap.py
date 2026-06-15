@@ -509,6 +509,23 @@ def update_watchlists_from_pairs(pairs: List[str]) -> Dict[str, List[str]]:
         if pair not in ghost:
             ghost.append(pair)
 
+    # Always-stream pairs: high-volume Base pairs that we already have
+    # 3-year OHLCV history for (Coinbase delivers tick streams for
+    # them too).  More pairs = more independent signal sources per
+    # cycle without lowering accuracy bars per pair.
+    always_stream = [
+        "WETH-USDC", "WETH-USDT", "WBTC-USDC", "WBTC-WETH",
+        "LINK-USDC", "UNI-USDC", "AAVE-USDC", "ARB-USDC",
+        "OP-USDC", "DOGE-USDC", "SOL-USDC", "DAI-USDC",
+        "CRV-USDC", "LDO-USDC", "MKR-USDC", "PEPE-USDC",
+        "SHIB-USDC", "SNX-USDC", "COMP-USDC", "AERO-USDC",
+    ]
+    for p in always_stream:
+        if p not in stream:
+            stream.append(p)
+        if p not in ghost:
+            ghost.append(p)
+
     # Live list: only include top pairs (most liquid)
     live_candidates = ["WETH-USDC", "WETH-USDT", "WBTC-USDC"]
     for pair in pairs:
@@ -516,8 +533,8 @@ def update_watchlists_from_pairs(pairs: List[str]) -> Dict[str, List[str]]:
             live.append(pair)
 
     result = save_watchlists({
-        "stream": stream[:15],  # cap to avoid overload
-        "ghost": ghost[:15],
+        "stream": stream[:32],  # widened cap; per-pair stream cost is low
+        "ghost": ghost[:32],
         "live": live[:8],
     })
 

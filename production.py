@@ -55,7 +55,11 @@ class ProductionManager:
             self._download_supervisor = TokenDownloadSupervisor(db=self.pipeline.db)
         self.task_manager = ParallelTaskManager(system_profile=self.pipeline.system_profile)
         self._cycle_thread: Optional[threading.Thread] = None
-        self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "45"))
+        # Faster scheduler re-evaluation: 45s → 15s.  Same accuracy
+        # gates per cycle; just more frequent checks so a buy-low
+        # opportunity that lasts ~2 minutes (the user's target window)
+        # isn't missed.
+        self._cycle_interval = float(os.getenv("PRODUCTION_CYCLE_INTERVAL", "15"))
         forced_pending = os.getenv("PRODUCTION_MAX_PENDING_FORCE")
         base_pending = int(os.getenv("PRODUCTION_MAX_PENDING", "64"))
         if forced_pending is not None:

@@ -3810,6 +3810,83 @@ class TradingBot:
 
     def configure_route(self, symbol: str, tokens: List[str]) -> None:
         self.bus_routes[symbol] = tokens
+        # Pre-warm the sample buffer from the most recent historical
+        # OHLCV bars so the bot starts evaluating signals on tick #1
+        # instead of waiting for the live stream to deliver window_size
+        # ticks (which at Coinbase ~2.5 samples/min = ~8 minutes of
+        # idle wait at our default).  Same accuracy gates apply —
+        # OpportunityTracker / money_button see real market data, just
+        # historical instead of brand-new live.  Disable with
+        # BOT_PREWARM_FROM_HISTORY=0.
+        if os.getenv("BOT_PREWARM_FROM_HISTORY", "1").lower() in {"0", "false", "no"}:
+            return
+        try:
+            self._prewarm_buffer_from_history(symbol)
+        except Exception as exc:
+            print(f"[bot prewarm] {symbol}: skipped ({exc})")
+
+    def _prewarm_buffer_from_history(self, symbol: str) -> None:
+        """Walk data/historical_ohlcv/{chain}/*_{SYMBOL}.json and seed
+        self._buffer with the tail.  Each row is converted to the same
+        sample-dict shape that MarketDataStream emits, so downstream
+        code (_handle_sample, OpportunityTracker, scheduler.evaluate)
+        treats them identically to live ticks."""
+        from pathlib import Path
+        import json as _j
+        if len(self._buffer) >= self.window_size:
+            return  # already warm
+        chain = (getattr(self, "primary_chain", None) or "base").lower()
+        root = Path("data/historical_ohlcv") / chain
+        if not root.exists():
+            return
+        # Try exact-symbol match first, then loose suffix match.
+        sym_u = symbol.upper().replace("/", "-")
+        candidates = sorted(root.glob(f"*_{sym_u}.json"))
+        if not candidates:
+            base = sym_u.split("-", 1)[0]
+            candidates = sorted(root.glob(f"*_{base}-*.json"))
+        if not candidates:
+            return
+        # Pick the file with the freshest tail.
+        chosen = max(candidates, key=lambda p: p.stat().st_mtime)
+        try:
+            with chosen.open("r", encoding="utf-8") as fh:
+                rows = _j.load(fh)
+        except Exception:
+            return
+        if not isinstance(rows, list) or not rows:
+            return
+        # Seed buffer with the last `window_size` candles, converting
+        # to the sample-dict shape the stream emits.
+        tail = rows[-self.window_size:]
+        seeded = 0
+        for r in tail:
+            try:
+                ts = float(r.get("timestamp", 0))
+                price = float(r.get("close", 0) or r.get("price", 0))
+                vol = float(r.get("net_volume", 0) or r.get("volume", 0))
+                if price <= 0:
+                    continue
+                sample = {
+                    "symbol":    symbol,
+                    "ts":        ts,
+                    "price":     price,
+                    "volume":    vol,
+                    "net_volume": vol,
+                    "open":      float(r.get("open",  price)),
+                    "high":      float(r.get("high",  price)),
+                    "low":       float(r.get("low",   price)),
+                    "close":     price,
+                    "source":    "history_prewarm",
+                    "rest":      "fallback",
+                }
+                self._buffer.append(sample)
+                seeded += 1
+            except Exception:
+                continue
+        if seeded:
+            print(f"[bot prewarm] {symbol}: seeded {seeded} historical samples "
+                  f"into buffer (file: {chosen.name})")
 
     def _schedule_next_portfolio_refresh(self, now: float, *, success: bool) -> None:
         base = self.portfolio.refresh_interval
