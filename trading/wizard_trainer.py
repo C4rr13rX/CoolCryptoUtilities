@@ -867,13 +867,14 @@ def push_live_tick(
     volume: float = 0.0,
     ts: Optional[float] = None,
     *,
-    min_interval_sec: float = 5.0,
+    min_interval_sec: float = 1.0,
 ) -> bool:
     """Push a single live market tick to the brain.
 
     Throttled per-symbol so a 100ms tick stream doesn't slam /brain/observe.
-    Per-symbol cooldown defaults to 5s; tune via WIZARD_LIVE_TICK_MIN_SEC.
-    Returns True if a sample was pushed.
+    Default cooldown 1s per symbol (was 5s) — captures every meaningful
+    price move per symbol per second across the universe.  Tune via
+    WIZARD_LIVE_TICK_MIN_SEC.  Returns True if a sample was pushed.
     """
     if not symbol or not (price and price > 0):
         return False

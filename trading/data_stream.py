@@ -243,7 +243,7 @@ _KRAKEN_SYMBOL_MAP = {
 _KRAKEN_QUOTE_MAP = {"USD": "USD", "USDT": "USDT", "USDC": "USDC", "ETH": "ETH", "BTC": "XBT"}
 
 # Endpoint controls (env override; defaults exclude noisiest WS providers)
-_DEFAULT_ENDPOINT_EXCLUDE: Set[str] = {"mexc", "dexscreener"}
+_DEFAULT_ENDPOINT_EXCLUDE: Set[str] = {"dexscreener"}
 _ENV_ENDPOINT_INCLUDE: Set[str] = {
     name.strip().lower()
     for name in (os.getenv("MARKET_ENDPOINT_INCLUDE") or "").split(",")
@@ -2045,12 +2045,19 @@ class MarketDataStream:
             )
         okx_quote = quote.upper()
         if okx_quote in {"USDT", "USDC", "USD", "ETH", "BTC"} and _endpoint_allowed("okx"):
+            okx_pair = f"{base.upper()}-{okx_quote}"
             endpoints.append(
                 Endpoint(
                     name="okx",
-                    ws_template=None,
-                    subscribe_template=None,
-                    rest_template=f"https://www.okx.com/api/v5/market/ticker?instId={base.upper()}-{okx_quote}",
+                    # OKX v5 public WebSocket — every trade comes through
+                    # as it happens (real-time), no polling.  Massive
+                    # bump over the previous REST-only 3s cadence.
+                    ws_template="wss://ws.okx.com:8443/ws/v5/public",
+                    subscribe_template=json.dumps({
+                        "op": "subscribe",
+                        "args": [{"channel": "tickers", "instId": okx_pair}],
+                    }),
+                    rest_template=f"https://www.okx.com/api/v5/market/ticker?instId={okx_pair}",
                 )
             )
         kucoin_quote = quote.upper()
@@ -2058,9 +2065,51 @@ class MarketDataStream:
             endpoints.append(
                 Endpoint(
                     name="kucoin",
+                    # KuCoin requires a bullet-token from /bullet-public
+                    # before connecting to the WS endpoint — keep REST-
+                    # only here so this never blocks; bullet handshake
+                    # can land as a follow-up.
                     ws_template=None,
                     subscribe_template=None,
                     rest_template=f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={base.upper()}-{kucoin_quote}",
+                )
+            )
+        # --- MEXC: WS + REST, US-accessible, generous rate limits ---
+        mexc_quote = quote.upper()
+        if mexc_quote in {"USDT", "USDC", "BTC", "ETH"} and _endpoint_allowed("mexc"):
+            mexc_symbol = f"{base.upper()}{mexc_quote}"
+            endpoints.append(
+                Endpoint(
+                    name="mexc",
+                    ws_template="wss://wbs.mexc.com/ws",
+                    subscribe_template=json.dumps({
+                        "method": "SUBSCRIPTION",
+                        "params": [f"spot@public.deals.v3.api@{mexc_symbol}"],
+                    }),
+                    rest_template=f"https://api.mexc.com/api/v3/ticker/24hr?symbol={mexc_symbol}",
+                )
+            )
+        # --- Gate.io: REST (their WS requires API key for ticker channel) ---
+        gateio_quote = quote.upper()
+        if gateio_quote in {"USDT", "USDC", "BTC", "ETH"} and _endpoint_allowed("gateio"):
+            gateio_pair = f"{base.upper()}_{gateio_quote}"
+            endpoints.append(
+                Endpoint(
+                    name="gateio",
+                    ws_template=None,
+                    subscribe_template=None,
+                    rest_template=f"https://api.gateio.ws/api/v4/spot/tickers?currency_pair={gateio_pair}",
+                )
+            )
+        # --- HTX (Huobi Global): REST, global access for market data ---
+        if quote.upper() in {"USDT", "USDC", "BTC", "ETH"} and _endpoint_allowed("htx"):
+            htx_symbol = f"{base.lower()}{quote.lower()}"
+            endpoints.append(
+                Endpoint(
+                    name="htx",
+                    ws_template=None,
+                    subscribe_template=None,
+                    rest_template=f"https://api.huobi.pro/market/detail?symbol={htx_symbol}",
                 )
             )
         # --- Kraken: WS v2 + REST (no geo-blocking, wide token support) ---
@@ -2623,7 +2672,12 @@ class MarketDataStream:
         return health
 
     def _init_rest_intervals(self) -> None:
-        base = max(0.5, float(os.getenv("REST_POLL_INTERVAL", "3.0")))
+        # REST poll cadence: 3.0s -> 1.0s default.  Self-throttling
+        # logic (consensus failures grow it, healthy responses relax)
+        # still kicks in if a venue rate-limits us, so this is just
+        # the floor.  WebSocket-bearing endpoints (Binance/Coinbase/
+        # Kraken/Bybit/OKX/MEXC) bypass REST entirely once connected.
+        base = max(0.5, float(os.getenv("REST_POLL_INTERVAL", "1.0")))
         max_interval = max(base, float(os.getenv("REST_POLL_INTERVAL_MAX", "120.0")))
         growth_factor = max(1.1, float(os.getenv("REST_POLL_GROWTH_FACTOR", "1.6")))
         relax_factor = min(0.95, max(0.1, float(os.getenv("REST_POLL_RELAX_FACTOR", "0.7"))))

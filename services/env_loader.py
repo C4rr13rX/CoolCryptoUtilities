@@ -175,7 +175,16 @@ def _apply_default_env() -> None:
         "LIVE_ALLOW_MINI_READY": "1",
         "OHLCV_CEX_FALLBACK": "1",
         "PREFER_FREE_RPC": "1",
-        "MARKET_ENDPOINT_INCLUDE": "binance,coinbase,coingecko,bitstamp,okx,kucoin",
+        # Widened allow-list: every globally-accessible spot endpoint
+        # we have an adapter for.  More parallel sources = more ticks
+        # captured per second per pair = signals fire sooner.  Bot
+        # consensus-checks across sources, so an outlier from one
+        # venue can't move the price; the per-endpoint health tracker
+        # cools down whichever start to misbehave.
+        "MARKET_ENDPOINT_INCLUDE": (
+            "binance,coinbase,coingecko,bitstamp,okx,kucoin,"
+            "kraken,bybit,mexc,gateio,htx,geckoterminal"
+        ),
         "TRAIN_LIGHTWEIGHT": "1",
         "TRAIN_BATCH_SIZE": "16",
         "NEWS_SKIP_ON_COLD_START": "1",
