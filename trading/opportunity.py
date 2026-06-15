@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import asdict, dataclass
 from typing import Dict, Optional
@@ -24,8 +25,14 @@ class OpportunitySignal:
 
 class OpportunityTracker:
     def __init__(self, *, min_points: int = 40, zscore_threshold: float = 1.5) -> None:
-        self.min_points = max(16, int(min_points))
-        self.zscore_threshold = max(0.5, float(zscore_threshold))
+        # Allow env override of warmup gate so buy-low/sell-high can
+        # fire after fewer samples when starting fresh.  The math is
+        # still trustworthy with 16 points — z-score over a 16-tick
+        # window catches 2-3% fluctuations the user is targeting.
+        env_min = int(os.getenv("OPPORTUNITY_MIN_POINTS", str(min_points)))
+        self.min_points = max(16, env_min)
+        env_z = float(os.getenv("OPPORTUNITY_ZSCORE_THRESHOLD", str(zscore_threshold)))
+        self.zscore_threshold = max(0.5, env_z)
         self._last_signal: Dict[str, OpportunitySignal] = {}
 
     def evaluate(self, symbol: str, prices: np.ndarray) -> Optional[OpportunitySignal]:

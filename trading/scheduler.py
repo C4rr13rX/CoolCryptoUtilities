@@ -1186,14 +1186,27 @@ class BusScheduler:
                 pass
         min_dir_prob = max(0.0, min(min_dir_prob, 1.0))
         min_exit_conf = max(0.0, min(min_exit_conf, 1.0))
-        if direction_prob < min_dir_prob or confidence < min_exit_conf:
-            return None
+        # When the TF model isn't available the bot passes neutral
+        # 0.5/0.5/0.0 in pred_summary.  In that case we shouldn't
+        # disqualify the trade — the opportunity-tracker buy-low
+        # z-score (already verified above) is itself a valid signal,
+        # AND the price-action checks below (drawdown window, median
+        # reversion target) are unconditional.  So skip the TF-gated
+        # min_dir_prob/min_exit_conf when both are sitting at neutral.
+        is_tf_neutral = (
+            abs(direction_prob - 0.5) < 1e-6
+            and abs(confidence - 0.5) < 1e-6
+            and abs(net_margin) < 1e-9
+        )
+        if not is_tf_neutral:
+            if direction_prob < min_dir_prob or confidence < min_exit_conf:
+                return None
 
         try:
             min_model_net_margin = float(os.getenv("MONEY_BUTTON_MIN_MODEL_NET_MARGIN", "0.0"))
         except Exception:
             min_model_net_margin = 0.0
-        if net_margin < min_model_net_margin:
+        if not is_tf_neutral and net_margin < min_model_net_margin:
             return None
 
         cutoff = state.samples[-1][0] - lookback_sec if state.samples else 0.0

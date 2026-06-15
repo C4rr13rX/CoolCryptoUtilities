@@ -79,7 +79,7 @@ class TradingBot:
         db: Optional[TradingDatabase] = None,
         stream: Optional[MarketDataStream] = None,
         pipeline: Optional[TrainingPipeline] = None,
-        window_size: int = 60,
+        window_size: int = int(os.getenv("BOT_WINDOW_SIZE", "20")),
     ) -> None:
         self.db = db or get_db()
         self.pipeline = pipeline or TrainingPipeline(db=self.db)
@@ -2101,6 +2101,25 @@ class TradingBot:
             ] if name in preds]
         return preds
 
+    def _neutral_pred_summary(self, *, current_price: Optional[float] = None) -> Dict[str, Any]:
+        """Neutral pred_summary used when TF is unavailable.  Matches
+        the shape of `_summarise_predictions` but emits non-committal
+        defaults (50/50 direction prob, zero expected return) so that
+        downstream non-TF strategies — OpportunityTracker / money_button
+        / brain_regime — can still vote on this tick without inheriting
+        a misleading TF signal."""
+        return {
+            "exit_conf":       0.5,
+            "direction_prob":  0.5,
+            "net_margin":      0.0,
+            "net_pnl":         0.0,
+            "expected_return": 0.0,
+            "price_mu":        float(current_price or 0.0),
+            "price_log_var":   0.0,
+            "current_price":   float(current_price or 0.0),
+            "model_available": False,
+        }
+
     def _summarise_predictions(self, preds, *, current_price: Optional[float] = None) -> Dict[str, Any]:
         summary: Dict[str, Any] = {
             "exit_conf": 0.5,
@@ -2224,25 +2243,29 @@ class TradingBot:
                 )
             except Exception:
                 pass
-            # Short-circuit the TF prediction path when model_definition
-            # is unavailable (DLL OOM / missing module).  The market-
-            # stream callback used to crash here on every tick, spamming
-            # `module 'model_definition' has no attribute
-            # 'build_multimodal_model'` into console.log.  Brain-feeder
-            # + non-TF strategies (money-button, brain-regime) keep
-            # running because they don't pass through this callback.
+            # Detect whether the TF model is usable on this tick.  When
+            # it's not (DLL OOM, missing model_definition, etc.) we
+            # used to early-return here, which silently disabled the
+            # OpportunityTracker → money_button → brain_regime path
+            # downstream.  All of those strategies are MATH-BASED and
+            # don't need TF; they just live AFTER `_invoke_model` in
+            # this method's body.  Instead: keep going with the TF
+            # model set to None, and build a neutral pred_summary
+            # below so the non-TF strategies still get to vote on
+            # every tick.
+            tf_ok = True
+            model = None
             try:
                 from trading.pipeline import model_defs_available
                 if not model_defs_available():
-                    return
+                    tf_ok = False
             except Exception:
                 pass
-            try:
-                model = self.pipeline.ensure_active_model()
-            except Exception as _exc:
-                # Logged once via _get_model_defs's WARNING; suppress
-                # the per-callback spam here.
-                return
+            if tf_ok:
+                try:
+                    model = self.pipeline.ensure_active_model()
+                except Exception as _exc:
+                    tf_ok = False
             if now >= self._portfolio_next_refresh:
                 try:
                     self.portfolio.refresh()
@@ -2260,16 +2283,28 @@ class TradingBot:
                 except Exception as exc:
                     print(f"[portfolio] refresh failed: {exc}")
                     self._schedule_next_portfolio_refresh(now, success=False)
-            self._ensure_model_bindings(model)
+            if tf_ok and model is not None:
+                self._ensure_model_bindings(model)
             history_snapshot = list(self._buffer)
             window_slice = history_snapshot[-self.window_size :]
-            inputs = self._prepare_inputs(window_slice)
-            try:
-                preds = self._invoke_model(inputs)
-            except Exception as exc:
-                print(f"[trading-bot] prediction failed: {exc}")
-                return
-            pred_summary = self._summarise_predictions(preds, current_price=sample.get("price"))
+            # When TF is unavailable, build a neutral pred_summary so
+            # the non-TF strategies (money_button, opportunity_tracker,
+            # brain_regime, swarm) still get to evaluate this tick.
+            # `_summarise_predictions` is what normally produces this
+            # dict from TF outputs; we mimic its neutral shape here.
+            current_price_safe = float(sample.get("price") or 0.0) or None
+            if tf_ok and model is not None:
+                inputs = self._prepare_inputs(window_slice)
+                try:
+                    preds = self._invoke_model(inputs)
+                    pred_summary = self._summarise_predictions(preds, current_price=current_price_safe)
+                except Exception as exc:
+                    # TF was supposed to be ok but the predict call
+                    # itself blew up — fall through to neutral.
+                    print(f"[trading-bot] prediction failed: {exc}; using neutral pred_summary")
+                    pred_summary = self._neutral_pred_summary(current_price=current_price_safe)
+            else:
+                pred_summary = self._neutral_pred_summary(current_price=current_price_safe)
             brain_summary = self._update_brain_state(sample, history_snapshot, pred_summary)
             await self._run_wallet_sync(reason="pre-schedule")
             directive = None
