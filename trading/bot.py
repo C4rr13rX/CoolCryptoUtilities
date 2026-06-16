@@ -1193,7 +1193,14 @@ class TradingBot:
         return os.getenv("ENABLE_BUS_ACTIONS", "0").lower() in {"1", "true", "yes", "on"}
 
     def _bus_actions_dry_run(self) -> bool:
-        return os.getenv("BUS_ACTIONS_DRY_RUN", "1").lower() in {"1", "true", "yes", "on"}
+        # The autonomous-mode promise: when the bot graduates to live
+        # (70% win rate, 25 ghost trades, replay-gate pass, accuracy
+        # holding), real swaps should actually fire — otherwise the
+        # whole graduation pipeline is theatre.  Default flips with
+        # AUTONOMOUS_MODE.
+        autonomous = os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1", "true", "yes", "on"}
+        default = "0" if autonomous else "1"
+        return os.getenv("BUS_ACTIONS_DRY_RUN", default).lower() in {"1", "true", "yes", "on"}
 
     def _bus_actions_cooldown(self) -> float:
         try:
