@@ -183,6 +183,25 @@ def _load_tf():
     global _TF_MODULE, _TF_LOAD_FAILED_AT, _TF_LOAD_LOGGED
     if _TF_MODULE is not None:
         return _TF_MODULE
+    # Hard skip: when SKIP_TF_CONFIGURE=1 (or LIGHTWEIGHT_TESTS=1),
+    # never even attempt the import.  Pins the failure cache so all
+    # callers see None instantly without the diag-trace spam we get
+    # on Windows DLL conflicts.  The non-TF strategies (money_button,
+    # opportunity_tracker, brain_regime, swarm) still vote on every
+    # tick via the neutral pred_summary path in bot._handle_sample.
+    import os as _os
+    if _os.getenv("SKIP_TF_CONFIGURE", "").lower() in {"1","true","yes","on"} \
+       or _os.getenv("LIGHTWEIGHT_TESTS", "").lower() in {"1","true","yes","on"}:
+        _TF_LOAD_FAILED_AT = float("inf")  # never retry
+        if not _TF_LOAD_LOGGED:
+            _TF_LOAD_LOGGED = True
+            try:
+                from services.logging_utils import log_message
+                log_message("tf-runtime", "SKIP_TF_CONFIGURE=1 — TF disabled",
+                            severity="info")
+            except Exception:
+                pass
+        return None
     import time as _t
     if _TF_LOAD_FAILED_AT and (_t.time() - _TF_LOAD_FAILED_AT) < _TF_LOAD_BACKOFF_SEC:
         return None
