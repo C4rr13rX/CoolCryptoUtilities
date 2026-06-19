@@ -25,6 +25,11 @@ from trading.equilibrium import EquilibriumTracker
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
 from trading.opportunity import OpportunityTracker
+from trading.brain_bridge import (
+    get_bridge as _brain_bridge,
+    features_text as _brain_features_text,
+    outcome_text as _brain_outcome_text,
+)
 from services.logging_utils import log_message
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
@@ -1952,21 +1957,106 @@ class TradingBot:
     def _maybe_promote_to_live(self) -> None:
         if self.live_trading_enabled or not self.auto_promote_live:
             return
-        if self.total_trades < max(1, self.required_live_trades):
+        # Sized-graduation gate: live trading turns on as soon as the brain
+        # has any observable confidence on recent trades AND a low-bar win
+        # rate has been met. Trade size is then scaled by brain confidence
+        # at the entry site, so a 0.3-confidence brain leads to 0.3x sizing.
+        # The binary 70%/50-trades wall is replaced by continuous sizing.
+        brain_floor_trades = int(os.getenv("BRAIN_GRADUATION_MIN_TRADES", "20"))
+        brain_min_winrate  = float(os.getenv("BRAIN_GRADUATION_MIN_WINRATE", "0.55"))
+        brain_min_conf_ema = float(os.getenv("BRAIN_GRADUATION_MIN_CONF_EMA", "0.20"))
+        brain_path_ok = (
+            self.total_trades >= brain_floor_trades
+            and (self.wins / max(self.total_trades, 1)) >= brain_min_winrate
+            and float(getattr(self, "_brain_conf_ema", 0.0)) >= brain_min_conf_ema
+        )
+        legacy_path_ok = (
+            self.total_trades >= max(1, self.required_live_trades)
+            and (self.wins / max(self.total_trades, 1)) >= self.required_live_win_rate
+            and self.total_profit >= self.required_live_profit
+        )
+        if not (brain_path_ok or legacy_path_ok):
             return
         win_rate = (self.wins / self.total_trades) if self.total_trades else 0.0
-        if win_rate < self.required_live_win_rate:
-            return
-        if self.total_profit < self.required_live_profit:
-            return
         self.live_trading_enabled = True
         self.metrics.feedback(
             "trading",
             severity=FeedbackSeverity.INFO,
             label="live_promotion",
-            details={"win_rate": win_rate, "trades": self.total_trades, "profit": self.total_profit},
+            details={
+                "win_rate": win_rate,
+                "trades": self.total_trades,
+                "profit": self.total_profit,
+                "brain_conf_ema": float(getattr(self, "_brain_conf_ema", 0.0)),
+                "path": "brain" if brain_path_ok else "legacy",
+            },
         )
-        print("[trading-bot] conditions met; live trading enabled.")
+        print(
+            "[trading-bot] conditions met; live trading enabled "
+            f"(path={'brain' if brain_path_ok else 'legacy'} "
+            f"win_rate={win_rate:.3f} brain_conf_ema={float(getattr(self, '_brain_conf_ema', 0.0)):.3f})"
+        )
+
+    # ------------------------------------------------------------------
+    # Brain bridge helpers
+    # ------------------------------------------------------------------
+    def _brain_record_entry(
+        self,
+        decision: Dict[str, Any],
+        *,
+        side: str,
+        symbol: str,
+        chain_name: str,
+        price: float,
+        momentum: Optional[float] = None,
+        confidence: Optional[float] = None,
+        spread_bps: Optional[float] = None,
+    ) -> float:
+        """Query the brain at trade-entry for its confidence on these
+        features. Returns a confidence in [0, 1] used to scale trade
+        size. Stores `bridge_features` + `bridge_confidence` on
+        decision["brain"] so the exit hook can wire (features→outcome)
+        back into the substrate.
+        """
+        try:
+            feats = _brain_features_text(
+                side=side, symbol=symbol, chain=chain_name,
+                price=price, spread_bps=spread_bps,
+                momentum=momentum, confidence=confidence,
+            )
+            answer, conf = _brain_bridge().query_confidence(feats)
+        except Exception:
+            return 0.0
+        if not isinstance(decision.get("brain"), dict):
+            decision["brain"] = {}
+        decision["brain"]["bridge_features"] = feats
+        decision["brain"]["bridge_confidence"] = float(conf)
+        decision["brain"]["bridge_answer"] = answer
+        # Maintain an EMA used by sized graduation.
+        prev = float(getattr(self, "_brain_conf_ema", 0.0))
+        alpha = 0.05
+        self._brain_conf_ema = (1.0 - alpha) * prev + alpha * float(conf)
+        return float(conf)
+
+    def _brain_record_exit(self, decision: Dict[str, Any], *, pnl_pct: float) -> bool:
+        """Push (features_at_entry → outcome_at_exit) into the brain so
+        the substrate forms a cross-pool binding it can read at the next
+        entry-time query_confidence call. No-op if no entry features
+        were recorded for this trade.
+        """
+        brain = decision.get("brain") if isinstance(decision.get("brain"), dict) else None
+        if not brain:
+            return False
+        feats = brain.get("bridge_features")
+        if not feats:
+            return False
+        try:
+            return _brain_bridge().observe_outcome(
+                features_text=feats,
+                outcome_text=_brain_outcome_text(float(pnl_pct)),
+            )
+        except Exception:
+            return False
 
     def _init_bridge(self) -> Optional["UltraSwapBridge"]:
         if getattr(self, "_bridge_init_attempted", False) and getattr(self, "_bridge", None) is not None:
@@ -3067,6 +3157,16 @@ class TradingBot:
                     except Exception:
                         self.positions[symbol]["fingerprint"] = []
 
+                self._brain_record_entry(
+                    decision,
+                    side="buy",
+                    symbol=symbol,
+                    chain_name=chain_name,
+                    price=float(executed_entry_price),
+                    momentum=float(direction_prob) - 0.5 if direction_prob is not None else None,
+                    confidence=float(exit_conf_val) if exit_conf_val is not None else None,
+                )
+
                 decision.update(
                     {
                         "action": "enter",
@@ -3173,6 +3273,15 @@ class TradingBot:
                     self.positions[symbol]["fingerprint"] = list(brain.get("fingerprint") or [])
                 except Exception:
                     self.positions[symbol]["fingerprint"] = []
+            self._brain_record_entry(
+                decision,
+                side="buy",
+                symbol=symbol,
+                chain_name=chain_name,
+                price=float(price),
+                momentum=float(direction_prob) - 0.5 if direction_prob is not None else None,
+                confidence=float(exit_conf_val) if exit_conf_val is not None else None,
+            )
             decision.update(
                 {
                     "action": "enter",
@@ -3740,6 +3849,18 @@ class TradingBot:
                     )
                 except Exception:
                     pass
+            # Post-operational brain feedback — strict per-trade evolution.
+            # Wire (features_at_entry → outcome_at_exit) into the substrate
+            # so the next entry-time query_confidence call reads against a
+            # binding the brain just learned.
+            try:
+                quote_basis = float(decision.get("quote_spent", 0.0) or 0.0)
+                if quote_basis <= 0:
+                    quote_basis = float(locals().get("cost_portion") or 0.0)
+                pnl_pct = (float(profit) / quote_basis) if quote_basis > 0 else 0.0
+                self._brain_record_exit(decision, pnl_pct=pnl_pct)
+            except Exception:
+                pass
             self._maybe_promote_to_live()
             if profit > 0 and decision.get("wallet", "ghost") == "live":
                 strategy = self._plan_gas_replenishment(
