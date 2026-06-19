@@ -92,15 +92,43 @@ class ApiEventLogMiddleware:
     LOG_API_REQUESTS=1) to the shared logging bus.
     """
 
+    # Successful GETs to these endpoints are dashboard polling noise.
+    # They still log on 4xx/5xx — only 2xx/3xx GETs are silenced.
+    QUIET_GET_PATHS = frozenset({
+        "/api/console/status/",
+        "/api/console/logs/",
+        "/api/guardian/logs/",
+        "/api/telemetry/advisories/",
+        "/api/telemetry/trades/",
+        "/api/telemetry/feedback/",
+        "/api/telemetry/metrics/",
+        "/api/telemetry/dashboard/",
+        "/api/streams/latest/",
+    })
+
     def __init__(self, get_response):
         self.get_response = get_response
         self.log_all = os.getenv("LOG_API_REQUESTS", "0").lower() in {"1", "true", "yes", "on"}
+        extra = os.getenv("LOG_API_QUIET_PATHS", "").strip()
+        if extra:
+            self.quiet_paths = self.QUIET_GET_PATHS | {
+                p.strip() for p in extra.split(",") if p.strip()
+            }
+        else:
+            self.quiet_paths = self.QUIET_GET_PATHS
 
     def __call__(self, request):
         response = self.get_response(request)
         path = request.path_info or ""
         if path.startswith("/api/") or path.startswith("/investigations/"):
             status = getattr(response, "status_code", 200)
+            quiet = (
+                request.method == "GET"
+                and status < 400
+                and path in self.quiet_paths
+            )
+            if quiet:
+                return response
             if self.log_all or status >= 400:
                 severity = "error" if status >= 500 else "warning" if status >= 400 else "info"
                 details = {"query": request.META.get("QUERY_STRING", "")}
