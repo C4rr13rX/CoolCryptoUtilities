@@ -64,12 +64,11 @@ export const useDashboardStore = defineStore('dashboard', {
       }
       this.loading = true;
       try {
+        // Console/guardian status + logs are covered by refreshConsole() on a
+        // 5s cadence; don't double-fetch them here on the 20s tick.
         const results = await Promise.allSettled([
           fetchDashboardSummary(),
           fetchLatestStreams(),
-          fetchConsoleStatus(),
-          fetchConsoleLogs(200),
-          fetchGuardianLogs(200),
           fetchAdvisories(50),
           fetchRecentTrades(50),
           fetchFeedback(50),
@@ -78,21 +77,12 @@ export const useDashboardStore = defineStore('dashboard', {
         const val = (i: number, fallback: any = null) => results[i].status === 'fulfilled' ? (results[i] as PromiseFulfilledResult<any>).value : fallback;
         const summary = val(0, this.dashboard);
         const streams = val(1, this.streams);
-        const consoleStatus = val(2, this.consoleStatus);
-        const consoleLogs = val(3, { lines: [] });
-        const guardianLogsResp = val(4, { guardian_lines: [], production_lines: [] });
-        const advisories = val(5, null);
-        const trades = val(6, null);
-        const feedback = val(7, null);
-        const metrics = val(8, null);
+        const advisories = val(2, null);
+        const trades = val(3, null);
+        const feedback = val(4, null);
+        const metrics = val(5, null);
         this.dashboard = summary || {};
         this.streams = streams || {};
-        this.consoleStatus = consoleStatus;
-        const guardianLines = guardianLogsResp.guardian_lines || guardianLogsResp.lines || [];
-        const guardianProduction = guardianLogsResp.production_lines || [];
-        const consoleLineList = consoleLogs.lines || [];
-        this.consoleLogs = guardianProduction.length ? guardianProduction : consoleLineList;
-        this.guardianLogs = guardianLines;
         const advisoryList = advisories?.results || advisories || summary?.active_advisories || [];
         this.advisories = advisoryList;
         this.recentTrades = trades?.results || trades || summary?.recent_trades || [];

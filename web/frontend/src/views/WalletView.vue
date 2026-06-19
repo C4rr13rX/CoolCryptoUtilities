@@ -452,7 +452,6 @@ const mnemonicInput = ref('');
 const formState = reactive<Record<string, Record<string, string>>>({});
 const activeAction = ref('');
 const statusTimer = ref<number>();
-const consoleTimer = ref<number>();
 const consoleBusy = ref(false);
 const creatingWallet = ref(false);
 const wizardOpen = ref(!sessionStorage.getItem('wallet-wizard-dismissed'));
@@ -768,15 +767,13 @@ onMounted(async () => {
   await loadNftPreferences();
   wallet.autoRefresh();
   statusTimer.value = window.setInterval(() => wallet.refreshStatus(), 6000);
-  consoleTimer.value = window.setInterval(() => dashboard.refreshConsole().catch(() => undefined), 10000);
+  // refreshConsole runs every 5s in App.vue's global interval; no need to
+  // double up here.
 });
 
 onBeforeUnmount(() => {
   if (statusTimer.value) {
     window.clearInterval(statusTimer.value);
-  }
-  if (consoleTimer.value) {
-    window.clearInterval(consoleTimer.value);
   }
 });
 
