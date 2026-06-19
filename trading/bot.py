@@ -4730,6 +4730,73 @@ class TradingBot:
             )
             return False
 
+        # ── Pre-flight: do we have enough native to cover BOTH this refill
+        # swap AND a subsequent return swap?  Without this check the bot
+        # hemorrhages gas attempting refills that themselves can't be
+        # paid for, and the GAS_REFILL_COOLDOWN_SEC retry hammers every
+        # ~10 min.  We estimate the per-swap gas via the strategy
+        # payload if present, falling back to a chain-specific floor.
+        # ──────────────────────────────────────────────────────────────
+        chain_l = chain.lower()
+        native_balance = float(self.portfolio.get_native_balance(chain_l) or 0.0)
+        per_swap_gas_native = float(strategy.get("per_swap_gas_native") or 0.0)
+        if per_swap_gas_native <= 0:
+            # Fallback per-chain native floor for one aggregator swap.
+            # On Base/Arb/Op a swap is ~0.0001 ETH at common base-fees.
+            per_swap_gas_native = {
+                "base": 0.00015,
+                "arbitrum": 0.00015,
+                "optimism": 0.00015,
+                "polygon": 0.05,  # MATIC, different denomination
+                "ethereum": 0.0015,
+            }.get(chain_l, 0.0005)
+        # Round-trip reserve = enough to do this refill AND one return swap.
+        reserve_multiplier = float(os.getenv("GAS_REFILL_RESERVE_MULTIPLIER", "2.5"))
+        min_native_for_swap = per_swap_gas_native * reserve_multiplier
+        if native_balance < per_swap_gas_native:
+            self.metrics.feedback(
+                "trading",
+                severity=FeedbackSeverity.WARNING,
+                label="gas_swap_unaffordable",
+                details={
+                    "chain": chain_l,
+                    "native_balance": native_balance,
+                    "per_swap_gas_native": per_swap_gas_native,
+                    "reason": "cannot afford the refill swap itself; extend cooldown",
+                },
+            )
+            # Extend the cooldown so we don't retry every 10 min when
+            # we fundamentally can't pay for the refill.
+            self._last_gas_refill_ts = time.time() + float(
+                os.getenv("GAS_REFILL_UNAFFORDABLE_BACKOFF_SEC", "3600")
+            )
+            return False
+
+        # ── CDCL gate: route this swap intent through the same SAT/UNSAT
+        # solver the scheduler uses for trades, so gas refills land in
+        # the same evaluation infrastructure as everything else.
+        # ──────────────────────────────────────────────────────────────
+        try:
+            sched_gate = getattr(self.scheduler, "gate_gas_swap", None)
+            if callable(sched_gate):
+                allowed, gate_reason = sched_gate(
+                    chain=chain_l,
+                    swap_plan=swap_plan,
+                    native_balance=native_balance,
+                    per_swap_gas_native=per_swap_gas_native,
+                    min_native_for_swap=min_native_for_swap,
+                )
+                if not allowed:
+                    self.metrics.feedback(
+                        "trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="gas_swap_unsat",
+                        details={"chain": chain_l, "reason": gate_reason},
+                    )
+                    return False
+        except Exception:
+            pass  # gate is advisory; never block on its own failure
+
         swapper = SwapService(self._bridge)
         slippage = int(os.getenv("GAS_REFILL_SLIPPAGE_BPS", "75"))
         executed = False
@@ -4738,9 +4805,74 @@ class TradingBot:
             token = plan.get("token")
             if spend <= 0.0 or not token:
                 continue
+
+            # Per-swap pre-flight: every loop iteration burns gas too.
+            current_native = float(self.portfolio.get_native_balance(chain_l) or 0.0)
+            if current_native < per_swap_gas_native:
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="gas_swap_stranded",
+                    details={
+                        "chain": chain_l,
+                        "current_native": current_native,
+                        "per_swap_gas_native": per_swap_gas_native,
+                        "reason": "ran out of gas mid-loop; remaining swaps skipped",
+                    },
+                )
+                break
+
+            t0 = time.time()
             try:
-                swapper.swap(chain=chain, sell=token, buy="native", amount_human=f"{spend:.4f}", slippage_bps=slippage)
+                swapper.swap(
+                    chain=chain_l, sell=token, buy="native",
+                    amount_human=f"{spend:.4f}", slippage_bps=slippage,
+                )
                 executed = True
+                # ── Metric: record the gas refill swap so it shows up
+                # in the dashboard's "what did the bot do" view.
+                # Without this the user sees no record of swaps that
+                # actually fired (the reported symptom today).
+                self.metrics.record(
+                    MetricStage.LIVE_TRADING,
+                    {
+                        "spend_amount": float(spend),
+                        "slippage_bps": float(slippage),
+                        "elapsed_sec": float(time.time() - t0),
+                        "native_balance_before": float(current_native),
+                    },
+                    category="gas_refill_swap",
+                    meta={
+                        "chain": chain_l,
+                        "token": token,
+                        "buy": "native",
+                    },
+                )
+                try:
+                    self.record_fill(
+                        symbol=f"{token}-{chain_l.upper()}-GAS",
+                        chain=chain_l,
+                        expected_amount=float(spend),
+                        executed_amount=float(spend),
+                        expected_price=0.0,
+                        executed_price=0.0,
+                        extra={
+                            "mode": "gas_refill",
+                            "sell": token,
+                            "buy": "native",
+                            "slippage_bps": slippage,
+                        },
+                    )
+                except Exception:
+                    pass
+                self.metrics.feedback(
+                    "trading",
+                    severity=FeedbackSeverity.INFO,
+                    label="gas_swap_executed",
+                    details={
+                        "chain": chain_l, "token": token, "amount": spend,
+                    },
+                )
             except Exception as exc:
                 self.metrics.feedback(
                     "trading",

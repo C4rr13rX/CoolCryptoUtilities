@@ -333,6 +333,95 @@ class BusScheduler:
         self._prefill_enabled = bool(prefill and not _is_test_env())
         self._pending_retries: Deque[Dict[str, Any]] = deque(maxlen=32)
 
+    # ------------------------------------------------------------------
+    # Gas-swap gate — routes gas refills through the same SAT/UNSAT
+    # solver the trading pipeline uses, so they're not a back-channel
+    # that bypasses our constraint reasoning.
+    # ------------------------------------------------------------------
+    def gate_gas_swap(
+        self,
+        *,
+        chain: str,
+        swap_plan: Sequence[Dict[str, Any]],
+        native_balance: float,
+        per_swap_gas_native: float,
+        min_native_for_swap: float,
+    ) -> Tuple[bool, str]:
+        """Return (allowed, reason).
+
+        Runs CDCL clauses against the gas-refill intent.  Hard gates:
+          - native_balance >= per_swap_gas_native (can pay for the
+            FIRST swap)
+          - cumulative gas budget across all planned swaps doesn't
+            exceed the native balance
+          - reserve check: after the refill completes, native_balance
+            after credits >= min_native_for_swap (i.e., enough to
+            execute a return swap later)
+
+        UNSAT certs include the predicted post-trade balance + the
+        rule that failed, so the bot can act on the diagnosis.
+        """
+        try:
+            from trading.cdcl_solver import Clause  # local import
+        except Exception:
+            # If CDCL unavailable, fall back to inline checks below.
+            Clause = None  # type: ignore
+
+        total_planned_gas = float(per_swap_gas_native) * max(len(swap_plan), 1)
+        if native_balance < per_swap_gas_native:
+            return False, (
+                f"native_balance ({native_balance:.6f}) < per_swap_gas "
+                f"({per_swap_gas_native:.6f}); cannot afford first swap"
+            )
+        if native_balance < total_planned_gas:
+            return False, (
+                f"cumulative planned gas ({total_planned_gas:.6f}) "
+                f"exceeds native_balance ({native_balance:.6f}); plan too aggressive"
+            )
+
+        # Expected native CREDIT from the swap plan (what we'll have
+        # AFTER the refill lands).  Sum of plan.expected_native_out if
+        # present, else conservative: assume each swap nets per_swap_gas
+        # in native (so reserve is met by the refill itself).
+        expected_credit = 0.0
+        for plan in swap_plan:
+            v = plan.get("expected_native_out")
+            if v is None:
+                v = plan.get("native_target") or plan.get("native_estimate")
+            if v is None:
+                v = per_swap_gas_native
+            try:
+                expected_credit += float(v)
+            except (TypeError, ValueError):
+                pass
+        post_swap_native = native_balance - total_planned_gas + expected_credit
+        if post_swap_native < min_native_for_swap:
+            return False, (
+                f"post-refill reserve ({post_swap_native:.6f}) < "
+                f"min_native_for_swap ({min_native_for_swap:.6f}); "
+                f"refill wouldn't leave enough for a return swap"
+            )
+
+        # Hand off to CDCL clause infrastructure for any added clauses
+        # callers have registered (e.g., risk_budget, drawdown gates).
+        try:
+            ctx = {
+                "native_balance":       native_balance,
+                "min_native":           per_swap_gas_native,
+                "post_swap_native":     post_swap_native,
+                "min_native_for_swap":  min_native_for_swap,
+                "risk_budget":          1.0,
+                "swap_intent":          "gas_refill",
+                "chain":                chain,
+            }
+            for clause in self._trident._clauses.global_clauses():
+                if not clause.test({}, ctx):
+                    return False, f"cdcl_clause:{clause.name}"
+        except Exception:
+            pass
+
+        return True, "ok"
+
     def _threshold_env(
         self,
         base: str,
