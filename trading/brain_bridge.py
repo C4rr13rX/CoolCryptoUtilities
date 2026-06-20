@@ -30,9 +30,20 @@ from http.client import HTTPConnection, BadStatusLine, RemoteDisconnected
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
-# Pool ids — match wizard_trainer._POOL_TEXT / _POOL_ACTION.
+# Pool ids — must match brain_api.rs::POOL_TEXT / POOL_ACTION and
+# wizard_trainer._POOL_TEXT / _POOL_ACTION. The brain defines:
+#   POOL_TEXT   = 1
+#   POOL_IMAGE  = 2   (NOT used by the bridge)
+#   POOL_AUDIO  = 3
+#   POOL_ACTION = 4   (this is the decode target for /brain/chat)
+# Earlier versions of this file used POOL_ACTION = 2 by mistake — all
+# trade-outcome bindings landed in POOL_TEXT↔POOL_IMAGE space, which
+# was internally self-consistent but isolated from the production
+# decode path. Bindings pushed under the old constant become orphans
+# in POOL_IMAGE after this fix; the supervisor must be re-run to
+# repopulate the correct channel.
 POOL_TEXT = 1
-POOL_ACTION = 2
+POOL_ACTION = 4
 
 
 def _b64url(s: str) -> str:
