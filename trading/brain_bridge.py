@@ -45,17 +45,22 @@ def _b64url_decode(s: str) -> str:
 
 
 class BrainBridge:
-    def __init__(self, endpoint: Optional[str] = None, timeout: float = 5.0) -> None:
+    def __init__(self, endpoint: Optional[str] = None, timeout: float = 30.0) -> None:
         ep = endpoint or os.getenv("BRAIN_ENDPOINT", "http://127.0.0.1:8090")
         u = urlparse(ep)
         self._host = u.hostname or "127.0.0.1"
         self._port = u.port or 8090
+        # A loaded brain (3M+ concepts) routinely takes 1-5s per
+        # /brain/observe — emergence-check scan over recent_atoms. The
+        # default 5s was tripping on every other call; 30s is the safe
+        # ceiling and individual calls are still bounded.
         self._timeout = timeout
         self._lock = threading.Lock()
         self._conn: Optional[HTTPConnection] = None
         self._failed_at: float = 0.0
-        # Don't retry connection more than once per 30s after a failure.
-        self._backoff = 30.0
+        # Retry one failed-call backoff fast — the brain is usually
+        # transient-slow, not permanently down.
+        self._backoff = 5.0
 
     def _reset(self) -> None:
         try:
