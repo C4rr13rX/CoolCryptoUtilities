@@ -113,7 +113,13 @@ if ($prodProc) {
     Write-Host "  starting..."
     $env:PRIMARY_WALLET       = $primaryWallet
     $env:SECURE_ENV_HYDRATED  = ""   # force re-hydration from vault
-    $env:SKIP_TF_CONFIGURE    = "1"  # TF Python-version mismatch on this host
+    # Don't force SKIP_TF_CONFIGURE -- let pipeline._load_tf attempt the
+    # import once, log a single clear WARNING if it can't load, then
+    # cache the failure permanently in-process. Other systems (model_lab
+    # GA, brain_regime) that depend on TF then either GET TF or see a
+    # visible failure they can act on -- rather than being silently
+    # disabled by an opinionated default.
+    $env:SKIP_TF_CONFIGURE    = $null
     Start-Process -FilePath $python `
         -ArgumentList "-u","main.py","--action","start_production","--stay-alive" `
         -WorkingDirectory $projectRoot `

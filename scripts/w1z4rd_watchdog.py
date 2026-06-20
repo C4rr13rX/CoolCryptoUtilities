@@ -163,11 +163,14 @@ def main() -> int:
             feeder_alive = _alive_pids_matching({"run_brain_feeder.py", "brain_feeder.py"})
             brain_ok     = _brain_alive()
 
-            # If multiple are alive, kill duplicates (oldest survives).
-            if len(prod_alive) > 1:
-                _kill_duplicates(prod_alive, label="production_manager")
-            if len(feeder_alive) > 1:
-                _kill_duplicates(feeder_alive, label="brain_feeder")
+            # NO dedupe: main.py spawns its own worker subprocesses
+            # (parent supervisor + per-cycle workers). They share the
+            # cmdline substring we match on. Killing "duplicates"
+            # actually kills the worker subprocesses the parent depends
+            # on, causing cascading restart cycles (observed all day
+            # 2026-06-20 -- the parent died seconds after we killed
+            # its workers). Multiple matching PIDs is the NORMAL
+            # state; only zero matching PIDs means it needs respawn.
 
             if not prod_alive and (now - last_spawn["prod"]) > grace:
                 _log("production manager DOWN — respawning")

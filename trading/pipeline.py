@@ -183,26 +183,29 @@ def _load_tf():
     global _TF_MODULE, _TF_LOAD_FAILED_AT, _TF_LOAD_LOGGED
     if _TF_MODULE is not None:
         return _TF_MODULE
-    # Hard skip: when SKIP_TF_CONFIGURE=1 (or LIGHTWEIGHT_TESTS=1),
-    # never even attempt the import.  Pins the failure cache so all
-    # callers see None instantly without the diag-trace spam we get
-    # on Windows DLL conflicts.  The non-TF strategies (money_button,
-    # opportunity_tracker, brain_regime, swarm) still vote on every
-    # tick via the neutral pred_summary path in bot._handle_sample.
+    # Explicit opt-out path (kept for tests and environments that
+    # genuinely don't want TF). When SKIP_TF_CONFIGURE=1 OR
+    # LIGHTWEIGHT_TESTS=1, never attempt the import — pin the failure
+    # cache to infinity and return None instantly.
     import os as _os
     if _os.getenv("SKIP_TF_CONFIGURE", "").lower() in {"1","true","yes","on"} \
        or _os.getenv("LIGHTWEIGHT_TESTS", "").lower() in {"1","true","yes","on"}:
-        _TF_LOAD_FAILED_AT = float("inf")  # never retry
+        _TF_LOAD_FAILED_AT = float("inf")
         if not _TF_LOAD_LOGGED:
             _TF_LOAD_LOGGED = True
             try:
                 from services.logging_utils import log_message
-                log_message("tf-runtime", "SKIP_TF_CONFIGURE=1 — TF disabled",
+                log_message("tf-runtime", "SKIP_TF_CONFIGURE=1 -- TF disabled",
                             severity="info")
             except Exception:
                 pass
         return None
+    # If we've already attempted and the cache is pinned to infinity,
+    # don't re-attempt (saves the C-side diag trace spam between
+    # retries on Windows DLL conflicts).
     import time as _t
+    if _TF_LOAD_FAILED_AT == float("inf"):
+        return None
     if _TF_LOAD_FAILED_AT and (_t.time() - _TF_LOAD_FAILED_AT) < _TF_LOAD_BACKOFF_SEC:
         return None
     try:
@@ -211,16 +214,30 @@ def _load_tf():
         _TF_MODULE = tf
         _TF_LOAD_FAILED_AT = 0.0
         _TF_LOAD_LOGGED = False
+        # First successful load — make it visible so the user can see
+        # the GA / model_lab actually has TF available.
+        try:
+            from services.logging_utils import log_message
+            log_message("tf-runtime",
+                        f"TensorFlow loaded successfully (version={getattr(tf, '__version__', '?')})",
+                        severity="info")
+        except Exception:
+            pass
         return _TF_MODULE
     except Exception as exc:
-        _TF_LOAD_FAILED_AT = _t.time()
+        # On Windows DLL mismatches the failure is not transient (it's
+        # a Python-version vs python3XX.dll mismatch). Pin the cache to
+        # infinity so we attempt exactly once per process. The error
+        # message is preserved at WARNING level so the cause is visible
+        # without re-spamming every backoff window.
+        _TF_LOAD_FAILED_AT = float("inf")
         if not _TF_LOAD_LOGGED:
             _TF_LOAD_LOGGED = True
             try:
                 from services.logging_utils import log_message
                 log_message(
                     "tf-runtime",
-                    f"TensorFlow unavailable, suppressing retries for {int(_TF_LOAD_BACKOFF_SEC)}s: {exc}",
+                    f"TensorFlow load failed (will not retry this process): {exc}",
                     severity="warning",
                 )
             except Exception:

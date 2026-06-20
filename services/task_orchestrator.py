@@ -273,8 +273,44 @@ class ParallelTaskManager:
             if error:
                 entry["error"] = error
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._state_path.open("w", encoding="utf-8") as handle:
-                json.dump(self._state, handle, indent=2)
+            # Atomic write — multiple worker processes can race on this
+            # file. A direct open("w") sees Errno 22 (Invalid argument)
+            # on Windows when a sibling worker has the file open with
+            # an incompatible share mode. Writing to a temp file then
+            # os.replace is atomic and lock-friendly. Wrap in try/except
+            # so a transient file-system error never crashes the cycle
+            # loop -- losing one state snapshot is acceptable; losing
+            # the entire production manager is not (the previous
+            # behaviour caused multi-restart cascades, see logs from
+            # 2026-06-20 04:47 onward).
+            import os as _os, tempfile as _tempfile
+            try:
+                tmp_fd, tmp_path = _tempfile.mkstemp(
+                    prefix=".state-", suffix=".json.tmp",
+                    dir=str(self._state_path.parent),
+                )
+                try:
+                    with _os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+                        json.dump(self._state, handle, indent=2)
+                    _os.replace(tmp_path, str(self._state_path))
+                except Exception:
+                    try: _os.unlink(tmp_path)
+                    except Exception: pass
+                    raise
+            except OSError as exc:
+                # Survive transient file-system errors. We log via the
+                # standard logging bus rather than re-raising so the
+                # cycle loop continues. State will refresh on the next
+                # successful write.
+                try:
+                    from services.logging_utils import log_message
+                    log_message(
+                        "task-orchestrator",
+                        f"state persist failed (continuing): {exc}",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
 
     @property
     def pending_tasks(self) -> int:

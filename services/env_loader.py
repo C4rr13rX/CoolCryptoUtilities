@@ -175,14 +175,14 @@ def _apply_default_env() -> None:
         "LIVE_ALLOW_MINI_READY": "1",
         "OHLCV_CEX_FALLBACK": "1",
         "PREFER_FREE_RPC": "1",
-        # TF on this Windows host can't load (cp313 ⨯ cp312 DLL chain
-        # + Windows VC++ runtime mismatches).  Hard-skip so the
-        # production manager doesn't log the diagnostic + ImportError
-        # trace every cycle.  Strategies (money_button, opportunity,
-        # brain_regime, swarm) don't need TF — they already vote on
-        # every tick via the neutral pred_summary path.  Override
-        # with SKIP_TF_CONFIGURE=0 if you fix the TF install.
-        "SKIP_TF_CONFIGURE": "1",
+        # TF: try-once, never-retry. The pipeline._load_tf path now
+        # attempts the import once per process; on failure it pins the
+        # failure cache to infinity so the C-side diag-trace doesn't
+        # re-spam every 5 minutes. This means model_lab GA and any
+        # other TF consumer GET TF if it loads, see a single clear
+        # WARNING if it doesn't. The previous "1" default was a workaround
+        # for the 5-min retry spam that's no longer needed.
+        "SKIP_TF_CONFIGURE": "0",
         # Widened allow-list: every globally-accessible spot endpoint
         # we have an adapter for.  More parallel sources = more ticks
         # captured per second per pair = signals fire sooner.  Bot
