@@ -1511,12 +1511,30 @@ class TradingBot:
         refill_signature = str(plan.get("signature") or f"gas-refill:{chain_name}:{round(gas_required, 6)}")
         cooldown = float(os.getenv("GAS_REFILL_COOLDOWN_SEC", "600"))
         now = time.time()
-        if (
+        # DB-persisted cooldown so the 4 prod_manager worker processes
+        # share the cooldown. Previous per-instance attrs let two
+        # workers each fire the same refill within seconds of each
+        # other (observed 04:39 + 04:45 = 6 min < 600s cooldown).
+        kv_key = f"gas_refill:{chain_name}:{refill_signature}"
+        try:
+            shared = self.db.get_json(kv_key) or {}
+            shared_ts = float(shared.get("ts") or 0.0)
+        except Exception:
+            shared_ts = 0.0
+        local_block = (
             refill_signature
             and refill_signature == self._last_gas_refill_signature
             and now - self._last_gas_refill_ts < cooldown
-        ):
+        )
+        shared_block = shared_ts and (now - shared_ts < cooldown)
+        if local_block or shared_block:
             return
+        # Take the slot — write before firing so a concurrent worker
+        # racing in this same tick sees our timestamp.
+        try:
+            self.db.set_json(kv_key, {"ts": now, "signature": refill_signature})
+        except Exception:
+            pass
         self._last_gas_refill_signature = refill_signature
         self._last_gas_refill_ts = now
         executed = self._rebalance_for_gas(chain_name, plan)
@@ -2017,6 +2035,14 @@ class TradingBot:
         size. Stores `bridge_features` + `bridge_confidence` on
         decision["brain"] so the exit hook can wire (features→outcome)
         back into the substrate.
+
+        Hard gate: when the brain's reported confidence is below
+        ``BRAIN_CONFIDENCE_FLOOR`` (default 0.5), treat the answer as
+        no-signal. The accuracy probe on 2026-06-20 showed the brain's
+        calibration is sharp (0.935 mean conf when right, 0.124 when
+        wrong) — so anything below the floor is signalling "I don't
+        know" and should not drag the EMA down or contribute to sizing.
+        Above the floor, behave as before: store conf + update EMA.
         """
         try:
             feats = _brain_features_text(
@@ -2030,13 +2056,26 @@ class TradingBot:
         if not isinstance(decision.get("brain"), dict):
             decision["brain"] = {}
         decision["brain"]["bridge_features"] = feats
-        decision["brain"]["bridge_confidence"] = float(conf)
         decision["brain"]["bridge_answer"] = answer
-        # Maintain an EMA used by sized graduation.
+        floor = float(os.getenv("BRAIN_CONFIDENCE_FLOOR", "0.5"))
+        raw_conf = float(conf)
+        # Hard gate: low-conf returns are abstentions, not noise.
+        if raw_conf < floor:
+            decision["brain"]["bridge_confidence"] = 0.0
+            decision["brain"]["bridge_confidence_raw"] = raw_conf
+            decision["brain"]["bridge_confidence_rejected"] = True
+            # Do NOT update _brain_conf_ema — keep the running average
+            # representative of actual signal, not abstentions.
+            return 0.0
+        decision["brain"]["bridge_confidence"] = raw_conf
+        decision["brain"]["bridge_confidence_rejected"] = False
+        # Maintain an EMA used by sized graduation, but only on
+        # accepted (above-floor) confidences so the average tracks
+        # real signal strength.
         prev = float(getattr(self, "_brain_conf_ema", 0.0))
         alpha = 0.05
-        self._brain_conf_ema = (1.0 - alpha) * prev + alpha * float(conf)
-        return float(conf)
+        self._brain_conf_ema = (1.0 - alpha) * prev + alpha * raw_conf
+        return raw_conf
 
     def _brain_record_exit(self, decision: Dict[str, Any], *, pnl_pct: float) -> bool:
         """Push (features_at_entry → outcome_at_exit) into the brain so
