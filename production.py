@@ -944,11 +944,21 @@ class ProductionManager:
             return {"skipped": True, "reason": "no_wallet_credentials"}
         try:
             from services.wallet_bootstrap import auto_bootstrap
-            result = auto_bootstrap()
+            # Pass the full focus-chain set so the brain trains on every
+            # chain the wallet touches, not just the primary one. The
+            # user's intent: "Do whatever you can with what's in the
+            # wallet at the lowest risk and highest profit" -- which
+            # means the bot should know about low-risk tokens on every
+            # chain it can swap on, not be bottlenecked to the literal
+            # wallet holdings. FOCUS_CHAINS env overrides.
+            env_chains = os.getenv("FOCUS_CHAINS", "base,arbitrum,optimism,polygon")
+            focus_chains = [c.strip().lower() for c in env_chains.split(",") if c.strip()]
+            result = auto_bootstrap(focus_chains=focus_chains)
             log_message("production", "wallet bootstrap complete", details={
                 "pairs": result.get("pairs_generated", []),
                 "total_usd": result.get("total_usd", 0),
                 "elapsed": result.get("elapsed_sec"),
+                "focus_chains": focus_chains,
             })
             return result
         except Exception as exc:

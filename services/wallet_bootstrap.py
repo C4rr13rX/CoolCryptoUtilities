@@ -492,6 +492,38 @@ def download_ohlcv_for_pairs(
     return results
 
 
+def core_pairs_for_chain(chain: str, *, max_pairs: int = 16) -> List[str]:
+    """Return low-risk pair list for the given chain — every core token
+    paired with USDC (and optionally WETH for deeper liquidity routes).
+
+    Pulled from services.token_catalog.DEFAULT_CORE_TOKENS so the set is
+    maintained in one place. Excludes the stable<->stable degenerates
+    (USDC-USDC). Used by auto_bootstrap to expand the watchlist beyond
+    just wallet holdings — if the wallet has exposure to a chain, the
+    bot streams + trains on that chain's blue-chip universe so its
+    swap decisions aren't bottlenecked to whatever you happen to be
+    holding right now.
+    """
+    try:
+        from services.token_catalog import core_tokens_for_chain
+        catalog = core_tokens_for_chain(chain) or {}
+    except Exception:
+        catalog = {}
+    pairs: List[str] = []
+    stables = {"USDC", "USDT", "DAI", "USDBC", "USDC.E"}
+    quote = "USDC"
+    for sym in catalog.keys():
+        sym_u = sym.upper()
+        if sym_u in stables:
+            continue
+        pair = f"{sym_u}-{quote}"
+        if pair not in pairs:
+            pairs.append(pair)
+        if len(pairs) >= max_pairs:
+            break
+    return pairs
+
+
 def update_watchlists_from_pairs(pairs: List[str]) -> Dict[str, List[str]]:
     """Update DB watchlists with auto-discovered pairs."""
     from services.watchlists import load_watchlists, save_watchlists
@@ -545,16 +577,25 @@ def update_watchlists_from_pairs(pairs: List[str]) -> Dict[str, List[str]]:
 def auto_bootstrap(
     chain: str = PRIMARY_CHAIN,
     days_back: int = 90,
+    focus_chains: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Full plug-and-play bootstrap:
       1. Scan wallet holdings on-chain
       2. Generate tradeable pairs from what the user holds
-      3. Download OHLCV data for those pairs
-      4. Update watchlists so ProductionManager picks them up
-      5. Return summary
+      3. Add the low-risk core pairs for EVERY focus chain (so the
+         bot streams + trains on the blue-chip universe of each
+         chain the wallet touches, not just whatever you happen to
+         be holding right now).
+      4. Download OHLCV data for the union
+      5. Update watchlists so ProductionManager picks them up
+      6. Return summary
 
-    Called automatically by ProductionManager on startup if wallet is configured.
+    Called automatically by ProductionManager on startup. The
+    `focus_chains` parameter (or FOCUS_CHAINS env, comma-separated)
+    determines which chains to expand with core-token pairs; defaults
+    to the primary chain alone if unset. Pass ['base','arbitrum',
+    'optimism','polygon'] to cover the standard 4-chain focus set.
     """
     t0 = time.time()
     log_message("wallet-bootstrap", f"starting auto-bootstrap on {chain}")
@@ -566,26 +607,61 @@ def auto_bootstrap(
 
     if not holdings:
         log_message("wallet-bootstrap", "no wallet holdings found; using default pairs", severity="warning")
-        pairs = ["WETH-USDC", "WETH-USDT", "WBTC-USDC"]
+        wallet_pairs = ["WETH-USDC", "WETH-USDT", "WBTC-USDC"]
     elif total_usd < MIN_PORTFOLIO_USD:
         log_message(
             "wallet-bootstrap",
             f"portfolio too small (${total_usd:.2f}); bootstrapping with defaults",
             severity="warning",
         )
-        pairs = ["WETH-USDC", "WETH-USDT"]
+        wallet_pairs = ["WETH-USDC", "WETH-USDT"]
     else:
         # Step 2: Generate pairs from holdings
-        pairs = generate_pairs_from_holdings(holdings, chain=chain)
-        log_message("wallet-bootstrap", f"generated {len(pairs)} pairs from {len(holdings)} holdings (${total_usd:.2f})")
+        wallet_pairs = generate_pairs_from_holdings(holdings, chain=chain)
+        log_message("wallet-bootstrap", f"generated {len(wallet_pairs)} pairs from {len(holdings)} holdings (${total_usd:.2f})")
 
     # Step 2b: Persist wallet balances to DB so readiness gates can see them
     _persist_balances(wallet_info, chain=chain)
 
-    # Step 3: Download OHLCV
+    # Step 3: Expand with low-risk core pairs across the focus chains.
+    # "Do whatever you can with what's in the wallet at the lowest
+    # risk and highest profit" -- meaning the brain trains and
+    # predicts on every chain the wallet touches, not just the
+    # holdings themselves.
+    if focus_chains is None:
+        env_chains = os.getenv("FOCUS_CHAINS", "").strip()
+        focus_chains = (
+            [c.strip().lower() for c in env_chains.split(",") if c.strip()]
+            if env_chains else [chain]
+        )
+    # Always include primary chain in the focus set.
+    if chain not in focus_chains:
+        focus_chains.insert(0, chain)
+
+    pairs_union: List[str] = list(wallet_pairs)
+    seen_pairs = set(pairs_union)
+    for fc in focus_chains:
+        try:
+            core_set = core_pairs_for_chain(fc)
+        except Exception:
+            core_set = []
+        for pair in core_set:
+            if pair not in seen_pairs:
+                pairs_union.append(pair)
+                seen_pairs.add(pair)
+    log_message(
+        "wallet-bootstrap",
+        f"focus chains {focus_chains}: expanded {len(wallet_pairs)} wallet -> "
+        f"{len(pairs_union)} total pairs (added {len(pairs_union)-len(wallet_pairs)} core blue-chips)",
+    )
+    pairs = pairs_union
+
+    # Step 4: Download OHLCV for the union
+    # Bot trains + predicts on whatever has OHLCV history; this is the
+    # gate that turns "watched pair" into "tradeable pair" in the brain.
     ohlcv_results = download_ohlcv_for_pairs(pairs, chain=chain, days_back=days_back)
 
-    # Step 4: Update watchlists
+    # Step 5: Update watchlists
     watchlists = update_watchlists_from_pairs(pairs)
 
     elapsed = time.time() - t0
