@@ -22,30 +22,67 @@ from services.logging_utils import log_message
 _PAIR_INDEX_ATTEMPTED: set[str] = set()
 
 
-def _maybe_generate_pair_index(chain: str) -> bool:
+def _maybe_generate_pair_index(chain: str, *, force_refresh: bool = False) -> bool:
+    """Generate the pair_index file for a chain via make2000index.py.
+
+    Without ``force_refresh``: skip if a fresh file exists. The
+    freshness window is controlled by ``PAIR_INDEX_MAX_AGE_DAYS``
+    (default 7). Older files trigger a regeneration -- the discovery
+    universe has to move with the market, otherwise the bot streams
+    on tokens that have lost liquidity and misses ones that gained
+    it. With ``force_refresh=True``, regenerate unconditionally.
+    """
     chain = chain.lower()
     index_path = DATA_ROOT / f"pair_index_{chain}.json"
-    if index_path.exists():
-        return True
-    if chain in _PAIR_INDEX_ATTEMPTED:
-        return False
-    _PAIR_INDEX_ATTEMPTED.add(chain)
+    if index_path.exists() and not force_refresh:
+        # Refresh if stale
+        try:
+            max_age_days = float(os.getenv("PAIR_INDEX_MAX_AGE_DAYS", "7"))
+        except Exception:
+            max_age_days = 7.0
+        try:
+            age_days = (time.time() - index_path.stat().st_mtime) / 86400.0
+        except Exception:
+            age_days = 0.0
+        if age_days < max_age_days:
+            return True
+        log_message(
+            "pair-index",
+            f"{chain} index is {age_days:.1f}d old (>{max_age_days:.1f}d); regenerating",
+            severity="info",
+        )
+    # Prevent re-attempt loop within a single process if generation fails
+    attempt_key = f"{chain}::{force_refresh}"
+    if attempt_key in _PAIR_INDEX_ATTEMPTED:
+        return index_path.exists()
+    _PAIR_INDEX_ATTEMPTED.add(attempt_key)
     script = REPO_ROOT / "make2000index.py"
     if not script.exists():
         log_message("pair-index", f"generator script missing: {script}", severity="warning")
         return False
     env = os.environ.copy()
-    env.setdefault("CHAIN_NAME", chain)
-    env.setdefault("PAIR_INDEX_OUTPUT_PATH", str(index_path))
+    env["CHAIN_NAME"] = chain  # override -- discovery is per-chain
+    env["PAIR_INDEX_OUTPUT_PATH"] = str(index_path)
+    if force_refresh or (index_path.exists() and (time.time() - index_path.stat().st_mtime) > 86400 * 7):
+        env["FORCE_REBUILD_INDEX"] = "1"
     try:
-        result = subprocess.run([resolve_python_bin(), str(script)], env=env, check=False, capture_output=True, text=True)
+        result = subprocess.run(
+            [resolve_python_bin(), str(script)],
+            env=env, check=False, capture_output=True, text=True,
+            timeout=int(os.getenv("PAIR_INDEX_TIMEOUT_SEC", "1800")),
+        )
         if result.returncode != 0:
             log_message(
                 "pair-index",
-                f"generation failed for {chain}: rc={result.returncode} stderr={result.stderr.strip()}",
+                f"generation failed for {chain}: rc={result.returncode} stderr={result.stderr.strip()[:200]}",
                 severity="warning",
             )
             return False
+        log_message(
+            "pair-index",
+            f"{chain} index regenerated -> {index_path}",
+            severity="info",
+        )
     except Exception as exc:
         log_message("pair-index", f"generation error for {chain}: {exc}", severity="warning")
         return False

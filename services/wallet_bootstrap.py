@@ -493,32 +493,66 @@ def download_ohlcv_for_pairs(
 
 
 def core_pairs_for_chain(chain: str, *, max_pairs: int = 16) -> List[str]:
-    """Return low-risk pair list for the given chain — every core token
-    paired with USDC (and optionally WETH for deeper liquidity routes).
+    """Return low-risk pair list for the given chain.
 
-    Pulled from services.token_catalog.DEFAULT_CORE_TOKENS so the set is
-    maintained in one place. Excludes the stable<->stable degenerates
-    (USDC-USDC). Used by auto_bootstrap to expand the watchlist beyond
-    just wallet holdings — if the wallet has exposure to a chain, the
-    bot streams + trains on that chain's blue-chip universe so its
-    swap decisions aren't bottlenecked to whatever you happen to be
-    holding right now.
+    Source preference (top-down):
+      1. ``data/pair_index_{chain}.json`` produced by make2000index.py
+         (autonomous discovery via DexScreener, scored on liquidity +
+         24h volume + wallet-overlap boost, scam-filtered). This is
+         the dynamic blue-chip universe that updates as the market
+         moves. Top-N distinct symbols by index rank.
+      2. ``services.token_catalog.core_tokens_for_chain`` — static
+         hand-maintained catalog. Used only when pair_index is missing
+         or empty (e.g., new chain, first boot, broken refresh).
+
+    Stables and stable-stable degenerates are excluded from the
+    returned list (those are quote sides, not interesting routes).
     """
+    pairs: List[str] = []
+    seen: set = set()
+    stables = {"USDC", "USDT", "DAI", "USDBC", "USDC.E", "EURC", "BUSD"}
+
+    # --- Source 1: dynamic pair_index --------------------------------
+    try:
+        index_path = Path("data") / f"pair_index_{chain.lower()}.json"
+        if index_path.exists():
+            with index_path.open("r", encoding="utf-8") as fh:
+                idx_data = json.load(fh) or {}
+            items = sorted(idx_data.items(), key=lambda kv: kv[1].get("index", 9999))
+            for _addr, meta in items:
+                sym = (meta.get("symbol") or "").upper()
+                if not sym or sym in seen:
+                    continue
+                # Skip stable-stable pairs (no directional alpha)
+                parts = sym.split("-")
+                if len(parts) == 2 and parts[0] in stables and parts[1] in stables:
+                    continue
+                # Skip if the BASE token is a stable (USDT-USDC reversed etc)
+                if parts and parts[0] in stables:
+                    continue
+                pairs.append(sym)
+                seen.add(sym)
+                if len(pairs) >= max_pairs:
+                    return pairs
+    except Exception:
+        pass
+
+    # --- Source 2: static catalog fallback ---------------------------
     try:
         from services.token_catalog import core_tokens_for_chain
         catalog = core_tokens_for_chain(chain) or {}
     except Exception:
         catalog = {}
-    pairs: List[str] = []
-    stables = {"USDC", "USDT", "DAI", "USDBC", "USDC.E"}
     quote = "USDC"
     for sym in catalog.keys():
         sym_u = sym.upper()
         if sym_u in stables:
             continue
         pair = f"{sym_u}-{quote}"
-        if pair not in pairs:
-            pairs.append(pair)
+        if pair in seen:
+            continue
+        pairs.append(pair)
+        seen.add(pair)
         if len(pairs) >= max_pairs:
             break
     return pairs
@@ -637,6 +671,19 @@ def auto_bootstrap(
     # Always include primary chain in the focus set.
     if chain not in focus_chains:
         focus_chains.insert(0, chain)
+
+    # Refresh pair_index for each focus chain (regenerates if stale,
+    # no-op if fresh). Discovery has to keep up with the market or
+    # we miss new high-liquidity tokens and stream on dead ones.
+    try:
+        from services.background_workers import _maybe_generate_pair_index
+        for fc in focus_chains:
+            try:
+                _maybe_generate_pair_index(fc)
+            except Exception as exc:
+                log_message("wallet-bootstrap", f"pair_index refresh for {fc} failed: {exc}", severity="warning")
+    except Exception:
+        pass
 
     pairs_union: List[str] = list(wallet_pairs)
     seen_pairs = set(pairs_union)
