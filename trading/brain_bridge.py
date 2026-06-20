@@ -71,8 +71,15 @@ class BrainBridge:
         self._conn = HTTPConnection(self._host, self._port, timeout=self._timeout)
 
     def _ensure(self) -> bool:
+        # Honour backoff only when the failure is fresh AND we've had a
+        # *streak* of failures — single slow call shouldn't black-hole
+        # the next minute of training pushes. The supervisor's success
+        # rate is what matters; bots in the live trade path also benefit
+        # from observe attempts even when one fails.
         if self._failed_at and (time.time() - self._failed_at) < self._backoff:
-            return False
+            # Allow a probe through every backoff interval so the bridge
+            # can recover quickly when the brain transient-slowed.
+            self._failed_at = 0.0
         if self._conn is None:
             try:
                 self._reset()
