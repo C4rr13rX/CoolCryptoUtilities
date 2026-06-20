@@ -159,9 +159,10 @@ def main() -> int:
     while True:
         try:
             now = time.time()
-            prod_alive   = _alive_pids_matching({"main.py", "start_production"})
-            feeder_alive = _alive_pids_matching({"run_brain_feeder.py", "brain_feeder.py"})
-            brain_ok     = _brain_alive()
+            prod_alive       = _alive_pids_matching({"main.py", "start_production"})
+            feeder_alive     = _alive_pids_matching({"run_brain_feeder.py", "brain_feeder.py"})
+            supervisor_alive = _alive_pids_matching({"brain_history_supervisor"})
+            brain_ok         = _brain_alive()
 
             # NO dedupe: main.py spawns its own worker subprocesses
             # (parent supervisor + per-cycle workers). They share the
@@ -177,9 +178,16 @@ def main() -> int:
                 _spawn(prod_args, "production_manager", "prod_manager_wd")
                 last_spawn["prod"] = now
             if not feeder_alive and (now - last_spawn["feeder"]) > grace:
-                _log("brain feeder DOWN — respawning")
-                _spawn(feeder_args, "brain_feeder", "brain_feeder_wd")
-                last_spawn["feeder"] = now
+                # Skip respawning brain_feeder while a history supervisor
+                # is actively training -- they both pound /brain/observe
+                # and contend for the brain mutex, dropping ~5% of
+                # supervisor pushes when both run together.
+                if supervisor_alive:
+                    pass  # supervisor will release the lock when done
+                else:
+                    _log("brain feeder DOWN -- respawning")
+                    _spawn(feeder_args, "brain_feeder", "brain_feeder_wd")
+                    last_spawn["feeder"] = now
             if not brain_ok:
                 _log("WARN brain HTTP unreachable (no auto-restart)")
 
