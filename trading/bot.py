@@ -2390,6 +2390,7 @@ class TradingBot:
             # `_summarise_predictions` is what normally produces this
             # dict from TF outputs; we mimic its neutral shape here.
             current_price_safe = float(sample.get("price") or 0.0) or None
+            preds = None  # ensure binding exists for the non-TF code paths
             if tf_ok and model is not None:
                 inputs = self._prepare_inputs(window_slice)
                 try:
@@ -2400,6 +2401,7 @@ class TradingBot:
                     # itself blew up — fall through to neutral.
                     print(f"[trading-bot] prediction failed: {exc}; using neutral pred_summary")
                     pred_summary = self._neutral_pred_summary(current_price=current_price_safe)
+                    preds = None
             else:
                 pred_summary = self._neutral_pred_summary(current_price=current_price_safe)
             brain_summary = self._update_brain_state(sample, history_snapshot, pred_summary)

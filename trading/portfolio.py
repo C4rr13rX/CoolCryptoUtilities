@@ -71,7 +71,16 @@ class PortfolioState:
     # ------------------------------------------------------------------
 
     def _derive_wallet_from_mnemonic(self) -> str:
-        mnemonic = os.getenv("MNEMONIC", "").strip()
+        # Reuse wallet_bootstrap's resolver — it handles env first, then
+        # SecureVault via MultiWalletManager (which knows how to decrypt
+        # admin-account mnemonic rows). Single source of truth for
+        # "where does the trading stack's mnemonic come from".
+        mnemonic = ""
+        try:
+            from services.wallet_bootstrap import _resolve_wallet_creds
+            mnemonic, _pk = _resolve_wallet_creds()
+        except Exception:
+            mnemonic = os.getenv("MNEMONIC", "").strip()
         if not mnemonic or Account is None:
             raise RuntimeError(
                 "PortfolioState requires a wallet address. "
