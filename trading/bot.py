@@ -3021,6 +3021,14 @@ class TradingBot:
         min_margin_required = max(fees * 1.5, SMALL_PROFIT_FLOOR)
         min_margin_required = max(0.0, min_margin_required + float(adjustments.get("margin_offset", 0.0)))
         expected_profit_units = margin * max(trade_size, 0.0) * max(price, 1e-9)
+        if trade_size <= 0.0 and pos is not None:
+            # Position is held -- floor trade_size off the held size so
+            # exit logic still gets a chance to evaluate. Without this
+            # every volume=0 tick on a held pair returns here with
+            # unrealized stats but never reaches should_exit, so
+            # positions hold forever and the brain bridge never sees
+            # the (features -> outcome) binding it was created to wire.
+            trade_size = float(pos.get("size", 0.0))
         if trade_size <= 0.0:
             if pos is not None:
                 decision.update(
@@ -4082,9 +4090,26 @@ class TradingBot:
     async def _start_background_refinement(self, cadence: float = 900.0) -> None:
         if not self._enable_bg_refinement:
             return
+        # If TF is permanently unavailable on this host (DLL mismatch),
+        # the candidate-training loop floods the log with the same
+        # 'model_definition unavailable' error every cycle and
+        # consumes worker threads on a no-op. Detect TF availability
+        # ONCE and bail if it can't load -- the cycle backlog observed
+        # at 5:18 today was a direct consequence of this loop hammering
+        # on a failed import.
+        try:
+            from trading.pipeline import _load_tf
+            if _load_tf() is None:
+                print("[trading-bot] TF unavailable; background refinement loop disabled")
+                return
+        except Exception:
+            pass
         fast_cadence = max(120.0, cadence / 3.0)
+        consecutive_failures = 0
+        max_consecutive_failures = int(os.getenv("BG_REFINEMENT_MAX_FAILURES", "3"))
 
         async def _loop():
+            nonlocal consecutive_failures
             while self._running:
                 # Train more aggressively when no active model exists or ghost
                 # data is insufficient — this is the critical bootstrap phase.
@@ -4103,8 +4128,13 @@ class TradingBot:
                     pass
                 try:
                     await asyncio.to_thread(self.pipeline.train_candidate)
+                    consecutive_failures = 0
                 except Exception as exc:
+                    consecutive_failures += 1
                     print(f"[trading-bot] background refinement error: {exc}")
+                    if consecutive_failures >= max_consecutive_failures:
+                        print(f"[trading-bot] {consecutive_failures} consecutive failures; halting bg refinement loop")
+                        return
 
         self._bg_task = asyncio.create_task(_loop())
         await self._bg_task
