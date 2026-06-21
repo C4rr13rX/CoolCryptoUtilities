@@ -3070,6 +3070,44 @@ class TradingBot:
             ):
                 should_enter = True
                 reason = "model-long"
+            elif (not self.live_trading_enabled) and os.getenv(
+                "GHOST_EXPLORE_ENABLED", "1"
+            ).lower() in {"1", "true", "yes", "on"}:
+                # Ghost exploration path. With TF disabled the conf gates
+                # above are unreachable (every neutral signal stays at
+                # 0.5 < threshold). Fall back to a simple momentum
+                # signal so ghost actually trades and the brain bridge
+                # accumulates real (features, outcome) bindings. Live
+                # mode never reaches this branch -- the model gates
+                # stay the only entry path on real money.
+                try:
+                    history_for_momentum = list(self._buffer)
+                except Exception:
+                    history_for_momentum = []
+                try:
+                    win_len = min(int(os.getenv("GHOST_EXPLORE_MOMENTUM_WIN", "5")),
+                                   len(history_for_momentum))
+                except Exception:
+                    win_len = 0
+                momentum_ok = False
+                if win_len >= 2 and price > 0.0:
+                    try:
+                        ref_price = float(history_for_momentum[-win_len].get("price") or 0.0)
+                        if ref_price > 0.0:
+                            change = (price - ref_price) / ref_price
+                            momentum_floor = float(os.getenv(
+                                "GHOST_EXPLORE_MIN_MOVEMENT", "0.0008"))
+                            momentum_ok = abs(change) >= momentum_floor
+                            if change > 0:
+                                reason = f"ghost-explore-up:{change:.4f}"
+                            else:
+                                # In sell-high regime, the bot is cash-only
+                                # so 'down' becomes a buy-low entry intent.
+                                reason = f"ghost-explore-rebound:{change:.4f}"
+                    except Exception:
+                        momentum_ok = False
+                if momentum_ok and trade_size > 0.0:
+                    should_enter = True
         else:
             exit_threshold = max(0.05, min(enter_threshold * 0.95, exit_threshold + float(adjustments.get("exit_offset", 0.0))))
             if direction_prob < exit_threshold or exit_conf_val < 0.5:
