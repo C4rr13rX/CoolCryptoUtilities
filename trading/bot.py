@@ -2816,6 +2816,19 @@ class TradingBot:
         trade_size = min(trade_size, 100.0)
         if directive and directive.size > 0:
             trade_size = float(directive.size)
+        # Ghost-mode floor: most stream ticks report volume=0 (price
+        # update from book change, not a trade), which zeros trade_size
+        # and bails 'insufficient_quote' before the entry-decision logic
+        # ever runs. In ghost (sim) mode this is pure waste -- we have
+        # a virtual bankroll, no real-money risk; floor the trade to
+        # GHOST_MIN_TRADE_USD / price so every signal actually gets a
+        # chance to enter. Live mode keeps the volume-derived size to
+        # respect real-market depth.
+        if use_sim and pos is None and price > 0.0:
+            min_trade_usd = float(os.getenv("GHOST_MIN_TRADE_USD", "2.0"))
+            floor_size = min_trade_usd / price
+            if trade_size < floor_size:
+                trade_size = floor_size
         if pos is None:
             trade_size *= max(0.0, scenario_mod)
         if scenario_defer and pos is None:
