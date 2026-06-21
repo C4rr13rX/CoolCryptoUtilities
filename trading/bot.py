@@ -252,6 +252,24 @@ class TradingBot:
             self._sim_initial_pool = sum(self.sim_quote_balances.values()) or self._sim_initial_pool
             if not self.sim_native_balances:
                 self.sim_native_balances[self.primary_chain.lower()] = 0.5
+        # Whether the sim balances came from disk or fresh init, always
+        # make sure every FOCUS_CHAINS chain has at least the per-chain
+        # USDC seed. Without this, persisted state from before the
+        # cross-chain expansion locks the bot into base-only ghost
+        # trading and insufficient_quote on every non-Base candidate.
+        try:
+            focus_chains_env = os.getenv("FOCUS_CHAINS", "base,arbitrum,optimism,polygon")
+            focus_chains = [c.strip().lower() for c in focus_chains_env.split(",") if c.strip()]
+            per_chain = float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "100.0"))
+            for fc in focus_chains:
+                fc_key = (fc, "USDC")
+                if self.sim_quote_balances.get(fc_key, 0.0) < per_chain:
+                    self.sim_quote_balances[fc_key] = per_chain
+                # Also seed sim native so gas check passes during ghost
+                if self.sim_native_balances.get(fc, 0.0) < 0.5:
+                    self.sim_native_balances[fc] = 0.5
+        except Exception:
+            pass
         self._ensure_runtime_state()
 
     async def start(self) -> None:
