@@ -339,6 +339,20 @@ class TradingBot:
         # ensure primary quote exists even if wallet empty
         key = (self.primary_chain.lower(), "USDC")
         self.sim_quote_balances.setdefault(key, 0.0)
+        # Seed sim USDC on every FOCUS_CHAINS chain so ghost trades
+        # on Arbitrum/Optimism/Polygon (which have 0 real USDC) can
+        # fire. Without this seed, _get_quote_balance returns 0 and
+        # every cross-chain ghost trade fails 'insufficient_quote'.
+        # Ghost is fake money -- bankroll-per-chain instead of one
+        # shared pool is fine; trades on chain A simulate without
+        # affecting chain B.
+        focus_chains_env = os.getenv("FOCUS_CHAINS", "base,arbitrum,optimism,polygon")
+        focus_chains = [c.strip().lower() for c in focus_chains_env.split(",") if c.strip()]
+        ghost_per_chain_usd = float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "100.0"))
+        for fc in focus_chains:
+            fc_key = (fc, "USDC")
+            if self.sim_quote_balances.get(fc_key, 0.0) < ghost_per_chain_usd:
+                self.sim_quote_balances[fc_key] = ghost_per_chain_usd
         self.sim_native_balances = {chain.lower(): max(balance, 0.1) for chain, balance in self.portfolio.native_balances.items()}
         self.sim_native_balances.setdefault(self.primary_chain.lower(), 0.5)
         self._sim_initial_pool = sum(self.sim_quote_balances.values())
