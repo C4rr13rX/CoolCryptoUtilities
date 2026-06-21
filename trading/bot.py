@@ -3078,9 +3078,16 @@ class TradingBot:
             ):
                 should_enter = True
                 reason = "model-long"
-            elif (not self.live_trading_enabled) and os.getenv(
-                "GHOST_EXPLORE_ENABLED", "1"
-            ).lower() in {"1", "true", "yes", "on"}:
+            elif (
+                (not self.live_trading_enabled)
+                and os.getenv("GHOST_EXPLORE_ENABLED", "1").lower() in {"1","true","yes","on"}
+                # Only explore USD-stable-quoted pairs. Base/base pairs
+                # like WBTC-WETH have their 'price' as a ratio (BTC/ETH
+                # ~ 37), not USD; the PnL calc treats price as USD and
+                # produces fake +$156 profits that poison the brain
+                # bridge's supervised binding pool.
+                and str(quote_token).upper() in {"USDC","USDT","DAI","USDBC","USDC.E","BUSD"}
+            ):
                 # Ghost exploration path. With TF disabled the conf gates
                 # above are unreachable (every neutral signal stays at
                 # 0.5 < threshold). Fall back to a simple momentum
