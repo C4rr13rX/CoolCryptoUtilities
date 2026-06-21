@@ -259,6 +259,25 @@ def _apply_default_env() -> None:
         # 0.5% bar lets the brain see + label many more outcomes
         # (most of which will be losses, that's correct supervision).
         "SCHEDULER_MIN_PROFIT": "0.005",
+        # --- TF-disabled signal-gate floors ---
+        # When TF is unavailable, every prediction is the neutral
+        # _neutral_pred_summary: direction_prob=0.5, exit_conf=0.5,
+        # net_margin=0. The money_button strategy's defaults require
+        # direction_prob >= 0.52 / exit_conf >= 0.52 — so it never
+        # fires a candidate, no TradeDirective comes back from the
+        # bus_scheduler, and the bot never opens a ghost trade. Lower
+        # the floors to 0.50 so the neutral case PASSES and money_button
+        # decides purely on the price-action signals (drawdown + slope).
+        "MONEY_BUTTON_MIN_DIR_PROB": "0.50",
+        "MONEY_BUTTON_MIN_EXIT_CONF": "0.50",
+        # 2% drawdown was too strict on a 1h-stable day. 0.5% lets
+        # ghost fire on minor pullbacks too — most will be losses,
+        # which is correct supervision for the brain.
+        "MONEY_BUTTON_MIN_DRAWDOWN": "0.005",
+        # Don't require an opportunity from the OpportunityTracker
+        # before firing — that's another stack of gates. Ghost mode
+        # gets to try every signal.
+        "MONEY_BUTTON_REQUIRE_OPPORTUNITY": "0",
         "SIMULATE_BRIDGE_TOPUP": "1",
         "ENABLE_BRIDGE_TOPUP": "0",
         "BRIDGE_FEE_USD": "1.5",
