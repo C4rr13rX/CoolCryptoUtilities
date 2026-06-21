@@ -270,6 +270,35 @@ class TradingBot:
                     self.sim_native_balances[fc] = 0.5
         except Exception:
             pass
+        # In ghost mode, the bus scheduler's candidate functions
+        # (brain_candidate, money_button_candidate) call
+        # portfolio.get_quantity to check what they can trade. Those
+        # read the REAL wallet, which has 0 USDC on arb/op/poly --
+        # so brain_candidate returns None ('available_quote <= 0'),
+        # money_button returns None, and no directive ever reaches
+        # the bot. Patch portfolio.get_quantity / get_native_balance
+        # to consult sim balances first when in ghost mode. Live
+        # trading flips this off via the live_trading_enabled gate.
+        if not self.live_trading_enabled:
+            try:
+                _real_get_quantity   = self.portfolio.get_quantity
+                _real_get_native_bal = self.portfolio.get_native_balance
+                _sim_quote = self.sim_quote_balances
+                _sim_native = self.sim_native_balances
+                def _sim_aware_get_quantity(symbol, chain="ethereum"):
+                    sim_val = _sim_quote.get((chain.lower(), str(symbol).upper()), None)
+                    if sim_val is not None and sim_val > 0:
+                        return float(sim_val)
+                    return _real_get_quantity(symbol, chain)
+                def _sim_aware_get_native(chain="ethereum"):
+                    sim_val = _sim_native.get(chain.lower(), None)
+                    if sim_val is not None and sim_val > 0:
+                        return float(sim_val)
+                    return _real_get_native_bal(chain)
+                self.portfolio.get_quantity = _sim_aware_get_quantity   # type: ignore[method-assign]
+                self.portfolio.get_native_balance = _sim_aware_get_native  # type: ignore[method-assign]
+            except Exception:
+                pass
         self._ensure_runtime_state()
 
     async def start(self) -> None:
