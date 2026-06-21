@@ -3122,14 +3122,22 @@ class TradingBot:
 
         if should_enter:
             await self._run_wallet_sync(reason="pre-enter")
-            allowed, guard_metrics, guard_reasons = self.swap_validator.validate(
-                symbol=symbol,
-                route=route,
-                trade_size=trade_size,
-                price=price,
-                volume=volume,
-                prediction=summary,
-            )
+            # Skip swap_validator for ghost mode. Its liquidity check
+            # uses per-tick avg_volume_usd from market_samples; on a
+            # quiet 5-min bar with volume=0 that ratio is infinity and
+            # every ghost trade gets blocked even at \$2 size. Live mode
+            # keeps the validator -- real money still needs guard rails.
+            if self.live_trading_enabled:
+                allowed, guard_metrics, guard_reasons = self.swap_validator.validate(
+                    symbol=symbol,
+                    route=route,
+                    trade_size=trade_size,
+                    price=price,
+                    volume=volume,
+                    prediction=summary,
+                )
+            else:
+                allowed, guard_metrics, guard_reasons = True, {}, []
             if not allowed:
                 decision.update(
                     {
