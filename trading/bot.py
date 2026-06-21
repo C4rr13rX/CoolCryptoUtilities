@@ -2731,14 +2731,34 @@ class TradingBot:
                 decision["reason"] = "insufficient-float"
                 return decision
         if time.time() < self._reflex_blocked_until:
-            decision.update(
-                {
-                    "status": "reflex-blocked",
-                    "reason": f"reflex:{self._reflex_block_reason or 'safety'}",
-                    "blocked_until": self._reflex_blocked_until,
-                }
-            )
-            return decision
+            # Reflex (volatility spike, drawdown) only blocks LIVE trades.
+            # Ghost trades are fake money -- their entire purpose is to
+            # observe price action during exactly these regimes so the
+            # brain can learn from them. Blocking ghost during reflex
+            # turns the bot into a passive observer and prevents any
+            # supervised binding from ever forming on volatile bars.
+            if self.live_trading_enabled:
+                decision.update(
+                    {
+                        "status": "reflex-blocked",
+                        "reason": f"reflex:{self._reflex_block_reason or 'safety'}",
+                        "blocked_until": self._reflex_blocked_until,
+                    }
+                )
+                return decision
+            # else: ghost mode -- log the reflex but continue evaluating
+            try:
+                self.metrics.feedback(
+                    "ghost_trading",
+                    severity=FeedbackSeverity.INFO,
+                    label="reflex_passthrough",
+                    details={
+                        "reason": self._reflex_block_reason or "safety",
+                        "blocked_until": self._reflex_blocked_until,
+                    },
+                )
+            except Exception:
+                pass
         gas_required = self._estimate_gas_cost(chain_name, route)
         use_sim = not self.live_trading_enabled
         base_balance_symbol = base_token

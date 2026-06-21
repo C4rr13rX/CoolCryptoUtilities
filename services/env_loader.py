@@ -242,6 +242,23 @@ def _apply_default_env() -> None:
         "LIVE_CIRCUIT_BREAKER_LOSSES": "5",
         "LIVE_CIRCUIT_BREAKER_DRAWDOWN": "0.25",
         "LIVE_FOCUS_CHAINS": "base,arbitrum,optimism,polygon",
+        # --- Ghost-mode gates ---
+        # The bus scheduler's defaults were calibrated for serious
+        # trading desks (>$5k/bar depth, <0.2% spreads). Our ghost
+        # mode is paper money on a $19 wallet exploring small-cap
+        # blue-chips; with the desk defaults the scheduler returns
+        # None on ~every tick, so no ghost trade ever fires, so the
+        # brain bridge never sees a closed-trade outcome, so the
+        # supervised binding pool stays sparse. Lower the gates for
+        # ghost while keeping live-mode strict via the same env
+        # mechanism if you want.
+        "SCHEDULER_DEPTH_FLOOR_USD": "50",     # was 5000
+        "SCHEDULER_SPREAD_FLOOR": "0.012",     # was 0.002 (allow 1.2% spread for low-cap)
+        # The default min-profit was 5% per round-trip — fine for a
+        # full-desk algo but ghost mode is supposed to explore.
+        # 0.5% bar lets the brain see + label many more outcomes
+        # (most of which will be losses, that's correct supervision).
+        "SCHEDULER_MIN_PROFIT": "0.005",
         "SIMULATE_BRIDGE_TOPUP": "1",
         "ENABLE_BRIDGE_TOPUP": "0",
         "BRIDGE_FEE_USD": "1.5",
