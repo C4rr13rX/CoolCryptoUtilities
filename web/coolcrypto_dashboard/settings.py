@@ -128,6 +128,7 @@ INSTALLED_APPS = [
     "investigations.apps.InvestigationsConfig",
     "delegation.apps.DelegationConfig",
     "wizard_chat.apps.WizardChatConfig",
+    "modelcontrol.apps.ModelControlConfig",
 ]
 
 MIDDLEWARE = [
@@ -138,8 +139,10 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "core.middleware.LocalBridgeCsrfBypassMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.LocalBridgeUserMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "core.middleware.ApiSlashFallbackMiddleware",

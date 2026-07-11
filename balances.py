@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 # NEW: caching (optional)
 from cache import CacheBalances, CacheTransfers, CachePrices
 from services.wallet_logger import wallet_log
+from token_decimals import known_token_decimals
 
 getcontext().prec = 50 # high precision for token math
 
@@ -438,7 +439,14 @@ class MultiChainTokenPortfolio:
                 meta = self._get_metadata_bulk(ch, list(need_meta), max_workers=8)
                 for a, m in meta.items():
                     if a not in decimals_map or not isinstance(decimals_map[a], int):
-                        decimals_map[a] = int((m or {}).get("decimals", 18) or 18)
+                        d = (m or {}).get("decimals")
+                        try:
+                            d = int(d)
+                        except (TypeError, ValueError):
+                            d = known_token_decimals(
+                                ch, a, (m or {}).get("symbol") or (m or {}).get("name")
+                            )
+                        decimals_map[a] = d if isinstance(d, int) else 18
                     symbol = (m or {}).get("symbol")
                     name = (m or {}).get("name")
                     symbol_norm = None
@@ -497,6 +505,14 @@ class MultiChainTokenPortfolio:
                     balances_raw[a] = "0x0"
 
             # -------- Compose quantities
+            # Canonical override: known tokens (stables, majors) have fixed
+            # decimals; cached rows written during a metadata outage may hold
+            # a wrong default-18 that would deflate 6-decimal stables by 10^12.
+            for a in token_list:
+                sym = (meta_map.get(a) or cached_entries.get(a, {}) or {}).get("symbol")
+                known = known_token_decimals(ch, a, sym)
+                if known is not None:
+                    decimals_map[a] = known
             qty_map: Dict[str, Decimal] = {}
             for a in token_list:
                 dec = int(decimals_map.get(a, 18))
@@ -513,6 +529,7 @@ class MultiChainTokenPortfolio:
             usd_map: Dict[str, str] = {}
             
             if self.price_mode == "cache_only":
+                refresh_set = set(refresh)
                 for a in token_list:
                     ent = cached_entries.get(a) or {}
                     usd_val = ent.get("usd_amount")
@@ -522,7 +539,9 @@ class MultiChainTokenPortfolio:
                             usd_dec = Decimal(str(usd_val))
                         except Exception:
                             usd_dec = None
-                    if usd_dec is None or usd_dec == 0:
+                    # Refreshed rows must re-derive USD: the cached usd_amount
+                    # embeds the previous quantity (possibly decimals-corrupted).
+                    if usd_dec is None or usd_dec == 0 or a in refresh_set:
                         meta_info = meta_map.get(a) or ent
                         px = self._lookup_cached_price(ch, a, meta_info)
                         if px is not None and qty_map[a] > 0:
@@ -797,7 +816,7 @@ class MultiChainTokenPortfolio:
 
     # ---------------- Metadata ----------------
     def _get_metadata_bulk(self, chain: str, token_list: List[str], max_workers: int = 8) -> Dict[str, Dict[str, Any]]:
-        def _default() -> Dict[str, Any]: return {"decimals": 18, "name": None, "symbol": None, "logo": None}
+        def _default() -> Dict[str, Any]: return {"decimals": None, "name": None, "symbol": None, "logo": None}
         out: Dict[str, Dict[str, Any]] = {};
         if not token_list: return out
         try:
@@ -816,17 +835,27 @@ class MultiChainTokenPortfolio:
     def _safe_get_token_metadata(self, chain: str, token: str) -> Dict[str, Any]:
         try:
             res = self._alchemy(chain, "alchemy_getTokenMetadata", [token])
-            d = res.get("decimals", 18); 
+            d = res.get("decimals")
             try: d = int(d)
-            except Exception: d = 18
+            except Exception: d = None
+            if d is None:
+                d = known_token_decimals(chain, token, res.get("symbol") or res.get("name"))
+            if d is None:
+                d = self._erc20_decimals(chain, token)
             return {"decimals": d, "name": res.get("name"), "symbol": res.get("symbol"), "logo": res.get("logo")}
         except Exception:
-            dec = self._erc20_decimals(chain, token); return {"decimals": dec, "name": None, "symbol": None, "logo": None}
+            dec = known_token_decimals(chain, token)
+            if dec is None:
+                dec = self._erc20_decimals(chain, token)
+            return {"decimals": dec, "name": None, "symbol": None, "logo": None}
 
-    def _erc20_decimals(self, chain: str, token: str) -> int:
+    def _erc20_decimals(self, chain: str, token: str) -> Optional[int]:
+        # None (not 18) on failure: callers must not mistake an RPC outage
+        # for a real 18-decimal reading — that is what corrupted stablecoin
+        # quantities in the first place.
         res = self._eth_call(chain, token, "0x313ce567")
-        try: return int(res, 16) if res else 18
-        except Exception: return 18
+        try: return int(res, 16) if res else None
+        except Exception: return None
 
     # ---------------- Pricing (hybrid only; cache-only handled inline) ----------------
     def _get_prices_usd(self, chain: str, tokens: List[str], meta: Dict[str, Any]) -> Dict[str, Decimal]:

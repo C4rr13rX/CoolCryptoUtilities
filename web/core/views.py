@@ -17,6 +17,7 @@ from django.conf import settings
 from django.contrib.auth import login
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import transaction
 from django.db.models import Q, Count
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect
@@ -35,7 +36,7 @@ from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
 from services.graph_store import search_graph_equations, graph_enabled  # noqa: E402
 from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E402
-from .models import C0d3rWebSession, C0d3rWebMessage, SystemLog
+from .models import C0d3rWebSession, C0d3rWebMessage, C0d3rWebRun, SystemLog
 
 GUARDIAN_TRANSCRIPT = Path("runtime/guardian/transcripts/guardian-session.log")
 LEGACY_TRANSCRIPT   = Path("runtime/guardian/transcripts/guardian-legacy.log")
@@ -112,7 +113,7 @@ class DashboardContextMixin:
         db = get_db()
         state = db.load_state() or {}
         ghost_state = state.get("ghost_trading") or {}
-        readiness = _load_report(Path("data/reports/live_readiness.json"))
+        readiness = _load_report(ROOT / "data/reports/live_readiness.json")
         confusion = _load_report(Path("data/reports/confusion_eval.json"))
         horizon = _load_report(Path("data/reports/horizon_profile.json"))
         timeline = _load_report(Path("runtime/organism_timeline.json"))
@@ -316,6 +317,10 @@ class AddressBookPageView(BaseSecureView):
 
 class C0d3rPageView(BaseSecureView):
     initial_route = "c0d3r"
+
+
+class ModelControlPageView(BaseSecureView):
+    initial_route = "model-control"
 
 
 def guardian_failure_response(request, *args, **kwargs):
@@ -901,7 +906,8 @@ class C0d3rRunView(LoginRequiredMixin, View):
       prompt       str   — user's request (required unless reset=true)
       session_id   int   — existing session pk (optional)
       reset        bool  — clear session and return (optional)
-      backend      str   — "wizard" (default) | "bedrock" | "openai"
+      backend      str   — "wizard" (default) | "bedrock" | "codex" |
+                           "openai" | "freeloader"
     """
     login_url = "core:index"
     http_method_names = ["post"]
@@ -914,7 +920,12 @@ class C0d3rRunView(LoginRequiredMixin, View):
 
         prompt   = str(payload.get("prompt") or "").strip()
         reset    = bool(payload.get("reset"))
-        backend  = str(payload.get("backend") or "wizard").lower().strip()
+        from modelcontrol.views import _setting_value
+        backend  = str(payload.get("backend") or _setting_value(request.user, "C0D3R_BACKEND") or "freeloader").lower().strip()
+        if backend == "auto":
+            backend = ""
+        model = _setting_value(request.user, "C0D3R_MODEL")
+        atf_models = [item.strip() for item in _setting_value(request.user, "AGENT_FREELOADER_MODELS").split(",") if item.strip()]
         session_id = payload.get("session_id")
 
         if not session_id and not reset and not prompt:
@@ -940,6 +951,9 @@ class C0d3rRunView(LoginRequiredMixin, View):
 
         # ── Handle reset ──────────────────────────────────────────────────
         if reset:
+            C0d3rWebRun.objects.filter(
+                session=session_obj, status__in=["queued", "running"],
+            ).update(status="cancelled", completed_at=timezone.now())
             C0d3rWebMessage.objects.filter(session=session_obj).delete()
             session_obj.summary   = ""
             session_obj.key_points = []
@@ -957,62 +971,65 @@ class C0d3rRunView(LoginRequiredMixin, View):
                     status=200,
                 )
 
-        # ── Build system context ──────────────────────────────────────────
-        context_chars  = _safe_int(os.getenv("C0D3R_WEB_CONTEXT_CHARS", "12000"),
-                                   12000, min_value=2000, max_value=20000)
-        system_context = _build_c0d3r_context(
-            session_obj, request=request, prompt=prompt, max_chars=context_chars
-        )
-
-        # ── Run C0d3rV2 agent ─────────────────────────────────────────────
-        try:
-            from tools.c0d3rV2.web_runner import run as c0d3rv2_run, probe_wizard_node
-            output = c0d3rv2_run(
-                prompt,
-                session_key=session_key,
-                workdir=ROOT,
-                backend=backend,
-                system_context=system_context,
+        # Persist and acknowledge before any model/network work. The background
+        # worker owns context construction, model invocation, and final writes.
+        with transaction.atomic():
+            C0d3rWebMessage.objects.create(
+                session=session_obj, role="user", content=prompt, metadata={},
             )
-        except Exception as exc:
-            return JsonResponse({"detail": f"c0d3rv2 failed: {exc}"}, status=500)
-
-        # Determine which model/backend actually served the response.
-        try:
-            from tools.c0d3rV2.web_runner import _FLOW_CACHE
-            flow = _FLOW_CACHE.get(session_key)
-            model_id = (
-                flow.session.get_model_id()
-                if flow and hasattr(flow.session, "get_model_id")
-                else "wizard-v1-local"
+            run = C0d3rWebRun.objects.create(
+                session=session_obj, prompt=prompt, backend=backend,
+                model=model or "", atf_models=atf_models,
             )
-        except Exception:
-            model_id = "wizard-v1-local"
-
-        # ── Persist messages ──────────────────────────────────────────────
-        C0d3rWebMessage.objects.create(
-            session=session_obj, role="user", content=prompt, metadata={},
-        )
-        C0d3rWebMessage.objects.create(
-            session=session_obj, role="c0d3r", content=output, model_id=model_id,
-        )
-        session_obj.model_id    = model_id
         session_obj.last_active = timezone.now()
-
-        # Use a lightweight Bedrock session just for the summary update, if
-        # configured — otherwise skip it (wizard handles memory internally).
-        try:
-            _update_c0d3r_summary(session_obj, user_text=prompt, assistant_text=output,
-                                  c0d3r_session=None)
-        except Exception:
-            pass
-
-        session_obj.save(update_fields=["model_id", "last_active", "summary",
-                                        "key_points", "updated_at"])
+        session_obj.save(update_fields=["last_active", "updated_at"])
+        from .c0d3r_async import submit_run
+        transaction.on_commit(lambda: submit_run(str(run.id)))
         return JsonResponse(
-            {"output": output, "model": model_id, "session_id": session_obj.id},
-            status=200,
+            {
+                "run_id": str(run.id), "status": "queued", "output": "",
+                "model": "", "session_id": session_obj.id,
+            },
+            status=202,
         )
+
+
+class C0d3rRunStatusView(LoginRequiredMixin, View):
+    login_url = "core:index"
+    http_method_names = ["get", "post"]
+
+    def get(self, request: HttpRequest, run_id, *args, **kwargs) -> JsonResponse:
+        try:
+            run = C0d3rWebRun.objects.select_related("session").get(
+                id=run_id, session__user=request.user,
+            )
+        except (C0d3rWebRun.DoesNotExist, ValueError):
+            return JsonResponse({"detail": "run not found"}, status=404)
+        from .c0d3r_async import run_progress
+        response = JsonResponse({
+            "run_id": str(run.id), "status": run.status,
+            "output": run.output if run.status == "completed" else "",
+            "model": run.model_id, "error": run.error,
+            "session_id": run.session_id,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "progress": run_progress(str(run.id)),
+        })
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        return response
+
+    def post(self, request: HttpRequest, run_id, *args, **kwargs) -> JsonResponse:
+        try:
+            run = C0d3rWebRun.objects.get(id=run_id, session__user=request.user)
+        except (C0d3rWebRun.DoesNotExist, ValueError):
+            return JsonResponse({"detail": "run not found"}, status=404)
+        from .c0d3r_async import cancel_run, run_progress
+        stopped = cancel_run(str(run.id))
+        return JsonResponse({
+            "run_id": str(run.id), "status": "cancelled" if stopped else run.status,
+            "stopped": stopped, "progress": run_progress(str(run.id)),
+        })
 
 
 def _tail_lines(path: Path, limit: int = 400) -> List[str]:

@@ -597,7 +597,10 @@ def _score_candidate(c: dict, ctx: HazyHashContext) -> float:
             score += 2.0
         else:
             # Shared prefix depth bonus
-            common = os.path.commonpath([cwd_norm, path_norm]) if cwd_norm and path_norm else ""
+            try:
+                common = os.path.commonpath([cwd_norm, path_norm]) if cwd_norm and path_norm else ""
+            except ValueError:
+                common = ""
             if common and common != "/":
                 depth = common.count("/")
                 score += min(depth * 0.5, 2.0)

@@ -49,11 +49,16 @@ from tool_registry import (
     MatrixSearchTool,
     FileReadTool,
     FileWriteTool,
+    DirectoryEnsureTool,
+    WorkspaceScaffoldTool,
+    EnvironmentBootstrapTool,
+    ScientificMethodTool,
     UnboundedSolverTool,
     MathGroundingTool,
     VMPlaygroundTool,
 )
-from orchestrator import Orchestrator
+from orchestrator import Orchestrator, StepResult
+from task_tree import TaskNode
 from context_builder import ContextBuilder
 from executor import Executor
 from sessions import SessionManager
@@ -66,6 +71,7 @@ from sessions import SessionManager
 ALL_TOOL_NAMES = [
     "executor", "web_search", "memory_search", "file_locate",
     "equation_matrix", "file_read", "file_write",
+    "directory_ensure", "workspace_scaffold", "environment_bootstrap", "scientific_method",
     "unbounded_solver", "math_grounding", "vm_playground",
 ]
 
@@ -107,9 +113,13 @@ def _build_registry(workdir: Path) -> ToolRegistry:
     reg.register(ExecutorTool(executor))
     reg.register(FileReadTool(workdir))
     reg.register(FileWriteTool(workdir))
+    reg.register(DirectoryEnsureTool(workdir))
+    reg.register(WorkspaceScaffoldTool(workdir))
+    reg.register(EnvironmentBootstrapTool(workdir))
+    reg.register(ScientificMethodTool(mock_ws, runtime_dir=workdir))
     reg.register(WebSearchTool(mock_ws))
     reg.register(MemorySearchTool(mock_mem))
-    reg.register(FileLocateTool(mock_st, mock_lt))
+    reg.register(FileLocateTool(mock_st, mock_lt, workdir=workdir))
     reg.register(MatrixSearchTool())
     reg.register(UnboundedSolverTool(solver))
     reg.register(MathGroundingTool(solver))
@@ -173,7 +183,7 @@ class TestToolRegistry:
     def test_tool_descriptions_count(self, tmp_path):
         reg = _build_registry(tmp_path)
         descs = reg.tool_descriptions()
-        assert len(descs) == 10
+        assert len(descs) == len(ALL_TOOL_NAMES)
 
     def test_tool_descriptions_all_have_use_when(self, tmp_path):
         reg = _build_registry(tmp_path)
@@ -204,7 +214,14 @@ class TestExecutorTool:
     def test_failed_command_has_nonzero_code(self, tmp_path):
         tool = ExecutorTool(Executor(tmp_path))
         result = tool.execute({"command": "exit 1"})
-        assert result.get("return_code", 0) != 0 or "error" in result
+        assert result.get("return_code", 0) != 0
+        assert "error" in result
+
+    def test_rejects_malformed_powershell_foreach(self, tmp_path):
+        tool = ExecutorTool(Executor(tmp_path))
+        result = tool.execute({"command": "foreach( in ){ New-Item -ItemType Directory }"})
+        assert "error" in result
+        assert "directory_ensure" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +265,185 @@ class TestFileTools:
         result = fw.execute({"path": "x.txt", "old_string": "NOPE", "new_string": "X"})
         assert "error" in result
 
+    def test_patch_accepts_one_unique_near_exact_multiline_block(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        fw.execute({"path": "core.py", "content": (
+            "def impedance(r, l, c, f):\n"
+            "    if f <= 0:\n"
+            "        raise ValueError('frequency')\n"
+            "    return r\n"
+        )})
+        result = fw.execute({
+            "path": "core.py",
+            "old_string": (
+                "def impedance(r, l, c, frequency):\n"
+                "    if frequency <= 0:\n"
+                "        raise ValueError('frequency')\n"
+                "    return r"
+            ),
+            "new_string": "def impedance(r, l, c, f):\n    if min(r, l, c, f) <= 0:\n        raise ValueError('inputs')\n    return r",
+        })
+        assert result.get("status") == "patched_fuzzy"
+        assert "min(r, l, c, f)" in (tmp_path / "core.py").read_text(encoding="utf-8")
+
+    def test_patch_rejects_low_similarity_fallback(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        fw.execute({"path": "core.py", "content": "def real():\n    return 1\n"})
+        result = fw.execute({
+            "path": "core.py", "old_string": "class Imaginary:\n    pass",
+            "new_string": "unsafe",
+        })
+        assert "error" in result
+        assert "unsafe" not in (tmp_path / "core.py").read_text(encoding="utf-8")
+
+    def test_patch_rejects_new_undefined_python_name(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = "def resonance(r, l, c):\n    if r <= 0:\n        raise ValueError\n    return r\n"
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({
+            "path": "core.py", "old_string": "if r <= 0:",
+            "new_string": "if r <= 0 or frequency <= 0:",
+        })
+        assert "undefined Python names: frequency" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
+    def test_patch_rejects_signature_that_still_mismatches_test_arity(self, tmp_path):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_core.py").write_text(
+            "def test_export():\n    export_to_csv('out.csv', [])\n", encoding="utf-8",
+        )
+        fw = FileWriteTool(tmp_path)
+        original = "def export_to_csv(rows, metadata, filename):\n    pass\n"
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({
+            "path": "core.py",
+            "old_string": "def export_to_csv(rows, metadata, filename):",
+            "new_string": "def export_to_csv(filename, rows, metadata):",
+        })
+        assert "tests with positional arities [2]" in result["error"]
+        assert "accepts 3" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
+    def test_patch_rejects_python_syntax_error_atomically(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = "def valid():\n    return 1\n"
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({
+            "path": "core.py", "old_string": "return 1",
+            "new_string": 'return """unterminated',
+        })
+        assert "Python syntax error" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
+    def test_full_write_rejects_python_syntax_error_atomically(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = "def valid():\n    return 1\n"
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({"path": "core.py", "content": "def broken():\nreturn 2\n"})
+        assert "Python syntax error" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
+    def test_patch_rejects_invalid_json_atomically(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = '{"dependencies": {"django": "5.2.1"}}\n'
+        fw.execute({"path": "package.json", "content": original})
+        result = fw.execute({
+            "path": "package.json", "old_string": '"django": "5.2.1"',
+            "new_string": '"django": "5.2.1"\n"numpy": "2.4.1"',
+        })
+        assert "invalid JSON" in result["error"]
+        assert (tmp_path / "package.json").read_text(encoding="utf-8") == original
+
+    def test_full_write_rejects_invalid_json_atomically(self, tmp_path):
+        result = FileWriteTool(tmp_path).execute({"path": "package.json", "content": '{"bad": }'})
+        assert "invalid JSON" in result["error"]
+        assert not (tmp_path / "package.json").exists()
+
+    def test_full_write_rejects_duplicate_json_keys(self, tmp_path):
+        result = FileWriteTool(tmp_path).execute({
+            "path": "angular.json", "content": '{"projects": {"app": {}, "app": {}}}',
+        })
+        assert "duplicate object key 'app'" in result["error"]
+        assert not (tmp_path / "angular.json").exists()
+
+    def test_full_write_rejects_tsconfig_extends_cycle(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        fw.execute({"path": "tsconfig.app.json", "content": '{"extends": "./tsconfig.json"}'})
+        result = fw.execute({
+            "path": "tsconfig.json", "content": '{"extends": "./tsconfig.app.json"}',
+        })
+        assert "extends cycle" in result["error"]
+        assert not (tmp_path / "tsconfig.json").exists()
+
+    def test_patch_rejects_new_unreachable_statement(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = "def validate(value):\n    if value <= 0:\n        raise ValueError\n    return value\n"
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({
+            "path": "core.py", "old_string": "if value <= 0:\n        raise ValueError",
+            "new_string": "if value <= 0:\n        return None\n        raise ValueError",
+        })
+        assert "unreachable Python statements" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
+    def test_corrective_patch_rejects_docstring_only_change(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = 'def calculate():\n    """old docs"""\n    return 1\n'
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({
+            "path": "core.py", "old_string": '"""old docs"""',
+            "new_string": '"""new docs"""', "require_semantic_change": True,
+        })
+        assert "only comments/docstrings" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
+    def test_corrective_full_write_rejects_public_api_removal(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = "def calculate():\n    return 1\n\ndef export():\n    return 2\n"
+        fw.execute({"path": "core.py", "content": original})
+        result = fw.execute({
+            "path": "core.py", "content": "def calculate():\n    return 1\n",
+            "require_semantic_change": True,
+        })
+        assert "removed public Python APIs: export" in result["error"]
+        assert (tmp_path / "core.py").read_text(encoding="utf-8") == original
+
     def test_write_no_path_returns_error(self, tmp_path):
         fw = FileWriteTool(tmp_path)
         assert "error" in fw.execute({"content": "some content"})
+
+    def test_write_rejects_unresolved_path_placeholder(self, tmp_path):
+        result = FileWriteTool(tmp_path).execute({
+            "path": "{{file_locate.path}}", "content": "wrong target",
+        })
+        assert "unresolved model placeholder" in result["error"]
+        assert not (tmp_path / "{{file_locate.path}}").exists()
+
+    def test_write_rejects_comment_only_typescript_placeholder(self, tmp_path):
+        result = FileWriteTool(tmp_path).execute({
+            "path": "src/physics/Gravity.ts", "content": "// Implement Gravity module here\n",
+        })
+        assert "only comments or placeholder" in result["error"]
+        assert not (tmp_path / "src" / "physics" / "Gravity.ts").exists()
+
+    def test_corrective_typescript_write_rejects_public_api_removal(self, tmp_path):
+        fw = FileWriteTool(tmp_path)
+        original = (
+            "export class Vector {\n"
+            "  public readonly x: number = 0;\n"
+            "  add(other: Vector): Vector { return other; }\n"
+            "  scale(value: number): Vector { return this; }\n"
+            "}\n"
+        )
+        fw.execute({"path": "vector.ts", "content": original})
+        result = fw.execute({
+            "path": "vector.ts",
+            "content": "export class Vector {\n  public readonly x: number = 0;\n}\n",
+            "require_semantic_change": True,
+        })
+        assert "removed public TypeScript APIs: add, scale" in result["error"]
+        assert (tmp_path / "vector.ts").read_text(encoding="utf-8") == original
 
     def test_creates_parent_dirs(self, tmp_path):
         fw = FileWriteTool(tmp_path)
@@ -258,9 +451,119 @@ class TestFileTools:
         assert result.get("status") == "written"
         assert (tmp_path / "a" / "b" / "c" / "new.txt").exists()
 
+    def test_normalizes_double_escaped_wrapped_source_payload(self, tmp_path):
+        payload = "'''\\nimport math\\n\\ndef answer():\\n\\treturn math.floor(42.9)\\n'''"
+        result = FileWriteTool(tmp_path).execute({"path": "generated.py", "content": payload})
+        source = (tmp_path / "generated.py").read_text(encoding="utf-8")
+        assert result.get("payload_normalized") is True
+        assert source.startswith("import math\n")
+        compile(source, "generated.py", "exec")
+
+    def test_preserves_legitimate_escaped_newlines_in_one_line_source(self, tmp_path):
+        source = 'first = "a\\nb"; second = "c\\nd"'
+        result = FileWriteTool(tmp_path).execute({"path": "strings.py", "content": source})
+        assert not result.get("payload_normalized")
+        assert (tmp_path / "strings.py").read_text(encoding="utf-8") == source
+
+    def test_read_and_write_reject_workdir_escape(self, tmp_path):
+        outside = tmp_path.parent / "outside-atf.txt"
+        outside.write_text("keep", encoding="utf-8")
+        read_result = FileReadTool(tmp_path).execute({"path": str(outside)})
+        write_result = FileWriteTool(tmp_path).execute({"path": "../outside-atf.txt", "content": "changed"})
+        assert "escapes workdir" in read_result["error"]
+        assert "escapes workdir" in write_result["error"]
+        assert outside.read_text(encoding="utf-8") == "keep"
+
+    def test_file_tools_normalize_duplicated_workdir_prefix(self, tmp_path):
+        target = tmp_path / "src" / "core.py"
+        target.parent.mkdir()
+        target.write_text("value = 1\n", encoding="utf-8")
+        duplicate_relative = f"{tmp_path.name}/src/core.py"
+        read = FileReadTool(tmp_path).execute({"path": duplicate_relative})
+        assert read["content"] == "value = 1\n"
+        write = FileWriteTool(tmp_path).execute({
+            "path": duplicate_relative, "old_string": "value = 1", "new_string": "value = 2",
+        })
+        assert write["status"] == "patched"
+        assert target.read_text(encoding="utf-8") == "value = 2\n"
+
 
 # ---------------------------------------------------------------------------
-# 5.  FileLocateTool
+# 5.  DirectoryEnsureTool + WorkspaceScaffoldTool
+# ---------------------------------------------------------------------------
+
+class TestScaffoldTools:
+
+    def test_directory_ensure_creates_nested_paths(self, tmp_path):
+        tool = DirectoryEnsureTool(tmp_path)
+        result = tool.execute({"paths": ["python/django", "rust/cli"]})
+        assert result.get("status") == "created"
+        assert (tmp_path / "python" / "django").is_dir()
+        assert (tmp_path / "rust" / "cli").is_dir()
+
+    def test_workspace_scaffold_creates_index_and_readmes(self, tmp_path):
+        tool = WorkspaceScaffoldTool(tmp_path)
+        result = tool.execute({
+            "root_readme": "# Apps\n",
+            "frameworks": [
+                {
+                    "name": "Django API",
+                    "language": "Python",
+                    "package_manager": "pip",
+                    "create_command": "python -m django startproject app .",
+                    "run_command": "python manage.py runserver",
+                    "files": {"notes/setup.txt": "install Python first\n"},
+                },
+                {
+                    "name": "Rust CLI",
+                    "language": "Rust",
+                    "package_manager": "cargo",
+                    "create_command": "cargo init",
+                    "run_command": "cargo run",
+                },
+            ],
+        })
+        assert result.get("status") == "scaffolded"
+        assert result.get("framework_count") == 2
+        assert (tmp_path / "README.md").exists()
+        assert (tmp_path / "Django-API" / "README.md").exists()
+        assert (tmp_path / "Django-API" / "notes" / "setup.txt").exists()
+        index = json.loads((tmp_path / "framework_index.json").read_text(encoding="utf-8"))
+        assert [item["name"] for item in index] == ["Django API", "Rust CLI"]
+
+    def test_workspace_scaffold_major_frameworks_preset_is_compact(self, tmp_path):
+        tool = WorkspaceScaffoldTool(tmp_path)
+        result = tool.execute({"preset": "major_app_frameworks"})
+        assert result.get("status") == "scaffolded"
+        assert result.get("framework_count") >= 10
+        assert (tmp_path / "Python-Django" / "README.md").exists()
+        assert (tmp_path / "Ionic-8-Angular-App" / "starter.placeholder.txt").exists()
+
+    def test_environment_bootstrap_unknown_preset_returns_error(self, tmp_path):
+        tool = EnvironmentBootstrapTool(tmp_path)
+        result = tool.execute({"preset": "missing_stack"})
+        assert "Unknown environment preset" in result["error"]
+
+    def test_scientific_method_resolves_monty_hall_baseline(self, tmp_path):
+        mock_ws = MagicMock()
+        mock_ws.search_authoritative.return_value = {
+            "summary": "Monty Hall problem: switching wins with probability 2/3.",
+            "results": [{"title": "Monty Hall", "url": "https://example.test/monty", "snippet": "switching wins 2/3"}],
+            "scientific": True,
+        }
+        tool = ScientificMethodTool(mock_ws, runtime_dir=tmp_path)
+        result = tool.execute({
+            "question": "In the Monty Hall problem, should you switch doors and what is the win probability?",
+            "expected_answer": "switching wins 2/3",
+            "domain": "probability",
+        })
+        assert result["conclusion"]["supported_hypothesis"] == "switch"
+        assert result["validation"]["switch_probability"] == pytest.approx(2 / 3)
+        assert result["persisted"]["paths"]
+
+
+# ---------------------------------------------------------------------------
+# 6.  FileLocateTool
 # ---------------------------------------------------------------------------
 
 class TestFileLocateTool:
@@ -288,6 +591,28 @@ class TestFileLocateTool:
         lt = MagicMock(); lt.lookup.return_value = ["/z/w.rs"]
         result = FileLocateTool(st, lt).execute({"query": "*.rs"})
         assert set(result["paths"]) == {"/x/y.rs", "/z/w.rs"}
+
+    def test_scoped_locator_filters_paths_outside_workdir(self, tmp_path):
+        inside = tmp_path / "main.py"
+        outside = tmp_path.parent / "other.py"
+        st = MagicMock(); st.lookup.return_value = [str(outside), str(inside)]
+        lt = MagicMock(); lt.lookup.return_value = []
+        result = FileLocateTool(st, lt, workdir=tmp_path).execute({
+            "query": "main.py", "cwd": "Z:/different-drive",
+        })
+        assert result["paths"] == [str(inside)]
+        assert st.lookup.call_args.kwargs["cwd"] == str(tmp_path.resolve())
+
+    def test_scoped_locator_finds_live_file_missing_from_memory(self, tmp_path):
+        target = tmp_path / "src" / "impedance_core.py"
+        target.parent.mkdir()
+        target.write_text("pass\n", encoding="utf-8")
+        st = MagicMock(); st.lookup.return_value = []
+        lt = MagicMock(); lt.lookup.return_value = []
+        result = FileLocateTool(st, lt, workdir=tmp_path).execute({
+            "query": "impedance_core.py",
+        })
+        assert str(target) in result["paths"]
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +866,46 @@ class TestSafeJson:
         assert result["action"] == "tool_calls"
         assert result["tool_calls"][0]["tool"] == "executor"
 
+    def test_normalizes_singular_tool_call_with_args(self):
+        payload = {
+            "action": "tool_call",
+            "tool": "file_write",
+            "args": {"path": "index.html", "content": "ok"},
+        }
+        result = Orchestrator._normalize_action(payload)
+        assert result == {
+            "action": "tool_calls",
+            "tool_calls": [{
+                "tool": "file_write",
+                "params": {"path": "index.html", "content": "ok"},
+            }],
+        }
+
+    def test_normalizes_nested_and_filename_variants(self):
+        payload = {
+            "action": "tool_call",
+            "tool_call": {"tool": "file_read", "args": {"filename": "progress.md"}},
+        }
+        result = Orchestrator._normalize_action(payload)
+        assert result["tool_calls"] == [
+            {"tool": "file_read", "params": {"path": "progress.md"}},
+        ]
+
+    def test_normalizes_top_level_action_list(self):
+        result = Orchestrator._normalize_action([
+            {"action": "complete", "output": "done"},
+        ])
+        assert result == {"action": "complete", "output": "done"}
+
+    def test_normalizes_top_level_tool_call_list(self):
+        result = Orchestrator._normalize_action([
+            {"tool": "file_read", "params": {"path": "README.md"}},
+        ])
+        assert result == {
+            "action": "tool_calls",
+            "tool_calls": [{"tool": "file_read", "params": {"path": "README.md"}}],
+        }
+
 
 # ---------------------------------------------------------------------------
 # 12.  Orchestrator.run() with mock session
@@ -598,7 +963,51 @@ class _ToolCallSession:
         return json.dumps({"action": "complete", "output": "echo dispatched"})
 
 
+class _CorrectiveSession:
+    def __init__(self):
+        self.systems = []
+        self.calls = 0
+
+    def send(self, prompt: str, *, stream: bool = False, system: str = "") -> str:
+        self.calls += 1
+        self.systems.append(system)
+        if self.calls == 1:
+            return json.dumps({
+                "action": "tool_calls",
+                "tool_calls": [{"tool": "file_read", "params": {"path": "repair.txt"}}],
+            })
+        if self.calls == 2:
+            return json.dumps({
+                "action": "tool_calls",
+                "tool_calls": [{"tool": "file_write", "params": {
+                    "path": "repair.txt", "content": "fixed",
+                }}],
+            })
+        if self.calls == 3:
+            return json.dumps({
+                "action": "tool_calls",
+                "tool_calls": [{"tool": "executor", "params": {"command": "echo validated"}}],
+            })
+        return json.dumps({"action": "complete", "output": "repaired"})
+
+
+class _DirectScrutinySession:
+    def __init__(self):
+        self.calls = 0
+
+    def send(self, prompt: str, *, stream: bool = False, system: str = "") -> str:
+        self.calls += 1
+        return json.dumps({
+            "decision": "direct",
+            "answer": "Hello! Good to hear from you.",
+        })
+
+
 class TestOrchestratorRun:
+    def test_safe_json_extracts_embedded_array_without_greedy_braces(self):
+        text = 'Plan follows: [{"id":"a","description":"one"}] trailing {not json}'
+        assert Orchestrator._safe_json(text) == [{"id": "a", "description": "one"}]
+
 
     def test_run_returns_results_list_and_tree(self, tmp_path):
         orch = Orchestrator(
@@ -647,6 +1056,178 @@ class TestOrchestratorRun:
         )
         results, tree = orch.run("")
         assert tree.root.is_done
+
+    def test_global_agent_iteration_budget_stops_recursive_work(self, tmp_path):
+        orch = Orchestrator(
+            session=_ToolCallSession(),
+            tools=_build_registry(tmp_path),
+            context="[test]",
+        )
+        orch._max_total_agent_iterations = 1
+        results, _ = orch.run("run an echo command")
+        assert orch._total_agent_iterations == 1
+        assert any("global agent-iteration budget exhausted" in result.error for result in results)
+
+    def test_global_model_call_budget_counts_reformulation_and_agent_calls(self, tmp_path):
+        session = _ToolCallSession()
+        orch = Orchestrator(session=session, tools=_build_registry(tmp_path), context="[test]")
+        orch._max_total_model_calls = 4
+        orch.run("run an echo command")
+        assert orch._total_model_calls == 3
+
+    def test_simple_greeting_is_answered_by_single_scrutiny_call(self, tmp_path):
+        session = _DirectScrutinySession()
+        orch = Orchestrator(session=session, tools=_build_registry(tmp_path), context="[test]")
+        results, tree = orch.run("hello")
+        assert session.calls == 0
+        assert orch._total_model_calls == 0
+        assert results[0].output == "Hello! Good to hear from you."
+        assert tree.root.is_done
+
+    def test_corrective_retry_skips_reformulation_and_planning(self, tmp_path):
+        (tmp_path / "repair.txt").write_text("broken", encoding="utf-8")
+        session = _CorrectiveSession()
+        orch = Orchestrator(
+            session=session, tools=_build_registry(tmp_path),
+            context="CORRECTIVE RETRY unattended atomic workday job",
+        )
+        results, tree = orch.run("CORRECTIVE RETRY: tests failed")
+        assert session.calls == 4
+        assert not any("key 'branches'" in system for system in session.systems)
+        assert len(tree.root.children) == 1
+        assert (tmp_path / "repair.txt").read_text(encoding="utf-8") == "fixed"
+        assert any(result.success for result in results)
+
+    def test_corrective_state_machine_requires_read_write_executor(self, tmp_path):
+        node = TaskNode(description="repair")
+        assert Orchestrator._corrective_required_tool(node) == "file_read"
+        node.add_tool_output("file_read", {"content": "x"})
+        assert Orchestrator._corrective_required_tool(node) == "file_write"
+        node.add_tool_output("file_write", {"status": "written"})
+        assert Orchestrator._corrective_required_tool(node) == "executor"
+        node.add_tool_output("executor", {"return_code": 1, "error": "failed"})
+        assert Orchestrator._corrective_required_tool(node) == "file_write"
+        node.add_tool_output("file_write", {"status": "patched"})
+        assert Orchestrator._corrective_required_tool(node) == "executor"
+        node.add_tool_output("executor", {"return_code": 0, "stdout": "ok"})
+        assert Orchestrator._corrective_required_tool(node) == ""
+
+    def test_corrective_batch_allows_navigation_and_advances_each_call(self, tmp_path):
+        (tmp_path / "repair.txt").write_text("broken", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="CORRECTIVE RETRY unattended atomic workday job",
+        )
+        node = TaskNode(description="repair")
+        result = orch._dispatch_tool_calls(node, [
+            {"tool": "file_read", "params": {"path": "repair.txt"}},
+            {"tool": "file_read", "params": {"path": "missing.txt"}},
+            {"tool": "file_write", "params": {"path": "repair.txt", "content": "fixed"}},
+            {"tool": "executor", "params": {"command": "python -c \"print('ok')\""}},
+        ], MagicMock())
+        assert (tmp_path / "repair.txt").read_text(encoding="utf-8") == "fixed"
+        assert any(item["tool"] == "executor" and not item["result"].get("error")
+                   for item in result.tool_outputs)
+        assert not any("rejected" in str(item["result"].get("error", ""))
+                       for item in result.tool_outputs)
+        assert "broken" in result.output
+
+    def test_corrective_navigation_budget_stops_read_only_loop(self, tmp_path):
+        (tmp_path / "repair.txt").write_text("broken", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="CORRECTIVE RETRY unattended atomic workday job",
+        )
+        node = TaskNode(description="repair")
+        node.add_tool_output("file_read", {"content": "broken"})
+        for _ in range(4):
+            node.add_tool_output("file_locate", {"paths": ["repair.txt"]})
+        result = orch._dispatch_tool_calls(node, [
+            {"tool": "file_read", "params": {"path": "repair.txt"}},
+            {"tool": "file_read", "params": {"path": "repair.txt"}},
+        ], MagicMock())
+        assert not result.tool_outputs[0]["result"].get("error")
+        assert "navigation allowance is exhausted" in result.tool_outputs[1]["result"]["error"]
+
+    def test_corrective_hidden_failure_rejects_test_edits(self, tmp_path):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        target = tests / "test_core.py"
+        target.write_text("assert False\n", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="CORRECTIVE RETRY: hidden impedance invariants failed",
+        )
+        node = TaskNode(description="repair")
+        node.add_tool_output("file_read", {"content": "assert False"})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {"path": "tests/test_core.py", "content": "assert True\n"},
+        }], MagicMock())
+        assert "test write rejected" in result.tool_outputs[0]["result"]["error"]
+        assert target.read_text(encoding="utf-8") == "assert False\n"
+        assert Orchestrator._looks_model_caused(result.tool_outputs[0]["result"]["error"])
+
+    def test_corrective_allows_test_repair_after_hidden_invariants_pass(self, tmp_path):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        target = tests / "test_core.py"
+        target.write_text("assert False\n", encoding="utf-8")
+        context = (
+            'CORRECTIVE RETRY validator evidence: {"evidence": ['
+            '{"command": ["python", "<hidden impedance physics>"], "ok": true}]}'
+        )
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path), context=context,
+        )
+        node = TaskNode(description="repair")
+        node.add_tool_output("file_read", {"content": "assert False"})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {
+                "path": "tests/test_core.py", "content": "assert True\n",
+            },
+        }], MagicMock())
+        assert not result.tool_outputs[0]["result"].get("error")
+        assert target.read_text(encoding="utf-8") == "assert True\n"
+
+    def test_corrective_state_rejection_is_model_caused(self):
+        assert Orchestrator._looks_model_caused(
+            "Corrective state requires file_write; navigation allowance is exhausted"
+        )
+
+    def test_failed_fix_attributes_actual_fix_model(self):
+        fixed = StepResult(
+            step_id="x", description="repair", output="", success=False,
+            tool_outputs=[{"tool": "file_write", "result": {
+                "error": "bad patch",
+                "_attribution": {"provider": "FixP", "model": "FixM"},
+            }}],
+        )
+        assert Orchestrator._failed_fix_attribution(
+            fixed, {"provider": "OriginalP", "model": "OriginalM"},
+        ) == {"provider": "FixP", "model": "FixM"}
+
+    def test_corrective_requires_executor_between_write_batches(self, tmp_path):
+        target = tmp_path / "core.py"
+        target.write_text("value = 1\n", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="CORRECTIVE RETRY unattended atomic workday job",
+        )
+        node = TaskNode(description="repair")
+        node.add_tool_output("file_read", {"content": "value = 1", "path": str(target)})
+        first = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {
+                "path": "core.py", "old_string": "value = 1", "new_string": "value = 2",
+            },
+        }], MagicMock())
+        assert first.success
+        second = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {
+                "path": "core.py", "old_string": "value = 2", "new_string": "value = 3",
+            },
+        }], MagicMock())
+        assert "requires executor" in second.error
+        assert target.read_text(encoding="utf-8") == "value = 2\n"
 
 
 # ---------------------------------------------------------------------------

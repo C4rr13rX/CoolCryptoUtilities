@@ -247,15 +247,18 @@ def _persist_balances(wallet_info: Dict[str, Any], chain: str = "base") -> None:
         wallet_addr = (wallet_info.get("wallet") or "guardian").lower()
         entries = []
         now = time.time()
+        from token_decimals import known_token_decimals
         for h in wallet_info.get("holdings", []):
+            token_addr = (h.get("address") or "native").lower()
+            decimals = known_token_decimals(chain, token_addr, h.get("symbol")) or 18
             entries.append({
                 "wallet": "guardian",
                 "chain": chain.lower(),
-                "token": (h.get("address") or "native").lower(),
+                "token": token_addr,
                 "balance_hex": "",
                 "asof_block": 0,
                 "ts": now,
-                "decimals": 18,
+                "decimals": decimals,
                 "quantity": str(h.get("quantity", 0)),
                 "usd_amount": h.get("usd", 0.0),
                 "symbol": h.get("symbol", ""),
@@ -390,6 +393,8 @@ def _load_index_symbols(chain: str) -> set:
 def generate_pairs_from_holdings(
     holdings: List[Dict[str, Any]],
     chain: str = PRIMARY_CHAIN,
+    *,
+    include_dust: bool = False,
 ) -> List[str]:
     """
     Given wallet holdings, generate tradeable pair symbols.
@@ -426,7 +431,12 @@ def generate_pairs_from_holdings(
         sym = h["symbol"].upper()
         usd = h.get("usd", 0.0)
 
-        if usd < MIN_HOLDING_USD:
+        # Any nonzero holding — dust included — signals holder interest and
+        # deserves a live stream; the USD floor only gates trading lists.
+        if include_dust:
+            if float(h.get("quantity", 0.0) or 0.0) <= 0.0 and usd <= 0.0:
+                continue
+        elif usd < MIN_HOLDING_USD:
             continue
 
         if sym in STABLE_SYMBOLS:
@@ -472,7 +482,7 @@ def download_ohlcv_for_pairs(
     results = {}
     existing_files = {f.stem.split("_", 1)[-1] for f in data_dir.glob("*.json")} if data_dir.exists() else set()
 
-    for pair in pairs:
+    for index, pair in enumerate(pairs, start=1):
         if pair in existing_files:
             results[pair] = "exists"
             continue
@@ -480,7 +490,7 @@ def download_ohlcv_for_pairs(
         try:
             candles = download_pair(pair, days_back=days_back)
             if candles:
-                save_ohlcv(candles, pair, chain=chain)
+                save_ohlcv(candles, pair, index, chain=chain)
                 results[pair] = f"downloaded:{len(candles)}"
                 log_message("wallet-bootstrap", f"OHLCV: {pair} -> {len(candles)} candles")
             else:
@@ -558,8 +568,15 @@ def core_pairs_for_chain(chain: str, *, max_pairs: int = 16) -> List[str]:
     return pairs
 
 
-def update_watchlists_from_pairs(pairs: List[str]) -> Dict[str, List[str]]:
-    """Update DB watchlists with auto-discovered pairs."""
+def update_watchlists_from_pairs(
+    pairs: List[str],
+    stream_extra: Optional[List[str]] = None,
+) -> Dict[str, List[str]]:
+    """Update DB watchlists with auto-discovered pairs.
+
+    ``stream_extra`` adds stream-only pairs (e.g. dust holdings) that should
+    be observed live without entering the ghost/live trading lists.
+    """
     from services.watchlists import load_watchlists, save_watchlists
 
     current = load_watchlists()
@@ -574,6 +591,10 @@ def update_watchlists_from_pairs(pairs: List[str]) -> Dict[str, List[str]]:
             stream.append(pair)
         if pair not in ghost:
             ghost.append(pair)
+
+    for pair in stream_extra or []:
+        if pair not in stream:
+            stream.append(pair)
 
     # Always-stream pairs: high-volume Base pairs that we already have
     # 3-year OHLCV history for (Coinbase delivers tick streams for
@@ -654,6 +675,13 @@ def auto_bootstrap(
         wallet_pairs = generate_pairs_from_holdings(holdings, chain=chain)
         log_message("wallet-bootstrap", f"generated {len(wallet_pairs)} pairs from {len(holdings)} holdings (${total_usd:.2f})")
 
+    # Dust-inclusive stream list: every held token, no USD floor — holder
+    # interest earns a live stream even when the position is too small to trade.
+    try:
+        dust_stream_pairs = generate_pairs_from_holdings(holdings, chain=chain, include_dust=True)
+    except Exception:
+        dust_stream_pairs = []
+
     # Step 2b: Persist wallet balances to DB so readiness gates can see them
     _persist_balances(wallet_info, chain=chain)
 
@@ -708,8 +736,8 @@ def auto_bootstrap(
     # gate that turns "watched pair" into "tradeable pair" in the brain.
     ohlcv_results = download_ohlcv_for_pairs(pairs, chain=chain, days_back=days_back)
 
-    # Step 5: Update watchlists
-    watchlists = update_watchlists_from_pairs(pairs)
+    # Step 5: Update watchlists (dust pairs stream-only)
+    watchlists = update_watchlists_from_pairs(pairs, stream_extra=dust_stream_pairs)
 
     elapsed = time.time() - t0
     summary = {

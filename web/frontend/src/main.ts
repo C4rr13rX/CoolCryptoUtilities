@@ -76,6 +76,7 @@ if (mountEl) {
     u53rxr080t: '/u53rxr080t',
     addressbook: '/addressbook',
     c0d3r: '/c0d3r',
+    'model-control': '/model-control',
     audiolab: '/audiolab',
     investigations: '/investigations',
     logs: '/logs',

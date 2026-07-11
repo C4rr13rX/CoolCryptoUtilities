@@ -575,14 +575,133 @@ export async function fetchC0d3rMessages(sessionId: number, params?: { limit?: n
   return data as { items: C0d3rMessage[]; count: number };
 }
 
-export async function runC0d3rPrompt(payload: {
+export interface C0d3rRunResult {
+  run_id?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  output: string;
+  model?: string;
+  error?: string;
+  session_id?: number;
+  progress?: {
+    phase?: string;
+    detail?: string;
+    elapsed_seconds?: number;
+    backend?: string;
+    model?: string;
+    requested_model?: string;
+  };
+}
+
+export async function queueC0d3rPrompt(payload: {
   prompt: string;
   research?: boolean;
   reset?: boolean;
   session_id?: number;
 }) {
-  const { data } = await api.post('/c0d3r/run/', payload, { timeout: 120000 });
-  return data as { output: string; model?: string; session_id?: number };
+  const { data } = await api.post('/c0d3r/run/', payload, { timeout: 0 });
+  return data as C0d3rRunResult;
+}
+
+export async function fetchC0d3rRun(runId: string) {
+  const { data } = await api.get(`/c0d3r/runs/${runId}/`, { timeout: 0 });
+  return data as C0d3rRunResult;
+}
+
+export async function stopC0d3rRun(runId: string) {
+  const { data } = await api.post(`/c0d3r/runs/${runId}/`, {}, { timeout: 0 });
+  return data as C0d3rRunResult & { stopped?: boolean };
+}
+
+export async function runC0d3rPrompt(
+  payload: { prompt: string; research?: boolean; reset?: boolean; session_id?: number },
+  onStatus?: (run: C0d3rRunResult) => void,
+) {
+  let result = await queueC0d3rPrompt(payload);
+  onStatus?.(result);
+  if (!result.run_id || result.status === 'completed') return result;
+  // C0d3rV2 tasks are intentionally unbounded. Keep showing live state until
+  // the agent completes, fails, or the operator presses Stop.
+  while (true) {
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    try {
+      result = await fetchC0d3rRun(result.run_id);
+    } catch (error: any) {
+      // Status polling is observational. A temporary transport/database stall
+      // must not terminate the agent task or replace its progress with a
+      // misleading timeout failure.
+      if (!error?.response || Number(error.response.status) >= 500) {
+        onStatus?.({
+          ...result,
+          status: 'running',
+          progress: {
+            ...(result.progress || {}),
+            detail: 'C0d3rV2 is still working; waiting for the next status update',
+          },
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        continue;
+      }
+      throw error;
+    }
+    onStatus?.(result);
+    if (result.status === 'completed') return result;
+    if (result.status === 'cancelled') return result;
+    if (result.status === 'failed') {
+      throw new Error(result.error || `C0d3r run ${result.status}`);
+    }
+  }
+}
+
+export interface ModelControlCredential {
+  name: string;
+  label: string;
+  description: string;
+  is_secret: boolean;
+  configured: boolean;
+  source: 'vault' | 'environment' | 'none';
+}
+
+export interface ModelControlPayload {
+  config: { backend: string; model: string; atf_models: string[] };
+  backends: { id: string; label: string; description: string }[];
+  credentials: ModelControlCredential[];
+  providers: {
+    name: string;
+    configured: boolean;
+    models: { id: string; best_at: string; configured: boolean; selected: boolean }[];
+  }[];
+  corrections: {
+    id: number;
+    created_at: number;
+    session: string;
+    provider: string;
+    model: string;
+    classification: string;
+    is_hallucination: boolean;
+    trigger: string;
+    correction: string;
+    resolved: boolean;
+  }[];
+}
+
+export async function fetchModelControl() {
+  const { data } = await api.get('/model-control/');
+  return data as ModelControlPayload;
+}
+
+export async function saveModelControl(payload: { backend: string; model: string; atf_models: string[] }) {
+  const { data } = await api.post('/model-control/config/', payload);
+  return data;
+}
+
+export async function saveModelCredential(name: string, value: string) {
+  const { data } = await api.post(`/model-control/credentials/${encodeURIComponent(name)}/`, { value });
+  return data;
+}
+
+export async function deleteModelCredential(name: string) {
+  const { data } = await api.delete(`/model-control/credentials/${encodeURIComponent(name)}/`);
+  return data;
 }
 
 export async function fetchIntegrations() {

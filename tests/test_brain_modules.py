@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 
 import numpy as np
+import pytest
 
 from trading.brain.arb_cell import VolatilityArbCell
 from trading.brain.event_engine import EventEngine, ReflexRule
@@ -51,7 +52,34 @@ def test_multi_resolution_swarm_vote_and_learn() -> None:
     realized = {"fast": 0.01, "slow": 0.02}
     pre_total = swarm.stats["fast"]["total"]
     swarm.learn(price_windows, sentiment_windows, realized)
-    assert swarm.stats["fast"]["total"] == pre_total + 1.0
+    # learn() maintains EMA-smoothed stats (alpha=0.05), not raw counts
+    assert swarm.stats["fast"]["total"] == pytest.approx(0.95 * pre_total + 0.05)
+
+
+def test_multi_resolution_swarm_persistence_round_trip() -> None:
+    horizons = [("fast", 5), ("slow", 10)]
+    source = MultiResolutionSwarm(horizons)
+    prices = np.linspace(100.0, 102.0, 10, dtype=np.float64)
+    sentiments = np.linspace(-0.2, 0.4, 10, dtype=np.float64)
+    for _ in range(10):
+        source.learn(
+            {"fast": prices[-5:], "slow": prices},
+            {"fast": sentiments[-5:], "slow": sentiments},
+            {"fast": 0.01, "slow": 0.02},
+        )
+    payload = source.to_dict()
+    import json
+    json.dumps(payload)  # must serialize for the db state blob
+
+    restored = MultiResolutionSwarm(horizons)
+    assert restored.from_dict(payload)
+    for label in ("fast", "slow"):
+        assert np.allclose(restored.cells[label].w, source.cells[label].w)
+        assert restored.cells[label].bias == pytest.approx(source.cells[label].bias)
+        assert restored.stats[label]["correct"] == pytest.approx(source.stats[label]["correct"])
+
+    # corrupted payloads must not blow up or partially load garbage
+    assert not MultiResolutionSwarm(horizons).from_dict({"cells": {"fast": {"w": [1.0]}}})
 
 
 def test_multi_resolution_swarm_weights_normalised() -> None:

@@ -66,24 +66,36 @@ function Wait-Port($port, $name, $maxSeconds = 60) {
 }
 
 # -- 1. Brain substrate ----------------------------------------------------
+#
+# Non-blocking by design: nothing in the trading path gates on the brain
+# (it's a supplemental confidence signal), so we NEVER hold up the panel or
+# production waiting for it. The node is launched via start_node.ps1 -- the
+# single source of truth for its args (api --addr) and env (identity pools,
+# RAM politeness floor, auto-checkpoint). Launching the bare binary the old
+# way started a process that never bound :8090, so the previous 300 s
+# Wait-Port always timed out -- that was the "gets stuck" hang.
 
 Write-Host "[1/4] Brain substrate"
+$brainStarter = "$brainProject\start_node.ps1"
 $brainProc = Find-Process "w1z4rd_node"
 if ($brainProc) {
     $rssGb = [math]::Round($brainProc.WorkingSet64 / 1GB, 2)
     Write-Host "  already running -- pid=$($brainProc.Id) RSS=${rssGb}GB"
-} elseif (Test-Path $brainBin) {
-    Write-Host "  starting..."
-    $env:W1Z4RDV1510N_DATA_DIR = $brainDataDir
-    Start-Process -FilePath $brainBin `
+} elseif (Test-Path $brainStarter) {
+    Write-Host "  starting via start_node.ps1 (background, non-blocking)..."
+    Start-Process -FilePath "powershell.exe" `
+        -ArgumentList "-ExecutionPolicy","Bypass","-WindowStyle","Hidden","-File",$brainStarter `
         -WorkingDirectory $brainProject `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput "$brainProject\brain_stdout.log" `
-        -RedirectStandardError  "$brainProject\brain_stderr.log"
-    # Brain takes minutes to load a 10 GB snapshot; just probe /health.
-    Wait-Port $brainPort "brain" 300 | Out-Null
+        -WindowStyle Hidden
+    # Courtesy probe only -- do NOT block the stack on it. If it's slow to
+    # bind, trading proceeds anyway and the brain joins when ready.
+    if (Wait-Port $brainPort "brain" 15) {
+        Write-Host "  brain online on :$brainPort"
+    } else {
+        Write-Host "  brain still coming up -- continuing without waiting (trading does not depend on it)"
+    }
 } else {
-    Write-Host "  WARN: brain binary not found at $brainBin (skipping)"
+    Write-Host "  WARN: start_node.ps1 not found at $brainStarter (skipping brain)"
 }
 
 # -- 2. R3V3N!R web panel (waitress) ---------------------------------------

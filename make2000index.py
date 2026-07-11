@@ -267,20 +267,20 @@ def _is_likely_scam(entry: dict) -> bool:
 
 
 def _get_wallet_symbols(chain: str) -> List[str]:
-    """Read token symbols from the wallet's on-chain balances in the database."""
-    wallet_symbols: List[str] = []
+    """Meaningful (non-dust, non-stable) wallet holdings for *chain*.
+
+    Delegates to services.wallet_focus — the single source of truth for
+    "what the user holds and cares about". Note: this previously did
+    `from db import DB` (a class that does not exist); the ImportError was
+    swallowed, so wallet seeding silently returned [] for the life of the
+    project. wallet_focus uses the correct get_db() path.
+    """
     try:
-        from db import DB
-        db = DB()
-        # Get all wallets from secure vault
-        rows = db.fetch_balances_flat(chains=[chain], include_zero=False)
-        for row in rows:
-            sym = (row["symbol"] if isinstance(row, dict) else row[5] or "").upper().strip()
-            if sym and sym not in wallet_symbols and len(sym) <= 10:
-                wallet_symbols.append(sym)
+        from services.wallet_focus import held_symbols
+        return held_symbols(chain=chain)
     except Exception as exc:
         print(f"[INFO] Could not read wallet balances for seeding: {exc}")
-    return wallet_symbols
+        return []
 
 
 def build_index_from_dexscreener(chain: str) -> dict:

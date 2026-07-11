@@ -45,18 +45,22 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _WIZARD_ENDPOINT = os.getenv("WIZARD_NODE_URL", "http://localhost:8090")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Throttle: don't push more than N texts per batch to the neuro endpoint
 _TRAIN_BATCH_MAX = int(os.getenv("WIZARD_TRAIN_BATCH_MAX", "64"))
 # TTL for probing the node; skip training if offline
 _PROBE_CACHE_TTL = 60.0
 
-# Standard pool ids (must match brain_api.rs constants).
-_POOL_TEXT   = 1
-_POOL_ACTION = 4
+# Market brain pool ids. They are configurable so another deployment can use
+# the same Django integration without changing source.
+_POOL_TEXT = int(os.getenv("WIZARD_MARKET_INPUT_POOL", "1"))
+_POOL_NEWS = int(os.getenv("WIZARD_MARKET_NEWS_POOL", "2"))
+_POOL_ACTION = int(os.getenv("WIZARD_MARKET_OUTCOME_POOL", "3"))
 
 
 def _brain_mode() -> bool:
@@ -84,6 +88,7 @@ class WizardTrainer:
         self._regime_lock = threading.Lock()
         self._regime_cache: Dict[str, "BrainSignal"] = {}
         self._regime_inflight: Dict[str, float] = {}  # symbol -> launch ts
+        self._latest_candles: Dict[str, Dict[str, float]] = {}
         try:
             self._regime_ttl = float(os.getenv("WIZARD_REGIME_TTL_SEC", "20"))
         except Exception:
@@ -92,6 +97,10 @@ class WizardTrainer:
             self._regime_timeout = float(os.getenv("WIZARD_REGIME_TIMEOUT_SEC", "1.5"))
         except Exception:
             self._regime_timeout = 1.5
+        # Capability + observability: set when the node 404s the learning
+        # endpoint; last_push_stats feeds health displays.
+        self._consolidate_unsupported_ts: float = 0.0
+        self.last_push_stats: Dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Node health
@@ -112,30 +121,107 @@ class WizardTrainer:
         self._probe_ts = now
         return bool(self._online)
 
+    def status(self) -> Dict[str, Any]:
+        """Feeder health for readiness reports / dashboards."""
+        return {
+            "endpoint": self._endpoint,
+            "online": bool(self._online),
+            "consolidate_supported": not bool(self._consolidate_unsupported_ts),
+            "last_push": dict(self.last_push_stats),
+        }
+
     # ------------------------------------------------------------------
     # OHLCV → text corpus
     # ------------------------------------------------------------------
 
-    def _format_ohlcv_sample(
-        self,
-        symbol: str,
-        ts: float,
-        price: float,
-        volume: float,
-        trend: str,
-        vol_regime: str,
-    ) -> str:
-        """Convert a single OHLCV point into a Hebbian-trainable sentence."""
+    # Bucket edges for quantizing continuous values into RECURRING tokens.
+    # This is the fix for unbounded brain growth: the old frame embedded a
+    # unique timestamp and full-precision OHLCV, so every frame was a new
+    # byte string -> new atoms -> new concepts, forever (the brain never saw
+    # a pattern recur, so it could never consolidate/plateau). Quantized
+    # tokens mean the same market SITUATION emits the same bytes, atoms
+    # recur, concept formation saturates, and RAM bounds itself by design.
+    _RET_EDGES = (-.02, -.01, -.005, -.002, -.0008, .0008, .002, .005, .01, .02)
+    _RANGE_EDGES = (.001, .002, .004, .007, .012, .02, .04)
+    _POS_EDGES = (.12, .25, .38, .5, .62, .75, .88)
+
+    @staticmethod
+    def _outcome_token(ret: float) -> str:
+        """Byte-disjoint outcome label (shares no substring across classes,
+        so the substrate can't confuse loss for loss_big on decode)."""
+        if ret >= 0.02:
+            return "surge"
+        if ret >= 0.002:
+            return "gain"
+        if ret >= -0.002:
+            return "steady"
+        if ret >= -0.02:
+            return "drop"
+        return "plunge"
+
+    @staticmethod
+    def _bucket(value: float, edges: Tuple[float, ...]) -> int:
+        lo = 0
+        for e in edges:
+            if value < e:
+                return lo
+            lo += 1
+        return lo
+
+    def _format_ohlcv_sample(self, symbol: str, candle: Dict[str, float],
+                             trend: str, vol_regime: str) -> str:
+        """Quantized, RECURRING feature frame for one candle.
+
+        No timestamp and no raw prices — only bucketed intra-bar shape plus
+        the caller's multi-bar trend/volatility labels. The identical format
+        is used for training (push) and inference (query) so the brain
+        matches situations. See _RET_EDGES for why quantization matters.
+        """
         base = symbol.split("/")[0].split("_")[0].upper()
         quote = symbol.split("/")[-1].split("_")[0].upper() if "/" in symbol else "USD"
-        price_fmt = f"{price:.6g}"
-        vol_fmt = f"{volume:.4g}"
+        o = float(candle.get("open") or 0.0)
+        h = float(candle.get("high") or 0.0)
+        low = float(candle.get("low") or 0.0)
+        c = float(candle.get("close") or 0.0)
+        denom = o if o > 0 else (c or 1e-12)
+        bar_ret = (c - o) / denom
+        bar_range = (h - low) / denom if denom else 0.0
+        pos = ((c - low) / (h - low)) if h > low else 0.5
         return (
-            f"{base} price {price_fmt} {quote}. "
-            f"Volume {vol_fmt}. "
-            f"Trend {trend}. "
-            f"Volatility {vol_regime}."
+            f"market={base}/{quote} "
+            f"barret=b{self._bucket(bar_ret, self._RET_EDGES)} "
+            f"range=b{self._bucket(bar_range, self._RANGE_EDGES)} "
+            f"pos=b{self._bucket(pos, self._POS_EDGES)} "
+            f"trend={trend.replace(' ', '_')} "
+            f"volatility={vol_regime}"
         )
+
+    @staticmethod
+    def _normalise_candle(sample: Any) -> Optional[Dict[str, float]]:
+        try:
+            if isinstance(sample, dict):
+                close = float(sample.get("close") or sample.get("price") or 0)
+                return {
+                    "timestamp": float(sample.get("timestamp") or sample.get("ts") or 0),
+                    "open": float(sample.get("open") or close),
+                    "high": float(sample.get("high") or close),
+                    "low": float(sample.get("low") or close),
+                    "close": close,
+                    "volume": float(sample.get("net_volume") or sample.get("volume") or 0),
+                } if close > 0 else None
+            values = list(sample)
+            if len(values) >= 6:
+                ts, opn, high, low, close, volume = values[:6]
+            elif len(values) >= 3:
+                ts, close, volume = values[:3]
+                opn = high = low = close
+            else:
+                return None
+            result = {"timestamp": float(ts), "open": float(opn), "high": float(high),
+                      "low": float(low), "close": float(close), "volume": float(volume)}
+            return result if result["close"] > 0 else None
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     def _classify_trend(self, prices: Sequence[float]) -> str:
         if len(prices) < 3:
@@ -167,7 +253,7 @@ class WizardTrainer:
     def push_ohlcv_batch(
         self,
         symbol: str,
-        samples: List[Tuple[float, float, float]],  # (ts, price, volume)
+        samples: Sequence[Any],
         *,
         max_items: int = _TRAIN_BATCH_MAX,
     ) -> int:
@@ -185,20 +271,28 @@ class WizardTrainer:
             step = len(samples) / max_items
             samples = [samples[int(i * step)] for i in range(max_items)]
 
-        prices = [float(s[1]) for s in samples if float(s[1]) > 0]
-        trend = self._classify_trend(prices) if prices else "unknown"
-        vol_regime = self._classify_vol(prices) if prices else "unknown"
-
-        texts = []
-        for ts, price, volume in samples:
-            if price <= 0:
-                continue
-            texts.append(self._format_ohlcv_sample(symbol, ts, float(price), float(volume), trend, vol_regime))
-
-        if not texts:
+        candles = [c for c in (self._normalise_candle(s) for s in samples) if c]
+        if len(candles) < 2:
             return 0
-
-        return self._push_texts(texts)
+        pairs: List[Tuple[str, str]] = []
+        for index, (current, future) in enumerate(zip(candles, candles[1:])):
+            history = [c["close"] for c in candles[max(0, index - 7):index + 1]]
+            trend = self._classify_trend(history)
+            vol_regime = self._classify_vol(history)
+            ret = (future["close"] - current["close"]) / max(abs(current["close"]), 1e-12)
+            feature = self._format_ohlcv_sample(symbol, current, trend, vol_regime)
+            # Quantized, byte-disjoint outcome (surge/gain/steady/drop/plunge)
+            # — the same bounded-token scheme the trading path uses. The old
+            # `future_return={ret:.9g} future_close={...:.9g}` embedded unique
+            # floats, so every outcome minted new atoms too (double growth).
+            outcome = f"outcome {self._outcome_token(ret)}"
+            pairs.append((feature, outcome))
+        latest_history = [c["close"] for c in candles[-8:]]
+        self._latest_candles[symbol] = {
+            **candles[-1], "trend": self._classify_trend(latest_history),
+            "volatility": self._classify_vol(latest_history),
+        }
+        return self._consolidate_pairs(pairs)
 
     def push_news_batch(
         self,
@@ -288,8 +382,14 @@ class WizardTrainer:
         """
         if not self.is_online():
             return None
-        base = symbol.split("/")[0].upper()
-        query = f"{base} market regime price {current_price:.6g}"
+        candle = dict(self._latest_candles.get(symbol) or {
+            "timestamp": time.time(), "open": current_price, "high": current_price,
+            "low": current_price, "close": current_price, "volume": 0.0,
+        })
+        candle["close"] = float(current_price)
+        query = self._format_ohlcv_sample(
+            symbol, candle, str(candle.get("trend", "unknown")),
+            str(candle.get("volatility", "unknown")))
 
         if _brain_mode():
             return self._query_regime_brain(query, timeout)
@@ -352,35 +452,19 @@ class WizardTrainer:
         }
 
     def _query_regime_brain(self, query: str, timeout: float) -> Optional[str]:
-        """Brain substrate route: observe the query into POOL_TEXT,
-        then POST /brain/integrate to get the trained regime
-        text decoded from POOL_ACTION.  The answer comes back
-        base64url-encoded in the canonical /brain/integrate
-        response shape (see brain_api.rs::h_integrate)."""
+        """Read-only market prediction; the query is never learned."""
         try:
             frame = base64.urlsafe_b64encode(
                 query.encode("utf-8")
             ).decode("ascii").rstrip("=")
-            observe_url = f"{self._endpoint}/brain/observe"
-            observe_payload = json.dumps({
-                "pool_id": _POOL_TEXT,
-                "frame":   frame,
-            }).encode("utf-8")
-            req = urllib.request.Request(
-                observe_url, data=observe_payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                resp.read()
-
-            integrate_url = f"{self._endpoint}/brain/integrate"
-            integrate_payload = json.dumps({
+            predict_url = f"{self._endpoint}/brain/predict"
+            predict_payload = json.dumps({
                 "query_pool":  _POOL_TEXT,
                 "target_pool": _POOL_ACTION,
+                "frame": frame,
             }).encode("utf-8")
             req = urllib.request.Request(
-                integrate_url, data=integrate_payload,
+                predict_url, data=predict_payload,
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
@@ -397,6 +481,85 @@ class WizardTrainer:
                 return None
         except Exception:
             return None
+
+    def _consolidate_pairs(self, pairs: Sequence[Tuple[str, str]]) -> int:
+        """Persist only feature frames paired with observed future outcomes.
+
+        Hardened after the 2026-07 incident where 4952/5000 pushes silently
+        failed: the running node was an old build without /brain/consolidate
+        (404) and a single transport error aborted the whole batch. Now:
+          - a 404 marks the capability missing, logs once, and stops the
+            batch (retried after the probe TTL, in case the node upgrades);
+          - transport errors reset the keep-alive connection and continue;
+          - failure stats are kept on self.last_push_stats for dashboards.
+        """
+        from urllib.parse import urlparse
+        from http.client import HTTPConnection
+        u = urlparse(self._endpoint)
+        host, port = u.hostname or "127.0.0.1", u.port or 8090
+        now = time.time()
+        if self._consolidate_unsupported_ts and now - self._consolidate_unsupported_ts < _PROBE_CACHE_TTL * 5:
+            self.last_push_stats = {"pushed": 0, "failed": len(pairs), "reason": "endpoint_unsupported"}
+            return 0
+        conn = HTTPConnection(host, port, timeout=8)
+        pushed = 0
+        failed = 0
+        reason = ""
+        try:
+            for feature, outcome in pairs:
+                enc = lambda text: base64.urlsafe_b64encode(text.encode()).decode().rstrip("=")
+                payload = json.dumps({
+                    "input_pool": _POOL_TEXT, "input_frame": enc(feature),
+                    "outcome_pool": _POOL_ACTION, "outcome_frame": enc(outcome),
+                }).encode()
+                try:
+                    conn.request("POST", "/brain/consolidate", payload,
+                                 {"Content-Type": "application/json"})
+                    response = conn.getresponse()
+                    raw = response.read().decode("utf-8", errors="replace") or "{}"
+                except Exception:
+                    # transport hiccup: reset the keep-alive socket, keep going
+                    failed += 1
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = HTTPConnection(host, port, timeout=8)
+                    continue
+                if response.status == 404:
+                    # Node build without the learning surface — pushing more
+                    # is pointless until the node is upgraded/restarted.
+                    self._consolidate_unsupported_ts = now
+                    failed += len(pairs) - pushed - failed
+                    reason = "endpoint_unsupported"
+                    print(
+                        "[wizard-trainer] node at %s:%s lacks /brain/consolidate "
+                        "(404) — brain learning disabled until the node is rebuilt/restarted"
+                        % (host, port)
+                    )
+                    break
+                try:
+                    body = json.loads(raw)
+                except Exception:
+                    body = {}
+                if body.get("backpressure"):
+                    # The node's machine is below its politeness RAM floor —
+                    # stop the batch; the remaining pairs simply wait for the
+                    # next feeder cycle. Not a failure: the brain is asking
+                    # the data stream to slow down.
+                    reason = "backpressure"
+                    break
+                if response.status == 200 and body.get("consolidated") is True:
+                    pushed += 1
+                else:
+                    failed += 1
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        self.last_push_stats = {"pushed": pushed, "failed": failed, "reason": reason or ("ok" if pushed else "unknown")}
+        return pushed
 
     def _query_regime_legacy(self, query: str, timeout: float) -> Optional[str]:
         """Legacy /neuro/query path on the crates/core NeuroRuntime
@@ -432,7 +595,15 @@ class WizardTrainer:
         return self._push_texts_legacy(texts)
 
     def _push_texts_brain(self, texts: List[str]) -> int:
-        """Route each text into the brain substrate as one observe
+        """Unlabelled text is intentionally not learned in brain mode.
+
+        Legacy callers may still submit text, but the prediction/consolidation
+        architecture requires an external outcome before a Hebbian tick.
+        """
+        return 0
+
+    def _push_texts_brain_unsafe_legacy(self, texts: List[str]) -> int:
+        """Deprecated observe/tick implementation retained for migration.
         cycle: observe → tick.  Uses a single keep-alive http.client
         connection — urllib was creating a fresh TCP connection per
         call on Windows, which made each push ~4.5 s even though the
@@ -571,6 +742,7 @@ _BRAIN_FEEDER_STATE: Dict[str, Any] = {
 # eventually sees the full corpus, not just the tail forever.  Stored in
 # _BRAIN_FEEDER_STATE["cursors"] = { (chain, sym): rows_streamed }.
 _BRAIN_FEEDER_STATE["cursors"] = {}
+_BRAIN_FEEDER_STATE["file_offset"] = 0
 
 
 def _build_training_package(
@@ -581,7 +753,7 @@ def _build_training_package(
     cursor: int,
     window_candles: int,
     news_lookback_hours: float,
-) -> Tuple[List[Tuple[float, float, float]], List[Dict[str, Any]], int]:
+) -> Tuple[List[Dict[str, float]], List[Dict[str, Any]], int]:
     """Construct a (ohlcv_samples, news_items, next_cursor) bundle.
 
     The user's "training package" concept: the brain should see a
@@ -598,14 +770,12 @@ def _build_training_package(
     end_idx = n - cursor
     start_idx = max(0, end_idx - window_candles)
     window = rows[start_idx:end_idx]
-    samples: List[Tuple[float, float, float]] = []
+    samples: List[Dict[str, float]] = []
     for r in window:
         try:
-            ts = float(r.get("timestamp", 0))
-            p = float(r.get("close", 0) or r.get("price", 0))
-            v = float(r.get("net_volume", 0) or r.get("volume", 0))
-            if p > 0:
-                samples.append((ts, p, v))
+            candle = WizardTrainer._normalise_candle(r)
+            if candle:
+                samples.append(candle)
         except Exception:
             continue
     # News for the same time window — READ from the cache only.  News
@@ -625,7 +795,7 @@ def _build_training_package(
             from datetime import datetime, timezone, timedelta
             from services.news_lab import collect_news_for_terms
             if samples:
-                window_end = datetime.fromtimestamp(samples[-1][0], tz=timezone.utc)
+                window_end = datetime.fromtimestamp(samples[-1]["timestamp"], tz=timezone.utc)
                 window_start = window_end - timedelta(hours=news_lookback_hours)
                 result = collect_news_for_terms(
                     tokens=[key], start=window_start, end=window_end)
@@ -657,12 +827,13 @@ def _brain_feeder_loop(
     """
     import json as _j
     from pathlib import Path as _P
-    root = _P(data_root) if data_root else _P("data") / "historical_ohlcv"
+    root = _P(data_root) if data_root else _REPO_ROOT / "data" / "historical_ohlcv"
     try:
         news_per_window = int(os.getenv("WIZARD_BRAIN_FEEDER_NEWS_PER_WINDOW", "16"))
         news_lookback_h = float(os.getenv("WIZARD_BRAIN_FEEDER_NEWS_LOOKBACK_H", "72"))
+        max_packages = max(1, int(os.getenv("WIZARD_BRAIN_FEEDER_MAX_PACKAGES", "2")))
     except Exception:
-        news_per_window, news_lookback_h = 16, 72.0
+        news_per_window, news_lookback_h, max_packages = 16, 72.0, 2
     while not _BRAIN_FEEDER_STATE.get("stop"):
         try:
             trainer = get_trainer()
@@ -671,11 +842,15 @@ def _brain_feeder_loop(
                 continue
             total_pushed = 0
             cursors = _BRAIN_FEEDER_STATE["cursors"]
-            for chain in chains:
-                cdir = root / chain
-                if not cdir.exists():
-                    continue
-                for jf in cdir.glob("*.json"):
+            files = [(chain, jf) for chain in chains
+                     for jf in sorted((root / chain).glob("*.json"))
+                     if (root / chain).exists()]
+            if files:
+                offset = int(_BRAIN_FEEDER_STATE.get("file_offset", 0)) % len(files)
+                selected = [files[(offset + i) % len(files)]
+                            for i in range(min(max_packages, len(files)))]
+                _BRAIN_FEEDER_STATE["file_offset"] = (offset + len(selected)) % len(files)
+                for chain, jf in selected:
                     try:
                         sym = jf.stem.split("_", 1)[-1]
                         with jf.open("r", encoding="utf-8") as fh:
@@ -685,11 +860,9 @@ def _brain_feeder_loop(
                         key = (chain, sym)
                         cursor = int(cursors.get(key, 0))
                         samples, news_items, next_cursor = _build_training_package(
-                            chain=chain, sym=sym, rows=rows,
-                            cursor=cursor,
+                            chain=chain, sym=sym, rows=rows, cursor=cursor,
                             window_candles=tail_candles,
-                            news_lookback_hours=news_lookback_h,
-                        )
+                            news_lookback_hours=news_lookback_h)
                         cursors[key] = next_cursor
                         if samples:
                             total_pushed += trainer.push_ohlcv_batch(
@@ -725,6 +898,7 @@ def start_brain_feeder(
       WIZARD_BRAIN_FEEDER_ENABLED  (default 1)
       WIZARD_BRAIN_FEEDER_INTERVAL (default 120 sec)
       WIZARD_BRAIN_FEEDER_TAIL     (default 16 candles per file per cycle)
+      WIZARD_BRAIN_FEEDER_MAX_PACKAGES (default 2 files per cycle)
     """
     if os.getenv("WIZARD_BRAIN_FEEDER_ENABLED", "1").lower() in {"0", "false", "no"}:
         return False
@@ -818,7 +992,7 @@ def start_news_worker(
         except Exception:
             lookback_hours = 168.0
     from pathlib import Path as _P
-    root = _P(data_root) if data_root else _P("data") / "historical_ohlcv"
+    root = _P(data_root) if data_root else _REPO_ROOT / "data" / "historical_ohlcv"
 
     def _symbols():
         seen = set()
@@ -890,7 +1064,14 @@ def push_live_tick(
         trainer = get_trainer()
         if not trainer.is_online():
             return False
-        trainer.push_ohlcv_batch(symbol, [(now_ts, float(price), float(volume))], max_items=1)
+        buffer = _LIVE_TICK_STATE["buffers"].setdefault(symbol, [])
+        buffer.append((now_ts, float(price), float(volume)))
+        if len(buffer) > 2:
+            del buffer[:-2]
+        if len(buffer) < 2:
+            return False
+        if trainer.push_ohlcv_batch(symbol, list(buffer), max_items=2) < 1:
+            return False
         _LIVE_TICK_STATE["last_pushed_ts"][symbol] = now_ts
         return True
     except Exception:
@@ -943,9 +1124,9 @@ class BrainSignal:
         }
 
 
-_BULL_TOKENS = {"bull", "bullish", "uptrend", "rally", "long", "buy", "breakout",
+_BULL_TOKENS = {"bull", "bullish", "uptrend", "future_direction=up", "rally", "long", "buy", "breakout",
                 "rising", "strong", "accumulat", "support"}
-_BEAR_TOKENS = {"bear", "bearish", "downtrend", "sell", "short", "breakdown",
+_BEAR_TOKENS = {"bear", "bearish", "downtrend", "future_direction=down", "sell", "short", "breakdown",
                 "falling", "weak", "distribut", "resistance", "reject"}
 
 
@@ -1031,16 +1212,4 @@ def get_trainer() -> WizardTrainer:
     global _default_trainer
     if _default_trainer is None:
         _default_trainer = WizardTrainer()
-        # Auto-start the OHLCV→brain feeder so the brain keeps learning
-        # even when the TF training cycle is broken (DLL OOM / model
-        # build failure).  Idempotent.  Disable with
-        # WIZARD_BRAIN_FEEDER_ENABLED=0 if it ever conflicts.
-        try:
-            start_brain_feeder(chains=("base", "arbitrum", "optimism", "polygon"))
-        except Exception:
-            pass
-        try:
-            start_news_worker(chains=("base",))
-        except Exception:
-            pass
     return _default_trainer

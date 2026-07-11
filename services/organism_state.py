@@ -166,6 +166,11 @@ def _prepare_positions(raw_positions: Dict[str, Dict[str, Any]]) -> Dict[str, Di
             "route": payload.get("route"),
             "target_price": _safe_float(payload.get("target_price")),
             "trade_id": payload.get("trade_id"),
+            # Sell-high expectation: which strategy opened this and on what
+            # timeframe — surfaced on the bus scheduler as e.g. 1H/1D/1W.
+            "horizon": payload.get("horizon"),
+            "strategy_id": payload.get("strategy_id"),
+            "confidence": _safe_float(payload.get("confidence")),
             "brain_snapshot": _sanitize(payload.get("brain_snapshot")),
         }
         if "fingerprint" in payload:

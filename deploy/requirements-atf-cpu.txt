@@ -1,0 +1,8 @@
+# CPU-only, permissively licensed hallucination-reduction helpers.
+fastembed>=0.7,<0.8
+onnxruntime>=1.22,<2
+jsonschema>=4.23,<5
+networkx>=3.4,<4
+z3-solver>=4.13,<5
+scipy>=1.15,<2
+scikit-learn>=1.6,<2

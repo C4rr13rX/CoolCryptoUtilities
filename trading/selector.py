@@ -465,14 +465,31 @@ def select_pairs(
         picked: List[PairCandidate] = []
         seen_tokens: set[str] = set()
 
-        def try_add_candidate(symbol: str) -> None:
+        def _ensure_candidate(symbol: str) -> None:
+            symbol_u = symbol.upper()
+            if symbol_u not in candidate_map:
+                tokens = [part.strip().upper() for part in symbol_u.split("-") if part.strip()]
+                candidate_map[symbol_u] = PairCandidate(
+                    symbol=symbol_u,
+                    tokens=tokens or [symbol_u],
+                    avg_volume=0.0,
+                    volatility=0.0,
+                    score=0.0,
+                    datapath=Path("."),
+                )
+
+        def try_add_candidate(symbol: str, *, priority: bool = False) -> None:
             cand = candidate_map.get(symbol.upper())
             if not cand:
                 return
             token_key = (tuple(sorted(cand.tokens)), chain.lower())
             if token_key in seen_tokens:
                 return
-            if _vol_spread_score(cand) < _PAIR_MIN_VOL_SCORE:
+            # Priority candidates (manual watchlist, wallet holdings) have no
+            # historical volume yet, so the vol-score gate would reject every
+            # one of them; safety still comes from the live-price probe,
+            # streaming-feed check and OHLCV bootstrap below.
+            if not priority and _vol_spread_score(cand) < _PAIR_MIN_VOL_SCORE:
                 return
             if not _has_live_price(cand.symbol, chain=chain):
                 return
@@ -486,7 +503,32 @@ def select_pairs(
         for cand in manual_candidates:
             if len(picked) >= limit:
                 break
-            try_add_candidate(cand.symbol)
+            try_add_candidate(cand.symbol, priority=True)
+
+        # Wallet holdings (any nonzero balance, dust included) signal the
+        # holder's interest — they stream ahead of generic market pairs, with
+        # a couple of slots kept free so market discovery is never starved.
+        held_symbols: set[str] = set()
+        try:
+            portfolio = PortfolioState()
+            portfolio.refresh(force=True)
+            held_symbols = {sym for (_, sym) in portfolio.holdings.keys()}
+        except Exception:
+            held_symbols = set()
+
+        held_slot_cap = max(1, limit - 2) if limit > 2 else limit
+        held_added_before = len(picked)
+        for held in sorted(held_symbols):
+            if len(picked) >= min(limit, held_added_before + held_slot_cap):
+                break
+            if held in STABLE_TOKENS:
+                continue
+            for stable in ("USDC", "USDT", "DAI"):
+                if len(picked) >= min(limit, held_added_before + held_slot_cap):
+                    break
+                for pair_symbol in (f"{held}-{stable}", f"{stable}-{held}"):
+                    _ensure_candidate(pair_symbol)
+                    try_add_candidate(pair_symbol, priority=True)
 
         for symbol in DEFAULT_LIVE_PAIRS:
             if len(picked) >= limit:
@@ -496,36 +538,8 @@ def select_pairs(
         for symbol in _load_top_symbols(_PAIR_SCAN_VOLUME_LIMIT, chain=chain):
             if len(picked) >= limit:
                 break
-            if symbol.upper() not in candidate_map:
-                tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
-                candidate_map[symbol.upper()] = PairCandidate(
-                    symbol=symbol.upper(),
-                    tokens=tokens or [symbol.upper()],
-                    avg_volume=0.0,
-                    volatility=0.0,
-                    score=0.0,
-                    datapath=Path("."),
-                )
+            _ensure_candidate(symbol)
             try_add_candidate(symbol)
-
-        held_symbols: set[str] = set()
-        try:
-            portfolio = PortfolioState()
-            portfolio.refresh(force=True)
-            held_symbols = {sym for (_, sym) in portfolio.holdings.keys()}
-        except Exception:
-            held_symbols = set()
-
-        for held in held_symbols:
-            if len(picked) >= limit:
-                break
-            if held in STABLE_TOKENS:
-                continue
-            for stable in ("USDC", "USDT", "DAI"):
-                if len(picked) >= limit:
-                    break
-                try_add_candidate(f"{held}-{stable}")
-                try_add_candidate(f"{stable}-{held}")
 
         scanned = 0
         max_scan = max(limit * 30, limit + 5)
@@ -572,12 +586,33 @@ class GhostTradingSupervisor:
         *,
         db: Optional[TradingDatabase] = None,
         pipeline: Optional[TrainingPipeline] = None,
-        pair_limit: int = 6,
+        pair_limit: Optional[int] = None,
         stable_checkpoint_ratio: float = 0.15,
     ) -> None:
         self.db = db or get_db()
         self.pipeline = pipeline or TrainingPipeline(db=self.db)
-        self.pair_limit = pair_limit
+        # Base number of concurrent stream+bot pairs. Was hard-coded to 6,
+        # which capped the whole system at 6 streams no matter how big the
+        # watchlist. Env-driven now (GHOST_PAIR_LIMIT, default 14) so a
+        # capable box streams a real cross-section of the market + wallet;
+        # resolve_pair_limit() still throttles it down under RAM pressure.
+        if pair_limit is None:
+            try:
+                pair_limit = int(os.getenv("GHOST_PAIR_LIMIT", "14"))
+            except (TypeError, ValueError):
+                pair_limit = 14
+        self.pair_limit = max(1, pair_limit)
+        # Data-only stream coverage: the first pair_limit pairs get full
+        # trading bots; additional pairs up to GHOST_STREAM_TOTAL get
+        # lightweight data-only MarketDataStreams (WS -> market_stream, no
+        # per-tick bot pipeline). This gives broad market coverage for the
+        # dashboard + opportunity scanning at a fraction of the CPU of a full
+        # bot, so the box can watch 100+ pairs without choking the event loop.
+        try:
+            self.stream_total = int(os.getenv("GHOST_STREAM_TOTAL", "0"))
+        except (TypeError, ValueError):
+            self.stream_total = 0
+        self.data_streams: List["MarketDataStream"] = []
         self._effective_pair_limit = pair_limit
         self.stable_checkpoint_ratio = stable_checkpoint_ratio
         self.bots: List[TradingBot] = []
@@ -588,6 +623,16 @@ class GhostTradingSupervisor:
         if self.bots:
             return
         focus_assets, _ = self.pipeline.ghost_focus_assets()
+        atf_priority: List[str] = []
+        try:
+            from services.atf_static_strategy import latest_signals
+            atf_priority = [
+                str(sig.get("symbol") or "").upper()
+                for sig in latest_signals(float(os.getenv("ATF_STATIC_SIGNAL_MAX_AGE_SEC", "1800")))
+                if isinstance(sig, dict) and str(sig.get("symbol") or "").strip()
+            ]
+        except Exception:
+            atf_priority = []
         readiness = self.pipeline.live_readiness_report()
         transition_plan = self.pipeline.ghost_live_transition_plan()
         horizon_bias = {}
@@ -625,9 +670,11 @@ class GhostTradingSupervisor:
                 severity="info" if readiness.get("ready") else "warning",
                 details=readiness,
             )
-        pairs = select_pairs(limit=pair_limit)
+        # Pull enough candidates for the full-bot tier AND the data-only tier.
+        select_limit = max(pair_limit, self.stream_total)
+        pairs = select_pairs(limit=select_limit)
         prioritized: List[PairCandidate] = []
-        for symbol in focus_assets:
+        for symbol in list(dict.fromkeys(atf_priority + list(focus_assets or []))):
             tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
             if not tokens:
                 tokens = [symbol.upper()]
@@ -641,18 +688,30 @@ class GhostTradingSupervisor:
                     datapath=Path("."),
                 )
             )
-        ordered: List[PairCandidate] = []
+        # Dedup the combined candidate list, preserving priority order.
+        all_ordered: List[PairCandidate] = []
         seen: set[str] = set()
         for candidate in prioritized + pairs:
             symbol_u = candidate.symbol.upper()
             if symbol_u in seen:
                 continue
-            ordered.append(candidate)
+            all_ordered.append(candidate)
             seen.add(symbol_u)
-            if len(ordered) >= pair_limit:
-                break
-        if not ordered:
-            ordered = pairs[: pair_limit]
+        if not all_ordered:
+            all_ordered = list(pairs)
+        if atf_priority:
+            log_message(
+                "ghost-supervisor",
+                "prioritized ATF static pairs for build",
+                details={"pairs": atf_priority[:8]},
+            )
+        # First pair_limit -> full trading bots; the remainder up to
+        # stream_total -> data-only streams (coverage without bot CPU cost).
+        ordered = all_ordered[:pair_limit]
+        data_pairs = (
+            all_ordered[pair_limit:self.stream_total]
+            if self.stream_total > pair_limit else []
+        )
         for pair in ordered:
             stream = MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN)
             bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
@@ -665,6 +724,33 @@ class GhostTradingSupervisor:
                 bot.apply_transition_plan(transition_plan)
             self.bots.append(bot)
 
+        # Data-only stream tier: lightweight WS->market_stream feeds for broad
+        # coverage (dashboard + opportunity scanning) without a per-tick bot.
+        for pair in data_pairs:
+            try:
+                self.data_streams.append(
+                    MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN))
+            except Exception:
+                continue
+        if self.data_streams:
+            log_message(
+                "ghost-supervisor",
+                f"data-only streams: {len(self.data_streams)} (+ {len(self.bots)} trading bots)",
+                severity="info",
+            )
+
+        # Portfolio-level cross-token rotation: sell high on one pair, jump
+        # into the freshest buy-low candidate on any other streamed pair.
+        try:
+            from trading.rotation import PortfolioRotator
+            rotator = PortfolioRotator()
+            for bot in self.bots:
+                rotator.register_bot(bot)
+            self.rotator = rotator
+        except Exception as exc:
+            log_message("ghost-supervisor", f"rotator init failed: {exc}", severity="warning")
+            self.rotator = None
+
     async def start(self) -> None:
         if self._require_ready_before_stream:
             await self._await_readiness_gate()
@@ -675,17 +761,206 @@ class GhostTradingSupervisor:
             bot = TradingBot(db=self.db, pipeline=self.pipeline)
             bot.configure_route(bot.stream.symbol, bot.stream.symbol.split("-"))
             self.bots.append(bot)
-        self._tasks = [asyncio.create_task(bot.start()) for bot in self.bots]
+        # Each bot runs under a supervisor wrapper so ONE crashing stream
+        # can't take down the others (plain gather() propagates the first
+        # exception and abandons the batch — that left the whole system with
+        # a single surviving stream). Failed bots auto-restart with backoff.
+        self._tasks = [asyncio.create_task(self._run_bot_forever(bot)) for bot in self.bots]
+        # Data-only streams run their own resilient loop (WS -> market_stream).
+        self._tasks.extend(
+            asyncio.create_task(self._run_data_stream_forever(s)) for s in self.data_streams
+        )
         self._tasks.append(asyncio.create_task(self._drain_trades()))
         try:
-            await asyncio.gather(*self._tasks)
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
             log_message("ghost-supervisor", f"unexpected supervisor error: {exc}", severity="error")
 
+    async def reconcile_pairs(self) -> Dict[str, Any]:
+        """Add newly prioritized watchlist pairs without restarting production."""
+        existing_bots = {str(getattr(bot, "primary_symbol", "") or "").upper() for bot in self.bots}
+        existing = set(existing_bots)
+        existing.update(str(getattr(stream, "symbol", "") or "").upper() for stream in self.data_streams)
+        atf_priority: List[str] = []
+        try:
+            from services.atf_static_strategy import latest_signals
+            atf_priority = [
+                str(sig.get("symbol") or "").upper()
+                for sig in latest_signals(float(os.getenv("ATF_STATIC_SIGNAL_MAX_AGE_SEC", "1800")))
+                if isinstance(sig, dict) and str(sig.get("symbol") or "").strip()
+            ]
+        except Exception:
+            atf_priority = []
+        atf_priority_set = set(atf_priority)
+        pair_limit, _meta = resolve_pair_limit(
+            self.pair_limit,
+            focus_assets=[],
+            system_profile=getattr(self.pipeline, "system_profile", None),
+        )
+        full_slots = max(0, int(pair_limit) - len(self.bots))
+        data_slots = max(0, int(self.stream_total) - len(self.bots) - len(self.data_streams))
+        allow_replace = os.getenv("ATF_STATIC_REPLACE_BOTS", "1").lower() in {"1", "true", "yes", "on"}
+        max_replacements = 0
+        if allow_replace:
+            try:
+                max_replacements = max(0, min(int(os.getenv("ATF_STATIC_MAX_REPLACEMENTS", "2")), int(pair_limit)))
+            except Exception:
+                max_replacements = 2
+        if full_slots <= 0 and data_slots <= 0 and not (allow_replace and atf_priority):
+            return {"added_bots": [], "added_streams": [], "reason": "no_slots"}
+
+        candidates = select_pairs(limit=max(int(pair_limit), int(self.stream_total), len(existing) + full_slots + data_slots + len(atf_priority)))
+        if atf_priority:
+            by_symbol = {pair.symbol.upper(): pair for pair in candidates}
+            promoted: List[PairCandidate] = []
+            for sym in atf_priority:
+                if sym in by_symbol:
+                    promoted.append(by_symbol[sym])
+                    continue
+                tokens = [part.strip().upper() for part in sym.split("-") if part.strip()]
+                promoted.append(
+                    PairCandidate(
+                        symbol=sym,
+                        tokens=tokens or [sym],
+                        avg_volume=0.0,
+                        volatility=0.0,
+                        score=1.0,
+                        datapath=Path("."),
+                    )
+                )
+            remainder = [pair for pair in candidates if pair.symbol.upper() not in atf_priority_set]
+            candidates = promoted + remainder
+        readiness = self.pipeline.live_readiness_report()
+        transition_plan = self.pipeline.ghost_live_transition_plan()
+        added_bots: List[str] = []
+        added_streams: List[str] = []
+        replaced_bots: List[Dict[str, str]] = []
+
+        async def _free_bot_slot_for(symbol: str) -> bool:
+            nonlocal full_slots, max_replacements
+            if full_slots > 0:
+                return True
+            if not allow_replace or max_replacements <= 0 or symbol not in atf_priority_set:
+                return False
+            replace_idx = None
+            for idx in range(len(self.bots) - 1, -1, -1):
+                old_symbol = str(getattr(self.bots[idx], "primary_symbol", "") or "").upper()
+                if old_symbol not in atf_priority_set:
+                    replace_idx = idx
+                    break
+            if replace_idx is None:
+                return False
+            old_bot = self.bots.pop(replace_idx)
+            old_symbol = str(getattr(old_bot, "primary_symbol", "") or "").upper()
+            try:
+                await old_bot.stop()
+            except Exception:
+                pass
+            existing.discard(old_symbol)
+            existing_bots.discard(old_symbol)
+            full_slots += 1
+            max_replacements -= 1
+            replaced_bots.append({"old": old_symbol, "new": symbol})
+            return True
+
+        for pair in candidates:
+            symbol = pair.symbol.upper()
+            if symbol in existing:
+                continue
+            if await _free_bot_slot_for(symbol):
+                existing.add(symbol)
+                existing_bots.add(symbol)
+                stream = MarketDataStream(symbol=symbol, chain=PRIMARY_CHAIN)
+                bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
+                bot.configure_route(symbol, pair.tokens)
+                bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
+                bot.max_trade_share = 0.12
+                if readiness and not readiness.get("ready"):
+                    bot.live_trading_enabled = False
+                if hasattr(bot, "apply_transition_plan"):
+                    bot.apply_transition_plan(transition_plan)
+                self.bots.append(bot)
+                task = asyncio.create_task(self._run_bot_forever(bot))
+                self._tasks.append(task)
+                try:
+                    if getattr(self, "rotator", None):
+                        self.rotator.register_bot(bot)
+                except Exception:
+                    pass
+                added_bots.append(symbol)
+                full_slots -= 1
+                continue
+            if data_slots > 0:
+                existing.add(symbol)
+                stream = MarketDataStream(symbol=symbol, chain=PRIMARY_CHAIN)
+                self.data_streams.append(stream)
+                task = asyncio.create_task(self._run_data_stream_forever(stream))
+                self._tasks.append(task)
+                added_streams.append(symbol)
+                data_slots -= 1
+        if added_bots or added_streams:
+            log_message(
+                "ghost-supervisor",
+                "reconciled new watchlist pairs",
+                details={"added_bots": added_bots, "added_streams": added_streams, "replaced_bots": replaced_bots},
+            )
+        return {"added_bots": added_bots, "added_streams": added_streams, "replaced_bots": replaced_bots}
+
+    async def _run_data_stream_forever(self, stream: "MarketDataStream") -> None:
+        """Keep a data-only stream alive (WS -> market_stream), restart on crash."""
+        sym = getattr(stream, "symbol", "?")
+        backoff = 5.0
+        while True:
+            try:
+                await stream.start()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log_message(
+                    "ghost-supervisor",
+                    f"data stream {sym} crashed; restarting in {backoff:.0f}s",
+                    severity="debug",
+                    details={"error": str(exc)[:160]},
+                )
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    raise
+                backoff = min(backoff * 1.5, 120.0)
+
+    async def _run_bot_forever(self, bot: "TradingBot") -> None:
+        """Keep one bot's stream alive; restart it on crash with backoff."""
+        sym = getattr(bot, "primary_symbol", "?")
+        backoff = 5.0
+        while True:
+            try:
+                await bot.start()
+                # Clean return = intentional stop; don't respin.
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log_message(
+                    "ghost-supervisor",
+                    f"bot {sym} crashed; restarting in {backoff:.0f}s",
+                    severity="warning",
+                    details={"error": str(exc)[:200]},
+                )
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    raise
+                backoff = min(backoff * 1.5, 120.0)
+
     async def stop(self) -> None:
-        await asyncio.gather(*(bot.stop() for bot in self.bots), return_exceptions=True)
+        await asyncio.gather(
+            *(bot.stop() for bot in self.bots),
+            *(s.stop() for s in self.data_streams if hasattr(s, "stop")),
+            return_exceptions=True,
+        )
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)

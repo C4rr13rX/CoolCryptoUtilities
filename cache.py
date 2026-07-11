@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 from db import get_db, TradingDatabase
 from services.wallet_logger import wallet_log
 from services.providers.covalent import CovalentClient, CovalentError
+from token_decimals import known_token_decimals
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -401,6 +402,17 @@ class CacheBalances:
         for addr, ent in mapping.items():
             if not addr:
                 continue
+            dec = ent.get("decimals")
+            try:
+                dec = int(dec)
+            except (TypeError, ValueError):
+                dec = None
+            if dec is None:
+                # Never write a blind 18: a wrong default here deflates
+                # 6-decimal stables and the bad row sticks in the cache.
+                dec = known_token_decimals(chain, addr, ent.get("symbol"))
+            if dec is None:
+                dec = 18
             payload.append(
                 {
                     "wallet": _lower(wallet),
@@ -409,7 +421,7 @@ class CacheBalances:
                     "balance_hex": ent.get("balance_hex") or ent.get("raw") or "0x0",
                     "asof_block": int(ent.get("asof_block") or 0),
                     "ts": float(ent.get("ts") or time.time()),
-                    "decimals": int(ent.get("decimals") or 18),
+                    "decimals": dec,
                     "quantity": str(ent.get("quantity") or "0"),
                     "usd_amount": str(ent.get("usd_amount") or "0"),
                     "symbol": (str(ent.get("symbol")).strip().upper() if ent.get("symbol") else None),

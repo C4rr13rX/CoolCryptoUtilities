@@ -53,7 +53,7 @@ _ABI_QUOTER_V1 = [{
 
 # QuoterV2:
 # quoteExactInputSingle((address tokenIn,address tokenOut,uint24 fee,uint256 amountIn,uint160 sqrtPriceLimitX96) params)
-#   -> (uint256 amountOut, uint160[] sqrtPriceX96AfterList, uint32[] initializedTicksCrossedList, uint256 gasEstimate)
+#   -> (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)
 _ABI_QUOTER_V2 = [{
     "inputs":[
         {"components":[
@@ -65,6 +65,22 @@ _ABI_QUOTER_V2 = [{
         ],"internalType":"struct IQuoterV2.QuoteExactInputSingleParams","name":"params","type":"tuple"}
     ],
     "name":"quoteExactInputSingle",
+    "outputs":[
+        {"internalType":"uint256","name":"amountOut","type":"uint256"},
+        {"internalType":"uint160","name":"sqrtPriceX96After","type":"uint160"},
+        {"internalType":"uint32","name":"initializedTicksCrossed","type":"uint32"},
+        {"internalType":"uint256","name":"gasEstimate","type":"uint256"}
+    ],
+    "stateMutability":"nonpayable",
+    "type":"function"
+}]
+
+_ABI_QUOTER_V2_EXACT_INPUT = [{
+    "inputs":[
+        {"internalType":"bytes","name":"path","type":"bytes"},
+        {"internalType":"uint256","name":"amountIn","type":"uint256"}
+    ],
+    "name":"quoteExactInput",
     "outputs":[
         {"internalType":"uint256","name":"amountOut","type":"uint256"},
         {"internalType":"uint160[]","name":"sqrtPriceX96AfterList","type":"uint160[]"},
@@ -142,7 +158,11 @@ class UniswapV3Local:
         addr = conf.get("QUOTER_V2")
         if not addr or int(addr, 16) == 0:
             return None
-        return w3.eth.contract(self._norm_addr(addr), abi=_ABI_QUOTER_V2)
+        return w3.eth.contract(self._norm_addr(addr), abi=_ABI_QUOTER_V2 + _ABI_QUOTER_V2_EXACT_INPUT)
+
+    @staticmethod
+    def _v3_path(token_in: str, fee: int, token_out: str) -> bytes:
+        return bytes.fromhex(token_in[2:]) + int(fee).to_bytes(3, "big") + bytes.fromhex(token_out[2:])
 
     # -------------------- main entrypoint ----------------------
     def quote_and_build(
@@ -178,7 +198,7 @@ class UniswapV3Local:
             return {"__error__": "UniswapV3: token_in == token_out"}
 
         # -------------------- quote best direct fee tier --------------------
-        fees = (500, 3000, 10000)
+        fees = (100, 500, 3000, 10000)
         best_out, best_fee = 0, 0
 
         q1 = self._qv1(w3, conf)
@@ -205,6 +225,19 @@ class UniswapV3Local:
                         self._dbg(f"[UniV3] V2 fee={f} amountOut={int(out)}")
                     except Exception as e:
                         self._dbg(f"[UniV3] V2 fee={f} error: {e!r}")
+                if best_out <= 0:
+                    for f in fees:
+                        try:
+                            # Some QuoterV2 deployments/RPCs revert on
+                            # quoteExactInputSingle but succeed through the
+                            # encoded-path quoteExactInput interface.
+                            path = self._v3_path(t_in, int(f), t_out)
+                            out, *_ = q2.functions.quoteExactInput(path, int(amount_in)).call()
+                            if int(out) > best_out:
+                                best_out, best_fee = int(out), int(f)
+                            self._dbg(f"[UniV3] V2 path fee={f} amountOut={int(out)}")
+                        except Exception as e:
+                            self._dbg(f"[UniV3] V2 path fee={f} error: {e!r}")
 
         if best_out <= 0:
             return {"__error__": "UniswapV3: no viable pool (direct)"}

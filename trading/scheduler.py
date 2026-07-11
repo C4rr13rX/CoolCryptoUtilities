@@ -123,6 +123,9 @@ class TradeDirective:
     reason: str
     tier: str = "T0"
     tranches: List[Dict[str, float]] = field(default_factory=list)
+    # Which strategy generated this directive — drives the per-strategy
+    # ghost ledger and independent ghost→live graduation.
+    strategy_id: str = ""
 
     def to_dict(self) -> Dict[str, float]:
         payload = asdict(self)
@@ -160,135 +163,6 @@ class RouteState:
     trade_history: Deque[TradeHistoryEntry] = field(default_factory=lambda: deque(maxlen=100))
 
 
-class TridentUSSATSolver:
-    """
-    Lightweight, portfolio-style search inspired by the TRIDENT-US SAT/UNSAT
-    description. The solver treats candidate directives as assignments and
-    runs a small family of scoring functions in a fair, weighted round-robin
-    to pick the best verified directive.
-    """
-
-    def __init__(self, *, explore: float = 0.06, decay: float = 0.9) -> None:
-        self.explore = max(0.01, float(explore))
-        self.decay = max(0.5, min(0.99, float(decay)))
-        self.weights: Dict[str, float] = {
-            "expected_return": 0.34,
-            "confidence_weighted": 0.33,
-            "risk_buffered": 0.33,
-        }
-        self.last_trace: Dict[str, Any] = {}
-
-    # Candidate shape: {"directive": TradeDirective, "score": float, "meta": {...}}
-    def select(self, candidates: Sequence[Dict[str, Any]], context: Dict[str, Any]) -> Optional[TradeDirective]:
-        if not candidates:
-            return None
-        verified = [cand for cand in candidates if self._verify(cand, context)]
-        if not verified:
-            return None
-        strategies = self._strategies()
-        min_weight = self.explore / max(1, len(strategies))
-
-        choice_scores: Dict[int, float] = {}
-        trace: List[Dict[str, Any]] = []
-        updated_weights: Dict[str, float] = {}
-
-        for name, scorer in strategies.items():
-            weight_prior = self.weights.get(name, 1.0 / max(1, len(strategies)))
-            try:
-                best = max(verified, key=lambda cand: scorer(cand, context))
-            except Exception:
-                continue
-            raw_score = scorer(best, context)
-            reward = self._normalise_reward(raw_score)
-            blended_weight = self.decay * weight_prior + (1.0 - self.decay) * reward
-            updated_weights[name] = blended_weight
-            trace.append(
-                {
-                    "strategy": name,
-                    "raw_score": float(raw_score),
-                    "reward": reward,
-                    "selected_action": getattr(best.get("directive"), "action", "unknown"),
-                }
-            )
-            best_id = id(best)
-            choice_scores[best_id] = choice_scores.get(best_id, 0.0) + blended_weight * raw_score
-
-        if not updated_weights:
-            return verified[0]["directive"]
-
-        total_weight = sum(updated_weights.values()) or 1.0
-        normalised_weights = {k: max(min_weight, v / total_weight) for k, v in updated_weights.items()}
-        self.weights = normalised_weights
-
-        # Apply normalised weights to scores for the final selection pass
-        final_scores: Dict[int, float] = {}
-        for name, scorer in strategies.items():
-            weight = normalised_weights.get(name, min_weight)
-            try:
-                best = max(verified, key=lambda cand: scorer(cand, context))
-            except Exception:
-                continue
-            best_id = id(best)
-            final_scores[best_id] = final_scores.get(best_id, 0.0) + weight * scorer(best, context)
-
-        if not final_scores:
-            return verified[0]["directive"]
-
-        selected_id = max(final_scores, key=final_scores.get)
-        selected = next(cand for cand in verified if id(cand) == selected_id)
-        self.last_trace = {"trace": trace, "weights": dict(self.weights)}
-        return selected["directive"]
-
-    def _normalise_reward(self, value: float) -> float:
-        if not math.isfinite(value):
-            return 0.0
-        clipped = max(-3.0, min(3.0, value))
-        return 0.5 + 0.5 * math.tanh(clipped)
-
-    def _verify(self, candidate: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        directive = candidate.get("directive")
-        meta = candidate.get("meta", {}) or {}
-        if not isinstance(directive, TradeDirective):
-            return False
-        if not math.isfinite(directive.size) or directive.size <= 0:
-            return False
-        if not math.isfinite(directive.target_price) or directive.target_price <= 0:
-            return False
-        native_balance = float(context.get("native_balance", 0.0))
-        min_native = float(context.get("min_native", 0.01))
-        if native_balance < min_native:
-            return False
-        risk_budget = float(context.get("risk_budget", 1.0))
-        if risk_budget <= 0:
-            return False
-        confidence = float(meta.get("confidence", 0.0))
-        direction_prob = float(meta.get("direction_prob", 0.5))
-        if confidence <= 0.0 or direction_prob <= 0.0:
-            return False
-        # Directional trade history constraint: if last completed trade was
-        # a buy (enter), next must be a sell (exit), and vice versa.
-        # Prevents "bought low to sell high, then bought low again" anti-pattern.
-        trade_history: Optional[Deque] = context.get("trade_history")
-        if trade_history and len(trade_history) > 0:
-            last_trade = trade_history[-1]
-            last_action = getattr(last_trade, "action", None) or last_trade.get("action", "") if isinstance(last_trade, dict) else ""
-            if last_action == "enter" and directive.action == "enter":
-                return False  # already bought, must sell first
-            if last_action == "exit" and directive.action == "exit":
-                return False  # already sold, must buy first
-        return True
-
-    def _strategies(self) -> Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], float]]:
-        return {
-            "expected_return": lambda cand, _: float(cand.get("score", 0.0)),
-            "confidence_weighted": lambda cand, _: float(cand.get("score", 0.0))
-            * float((cand.get("meta") or {}).get("confidence", 1.0)),
-            "risk_buffered": lambda cand, ctx: float(cand.get("score", 0.0))
-            - float(ctx.get("fee_rate", 0.0))
-            - float((cand.get("meta") or {}).get("risk_penalty", 0.0)),
-        }
-
-
 class BusScheduler:
     """
     Maintains multi-horizon forecasts for each trading pair and produces
@@ -323,6 +197,17 @@ class BusScheduler:
         self._last_gas_alert_ts: float = 0.0
         self._gas_alert_interval: float = 180.0
         self._trident = CDCLTradingSolver()
+        # Independent CPU strategy plugins (trading/strategies/). The bot may
+        # publish per-tick signals (e.g. swarm consensus) via external_signals.
+        try:
+            from trading.strategies import build_default_registry
+            self.strategy_registry = build_default_registry()
+        except Exception:
+            self.strategy_registry = None
+        self.external_signals: Dict[str, Any] = {}
+        # Freshest enter candidates per symbol — the PortfolioRotator shops
+        # across every pair's latest buy-low candidates on a sell-high exit.
+        self.last_enter_candidates: Dict[str, Dict[str, Any]] = {}
         self.gas_roundtrip_fee = float(os.getenv("SCHEDULER_GAS_ROUNDTRIP_RATIO", os.getenv("GAS_ROUNDTRIP_FEE_RATIO", "0.0025")))
         self.slippage_bps = int(os.getenv("SCHEDULER_SLIPPAGE_BPS", "50"))
         self.spread_floor = float(os.getenv("SCHEDULER_SPREAD_FLOOR", "0.002"))
@@ -489,7 +374,27 @@ class BusScheduler:
         state = self._update_state(sample)
         state.evaluation_count += 1
         signals = self._forecast(state)
-        if not signals:
+        atf_scout_candidate = False
+        atf_expected_return = 0.01
+        if not live_trading and os.getenv("ATF_STATIC_GHOST_SCOUT_ENABLED", "1").lower() in {"1", "true", "yes", "on"}:
+            try:
+                from services.atf_static_strategy import latest_signals
+                for sig in latest_signals(float(os.getenv("ATF_STATIC_SIGNAL_MAX_AGE_SEC", "1800"))):
+                    if not isinstance(sig, dict):
+                        continue
+                    if str(sig.get("symbol") or "").upper() != state.symbol.upper():
+                        continue
+                    if not bool((sig.get("quote_probe") or {}).get("ok")):
+                        continue
+                    atf_scout_candidate = True
+                    try:
+                        atf_expected_return = max(0.001, min(0.25, float(sig.get("expected_return") or atf_expected_return)))
+                    except Exception:
+                        pass
+                    break
+            except Exception:
+                atf_scout_candidate = False
+        if not signals and not atf_scout_candidate:
             state.last_filter_reason = "no_forecast_signals"
             return None
 
@@ -522,8 +427,24 @@ class BusScheduler:
             state.last_filter_reason = f"gas_too_low ({native_balance:.4f} < {min_native:.4f})"
             return None
 
-        best_long = max(signals, key=self._score_signal)
-        best_short = min(signals, key=self._score_signal)
+        if signals:
+            best_long = max(signals, key=self._score_signal)
+            best_short = min(signals, key=self._score_signal)
+        else:
+            best_long = HorizonSignal(
+                label="atf",
+                seconds=300,
+                predicted_price=last_price * (1.0 + atf_expected_return),
+                expected_return=atf_expected_return,
+                zscore=0.0,
+            )
+            best_short = HorizonSignal(
+                label="atf",
+                seconds=300,
+                predicted_price=last_price,
+                expected_return=0.0,
+                zscore=0.0,
+            )
 
         fee_rate = self.fee_buffer + self.tax_buffer + self.gas_roundtrip_fee + (self.slippage_bps / 10000.0)
         candidates: List[Dict[str, Any]] = []
@@ -573,7 +494,7 @@ class BusScheduler:
         if brain_candidate:
             candidates.append(brain_candidate)
         # Pause if recent data is too sparse
-        if len(state.samples) < 12:
+        if len(state.samples) < 12 and not atf_scout_candidate:
             state.last_filter_reason = f"warming_up ({len(state.samples)}/12 samples)"
             return None
         gap_cutoff = state.samples[-1][0] - state.samples[0][0]
@@ -596,7 +517,13 @@ class BusScheduler:
             )
             state.last_filter_reason = f"spread ({implied_spread:.4f} > {self.spread_floor:.4f})"
             return None
-        if last_volume * last_price < self.depth_floor_usd:
+        # Depth is only meaningful when the feed reports volume at all —
+        # CEX ticker feeds (e.g. coinbase price polls) carry volume=0, and
+        # hard-failing on that starved every strategy on stable-quoted
+        # pairs for days: last_filter_reason was "depth (0.00 < 50.00)"
+        # on every tick. Unknown volume defers depth safety to per-trade
+        # tranching + fee guards instead of blocking candidate generation.
+        if last_volume > 0.0 and last_volume * last_price < self.depth_floor_usd and not atf_scout_candidate:
             if self._log_filters:
                 print(f"[bus-scheduler] skip {state.symbol}: depth {last_volume*last_price:.2f} < floor {self.depth_floor_usd:.2f}")
             self._filter_metrics.append(
@@ -610,6 +537,29 @@ class BusScheduler:
             )
             state.last_filter_reason = f"depth ({last_volume*last_price:.2f} < {self.depth_floor_usd:.2f})"
             return None
+        # Independent strategy plugins: each detects its own buy-low/sell-high
+        # margin without TF; all candidates are arbitrated by the CDCL solver.
+        if self.strategy_registry is not None:
+            try:
+                from trading.strategies import StrategyContext
+                strategy_ctx = StrategyContext(
+                    chain=chain_name,
+                    last_price=last_price,
+                    last_volume=last_volume,
+                    fee_rate=fee_rate,
+                    available_quote=available_quote,
+                    available_base=available_base,
+                    risk_budget=risk_budget,
+                    live_trading=live_trading,
+                    direction_prob=direction_prob,
+                    confidence=confidence,
+                    net_margin=net_margin,
+                    opportunity=self._opportunity_bias.get(state.symbol),
+                    extras=self.external_signals,
+                )
+                candidates.extend(self.strategy_registry.evaluate_all(state, strategy_ctx))
+            except Exception:
+                pass
         # Enter: use quote asset to buy base
         if available_quote > 0:
             long_quality = self.accuracy.quality(best_long.label)
@@ -684,12 +634,14 @@ class BusScheduler:
                         reason=f"forecast {best_long.label} {expected:.2%} w/ dir={direction_prob:.2f}",
                         tier=tier,
                         tranches=tranches,
+                        strategy_id="tf_forecast",
                     )
                     candidates.append(
                         {
                             "directive": directive,
                             "score": float(expected),
                             "meta": {
+                                "strategy": "tf_forecast",
                                 "confidence": confidence,
                                 "direction_prob": direction_prob,
                                 "risk_factor": risk_factor,
@@ -752,12 +704,14 @@ class BusScheduler:
                         reason=f"drawdown {best_short.label} {expected:.2%}",
                         tier=exit_tier,
                         tranches=exit_tranches,
+                        strategy_id="tf_forecast",
                     )
                     candidates.append(
                         {
                             "directive": directive,
                             "score": float(expected),
                             "meta": {
+                                "strategy": "tf_forecast",
                                 "confidence": confidence,
                                 "direction_prob": direction_prob,
                                 "risk_factor": 0.0,
@@ -768,6 +722,15 @@ class BusScheduler:
                         }
                     )
 
+        enter_candidates = [
+            cand for cand in candidates
+            if getattr(cand.get("directive"), "action", "") == "enter"
+        ]
+        if enter_candidates:
+            self.last_enter_candidates[state.symbol] = {
+                "ts": time.time(),
+                "candidates": enter_candidates,
+            }
         if not candidates:
             state.last_filter_reason = "no_candidates (thresholds not met)"
             return None
@@ -1111,11 +1074,21 @@ class BusScheduler:
             * the signal is too neutral or too low-confidence,
             * live mode is on without WIZARD_BRAIN_STRATEGY_ALLOW_LIVE.
         """
-        enabled = os.getenv("WIZARD_BRAIN_STRATEGY_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
+        # DEFAULT OFF (2026-07-10): the W1z4rD node brain is trained online and
+        # starts each deployment near-random. When it was default-on it churned
+        # ~842 losing trades (0 wins, -$8.37) on noise and dominated CDCL
+        # candidate selection, starving the CPU strategies that actually have
+        # edge. It re-enables ONLY once the brain is validated — set
+        # WIZARD_BRAIN_STRATEGY_ENABLED=1 after its directional accuracy clears
+        # a bar (see scripts/brain_chronological_experiment.py). Gated further
+        # below on a minimum brain maturity so a fresh brain can't trade even
+        # when the flag is on.
+        enabled = os.getenv("WIZARD_BRAIN_STRATEGY_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
         if not enabled:
             return None
-        _br_live_default = "1" if os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1","true","yes","on"} else "0"
-        if live_trading and os.getenv("WIZARD_BRAIN_STRATEGY_ALLOW_LIVE", _br_live_default).lower() not in {"1", "true", "yes", "on"}:
+        # Brain-directed live orders require an explicit post-graduation opt-in.
+        # AUTONOMOUS_MODE must never silently promote an unvalidated brain.
+        if live_trading and os.getenv("WIZARD_BRAIN_STRATEGY_ALLOW_LIVE", "0").lower() not in {"1", "true", "yes", "on"}:
             return None
         if last_price <= 0:
             return None
@@ -1181,6 +1154,7 @@ class BusScheduler:
             confidence=float(signal.confidence),
             expected_return=expected_return,
             reason=f"brain_regime dir={signal.direction_prob:.2f} conf={signal.confidence:.2f}",
+            strategy_id="brain_regime",
         )
         # Score blends brain edge × confidence; the selector then
         # compares this against money_button + model-derived candidates.
@@ -1400,11 +1374,13 @@ class BusScheduler:
             expected_return=float(net_expected),
             reason=f"money_button dip {drawdown:.2%} -> target {take_profit_return:.2%}",
             tier=tier,
+            strategy_id="money_button",
         )
         return {
             "directive": directive,
             "score": float(net_expected),
             "meta": {
+                "strategy": "money_button",
                 "confidence": float(directive.confidence),
                 "direction_prob": float(direction_prob),
                 "risk_factor": float(min(1.0, max(net_expected / max(min_net_return, 1e-9), 0.0))),
@@ -1536,6 +1512,7 @@ class BusScheduler:
             "expected_return": float(directive.expected_return),
             "reason": f"retry partial fill ({executed_size:.6f}/{directive.size:.6f})",
             "tier": directive.tier,
+            "strategy_id": getattr(directive, "strategy_id", ""),
             "ts": time.time(),
             "attempts": 0,
         })
@@ -1567,6 +1544,7 @@ class BusScheduler:
                 expected_return=float(entry["expected_return"]),
                 reason=entry.get("reason", "retry"),
                 tier=entry.get("tier", "T0"),
+                strategy_id=entry.get("strategy_id", ""),
             )
         return None
 

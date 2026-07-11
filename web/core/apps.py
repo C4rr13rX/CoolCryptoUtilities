@@ -63,6 +63,14 @@ def _shutdown_all() -> None:
     except Exception as exc:
         _shutdown_logger.warning("shutdown: console streams stop failed -> %s", exc)
 
+    # 5. Outcome-supervised OHLCV brain feeder
+    try:
+        from trading.wizard_trainer import stop_brain_feeder
+        stop_brain_feeder()
+        _shutdown_logger.info("shutdown: market brain feeder stopped")
+    except Exception as exc:
+        _shutdown_logger.warning("shutdown: market brain feeder stop failed -> %s", exc)
+
     _shutdown_logger.info("shutdown: all services stopped")
 
 
@@ -83,6 +91,7 @@ class CoreConfig(AppConfig):
     _cron_started = False
     _production_started = False
     _shutdown_registered = False
+    _market_brain_started = False
 
     def ready(self):
         if getattr(settings, "TESTING", False):
@@ -132,6 +141,39 @@ class CoreConfig(AppConfig):
                 CoreConfig._streams_started = True
             except Exception:
                 pass
+
+        # Start the dedicated OHLCV→outcome consolidation worker as part of
+        # Django/Waitress readiness. This is independent of TensorFlow and the
+        # first scheduler evaluation, so the market brain begins training as
+        # soon as the website is online.
+        if (not CoreConfig._market_brain_started
+                and bool(os.environ.get("WAITRESS_PORT"))
+                and "start_production" not in sys.argv
+                and os.environ.get("WIZARD_BRAIN_FEEDER_ENABLED", "1").lower()
+                not in {"0", "false", "no"}):
+            CoreConfig._market_brain_started = True
+
+            def _market_brain_bootstrap():
+                logger = logging.getLogger("core.market_brain")
+                try:
+                    while not apps.ready:
+                        time.sleep(0.05)
+                    from trading.wizard_trainer import (
+                        get_trainer, start_brain_feeder, start_news_worker,
+                        brain_feeder_status,
+                    )
+                    trainer = get_trainer()
+                    start_brain_feeder(chains=("base", "arbitrum", "optimism", "polygon"))
+                    start_news_worker(chains=("base",))
+                    logger.info("market-brain-bootstrap: endpoint=%s online=%s feeder=%s",
+                                getattr(trainer, "_endpoint", ""), trainer.is_online(),
+                                brain_feeder_status())
+                except Exception as exc:
+                    logger.error("market-brain-bootstrap: failed -> %s", exc)
+                    CoreConfig._market_brain_started = False
+
+            threading.Thread(target=_market_brain_bootstrap,
+                             name="market-brain-bootstrap", daemon=True).start()
 
         # Auto-start production manager when wallet credentials are available.
         if (

@@ -361,7 +361,7 @@ const stageProgress = computed(() => {
   const stages = [
     { key: 'ingest', label: t('pipeline.stage_ingest'), done: Boolean(stageSummary.value.length || metrics.value.length) },
     { key: 'training', label: t('pipeline.stage_training'), done: Boolean(readiness.samples || readiness.precision) },
-    { key: 'ghost', label: t('pipeline.stage_ghost'), done: Boolean(readiness.mini_ready) },
+    { key: 'ghost', label: t('pipeline.stage_ghost'), done: Boolean(readiness.ghost_collection_ready) },
     { key: 'live', label: t('pipeline.stage_live'), done: Boolean(readiness.ready) },
     { key: 'trading', label: t('pipeline.stage_trading'), done: Boolean(liveTrades.value.length) },
   ];
@@ -370,7 +370,7 @@ const stageProgress = computed(() => {
   const withState = stages.map((s, idx) => {
     const state = s.done && idx < current ? 'done' : idx === current ? 'active' : 'pending';
     let detail = '';
-    if (idx === 2 && readiness.mini_reason) detail = readiness.mini_reason;
+    if (idx === 2) detail = readiness.ghost_collection_reason || (s.done ? 'collecting validation samples' : readiness.mini_reason);
     if (idx === 3 && readiness.reason) detail = readiness.reason;
     return { ...s, state, detail, fill: state === 'done' ? 100 : state === 'active' ? 45 : 0 };
   });

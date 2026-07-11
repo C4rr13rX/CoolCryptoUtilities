@@ -170,8 +170,26 @@ def _make_session(backend: str, session_key: str) -> Any:
     end-to-end (e.g. with a burner OpenAI key) can do so without
     bypassing the agent endpoint entirely.
     """
+    if (backend or "").lower().strip() in {
+        "freeloader", "agentthefreeloader", "agent_the_freeloader",
+    }:
+        from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
+        return AgentTheFreeloaderSession(
+            session_name=f"freeloader-agent-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            workdir=_PROJECT_ROOT,
+        )
+
     from tools.ai_session import resolve_with_fallback
     chosen = resolve_with_fallback(backend)
+
+    if chosen == "freeloader":
+        from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
+        return AgentTheFreeloaderSession(
+            session_name=f"freeloader-agent-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            workdir=_PROJECT_ROOT,
+        )
 
     if chosen == "openai":
         from tools.openai_session import OpenAISession
@@ -267,7 +285,7 @@ def run(
 
     session_key   Unique key per user+session.
     workdir       Defaults to the CoolCryptoUtilities project root.
-    backend       "wizard" or "bedrock"; falls through if wizard offline.
+    backend       "wizard", "bedrock", or "freeloader"; falls through if wizard offline.
     allow_admin   If True, the shell_admin tool is registered so the AI
                   can request OS-level elevation.  Each elevated command
                   still requires fresh user authentication via UAC/polkit/

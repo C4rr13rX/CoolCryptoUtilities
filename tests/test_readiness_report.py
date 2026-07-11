@@ -118,6 +118,8 @@ def test_transition_plan_blocks_live_when_ghost_not_ready() -> None:
     pipeline._last_confusion_report = {}
     pipeline.live_readiness_report = lambda: {
         "ready": False,
+        "mini_ready": True,
+        "ghost_collection_ready": True,
         "horizon": "5m",
         "precision": 0.7,
         "recall": 0.68,
@@ -156,6 +158,8 @@ def test_transition_plan_blocks_live_when_ghost_not_ready() -> None:
     assert plan["risk_flags"]["ghost_ready"] is False
     assert any(action["action"] == "swap_to_stable" for action in plan["bus_swap_actions"])
     assert plan["risk_flags"]["halt_live"] is True
+    assert plan["risk_flags"]["halt_ghost"] is False
+    assert plan["risk_flags"]["ghost_risk_multiplier"] > 0.0
     assert plan["risk_flags"]["bus_actions_pending"] is True
 
 
@@ -208,3 +212,29 @@ def test_transition_plan_halts_on_loss_rate(monkeypatch: pytest.MonkeyPatch) -> 
     assert plan["recommended_savings_ratio"] == 0.0
     assert plan["risk_flags"]["halt_live"] is True
     assert any(action["reason"].startswith("ghost_loss") for action in plan["bus_swap_actions"])
+
+
+def test_transition_plan_never_graduates_with_non_positive_net_profit() -> None:
+    pipeline = _pipeline_stub()
+    pipeline._last_confusion_summary = {"horizons": {"5m": {"precision": 0.8, "samples": 140}}}
+    pipeline._last_confusion_report = {}
+    pipeline.live_readiness_report = lambda: {"ready": True, "horizon": "5m", "threshold": 0.3}
+    pipeline._wallet_state = lambda: {
+        "wallet": "guardian", "stable_usd": 200.0, "native_usd": 10.0,
+        "sparse": False, "fragmented": False, "min_capital_usd": 50.0,
+    }
+    pipeline._ghost_validation = lambda: {
+        "ready": True, "reason": "", "samples": 100, "win_rate": 0.7,
+        "avg_profit": 0.01, "total_net_profit": -0.01,
+        "tail_risk": 0.0, "tail_guardrail": 0.08,
+        "max_drawdown": 0.0, "drawdown_guardrail": 0.1,
+        "min_trades": 50, "min_win_rate": 0.55,
+        "profit_factor": 1.2, "min_profit_factor": 0.95,
+        "loss_rate": 0.2, "loss_rate_guardrail": 0.6,
+        "max_loss_streak": 1, "loss_streak_guardrail": 5,
+    }
+
+    plan = pipeline._build_transition_plan()
+
+    assert plan["risk_flags"]["live_safe"] is False
+    assert plan["capital_plan"]["recommended_live_usd"] == 0.0

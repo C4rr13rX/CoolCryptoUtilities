@@ -106,6 +106,10 @@ def main(argv: list[str] | None = None) -> int:
         VMPlaygroundTool,
         FileReadTool,
         FileWriteTool,
+        DirectoryEnsureTool,
+        WorkspaceScaffoldTool,
+        EnvironmentBootstrapTool,
+        ScientificMethodTool,
         UnboundedSolverTool,
         MathGroundingTool,
     )
@@ -151,7 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     tools.register(ExecutorTool(executor))
     tools.register(FileReadTool(workdir))
     tools.register(FileWriteTool(workdir))
+    tools.register(DirectoryEnsureTool(workdir))
+    tools.register(WorkspaceScaffoldTool(workdir))
+    tools.register(EnvironmentBootstrapTool(workdir))
     tools.register(WebSearchTool(web_search))
+    tools.register(ScientificMethodTool(web_search, runtime_dir=runtime_root))
     tools.register(MemorySearchTool(lt_memory))
     tools.register(FileLocateTool(st_memory, lt_side_memory))
     tools.register(MatrixSearchTool())

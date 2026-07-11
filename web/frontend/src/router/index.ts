@@ -23,6 +23,7 @@ import InvestigationsView from '@/views/InvestigationsView.vue';
 import LogsView from '@/views/LogsView.vue';
 import BusScheduleView from '@/views/BusScheduleView.vue';
 import WizardChatView from '@/views/WizardChatView.vue';
+import ModelControlView from '@/views/ModelControlView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -101,6 +102,12 @@ const routes: RouteRecordRaw[] = [
     name: 'c0d3r',
     component: C0d3rView,
     meta: { title: 'c0d3r' },
+  },
+  {
+    path: '/model-control',
+    name: 'model-control',
+    component: ModelControlView,
+    meta: { title: 'C0d3rV2 Model Control' },
   },
   {
     path: '/branddozer',

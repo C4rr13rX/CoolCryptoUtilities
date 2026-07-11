@@ -113,6 +113,7 @@ class ProductionManager:
         self._task_backoff_until: Dict[str, float] = {}
         self._task_threads: Dict[str, threading.Thread] = {}
         self._task_thread_start: Dict[str, float] = {}
+        self._last_atf_static_refresh_ts = 0.0
         # Delegation — offload tasks to remote Revenir service hosts
         self._delegation_enabled = os.getenv("DELEGATION_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
         self._delegation_client: Optional[DelegationClient] = None
@@ -144,7 +145,13 @@ class ProductionManager:
                 log_message("production", f"delegation client failed to start: {exc}", severity="warning")
                 self._delegation_client = None
         self._wallet_bootstrap = self._try_wallet_bootstrap()
-        self._startup_prewarm = self._prewarm_pipeline()
+        # Publish ATF static candidates before startup prewarm/supervisor build
+        # so ghost slots see the freshest buy-low candidates immediately.
+        try:
+            self._task_atf_static_strategy()
+        except Exception as exc:
+            log_message("production", f"startup ATF static refresh failed: {exc}", severity="warning")
+        self._startup_prewarm = {"skipped": True, "reason": "deferred_after_start"}
         self._startup_prewarm_reported = False
         self.supervisor.build()
         try:
@@ -233,6 +240,15 @@ class ProductionManager:
             cycle_id = str(int(time.time()))
             focus_assets, _ = self.pipeline.ghost_focus_assets()
             readiness = self.pipeline.live_readiness_report()
+            # Persist the snapshot inline every cycle. The scheduler_refresh
+            # task also does this, but it competes with heavy tasks in a
+            # saturated queue (and queue flushes delete it) — which left
+            # data/reports/live_readiness.json stale for days while the
+            # dashboard and ghost→live gating read stale state.
+            try:
+                self.pipeline._persist_live_readiness_snapshot(readiness)
+            except Exception as exc:
+                log_message("production", f"inline readiness persist failed: {exc}", severity="warning")
             bias = self._safe_horizon_bias()
             deficit = self._safe_horizon_deficit()
             metadata = {
@@ -281,6 +297,27 @@ class ProductionManager:
                     "heavy_backlog_threshold": self._heavy_backlog_threshold,
                 },
             )
+            # ── Wallet holdings → stream watchlist ───────────────────
+            # The user expects to trade what's in their wallet. Guarantee
+            # every meaningful (non-dust, non-stable) holding is streamed,
+            # each cycle, so a fresh deposit starts being predicted at once.
+            try:
+                from services.wallet_focus import ensure_wallet_streams
+                _ws = ensure_wallet_streams()
+                if _ws.get("added"):
+                    log_message("production", f"wallet holdings streamed: {_ws['added']}")
+            except Exception as exc:
+                log_message("production", f"wallet stream reconcile failed: {exc}", severity="debug")
+            # ── Discovery → stream watchlist bridge ──────────────────
+            # Bullish/bearish movers (safety-filtered) join the stream
+            # watchlist; internally throttled so this is cheap per cycle.
+            try:
+                from services.discovery.stream_bridge import (
+                    refresh_stream_watchlist_from_discovery,
+                )
+                refresh_stream_watchlist_from_discovery()
+            except Exception as exc:
+                log_message("production", f"discovery stream bridge failed: {exc}", severity="debug")
             # ── Stable bank threshold notification ──────────────────
             try:
                 from db import get_db
@@ -306,6 +343,11 @@ class ProductionManager:
             except Exception:
                 pass  # multi-wallet is best-effort
             # ────────────────────────────────────────────────────────
+            # ATF static strategy is lightweight and time-sensitive. Run it
+            # before backlog skipping so buy-low/sell-high ghost candidates
+            # continue refreshing even when heavier enrichment/download work
+            # saturates the queue.
+            self._task_atf_static_strategy()
             # Dynamically reduce max pending under pressure
             effective_max_pending = self._max_pending
             if _governor.should_throttle(_Priority.HIGH):
@@ -429,6 +471,75 @@ class ProductionManager:
             return
         if self._download_supervisor:
             self._download_supervisor.run_cycle()
+
+    def _task_atf_static_strategy(self) -> None:
+        if os.getenv("ATF_STATIC_AUTORUN_ENABLED", "1").lower() not in {"1", "true", "yes", "on"}:
+            return
+        try:
+            interval = float(os.getenv("ATF_STATIC_REFRESH_SEC", "600"))
+        except Exception:
+            interval = 600.0
+        interval = max(300.0, min(3600.0, interval))
+        now = time.time()
+        if now - float(self._last_atf_static_refresh_ts or 0.0) < interval:
+            return
+        self._last_atf_static_refresh_ts = now
+        try:
+            from services.atf_static_strategy import build_static_strategy_signals
+            result = build_static_strategy_signals(
+                budget_usd=float(os.getenv("ATF_STATIC_BUDGET_USD", "20")),
+                max_positions=int(os.getenv("ATF_STATIC_MAX_POSITIONS", "3")),
+                chain=os.getenv("ATF_STATIC_CHAIN", "base"),
+                quote_token=os.getenv("ATF_STATIC_QUOTE_TOKEN", "USDC"),
+                slippage_bps=int(os.getenv("ATF_STATIC_SLIPPAGE_BPS", "100")),
+                probe_quotes=os.getenv("ATF_STATIC_PROBE_QUOTES", "1").lower() in {"1", "true", "yes", "on"},
+            )
+            self.pipeline.metrics.feedback(
+                "atf_static_strategy",
+                severity=FeedbackSeverity.INFO,
+                label="signals_published",
+                details={
+                    "signals": len(result.get("signals") or []),
+                    "bus_actions": len(result.get("bus_actions") or []),
+                    "chain": result.get("chain"),
+                    "duration_sec": result.get("duration_sec"),
+                },
+            )
+            self._reconcile_ghost_supervisor_pairs()
+        except Exception as exc:
+            self.pipeline.metrics.feedback(
+                "atf_static_strategy",
+                severity=FeedbackSeverity.WARNING,
+                label="refresh_failed",
+                details={"error": str(exc)[:300]},
+            )
+
+    def _reconcile_ghost_supervisor_pairs(self) -> None:
+        if not self._loop or not self._loop.is_running():
+            return
+        reconcile = getattr(self.supervisor, "reconcile_pairs", None)
+        if not callable(reconcile):
+            return
+        try:
+            def _schedule() -> None:
+                try:
+                    task = self._loop.create_task(reconcile())  # type: ignore[union-attr]
+
+                    def _done(done: "asyncio.Task[Any]") -> None:
+                        try:
+                            result = done.result()
+                            if result and (result.get("added_bots") or result.get("added_streams") or result.get("replaced_bots")):
+                                log_message("production", "ATF ghost pair reconcile complete", details=result)
+                        except Exception as exc:
+                            log_message("production", f"ATF ghost pair reconcile failed: {exc}", severity="warning")
+
+                    task.add_done_callback(_done)
+                except Exception as exc:
+                    log_message("production", f"ATF ghost pair reconcile schedule failed: {exc}", severity="warning")
+
+            self._loop.call_soon_threadsafe(_schedule)
+        except Exception as exc:
+            log_message("production", f"ATF ghost pair reconcile failed: {exc}", severity="warning")
 
     def _task_news_enrichment(self, focus_assets: Optional[Sequence[str]] = None) -> None:
         if not self._task_directives.get("news", True):

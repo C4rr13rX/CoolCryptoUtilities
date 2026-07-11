@@ -668,6 +668,19 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
             finally:
                 manager.stop()
         return
+    if action == "atf_static_strategy":
+        from services.atf_static_strategy import build_static_strategy_signals
+
+        result = build_static_strategy_signals(
+            budget_usd=float(payload.get("budget_usd") or os.getenv("ATF_STATIC_BUDGET_USD", "20")),
+            max_positions=int(payload.get("max_positions") or os.getenv("ATF_STATIC_MAX_POSITIONS", "3")),
+            chain=str(payload.get("chain") or os.getenv("ATF_STATIC_CHAIN", "base")),
+            quote_token=str(payload.get("quote_token") or os.getenv("ATF_STATIC_QUOTE_TOKEN", "USDC")),
+            slippage_bps=int(payload.get("slippage_bps") or os.getenv("ATF_STATIC_SLIPPAGE_BPS", "100")),
+            probe_quotes=str(payload.get("probe_quotes", "true")).lower() not in {"0", "false", "no", "off"},
+        )
+        print(json.dumps(result, indent=2, default=str))
+        return
     try:
         bridge: UltraSwapBridge | None = UltraSwapBridge()
     except ImportError as exc:

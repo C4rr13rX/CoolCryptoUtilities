@@ -426,16 +426,31 @@ def _rebuild_assignment_from_index(chain: str, assignment_path: Path) -> dict:
         _refresh_pair_index(chain, index_path)
     with index_path.open("r", encoding="utf-8") as fh:
         index = json.load(fh)
+    # Wallet holdings first: whatever the user actually holds should get
+    # OHLCV history before generic market pairs, so a capped/slow download
+    # still covers their positions. Held symbols get negative indices so
+    # they sort to the front of the fetch order.
+    try:
+        from services.wallet_focus import held_symbols
+        wallet_syms = set(held_symbols(chain=chain))
+    except Exception:
+        wallet_syms = set()
     pairs = {}
     for addr, meta in index.items():
         symbol = str(meta.get("symbol") or "").upper()
         if not symbol:
             continue
+        base = symbol.split("-", 1)[0]
+        is_held = base in wallet_syms or symbol in wallet_syms
         pairs[addr] = {
             "symbol": symbol,
-            "index": int(meta.get("index", len(pairs))),
+            "index": -1000 + len(pairs) if is_held else int(meta.get("index", len(pairs))),
             "completed": False,
+            "wallet_held": is_held,
         }
+    if wallet_syms:
+        n_held = sum(1 for m in pairs.values() if m.get("wallet_held"))
+        print(f"[INFO] Prioritised {n_held} wallet-held pair(s) to front of fetch order")
     assignment = {
         "granularity_seconds": GRANULARITY_SECONDS,
         "years_back": YEARS_BACK,

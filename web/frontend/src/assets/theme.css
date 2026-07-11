@@ -1,36 +1,14 @@
-@font-face {
-  font-family: 'EscapeArtist';
-  src: url('/static/assets/escape-artist-font/EscapeArtist-7Oo5V.otf') format('opentype');
-  font-display: swap;
-  font-weight: 400;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: 'EscapeArtist';
-  src: url('/static/assets/escape-artist-font/EscapeArtistBold-ovy4B.otf') format('opentype');
-  font-display: swap;
-  font-weight: 700;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: 'Hackout';
-  src: url('/static/assets/h-hackout-font/Hackout-Eaw5j.otf') format('opentype');
-  font-display: swap;
-  font-weight: 400;
-  font-style: normal;
-}
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&display=swap');
 
 :root {
-  font-family: 'Hackout', 'Segoe UI', sans-serif;
+  font-family: 'Orbitron', 'Segoe UI', sans-serif;
   color: #f6f9ff;
   background-color: #02050b;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
-  --font-title: 'EscapeArtist', 'Hackout', 'Segoe UI', sans-serif;
-  --font-body: 'Hackout', 'Segoe UI', sans-serif;
+  --font-title: 'Orbitron', 'Segoe UI', sans-serif;
+  --font-body: 'Orbitron', 'Segoe UI', sans-serif;
   --surface: rgba(6, 10, 18, 0.78);
   --surface-strong: rgba(4, 8, 14, 0.92);
   --border: rgba(165, 194, 255, 0.28);
@@ -87,6 +65,30 @@ h6,
 .panel h3,
 .panel h4 {
   font-family: var(--font-title);
+}
+
+/* Halve the oversized Quasar heading scale site-wide (Quasar sets h1=6rem,
+   h2=3.75rem, h3=3rem, h4=2.125rem, h5=1.5rem). theme.css loads after Quasar,
+   so these win for any heading a component does not scope-override. */
+h1 {
+  font-size: 3rem;
+  line-height: 1.1;
+}
+h2 {
+  font-size: 1.875rem;
+  line-height: 1.1;
+}
+h3 {
+  font-size: 1.5rem;
+  line-height: 1.15;
+}
+h4 {
+  font-size: 1.0625rem;
+  line-height: 1.2;
+}
+h5 {
+  font-size: 0.75rem;
+  line-height: 1.25;
 }
 
 html,

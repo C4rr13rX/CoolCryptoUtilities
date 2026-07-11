@@ -330,7 +330,7 @@ textarea {
   border-radius: 12px;
   color: #f4f6fa;
   padding: 0.8rem;
-  font-family: "Hackout", "IBM Plex Mono", monospace;
+  font-family: "Orbitron", "IBM Plex Mono", monospace;
   font-size: 0.85rem;
   line-height: 1.35;
 }

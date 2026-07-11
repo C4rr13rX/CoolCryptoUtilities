@@ -774,7 +774,10 @@ const resolveAppIntent = (routeName: string) => {
     case 'pipeline':
     case 'bus':
       if (hasCritical) return 'error';
-      return metricsCount ? (hasWarnings ? 'warn' : 'ok') : 'warn';
+      // General advisories (for example, wallet gas warnings) belong to the
+      // Advisories indicator. They must not make healthy pipeline and bus
+      // navigation entries flash indefinitely.
+      return metricsCount ? 'ok' : 'warn';
     case 'advisories':
       if (hasCritical) return 'error';
       return advisoryCount ? 'warn' : 'ok';
@@ -783,6 +786,8 @@ const resolveAppIntent = (routeName: string) => {
     case 'wallet':
     case 'c0d3r':
       return consoleOk ? 'ok' : 'warn';
+    case 'model-control':
+      return store.serverOnline ? 'ok' : 'warn';
     case 'guardian':
       return consoleOk ? 'ok' : 'warn';
     case 'datalab':
@@ -815,6 +820,7 @@ const navItems = computed(() => {
     { route: 'logs', path: '/logs', label: t('nav.logs'), icon: 'activity' },
     { route: 'wallet', path: '/wallet', label: t('nav.wallet'), icon: 'wallet' },
     { route: 'c0d3r', path: '/c0d3r', label: t('nav.c0d3r'), icon: 'terminal' },
+    { route: 'model-control', path: '/model-control', label: t('nav.model_control'), icon: 'settings' },
     { route: 'investigations', path: '/investigations', label: t('nav.investigations'), icon: 'shield' },
     { route: 'addressbook', path: '/addressbook', label: t('nav.addressbook'), icon: 'link' },
     { route: 'advisories', path: '/advisories', label: t('nav.advisories'), icon: 'shield' },
@@ -878,8 +884,10 @@ const totalProfitDisplay = computed(() =>
   padding: 1.8rem 1.3rem 2rem;
   position: sticky;
   top: 0;
-  max-height: 100vh;
-  overflow-y: auto;
+  align-self: flex-start;
+  /* Desktop: no inner scrollbar — let the menu take its natural height and
+     grow the page instead (mobile drawer re-enables its own scroll below). */
+  overflow: visible;
   transition: transform 0.3s ease;
   z-index: 1000;
 }
@@ -1160,6 +1168,8 @@ const totalProfitDisplay = computed(() =>
     max-width: none;
     padding-top: 2.5rem;
     z-index: 1000;
+    /* Mobile drawer is a fixed full-screen panel — it needs its own scroll. */
+    overflow-y: auto;
   }
   .sidebar.open {
     transform: translateX(0);

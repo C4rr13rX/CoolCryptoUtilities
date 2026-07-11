@@ -12,6 +12,9 @@
     <link rel="apple-touch-icon" href="{% static 'assets/icon-192.png' %}?v={{ asset_version }}" />
     <link rel="manifest" href="{% static 'site.webmanifest' %}" />
     <meta name="theme-color" content="#7fb0ff" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400..900&display=swap" />
     {% if serve_vite %}
       <script type="module">
         const DEV_ORIGIN = "{{ vite_dev_server }}";
@@ -47,9 +50,9 @@
           #02050b;
         --panel-bg: rgba(5, 9, 16, 0.9);
         --panel-border: rgba(165, 194, 255, 0.22);
-        font-family: "Hackout", "Segoe UI", "Helvetica", sans-serif;
-        --font-title: "EscapeArtist", "Hackout", "Segoe UI", sans-serif;
-        --font-body: "Hackout", "Segoe UI", "Helvetica", sans-serif;
+        font-family: "Orbitron", "Segoe UI", "Helvetica", sans-serif;
+        --font-title: "Orbitron", "Segoe UI", "Helvetica", sans-serif;
+        --font-body: "Orbitron", "Segoe UI", "Helvetica", sans-serif;
       }
       * {
         box-sizing: border-box;
@@ -201,7 +204,7 @@
         text-transform: uppercase;
         cursor: pointer;
         line-height: 1.2;
-        font-family: "Hackout", "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI", sans-serif;
+        font-family: "Orbitron", "Segoe UI Emoji", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI", sans-serif;
       }
       header.site-header .lang-label {
         font-size: 0.55rem;

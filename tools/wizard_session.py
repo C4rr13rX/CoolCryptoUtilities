@@ -160,6 +160,12 @@ class WizardSession:
         system context is prepended to the prompt so the node can
         attempt to recall relevant knowledge from that framing.
         """
+        from tools.ai_backend_mode import freeloader_mode_active
+
+        if freeloader_mode_active():
+            raise RuntimeError(
+                "WizardSession is disabled while AgentTheFreeloader exclusive mode is active"
+            )
         if stream_callback is not None:
             self._stream_callback = stream_callback
 
@@ -327,6 +333,16 @@ class WizardSession:
         Probe the node health endpoint.  Returns a dict with:
           online: bool, version: str, endpoint: str, error: str
         """
+        from tools.ai_backend_mode import freeloader_mode_active
+
+        if freeloader_mode_active():
+            return {
+                "online": False,
+                "version": "",
+                "endpoint": endpoint or _wizard_endpoint(),
+                "error": "disabled by AgentTheFreeloader exclusive mode",
+            }
+
         import urllib.request
         import urllib.error
 

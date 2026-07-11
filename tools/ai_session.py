@@ -22,6 +22,7 @@ context["session_provider"]):
   coder    — Alias for c0d3r (same agent reference).
   claude   — Anthropic API direct (ClaudeSession).
   openai   — OpenAI API (OpenAISession) — last resort.
+  freeloader — AgentTheFreeloader quota-aware free-model router.
 
 Preferred fallback order when none is specified or when `auto` is
 requested: wizard → bedrock → claude → openai.
@@ -64,6 +65,9 @@ _WIZARD_ALIASES  = {"wizard", "w1z4rd", "wizard_node", "local",
                     "c0d3r", "coder"}
 _CLAUDE_ALIASES  = {"claude", "anthropic", "claude_api"}
 _OPENAI_ALIASES  = {"openai", "gpt", "openai_api"}
+_FREELOADER_ALIASES = {
+    "freeloader", "agentthefreeloader", "agent_the_freeloader", "free_models",
+}
 
 # Cascading preference order — wizard first, OpenAI last by policy.
 _FALLBACK_ORDER  = ("wizard", "bedrock", "claude", "openai")
@@ -81,6 +85,10 @@ def _normalise(raw: str) -> str:
 
 
 def session_provider_from_context(ctx: Dict[str, Any] | None = None) -> str:
+    from tools.ai_backend_mode import freeloader_mode_active
+
+    if freeloader_mode_active():
+        return "freeloader"
     ctx = ctx or {}
     raw = (
         ctx.get("session_provider")
@@ -92,7 +100,12 @@ def session_provider_from_context(ctx: Dict[str, Any] | None = None) -> str:
 
 
 def get_session_class(provider: str) -> Type:
+    from tools.ai_backend_mode import freeloader_mode_active
+
     norm = _normalise(provider or "wizard")
+    if freeloader_mode_active() or norm in _FREELOADER_ALIASES:
+        from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
+        return AgentTheFreeloaderSession
     if norm in _OPENAI_ALIASES:
         return OpenAISession
     if norm in _CLAUDE_ALIASES:
@@ -105,6 +118,10 @@ def get_session_class(provider: str) -> Type:
 
 
 def default_settings(provider: str) -> Dict[str, Any]:
+    from tools.ai_backend_mode import freeloader_mode_active
+
+    if freeloader_mode_active():
+        return {}
     norm = _normalise(provider or "wizard")
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
         return {}
@@ -115,6 +132,10 @@ def default_settings(provider: str) -> Dict[str, Any]:
 
 
 def settings_for_role(provider: str, role: str | None = None) -> Dict[str, Any]:
+    from tools.ai_backend_mode import freeloader_mode_active
+
+    if freeloader_mode_active():
+        return {}
     norm = _normalise(provider or "wizard")
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
         return {}
@@ -129,6 +150,9 @@ def _probe(provider: str) -> bool:
     will accept a real request right now."""
     norm = _normalise(provider)
     try:
+        if norm in _FREELOADER_ALIASES:
+            from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
+            return bool(AgentTheFreeloaderSession.probe().get("online"))
         if norm in _WIZARD_ALIASES or norm == "wizard":
             return bool(WizardSession.probe().get("online"))
         if norm in _BEDROCK_ALIASES:
@@ -169,6 +193,10 @@ def resolve_with_fallback(preferred: str | None = None) -> str:
     online.  Falls back to "wizard" as a last resort even if nothing
     probes — the caller will then surface a clear error.
     """
+    from tools.ai_backend_mode import freeloader_mode_active
+
+    if freeloader_mode_active():
+        return "freeloader"
     if preferred:
         norm = _normalise(preferred)
         if _probe(norm):
@@ -191,7 +219,7 @@ def make_session(
     """
     Convenience factory: create a session for the given provider.
 
-    provider    "wizard" (default), "bedrock", "openai"
+    provider    "wizard" (default), "bedrock", "openai", "freeloader"
     session_name  Logical name for transcripts / logs.
     role        Optional role for model selection.
     model       Override model ID (Bedrock only).

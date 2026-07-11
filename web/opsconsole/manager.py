@@ -31,11 +31,18 @@ def _is_pid_alive(pid: int) -> bool:
         if os.name == "nt":
             import ctypes
             kernel32 = ctypes.windll.kernel32
-            handle = kernel32.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
-            if handle:
+            # A successful OpenProcess does not prove the process is active;
+            # Windows can retain a signalled handle for a terminated process.
+            handle = kernel32.OpenProcess(0x100000 | 0x0400, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return False
+                return exit_code.value == 259  # STILL_ACTIVE
+            finally:
                 kernel32.CloseHandle(handle)
-                return True
-            return False
         else:
             os.kill(pid, 0)
             return True

@@ -6,6 +6,7 @@ from web3 import Web3
 from router_wallet import UltraSwapBridge
 from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
+from services.token_catalog import core_tokens_for_chain
 
 
 class SwapService:
@@ -163,6 +164,21 @@ class SwapService:
             return int(self.bridge.erc20_decimals(chain, token))
         except Exception:
             return 18
+
+    def _resolve_token(self, chain: str, token: str) -> str:
+        if is_native(token):
+            return "native"
+        raw = str(token or "").strip()
+        if raw.lower().startswith("0x") and len(raw) == 42:
+            return raw
+        try:
+            catalog = core_tokens_for_chain(chain)
+            mapped = catalog.get(raw.upper()) or catalog.get(raw)
+            if mapped:
+                return mapped
+        except Exception:
+            pass
+        return raw
 
     def _ensure_allowance(self, chain: str, token: str, spender: str, need_raw: int) -> bool:
         if is_native(token): return True
@@ -340,6 +356,8 @@ class SwapService:
 
         sell = _normalize_native_spelling(sell)
         buy  = _normalize_native_spelling(buy)
+        sell = self._resolve_token(ch, sell)
+        buy = self._resolve_token(ch, buy)
 
         # compute amount (sell decimals from token / native=18)
         dec = self._decimals(ch, sell)

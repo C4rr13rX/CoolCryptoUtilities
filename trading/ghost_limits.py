@@ -17,7 +17,7 @@ def resolve_pair_limit(
 ) -> Tuple[int, Dict[str, Any]]:
     base_limit = max(1, int(base_limit))
     limit = base_limit
-    max_limit = int(os.getenv("GHOST_PAIR_LIMIT_MAX", str(max(base_limit, base_limit + 4))))
+    max_limit = int(os.getenv("GHOST_PAIR_LIMIT_MAX", str(max(base_limit, base_limit + 6))))
     min_limit = int(os.getenv("GHOST_PAIR_LIMIT_MIN", "1"))
     max_limit = max(max_limit, base_limit)
     min_limit = max(1, min(min_limit, max_limit))
@@ -28,6 +28,19 @@ def resolve_pair_limit(
         "min_limit": min_limit,
         "max_limit": max_limit,
     }
+    # Under real resource pressure the ResourceGovernor halves the stream
+    # budget; with headroom the full max_limit stands. Streams are I/O-bound,
+    # so only genuine pressure (not CPU-count heuristics) should shrink them.
+    if os.getenv("GHOST_PAIR_LIMIT_GOVERNOR", "1").lower() in {"1", "true", "yes", "on"}:
+        try:
+            from services.resource_governor import governor
+
+            if governor.should_throttle():
+                max_limit = max(min_limit, min(max_limit, max(base_limit // 2, min_limit)))
+                details["governor_throttled"] = True
+                details["max_limit"] = max_limit
+        except Exception:
+            pass
 
     focus_count = len([asset for asset in focus_assets if asset])
     if focus_count > limit:

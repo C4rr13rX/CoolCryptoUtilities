@@ -121,6 +121,18 @@ class TradingBot:
         self.swarm = MultiResolutionSwarm(
             [("fast", 20), ("medium", 60), ("slow", 180)]
         )
+        # Per-strategy ghost/live ledger: every strategy proves itself in
+        # ghost independently and graduates to live on its own record.
+        from trading.strategies.ledger import StrategyLedger
+        self.strategy_ledger = StrategyLedger()
+        # Set once readiness + at least one graduated strategy line up; lets
+        # _live_trades_dry_run() flip to real execution without hand-set env.
+        self._auto_execute_approved: bool = False
+        # Cross-token rotation (trading/rotation.py): the supervisor attaches
+        # the shared PortfolioRotator; a queued directive from another pair's
+        # profitable exit is consumed here on the next tick.
+        self.rotator: Optional[Any] = None
+        self.pending_rotation_directive: Optional[Dict[str, Any]] = None
         self._brain_window = max(
             self.window_size,
             max((h for _, h in self.swarm.horizon_defs), default=self.window_size),
@@ -541,7 +553,90 @@ class TradingBot:
     def _live_trades_dry_run(self) -> bool:
         if os.getenv("EXECUTE_LIVE_TRADES", "0").lower() in {"1", "true", "yes", "on"}:
             return False
+        # Auto-go-live: once readiness passes and a strategy has graduated
+        # from ghost (set in _maybe_transition_to_live), real execution turns
+        # on without a hand-set env flag. An explicit LIVE_TRADES_DRY_RUN=1
+        # env still wins as the manual kill switch.
+        if os.getenv("LIVE_TRADES_DRY_RUN") is None and self._auto_execute_approved:
+            return False
         return os.getenv("LIVE_TRADES_DRY_RUN", "1").lower() in {"1", "true", "yes", "on"}
+
+    def _take_pending_rotation(self, sample: Dict[str, Any]) -> Optional["TradeDirective"]:
+        """Consume a rotation directive queued by the PortfolioRotator.
+
+        The directive replaces this tick's scheduler output; stale or
+        symbol-mismatched entries are dropped."""
+        pending = self.pending_rotation_directive
+        if not pending:
+            return None
+        self.pending_rotation_directive = None
+        directive = pending.get("directive")
+        if directive is None:
+            return None
+        max_age = 300.0
+        try:
+            max_age = float(os.getenv("ROTATION_PENDING_MAX_AGE_S", "300"))
+        except Exception:
+            pass
+        if time.time() - float(pending.get("ts", 0.0)) > max_age:
+            return None
+        symbol = str(sample.get("symbol") or self.primary_symbol)
+        if getattr(directive, "symbol", None) != symbol:
+            return None
+        if self.positions.get(symbol):
+            return None
+        log_message(
+            "rotation",
+            f"consuming rotation entry on {symbol} from {pending.get('source_symbol')}",
+        )
+        return directive
+
+    def _refresh_auto_execute(self) -> None:
+        """Flip real execution on when the whole chain has proven itself:
+        bot-level live transition passed AND at least one strategy graduated
+        from its own ghost ledger. AUTO_EXECUTE_ON_GRADUATION=0 keeps the
+        old behavior of requiring a hand-set EXECUTE_LIVE_TRADES=1."""
+        if self._auto_execute_approved or not self.live_trading_enabled:
+            return
+        if os.getenv("AUTO_EXECUTE_ON_GRADUATION", "1").lower() not in {"1", "true", "yes", "on"}:
+            return
+        try:
+            approved = self.strategy_ledger.approved_ids()
+        except Exception:
+            approved = []
+        if not approved:
+            return
+        self._auto_execute_approved = True
+        log_message(
+            "live-transition",
+            f"auto-execution enabled — graduated strategies: {', '.join(approved)}",
+            severity="warning",
+        )
+        try:
+            self.metrics.feedback(
+                "live_transition",
+                severity=FeedbackSeverity.INFO,
+                label="auto_execute_enabled",
+                details={"approved_strategies": approved},
+            )
+        except Exception:
+            pass
+
+    def _strategy_live_approved(self, directive: Optional["TradeDirective"]) -> bool:
+        """Dual-track gate: only ghost-graduated strategies may enter live.
+
+        Directives without a strategy_id (legacy paths) fall back to the
+        bot-level promotion gates that admitted them in the first place.
+        """
+        if os.getenv("STRATEGY_GRADUATION_ENFORCED", "1").lower() not in {"1", "true", "yes", "on"}:
+            return True
+        sid = str(getattr(directive, "strategy_id", "") or "") if directive is not None else ""
+        if not sid:
+            return True
+        try:
+            return self.strategy_ledger.is_live_approved(sid)
+        except Exception:
+            return True
 
     def _live_trade_slippage_bps(self) -> int:
         raw = os.getenv("LIVE_TRADE_SLIPPAGE_BPS", os.getenv("SCHEDULER_SLIPPAGE_BPS", "75"))
@@ -963,13 +1058,33 @@ class TradingBot:
             swarm_votes = self.swarm.vote(price_windows, sentiment_windows)
         except Exception:
             swarm_votes = []
+        swarm_consensus = None
         if swarm_votes:
             try:
-                swarm_bias, _ = self.swarm.aggregate_votes(swarm_votes)
+                swarm_consensus = self.swarm.consensus(swarm_votes)
+                swarm_bias = swarm_consensus.expected_return
             except Exception:
+                swarm_consensus = None
                 swarm_bias = 0.0
         else:
             swarm_bias = 0.0
+        # Publish the full consensus so the swarm_consensus strategy plugin
+        # (trading/strategies/swarm_consensus.py) can act on it this tick.
+        try:
+            self.scheduler.external_signals["swarm_consensus"] = (
+                {
+                    "expected_return": swarm_consensus.expected_return,
+                    "confidence": swarm_consensus.confidence,
+                    "direction_prob": swarm_consensus.direction_prob,
+                    "entropy": swarm_consensus.entropy,
+                    "horizon_count": swarm_consensus.horizon_count,
+                    "dominant_horizon": swarm_consensus.dominant_horizon,
+                }
+                if swarm_consensus is not None
+                else None
+            )
+        except Exception:
+            pass
         volatility = float(sample.get("rolling_volatility") or 0.0)
         if volatility == 0.0 and history_prices.size > 3:
             volatility = float(np.std(np.diff(history_prices[-min(20, history_prices.size):])))
@@ -1836,6 +1951,7 @@ class TradingBot:
             )
             return
         self.live_trading_enabled = True
+        self._refresh_auto_execute()
         self._live_transition_state = {
             **(readiness or {}),
             "enabled": True,
@@ -2048,6 +2164,9 @@ class TradingBot:
             self.total_trades >= brain_floor_trades
             and (self.wins / max(self.total_trades, 1)) >= brain_min_winrate
             and float(getattr(self, "_brain_conf_ema", 0.0)) >= brain_min_conf_ema
+            # Confidence and win rate are insufficient when round-trip
+            # costs turn each nominally correct call into a net loss.
+            and self.total_profit > max(0.0, float(self.required_live_profit))
         )
         legacy_path_ok = (
             self.total_trades >= max(1, self.required_live_trades)
@@ -2090,6 +2209,7 @@ class TradingBot:
         momentum: Optional[float] = None,
         confidence: Optional[float] = None,
         spread_bps: Optional[float] = None,
+        min_confidence: Optional[float] = None,
     ) -> float:
         """Query the brain at trade-entry for its confidence on these
         features. Returns a confidence in [0, 1] used to scale trade
@@ -2118,7 +2238,12 @@ class TradingBot:
             decision["brain"] = {}
         decision["brain"]["bridge_features"] = feats
         decision["brain"]["bridge_answer"] = answer
-        floor = float(os.getenv("BRAIN_CONFIDENCE_FLOOR", "0.5"))
+        floor = (
+            float(min_confidence)
+            if min_confidence is not None
+            else float(os.getenv("BRAIN_CONFIDENCE_FLOOR", "0.5"))
+        )
+        floor = max(0.0, min(1.0, floor))
         raw_conf = float(conf)
         # Hard gate: low-conf returns are abstentions, not noise.
         if raw_conf < floor:
@@ -2551,14 +2676,18 @@ class TradingBot:
                     self._scheduler_halted = True
                 else:
                     self._scheduler_halted = False
-                    directive = self.scheduler.evaluate(
-                        sample,
-                        pred_summary,
-                        self.portfolio,
-                        base_allocation=allocation_map,
-                        risk_budget=risk_budget,
-                        live_trading=self.live_trading_enabled,
-                    )
+                    rotation_directive = self._take_pending_rotation(sample)
+                    if rotation_directive is not None:
+                        directive = rotation_directive
+                    else:
+                        directive = self.scheduler.evaluate(
+                            sample,
+                            pred_summary,
+                            self.portfolio,
+                            base_allocation=allocation_map,
+                            risk_budget=risk_budget,
+                            live_trading=self.live_trading_enabled,
+                        )
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
             self._maybe_record_horizon_summary(sample_ts)
@@ -3062,8 +3191,36 @@ class TradingBot:
             should_enter = True
             reason = directive.reason
         elif directive and directive.action == "exit":
-            should_exit = True
-            reason = directive.reason
+            # Anti-whipsaw: a strategy-emitted exit must not close a freshly
+            # opened position at a fee-loss — unless it's already in profit
+            # or breaching the stop. Competing strategies were flip-flopping
+            # positions within seconds, guaranteeing entry-minus-fees losses.
+            _entry_p = float((pos or {}).get("entry_price") or 0.0)
+            _held_s = time.time() - float((pos or {}).get("entry_ts", (pos or {}).get("ts", 0)) or 0)
+            _pnl_pct = ((price - _entry_p) / _entry_p) if _entry_p > 0 else 0.0
+            _min_hold = float(os.getenv("MIN_HOLD_SECONDS", "300"))
+            # Horizon-scaled hold: a 1w-horizon entry must not be churned out in
+            # 5 minutes and re-entered on the same slow (still-oversold) signal.
+            # Scale the flat-hold floor to the position's horizon so long-horizon
+            # positions actually hold — freeing the slot for other pairs/tiers and
+            # producing genuine cross-horizon variety instead of one signal looping.
+            # Take-profit and stop-loss still close early (handled below/elsewhere);
+            # this only suppresses flat strategy-emitted exits.
+            _HOLD_BY_HORIZON = {
+                "5h": 3600.0, "12h": 7200.0, "1d": 14400.0,
+                "3d": 43200.0, "5d": 86400.0, "1w": 172800.0,
+            }
+            _pos_sid = str((pos or {}).get("strategy_id") or "")
+            _pos_horizon = _pos_sid.split("@")[-1] if "@" in _pos_sid else ""
+            _hold_mult = float(os.getenv("HORIZON_HOLD_MULT", "1.0"))
+            _min_hold = max(_min_hold, _HOLD_BY_HORIZON.get(_pos_horizon, 0.0) * _hold_mult)
+            _stop = float(os.getenv("GHOST_STOP_LOSS_PCT", "0.02"))
+            if pos is not None and _held_s < _min_hold and _pnl_pct > -_stop and _pnl_pct <= fees:
+                should_exit = False
+                reason = f"exit-suppressed-min-hold:{directive.reason[:40]}"
+            else:
+                should_exit = True
+                reason = directive.reason
         elif pos is None:
             enter_threshold = max(0.5, min(0.99, enter_threshold + float(adjustments.get("enter_offset", 0.0))))
             min_margin_gate = max(min_margin_required, fees)
@@ -3087,6 +3244,10 @@ class TradingBot:
                 # produces fake +$156 profits that poison the brain
                 # bridge's supervised binding pool.
                 and str(quote_token).upper() in {"USDC","USDT","DAI","USDBC","USDC.E","BUSD"}
+                # ... and never stable-stable (USDT-USDC etc.): price can't beat
+                # fees, so exploring them just accumulates near-zero losses that
+                # tank ledger win rates and block graduation.
+                and str(base_token).upper() not in {"USDC","USDT","DAI","USDBC","USDC.E","BUSD","EURC","TUSD","FDUSD"}
             ):
                 # Ghost exploration path. With TF disabled the conf gates
                 # above are unreachable (every neutral signal stays at
@@ -3122,16 +3283,83 @@ class TradingBot:
                     except Exception:
                         momentum_ok = False
                 if momentum_ok and trade_size > 0.0:
-                    should_enter = True
+                    # Exploration is allowed to use a lower confidence floor
+                    # than live trading, but it must still be supported by the
+                    # Wizard node.  This turns random momentum churn into a
+                    # brain-biased data-collection path.  The normal live gate
+                    # remains BRAIN_CONFIDENCE_FLOOR (default 0.5).
+                    try:
+                        explore_floor = float(os.getenv(
+                            "GHOST_EXPLORE_BRAIN_MIN_CONFIDENCE", "0.3"))
+                    except Exception:
+                        explore_floor = 0.3
+                    explore_conf = self._brain_record_entry(
+                        decision,
+                        side="buy",
+                        symbol=symbol,
+                        chain_name=chain_name,
+                        price=float(price),
+                        momentum=float(change),
+                        confidence=float(exit_conf_val) if exit_conf_val is not None else None,
+                        min_confidence=explore_floor,
+                    )
+                    if explore_conf >= max(0.0, min(1.0, explore_floor)):
+                        should_enter = True
+                    else:
+                        reason = f"ghost-explore-brain-low:{explore_conf:.3f}"
         else:
+            # Held-position exit logic. Rewritten 2026-07-11 after 900+ ghost
+            # trades closed with ZERO wins: the old gates exited within
+            # seconds of entry (direction_prob < ~0.57 or predicted margin <=
+            # fees fires on any neutral-ish model read), before price could
+            # move — every trade realised entry-minus-fees as a guaranteed
+            # loss. And the stored take-profit target was never checked, so
+            # winning was structurally impossible. Order of checks:
+            #   1. take-profit  — the whole point of buy-low/sell-high
+            #   2. stop-loss    — bounded downside
+            #   3. model gates  — only when the model expresses a real
+            #      opinion (non-neutral) AND the trade has had time to work
+            #   4. timed exit   — stale losers release capital
+            entry_price_held = float(pos.get("entry_price") or 0.0)
+            target_price_held = float(pos.get("target_price") or 0.0)
+            held_secs = time.time() - float(pos.get("entry_ts", pos.get("ts", 0)) or 0)
+            pnl_pct_held = ((price - entry_price_held) / entry_price_held) if entry_price_held > 0 else 0.0
+            min_hold = float(os.getenv("MIN_HOLD_SECONDS", "300"))
+            stop_loss_pct = float(os.getenv("GHOST_STOP_LOSS_PCT", "0.02"))
+            model_neutral = abs(direction_prob - 0.5) < 0.02 and abs(exit_conf_val - 0.5) < 0.02
             exit_threshold = max(0.05, min(enter_threshold * 0.95, exit_threshold + float(adjustments.get("exit_offset", 0.0))))
-            if direction_prob < exit_threshold or exit_conf_val < 0.5:
+            # An exit on "the model isn't excited" only makes sense when the
+            # model is actively bearish, not merely below the (high) entry
+            # bar. 0.45 = model leaning against the position.
+            bearish_floor = min(exit_threshold, float(os.getenv("EXIT_BEARISH_FLOOR", "0.45")))
+            try:
+                from trading.triggers import evaluate_long_triggers
+                trigger = evaluate_long_triggers(
+                    pos,
+                    price=float(price),
+                    fee_rate=float(fees),
+                    now_ts=float(sample_ts),
+                    live=bool(self.live_trading_enabled),
+                )
+                pos["trigger_state"] = trigger.state
+            except Exception:
+                trigger = None
+            if trigger is not None and trigger.should_exit:
+                should_exit = True
+                reason = trigger.reason
+            elif target_price_held > 0 and price >= target_price_held:
+                should_exit = True
+                reason = "target_hit"
+            elif pnl_pct_held <= -stop_loss_pct:
+                should_exit = True
+                reason = f"stop_loss:{pnl_pct_held:.4f}"
+            elif (not model_neutral) and held_secs >= min_hold and direction_prob < bearish_floor:
                 should_exit = True
                 reason = "confidence_drop"
-            elif margin <= fees:
+            elif (not model_neutral) and held_secs >= min_hold and margin <= -fees:
                 should_exit = True
                 reason = "negative_margin"
-            elif pnl < 0 and (time.time() - pos.get("ts", 0)) > 60 * 15:
+            elif pnl < 0 and held_secs > float(os.getenv("GHOST_NEG_EXIT_SECONDS", str(60 * 45))):
                 should_exit = True
                 reason = "timed-exit"
 
@@ -3174,7 +3402,9 @@ class TradingBot:
             trade_id = f"{symbol}-{self._ghost_trade_counter}"
             entry_reason = reason or (directive.reason if directive else "model")
 
-            if self.live_trading_enabled:
+            # Dual-track: even on a live bot, a strategy that has not yet
+            # graduated from ghost keeps entering as simulation only.
+            if self.live_trading_enabled and self._strategy_live_approved(directive):
                 if self._live_trades_dry_run():
                     decision.update(
                         {
@@ -3184,6 +3414,7 @@ class TradingBot:
                             "entry_price": price,
                             "route": route,
                             "reason": entry_reason,
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
                             "target_price": directive.target_price if directive else price * 1.05,
                             "horizon": directive.horizon if directive else None,
                             "trade_id": trade_id,
@@ -3329,6 +3560,8 @@ class TradingBot:
 
                 executed_entry_price = quote_spent / max(base_received, 1e-9)
                 self.positions[symbol] = {
+                    "mode": "live",
+                    "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
                     "entry_price": executed_entry_price,
                     "size": base_received,
                     "ts": sample_ts,
@@ -3346,6 +3579,7 @@ class TradingBot:
                     "gas_spent_native": gas_spent_native,
                     "base_symbol": base_balance_symbol,
                     "quote_symbol": quote_balance_symbol,
+                    "trigger_state": {"high_watermark": executed_entry_price},
                 }
                 if brain.get("fingerprint"):
                     try:
@@ -3371,6 +3605,7 @@ class TradingBot:
                         "entry_price": executed_entry_price,
                         "route": route,
                         "reason": entry_reason,
+                        "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
                         "target_price": directive.target_price if directive else price * 1.05,
                         "horizon": directive.horizon if directive else None,
                         "trade_id": trade_id,
@@ -3450,6 +3685,8 @@ class TradingBot:
 
             # ghost / paper entry
             self.positions[symbol] = {
+                "mode": "ghost",
+                "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
                 "entry_price": price,
                 "size": trade_size,
                 "ts": sample_ts,
@@ -3463,21 +3700,29 @@ class TradingBot:
                 "expected_margin_after_fees": margin - fees,
                 "entry_confidence": exit_conf_val,
                 "direction_prob": direction_prob,
+                "trigger_state": {"high_watermark": price},
             }
             if brain.get("fingerprint"):
                 try:
                     self.positions[symbol]["fingerprint"] = list(brain.get("fingerprint") or [])
                 except Exception:
                     self.positions[symbol]["fingerprint"] = []
-            self._brain_record_entry(
-                decision,
-                side="buy",
-                symbol=symbol,
-                chain_name=chain_name,
-                price=float(price),
-                momentum=float(direction_prob) - 0.5 if direction_prob is not None else None,
-                confidence=float(exit_conf_val) if exit_conf_val is not None else None,
-            )
+            # Explore-mode already queried and gated on the same entry
+            # features.  Do not query again and overwrite a valid 0.3-0.5
+            # exploration confidence with the stricter live floor.
+            if not (
+                isinstance(decision.get("brain"), dict)
+                and decision["brain"].get("bridge_features")
+            ):
+                self._brain_record_entry(
+                    decision,
+                    side="buy",
+                    symbol=symbol,
+                    chain_name=chain_name,
+                    price=float(price),
+                    momentum=float(direction_prob) - 0.5 if direction_prob is not None else None,
+                    confidence=float(exit_conf_val) if exit_conf_val is not None else None,
+                )
             decision.update(
                 {
                     "action": "enter",
@@ -3486,6 +3731,7 @@ class TradingBot:
                     "entry_price": price,
                     "route": route,
                     "reason": entry_reason,
+                    "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
                     "target_price": directive.target_price if directive else price * 1.05,
                     "horizon": directive.horizon if directive else None,
                     "trade_id": trade_id,
@@ -3571,9 +3817,14 @@ class TradingBot:
                     },
                 )
                 return decision
-            trade_stage = MetricStage.LIVE_TRADING if self.live_trading_enabled else MetricStage.GHOST_TRADING
-            feedback_channel = "live_trading" if self.live_trading_enabled else "ghost_trading"
-            log_prefix = "[live]" if self.live_trading_enabled else "[ghost]"
+            # Positions close in the mode they were opened in: a ghost-opened
+            # (dual-track) position must never route through the live swap
+            # path, even when the bot itself has since gone live.
+            pos_mode = str(pos.get("mode") or ("live" if self.live_trading_enabled else "ghost"))
+            pos_is_live = pos_mode == "live" and self.live_trading_enabled
+            trade_stage = MetricStage.LIVE_TRADING if pos_is_live else MetricStage.GHOST_TRADING
+            feedback_channel = "live_trading" if pos_is_live else "ghost_trading"
+            log_prefix = "[live]" if pos_is_live else "[ghost]"
 
             entry_price = float(pos.get("entry_price", 0.0))
             total_quote_spent = float(pos.get("quote_spent", entry_price * held_size))
@@ -3587,14 +3838,17 @@ class TradingBot:
             native_price_usd = 0.0
             fee_cost = 0.0
 
-            if self.live_trading_enabled:
+            if pos_is_live:
                 entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
                 if (sample_ts - entry_ts_gate) < max_hold_sec:
                     est_notional = max(exit_size * entry_price, 1e-9)
                     est_gross_profit = (price - entry_price) * exit_size
                     est_fee_cost = max(est_notional * fees, 0.0)
                     est_profit = est_gross_profit - est_fee_cost
-                    if est_profit <= 0.0:
+                    protective_exit = str(reason or "").startswith(
+                        ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
+                    )
+                    if est_profit <= 0.0 and not protective_exit:
                         decision.update({"status": "hold-negative", "reason": reason or "hold"})
                         return decision
                 if self._live_trades_dry_run():
@@ -3756,6 +4010,18 @@ class TradingBot:
             self.total_trades += 1
             if profit > 0:
                 self.wins += 1
+            # Per-strategy ledger: attribute the outcome to the strategy that
+            # opened this position; graduation/demotion re-evaluates inside.
+            try:
+                self.strategy_ledger.record(
+                    str(pos.get("strategy_id") or "") or "unclassified",
+                    profit=float(profit),
+                    mode=pos_mode,
+                    confidence=float(pos.get("entry_confidence") or 0.0) or None,
+                )
+                self._refresh_auto_execute()
+            except Exception:
+                pass
             checkpoint = 0.0
             next_stop = route[1] if len(route) > 1 else None
             realized_margin = profit / notional if notional else 0.0
@@ -3821,13 +4087,37 @@ class TradingBot:
                     savings_slot["skipped"] = skip_payload
                     self._log_savings_skip(skip_payload)
                     checkpoint = 0.0
-            elif (not self.live_trading_enabled) and profit <= 0 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec:
+            protective_exit = str(reason or "").startswith(
+                ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
+            )
+            if (
+                (not pos_is_live)
+                and profit <= 0
+                and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec
+                and not protective_exit
+            ):
                 decision.update({"status": "hold-negative", "reason": reason or "hold"})
                 return decision
             self.total_profit += profit
             self.realized_profit += profit
+            # Cross-token rotation: a profitable sell-high frees quote —
+            # let the portfolio rotator pick the next buy-low across all
+            # streamed pairs (SAT) or park in stable (UNSAT). Runs after
+            # the stable-bank skim so savings are never re-risked.
+            if profit > 0 and self.rotator is not None:
+                try:
+                    freed_quote = quote_received if quote_received > 0 else exit_size * price
+                    self.rotator.on_exit(
+                        self,
+                        symbol=symbol,
+                        chain=chain_name,
+                        freed_quote=float(freed_quote),
+                        profit=float(profit),
+                    )
+                except Exception as exc:
+                    log_message("rotation", f"on_exit failed: {exc}", severity="warning")
             # --- Live circuit breaker: revert to ghost on sustained losses ---
-            if self.live_trading_enabled:
+            if pos_is_live:
                 if profit > 0:
                     self._live_consecutive_losses = 0
                 else:
@@ -3845,6 +4135,15 @@ class TradingBot:
                     self._live_consecutive_losses = 0
                     self._live_total_pnl = 0.0
                     self._live_peak_pnl = 0.0
+                    # The strategy behind the losing streak loses its live
+                    # approval too and must re-prove itself in ghost.
+                    try:
+                        self.strategy_ledger.demote(
+                            str(pos.get("strategy_id") or "") or "unclassified",
+                            "bot circuit breaker tripped",
+                        )
+                    except Exception:
+                        pass
                     log_message(
                         "live-circuit-breaker",
                         "reverted to ghost mode",
@@ -3921,6 +4220,7 @@ class TradingBot:
                     "action": "exit",
                     "status": f"{'live' if self.live_trading_enabled else 'ghost'}-exit",
                     "exit_reason": reason,
+                    "strategy_id": str(pos.get("strategy_id") or ""),
                     "size": exit_size,
                     "entry_price": entry_price,
                     "exit_price": exit_price_effective,
@@ -5208,6 +5508,14 @@ class TradingBot:
         exposure = ghost.get("active_exposure")
         if isinstance(exposure, dict):
             self.active_exposure = {str(sym): float(value) for sym, value in exposure.items()}
+        self._auto_execute_approved = bool(ghost.get("auto_execute_approved", False))
+        swarm_state = ghost.get("swarm")
+        if isinstance(swarm_state, dict):
+            try:
+                if self.swarm.from_dict(swarm_state):
+                    log_message("trading", "swarm learning state restored", severity="debug")
+            except Exception:
+                pass
 
     def _append_organism_timeline(self, snapshot: Dict[str, Any], limit: int = 32) -> None:
         path = getattr(self, "_timeline_path", Path("runtime/organism_timeline.json"))
@@ -5311,7 +5619,14 @@ class TradingBot:
             "sim_native_balances": self.sim_native_balances,
             "session_id": self.ghost_session_id,
             "active_exposure": self.active_exposure,
+            "auto_execute_approved": bool(self._auto_execute_approved),
         }
+        # Swarm learning survives restarts — without this every process
+        # restart wiped the LinearCell weights back to the cold-start prior.
+        try:
+            state["ghost_trading"]["swarm"] = self.swarm.to_dict()
+        except Exception:
+            pass
         try:
             self.db.save_state(state)
         except Exception:

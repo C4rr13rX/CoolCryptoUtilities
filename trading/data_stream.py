@@ -258,10 +258,25 @@ _ENV_ENDPOINT_EXCLUDE: Set[str] = {
 
 def _endpoint_allowed(name: str) -> bool:
     lname = name.lower()
-    if _ENV_ENDPOINT_INCLUDE:
-        return lname in _ENV_ENDPOINT_INCLUDE
+    # Read the env DYNAMICALLY, not from the import-time module constants:
+    # EnvLoader hydrates MARKET_ENDPOINT_EXCLUDE after this module is imported,
+    # so caching the set at import froze it empty and the exclude never applied
+    # (binance kept getting tried despite being geo-blocked). Fall back to the
+    # import-time sets when the env isn't set.
+    include = {
+        n.strip().lower()
+        for n in (os.getenv("MARKET_ENDPOINT_INCLUDE") or "").split(",")
+        if n.strip()
+    } or _ENV_ENDPOINT_INCLUDE
+    if include:
+        return lname in include
     exclude = set(_DEFAULT_ENDPOINT_EXCLUDE)
-    exclude.update(_ENV_ENDPOINT_EXCLUDE)
+    env_excl = {
+        n.strip().lower()
+        for n in (os.getenv("MARKET_ENDPOINT_EXCLUDE") or "").split(",")
+        if n.strip()
+    }
+    exclude.update(env_excl or _ENV_ENDPOINT_EXCLUDE)
     return lname not in exclude
 
 
@@ -2165,13 +2180,38 @@ class MarketDataStream:
             )
         return endpoints
 
+    # Real-time WS exchanges that serve USDC/USDT natively. coinbase lists
+    # most pairs as -USD (not -USDC/-USDT) so it can't stream them; okx et al.
+    # can. But concentrating ALL streams on one exchange throttles it (okx
+    # times out past ~30 connections per IP). So we SPREAD: each symbol
+    # rotates which of these it tries first (by symbol hash), distributing
+    # N streams across the pool instead of piling them on okx.
+    _WS_POOL = ("okx", "bybit", "mexc", "kraken", "kucoin", "coinbase")
+    # REST-only / fallback sources always rank after the WS pool.
+    _FALLBACK_PREFERENCE = {
+        "coingecko": 0, "bitstamp": 1, "gateio": 2, "htx": 3,
+        "geckoterminal": 4, "binance": 20,
+    }
+
     def _ranked_endpoints(self) -> List[Endpoint]:
         if not self.endpoints:
             return []
+        pool = self._WS_POOL
+        rot = abs(hash(self.symbol)) % len(pool)
+        rotated = pool[rot:] + pool[:rot]
+        ws_pref = {name: i for i, name in enumerate(rotated)}
+        base = len(pool)
+
+        def rank(ep: "Endpoint") -> int:
+            if ep.name in ws_pref:
+                return ws_pref[ep.name]
+            return base + self._FALLBACK_PREFERENCE.get(ep.name, 10)
+
         return sorted(
             self.endpoints,
             key=lambda ep: (
                 -self._endpoint_scores.get(ep.name, 0.0),
+                rank(ep),
                 self._endpoint_order.get(ep.name, 0),
             ),
         )

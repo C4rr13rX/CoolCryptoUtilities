@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import trading.bot as bot_module
 from trading.bot import TradingBot
 
 
@@ -102,3 +103,59 @@ def test_plan_gas_replenishment_prefers_stable_swaps() -> None:
     assert strategy["stable_swap_plan"]
     assert strategy["force_rebalance"] is True
     assert strategy["remaining_native_gap"] >= 0
+
+
+@pytest.mark.parametrize(
+    ("confidence", "floor", "accepted"),
+    [(0.29, 0.30, False), (0.30, 0.30, True), (0.49, None, False), (0.50, None, True)],
+)
+def test_brain_entry_supports_separate_explore_and_live_floors(
+    monkeypatch, confidence: float, floor: float | None, accepted: bool
+) -> None:
+    class Bridge:
+        def query_confidence(self, features: str):
+            return "UP", confidence
+
+    bot = TradingBot.__new__(TradingBot)
+    bot._brain_conf_ema = 0.0
+    monkeypatch.setattr(bot_module, "_brain_bridge", lambda: Bridge())
+    monkeypatch.setattr(bot_module, "_brain_features_text", lambda **kwargs: "features")
+    monkeypatch.setenv("BRAIN_CONFIDENCE_FLOOR", "0.5")
+    decision = {}
+
+    result = bot._brain_record_entry(
+        decision,
+        side="buy",
+        symbol="ETH-USDC",
+        chain_name="base",
+        price=100.0,
+        min_confidence=floor,
+    )
+
+    assert (result > 0.0) is accepted
+    assert decision["brain"]["bridge_confidence_rejected"] is (not accepted)
+
+
+def test_brain_graduation_requires_positive_net_profit(monkeypatch) -> None:
+    class Metrics:
+        def feedback(self, *args, **kwargs):
+            raise AssertionError("loss-making ghost strategy must not graduate")
+
+    bot = TradingBot.__new__(TradingBot)
+    bot.live_trading_enabled = False
+    bot.auto_promote_live = True
+    bot.total_trades = 30
+    bot.wins = 25
+    bot.total_profit = -0.01
+    bot._brain_conf_ema = 0.9
+    bot.required_live_trades = 50
+    bot.required_live_win_rate = 0.7
+    bot.required_live_profit = 0.0
+    bot.metrics = Metrics()
+    monkeypatch.setenv("BRAIN_GRADUATION_MIN_TRADES", "20")
+    monkeypatch.setenv("BRAIN_GRADUATION_MIN_WINRATE", "0.55")
+    monkeypatch.setenv("BRAIN_GRADUATION_MIN_CONF_EMA", "0.20")
+
+    bot._maybe_promote_to_live()
+
+    assert bot.live_trading_enabled is False

@@ -3,9 +3,25 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sys
 import threading
 from pathlib import Path
 from typing import Dict, Optional
+
+# CRITICAL ordering: point Django at the real settings module and put repo
+# root + web/ on sys.path BEFORE importing anything from django.* . Any later
+# django.setup() (ours or triggered incidentally by an import) would otherwise
+# run against Django's empty global_settings (DJANGO_SETTINGS_MODULE unset),
+# populate 0 apps, and mark the registry "ready" — permanently blocking the
+# real INSTALLED_APPS (auth, securevault) from loading. That empty-but-ready
+# registry was the true cause of `default_env_user()` returning None and the
+# whole vault (MNEMONIC/ALCHEMY/...) failing to hydrate in subprocesses.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+for _p in (_REPO_ROOT, _REPO_ROOT / "web"):
+    _p_str = str(_p)
+    if _p_str not in sys.path:
+        sys.path.insert(0, _p_str)
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from django.conf import settings as django_settings
@@ -17,7 +33,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 try:
     import django
-    if django_settings.configured and not django.apps.apps.ready:  # type: ignore[attr-defined]
+    if not django.apps.apps.ready:  # type: ignore[attr-defined]
         django.setup()
 except Exception:
     pass
@@ -249,12 +265,43 @@ def get_settings_for_user(user) -> Dict[str, str]:
 
 
 def _ensure_django_ready() -> bool:
+    """Configure Django so the encrypted vault (Postgres) is reachable.
+
+    The previous version only called ``django.setup()`` when settings were
+    ALREADY configured — so a bare subprocess (production's
+    ``main.py --action start_production``, feeders, scripts) that never set
+    ``DJANGO_SETTINGS_MODULE`` silently failed: ``SecureSetting`` imported as
+    None and ``default_env_user()`` returned None, so MNEMONIC/ALCHEMY/etc.
+    never hydrated (log signature: ``secure settings loaded {alchemy: False}``
+    and ``unable to initialise UltraSwapBridge``). The web app worked only
+    because it runs under manage.py with the settings module already set.
+
+    Now it bootstraps Django itself when unconfigured: puts ``web`` on the
+    path, points ``DJANGO_SETTINGS_MODULE`` at the canonical settings, and
+    calls ``django.setup()``. Idempotent; a no-op once Django is ready.
+    """
+    import sys
+    from pathlib import Path
+    # ALWAYS put repo root + web/ on sys.path first — regardless of whether
+    # settings look "configured". Django's settings can be configured (lazy)
+    # while the app registry is empty; if django.setup() then runs without
+    # web/ on the path it fails importing `securevault`, leaving the registry
+    # half-built so even `auth` is missing (LookupError: No installed app with
+    # label 'auth'). That aborted default_env_user() and blocked all vault
+    # hydration. Fixing the path unconditionally is the load-bearing change.
+    root = Path(__file__).resolve().parents[1]
+    for p in (root, root / "web"):
+        p_str = str(p)
+        if p_str not in sys.path:
+            sys.path.insert(0, p_str)
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
     try:
-        if django_settings.configured and not django.apps.apps.ready:  # type: ignore[attr-defined]
+        from django.apps import apps as _django_apps
+        if not _django_apps.ready:
             django.setup()
+        return bool(_django_apps.ready)
     except Exception:
         return False
-    return bool(django_settings.configured and django.apps.apps.ready)  # type: ignore[attr-defined]
 
 
 def _load_secure_setting_model():

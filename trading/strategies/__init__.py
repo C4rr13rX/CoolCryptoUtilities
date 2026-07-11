@@ -1,0 +1,73 @@
+"""Independent CPU-only trading strategies + registry.
+
+Every strategy evaluates a pair's rolling window and emits candidate
+directives that the CDCL SAT/UNSAT solver arbitrates. See base.py for the
+contract. New strategies: subclass Strategy, register in
+build_default_registry(), and they automatically enter the per-strategy
+ghost ledger / graduation pipeline.
+"""
+from __future__ import annotations
+
+from trading.strategies.base import Strategy, StrategyContext, StrategyRegistry
+from trading.strategies.bollinger_squeeze import BollingerSqueezeStrategy
+from trading.strategies.donchian_breakout import DonchianBreakoutStrategy
+from trading.strategies.ema_cross import EmaCrossStrategy
+from trading.strategies.horizons import build_multihorizon_strategies
+from trading.strategies.macd_momentum import MacdMomentumStrategy
+from trading.strategies.mean_reversion import MeanReversionStrategy
+from trading.strategies.momentum_breakout import MomentumBreakoutStrategy
+from trading.strategies.obv_accumulation import ObvAccumulationStrategy
+from trading.strategies.rsi_reversal import RsiReversalStrategy
+from trading.strategies.stochastic_reversal import StochasticReversalStrategy
+from trading.strategies.supertrend_follow import SupertrendFollowStrategy
+from trading.strategies.swarm_consensus import SwarmConsensusStrategy
+from trading.strategies.atf_static import ATFStaticStrategy
+from trading.strategies.volume_spike import VolumeSpikeStrategy
+from trading.strategies.vwap_reversion import VwapReversionStrategy
+
+__all__ = [
+    "Strategy",
+    "StrategyContext",
+    "StrategyRegistry",
+    "build_default_registry",
+    "MeanReversionStrategy",
+    "MomentumBreakoutStrategy",
+    "EmaCrossStrategy",
+    "RsiReversalStrategy",
+    "BollingerSqueezeStrategy",
+    "VolumeSpikeStrategy",
+    "VwapReversionStrategy",
+    "SwarmConsensusStrategy",
+    "ATFStaticStrategy",
+    "MacdMomentumStrategy",
+    "StochasticReversalStrategy",
+    "DonchianBreakoutStrategy",
+    "SupertrendFollowStrategy",
+    "ObvAccumulationStrategy",
+]
+
+
+def build_default_registry() -> StrategyRegistry:
+    base = [
+        MeanReversionStrategy(),
+        MomentumBreakoutStrategy(),
+        EmaCrossStrategy(),
+        RsiReversalStrategy(),
+        BollingerSqueezeStrategy(),
+        VolumeSpikeStrategy(),
+        VwapReversionStrategy(),
+        SwarmConsensusStrategy(),
+        ATFStaticStrategy(),
+        # Proven classics added for fast ghost->live graduation: frequent,
+        # quick-resolving signals with decades of evidence behind them.
+        MacdMomentumStrategy(),
+        StochasticReversalStrategy(),
+        DonchianBreakoutStrategy(),
+        SupertrendFollowStrategy(),
+        ObvAccumulationStrategy(),
+    ]
+    # Multi-timescale sweep: the full-window strategies also hunt at 5h..1w
+    # horizons off resampled stored history, so every time bucket the user
+    # cares about has strategies looking for opportunities. Each swept variant
+    # is an independent strategy_id in the ledger.
+    return StrategyRegistry(base + build_multihorizon_strategies(base))

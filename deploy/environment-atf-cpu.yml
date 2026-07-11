@@ -1,0 +1,21 @@
+name: atf-cpu-verifier
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - scipy
+  - sympy
+  - scikit-learn
+  - pydantic
+  - jsonschema
+  - networkx
+  - z3-solver
+  - onnxruntime
+  - pip
+  - pip:
+      - fastembed>=0.7,<0.8
+
+# Runtime model (downloaded lazily): BAAI/bge-small-en-v1.5, MIT, 33M params.
+# Optional protocol-repair model: HuggingFaceTB/SmolLM2-360M-Instruct,
+# Apache-2.0. It is not used as a factual authority.

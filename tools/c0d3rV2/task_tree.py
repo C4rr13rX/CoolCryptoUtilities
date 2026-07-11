@@ -33,6 +33,11 @@ class TaskNode:
     created_at: float = field(default_factory=time.time)
     completed_at: float | None = None
     error: str = ""
+    rationale: str = ""
+    dependencies: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    acceptance_criteria: list[str] = field(default_factory=list)
+    recovery_policy: str = ""
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -66,11 +71,21 @@ class TaskNode:
         self,
         description: str,
         scientific_form: str = "",
+        rationale: str = "",
+        dependencies: list[str] | None = None,
+        constraints: list[str] | None = None,
+        acceptance_criteria: list[str] | None = None,
+        recovery_policy: str = "",
     ) -> TaskNode:
         child = TaskNode(
             description=description,
             scientific_form=scientific_form,
             parent_id=self.id,
+            rationale=rationale,
+            dependencies=list(dependencies or []),
+            constraints=list(constraints or []),
+            acceptance_criteria=list(acceptance_criteria or []),
+            recovery_policy=recovery_policy,
         )
         self.children.append(child)
         return child
@@ -95,6 +110,11 @@ class TaskNode:
             "scientific_form": self.scientific_form,
             "status": self.status,
             "error": self.error,
+            "rationale": self.rationale,
+            "dependencies": self.dependencies,
+            "constraints": self.constraints,
+            "acceptance_criteria": self.acceptance_criteria,
+            "recovery_policy": self.recovery_policy,
             "tool_outputs_count": len(self.tool_outputs),
             "children": [c.to_dict() for c in self.children],
         }
@@ -106,6 +126,14 @@ class TaskNode:
         label = self.scientific_form or self.description
         line = f"{indent}{icon} [{self.id}] {label}"
         parts = [line]
+        if self.dependencies:
+            parts.append(f"{indent}  depends_on: {', '.join(self.dependencies)}")
+        if self.constraints:
+            parts.append(f"{indent}  constraints: {'; '.join(self.constraints)}")
+        if self.acceptance_criteria:
+            parts.append(f"{indent}  acceptance: {'; '.join(self.acceptance_criteria)}")
+        if self.recovery_policy:
+            parts.append(f"{indent}  recovery: {self.recovery_policy}")
         for child in self.children:
             parts.append(child.summary(depth + 1))
         return "\n".join(parts)
@@ -161,7 +189,7 @@ class TaskTree:
         """Full tree summary for injection into AI context."""
         return self.root.summary()
 
-    def accumulated_results_summary(self, max_chars: int = 6000) -> str:
+    def accumulated_results_summary(self, max_chars: int = 7000) -> str:
         """
         Condensed text block of all tool outputs for context injection.
         Truncates per-entry to stay within budget.
@@ -169,20 +197,40 @@ class TaskTree:
         entries = self.accumulated_results()
         if not entries:
             return ""
+        # Preserve actual source context instead of letting repeated tool
+        # errors dilute every file read to a few hundred characters. Keep the
+        # latest successful read for each path and the most recent non-read
+        # events that explain what happened after those reads.
+        latest_reads: dict[str, dict] = {}
+        for entry in entries:
+            if entry.get("tool") != "file_read":
+                continue
+            result = entry.get("result") or {}
+            if result.get("error") or not result.get("content"):
+                continue
+            key = str(result.get("path") or f"{entry.get('branch')}:{result.get('offset', 0)}")
+            latest_reads[key] = entry
+        recent_other = [entry for entry in entries if entry.get("tool") != "file_read"][-10:]
+        selected = list(latest_reads.values())[-3:] + recent_other
+
         lines = ["[Accumulated Tool Results]"]
         char_count = 0
-        per_entry_limit = max(200, max_chars // max(len(entries), 1))
-        for entry in entries:
+        for entry in selected:
             tool = entry.get("tool", "?")
             branch = entry.get("branch_desc", entry.get("branch", ""))
             result = entry.get("result", {})
             # Compact serialisation
-            result_str = json.dumps(result, default=str)
-            if len(result_str) > per_entry_limit:
-                result_str = result_str[:per_entry_limit] + "..."
+            # `default=str` handles non-JSON values but not non-primitive
+            # mapping keys (for example SymPy Symbol keys returned by
+            # math_grounding). Normalize the full structure first so one tool
+            # result cannot crash the orchestration feedback loop.
+            result_str = json.dumps(_json_safe(result), default=str)
+            entry_limit = 2200 if tool == "file_read" else 700
+            if len(result_str) > entry_limit:
+                result_str = result_str[:entry_limit] + "..."
             line = f"- [{tool}] (branch: {branch[:80]}): {result_str}"
             if char_count + len(line) > max_chars:
-                lines.append(f"  ... ({len(entries) - len(lines) + 1} more entries truncated)")
+                lines.append("  ... (remaining recent entries truncated)")
                 break
             lines.append(line)
             char_count += len(line)
@@ -219,7 +267,6 @@ class TaskTree:
             out.append(node)
         for child in node.children:
             self._collect_pending(child, out)
-
     @property
     def is_complete(self) -> bool:
         return self.root.is_done
@@ -239,3 +286,13 @@ class TaskTree:
     def _count_done(self, node: TaskNode) -> int:
         n = 1 if node.is_done else 0
         return n + sum(self._count_done(c) for c in node.children)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)

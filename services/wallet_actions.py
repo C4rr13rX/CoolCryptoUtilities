@@ -156,6 +156,23 @@ WALLET_ACTIONS: Dict[str, WalletAction] = {
         fields=[],
         category="production",
     ),
+    "atf_static_strategy": WalletAction(
+        name="atf_static_strategy",
+        label="C0D3R/ATF Static Strategy",
+        description=(
+            "Researches Base candidates, publishes ghost/scheduler signals, "
+            "and performs quote-only swap readiness probes by default."
+        ),
+        fields=[
+            WalletField("budget_usd", "Budget USD", kind="number", required=False, placeholder="20"),
+            WalletField("max_positions", "Max Positions", kind="number", required=False, placeholder="3"),
+            WalletField("chain", "Chain", "select", required=False, options=CHAIN_OPTIONS),
+            WalletField("quote_token", "Quote Token", required=False, placeholder="USDC"),
+            WalletField("slippage_bps", "Slippage (bps)", kind="number", required=False, placeholder="100"),
+            WalletField("probe_quotes", "Probe Quotes", kind="select", required=False, options=["true", "false"]),
+        ],
+        category="production",
+    ),
 }
 
 

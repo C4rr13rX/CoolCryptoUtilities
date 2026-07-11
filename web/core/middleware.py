@@ -1,11 +1,86 @@
 from __future__ import annotations
 
+import hmac
 import os
+from pathlib import Path
 from django.conf import settings
 from django.http.request import split_domain_port, validate_host
 from django.urls import resolve
 from django.urls.exceptions import Resolver404
 from services.logging_utils import log_message
+
+
+def _local_bridge_token() -> str:
+    token = os.getenv("CCU_LOCAL_BRIDGE_TOKEN", "").strip().lstrip("\ufeff")
+    if token:
+        return token
+    try:
+        path = Path(getattr(settings, "REPO_ROOT", Path.cwd())) / "runtime" / "local_bridge" / "token.txt"
+        return path.read_text(encoding="utf-8-sig").strip().lstrip("\ufeff")
+    except Exception:
+        return ""
+
+
+def _is_loopback_request(request) -> bool:
+    remote = (request.META.get("REMOTE_ADDR") or "").strip()
+    host = (request.META.get("HTTP_HOST") or request.META.get("SERVER_NAME") or "").split(":", 1)[0].strip().lower()
+    return remote in {"127.0.0.1", "::1", "localhost"} or host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _has_valid_local_bridge_token(request) -> bool:
+    expected = _local_bridge_token()
+    if len(expected) < 32:
+        return False
+    provided = (request.META.get("HTTP_X_C4_LOCAL_AGENT_TOKEN") or "").strip()
+    if len(provided) < 32:
+        return False
+    return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
+
+
+class LocalBridgeCsrfBypassMiddleware:
+    """
+    Allow the owner-controlled native bridge to call localhost API endpoints
+    without copied browser cookies/CSRF tokens.
+
+    This does not authorize public traffic.  The shared token is only accepted
+    when the request is from loopback, because the bridge talks to Django at
+    http://127.0.0.1:8000 on the same PC.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        path = request.path_info or ""
+        if path.startswith("/api/") and _is_loopback_request(request) and _has_valid_local_bridge_token(request):
+            request.META["CCU_LOCAL_BRIDGE_AUTH"] = "1"
+            request._dont_enforce_csrf_checks = True
+        return self.get_response(request)
+
+
+class LocalBridgeUserMiddleware:
+    """Attach a local admin user for requests already verified by the bridge token."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.META.get("CCU_LOCAL_BRIDGE_AUTH") == "1":
+            try:
+                from django.contrib.auth import get_user_model
+
+                User = get_user_model()
+                user = (
+                    User.objects.filter(is_active=True, is_superuser=True).order_by("id").first()
+                    or User.objects.filter(is_active=True, is_staff=True).order_by("id").first()
+                    or User.objects.filter(is_active=True).order_by("id").first()
+                )
+                if user is not None:
+                    request.user = user
+                    request._cached_user = user
+            except Exception:
+                pass
+        return self.get_response(request)
 
 
 class DynamicOriginMiddleware:

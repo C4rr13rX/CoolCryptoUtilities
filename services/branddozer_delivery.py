@@ -1799,7 +1799,10 @@ class DeliveryOrchestrator:
                 plan_prompt,
                 session_key=f"branddozer:{run.id}:plan",
                 workdir=root,
-                backend=provider if provider in ("wizard", "bedrock", "c0d3r", "coder") else "wizard",
+                backend=provider if provider in (
+                    "wizard", "bedrock", "c0d3r", "coder", "freeloader",
+                    "agentthefreeloader", "agent_the_freeloader",
+                ) else "wizard",
                 system_context=system_ctx,
             )
             exhausted = _codex_quota_exhausted(output)

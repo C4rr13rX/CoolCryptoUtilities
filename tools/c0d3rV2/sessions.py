@@ -23,6 +23,7 @@ Backend priority (CLI --backend flag or env):
                 offline or for tasks needing transformer-style generation).
   3. claude   — Anthropic API direct (third fallback).
   4. openai   — OpenAI API (last resort).
+  5. freeloader — AgentTheFreeloader free-model capacity router.
 
 The wizard backend is the strategic choice: as the brain trains on
 engineering/research corpora, it replaces external APIs.  Bedrock /
@@ -32,13 +33,16 @@ availability check lives in `tools.ai_session.resolve_with_fallback`.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 
 def _default_backend() -> str:
-    raw = os.getenv("C0D3R_BACKEND", "wizard").strip().lower()
+    from tools.ai_backend_mode import configured_backend
+
+    raw = configured_backend("wizard")
+    if raw == "auto":
+        raw = "wizard"
     legacy = {"codex": "wizard", "openai_codex": "wizard"}
     return legacy.get(raw, raw) or "wizard"
 
@@ -64,7 +68,18 @@ class SessionManager:
         transcript_dir: Path | None = None,
         workdir: str = "",
     ) -> None:
+        from tools.ai_backend_mode import freeloader_mode_active
+
         self._backend = (backend or _default_backend()).lower().strip()
+        if freeloader_mode_active():
+            self._backend = "freeloader"
+        if model is None:
+            try:
+                from tools.secret_vault import get_secret
+
+                model = get_secret("C0D3R_MODEL") or None
+            except Exception:
+                model = None
         self._session = self._create_session(
             backend=self._backend,
             wizard_endpoint=wizard_endpoint,
@@ -90,6 +105,15 @@ class SessionManager:
     ) -> Any:
         _BEDROCK = {"bedrock", "c0d3r", "coder"}
         _WIZARD  = {"wizard", "w1z4rd", "wizard_node", "local"}
+        _FREELOADER = {"freeloader", "agentthefreeloader", "agent_the_freeloader"}
+
+        if backend in _FREELOADER:
+            from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
+            return AgentTheFreeloaderSession(
+                session_name="c0d3rv2-freeloader",
+                transcript_dir=transcript_dir,
+                workdir=workdir,
+            )
 
         if backend in _WIZARD:
             from tools.wizard_session import WizardSession
@@ -129,7 +153,7 @@ class SessionManager:
 
         raise ValueError(
             f"Unknown C0d3rV2 backend: {backend!r}. "
-            "Use 'wizard', 'bedrock', or 'openai'."
+            "Use 'wizard', 'bedrock', 'codex', 'openai', or 'freeloader'."
         )
 
     # ------------------------------------------------------------------

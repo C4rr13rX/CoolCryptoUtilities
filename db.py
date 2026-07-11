@@ -17,6 +17,9 @@ except Exception:  # pragma: no cover - psycopg optional for SQLite-only setups
     psycopg = None  # type: ignore
     dict_row = None  # type: ignore
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
 class TradingDatabase:
     """
     Backing store for trading data. Supports SQLite (legacy) and PostgreSQL
@@ -26,7 +29,7 @@ class TradingDatabase:
 
     _DEFAULT_PATH = os.getenv(
         "TRADING_DB_PATH",
-        str((Path.cwd() / "storage" / "trading_cache.db").resolve()),
+        str(PROJECT_ROOT / "storage" / "trading_cache.db"),
     )
 
     def __init__(self, path: Optional[str] = None) -> None:
@@ -1447,6 +1450,28 @@ class TradingDatabase:
         payload = json.dumps(meta or {})
         ts = time.time()
         with self._conn:
+            # An advisory represents a current condition, not an event log.
+            # Refresh an existing open condition instead of accumulating a new
+            # flashing warning every scheduler cycle.
+            existing = self._conn.execute(
+                """
+                SELECT id FROM advisories
+                WHERE resolved=? AND topic=? AND scope=?
+                ORDER BY ts DESC LIMIT 1
+                """,
+                (False, topic, scope or ""),
+            ).fetchone()
+            if existing is not None:
+                advisory_id = int(existing["id"])
+                self._conn.execute(
+                    """
+                    UPDATE advisories
+                    SET ts=?, severity=?, message=?, recommendation=?, meta=?
+                    WHERE id=?
+                    """,
+                    (ts, severity, message, recommendation or "", payload, advisory_id),
+                )
+                return advisory_id
             cur = self._conn.execute(
                 """
                 INSERT INTO advisories(ts, scope, topic, severity, message, recommendation, meta, resolved)

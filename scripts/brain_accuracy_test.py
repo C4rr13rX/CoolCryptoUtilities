@@ -85,8 +85,13 @@ def _outcome_for_bar(bars: List[Dict], i: int, horizon: int) -> str:
 
 
 def _outcome_label(text: str) -> str:
-    """Strip the 'outcome ' prefix that outcome_text adds, so we can
-    compare against brain's decoded answer."""
+    """Canonical label for an outcome_text string (handles both the
+    disjoint tokens and legacy words), so expected and predicted sides
+    compare in the same vocabulary."""
+    from trading.brain_bridge import parse_outcome
+    parsed = parse_outcome(text)
+    if parsed:
+        return parsed
     if text.startswith("outcome "):
         return text[len("outcome "):]
     return text
@@ -94,15 +99,16 @@ def _outcome_label(text: str) -> str:
 
 def _parse_answer_bucket(answer: str) -> str:
     """Brain's decoded answer for POOL_ACTION may come back as something
-    like 'outcome win_big' or partial. Extract the bucket if present;
-    otherwise return the raw string for the confusion matrix."""
+    like 'outcome surge' (disjoint tokens) or legacy 'outcome win_big'.
+    Extract the bucket if present; otherwise return the raw string for
+    the confusion matrix."""
     if not answer:
         return "(none)"
-    a = answer.strip().lower()
-    for label in ("win_big", "loss_big", "win", "flat", "loss"):
-        if label in a:
-            return label
-    return f"(other:{a[:20]})"
+    from trading.brain_bridge import parse_outcome
+    parsed = parse_outcome(answer)
+    if parsed:
+        return parsed
+    return f"(other:{answer.strip().lower()[:20]})"
 
 
 def train_phase(bars: List[Dict], train_n: int, horizon: int,

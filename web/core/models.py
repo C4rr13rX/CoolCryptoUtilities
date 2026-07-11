@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.db import models
+import uuid
 
 
 class CodeGraphCache(models.Model):
@@ -573,3 +574,24 @@ class C0d3rWebMessage(models.Model):
         indexes = [
             models.Index(fields=["session", "created_at"])
         ]
+
+
+class C0d3rWebRun(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(C0d3rWebSession, on_delete=models.CASCADE, related_name="runs")
+    status = models.CharField(max_length=16, default="queued")
+    prompt = models.TextField()
+    backend = models.CharField(max_length=32, default="", blank=True)
+    model = models.CharField(max_length=255, default="", blank=True)
+    atf_models = models.JSONField(default=list, blank=True)
+    output = models.TextField(default="", blank=True)
+    model_id = models.CharField(max_length=255, default="", blank=True)
+    error = models.TextField(default="", blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "c0d3r_web_runs"
+        indexes = [models.Index(fields=["session", "status", "created_at"], name="c0d3r_run_state_idx")]

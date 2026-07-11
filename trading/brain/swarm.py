@@ -402,6 +402,67 @@ class MultiResolutionSwarm:
             })
         return diag
 
+    # ------------------------------------------------------------------
+    # Persistence — learned cell weights and stats survive restarts
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "cells": {
+                label: {
+                    "w": cell.w.tolist(),
+                    "bias": float(cell.bias),
+                    "lr": float(cell.lr),
+                    "l2": float(cell.l2),
+                }
+                for label, cell in self.cells.items()
+            },
+            "stats": {label: dict(stats) for label, stats in self.stats.items()},
+            "momentum": dict(self._momentum),
+            "recent_returns": {
+                label: list(returns) for label, returns in self._recent_returns.items()
+            },
+        }
+
+    def from_dict(self, payload: Dict[str, Any]) -> bool:
+        """Restore learned state; unknown horizons are ignored, missing ones
+        keep their cold-start prior. Returns True when anything was loaded."""
+        if not isinstance(payload, dict):
+            return False
+        loaded = False
+        for label, cell_data in (payload.get("cells") or {}).items():
+            cell = self.cells.get(label)
+            if cell is None or not isinstance(cell_data, dict):
+                continue
+            try:
+                w = np.asarray(cell_data.get("w"), dtype=np.float64)
+                if w.shape == cell.w.shape and np.all(np.isfinite(w)):
+                    cell.w = w
+                    cell.bias = float(cell_data.get("bias", 0.0))
+                    loaded = True
+            except Exception:
+                continue
+        for label, stats in (payload.get("stats") or {}).items():
+            if label in self.stats and isinstance(stats, dict):
+                try:
+                    self.stats[label].update({k: float(v) for k, v in stats.items()})
+                    loaded = True
+                except Exception:
+                    continue
+        for label, value in (payload.get("momentum") or {}).items():
+            if label in self._momentum:
+                try:
+                    self._momentum[label] = float(value)
+                except Exception:
+                    continue
+        for label, returns in (payload.get("recent_returns") or {}).items():
+            if label in self._recent_returns and isinstance(returns, list):
+                try:
+                    self._recent_returns[label].extend(float(r) for r in returns[-32:])
+                except Exception:
+                    continue
+        return loaded
+
     def weights(self) -> Dict[str, float]:
         raw: List[Tuple[str, float]] = []
         for label, stats in self.stats.items():

@@ -23,7 +23,9 @@ hexbytes>=0.3.1
 pandas>=2.1.0; python_version>="3.9"
 pandas>=1.5.3; python_version<"3.9"
 numpy>=1.24.0
-tensorflow>=2.14.0
+# !=2.21.0: its cp313 Windows wheel ships a python312-linked TFLite metrics
+# pyd (ImportError: _pywrap_tensorflow_lite_metrics_wrapper). 2.20.0 is good.
+tensorflow>=2.14.0,!=2.21.0
 matplotlib>=3.7.0
 sympy>=1.12
 

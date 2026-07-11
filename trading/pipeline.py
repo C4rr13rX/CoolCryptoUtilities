@@ -225,19 +225,31 @@ def _load_tf():
             pass
         return _TF_MODULE
     except Exception as exc:
-        # On Windows DLL mismatches the failure is not transient (it's
-        # a Python-version vs python3XX.dll mismatch). Pin the cache to
-        # infinity so we attempt exactly once per process. The error
-        # message is preserved at WARNING level so the cause is visible
-        # without re-spamming every backoff window.
-        _TF_LOAD_FAILED_AT = float("inf")
+        # Windows TF load failures come in two flavours: transient
+        # working-set/`ERROR_NOT_ENOUGH_MEMORY` quirks that clear up on
+        # their own, and genuine DLL/version mismatches. Pinning either to
+        # infinity meant a single bad moment disabled predictions for the
+        # process lifetime even after memory freed up — so re-probe on a
+        # long backoff instead (short for memory blips, long otherwise).
+        # TF_LOAD_PIN_FAILURES=1 restores the old attempt-once behaviour.
+        if _os.getenv("TF_LOAD_PIN_FAILURES", "0").lower() in {"1", "true", "yes", "on"}:
+            _TF_LOAD_FAILED_AT = float("inf")
+        else:
+            msg = str(exc).lower()
+            transient = "memory" in msg or "page" in msg or "working set" in msg
+            retry_sec = _TF_LOAD_BACKOFF_SEC if transient else float(
+                _os.getenv("TF_LOAD_RETRY_SEC", "1800")
+            )
+            # store a timestamp such that the standard backoff check waits
+            # retry_sec from now
+            _TF_LOAD_FAILED_AT = _t.time() - _TF_LOAD_BACKOFF_SEC + retry_sec
         if not _TF_LOAD_LOGGED:
             _TF_LOAD_LOGGED = True
             try:
                 from services.logging_utils import log_message
                 log_message(
                     "tf-runtime",
-                    f"TensorFlow load failed (will not retry this process): {exc}",
+                    f"TensorFlow load failed (will retry on backoff): {exc}",
                     severity="warning",
                 )
             except Exception:
@@ -3373,8 +3385,9 @@ class TrainingPipeline:
         except Exception:
             pass
 
-    def _persist_live_readiness_snapshot(self) -> None:
-        snapshot = self.live_readiness_report()
+    def _persist_live_readiness_snapshot(self, snapshot: Optional[Dict[str, Any]] = None) -> None:
+        if snapshot is None:
+            snapshot = self.live_readiness_report()
         try:
             path = Path("data/reports/live_readiness.json")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -3424,6 +3437,7 @@ class TrainingPipeline:
         min_profit_factor = float(os.getenv("MIN_GHOST_PROFIT_FACTOR", "0.95"))
         win_rate = float(summary.get("win_rate", 0.0))
         avg_profit = float(summary.get("avg_profit", 0.0))
+        total_net_profit = float(sum(float(getattr(t, "profit", 0.0)) for t in trades))
         profit_factor = float(summary.get("profit_factor", 1.0))
         tail_risk = abs(profit_dist.get("expected_shortfall_95", 0.0))
         symbol_counts = Counter([str(t.symbol or "UNKNOWN").upper() for t in trades])
@@ -3494,6 +3508,7 @@ class TrainingPipeline:
                 len(trades) >= min_trades
                 and win_rate >= min_win_rate
                 and avg_profit >= min_margin
+                and total_net_profit > 0.0
                 and profit_factor >= min_profit_factor
                 and tail_risk <= tail_guard
                 and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
@@ -3514,6 +3529,7 @@ class TrainingPipeline:
             len(trades) >= fast_track_min_trades
             and win_rate_lb >= fast_track_min_win_rate_lb
             and avg_profit >= min_margin
+            and total_net_profit > 0.0
             and profit_factor >= min_profit_factor
             and tail_risk <= tail_guard
             and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
@@ -3538,6 +3554,8 @@ class TrainingPipeline:
                 reason = "low_win_rate"
             elif avg_profit < min_margin:
                 reason = "negative_margin"
+            elif total_net_profit <= 0.0:
+                reason = "non_positive_net_profit"
             elif profit_factor < min_profit_factor:
                 reason = "weak_profit_factor"
             elif tail_risk > tail_guard:
@@ -3558,6 +3576,7 @@ class TrainingPipeline:
             "win_rate_lb": win_rate_lb,
             "wilson_z": wilson_z,
             "avg_profit": avg_profit,
+            "total_net_profit": total_net_profit,
             "tail_risk": tail_risk,
             "tail_guardrail": tail_guard,
             "max_drawdown": max_drawdown,
@@ -3797,6 +3816,8 @@ class TrainingPipeline:
                 report_fb["reason"] = f"sparse_wallet{detail}"
             report_fb.update(
                 {
+                    "ghost_collection_ready": bool(mini_ready_fb),
+                    "ghost_collection_reason": "" if mini_ready_fb else report_fb.get("mini_reason", "model_not_ready"),
                     "ghost_ready": ghost_ready,
                     "ghost_reason": ghost_check.get("reason", ""),
                     "ghost_samples": ghost_check.get("samples", 0),
@@ -3857,6 +3878,7 @@ class TrainingPipeline:
             "mini_false_positive_rate": mini_fpr,
         }
         ghost_ready = bool(ghost_check.get("ready"))
+        ghost_net_profit = float(ghost_check.get("total_net_profit", 0.0))
         if report_ready["ready"] and not ghost_ready:
             report_ready["ready"] = False
             report_ready["reason"] = f"ghost_{ghost_check.get('reason') or 'not_ready'}"
@@ -3867,6 +3889,8 @@ class TrainingPipeline:
             report_ready["reason"] = f"sparse_wallet{detail}"
         report_ready.update(
             {
+                "ghost_collection_ready": bool(mini_ready),
+                "ghost_collection_reason": "" if mini_ready else mini_reason,
                 "ghost_ready": ghost_ready,
                 "ghost_reason": ghost_check.get("reason", ""),
                 "ghost_samples": ghost_check.get("samples", 0),
@@ -3938,6 +3962,13 @@ class TrainingPipeline:
         loss_rate_block = loss_rate_guard > 0 and loss_rate > loss_rate_guard
         loss_streak_block = loss_streak_guard > 0 and loss_streak > loss_streak_guard
         ghost_ready = bool(ghost_check.get("ready"))
+        # Ghost collection is the mechanism that produces validation samples.
+        # It must be gated by model bootstrap readiness, not by the validation
+        # result that it is still gathering.
+        ghost_collection_ready = bool(
+            readiness.get("ghost_collection_ready", readiness.get("mini_ready", False))
+        ) if isinstance(readiness, dict) else False
+        ghost_net_profit = float(ghost_check.get("total_net_profit", 0.0))
         fragmented_wallet = bool(wallet_state.get("fragmented"))
         wallet_sparse = bool(wallet_state.get("sparse") or fragmented_wallet)
         native_starved = bool(wallet_state.get("native_starved", native_buffer_gap > 0))
@@ -3969,6 +4000,7 @@ class TrainingPipeline:
         safe_to_live = (
             plan["live_ready"]
             and ghost_ready
+            and ghost_net_profit > 0.0
             and not wallet_sparse
             and not tail_block
             and capital_deficit <= 0
@@ -3987,11 +4019,12 @@ class TrainingPipeline:
         health_score = float(ghost_check.get("health_score", 1.0))
         ghost_risk_multiplier = ghost_sample_buffer * tail_headroom * loss_health * drawdown_headroom
         ghost_risk_multiplier *= max(0.2, min(1.0, health_score))
-        if not ghost_ready or tail_block or drawdown_breach or loss_rate_block or loss_streak_block:
-            ghost_risk_multiplier = 0.0
-        if wallet_sparse:
-            ghost_risk_multiplier = min(ghost_risk_multiplier, 0.25)
-        if capital_deficit > 0:
+        if ghost_collection_ready:
+            # Keep ghost simulation collecting evidence even while validation,
+            # wallet, or live-risk gates are blocked. These gates still fully
+            # block live capital below.
+            ghost_risk_multiplier = max(0.25, ghost_risk_multiplier)
+        else:
             ghost_risk_multiplier = 0.0
         ghost_risk_multiplier = float(max(0.0, min(1.0, ghost_risk_multiplier)))
         validation_margin = min(
@@ -4219,7 +4252,6 @@ class TrainingPipeline:
             or "freeze_live" in bus_freeze_actions
             or "pause_live" in bus_freeze_actions
         ):
-            ghost_risk_multiplier = 0.0
             recommended_ratio = 0.0
             if not block_reason:
                 block_reason = "bus_actions_pending"
@@ -4293,10 +4325,12 @@ class TrainingPipeline:
         plan["capital_plan"]["ghost_risk_multiplier"] = ghost_risk_multiplier
         plan["recommended_savings_ratio"] = max(0.0, recommended_ratio)
         ghost_halt_reason = ""
-        if ghost_risk_multiplier <= 0.0:
-            ghost_halt_reason = block_reason or ghost_check.get("reason", "") or ("capital_deficit" if capital_deficit > 0 else "")
-        if bus_actions_pending and not ghost_halt_reason:
-            ghost_halt_reason = "bus_actions_pending"
+        if not ghost_collection_ready:
+            ghost_halt_reason = (
+                readiness.get("ghost_collection_reason", "")
+                if isinstance(readiness, dict)
+                else ""
+            ) or "model_not_ready"
         plan["risk_flags"].update(
             {
                 "ghost_drawdown": drawdown,
@@ -4323,10 +4357,12 @@ class TrainingPipeline:
                 "bus_actions_pending": bus_actions_pending,
                 "risk_budget_cap": recommended_ratio,
                 "ghost_risk_multiplier": ghost_risk_multiplier,
+                "ghost_collection_ready": ghost_collection_ready,
+                "ghost_collection_reason": ghost_halt_reason,
                 "recommended_live_usd": recommended_live_usd,
                 "min_clip_block": min_clip_block,
                 "min_clip_usd": min_clip_usd,
-                "halt_ghost": ghost_risk_multiplier <= 0.0 or bus_actions_pending,
+                "halt_ghost": not ghost_collection_ready,
                 "ghost_halt_reason": ghost_halt_reason,
             }
         )

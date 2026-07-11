@@ -30,20 +30,19 @@ from http.client import HTTPConnection, BadStatusLine, RemoteDisconnected
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
-# Pool ids — must match brain_api.rs::POOL_TEXT / POOL_ACTION and
-# wizard_trainer._POOL_TEXT / _POOL_ACTION. The brain defines:
-#   POOL_TEXT   = 1
-#   POOL_IMAGE  = 2   (NOT used by the bridge)
-#   POOL_AUDIO  = 3
-#   POOL_ACTION = 4   (this is the decode target for /brain/chat)
-# Earlier versions of this file used POOL_ACTION = 2 by mistake — all
-# trade-outcome bindings landed in POOL_TEXT↔POOL_IMAGE space, which
-# was internally self-consistent but isolated from the production
-# decode path. Bindings pushed under the old constant become orphans
-# in POOL_IMAGE after this fix; the supervisor must be re-run to
-# repopulate the correct channel.
-POOL_TEXT = 1
-POOL_ACTION = 4
+# Pool ids — must match the brain the node is running and
+# wizard_trainer's env-driven pools (same env names used here).
+#
+# The node now runs the market identity spec
+# (W1z4rDV1510n/brains/market_small.identity.toml):
+#   ohlcv   = 1  (sensory input — features go here)
+#   news    = 2  (sensory input — wizard_trainer pushes news here)
+#   outcome = 3  (action — the decode target for predictions)
+# The default multimodal topology used POOL_ACTION=4; bindings trained
+# against that brain live in a different pool space, so switching
+# topologies means retraining (the supervisor scripts repopulate).
+POOL_TEXT = int(os.getenv("WIZARD_MARKET_INPUT_POOL", "1"))
+POOL_ACTION = int(os.getenv("WIZARD_MARKET_OUTCOME_POOL", "3"))
 
 
 def _b64url(s: str) -> str:
@@ -146,6 +145,68 @@ class BrainBridge:
                 return False
         return True
 
+    def train_binding(self, features_text: str, outcome_text: str) -> bool:
+        """Supervised feature→outcome binding via /brain/consolidate.
+
+        Unlike observe_outcome (Hebbian co-firing inside one tick), this
+        is the explicit paired-training surface: the node wires the
+        features frame in POOL_TEXT to the outcome frame in POOL_ACTION
+        and reports whether the binding consolidated.
+
+        Honors the node's ingest backpressure: when the machine is below
+        its politeness RAM floor the node replies backpressure=true, and
+        this method sleeps and retries (bounded) so training slows down
+        instead of losing pairs or suffocating the host.
+        """
+        payload = json.dumps({
+            "input_pool":    POOL_TEXT,
+            "input_frame":   _b64url(features_text),
+            "outcome_pool":  POOL_ACTION,
+            "outcome_frame": _b64url(outcome_text),
+        }).encode("utf-8")
+        max_backoff_attempts = int(os.getenv("WIZARD_BACKPRESSURE_RETRIES", "30"))
+        for _attempt in range(max(1, max_backoff_attempts)):
+            with self._lock:
+                body = self._post("/brain/consolidate", payload)
+            if body is None:
+                return False
+            try:
+                data = json.loads(body.decode("utf-8", errors="replace"))
+            except Exception:
+                return False
+            if data.get("backpressure"):
+                delay = min(30.0, float(data.get("retry_after_ms") or 2000) / 1000.0)
+                time.sleep(delay)
+                continue
+            return bool(data.get("consolidated") is True)
+        return False
+
+    def predict_outcome(self, features_text: str) -> Tuple[Optional[str], float]:
+        """Read-only prediction via /brain/predict.
+
+        Query activation is never admitted to the learning moment — the
+        node activates the features frame, reads the strongest POOL_ACTION
+        binding, then clears the prediction activation. Safe for held-out
+        evaluation (no leakage of test features into training state).
+        """
+        payload = json.dumps({
+            "query_pool":  POOL_TEXT,
+            "target_pool": POOL_ACTION,
+            "frame":       _b64url(features_text),
+        }).encode("utf-8")
+        with self._lock:
+            body = self._post("/brain/predict", payload)
+        if body is None:
+            return None, 0.0
+        try:
+            data = json.loads(body.decode("utf-8", errors="replace"))
+        except Exception:
+            return None, 0.0
+        ans_b64 = data.get("answer")
+        answer = _b64url_decode(ans_b64) if ans_b64 else None
+        conf = float(data.get("integrated_confidence") or data.get("confidence") or 0.0)
+        return answer, conf
+
     def query_confidence(self, features_text: str) -> Tuple[Optional[str], float]:
         """Return (decoded_action_text_or_None, integrated_confidence).
 
@@ -215,22 +276,56 @@ def features_text(
     )
 
 
+# Canonical five-bucket labels and their byte-disjoint brain tokens.
+# The substrate has no tokenizer — atoms are bytes — so "outcome loss_big"
+# CONTAINS "outcome loss" and the frequent class's binding mass swallows the
+# rare class on decode (measured 2026-07-09: every recall miss on the OHLCV
+# corpus was loss_big→loss / win_big→win; disjoint tokens took train recall
+# from 96% to 100%). Each token shares no substring with any other.
+OUTCOME_TOKENS = {
+    "win_big": "surge",
+    "win": "gain",
+    "flat": "steady",
+    "loss": "drop",
+    "loss_big": "plunge",
+}
+_TOKEN_OUTCOMES = {v: k for k, v in OUTCOME_TOKENS.items()}
+
+
 def outcome_text(pnl_pct: float) -> str:
     """Canonical post-trade outcome bucket.
 
     Five buckets covering the realised PnL distribution. The brain
     learns features → outcome by repeated co-firing, so the bucket count
-    is the resolution of the classifier.
+    is the resolution of the classifier. Emits byte-disjoint tokens —
+    see OUTCOME_TOKENS for why.
     """
     if pnl_pct >= 0.02:
-        return "outcome win_big"
+        return f"outcome {OUTCOME_TOKENS['win_big']}"
     if pnl_pct >= 0.002:
-        return "outcome win"
+        return f"outcome {OUTCOME_TOKENS['win']}"
     if pnl_pct >= -0.002:
-        return "outcome flat"
+        return f"outcome {OUTCOME_TOKENS['flat']}"
     if pnl_pct >= -0.02:
-        return "outcome loss"
-    return "outcome loss_big"
+        return f"outcome {OUTCOME_TOKENS['loss']}"
+    return f"outcome {OUTCOME_TOKENS['loss_big']}"
+
+
+def parse_outcome(answer: Optional[str]) -> Optional[str]:
+    """Map a brain answer back to the canonical label.
+
+    Understands both the disjoint tokens and the legacy win/loss words
+    (checked longest-first so 'loss_big' isn't shadowed by 'loss') for
+    brains trained before the 2026-07 token change.
+    """
+    value = (answer or "").lower()
+    for token, canonical in _TOKEN_OUTCOMES.items():
+        if token in value:
+            return canonical
+    for legacy in ("win_big", "loss_big", "win", "flat", "loss"):
+        if legacy in value:
+            return legacy
+    return None
 
 
 # Process-singleton — the bot is one process; one keep-alive connection is

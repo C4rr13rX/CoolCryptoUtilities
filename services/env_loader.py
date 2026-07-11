@@ -118,7 +118,53 @@ class EnvLoader:
         if not vault_ok and _bool_env(os.getenv("ALLOW_DOTENV_FALLBACK", "1")):
             _load_dotenv_fallback()
 
+        # OPERATIONAL OVERLAY: ALWAYS apply NON-SECRET operational toggles
+        # from .env (endpoint excludes, pair limits, strategy flags,
+        # thresholds) — regardless of whether vault hydration ran this call.
+        # It must NOT be gated on vault_ok: when SECURE_ENV_HYDRATED is
+        # already set (inherited or a second EnvLoader call), the vault block
+        # is skipped, vault_ok stays False, and gating the overlay on it meant
+        # MARKET_ENDPOINT_EXCLUDE=binance never applied. setdefault semantics
+        # keep real secrets (already in os.environ) winning.
+        _overlay_operational_env()
+
         _apply_default_env()
+
+
+# Non-secret operational keys that .env is allowed to set even when the vault
+# is the primary source. Deliberately excludes anything credential-shaped.
+_OPERATIONAL_PREFIXES = (
+    "MARKET_ENDPOINT_", "GHOST_", "WIZARD_BRAIN_STRATEGY", "MIN_HOLD",
+    "MAX_HOLD", "SCHEDULER_", "STRATEGY_", "MONEY_BUTTON_", "EXIT_",
+    "ENABLE_", "AUTONOMOUS_", "REQUIRE_READY_", "GHOST_EXPLORE_",
+    "DISCOVERY_", "ROTATION_", "TIER_", "W1Z4RD_",
+)
+
+
+def _overlay_operational_env() -> None:
+    """Apply non-secret operational keys from .env over a vault-hydrated env,
+    without overwriting anything the vault already set."""
+    try:
+        from dotenv_fallback import dotenv_values, find_dotenv
+    except Exception:
+        return
+    path = find_dotenv(usecwd=True)
+    if not path:
+        repo_root = Path(__file__).resolve().parents[1]
+        cand = repo_root / ".env"
+        path = str(cand) if cand.is_file() else ""
+    if not path:
+        return
+    try:
+        values = dotenv_values(path) or {}
+    except Exception:
+        return
+    for key, val in values.items():
+        if val is None:
+            continue
+        if not any(key.startswith(p) for p in _OPERATIONAL_PREFIXES):
+            continue
+        os.environ.setdefault(key, val)
 
 
 def _load_dotenv_fallback() -> None:

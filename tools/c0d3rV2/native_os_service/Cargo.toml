@@ -1,0 +1,17 @@
+[package]
+name = "c0d3r-native-os-service"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+axum = { version = "0.7", features = ["json"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"
