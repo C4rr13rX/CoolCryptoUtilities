@@ -689,6 +689,21 @@ export async function fetchModelControl() {
   return data as ModelControlPayload;
 }
 
+export interface ModelOptions {
+  default: { backend: string; model: string; label: string };
+  backends: Array<{ id: string; label: string; description: string }>;
+  curated: Record<string, string[]>;
+  catalog: Array<{ id: string; provider: string; best_at: string; configured: boolean }>;
+}
+
+let _modelOptionsCache: ModelOptions | null = null;
+export async function fetchModelOptions(force = false): Promise<ModelOptions> {
+  if (_modelOptionsCache && !force) return _modelOptionsCache;
+  const { data } = await api.get('/model-control/options/');
+  _modelOptionsCache = data as ModelOptions;
+  return _modelOptionsCache;
+}
+
 export async function saveModelControl(payload: { backend: string; model: string; atf_models: string[] }) {
   const { data } = await api.post('/model-control/config/', payload);
   return data;

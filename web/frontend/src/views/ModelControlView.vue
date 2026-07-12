@@ -38,8 +38,12 @@
       </div>
 
       <label v-if="form.backend === 'bedrock' || form.backend === 'openai' || form.backend === 'claude'" class="model-field">
-        <span>Model ID override <small>(optional)</small></span>
-        <input v-model.trim="form.model" type="text" placeholder="Leave blank for the backend default" />
+        <span>Model <small>(optional — blank uses the backend default)</small></span>
+        <ModelSelect
+          v-model="form.model"
+          :kind="form.backend === 'openai' ? 'codex' : 'c0d3r'"
+          empty-label="Backend default"
+        />
       </label>
 
       <div class="actions">
@@ -168,6 +172,7 @@ import {
   type ModelControlCredential,
   type ModelControlPayload,
 } from '@/api';
+import ModelSelect from '@/components/ModelSelect.vue';
 
 const data = ref<ModelControlPayload | null>(null);
 const loading = ref(false);

@@ -69,6 +69,38 @@ CREDENTIALS = (
 )
 CREDENTIAL_LOOKUP = {item[0]: item for item in CREDENTIALS}
 
+# Curated current premium models per backend, used to populate dropdowns where a
+# specific model must be named (Bedrock / Anthropic / OpenAI / Codex). The ATF
+# ("freeloader") backend instead draws its models from the live free catalog.
+CURATED_MODELS = {
+    "claude": [
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "claude-fable-5",
+    ],
+    "bedrock": [
+        "anthropic.claude-opus-4-8-v1:0",
+        "anthropic.claude-sonnet-5-v1:0",
+        "anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "anthropic.claude-3-5-haiku-20241022-v1:0",
+    ],
+    "openai": [
+        "gpt-5.2",
+        "gpt-5.2-mini",
+        "o4-mini",
+        "o3",
+        "gpt-4.1",
+    ],
+    "codex": [
+        "gpt-5.2-codex",
+        "gpt-5.1-codex",
+        "gpt-5.2",
+        "o4-mini",
+    ],
+}
+
 
 def _setting_value(user, name: str) -> str:
     setting = SecureSetting.objects.filter(user=user, category=CATEGORY, name=name).first()
@@ -166,6 +198,48 @@ class ModelControlView(APIView):
             "credentials": credentials,
             "providers": providers,
             "corrections": ModelFeedbackStore().correction_snapshot(limit=100),
+        })
+
+
+class ModelOptionsView(APIView):
+    """Lightweight, reusable source of truth for model dropdowns site-wide.
+
+    Every page that lets a user pick an AI model reads this: the site-wide
+    default (chosen on the Model Control page), the available backends, the
+    curated premium models per backend, and the live Agent-the-Freeloader free
+    catalog. Pages default to the site default and can override per use.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        backend = (_setting_value(request.user, "C0D3R_BACKEND") or "wizard").lower()
+        model = _setting_value(request.user, "C0D3R_MODEL")
+
+        catalog = []
+        try:
+            seen = set()
+            for spec in load_catalog():
+                if spec.model_id in seen:
+                    continue
+                seen.add(spec.model_id)
+                catalog.append({
+                    "id": spec.model_id,
+                    "provider": spec.provider,
+                    "best_at": spec.best_at,
+                    "configured": has_credential(spec),
+                })
+        except Exception:
+            catalog = []
+        catalog.sort(key=lambda item: (item["provider"], item["id"]))
+
+        backend_label = {item["id"]: item["label"] for item in BACKENDS}.get(backend, backend)
+        default_label = backend_label + (f" · {model}" if model else "")
+        return Response({
+            "default": {"backend": backend, "model": model, "label": default_label},
+            "backends": BACKENDS,
+            "curated": CURATED_MODELS,
+            "catalog": catalog,
         })
 
 

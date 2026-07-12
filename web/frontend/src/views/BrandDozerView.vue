@@ -174,29 +174,22 @@
           <label>
             <span>{{ t('branddozer.session_provider') }}</span>
             <select v-model="deliveryForm.session_provider">
-              <option value="codex">{{ t('branddozer.provider_codex') }}</option>
               <option value="c0d3r">{{ t('branddozer.provider_c0d3r') }}</option>
+              <option value="bedrock">{{ t('branddozer.provider_bedrock') }}</option>
+              <option value="claude">{{ t('branddozer.provider_claude') }}</option>
+              <option value="openai">{{ t('branddozer.provider_openai') }}</option>
+              <option value="freeloader">{{ t('branddozer.provider_freeloader') }}</option>
             </select>
           </label>
           <label>
-            <span>{{ t('branddozer.codex_model') }}</span>
-            <input v-model="deliveryForm.codex_model" placeholder="gpt-5.2-codex" />
+            <span>{{ t('branddozer.model') }}</span>
+            <ModelSelect
+              v-model="deliveryForm.c0d3r_model"
+              :kind="deliveryForm.session_provider === 'openai' ? 'codex' : 'c0d3r'"
+            />
           </label>
           <label>
-            <span>{{ t('branddozer.codex_reasoning') }}</span>
-            <select v-model="deliveryForm.codex_reasoning">
-              <option value="medium">{{ t('branddozer.reasoning_medium') }}</option>
-              <option value="high">{{ t('branddozer.reasoning_high') }}</option>
-              <option value="extra_high">{{ t('branddozer.reasoning_extra_high') }}</option>
-              <option value="low">{{ t('branddozer.reasoning_low') }}</option>
-            </select>
-          </label>
-          <label>
-            <span>{{ t('branddozer.c0d3r_model') }}</span>
-            <input v-model="deliveryForm.c0d3r_model" placeholder="anthropic.claude-3-5-sonnet" />
-          </label>
-          <label>
-            <span>{{ t('branddozer.c0d3r_reasoning') }}</span>
+            <span>{{ t('branddozer.reasoning') }}</span>
             <select v-model="deliveryForm.c0d3r_reasoning">
               <option value="medium">{{ t('branddozer.reasoning_medium') }}</option>
               <option value="high">{{ t('branddozer.reasoning_high') }}</option>
@@ -886,6 +879,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useBrandDozerStore } from '@/stores/branddozer';
 import { t } from '@/i18n';
+import ModelSelect from '@/components/ModelSelect.vue';
+import { fetchModelOptions } from '@/api';
 
 const store = useBrandDozerStore();
 const selectedId = ref<string>('');
@@ -932,7 +927,7 @@ const deliveryForm = ref({
   project_id: '',
   mode: 'auto',
   team_mode: 'full',
-  session_provider: 'codex',
+  session_provider: 'c0d3r',
   codex_model: '',
   codex_reasoning: 'medium',
   c0d3r_model: '',
@@ -992,6 +987,17 @@ let visibilityHandler: (() => void) | null = null;
 const desktopSeededRunId = ref('');
 
 onMounted(async () => {
+  // Seed the delivery provider/model from the site-wide default (Model Control);
+  // the dropdowns then act as a per-run override.
+  try {
+    const opts = await fetchModelOptions();
+    const backendMap: Record<string, string> = { wizard: 'c0d3r', auto: 'c0d3r' };
+    const backend = opts.default?.backend || '';
+    deliveryForm.value.session_provider = backendMap[backend] || backend || 'c0d3r';
+    deliveryForm.value.c0d3r_model = opts.default?.model || '';
+  } catch {
+    /* keep static defaults if options are unavailable */
+  }
   pageVisible.value = typeof document !== 'undefined' ? !document.hidden : true;
   visibilityHandler = () => {
     pageVisible.value = !document.hidden;
