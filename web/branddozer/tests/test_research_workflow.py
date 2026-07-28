@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 from branddozer.models import (
     BrandProject,
     DeliveryRun,
+    DeliverySession,
     ResearchClaim,
     ResearchPaper,
     ResearchPaperRevision,
@@ -252,6 +253,8 @@ class ResearchPaperApiTests(TestCase):
                     "citation_style": "ieee",
                 },
                 "team_mode": "full",
+                "agent_provider": "c0d3r",
+                "model_provider": "freeloader",
             },
             format="json",
         )
@@ -259,7 +262,42 @@ class ResearchPaperApiTests(TestCase):
         context = response.data["run"]["context"]
         self.assertTrue(context["research_mode"])
         self.assertEqual(context["research_config"]["min_words"], 6500)
+        self.assertEqual(context["agent_provider"], "c0d3r")
+        self.assertEqual(context["model_provider"], "freeloader")
         self.assertIn("job_id", context)
+
+    @patch("branddozer.research.run_delivery_turn_detailed")
+    def test_c0d3r_agent_uses_separate_freeloader_model_backend(self, routed) -> None:
+        routed.return_value = {
+            "output": '{"answer": "bounded"}',
+            "route_history": [[{"outcome": "selected", "provider": "free"}]],
+            "models": [{"provider": "free", "model": "test-model"}],
+            "turn_model_calls": 1,
+            "tool_events": [],
+        }
+        run = DeliveryRun.objects.create(
+            project=self.project,
+            prompt="Research a bounded question.",
+            context={
+                "research_mode": True,
+                "agent_provider": "c0d3r",
+                "model_provider": "freeloader",
+            },
+        )
+        workflow = ResearchWorkflow(run, Path(self.temp.name))
+
+        result = workflow._call(
+            "research_planner",
+            "route contract",
+            "Return bounded JSON.",
+            system="Return JSON only.",
+        )
+
+        self.assertEqual(result, {"answer": "bounded"})
+        self.assertEqual(routed.call_args.kwargs["backend"], "freeloader")
+        session = DeliverySession.objects.get(run=run)
+        self.assertEqual(session.meta["agent_provider"], "c0d3r")
+        self.assertEqual(session.meta["model_provider"], "freeloader")
 
 
 class ResearchWorkflowPersistenceTests(TestCase):

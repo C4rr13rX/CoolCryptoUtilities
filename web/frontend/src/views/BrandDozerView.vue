@@ -206,8 +206,14 @@
             </select>
           </label>
           <label>
-            <span>{{ t('branddozer.session_provider') }}</span>
-            <select v-model="deliveryForm.session_provider">
+            <span>Agent</span>
+            <select v-model="deliveryForm.agent_provider">
+              <option value="c0d3r">C0D3R V2</option>
+            </select>
+          </label>
+          <label>
+            <span>C0D3R model backend</span>
+            <select v-model="deliveryForm.model_provider">
               <option value="c0d3r">{{ t('branddozer.provider_c0d3r') }}</option>
               <option value="bedrock">{{ t('branddozer.provider_bedrock') }}</option>
               <option value="claude">{{ t('branddozer.provider_claude') }}</option>
@@ -219,7 +225,7 @@
             <span>{{ t('branddozer.model') }}</span>
             <ModelSelect
               v-model="deliveryForm.c0d3r_model"
-              :kind="deliveryForm.session_provider === 'openai' ? 'codex' : 'c0d3r'"
+              :kind="deliveryForm.model_provider === 'openai' ? 'codex' : 'c0d3r'"
             />
           </label>
           <label>
@@ -1090,6 +1096,8 @@ const deliveryForm = ref({
   mode: 'auto',
   project_type: 'software' as 'software' | 'research',
   team_mode: 'full',
+  agent_provider: 'c0d3r',
+  model_provider: 'freeloader',
   session_provider: 'c0d3r',
   codex_model: '',
   codex_reasoning: 'medium',
@@ -1164,7 +1172,8 @@ onMounted(async () => {
     const opts = await fetchModelOptions();
     const backendMap: Record<string, string> = { wizard: 'c0d3r', auto: 'c0d3r' };
     const backend = opts.default?.backend || '';
-    deliveryForm.value.session_provider = backendMap[backend] || backend || 'c0d3r';
+    deliveryForm.value.model_provider = backendMap[backend] || backend || 'freeloader';
+    deliveryForm.value.session_provider = deliveryForm.value.model_provider;
     deliveryForm.value.c0d3r_model = opts.default?.model || '';
   } catch {
     /* keep static defaults if options are unavailable */
@@ -1996,7 +2005,9 @@ async function startDeliveryRun() {
           }
         : undefined,
       team_mode: deliveryForm.value.project_type === 'research' ? 'full' : deliveryForm.value.team_mode,
-      session_provider: deliveryForm.value.session_provider,
+      agent_provider: deliveryForm.value.agent_provider,
+      model_provider: deliveryForm.value.model_provider,
+      session_provider: deliveryForm.value.model_provider,
       codex_model: deliveryForm.value.codex_model,
       codex_reasoning: deliveryForm.value.codex_reasoning,
       c0d3r_model: deliveryForm.value.c0d3r_model,

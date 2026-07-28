@@ -31,6 +31,7 @@ from tools.ai_session import (
     get_session_class,
     session_provider_from_context,
 )
+from tools.c0d3rV2.delivery_runner import run_delivery_turn_detailed
 from tools.c0d3rV2.plugins.research_harvester import HarvestConfig, ResearchHarvester
 
 
@@ -377,7 +378,15 @@ class ResearchWorkflow:
         self.run = run
         self.root = root
         self.policy = ResearchPolicy.from_context(run.context or {})
-        self.provider = session_provider_from_context(run.context or {})
+        context = run.context or {}
+        self.agent_provider = str(context.get("agent_provider") or "c0d3r").strip().lower()
+        self.model_provider = str(
+            context.get("model_provider")
+            or session_provider_from_context(context)
+            or "wizard"
+        ).strip().lower()
+        # Kept as a compatibility alias for existing diagnostics.
+        self.provider = self.model_provider
         self.source_verifier = source_verifier
         self.transcript_root = (
             PROJECT_ROOT / "runtime" / "branddozer" / "transcripts" / str(run.id)
@@ -385,7 +394,7 @@ class ResearchWorkflow:
         self.transcript_root.mkdir(parents=True, exist_ok=True)
         self.harvester = ResearchHarvester(PROJECT_ROOT / "runtime" / "branddozer")
 
-    def _session(self, role: str, name: str) -> tuple[DeliverySession, Any]:
+    def _session(self, role: str, name: str) -> tuple[DeliverySession, Any | None]:
         record = DeliverySession.objects.create(
             project=self.run.project,
             run=self.run,
@@ -394,7 +403,11 @@ class ResearchWorkflow:
             status="running",
             workspace_path=str(self.root),
             last_heartbeat=timezone.now(),
-            meta={"provider": self.provider, "research": True},
+            meta={
+                "agent_provider": self.agent_provider,
+                "model_provider": self.model_provider,
+                "research": True,
+            },
         )
         log_path = (
             PROJECT_ROOT
@@ -406,14 +419,16 @@ class ResearchWorkflow:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         record.log_path = str(log_path)
         record.save(update_fields=["log_path"])
-        SessionClass = get_session_class(self.provider)
-        client = SessionClass(
-            session_name=f"research-{role}-{record.id}",
-            transcript_dir=self.transcript_root,
-            read_timeout_s=None,
-            workdir=str(self.root),
-            **default_settings(self.provider),
-        )
+        client = None
+        if self.agent_provider not in {"c0d3r", "coder", "c0d3rv2"}:
+            SessionClass = get_session_class(self.model_provider)
+            client = SessionClass(
+                session_name=f"research-{role}-{record.id}",
+                transcript_dir=self.transcript_root,
+                read_timeout_s=None,
+                workdir=str(self.root),
+                **default_settings(self.model_provider),
+            )
         return record, client
 
     @staticmethod
@@ -430,12 +445,41 @@ class ResearchWorkflow:
         record, client = self._session(role, name)
         self._write_log(record, f"PROMPT\n{prompt}")
         try:
-            output = client.send(prompt, stream=False, system=system)
+            if self.agent_provider in {"c0d3r", "coder", "c0d3rv2"}:
+                routed = run_delivery_turn_detailed(
+                    prompt=(
+                        "This is a bounded, read-only archival-research role. Do not "
+                        "modify files or run project mutations. Complete the assigned "
+                        "role and return the requested strict JSON object as the final "
+                        f"answer.\n\n{prompt}"
+                    ),
+                    session_key=f"branddozer-research:{self.run.id}:{record.id}",
+                    workdir=self.root,
+                    backend=self.model_provider,
+                    system_context=(
+                        "Brand Dozer selected C0D3R V2 as the research agent. "
+                        f"C0D3R V2 selected {self.model_provider} as its model backend. "
+                        f"{system}"
+                    ),
+                    reset=True,
+                )
+                output = str(routed.get("output") or "")
+                record.meta = {
+                    **(record.meta or {}),
+                    "route_history": routed.get("route_history") or [],
+                    "models": routed.get("models") or [],
+                    "turn_model_calls": routed.get("turn_model_calls") or 0,
+                    "tool_events": routed.get("tool_events") or [],
+                }
+            else:
+                if client is None:
+                    raise RuntimeError("research model client was not initialized")
+                output = client.send(prompt, stream=False, system=system)
             self._write_log(record, f"OUTPUT\n{output}")
             payload = _extract_json(output)
             record.status = "done"
             record.completed_at = timezone.now()
-            record.save(update_fields=["status", "completed_at"])
+            record.save(update_fields=["status", "completed_at", "meta"])
             return payload
         except Exception as exc:
             self._write_log(record, f"ERROR\n{exc}")

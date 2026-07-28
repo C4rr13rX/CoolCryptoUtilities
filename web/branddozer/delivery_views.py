@@ -126,6 +126,8 @@ class DeliveryRunListView(APIView):
         )
         team_mode = data.get("team_mode")
         session_provider = data.get("session_provider") or data.get("provider")
+        agent_provider = data.get("agent_provider")
+        model_provider = data.get("model_provider")
         codex_model = data.get("model") or data.get("codex_model")
         codex_reasoning = data.get("reasoning_effort") or data.get("codex_reasoning")
         c0d3r_model = data.get("c0d3r_model")
@@ -157,6 +159,10 @@ class DeliveryRunListView(APIView):
             context["research_config"] = research_config
         if session_provider:
             context["session_provider"] = session_provider
+        if agent_provider:
+            context["agent_provider"] = str(agent_provider)
+        if model_provider:
+            context["model_provider"] = str(model_provider)
         run.context = context
         run.save(update_fields=["context"])
         job = enqueue_job(

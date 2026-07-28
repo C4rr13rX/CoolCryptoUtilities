@@ -308,6 +308,8 @@ export const useBrandDozerStore = defineStore('branddozer', {
       research_config?: Record<string, any>;
       team_mode?: string;
       session_provider?: string;
+      agent_provider?: string;
+      model_provider?: string;
       codex_model?: string;
       codex_reasoning?: string;
       c0d3r_model?: string;
