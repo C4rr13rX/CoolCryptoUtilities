@@ -140,7 +140,7 @@ def _make_session(backend: str, session_key: str, workdir: Path) -> Any:
             allowed_models=allowed,
             max_tokens=max(
                 2048,
-                int(os.getenv("C0D3R_DELIVERY_ATF_MAX_TOKENS", "8192")),
+                int(os.getenv("C0D3R_DELIVERY_ATF_MAX_TOKENS", "4096")),
             ),
             timeout_s=float(os.getenv("C0D3R_DELIVERY_ATF_TIMEOUT_S", "30")),
             max_attempts=max(1, int(os.getenv("C0D3R_DELIVERY_ATF_ATTEMPTS", "3"))),
