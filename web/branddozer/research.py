@@ -185,8 +185,16 @@ def _enforce_current_temporal_scope(plan: dict[str, Any]) -> dict[str, Any]:
         "selecting the focal event."
     )
     scope = str(guarded.get("scope") or "").strip()
-    if guard_text.strip() not in scope:
-        guarded["scope"] = scope + guard_text
+    # Replace stale guards instead of appending a new dated sentence on every
+    # resume.  Checkpointed runs must be safe to re-enter indefinitely.
+    guard_pattern = (
+        r"\s*Mandatory temporal guard: discovery and inclusion screening remain "
+        r"open through \d{4}-\d{2}-\d{2}\. Earlier date ranges are historical "
+        r"subwindows, not exclusion cutoffs\. Identify competing Target boycott "
+        r"events before selecting the focal event\."
+    )
+    scope = re.sub(guard_pattern, "", scope).strip()
+    guarded["scope"] = scope + guard_text
     strategy = guarded.get("search_strategy")
     if isinstance(strategy, dict):
         guarded["search_strategy"] = {
@@ -198,8 +206,11 @@ def _enforce_current_temporal_scope(plan: dict[str, Any]) -> dict[str, Any]:
             ),
         }
     else:
+        strategy_text = re.sub(
+            guard_pattern, "", str(strategy or "").strip()
+        ).strip()
         guarded["search_strategy"] = (
-            str(strategy or "").strip() + guard_text
+            strategy_text + guard_text
         ).strip()
     guarded["temporal_scope_guard"] = {
         "as_of_date": as_of,
@@ -914,7 +925,12 @@ class ResearchWorkflow:
             ),
         )
         item.status = "done"
-        item.meta = {**(item.meta or {}), "result_summary": result.get("summary", "")}
+        item.meta = {
+            **(item.meta or {}),
+            "result_summary": result.get("summary", ""),
+            "research_result": result,
+            "error": "",
+        }
         item.save(update_fields=["status", "meta", "updated_at"])
         SprintItem.objects.filter(backlog_item=item).update(status="done")
         return result
@@ -925,9 +941,18 @@ class ResearchWorkflow:
         results: list[dict[str, Any]] = []
         quarantined: list[dict[str, Any]] = []
         workers = min(self.policy.max_parallel_agents, len(items))
+
+        def review_with_isolated_connection(item: BacklogItem) -> dict[str, Any]:
+            close_old_connections()
+            try:
+                return self._review_package(item, plan)
+            finally:
+                close_old_connections()
+
         with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
             futures = {
-                executor.submit(self._review_package, item, plan): item for item in items
+                executor.submit(review_with_isolated_connection, item): item
+                for item in items
             }
             for future in as_completed(futures):
                 item = futures[future]
@@ -946,17 +971,20 @@ class ResearchWorkflow:
                             "quarantined_at": timezone.now().isoformat(),
                         }
                     )
-        if quarantined:
-            context = dict(self.run.context or {})
-            context["research_quarantine"] = [
-                *(context.get("research_quarantine") or []),
-                *quarantined,
-            ][-100:]
-            context["research_quarantine_count"] = len(
-                context["research_quarantine"]
-            )
-            self.run.context = context
-            self.run.save(update_fields=["context"])
+                    # Persist each failure immediately. A different package can
+                    # still be waiting on a provider, and its latency must not
+                    # hide failures that have already completed.
+                    self.run.refresh_from_db(fields=["context"])
+                    context = dict(self.run.context or {})
+                    context["research_quarantine"] = [
+                        *(context.get("research_quarantine") or []),
+                        quarantined[-1],
+                    ][-100:]
+                    context["research_quarantine_count"] = len(
+                        context["research_quarantine"]
+                    )
+                    self.run.context = context
+                    self.run.save(update_fields=["context"])
         if not results:
             raise RuntimeError(
                 "all archival evidence work packages failed; "

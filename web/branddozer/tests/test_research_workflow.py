@@ -176,6 +176,21 @@ class ResearchValidationTests(TestCase):
         self.assertIn("Target Corporation", plan["work_packages"][0]["query"])
         self.assertIn(str(current_year), str(plan["search_strategy"]))
 
+    def test_current_event_temporal_guard_is_idempotent_on_resume(self) -> None:
+        original = {
+            "scope": "Approximately 2015-2024.",
+            "search_strategy": "Limit searches to 2015-2024.",
+            "work_packages": [{"title": "Identity", "query": "Target boycott"}],
+        }
+
+        once = _enforce_current_temporal_scope(original)
+        twice = _enforce_current_temporal_scope(once)
+
+        self.assertEqual(
+            twice["scope"].count("Mandatory temporal guard:"), 1
+        )
+        self.assertEqual(once, twice)
+
     def test_source_is_verified_only_when_quoted_passage_was_fetched(self) -> None:
         class Harvester:
             def crawl(self, seeds, *, query, config):

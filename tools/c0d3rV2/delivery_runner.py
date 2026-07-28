@@ -218,8 +218,15 @@ def run_delivery_turn(
     begin_turn = getattr(flow.session, "begin_turn", None)
     if callable(begin_turn):
         atomic = "unattended atomic workday job" in system_context.lower()
-        budget_name = "C0D3R_ATOMIC_MAX_MODEL_CALLS" if atomic else "C0D3R_MAX_MODEL_CALLS"
-        default_budget = "12" if atomic else "64"
+        bounded_research = (
+            "bounded read-only archival-research role" in system_context.lower()
+        )
+        if bounded_research:
+            budget_name = "C0D3R_RESEARCH_MAX_MODEL_CALLS"
+            default_budget = "2"
+        else:
+            budget_name = "C0D3R_ATOMIC_MAX_MODEL_CALLS" if atomic else "C0D3R_MAX_MODEL_CALLS"
+            default_budget = "12" if atomic else "64"
         begin_turn(max(1, int(os.getenv(budget_name, default_budget))))
 
     if system_context and system_context.strip():
@@ -227,6 +234,12 @@ def run_delivery_turn(
         _patch_session_context(flow, system_context)
     else:
         flow._pending_system = ""
+
+    bounded_research_result = _bounded_read_only_research_delivery(
+        prompt, flow, system_context
+    )
+    if bounded_research_result:
+        return bounded_research_result
 
     prompt = _inject_dependency_evidence(prompt, flow, system_context)
     prompt = _inject_research_evidence(prompt, flow, system_context, project_key=session_key)
@@ -343,6 +356,55 @@ def _read_only_evidence_delivery(prompt: str, flow: Any) -> str:
     if parsed.valid and isinstance(parsed.value, (dict, list)):
         output = json.dumps(parsed.value, ensure_ascii=False, indent=2)
     return output
+
+
+def _bounded_read_only_research_delivery(
+    prompt: str, flow: Any, system_context: str
+) -> str:
+    """Run research synthesis directly, without the mutation-agent planner.
+
+    Source discovery and document fetching are performed by Brand Dozer before
+    this call.  Entering the general C0D3R planner here can turn one bounded
+    literature package into dozens of tool-protocol turns even though the only
+    valid product is a JSON object.
+    """
+    if "bounded read-only archival-research role" not in system_context.lower():
+        return ""
+    system = (
+        f"{system_context.strip()}\n\n"
+        "You are C0D3R V2's bounded archival-research synthesis path. Work only "
+        "from the assignment and supplied candidate evidence. Do not plan a "
+        "software project, call tools, modify files, or return a tool protocol. "
+        "Return exactly one complete JSON object matching the requested schema, "
+        "without Markdown fences or commentary."
+    )
+    from model_response_normalizer import ModelResponseNormalizer
+
+    raw = flow.session.send(prompt, stream=False, system=system)
+    output = str(raw or "").strip()
+    parsed = ModelResponseNormalizer().parse(output)
+    if parsed.valid and isinstance(parsed.value, dict):
+        return json.dumps(parsed.value, ensure_ascii=False)
+
+    # One scope-locked repair is enough to recover truncated/fenced prose.  A
+    # second failed response is surfaced to Brand Dozer's quarantine instead
+    # of allowing an unbounded autonomous loop.
+    repair_prompt = (
+        "Repair your previous response. Return exactly one complete JSON object "
+        "that satisfies every requested key and evidence constraint in the "
+        "original assignment. Do not add prose or Markdown.\n\n"
+        f"ORIGINAL ASSIGNMENT:\n{prompt}\n\n"
+        f"INVALID RESPONSE:\n{output[:16000]}"
+    )
+    repaired = flow.session.send(repair_prompt, stream=False, system=system)
+    repaired_output = str(repaired or "").strip()
+    repaired_parsed = ModelResponseNormalizer().parse(repaired_output)
+    if repaired_parsed.valid and isinstance(repaired_parsed.value, dict):
+        return json.dumps(repaired_parsed.value, ensure_ascii=False)
+    raise RuntimeError(
+        "C0D3R bounded research route returned no complete JSON object after "
+        "one scope-locked repair."
+    )
 
 
 def _atomic_contract_delivery(prompt: str, flow: Any, workdir: Path, system_context: str) -> str:

@@ -3,7 +3,10 @@ from pathlib import Path
 from tools.c0d3rV2.plugins.dependency_traversal import DependencyTraversal
 from tools.c0d3rV2.tool_registry import DependencyTraversalTool
 from services.c0d3r_jeopardy_ctf_benchmark import CHALLENGES, create_arena
-from tools.c0d3rV2.delivery_runner import _read_only_evidence_delivery
+from tools.c0d3rV2.delivery_runner import (
+    _bounded_read_only_research_delivery,
+    _read_only_evidence_delivery,
+)
 
 
 def write(root: Path, relative: str, content: str) -> None:
@@ -141,3 +144,51 @@ def test_read_only_evidence_path_uses_one_answer_call_without_planning():
     assert "FLAG{RIBOSOME_TRANSLATION}" in output
     assert "```" not in output
     assert flow.session.calls == 1
+
+
+def test_bounded_research_path_returns_json_in_one_call_without_planning():
+    class Session:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, prompt, **kwargs):
+            self.calls += 1
+            return '```json\n{"findings":["verified"],"sources":[],"claims":[]}\n```'
+
+    class Flow:
+        session = Session()
+
+    flow = Flow()
+    output = _bounded_read_only_research_delivery(
+        "Return strict JSON with findings, sources, and claims.",
+        flow,
+        "Execution mode: bounded read-only archival-research role.",
+    )
+
+    assert '"findings": ["verified"]' in output
+    assert flow.session.calls == 1
+
+
+def test_bounded_research_path_allows_only_one_json_repair():
+    class Session:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, prompt, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return "I found several relevant records."
+            return '{"findings":[],"sources":[],"claims":[]}'
+
+    class Flow:
+        session = Session()
+
+    flow = Flow()
+    output = _bounded_read_only_research_delivery(
+        "Return strict JSON with findings, sources, and claims.",
+        flow,
+        "Execution mode: bounded read-only archival-research role.",
+    )
+
+    assert '"claims": []' in output
+    assert flow.session.calls == 2
