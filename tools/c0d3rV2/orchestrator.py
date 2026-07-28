@@ -1269,6 +1269,19 @@ class Orchestrator:
                     "transformations": normalized.transformations[-20:],
                 })
             return normalized.value
+        # Research role agents are explicitly read-only and their caller owns
+        # the role schema. A provider may therefore return the requested JSON
+        # object directly instead of wrapping it in C0D3R's action envelope.
+        # Preserve the object verbatim as the branch answer; Brand Dozer then
+        # applies its stricter role-specific schema and evidence gates.
+        if self._bounded_read_only:
+            parsed = self.response_normalizer.parse(raw or "")
+            if parsed.valid and isinstance(parsed.value, dict):
+                return {
+                    "action": "answer",
+                    "output": json.dumps(parsed.value, ensure_ascii=False),
+                    "reason": "bounded read-only role returned its caller-owned JSON schema",
+                }
         # Hosted/free models occasionally describe the tool call in prose even
         # though the control prompt requires JSON. Give the same model one
         # explicit protocol-repair opportunity before treating the text as a

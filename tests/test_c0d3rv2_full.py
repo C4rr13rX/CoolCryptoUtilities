@@ -1003,6 +1003,25 @@ class _DirectScrutinySession:
         })
 
 
+class _BoundedResearchSession:
+    def __init__(self):
+        self.calls = 0
+
+    def send(self, prompt: str, *, stream: bool = False, system: str = "") -> str:
+        self.calls += 1
+        if self.calls == 1:
+            return json.dumps({
+                "decision": "execute",
+                "scientific_request": "Produce the bounded protocol.",
+                "branches": [{"id": "protocol", "description": "Produce protocol JSON"}],
+            })
+        return json.dumps({
+            "title": "Bounded protocol",
+            "research_question": "What happened?",
+            "work_packages": [{"title": "Chronology"}],
+        })
+
+
 class TestOrchestratorRun:
     def test_safe_json_extracts_embedded_array_without_greedy_braces(self):
         text = 'Plan follows: [{"id":"a","description":"one"}] trailing {not json}'
@@ -1108,6 +1127,24 @@ class TestOrchestratorRun:
 
         assert session.send.call_count == 1
         assert results[0].output == '{"work_packages":[{"title":"chronology"}]}'
+        assert tree.root.is_done
+
+    def test_bounded_research_branch_accepts_caller_owned_json_without_action_envelope(
+        self, tmp_path
+    ):
+        session = _BoundedResearchSession()
+        orch = Orchestrator(
+            session=session,
+            tools=_build_registry(tmp_path),
+            context="Execution mode: bounded read-only archival-research role.",
+        )
+
+        results, tree = orch.run("Build a rigorous archival research protocol.")
+
+        assert session.calls == 2
+        assert len(results) == 1
+        payload = results[0].output.split("\n\n[reason:", 1)[0]
+        assert json.loads(payload)["title"] == "Bounded protocol"
         assert tree.root.is_done
 
     def test_corrective_retry_skips_reformulation_and_planning(self, tmp_path):
