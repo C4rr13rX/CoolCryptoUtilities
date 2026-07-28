@@ -71,6 +71,7 @@ class ResearchPolicy:
     min_sources: int = 12
     min_verified_sources: int = 10
     min_high_authority_sources: int = 6
+    min_primary_sources: int = 2
     min_source_domains: int = 4
     max_revision_rounds: int = 4
     max_parallel_agents: int = 4
@@ -93,6 +94,7 @@ class ResearchPolicy:
             min_high_authority_sources=bounded(
                 "min_high_authority_sources", 6, 1, 100
             ),
+            min_primary_sources=bounded("min_primary_sources", 2, 0, 100),
             min_source_domains=bounded("min_source_domains", 4, 2, 30),
             max_revision_rounds=bounded("max_revision_rounds", 4, 1, 10),
             max_parallel_agents=bounded("max_parallel_agents", 4, 1, 8),
@@ -247,6 +249,74 @@ def _authority_tier(source: dict[str, Any]) -> int:
     return 1
 
 
+def _classify_source_provenance(source: dict[str, Any]) -> dict[str, Any]:
+    """Classify evidence origin separately from passage/retrieval verification."""
+    classified = dict(source)
+    host = (
+        urllib.parse.urlparse(str(classified.get("url") or "")).hostname or ""
+    ).lower().removeprefix("www.")
+    source_class = "other"
+    first_party = False
+    provenance_status = "unverified"
+    detail = "Source type could not be authenticated from its host alone."
+
+    if host == "corporate.target.com":
+        source_class, first_party, provenance_status = (
+            "corporate_primary", True, "verified"
+        )
+        detail = "Published on Target Corporation's official corporate domain."
+    elif host.endswith(".gov") or host == "gov":
+        source_class, first_party, provenance_status = (
+            "government_record", True, "verified"
+        )
+        detail = "Published by an official government domain."
+    elif host == "courtlistener.com" or host.endswith(".courtlistener.com"):
+        source_class, first_party, provenance_status = (
+            "court_record", True, "corroborated"
+        )
+        detail = "Public court-record repository; docket identity still requires citation."
+    elif host == "muckrock.com" or host.endswith(".muckrock.com"):
+        source_class, first_party, provenance_status = (
+            "government_record", True, "corroborated"
+        )
+        detail = "Public-record/FOIA repository with document provenance metadata."
+    elif host == "wikileaks.org" or host.endswith(".wikileaks.org"):
+        source_class, first_party, provenance_status = (
+            "leaked_primary", True, "unverified"
+        )
+        detail = (
+            "Leaked-document repository: direct evidence of document contents only; "
+            "authenticity, completeness, chain of custody, and context require "
+            "independent corroboration."
+        )
+    elif host in {"documentcloud.org", "www.documentcloud.org"}:
+        source_class = "archival_copy"
+        detail = "Document repository copy; authenticate against its originating record."
+    elif host in {"archive.org", "web.archive.org"}:
+        source_class, provenance_status = "archival_copy", "corroborated"
+        detail = "Archived web copy; provenance derives from the captured origin and date."
+    elif bool(classified.get("peer_reviewed")) or any(
+        marker in host
+        for marker in (
+            "doi.org", "pubmed.ncbi.nlm.nih.gov", "ieee.org", "acm.org",
+            "springer.com", "sciencedirect.com", "nature.com", "science.org",
+        )
+    ):
+        source_class, provenance_status = "peer_reviewed", "verified"
+        detail = "Scholarly publication provenance identified from its publication host."
+    elif host in {"apnews.com", "reuters.com"}:
+        source_class, provenance_status = "journalism", "verified"
+        detail = "Identified news publisher; reporting remains secondary evidence."
+
+    classified.update(
+        source_class=source_class,
+        first_party=first_party,
+        provenance_status=provenance_status,
+        provenance_detail=detail,
+    )
+    return classified
+
+
 def validate_paper_payload(
     *,
     markdown: str,
@@ -283,6 +353,12 @@ def validate_paper_payload(
     ]
     high_authority = [
         source for source in verified if int(source.get("authority_tier") or 0) >= 2
+    ]
+    verified_primary = [
+        source
+        for source in verified
+        if bool(source.get("first_party"))
+        and source.get("provenance_status") in {"verified", "corroborated"}
     ]
     domains = {
         (urllib.parse.urlparse(str(source.get("url") or "")).hostname or "").lower()
@@ -326,6 +402,9 @@ def validate_paper_payload(
         "authoritative_sources": (
             len(high_authority) >= policy.min_high_authority_sources
         ),
+        "primary_source_coverage": (
+            len(verified_primary) >= policy.min_primary_sources
+        ),
         "source_diversity": len(domains) >= policy.min_source_domains,
         "known_citations": not unknown_citations,
         "claims_supported": bool(claim_list) and not unsupported_claims,
@@ -341,6 +420,7 @@ def validate_paper_payload(
             "sources": len(source_list),
             "verified_sources": len(verified),
             "high_authority_sources": len(high_authority),
+            "verified_primary_sources": len(verified_primary),
             "source_domains": len(domains),
             "claims": len(claim_list),
             "citations_used": len(used_keys),
@@ -357,6 +437,7 @@ def _verify_source(
     harvester: ResearchHarvester, source: dict[str, Any], question: str
 ) -> dict[str, Any]:
     candidate = dict(source)
+    candidate = _classify_source_provenance(candidate)
     candidate["authority_tier"] = _authority_tier(candidate)
     url = str(candidate.get("url") or "").strip()
     if not url:
@@ -710,6 +791,13 @@ class ResearchWorkflow:
                     'site:corporate.target.com "diversity, equity and inclusion" '
                     f"{current_year - 1} {current_year}"
                 ),
+                f"site:wikileaks.org ({base_query})",
+                (
+                    "(site:documentcloud.org OR site:muckrock.com OR "
+                    f"site:courtlistener.com) ({base_query})"
+                ),
+                f"site:sec.gov ({base_query})",
+                f"(site:archive.org OR site:web.archive.org) ({base_query})",
             ]
             package_text = " ".join(
                 str(package.get(key) or "")
@@ -733,6 +821,24 @@ class ResearchWorkflow:
                 )
             search = WebSearch(None, delay_s=0.25, max_results=8)
             unique: dict[str, dict[str, Any]] = {}
+            for seed in (self.run.context or {}).get("research_seed_sources") or []:
+                if not isinstance(seed, dict):
+                    continue
+                url = str(seed.get("url") or "").strip()
+                if not url.startswith(("http://", "https://")):
+                    continue
+                key = re.sub(r"[?#].*$", "", url.lower())
+                unique[key] = {
+                    "title": str(seed.get("title") or url),
+                    "url": url,
+                    "snippet": (
+                        "Explicit benchmark seed; discovery only. Fetch and verify "
+                        "the document before using any claim."
+                    ),
+                    "authority_score": 10,
+                    "metadata_relevance": 10,
+                    "provider": "benchmark_seed",
+                }
             for query in queries:
                 for candidate in search.discover(query):
                     url = str(candidate.get("url") or "").strip()
@@ -787,7 +893,12 @@ class ResearchWorkflow:
                 "JSON with findings, counterevidence, uncertainties, sources, and claims. "
                 "Every source needs citation_key, exact title, authors, publication_year, "
                 "publisher, URL, DOI when available, peer_reviewed, and a short "
-                "verified_passage to locate. Every claim needs claim_text, section, and "
+                "verified_passage to locate. Classify source_class, first_party, "
+                "provenance_status, and provenance_detail. Search official releases, "
+                "filings, court/FOIA records, public archives, WikiLeaks, and comparable "
+                "public document repositories. A leak is direct evidence of its contents "
+                "only until authenticity, completeness, chain of custody, and context "
+                "are independently corroborated. Every claim needs claim_text, section, and "
                 "source_keys. Use only the independently discovered candidate URLs "
                 "provided below. Copy a short supporting passage verbatim so it can be "
                 "checked against the fetched document. Never fabricate a citation; omit "
@@ -892,7 +1003,13 @@ class ResearchWorkflow:
                 "Audit the archival research protocol and gathered evidence. Return JSON "
                 "with method, inclusion_decisions, exclusion_decisions, bias_risks, "
                 "validity_limits, unresolved_questions, and synthesis_rules. Do not "
-                "claim that experiments or measurements were performed.\n\n"
+                "claim that experiments or measurements were performed. Explicitly audit "
+                "the search of official company releases and filings, government/court/"
+                "FOIA records, WikiLeaks, and comparable public document repositories. "
+                "Prioritize first-party evidence while treating source proximity, "
+                "authenticity, truth, completeness, and representativeness as separate "
+                "questions. Record leak provenance, corroboration, selection bias, and "
+                "missing context.\n\n"
                 f"PROTOCOL: {json.dumps(plan)}\n"
                 f"EVIDENCE SUMMARIES: {json.dumps(evidence)[:80000]}"
             ),
@@ -958,7 +1075,10 @@ class ResearchWorkflow:
                 "paper context. Return JSON with claims, where every item repeats "
                 "claim_text and source_keys and sets verification_status to supported, "
                 "qualified, or rejected with rationale. Also return fabricated_or_unknown "
-                "citation keys and blocking_issues. A source URL alone is not support.\n\n"
+                "citation keys and blocking_issues. A source URL alone is not support. "
+                "Reject or qualify any claim that treats an unverified or disputed leaked "
+                "document as authenticated external fact, or that confuses a company's "
+                "statement about itself with independent validation.\n\n"
                 f"SOURCES: {json.dumps(sources)}\n"
                 f"CLAIMS: {json.dumps(candidate.get('claims') or [])}\n"
                 f"PAPER: {str(candidate.get('markdown') or '')[:120000]}"
@@ -1033,6 +1153,12 @@ class ResearchWorkflow:
                 authority_tier=int(source.get("authority_tier") or 0),
                 peer_reviewed=bool(source.get("peer_reviewed")),
                 archival=True,
+                source_class=str(source.get("source_class") or "other"),
+                first_party=bool(source.get("first_party")),
+                provenance_status=str(
+                    source.get("provenance_status") or "unverified"
+                ),
+                provenance_detail=str(source.get("provenance_detail") or ""),
                 verified_passage=str(source.get("verified_passage") or "")[:12000],
                 verification_status=str(source.get("verification_status") or "pending"),
                 verification_detail=str(source.get("verification_detail") or ""),

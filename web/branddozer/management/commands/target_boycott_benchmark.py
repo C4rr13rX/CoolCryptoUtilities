@@ -62,6 +62,11 @@ Validity and motivated-reasoning controls:
 - Prefer Target filings and archived corporate materials, government data,
   contemporaneous records, preregistered or peer-reviewed studies, systematic
   reviews, and high-quality longitudinal/quasi-experimental evidence.
+- Always search public first-party repositories, including WikiLeaks,
+  DocumentCloud, MuckRock/FOIA collections, court records, regulatory filings,
+  and web archives. A leaked document is direct evidence of its contents, not
+  automatic proof of authenticity or truth: record chain of custody,
+  completeness, context, corroboration, disputes, and selection bias.
 - Keep corporate statements, news reporting, advocacy claims, observational
   associations, causal estimates, model-based inference, and counterfactual
   speculation visibly separate.
@@ -78,6 +83,65 @@ chronology and program-comparison table, distinguish empirical conclusions from
 inferences and scenarios, and be suitable for critical review in social
 science, applied psychology, economics, and systems-science venues.
 """.strip()
+
+BENCHMARK_SEED_SOURCES = [
+    {
+        "title": "Target's Belonging at the Bullseye Strategy",
+        "url": "https://corporate.target.com/press/fact-sheet/2025/01/belonging-bullseye-strategy",
+    },
+    {
+        "title": "Target Commits to Spending More Than $2 Billion with Black-Owned Businesses by 2025",
+        "url": "https://corporate.target.com/press/release/2021/04/target-commits-to-spending-more-than-2-billion-wit",
+    },
+    {
+        "title": "Target Announces Target Forward",
+        "url": "https://corporate.target.com/press/release/2021/06/target-forward",
+    },
+    {
+        "title": "Target 2020 Annual Report",
+        "url": "https://corporate.target.com/investors/annual/2020-annual-report",
+    },
+    {
+        "title": "Target 2022 ESG Report",
+        "url": "https://corporate.target.com/getmedia/6fa88845-4341-4654-a554-5d58c553e88c/2022_Target_ESG_Report.pdf",
+    },
+    {
+        "title": "Target 2023 Sustainability and Governance Report",
+        "url": "https://corporate.target.com/getmedia/e4f81467-57ab-4787-a5a7-ab6efb7dd05c/Target-2023-Sustainability-and-Governance-Report.pdf",
+    },
+    {
+        "title": "Target 2024 Sustainability and Governance Report Appendix",
+        "url": "https://corporate.target.com/getmedia/61bfcb36-0a4e-4755-98bf-9c545bb5300d/2024-Sustainability-and-Governance-Report-Appendix.pdf",
+    },
+    {
+        "title": "Target Scholars Program",
+        "url": "https://corporate.target.com/news-features/article/2022/05/target-scholars",
+    },
+    {
+        "title": "Target Community Engagement Funds",
+        "url": "https://corporate.target.com/about/purpose-history/communities/grants-corporate-giving/community-engagement-funds",
+    },
+    {
+        "title": "Target Supplier Engagement",
+        "url": "https://corporate.target.com/news-features/article/2026/02/supplier-engagement",
+    },
+    {
+        "title": "Target 2025 Annual Report Risk Factors",
+        "url": "https://corporate.target.com/investors/annual/2025-annual-report/10-k-report/10-k-part-i/item-1a-risk-factors",
+    },
+    {
+        "title": "Congressional Black Caucus Readout of Target Meeting",
+        "url": "https://cbc.house.gov/news/documentsingle.aspx?DocumentID=3041",
+    },
+    {
+        "title": "AP: 40-day Target boycott begins",
+        "url": "https://apnews.com/article/d1d40f79f5f1b3afb2dfe8561e7729a0",
+    },
+    {
+        "title": "AP: Pro-DEI organizers maintain Target boycott",
+        "url": "https://apnews.com/article/7996ce3fbf7f0cc9207472bc7a227cd6",
+    },
+]
 
 
 class Command(BaseCommand):
@@ -129,6 +193,7 @@ class Command(BaseCommand):
                 "motivated_reasoning_audit": True,
                 "dynamical_systems_comparison": True,
             },
+            "research_seed_sources": BENCHMARK_SEED_SOURCES,
             "research_config": {
                 "target_journal": (
                     "interdisciplinary social science, applied psychology, "
@@ -139,6 +204,7 @@ class Command(BaseCommand):
                 "min_sources": 12,
                 "min_verified_sources": 10,
                 "min_high_authority_sources": 6,
+                "min_primary_sources": 4,
                 "min_source_domains": 5,
                 "max_revision_rounds": 4,
                 "max_parallel_agents": 3,

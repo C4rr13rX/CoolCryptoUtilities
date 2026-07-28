@@ -23,6 +23,7 @@ from branddozer.models import (
 from branddozer.research import (
     ResearchPolicy,
     ResearchWorkflow,
+    _classify_source_provenance,
     _enforce_current_temporal_scope,
     _extract_json,
     _verify_source,
@@ -66,6 +67,8 @@ class ResearchValidationTests(TestCase):
                 "content_sha256": hashlib.sha256(str(i).encode()).hexdigest(),
                 "authority_tier": 3,
                 "verification_status": "verified",
+                "first_party": i < 2,
+                "provenance_status": "verified" if i < 2 else "unverified",
             }
             for i in range(3)
         ]
@@ -88,6 +91,14 @@ class ResearchValidationTests(TestCase):
         )
         self.assertTrue(result["passed"], result)
         self.assertTrue(all(result["checks"].values()))
+
+    def test_leak_is_primary_but_not_provenance_verified_by_retrieval(self) -> None:
+        source = _classify_source_provenance(
+            {"url": "https://wikileaks.org/example/document"}
+        )
+        self.assertEqual(source["source_class"], "leaked_primary")
+        self.assertTrue(source["first_party"])
+        self.assertEqual(source["provenance_status"], "unverified")
 
     def test_unknown_citation_and_unsupported_claim_block_validation(self) -> None:
         claims = [
@@ -475,6 +486,8 @@ class ResearchWorkflowPersistenceTests(TestCase):
                 "authority_tier": 3,
                 "verification_status": "verified",
                 "peer_reviewed": True,
+                "first_party": i < 2,
+                "provenance_status": "verified" if i < 2 else "unverified",
             }
             for i in range(3)
         ]

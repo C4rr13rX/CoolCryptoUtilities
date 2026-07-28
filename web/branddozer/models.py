@@ -505,6 +505,23 @@ class ResearchPaper(models.Model):
 class ResearchSource(models.Model):
     """A source whose identity and fetched content are independently recorded."""
 
+    SOURCE_CLASS_CHOICES = [
+        ("corporate_primary", "Corporate Primary"),
+        ("government_record", "Government Record"),
+        ("court_record", "Court Record"),
+        ("leaked_primary", "Leaked Primary"),
+        ("archival_copy", "Archival Copy"),
+        ("peer_reviewed", "Peer Reviewed"),
+        ("journalism", "Journalism"),
+        ("advocacy", "Advocacy"),
+        ("other", "Other"),
+    ]
+    PROVENANCE_CHOICES = [
+        ("verified", "Verified"),
+        ("corroborated", "Corroborated"),
+        ("unverified", "Unverified"),
+        ("disputed", "Disputed"),
+    ]
     VERIFICATION_CHOICES = [
         ("pending", "Pending"),
         ("verified", "Verified"),
@@ -526,6 +543,14 @@ class ResearchSource(models.Model):
     authority_tier = models.PositiveSmallIntegerField(default=0)
     peer_reviewed = models.BooleanField(default=False)
     archival = models.BooleanField(default=True)
+    source_class = models.CharField(
+        max_length=32, choices=SOURCE_CLASS_CHOICES, default="other"
+    )
+    first_party = models.BooleanField(default=False)
+    provenance_status = models.CharField(
+        max_length=16, choices=PROVENANCE_CHOICES, default="unverified"
+    )
+    provenance_detail = models.TextField(blank=True, default="")
     verified_passage = models.TextField(blank=True, default="")
     verification_status = models.CharField(
         max_length=16, choices=VERIFICATION_CHOICES, default="pending"
