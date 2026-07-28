@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import time
 
 import pytest
 
@@ -273,6 +274,26 @@ def test_quota_failure_blocks_shared_pool_and_falls_back(monkeypatch):
     assert router.send("implement code with tools") == "fallback"
     assert attempted == ["best", "fallback"]
     assert ledger.headroom(("provider-shared",), 1) == 0.0
+
+
+def test_router_enforces_hard_wall_clock_provider_deadline(monkeypatch):
+    monkeypatch.setenv("TEST_FREE_KEY", "configured")
+    spec = _spec("stalled", pool="stalled")
+    ledger = QuotaLedger({"stalled": PoolLimit(requests_per_day=100)})
+
+    def stalled(_spec, **_kwargs):
+        time.sleep(0.5)
+        return ProviderResponse(text="late", headers={}, input_tokens=1, output_tokens=1)
+
+    router = FreeloaderRouter(
+        [spec], ledger, invoker=stalled, timeout_s=0.05, max_attempts=1,
+    )
+    started = time.perf_counter()
+    with pytest.raises(RuntimeError, match="hard wall-clock deadline"):
+        router.send("hello")
+    assert time.perf_counter() - started < 0.3
+
+
 def test_session_records_failed_route_trace() -> None:
     class FailingRouter:
         last_trace = [{"provider": "P", "model": "M", "outcome": "failed", "status": 429}]
@@ -409,3 +430,30 @@ def test_session_rotates_phase_affinity_after_four_calls(monkeypatch) -> None:
         session.send("step", system=system)
     assert session.router.exclusions[:4] == [set(), set(), set(), set()]
     assert session.router.exclusions[4] == {"P:M"}
+
+
+def test_atomic_implementation_rotates_after_two_calls_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("ATF_PHASE_MODEL_CALLS", raising=False)
+
+    class Router:
+        def __init__(self):
+            self.last_trace = []
+            self.exclusions = []
+
+        def send(self, *args, excluded_identities=None, **kwargs):
+            self.exclusions.append(set(excluded_identities or ()))
+            self.last_trace = [{"provider": "P", "model": "M", "outcome": "selected"}]
+            return "ok"
+
+    session = object.__new__(AgentTheFreeloaderSession)
+    session.router = Router()
+    session.route_history = []
+    session.max_tokens = 100
+    session.temperature = 0.2
+    session.transcript_enabled = False
+    session.begin_turn(4)
+    system = "ATOMIC IMPLEMENTATION POLICY: emit one file_write"
+    for _ in range(3):
+        session.send("step", system=system)
+    assert session.router.exclusions[:2] == [set(), set()]
+    assert session.router.exclusions[2] == {"P:M"}

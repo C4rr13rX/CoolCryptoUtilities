@@ -34,6 +34,7 @@ class BrandDozerManager:
         self._threads: Dict[str, threading.Thread] = {}
         self._stops: Dict[str, threading.Event] = {}
         self._locks: Dict[str, threading.Lock] = {}
+        self._leases: Dict[str, Any] = {}
         self._lock = threading.Lock()
         self._status: Dict[str, Dict[str, str]] = {}
 
@@ -108,9 +109,18 @@ class BrandDozerManager:
 
     # ------------------------------------------------------------------ workers
     def _run_loop(self, project_id: str, stop: threading.Event) -> None:
+        from services.guardian_lock import GuardianLease
+        lease = GuardianLease(f"branddozer-project-{project_id}", poll_interval=1.0)
+        if not lease.acquire(cancel_event=stop):
+            with self._lock:
+                self._status[project_id] = {"state": "standby", "last_message": "another worker owns this project"}
+            return
+        self._leases[project_id] = lease
         close_old_connections()
         project = get_project(project_id)
         if not project:
+            lease.release()
+            self._leases.pop(project_id, None)
             return
         interval = int(project.get("interval_minutes") or 120) * 60
         lock = self._locks.get(project_id) or threading.Lock()
@@ -124,7 +134,14 @@ class BrandDozerManager:
                     log_message("branddozer", f"skip cycle: lock busy for {project_id}", severity="warning")
                     continue
                 try:
-                    self._run_cycle(project, stop)
+                    from services.branddozer_lifecycle import prepare_cycle, finalize_cycle
+                    prepare_cycle(project)
+                    cycle_ok = self._run_cycle(project, stop)
+                    lifecycle = finalize_cycle(
+                        project,
+                        success=cycle_ok,
+                        message=f"BrandDozer cycle: {project.get('name', 'project')}",
+                    )
                 finally:
                     lock.release()
                 update_project_fields(project_id, {"last_run": time.time()})
@@ -138,12 +155,28 @@ class BrandDozerManager:
                 break
             close_old_connections()
         close_old_connections()
+        try:
+            lease.release()
+        finally:
+            self._leases.pop(project_id, None)
         with self._lock:
             self._status[project_id] = {"state": "stopped"}
 
-    def _run_cycle(self, project: Dict[str, str], stop: threading.Event) -> None:
+    def _run_cycle(self, project: Dict[str, str], stop: threading.Event) -> bool:
         if stop.is_set():
-            return
+            return False
+        # A continuous project may select a reusable workflow with its own
+        # research/build/validation gates. Unconfigured projects retain the
+        # generic prompt/interjection loop below.
+        from services.branddozer_workflows import run_project_workflow
+        result = run_project_workflow(project)
+        if result is not None:
+            with self._lock:
+                self._status[project["id"]] = {
+                    "state": result.state.get("status", "running"),
+                    "last_message": result.output or "product refinement cycle complete",
+                }
+            return str(result.state.get("status") or "").lower() == "completed"
         prompts: List[tuple[str, str]] = []
         default_prompt = (project.get("default_prompt") or "").strip()
         if default_prompt:
@@ -153,13 +186,14 @@ class BrandDozerManager:
             if intr_text:
                 prompts.append((f"interjection-{idx+1}", intr_text))
         if not prompts:
-            return
+            return False
         for label, prompt in prompts:
             if stop.is_set():
                 break
             self._run_prompt(project, prompt, label)
             with self._lock:
                 self._status[project["id"]] = {"state": "running", "last_message": f"{label} done"}
+        return not stop.is_set()
 
     def _run_prompt(self, project: Dict[str, str], prompt: str, label: str) -> str:
         provider = session_provider_from_context({})

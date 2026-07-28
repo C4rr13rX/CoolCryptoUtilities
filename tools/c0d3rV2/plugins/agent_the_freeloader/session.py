@@ -4,6 +4,7 @@ import os
 import json
 import time
 import uuid
+import re
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +105,9 @@ class AgentTheFreeloaderSession:
         preferred_identity = str(phase_sticky.get(phase) or "")
         phase_counts = getattr(self, "_phase_model_counts", {})
         excluded = set(getattr(self, "_turn_banned", set()))
-        affinity_limit = max(1, int(os.getenv("ATF_PHASE_MODEL_CALLS", "4")))
+        atomic_implementation = "atomic implementation policy" in system.lower()
+        default_affinity = "2" if atomic_implementation else "4"
+        affinity_limit = max(1, int(os.getenv("ATF_PHASE_MODEL_CALLS", default_affinity)))
         if preferred_identity and int(phase_counts.get((phase, preferred_identity), 0)) >= affinity_limit:
             excluded.add(preferred_identity)
         try:
@@ -216,15 +219,15 @@ class AgentTheFreeloaderSession:
         for event in events:
             if len(lines) >= limit:
                 break
-            bad_edit = str(event.get("failed_output") or "").strip().replace("\n", " ")[:500]
+            bad_edit = str(event.get("failed_output") or "").strip().replace("\n", " ")[:180]
             lines.append(
                 f"- {event['provider']}/{event['model']} [{event['classification']}]: "
-                f"{event['trigger'][:500]} -> {event['correction'][:300] or 'unresolved'}"
+                f"{event['trigger'][:240]} -> {event['correction'][:160] or 'unresolved'}"
                 + (f"; rejected edit: {bad_edit}" if bad_edit else "")
             )
         if not lines:
             return ""
-        return "[Recent ATF correction memory — do not repeat these errors]\n" + "\n".join(lines)
+        return ("[Recent ATF correction memory — do not repeat these errors]\n" + "\n".join(lines))[:2500]
 
     def _append_transcript(self, prompt: str, system: str, reply: str) -> None:
         if not self.transcript_enabled or not self.transcript_dir:
@@ -232,7 +235,8 @@ class AgentTheFreeloaderSession:
         try:
             self.transcript_dir.mkdir(parents=True, exist_ok=True)
             stamp = time.strftime("%Y%m%d_%H%M%S")
-            path = self.transcript_dir / f"{self.session_name}_{stamp}_{uuid.uuid4().hex[:8]}.json"
+            safe_session = re.sub(r"[^A-Za-z0-9._-]+", "-", self.session_name).strip("-._") or "atf-session"
+            path = self.transcript_dir / f"{safe_session}_{stamp}_{uuid.uuid4().hex[:8]}.json"
             path.write_text(
                 json.dumps(
                     {
@@ -247,8 +251,20 @@ class AgentTheFreeloaderSession:
                 ),
                 encoding="utf-8",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            # Transcript failures are operational failures, not optional noise. Keep
+            # this independent of the normal transcript filename so invalid session
+            # identifiers or serialization problems remain diagnosable.
+            try:
+                self.transcript_dir.mkdir(parents=True, exist_ok=True)
+                error_path = self.transcript_dir / "transcript_errors.log"
+                with error_path.open("a", encoding="utf-8") as handle:
+                    handle.write(
+                        f"{time.strftime('%Y-%m-%dT%H:%M:%S')} "
+                        f"session={self.session_name!r} error={exc!r}\n"
+                    )
+            except Exception:
+                pass
 
     def _phase_trace(self, system: str) -> list[dict]:
         phase = self._phase_name(system)

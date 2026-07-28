@@ -114,7 +114,16 @@ class DeliveryRunListView(APIView):
         project_id = data.get("project_id")
         prompt = (data.get("prompt") or "").strip()
         mode = data.get("mode") or "auto"
-        research_mode = bool(data.get("research") or data.get("research_mode"))
+        research_raw = data.get("research_mode", data.get("research", False))
+        research_mode = (
+            str(research_raw).strip().lower() in {"1", "true", "yes", "on"}
+            or str(data.get("project_type") or "").strip().lower() == "research"
+        )
+        research_config = (
+            data.get("research_config")
+            if isinstance(data.get("research_config"), dict)
+            else {}
+        )
         team_mode = data.get("team_mode")
         session_provider = data.get("session_provider") or data.get("provider")
         codex_model = data.get("model") or data.get("codex_model")
@@ -142,20 +151,26 @@ class DeliveryRunListView(APIView):
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        context = dict(run.context or {})
+        if research_mode:
+            context["research_mode"] = True
+            context["research_config"] = research_config
+        if session_provider:
+            context["session_provider"] = session_provider
+        run.context = context
+        run.save(update_fields=["context"])
         job = enqueue_job(
             kind="delivery_run",
             project=run.project,
             run=run,
             user=request.user,
-            payload={"mode": mode},
+            payload={
+                "mode": mode,
+                "project_type": "research" if research_mode else "software",
+            },
             message="Queued",
         )
-        context = {**(run.context or {}), "job_id": str(job.id)}
-        if research_mode:
-            context["research_mode"] = True
-        if session_provider:
-            context["session_provider"] = session_provider
-        run.context = context
+        run.context = {**context, "job_id": str(job.id)}
         run.save(update_fields=["context"])
         return Response({"run": _run_payload(run), "job_id": str(job.id)}, status=status.HTTP_201_CREATED)
 

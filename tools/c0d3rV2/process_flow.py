@@ -43,6 +43,8 @@ class ProcessFlow:
         session_id: str | None = None,
         lt_memory: Any | None = None,
         st_memory: Any | None = None,
+        short_memory: Any | None = None,
+        st_side_memory: Any | None = None,
         lt_side_memory: Any | None = None,
         usage_tracker: Any | None = None,
         header: Any | None = None,
@@ -54,7 +56,9 @@ class ProcessFlow:
         self.tools = tools
         self.session_id = session_id
         self.lt_memory = lt_memory
-        self.st_memory = st_memory
+        self.st_memory = st_side_memory or (
+            st_memory if st_memory and hasattr(st_memory, "record_paths") else None
+        )
         self.lt_side_memory = lt_side_memory
         self.usage = usage_tracker
         self.header = header
@@ -64,10 +68,13 @@ class ProcessFlow:
         # If a modular STMemory is provided, it owns summary + transcript.
         # Otherwise fall back to the embedded summary bundle.
         self._st_mem = None
-        if st_memory and hasattr(st_memory, "build_memory_section"):
+        candidate_short = short_memory or (
+            st_memory if st_memory and hasattr(st_memory, "build_memory_section") else None
+        )
+        if candidate_short and hasattr(candidate_short, "build_memory_section"):
             # This is the new modular STMemory (st_memory.py).
-            self._st_mem = st_memory
-            self._summary_bundle = st_memory.summary_bundle
+            self._st_mem = candidate_short
+            self._summary_bundle = candidate_short.summary_bundle
         else:
             self._summary_bundle = self._load_summary_bundle()
 
@@ -127,7 +134,17 @@ class ProcessFlow:
             task_tree_summary=task_tree_summary,
         )
         self._context = builder.build()
+        if self.lt_memory and self._memory_recall_trigger(request):
+            recalled = self.lt_memory.search(request, limit=12)
+            if recalled:
+                self._context += "\n\n[Triggered Long-Term Recall]\n" + json.dumps(recalled, ensure_ascii=False, default=str)[:12000]
         return f"{self._context}\n\nUser request:\n{request}"
+
+    @staticmethod
+    def _memory_recall_trigger(request: str) -> bool:
+        text=" ".join(str(request or "").lower().split())
+        markers=("do you remember","remember when","last time","previous session","earlier session","continue the project","continue working on","pick up where","yesterday","today","last week","last month")
+        return any(marker in text for marker in markers) or bool(re.search(r"\b20\d{2}-\d{2}-\d{2}\b",text))
 
     # ------------------------------------------------------------------
     # Step 3 + 3A: Orchestration
@@ -185,7 +202,9 @@ class ProcessFlow:
         for entry in tree.accumulated_results():
             result = entry.get("result") or {}
             # Collect paths from file_locate results, executor outputs, etc.
-            paths = result.get("paths") or []
+            paths = result.get("paths") or result.get("files") or result.get("artifacts") or []
+            if isinstance(result.get("path"), str) and result.get("path"):
+                paths = [*paths, result["path"]]
             # Also look for file paths in stdout (executor results)
             stdout = result.get("stdout", "")
             if not paths and stdout:
@@ -238,7 +257,7 @@ class ProcessFlow:
                 and hasattr(self.lt_side_memory, "absorb_from_session")
             ):
                 promoted = self.lt_side_memory.absorb_from_session(
-                    self.st_memory.hazy_hash._scope,
+                    self.st_memory.hazy_hash,
                 )
                 if promoted and self.tui:
                     self.tui.write_line(

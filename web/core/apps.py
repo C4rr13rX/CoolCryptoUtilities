@@ -102,6 +102,17 @@ class CoreConfig(AppConfig):
         if cmd == "runserver" and os.environ.get("RUN_MAIN") != "true":
             return
 
+        server_bootstrap = (
+            cmd == "runserver"
+            or bool(os.environ.get("WAITRESS_PORT"))
+            or os.environ.get("CORE_AUTO_BOOTSTRAP") == "1"
+        )
+        if not server_bootstrap and cmd not in {"start_production"}:
+            # One-off management commands (shell, migrate, tests, benchmark
+            # commands) must not spawn/stop trading, cron, guardian, or console
+            # background services as a side effect of importing Django.
+            return
+
         # Register shutdown hooks once so Ctrl+C / normal exit cleans everything.
         if not CoreConfig._shutdown_registered:
             CoreConfig._shutdown_registered = True

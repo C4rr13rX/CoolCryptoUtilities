@@ -26,7 +26,7 @@ from services.production_supervisor import production_supervisor
 from services.secure_settings import build_process_env
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-GUARDIAN_LOG = Path("runtime/guardian/guardian.log")
+GUARDIAN_LOG = REPO_ROOT / "runtime" / "guardian" / "guardian.log"
 
 
 def _python_bin() -> str:
@@ -62,7 +62,6 @@ class GuardianSupervisor:
                 log_message("guardian", "another guardian supervisor already active; skipping bootstrap", severity="warning")
                 return
             self._stop.clear()
-            production_supervisor.ensure_running()
             self._thread = threading.Thread(target=self._guardian_loop, name="guardian-process", daemon=True)
             self._thread.start()
 
@@ -85,7 +84,6 @@ class GuardianSupervisor:
         if self._thread:
             self._thread.join(timeout=5.0)
         self._thread = None
-        production_supervisor.stop()
         with self._status_lock:
             self._status["running"] = False
             self._status["pid"] = None
@@ -122,10 +120,21 @@ class GuardianSupervisor:
             status = dict(self._status)
         status["settings"] = get_guardian_settings()
         status["console"] = console_manager.status()
-        status["running"] = bool(self._process and self._process.poll() is None)
+        external_pid = self._find_guardian_pid()
+        status["running"] = bool((self._process and self._process.poll() is None) or external_pid)
+        if not status.get("pid") and external_pid:
+            status["pid"] = external_pid
         status["queue"] = guardian_queue_snapshot()
         status["production"] = production_supervisor.status()
         status["log_path"] = str(GUARDIAN_LOG)
+        recovery_path = REPO_ROOT / "runtime" / "guardian" / "recovery.json"
+        try:
+            import json
+            recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
+        except Exception:
+            recovery = {}
+        status["components"] = recovery.get("components") or {}
+        status["recovery_updated_at"] = recovery.get("updated_at")
         return status
 
     def ensure_running(self) -> None:
@@ -134,8 +143,6 @@ class GuardianSupervisor:
             return
         if not self._thread or not self._thread.is_alive():
             self.start()
-        else:
-            production_supervisor.ensure_running()
 
     def _acquire_lease(self) -> bool:
         if self._lease:
@@ -173,6 +180,13 @@ class GuardianSupervisor:
         GUARDIAN_LOG.parent.mkdir(parents=True, exist_ok=True)
         while not self._stop.is_set():
             try:
+                external_pid = self._find_guardian_pid()
+                if external_pid:
+                    with self._status_lock:
+                        self._status.update({"running": True, "pid": external_pid, "external": True})
+                    while self._find_guardian_pid() and not self._stop.wait(1.0):
+                        pass
+                    continue
                 with GUARDIAN_LOG.open("a", encoding="utf-8") as log_handle:
                     proc = subprocess.Popen(
                         cmd,
@@ -203,6 +217,21 @@ class GuardianSupervisor:
                 self._process = None
         # Loop exited (stop requested); release lease so another process can take over later.
         self._release_lease()
+
+    @staticmethod
+    def _find_guardian_pid() -> Optional[int]:
+        try:
+            import psutil
+            for proc in psutil.process_iter(["pid", "cmdline"]):
+                try:
+                    line = " ".join(proc.info.get("cmdline") or []).lower()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                if "monitoring_guardian.guardian" in line and "--health-once" not in line:
+                    return int(proc.info["pid"])
+        except Exception:
+            return None
+        return None
 
 
 guardian_supervisor = GuardianSupervisor()

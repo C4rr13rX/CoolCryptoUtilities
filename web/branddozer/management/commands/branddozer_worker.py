@@ -12,7 +12,7 @@ from django.utils import timezone
 from branddozer.models import DeliveryRun
 from branddozer import views as branddozer_views
 from services.branddozer_delivery import delivery_orchestrator
-from services.branddozer_jobs import cancel_stale_jobs, claim_next_job, complete_job, fail_job, update_job
+from services.branddozer_jobs import cancel_stale_jobs, claim_next_job, complete_job, fail_job, requeue_job, update_job
 
 
 class Command(BaseCommand):
@@ -122,6 +122,13 @@ class Command(BaseCommand):
                 return
             if run and run.status == "blocked":
                 complete_job(job, message="Delivery run blocked", result={"run_status": run.status})
+                return
+            if run and run.status not in {"complete", "completed", "awaiting_acceptance", "error", "blocked"}:
+                requeue_job(
+                    job,
+                    message="Delivery iteration complete; queued next bounded turn",
+                    detail=f"Run remains {run.status}; continuing iterative delivery",
+                )
                 return
             complete_job(
                 job,

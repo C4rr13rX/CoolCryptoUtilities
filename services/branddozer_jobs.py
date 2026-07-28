@@ -117,6 +117,24 @@ def complete_job(job: BackgroundJob, *, message: Optional[str] = None, detail: O
     job.save(update_fields=["status", "message", "detail", "result", "completed_at", "updated_at"])
 
 
+def requeue_job(job: BackgroundJob, *, message: Optional[str] = None, detail: Optional[str] = None) -> None:
+    """Return a nonterminal long-running job to the queue for its next bounded turn."""
+    if message is not None:
+        job.message = message
+    if detail is not None:
+        job.detail = detail
+    job.status = "queued"
+    job.error = ""
+    job.completed_at = None
+    job.started_at = None
+    job.locked_at = None
+    job.locked_by = ""
+    job.save(update_fields=[
+        "status", "message", "detail", "error", "completed_at",
+        "started_at", "locked_at", "locked_by", "updated_at",
+    ])
+
+
 def fail_job(job: BackgroundJob, *, error: str, message: Optional[str] = None, detail: Optional[str] = None) -> None:
     job.status = "error"
     job.error = error

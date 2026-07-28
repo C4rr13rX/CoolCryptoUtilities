@@ -142,11 +142,15 @@ class LTSideLoadedMemory:
     # Absorption (ST → LT promotion)
     # ------------------------------------------------------------------
 
-    def absorb_from_session(self, session_scope: str) -> int:
+    def absorb_from_session(self, session_source) -> int:
         """
         Promote high-value entries from a session-scoped HazyHash into
         the global LT graph.  Called at session end.
 
         Returns the number of nodes promoted.
         """
-        return self._hash.promote_to_scope("global")
+        if hasattr(session_source, "all_paths"):
+            paths = session_source.all_paths(min_access_count=1)
+            self.record_paths("promoted session file locations", paths)
+            return len(paths)
+        return 0

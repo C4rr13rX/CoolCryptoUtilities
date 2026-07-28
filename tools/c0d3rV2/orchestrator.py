@@ -23,10 +23,16 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from task_tree import TaskNode, TaskTree
 from tool_registry import ToolRegistry
+from outline_refiner import OutlineRefiner, is_creation_request
+try:
+    from model_response_normalizer import ModelResponseNormalizer
+except ModuleNotFoundError:  # package import in tests/library consumers
+    from .model_response_normalizer import ModelResponseNormalizer
 
 
 class ModelCallBudgetExceeded(RuntimeError):
@@ -85,6 +91,9 @@ class Orchestrator:
         "  2. Use file_locate before any file_read/file_write/executor call "
         "when you do not have a confirmed exact path.\n"
         "  3. Always call file_read before file_write on existing files.\n"
+        "  3a. Before a cross-file change or validator repair, use dependency_traversal. "
+        "If a dependency/regression injection packet is already present, follow its ordered "
+        "regression_route and hashed evidence instead of rediscovering unrelated files.\n"
         "  4. For science/math/engineering problems: call math_grounding first, "
         "then scientific_method when the claim is uncertain or experimentally "
         "testable, then web_search/equation_matrix to find/fill gaps.\n"
@@ -117,6 +126,40 @@ class Orchestrator:
         "  15. Chain tools: the output of one tool is visible to all subsequent "
         "tool calls in the same task tree — use this feedback loop deliberately."
     )
+
+    def _control_prefix(self) -> str:
+        """Expose routing rules only for tools that this flow actually owns.
+
+        Delivery flows intentionally register a smaller tool surface than the
+        interactive desktop flow. Advertising unavailable tools makes smaller
+        models repeatedly request impossible branches before correcting.
+        """
+        available = set(self.tools.tool_names())
+        blocks = re.split(r"(?=  \d+\. )", self.CONTROL_PREFIX)
+        known = {
+            "memory_search", "file_locate", "file_read", "file_write",
+            "math_grounding", "scientific_method", "web_search",
+            "equation_matrix", "unbounded_solver", "vm_playground",
+            "executor", "c0d3r_native_os", "directory_ensure",
+        }
+        kept: list[str] = []
+        for block in blocks:
+            mentioned = {name for name in known if re.search(rf"\b{re.escape(name)}\b", block)}
+            if mentioned and not mentioned.issubset(available):
+                continue
+            kept.append(block)
+        guidance: list[str] = []
+        if {"scientific_method", "web_search", "equation_matrix"}.issubset(available):
+            guidance.append(
+                "For uncertain scientific claims, use web_search for archival evidence, "
+                "scientific_method for falsifiable evaluation, and equation_matrix for mathematical grounding."
+            )
+        return (
+            "".join(kept)
+            + "\nOnly call tools present in Available tools; never invent or substitute an unregistered tool.\n"
+            + "\n".join(guidance)
+            + "\n"
+        )
 
     REFORMULATION_SYSTEM: str = (
         "You are a senior research scientist and engineer.  Restate the "
@@ -159,6 +202,10 @@ class Orchestrator:
         self._corrective_retry = "corrective retry" in context.lower()
         self._total_agent_iterations = 0
         self._total_model_calls = 0
+        self.refined_outline: dict[str, Any] = {}
+        self.response_normalizer = ModelResponseNormalizer.from_tool_descriptions(
+            self.tools.tool_descriptions()
+        )
         self._max_total_agent_iterations = max(
             8,
             int(os.getenv("C0D3R_MAX_TOTAL_ITERATIONS", str(self.MAX_TOTAL_AGENT_ITERATIONS))),
@@ -209,9 +256,19 @@ class Orchestrator:
         corrective_retry = "corrective retry" in request.lower() or "corrective retry" in self.context.lower()
 
         scrutiny: dict[str, Any] = {}
-        if not corrective_retry:
+        if self._atomic_workday:
+            # BrandDozer already persisted a scope-locked plan, input/output
+            # contract, and exact next work package. Reclassifying it with a
+            # scarce model call cannot make the task smaller and gives weak
+            # providers another opportunity to derail before execution.
+            scrutiny = {
+                "decision": "execute",
+                "scientific_request": request,
+                "branches": [],
+            }
+        elif not corrective_retry:
             scrutiny = self._scrutinize(request)
-            if scrutiny.get("decision") == "direct":
+            if scrutiny.get("decision") == "direct" and not is_creation_request(request):
                 answer = str(scrutiny.get("answer") or "").strip()
                 root = TaskTree(root_description=request, scientific_form=request)
                 root.mark_root_complete()
@@ -226,6 +283,20 @@ class Orchestrator:
             request if corrective_retry
             else str(scrutiny.get("scientific_request") or request).strip()
         )
+
+        refined_branches: list[dict[str, Any]] = []
+        # BrandDozer atomic work packages are already derived from a persisted,
+        # scope-locked outline and project map. Refining them again wastes
+        # several scarce calls and commonly expands one class/scaffold into
+        # redundant branches before any file is written.
+        if not corrective_retry and not self._atomic_workday and is_creation_request(request):
+            self.refined_outline, refined_branches = self._refine_creation_request(
+                request, scientific_request,
+            )
+            if self.refined_outline:
+                scientific_request = str(
+                    self.refined_outline.get("scientific_request") or scientific_request
+                )
 
         # Build the task tree.
         tree = TaskTree(
@@ -246,15 +317,24 @@ class Orchestrator:
             ],
             "acceptance_criteria": ["The supplied acceptance command exits zero"],
             "recovery_policy": "Inspect the failing file or test, make the smallest evidence-backed repair, and rerun validation.",
-        }] if corrective_retry else list(scrutiny.get("branches") or []) or [{
+        }] if corrective_retry else ([{
+            "id": "atomic-work-package",
+            "description": scientific_request,
+            "rationale": "Execute the persisted BrandDozer work package without replanning it.",
+            "dependencies": [],
+            "constraints": ["Stay inside the named work package and project root"],
+            "acceptance_criteria": ["Produce mutation evidence and run the package validation command"],
+            "recovery_policy": "Use validator evidence to repair the same package, then rerun validation.",
+        }] if self._atomic_workday else refined_branches or list(scrutiny.get("branches") or []) or [{
             "id": "execute-request", "description": scientific_request,
             "rationale": "The scrutiny gate determined that execution is required.",
-        }])
+        }]))
+        mapper_task_by_node: dict[str, str] = {}
         for index, branch_def in enumerate(branches, start=1):
             desc = str(branch_def.get("description", ""))
             sci = desc
             alias = str(branch_def.get("id") or f"step-{index}")
-            tree.root.add_child(
+            child = tree.root.add_child(
                 description=f"[{alias}] {desc}",
                 scientific_form=sci,
                 rationale=str(branch_def.get("rationale") or ""),
@@ -263,12 +343,43 @@ class Orchestrator:
                 acceptance_criteria=_as_str_list(branch_def.get("acceptance_criteria")),
                 recovery_policy=str(branch_def.get("recovery_policy") or "Diverge only to resolve evidence-backed blockers; then return to this step's acceptance criteria."),
             )
+            if refined_branches:
+                mapper_task_by_node[child.id] = alias
 
         # Step 2 — execute each branch recursively.
         all_results: list[StepResult] = []
+        completed_aliases: set[str] = set()
+        planned_aliases = set(mapper_task_by_node.values())
         for child in tree.root.children:
+            mapper_task = mapper_task_by_node.get(child.id)
+            required_planned = set(child.dependencies) & planned_aliases
+            if mapper_task and not required_planned.issubset(completed_aliases):
+                child.fail("dependency contract did not complete successfully")
+                all_results.append(StepResult(
+                    step_id=child.id,
+                    description=child.scientific_form or child.description,
+                    output="",
+                    success=False,
+                    attempts=0,
+                    error=child.error,
+                ))
+                continue
             branch_results = self._execute_branch(child, tree, depth=1)
             all_results.extend(branch_results)
+            successful = child.status == "completed" and any(
+                result.success for result in branch_results
+            )
+            if mapper_task and successful and self.tools.get("project_work_mapper"):
+                evidence = {
+                    "branch_id": child.id,
+                    "tool_outputs": child.tool_outputs[-10:],
+                    "result_count": len(branch_results),
+                }
+                self.tools.dispatch("project_work_mapper", {
+                    "action": "complete", "task_id": mapper_task,
+                    "evidence": evidence,
+                })
+                completed_aliases.add(mapper_task)
 
         # Finalize tree.
         tree.mark_root_complete()
@@ -281,6 +392,67 @@ class Orchestrator:
             self.petals.evaluate_effectiveness(feedback)
 
         return all_results, tree
+
+    def _refine_creation_request(
+        self, request: str, scientific_request: str,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Refine scope before any implementation branch can execute."""
+        def market_search(query: str) -> dict:
+            result = self.tools.dispatch("web_search", {"query": query})
+            return result if isinstance(result, dict) and not result.get("error") else {}
+
+        refiner = OutlineRefiner(
+            send=self._send,
+            market_search=market_search if self.tools.get("web_search") else None,
+        )
+        outline = refiner.refine(request, scientific_request)
+        if not (outline.get("quality") or {}).get("passed"):
+            # Deterministic passes normally clear this gate. If they do not,
+            # refuse to disguise a thin plan as implementation readiness.
+            return outline, [{
+                "id": "outline-quality-blocker",
+                "description": "Refine the persisted outline until its planning quality gate passes",
+                "rationale": "Implementation is prohibited before the outline is complete and scope-locked.",
+                "dependencies": [],
+                "constraints": list((outline.get("scope_boundary") or {}).get("forbidden") or []),
+                "acceptance_criteria": ["Outline quality score is >= 92/100 with zero scope violations"],
+                "recovery_policy": "Add missing contracts or validation detail without adding a new user goal, then rescore.",
+            }]
+        mapped = self.tools.dispatch("project_work_mapper", {
+            "action": "map",
+            "request": request,
+            "acceptance": {
+                "quality": outline.get("quality"),
+                "deliverables": outline.get("deliverables"),
+                "requirements": outline.get("functional_requirements"),
+                "validation": outline.get("validation"),
+            },
+            "outline": outline,
+        }) if self.tools.get("project_work_mapper") else {}
+        tasks = mapped.get("tasks") if isinstance(mapped, dict) else []
+        branches: list[dict[str, Any]] = []
+        for task in tasks or []:
+            if task.get("status") == "complete":
+                continue
+            inputs = task.get("inputs") or {}
+            outputs = task.get("outputs") or {}
+            branches.append({
+                "id": str(task.get("id") or f"contract-{len(branches)+1}"),
+                "description": (
+                    f"{task.get('title')}. INPUT CONTRACT: {json.dumps(inputs, ensure_ascii=True)}. "
+                    f"OUTPUT CONTRACT: {json.dumps(outputs, ensure_ascii=True)}."
+                ),
+                "rationale": "Atomic contract produced by the scope-locked project mapper.",
+                "dependencies": _as_str_list(task.get("depends_on")),
+                "constraints": [
+                    *list((mapped.get("scope") or {}).get("allowed_roots") or []),
+                    *_as_str_list(task.get("forbidden")),
+                    "Do not redesign or expand the original request",
+                ],
+                "acceptance_criteria": _as_str_list(task.get("acceptance")),
+                "recovery_policy": "Use observed validation evidence only; make the smallest in-scope repair and rerun this contract's checks.",
+            })
+        return outline, branches[:self.MAX_PLAN_BRANCHES]
 
     @staticmethod
     def _deterministic_direct_answer(request: str) -> str:
@@ -307,7 +479,8 @@ class Orchestrator:
             raw = self._send(prompt=prompt, stream=False, system=self.SCRUTINY_SYSTEM)
         except Exception:
             return {"decision": "execute", "scientific_request": request, "branches": []}
-        payload = self._safe_json(raw or "")
+        normalized = self.response_normalizer.normalize_scrutiny(raw or "")
+        payload = normalized.value if normalized.valid else None
         if isinstance(payload, dict):
             decision = str(payload.get("decision") or "").lower().strip()
             answer = str(payload.get("answer") or "").strip()
@@ -466,6 +639,7 @@ class Orchestrator:
         """
         node.start()
         results: list[StepResult] = []
+        self._seed_validator_context(node)
 
         for iteration in range(1, self.MAX_AGENT_ITERATIONS + 1):
             if self._total_agent_iterations >= self._max_total_agent_iterations:
@@ -495,6 +669,34 @@ class Orchestrator:
             # --- Tool calls -------------------------------------------
             if action_type == "tool_calls":
                 calls = action.get("tool_calls") or []
+                if self._atomic_workday:
+                    # Read-only context gathering is safe to batch within its
+                    # deterministic budget. Mutations and command execution
+                    # remain serialized so each has its own validation
+                    # boundary and truncated tails cannot partially apply.
+                    progress_tools = {
+                        "file_write", "workspace_scaffold",
+                        "environment_bootstrap", "executor",
+                    }
+                    progress_calls = [
+                        call for call in calls
+                        if str(call.get("tool") or "") in progress_tools
+                    ]
+                    if progress_calls:
+                        calls = progress_calls[:1]
+                    else:
+                        validator_directed = "validator-directed repair paths" in (
+                            f"{node.description}\n{node.scientific_form}"
+                        ).lower()
+                        navigation_limit = self._atomic_navigation_limit(node)
+                        calls = self._prioritize_repair_calls(node, calls)
+                        successful_navigation = sum(
+                            entry.get("tool") in {"memory_search", "file_locate", "file_read"}
+                            and isinstance(entry.get("result"), dict)
+                            and not entry["result"].get("error")
+                            for entry in node.tool_outputs
+                        )
+                        calls = calls[:max(1, navigation_limit - successful_navigation)]
                 step_result = self._dispatch_tool_calls(
                     node, calls, tree, attempt=iteration,
                 )
@@ -711,14 +913,11 @@ class Orchestrator:
             )
 
         task = f"{node.description}\n{node.scientific_form}".lower()
-        mutation_markers = (
-            "write", "replace", "implement", "create", "edit", "patch",
-            "repair", "fix", "build", "update",
-        )
-        if any(marker in task for marker in mutation_markers) and "file_write" not in successful_tools:
+        mutation_tools = {"file_write", "workspace_scaffold", "environment_bootstrap"}
+        if Orchestrator._task_requests_mutation(task) and not (successful_tools & mutation_tools):
             return (
                 "Completion rejected: this is a code/file mutation branch but no "
-                "successful file_write evidence exists. Write the requested file first."
+                "successful file_write/scaffold/bootstrap evidence exists. Mutate the requested workspace first."
             )
 
         validation_markers = ("node --check", "syntax-check", "syntax check", "validate with executor")
@@ -728,6 +927,58 @@ class Orchestrator:
                 "validation, but no successful executor evidence exists."
             )
         return ""
+
+    @staticmethod
+    def _task_requests_mutation(task: str) -> bool:
+        """Distinguish requested mutations from negated/read-only vocabulary."""
+        text = " ".join(str(task or "").lower().split())
+        if any(marker in text for marker in ("read-only", "read only", "without modifying")):
+            # Explicit evidence/review tasks often mention forbidden writes in
+            # their safety contract; those words must not turn into a write gate.
+            text = re.sub(
+                r"\b(?:do not|don't|never|without)\s+(?:write|modify|edit|change|mutate|create|update)\b",
+                "", text,
+            )
+            if not re.search(
+                r"\b(?:implement|repair|fix|build|patch|replace|refactor|add|remove|rename|move)\b",
+                text,
+            ):
+                return False
+        text = re.sub(
+            r"\b(?:do not|don't|never|without)\s+(?:write|modify|edit|change|mutate|create|update)\b",
+            "", text,
+        )
+        return bool(re.search(
+            r"\b(?:write|replace|implement|create|edit|patch|repair|fix|build|update|"
+            r"refactor|add|remove|rename|move|modify|mutate)\b",
+            text,
+        ))
+
+    @staticmethod
+    def _compact_atomic_task_text(text: str, *, max_chars: int = 15000) -> str:
+        """Retain the active contract while dropping duplicated validator history."""
+        value = str(text or "")
+        if len(value) <= max_chars:
+            return value
+        anchors: list[str] = []
+        for pattern in (
+            r"Current plan summary:\s*[^\n]+",
+            r"Next step:\s*[^\n]+",
+            r"Atomic work package:\s*[^\n]+",
+            r"Expected outputs:\s*[^\n]+",
+            r"Acceptance checks:\s*[^\n]+",
+            r"Validator-directed repair paths:\s*\[[^\]]*\][^.]*\.?",
+        ):
+            match = re.search(pattern, value, flags=re.IGNORECASE)
+            if match:
+                anchors.append(match.group(0))
+        marker = value.rfind("Persisted deterministic repair packet")
+        if marker < 0:
+            marker = value.rfind("Deterministic repair packet")
+        tail_budget = max(2000, max_chars - sum(len(item) + 1 for item in anchors))
+        tail = value[marker:] if marker >= 0 else value[-tail_budget:]
+        compact = "\n".join(anchors + [tail[-tail_budget:]])
+        return compact[-max_chars:]
 
     def _agent_step(
         self,
@@ -744,6 +995,85 @@ class Orchestrator:
           {"action": "complete", "output": "..."}
         """
         tool_descriptions = self.tools.tool_descriptions()
+        atomic_required = ""
+        if self._atomic_workday and not self._corrective_retry:
+            validator_directed = "validator-directed repair paths" in (
+                f"{node.description}\n{node.scientific_form}"
+            ).lower()
+            navigation_limit = self._atomic_navigation_limit(node)
+            successful = [
+                entry for entry in node.tool_outputs
+                if isinstance(entry.get("result"), dict) and not entry["result"].get("error")
+            ]
+            progress_tools = {"file_write", "workspace_scaffold", "environment_bootstrap", "executor"}
+            mutation_tools = {"file_write", "workspace_scaffold", "environment_bootstrap"}
+            mutation_seen = any(entry.get("tool") in mutation_tools for entry in successful)
+            last_mutation = max(
+                (index for index, entry in enumerate(node.tool_outputs)
+                 if entry.get("tool") in mutation_tools
+                 and isinstance(entry.get("result"), dict)
+                 and not entry["result"].get("error")),
+                default=-1,
+            )
+            last_executor = max(
+                (index for index, entry in enumerate(node.tool_outputs)
+                 if entry.get("tool") == "executor"),
+                default=-1,
+            )
+            last_executor_failed = False
+            if last_executor >= 0:
+                executor_result = node.tool_outputs[last_executor].get("result") or {}
+                last_executor_failed = bool(executor_result.get("error")) or int(
+                    executor_result.get("return_code") or 0
+                ) != 0
+            last_progress = max(
+                (index for index, entry in enumerate(successful) if entry.get("tool") in progress_tools),
+                default=-1,
+            )
+            navigation_total = sum(
+                entry.get("tool") in {"memory_search", "file_locate", "file_read"}
+                for entry in successful
+            )
+            navigation_since = sum(
+                entry.get("tool") in {"memory_search", "file_locate", "file_read"}
+                for entry in successful[last_progress + 1:]
+            )
+            allowed_names: set[str] | None = None
+            if not mutation_seen and navigation_total >= navigation_limit:
+                # Inspection has established enough context. A single write
+                # is the universally valid transition for both initialized
+                # and empty workspaces and cannot destructively re-bootstrap
+                # an established project.
+                allowed_names = {"file_write", "executor"}
+                atomic_required = (
+                    "Navigation is exhausted. Use exactly one file_write for a necessary "
+                    "repair, or run executor validation if the inspected contract is already correct."
+                )
+            elif mutation_seen and validator_directed:
+                if last_executor > last_mutation and last_executor_failed:
+                    # Validation is fresh evidence.  Reopen exactly one edit
+                    # rather than trapping small models in an executor loop.
+                    allowed_names = {"file_write"}
+                    atomic_required = (
+                        "Fresh executor validation failed after the last mutation. Apply exactly one "
+                        "evidence-directed file_write within the declared repair paths; do not validate "
+                        "again until that correction lands."
+                    )
+                else:
+                    # Every mutation must cross an external validation boundary
+                    # before another mutation is permitted.
+                    allowed_names = {"executor"}
+                    atomic_required = (
+                        "A validator-directed mutation already landed. Run executor validation "
+                        "now; do not repeat or extend the edit before collecting fresh evidence."
+                    )
+            elif mutation_seen and navigation_since >= 3:
+                allowed_names = {"file_write", "executor"}
+                atomic_required = "Write the next cohesive unit or run validation now; navigation is exhausted."
+            if allowed_names is not None:
+                tool_descriptions = [
+                    item for item in tool_descriptions if item.get("name") in allowed_names
+                ]
         if self._corrective_retry:
             required = self._corrective_required_tool(node)
             navigation_allowed = self._corrective_navigation_allowed(node, required)
@@ -759,11 +1089,11 @@ class Orchestrator:
                 item for item in tool_descriptions if item.get("name") in allowed_names
             ]
         tool_desc = json.dumps(tool_descriptions, indent=2)
-        accumulated = tree.accumulated_results_summary()
+        accumulated = tree.accumulated_results_summary(max_chars=7000 if self._atomic_workday else 7000)
         tree_summary = tree.context_summary()
 
         system = (
-            self.CONTROL_PREFIX
+            self._control_prefix()
             + "\n\nYou are executing one branch of a task tree.  "
             "You have access to the tools listed below, each with a Scope "
             "field that tells you WHEN to use it.  Read the Scope before "
@@ -789,13 +1119,21 @@ class Orchestrator:
         if self._atomic_workday:
             system += (
                 "\n\nATOMIC IMPLEMENTATION POLICY: Execute this branch directly; do not request "
-                "sub-branches. Batch multiple independent file_write calls in one response. Write "
+                "sub-branches. Emit exactly one complete file_write call per response, then continue in the "
+                "next iteration; never attempt to emit an entire application in one JSON response. Write "
                 "complete functional files, not empty placeholders. Use executor after writing to "
                 "validate concrete behavior. Conserve model calls for implementation and repair. "
+                "For a new application foundation, prefer workspace_scaffold or environment_bootstrap, "
+                "then upgrade the generated files with file_write and validate the build/tests. "
+                "The host shell is PowerShell; never use Unix-only flags such as `ls -la`. "
                 "On a corrective retry, inspect every failing call site and the full implementation "
                 "signature before editing; reconcile the complete interface contract in one patch, "
-                "not only the first parameter or first traceback."
+                "not only the first parameter or first traceback. Never add a counterfeit production "
+                "fallback solely to satisfy a headless test; separate pure domain construction from "
+                "platform adapters or inject the platform dependency and use an explicit test double."
             )
+            if atomic_required:
+                system += f"\nATOMIC REQUIRED TRANSITION: {atomic_required}"
         if self._corrective_retry:
             system += (
                 "\nCORRECTIVE OVERRIDE: The validator evidence supplies exact local paths and errors. "
@@ -813,9 +1151,14 @@ class Orchestrator:
                 "When any hidden/reference invariant is failing, test files are immutable: do not edit "
                 "tests, validators, or fixtures; repair the production implementation only."
             )
-        correction_guidance = getattr(self.session, "correction_guidance", lambda _context="": "")(
-            f"{node.description}\n{node.scientific_form}"
-        )
+        guidance_fn = getattr(self.session, "correction_guidance", lambda _context="", **_kwargs: "")
+        guidance_context = f"{node.description}\n{node.scientific_form}"
+        try:
+            correction_guidance = guidance_fn(
+                guidance_context, limit=3 if self._atomic_workday else 8,
+            )
+        except TypeError:
+            correction_guidance = guidance_fn(guidance_context)
         if correction_guidance:
             system += f"\n\n{correction_guidance}"
 
@@ -857,16 +1200,25 @@ class Orchestrator:
                     "\nCORRECTIVE STATE: Batch all necessary file_read calls in this first action only."
                 )
 
-        prompt_parts = [
-            f"System context:\n{self.context}",
-            f"\nCurrent task tree:\n{tree_summary}",
-        ]
+        if self._atomic_workday:
+            task_text = self._compact_atomic_task_text(node.description)
+            if node.scientific_form and node.scientific_form not in node.description:
+                scientific_tail = self._compact_atomic_task_text(node.scientific_form, max_chars=2500)
+                task_text = (task_text + "\nScientific constraints:\n" + scientific_tail)[-18000:]
+            prompt_parts = [f"System context:\n{str(self.context)[:4000]}"]
+        else:
+            task_text = node.description
+            prompt_parts = [
+                f"System context:\n{self.context}",
+                f"\nCurrent task tree:\n{tree_summary}",
+            ]
         if accumulated:
             prompt_parts.append(f"\n{accumulated}")
         prompt_parts.append(
             f"\nCurrent branch [{node.id}]:\n"
-            f"  Description: {node.description}\n"
-            f"  Scientific form: {node.scientific_form}\n"
+            f"  Description: {task_text}\n"
+            + (f"  Scientific form: {node.scientific_form}\n" if not self._atomic_workday else "")
+            +
             f"  Status: {node.status}\n"
             f"  Depth: {depth}/{self.MAX_BRANCH_DEPTH}\n"
             f"  Prior tool outputs on this branch: {len(node.tool_outputs)}\n"
@@ -878,12 +1230,20 @@ class Orchestrator:
             recent_str = json.dumps(recent, indent=2, default=str)[:3000]
             prompt_parts.append(f"\nRecent outputs on this branch:\n{recent_str}")
 
-        prompt_parts.append(
-            "\nDecide the next action for this branch.  "
-            "If you need information, call a tool.  "
-            "If the task is too complex, break it into sub-branches.  "
-            "If the branch is resolved, complete it with a summary."
-        )
+        if atomic_required:
+            prompt_parts.append(
+                "\nMANDATORY NEXT ACTION: " + atomic_required + " "
+                "Respond with action=tool_calls and exactly one call using only a tool "
+                "listed in Available tools. Do not request more context, discovery, reads, "
+                "sub-branches, an answer, or completion."
+            )
+        else:
+            prompt_parts.append(
+                "\nDecide the next action for this branch.  "
+                "If you need information, call a tool.  "
+                "If the task is too complex, break it into sub-branches.  "
+                "If the branch is resolved, complete it with a summary."
+            )
 
         prompt = "\n".join(prompt_parts)
 
@@ -891,9 +1251,14 @@ class Orchestrator:
             raw = self._send(prompt=prompt, stream=False, system=system)
         except Exception:
             return None
-        parsed = self._safe_json(raw or "")
-        if parsed is not None:
-            return self._normalize_action(parsed)
+        normalized = self.response_normalizer.normalize_action(raw or "")
+        if normalized.valid:
+            if normalized.transformations:
+                node.add_tool_output("response_normalizer", {
+                    "status": "normalized",
+                    "transformations": normalized.transformations[-20:],
+                })
+            return normalized.value
         # Hosted/free models occasionally describe the tool call in prose even
         # though the control prompt requires JSON. Give the same model one
         # explicit protocol-repair opportunity before treating the text as a
@@ -913,11 +1278,32 @@ class Orchestrator:
                     stream=False,
                     system=system,
                 )
-                repaired = self._safe_json(repaired_raw or "")
-                if repaired is not None:
-                    return self._normalize_action(repaired)
+                repaired = self.response_normalizer.normalize_action(repaired_raw or "")
+                if repaired.valid:
+                    node.add_tool_output("response_normalizer", {
+                        "status": "protocol_repaired",
+                        "transformations": repaired.transformations[-20:],
+                    })
+                    return repaired.value
             except Exception:
                 pass
+        if self._atomic_workday:
+            trigger = (
+                "Atomic implementation response did not match any action schema and supplied "
+                "no tool evidence; prose claims of edits, tests, or completion are unsupported."
+            )
+            self._report_correction(
+                classification="protocol_hallucination",
+                trigger=trigger,
+                failed_output=text[:4000],
+                correction="Emit one schema-valid tool call and rely on validator evidence.",
+                resolved=False,
+                is_hallucination=True,
+                attribution=self._capture_attribution(),
+                metadata={"branch": node.description},
+            )
+            node.add_tool_output("response_normalizer", {"error": trigger})
+            return {"action": "tool_calls", "tool_calls": []}
         # Hebbian recall backends (W1z4rD brain) often return prose rather
         # than JSON.  Surface that text as a direct answer instead of
         # silently dropping the turn.  Sentinels like
@@ -950,6 +1336,127 @@ class Orchestrator:
         )
         return not statuses or any(status.lower() != "true" for status in statuses)
 
+    @staticmethod
+    def _evidence_forbidden_write_error(node: TaskNode, params: dict) -> str:
+        """Reject a validator-named anti-pattern before it reaches disk."""
+        evidence = f"{node.description}\n{node.scientific_form}".lower()
+        path = str(params.get("path") or "").replace("\\", "/").lower()
+        existing = ""
+        for item in reversed(node.tool_outputs):
+            if item.get("tool") != "file_read" or not isinstance(item.get("result"), dict):
+                continue
+            result = item["result"]
+            read_path = str(result.get("path") or "").replace("\\", "/").lower()
+            if read_path == path or read_path.endswith(f"/{path}") or path.endswith(f"/{read_path}"):
+                existing = str(result.get("content") or "")
+                break
+        proposed = str(params.get("content") or "")
+        if not proposed and params.get("new_string") is not None:
+            # Judge the effective file, not merely the replacement fragment. A
+            # superficially harmless one-line patch must not leave a validator-
+            # identified counterfeit implementation in the rest of the file.
+            old_string = str(params.get("old_string") or "")
+            proposed = (
+                existing.replace(old_string, str(params.get("new_string") or ""), 1)
+                if existing and old_string and old_string in existing
+                else str(params.get("new_string") or "")
+            )
+        if Path(path).name.lower() == "package.json" and existing and proposed:
+            try:
+                before_manifest = json.loads(existing)
+                after_manifest = json.loads(proposed)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                before_manifest = after_manifest = {}
+            removed: list[str] = []
+            for section in ("scripts", "dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                before_items = before_manifest.get(section) or {}
+                after_items = after_manifest.get(section) or {}
+                if isinstance(before_items, dict) and isinstance(after_items, dict):
+                    removed.extend(f"{section}.{key}" for key in before_items if key not in after_items)
+            if removed and not any(marker in evidence for marker in (
+                "remove dependency", "remove script", "obsolete dependency", "conflicting dependency",
+            )):
+                return (
+                    "Evidence-directed write rejected: corrective manifest rewrite removes established entries "
+                    + ", ".join(removed[:12])
+                    + "; apply an additive/targeted manifest patch."
+                )
+        if existing and proposed and Path(path).suffix.lower() in {".ts", ".tsx", ".js", ".jsx", ".py"}:
+            export_pattern = re.compile(
+                r"\bexport\s+(?:default\s+)?(?:async\s+)?"
+                r"(?:function|class|const|let|var|type|interface|enum)\s+([A-Za-z_$][\w$]*)"
+            )
+            before_exports = set(export_pattern.findall(existing))
+            after_exports = set(export_pattern.findall(proposed))
+            removed_exports = sorted(before_exports - after_exports)
+            if removed_exports and not any(marker in evidence for marker in (
+                "remove export", "rename export", "breaking interface", "deprecate export",
+                # Preserve the more specific security/quality diagnostic when a
+                # rewrite is also attempting a counterfeit platform object.
+                "counterfeit", "unsafe double",
+            )):
+                return (
+                    "Evidence-directed write rejected: corrective rewrite removes established exports "
+                    + ", ".join(removed_exports[:16])
+                    + "; preserve the public contract or provide an explicit migration."
+                )
+        is_test_path = "/tests/" in f"/{path}" or path.startswith("tests/") or re.search(
+            r"(?:^|/)[^/]+\.(?:test|spec)\.[^/]+$", path,
+        ) is not None
+        if is_test_path and "inject" in evidence:
+            injectable_functions = set(re.findall(
+                r"function\s+([a-z_$][\w$]*)\s*\([^)]*(?:factory|adapter|port)",
+                evidence,
+                flags=re.IGNORECASE,
+            ))
+            for function_name in injectable_functions:
+                calls = re.findall(
+                    rf"\b{re.escape(function_name)}\s*\(([^()]*)\)", proposed,
+                    flags=re.IGNORECASE,
+                )
+                if any(call.strip() for call in calls) and any(not call.strip() for call in calls):
+                    return (
+                        "Evidence-directed write rejected: partial dependency-injection migration; "
+                        f"{function_name} still has uninjected call sites in the same regression file."
+                    )
+        if is_test_path:
+            asserted_double_types = set(re.findall(
+                r"\bas\s+unknown\s+as\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)",
+                proposed,
+            ))
+            for type_name in asserted_double_types:
+                short_name = type_name.rsplit(".", 1)[-1]
+                if re.search(
+                    rf"\.toBeInstanceOf\(\s*(?:[A-Za-z_$][\w$]*\.)?{re.escape(short_name)}\s*\)",
+                    proposed,
+                ):
+                    return (
+                        "Evidence-directed write rejected: a structural test double cannot satisfy an "
+                        f"instanceof assertion for {type_name}; assert the injected port behavior instead."
+                    )
+        rules: list[tuple[bool, str, str]] = [
+            (
+                any(term in evidence for term in ("unsafe double assertion", "counterfeit")) and not is_test_path,
+                r"\bas\s+unknown\s+as\s+(?:THREE\.)?WebGLRenderer\b",
+                "validator forbids counterfeit WebGLRenderer assertions; define/inject an honest renderer port",
+            ),
+            (
+                any(term in evidence for term in ("platform mock", "test-environment shim"))
+                and not is_test_path,
+                r"(?:HTMLCanvasElement|globalThis|window)[^\n]{0,160}\.prototype\.|\b(?:mock|fake|dummy|stub)\w*(?:renderer|context|canvas)\b",
+                "validator forbids production test shims; inject the platform dependency and keep doubles in tests",
+            ),
+            (
+                "placeholder" in evidence,
+                r"\bplaceholder\b",
+                "validator forbids placeholder source; implement observable behavior and invariants",
+            ),
+        ]
+        for enabled, pattern, message in rules:
+            if enabled and re.search(pattern, proposed, re.IGNORECASE):
+                return f"Evidence-directed write rejected: {message}."
+        return ""
+
     def _dispatch_tool_calls(
         self,
         node: TaskNode,
@@ -963,11 +1470,149 @@ class Orchestrator:
         stdout_parts: list[str] = []
         attribution = self._capture_attribution()
         wrote_in_batch = False
+        repair_paths = self._validator_repair_paths(node)
+        calls = self._prioritize_repair_calls(node, calls)
         for call in calls:
             tool_name = str(call.get("tool", ""))
             params = call.get("params") or {}
             if not tool_name:
                 continue
+            if tool_name == "file_locate" and repair_paths:
+                query = str(params.get("query") or "").replace("\\", "/").strip().lower()
+                matches = [
+                    path for path in repair_paths
+                    if path.lower() == query or Path(path).name.lower() == Path(query).name.lower()
+                ]
+                if query and len(matches) == 1:
+                    tool_name = "file_read"
+                    params = {"path": matches[0]}
+            if self._atomic_workday and tool_name == "file_read":
+                requested = str(params.get("path") or "").replace("\\", "/").lower()
+                last_mutation_index = max(
+                    (index for index, entry in enumerate(node.tool_outputs)
+                     if entry.get("tool") in {"file_write", "workspace_scaffold", "environment_bootstrap"}
+                     and not (entry.get("result") or {}).get("error")),
+                    default=-1,
+                )
+                duplicate = any(
+                    entry.get("tool") == "file_read"
+                    and not (entry.get("result") or {}).get("error")
+                    and str((entry.get("result") or {}).get("path") or "").replace("\\", "/").lower() == requested
+                    for entry in node.tool_outputs[last_mutation_index + 1:]
+                )
+                if duplicate:
+                    result = {"error": "File is already preloaded and unchanged; use its current content to write or validate now."}
+                    tool_outputs.append({"tool": tool_name, "result": result})
+                    node.add_tool_output(tool_name, result)
+                    errors.append(f"{tool_name}: {result['error']}")
+                    continue
+            if self._atomic_workday and not self._corrective_retry:
+                validator_directed = "validator-directed repair paths" in (
+                    f"{node.description}\n{node.scientific_form}"
+                ).lower()
+                navigation_limit = self._atomic_navigation_limit(node)
+                successful = [
+                    entry for entry in node.tool_outputs
+                    if isinstance(entry.get("result"), dict)
+                    and not entry["result"].get("error")
+                ]
+                navigation_count = sum(
+                    entry.get("tool") in {"memory_search", "file_locate", "file_read"}
+                    for entry in successful
+                )
+                mutation_seen = any(
+                    entry.get("tool") in {"file_write", "workspace_scaffold", "environment_bootstrap"}
+                    for entry in successful
+                )
+                last_mutation = max(
+                    (index for index, entry in enumerate(node.tool_outputs)
+                     if entry.get("tool") in {"file_write", "workspace_scaffold", "environment_bootstrap"}
+                     and not (entry.get("result") or {}).get("error")),
+                    default=-1,
+                )
+                last_executor = max(
+                    (index for index, entry in enumerate(node.tool_outputs)
+                     if entry.get("tool") == "executor"),
+                    default=-1,
+                )
+                executor_failed_after_mutation = False
+                if last_executor > last_mutation:
+                    prior_validation = node.tool_outputs[last_executor].get("result") or {}
+                    executor_failed_after_mutation = bool(prior_validation.get("error")) or int(
+                        prior_validation.get("return_code") or 0
+                    ) != 0
+                requested_read = str(params.get("path") or "").replace("\\", "/").lower()
+                read_is_fresh_validator_path = False
+                if executor_failed_after_mutation and tool_name == "file_read" and requested_read:
+                    within_surface = any(
+                        requested_read == allowed.lower()
+                        or requested_read.endswith("/" + allowed.lower())
+                        for allowed in repair_paths
+                    )
+                    read_after_validation = any(
+                        index > last_executor
+                        and entry.get("tool") == "file_read"
+                        and not (entry.get("result") or {}).get("error")
+                        and (
+                            str((entry.get("result") or {}).get("path") or "").replace("\\", "/").lower()
+                            == requested_read
+                            or str((entry.get("result") or {}).get("path") or "").replace("\\", "/").lower().endswith("/" + requested_read)
+                            or requested_read.endswith("/" + str((entry.get("result") or {}).get("path") or "").replace("\\", "/").lower())
+                        )
+                        for index, entry in enumerate(node.tool_outputs)
+                    )
+                    read_is_fresh_validator_path = within_surface and not read_after_validation
+                if (
+                    validator_directed and mutation_seen and tool_name != "executor"
+                    and not (executor_failed_after_mutation and tool_name == "file_write")
+                    and not read_is_fresh_validator_path
+                ):
+                    result = {
+                        "error": (
+                            "Validator-directed mutation already landed; validate it with executor "
+                            "before any further discovery or mutation."
+                        )
+                    }
+                    tool_outputs.append({"tool": tool_name, "result": result})
+                    node.add_tool_output(tool_name, result)
+                    errors.append(f"{tool_name}: {result['error']}")
+                    continue
+                if not mutation_seen and navigation_count >= navigation_limit and tool_name not in {
+                    "file_write", "workspace_scaffold", "environment_bootstrap", "executor",
+                }:
+                    result = {
+                        "error": (
+                            "Atomic navigation budget exhausted. Existing context is sufficient; "
+                            "the next call must create concrete project files using file_write, "
+                            "workspace_scaffold, or environment_bootstrap."
+                        )
+                    }
+                    tool_outputs.append({"tool": tool_name, "result": result})
+                    node.add_tool_output(tool_name, result)
+                    errors.append(f"{tool_name}: {result['error']}")
+                    continue
+                progress_tools = {"file_write", "workspace_scaffold", "environment_bootstrap", "executor"}
+                last_progress = max(
+                    (index for index, entry in enumerate(successful) if entry.get("tool") in progress_tools),
+                    default=-1,
+                )
+                navigation_since_progress = sum(
+                    entry.get("tool") in {"memory_search", "file_locate", "file_read"}
+                    for entry in successful[last_progress + 1:]
+                )
+                if mutation_seen and navigation_since_progress >= 3 and tool_name in {
+                    "memory_search", "file_locate", "file_read",
+                }:
+                    result = {
+                        "error": (
+                            "Atomic phase navigation budget exhausted. Use the gathered evidence to "
+                            "write the next cohesive implementation unit or run executor validation."
+                        )
+                    }
+                    tool_outputs.append({"tool": tool_name, "result": result})
+                    node.add_tool_output(tool_name, result)
+                    errors.append(f"{tool_name}: {result['error']}")
+                    continue
             # Re-evaluate after every call so a batched read -> write -> executor
             # response can advance through the corrective state machine. File
             # navigation remains legal at every stage; it does not satisfy the
@@ -982,6 +1627,18 @@ class Orchestrator:
                 or (required_tool == "executor" and tool_name == "file_write" and wrote_in_batch)
             )
             path_parts = re.split(r"[\\/]", str(params.get("path") or "").lower())
+            write_outside_repair_surface = False
+            if tool_name == "file_write" and repair_paths:
+                requested_path = str(params.get("path") or "").replace("\\", "/").lower()
+                try:
+                    requested_relative = str(Path(requested_path).resolve().relative_to(self.tools.workdir.resolve())).replace("\\", "/").lower()
+                except (AttributeError, ValueError, OSError):
+                    requested_relative = requested_path
+                write_outside_repair_surface = not any(
+                    requested_relative == allowed.lower()
+                    or requested_relative.endswith("/" + allowed.lower())
+                    for allowed in repair_paths
+                )
             protected_test_write = (
                 self._corrective_retry and tool_name == "file_write"
                 and "tests" in path_parts and self._hidden_invariants_failing()
@@ -998,6 +1655,22 @@ class Orchestrator:
                         "repair the production implementation instead."
                     )
                 }
+            elif write_outside_repair_surface:
+                requested_label = str(params.get("path") or "<missing path>")
+                result = {
+                    "error": (
+                        f"Validator-directed write rejected: attempted path {requested_label!r} "
+                        "is outside the declared repair paths: " + ", ".join(repair_paths)
+                    )
+                }
+            elif tool_name == "executor" and self._atomic_workday and (
+                executor_mutation_error := self._atomic_executor_mutation_error(params)
+            ):
+                result = {"error": executor_mutation_error}
+            elif tool_name == "file_write" and self._atomic_workday and (
+                forbidden := self._evidence_forbidden_write_error(node, params)
+            ):
+                result = {"error": forbidden}
             elif not allowed:
                 result = {
                     "error": (
@@ -1041,6 +1714,166 @@ class Orchestrator:
             error="\n".join(errors),
             tool_outputs=tool_outputs,
         )
+
+    @staticmethod
+    def _atomic_executor_mutation_error(params: dict) -> str:
+        """Keep atomic source/config mutations on the auditable file-write path."""
+        command = str(params.get("command") or "")
+        forbidden = (
+            (r"(?:^|[;&|]\s*)npm(?:\.cmd)?\s+init\b", "npm init"),
+            (r"(?:^|[;&|]\s*)(?:Set-Content|Add-Content|Out-File)\b", "PowerShell content writer"),
+            (r"(?:^|[;&|]\s*)sed\s+-i\b", "in-place sed edit"),
+        )
+        for pattern, label in forbidden:
+            if re.search(pattern, command, flags=re.IGNORECASE):
+                return (
+                    f"Atomic executor rejected {label}; use file_write for source/config changes "
+                    "so repair-surface, schema, and anti-regression gates remain enforceable."
+                )
+        return ""
+
+    @staticmethod
+    def _validator_repair_paths(node: TaskNode) -> list[str]:
+        text = f"{node.description}\n{node.scientific_form}"
+        match = re.search(
+            r"Validator-directed repair paths:\s*(\[[^\]]*\])",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return []
+        try:
+            value = json.loads(match.group(1))
+        except Exception:
+            return []
+        paths = [str(item).replace("\\", "/") for item in value if str(item).strip()]
+        # A truthful interface repair often moves the next failure into a
+        # consumer. Expand the bounded surface only from fresh, failed executor
+        # evidence, so the agent can migrate that caller without regaining
+        # arbitrary workspace write access.
+        latest_failed_validation = ""
+        for entry in reversed(node.tool_outputs):
+            if entry.get("tool") != "executor" or not isinstance(entry.get("result"), dict):
+                continue
+            result = entry["result"]
+            failed = bool(result.get("error")) or int(result.get("return_code") or 0) != 0
+            if failed:
+                latest_failed_validation = "\n".join(
+                    str(result.get(key) or "") for key in ("stdout", "stderr", "error")
+                )
+            break
+        if latest_failed_validation:
+            normalized = latest_failed_validation.replace("\\\\", "/").replace("\\", "/")
+            discovered = re.findall(
+                r"(?:src|tests|app|lib)/[A-Za-z0-9_./-]+\.(?:ts|tsx|js|jsx|py|rs|go|java|cpp|c|h|php|pl)",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+            for path in discovered:
+                canonical = path.replace("\\", "/")
+                if canonical.lower() not in {item.lower() for item in paths}:
+                    paths.append(canonical)
+        return paths
+
+    @classmethod
+    def _atomic_navigation_limit(cls, node: TaskNode) -> int:
+        """Size bounded inspection to the explicit validator contract."""
+        repair_paths = cls._validator_repair_paths(node)
+        if not repair_paths:
+            text = f"{node.description}\n{node.scientific_form}".lower()
+            return 3 if "validator-directed repair paths" in text else 4
+        return min(8, max(3, len(repair_paths)))
+
+    @classmethod
+    def _prioritize_repair_calls(cls, node: TaskNode, calls: list[dict]) -> list[dict]:
+        """Stable-sort validator evidence before incidental model discovery."""
+        repair_paths = cls._validator_repair_paths(node)
+        if not repair_paths:
+            return list(calls)
+
+        def priority(call: dict) -> int:
+            tool = str(call.get("tool") or "")
+            params = call.get("params") or {}
+            candidate = str(
+                params.get("path") if tool == "file_read" else params.get("query")
+                if tool == "file_locate" else ""
+            ).replace("\\", "/").strip().lower()
+            if not candidate:
+                return 1
+            matches = [
+                path for path in repair_paths
+                if path.lower() == candidate
+                or Path(path).name.lower() == Path(candidate).name.lower()
+            ]
+            return 0 if len(matches) == 1 else 1
+
+        return sorted(calls, key=priority)
+
+    def _seed_validator_context(self, node: TaskNode) -> None:
+        """Preload exact validator files so the first model turn can act."""
+        if not self._atomic_workday:
+            return
+        paths = self._validator_repair_paths(node)[: self._atomic_navigation_limit(node)]
+        if not paths:
+            return
+        already_read = {
+            str((entry.get("result") or {}).get("path") or "").replace("\\", "/").lower()
+            for entry in node.tool_outputs
+            if entry.get("tool") == "file_read"
+        }
+        for path in paths:
+            normalized = path.replace("\\", "/").lower()
+            if normalized in already_read or any(
+                item.endswith("/" + normalized) for item in already_read if item
+            ):
+                continue
+            result = self.tools.dispatch("file_read", {"path": path})
+            node.add_tool_output("file_read", result)
+
+    @classmethod
+    def _validator_read_context(cls, node: TaskNode, *, max_chars: int = 16000) -> str:
+        """Return current validator-named files even when generic history is compacted.
+
+        Atomic repair turns may legitimately exhaust their navigation allowance
+        before every causal file survives the accumulated-results summary.  A
+        corrective prompt that advertises only ``file_write`` while omitting the
+        exact current file creates an impossible read-before-write contract.  Keep
+        the latest successful read for each bounded repair path in the prompt.
+        """
+        repair_paths = cls._validator_repair_paths(node)
+        if not repair_paths:
+            return ""
+        latest: dict[str, dict] = {}
+        for entry in node.tool_outputs:
+            if entry.get("tool") != "file_read" or not isinstance(entry.get("result"), dict):
+                continue
+            result = entry["result"]
+            if result.get("error"):
+                continue
+            read_path = str(result.get("path") or "").replace("\\", "/").lower()
+            for repair_path in repair_paths:
+                normalized = repair_path.replace("\\", "/").lower()
+                if read_path == normalized or read_path.endswith("/" + normalized):
+                    latest[normalized] = result
+                    break
+        if not latest:
+            return ""
+        sections: list[str] = []
+        remaining = max(1000, int(max_chars))
+        for repair_path in repair_paths:
+            result = latest.get(repair_path.replace("\\", "/").lower())
+            if not result or remaining <= 0:
+                continue
+            content = str(result.get("content") or "")
+            # Preserve complete small files; bounded truncation is explicit so a
+            # model will not mistake a fragment for the whole source file.
+            allowance = min(6000, remaining)
+            clipped = content[:allowance]
+            marker = "\n...[validator file truncated]" if len(content) > allowance else ""
+            section = f"--- {repair_path} (current validator context) ---\n{clipped}{marker}"
+            sections.append(section)
+            remaining -= len(section)
+        return "\n\n".join(sections)
 
     @staticmethod
     def _corrective_required_tool(node: TaskNode) -> str:
@@ -1116,6 +1949,12 @@ class Orchestrator:
         Returns a new StepResult if the fix succeeded, else None.
         """
         tool_descriptions = self.tools.tool_descriptions()
+        allowed_names: set[str] | None = None
+        if self._atomic_workday and "navigation budget exhausted" in failed_result.error.lower():
+            allowed_names = {"file_write", "executor"}
+            tool_descriptions = [
+                item for item in tool_descriptions if item.get("name") in allowed_names
+            ]
         if self._corrective_retry:
             required = self._corrective_required_tool(node)
             navigation_allowed = self._corrective_navigation_allowed(node, required)
@@ -1132,6 +1971,7 @@ class Orchestrator:
             ]
         tool_desc = json.dumps(tool_descriptions, indent=2)
         accumulated = tree.accumulated_results_summary()
+        validator_context = self._validator_read_context(node)
 
         if self._needs_web_verification(failed_result.error):
             research = self.tools.dispatch("web_search", {
@@ -1142,10 +1982,13 @@ class Orchestrator:
                 accumulated = tree.accumulated_results_summary()
 
         system = (
-            self.CONTROL_PREFIX
+            self._control_prefix()
             + " A tool call failed.  Diagnose the issue and provide "
             "corrective tool calls.\n"
-            'Return ONLY JSON: {"fix_tool_calls": [{"tool": str, "params": dict}], "reasoning": str}'
+            'Return ONLY JSON: {"action":"tool_calls","tool_calls": [{"tool": str, "params": dict}]}. '
+            'Return exactly one small, complete corrective call so the JSON cannot be truncated. '
+            'Use only registered tool names such as file_read, file_write, or executor; '
+            'never emit XML/tool_call tags, markdown, shell-style pseudo-calls, or prose.'
             f"\n\nAvailable tools:\n{tool_desc}"
         )
         prompt = (
@@ -1155,17 +1998,42 @@ class Orchestrator:
         )
         if accumulated:
             prompt += f"{accumulated}\n\n"
-        prompt += "Provide fix_tool_calls to resolve the issue."
+        if validator_context:
+            prompt += f"[Current bounded validator files]\n{validator_context}\n\n"
+        prompt += "Provide normalized tool_calls to resolve the issue."
 
         try:
             raw = self._send(prompt=prompt, stream=False, system=system)
-            payload = self._safe_json(raw or "")
-            if isinstance(payload, dict):
-                fix_calls = payload.get("fix_tool_calls") or []
-                if isinstance(fix_calls, list) and fix_calls:
-                    return self._dispatch_tool_calls(
-                        node, fix_calls, tree, attempt=2,
-                    )
+            normalized = self.response_normalizer.normalize_action(raw or "")
+            if normalized.valid and normalized.value.get("action") == "tool_calls":
+                if normalized.transformations:
+                    node.add_tool_output("response_normalizer", {
+                        "status": "corrective_normalized",
+                        "transformations": normalized.transformations[-20:],
+                    })
+                fix_calls = normalized.value.get("tool_calls") or []
+                if allowed_names is not None:
+                    requested = [str(call.get("tool") or "") for call in fix_calls]
+                    fix_calls = [call for call in fix_calls if call.get("tool") in allowed_names]
+                    if requested and not fix_calls:
+                        violation = (
+                            "Corrective model violated the advertised tool schema; "
+                            f"allowed={sorted(allowed_names)}, requested={requested}."
+                        )
+                        # Attribute the corrective provider here. The caller
+                        # separately records the original failed action, so
+                        # ATF can avoid both noncompliant models this turn.
+                        self._report_correction(
+                            classification="protocol_hallucination",
+                            trigger=violation,
+                            failed_output=str(raw or "")[:8000],
+                            resolved=False,
+                            is_hallucination=True,
+                            attribution=self._capture_attribution(),
+                            metadata={"branch": node.description, "allowed_tools": sorted(allowed_names)},
+                        )
+                if fix_calls:
+                    return self._dispatch_tool_calls(node, fix_calls[:1], tree, attempt=2)
         except Exception:
             pass
         return None
@@ -1236,6 +2104,7 @@ class Orchestrator:
             "unexpected token", "cannot find module", "modulenotfounderror",
             "no such file", "unrecognized argument", "invalid parameter",
             "corrective state requires", "navigation allowance is exhausted",
+            "atomic navigation budget exhausted",
             "test write rejected", "patch rejected;",
         )
         return any(marker in lowered for marker in markers)
@@ -1257,65 +2126,11 @@ class Orchestrator:
 
     @staticmethod
     def _normalize_action(payload: Any) -> Any:
-        """Accept common function-call dialects emitted by hosted models.
+        """Backward-compatible boundary normalizer for library consumers.
 
-        C0d3rV2's canonical protocol uses ``action=tool_calls`` and a list of
-        ``{tool, params}`` objects.  OpenAI-compatible models also commonly
-        produce a singular ``tool_call``, nest that call under ``tool_call``,
-        or call the argument object ``args``.  Normalizing at this boundary
-        keeps the tool registry strict while allowing ATF to rotate models.
+        Runtime paths use the instance normalizer populated with registered
+        tool schemas.  This helper remains schema-neutral because callers have
+        historically invoked it directly on the class.
         """
-        if isinstance(payload, list):
-            if len(payload) == 1 and isinstance(payload[0], dict):
-                payload = payload[0]
-            elif payload and all(isinstance(item, dict) for item in payload):
-                if any(item.get("action") for item in payload):
-                    payload = next((item for item in payload if item.get("action")), payload[0])
-                else:
-                    payload = {"action": "tool_calls", "tool_calls": payload}
-            else:
-                return {"action": "answer", "output": json.dumps(payload, default=str),
-                        "reason": "unsupported top-level list response surfaced verbatim"}
-
-        if not isinstance(payload, dict):
-            return payload
-
-        action = str(payload.get("action") or "").strip()
-        if action == "tool_call":
-            nested = payload.get("tool_call")
-            call = nested if isinstance(nested, dict) else payload
-            payload = {"action": "tool_calls", "tool_calls": [call]}
-        elif not action and (payload.get("tool") or payload.get("name")):
-            payload = {"action": "tool_calls", "tool_calls": [payload]}
-
-        if payload.get("action") != "tool_calls":
-            return payload
-
-        raw_calls = payload.get("tool_calls") or []
-        if isinstance(raw_calls, dict):
-            raw_calls = [raw_calls]
-        calls: list[dict] = []
-        for raw_call in raw_calls:
-            if not isinstance(raw_call, dict):
-                continue
-            function = raw_call.get("function")
-            if isinstance(function, dict):
-                raw_call = {**raw_call, **function}
-            tool = raw_call.get("tool") or raw_call.get("name")
-            params = raw_call.get("params")
-            if params is None:
-                params = raw_call.get("args")
-            if params is None:
-                params = raw_call.get("arguments")
-            if isinstance(params, str):
-                try:
-                    params = json.loads(params)
-                except Exception:
-                    params = {}
-            if not isinstance(params, dict):
-                params = {}
-            if "filename" in params and "path" not in params:
-                params["path"] = params.pop("filename")
-            if tool:
-                calls.append({"tool": str(tool), "params": params})
-        return {**payload, "action": "tool_calls", "tool_calls": calls}
+        normalized = ModelResponseNormalizer().normalize_action(payload)
+        return normalized.value if normalized.valid else payload

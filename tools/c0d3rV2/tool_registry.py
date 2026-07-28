@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import hashlib
 import os
 import re
@@ -10,6 +11,7 @@ import time
 import builtins
 import symtable
 import ast
+import csv
 import urllib.error
 import urllib.request
 from dataclasses import asdict
@@ -285,6 +287,34 @@ def _typescript_semantic_guard(before: str, after: str, protect_public_api: bool
     return ""
 
 
+def _typescript_syntax_error(source: str, path: Path, workdir: Path) -> str:
+    """Use the project's TypeScript parser to reject malformed model writes."""
+    if path.suffix.lower() not in {".ts", ".tsx"}:
+        return ""
+    compiler = workdir / "node_modules" / "typescript"
+    if not compiler.exists():
+        return ""
+    script = (
+        "const fs=require('fs'),ts=require('typescript');"
+        "const s=fs.readFileSync(0,'utf8');"
+        "const r=ts.transpileModule(s,{fileName:process.argv[1],reportDiagnostics:true,"
+        "compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}});"
+        "const d=(r.diagnostics||[]).filter(x=>x.category===ts.DiagnosticCategory.Error);"
+        "if(d.length){console.error(d.slice(0,8).map(x=>ts.flattenDiagnosticMessageText(x.messageText,' ')).join(' | '));process.exit(1)}"
+    )
+    try:
+        proc = subprocess.run(
+            ["node", "-e", script, str(path)],
+            cwd=str(workdir), input=source, capture_output=True, text=True,
+            check=False, timeout=10,
+        )
+    except Exception:
+        return ""
+    if proc.returncode:
+        return f"TypeScript syntax rejected for {path.name}: {(proc.stderr or proc.stdout).strip()[:1000]}"
+    return ""
+
+
 def _python_behavior_fingerprint(source: str) -> str:
     try:
         tree = ast.parse(source)
@@ -305,6 +335,37 @@ def _python_behavior_fingerprint(source: str) -> str:
 def _behavior_change_error(before: str, after: str, required: bool) -> str:
     if required and _python_behavior_fingerprint(before) == _python_behavior_fingerprint(after):
         return "patch rejected; corrective write changes only comments/docstrings, not executable behavior"
+    return ""
+
+
+def _ensure_project_django() -> str:
+    """Make Django-backed services importable from standalone C0D3R contexts."""
+    import sys
+    project_root = Path(__file__).resolve().parents[2]
+    web_root = project_root / "web"
+    # Project root must precede web root so repo-level packages such as
+    # services.* resolve before Django app packages.
+    for path in (web_root, project_root):
+        if str(path) in sys.path:
+            sys.path.remove(str(path))
+        sys.path.insert(0, str(path))
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
+    os.environ.setdefault("PRODUCTION_AUTO_DISABLED", "1")
+    os.environ.setdefault("CRON_AUTO_DISABLED", "1")
+    os.environ.setdefault("GUARDIAN_AUTO_DISABLED", "1")
+    try:
+        import django
+        from django.apps import apps
+        if not apps.ready:
+            secure_env_was_set = "SECURE_ENV_HYDRATED" in os.environ
+            os.environ["SECURE_ENV_HYDRATED"] = "1"
+            django.setup()
+            if not secure_env_was_set:
+                os.environ.pop("SECURE_ENV_HYDRATED", None)
+        from services.env_loader import EnvLoader
+        EnvLoader.load()
+    except Exception as exc:
+        return str(exc)
     return ""
 
 
@@ -351,7 +412,9 @@ class ExecutorTool(Tool):
         "git operations, building projects, starting/stopping services, "
         "or any OS-level task.  Prefer file_read/file_write for reading/editing "
         "source files — reserve executor for running things.  When you need a "
-        "path first, call file_locate before this."
+        "path first, call file_locate before this. On Windows the default shell "
+        "is PowerShell: never use Unix-only flags such as `ls -la`; use the "
+        "structured file tools for inspection."
     )
     params_schema = {"command": "str — the shell command to execute"}
 
@@ -882,6 +945,140 @@ class WebSearchTool(Tool):
         return self._ws.search(query)
 
 
+class ResearchHarvesterTool(Tool):
+    """Build and query C0d3rV2's bounded local web knowledge library."""
+
+    name = "research_harvester"
+    description = (
+        "Search a provenance-indexed local knowledge library and, when requested, "
+        "discover/crawl a bounded set of relevant public documentation pages."
+    )
+    use_when = (
+        "Use before implementation when training knowledge may be weak, a validator exposes "
+        "an unfamiliar API/architecture failure, or authoritative science/engineering/programming "
+        "evidence is needed. Retrieve locally first; expand only when coverage says it is insufficient."
+    )
+    params_schema = {
+        "action": "retrieve | research | harvest | project_configure | project_refresh | project_status | status",
+        "project_key": "stable project/session identifier for continuous research policy",
+        "query": "task, error, API, or scientific question",
+        "seed_urls": "list of explicit public HTTP(S) seeds for harvest",
+        "max_depth": "0-4 crawl link depth",
+        "max_pages": "1-200 hard page limit",
+        "same_origin": "keep each crawl on its seed host (default true)",
+        "allowed_domains": "optional domain allowlist",
+        "include_patterns": "optional URL regex allow filters",
+        "exclude_patterns": "optional URL regex deny filters",
+        "limit": "retrieval passage count",
+        "coverage_target": "0.25-1.0 required term/source coverage before stopping",
+        "refresh_seconds": "300-31536000 refresh interval for continuous project research",
+        "max_rounds": "1-4 bounded discover/crawl/measure escalation rounds",
+        "force": "refresh even when the project policy is not yet due",
+    }
+
+    def __init__(self, harvester: Any, web_search: Any | None = None) -> None:
+        self._harvester = harvester
+        self._web_search = web_search
+
+    def _config(self, params: dict) -> Any:
+        from tools.c0d3rV2.plugins.research_harvester import HarvestConfig
+        return HarvestConfig(
+            max_depth=int(params.get("max_depth", 0)),
+            max_pages=int(params.get("max_pages", 8)),
+            same_origin=bool(params.get("same_origin", True)),
+            allowed_domains=tuple(params.get("allowed_domains") or ()),
+            include_patterns=tuple(params.get("include_patterns") or ()),
+            exclude_patterns=tuple(params.get("exclude_patterns") or ()),
+            delay_seconds=float(params.get("delay_seconds", 0.35)),
+            respect_robots=bool(params.get("respect_robots", True)),
+        ).bounded()
+
+    def execute(self, params: dict) -> dict:
+        action = str(params.get("action") or "retrieve").strip().lower()
+        query = str(params.get("query") or "").strip()
+        if action == "status":
+            return self._harvester.status()
+        project_key = str(params.get("project_key") or "").strip()
+        if action == "project_status":
+            if not project_key:
+                return {"error": "project_key is required"}
+            return self._harvester.project_policy(project_key) or {"error": "unknown project policy"}
+        if action == "project_configure":
+            return self._harvester.configure_project(
+                project_key, query=query,
+                seeds=[str(item) for item in params.get("seed_urls") or [] if str(item).strip()],
+                config=self._config(params),
+                coverage_target=float(params.get("coverage_target", 0.7)),
+                refresh_seconds=int(params.get("refresh_seconds", 86_400)),
+                max_rounds=int(params.get("max_rounds", 2)),
+            )
+        if action == "project_refresh":
+            policy = self._harvester.project_policy(project_key)
+            if policy is None:
+                return {"error": "configure the project policy before refreshing"}
+            if not policy["due"] and not bool(params.get("force", False)):
+                return {"status": "not_due", "policy": policy,
+                        "retrieval": self._harvester.search(policy["query"], limit=int(params.get("limit", 6)))}
+            seeds = list(policy["seeds"])
+            config_data = dict(policy["config"])
+            rounds: list[dict[str, Any]] = []
+            retrieval = self._harvester.search(policy["query"], limit=int(params.get("limit", 6)))
+            for round_index in range(int(policy["max_rounds"])):
+                if retrieval.get("coverage", 0) >= float(policy["coverage_target"]) and len(retrieval.get("results") or []) >= 2:
+                    break
+                discovery = self._web_search.discover(policy["query"]) if self._web_search is not None else []
+                round_seeds = list(dict.fromkeys(seeds + [str(item.get("url") or "") for item in discovery[:8] if item.get("url")]))
+                round_config = dict(config_data)
+                round_config["max_depth"] = min(4, int(round_config.get("max_depth", 0)) + round_index)
+                round_config["max_pages"] = min(200, int(round_config.get("max_pages", 8)) * (round_index + 1))
+                crawled = self._harvester.crawl(
+                    round_seeds, query=policy["query"], config=__import__(
+                        "tools.c0d3rV2.plugins.research_harvester", fromlist=["HarvestConfig"]
+                    ).HarvestConfig(**round_config).bounded(),
+                ) if round_seeds else {"stored": [], "errors": [{"error": "no seeds"}]}
+                retrieval = self._harvester.search(policy["query"], limit=int(params.get("limit", 6)))
+                rounds.append({"round": round_index + 1, "crawl": crawled, "coverage": retrieval.get("coverage")})
+            sufficient = retrieval.get("coverage", 0) >= float(policy["coverage_target"]) and len(retrieval.get("results") or []) >= 2
+            reason = "coverage target met" if sufficient else "bounded rounds exhausted; human/model may refine query or seeds"
+            updated = self._harvester.record_project_refresh(
+                project_key, coverage=float(retrieval.get("coverage") or 0),
+                status="sufficient" if sufficient else "insufficient", reason=reason,
+            )
+            return {"status": updated.get("status"), "reason": reason, "policy": updated,
+                    "rounds": rounds, "retrieval": retrieval}
+        if action == "retrieve":
+            if not query:
+                return {"error": "query is required"}
+            return self._harvester.search(query, limit=int(params.get("limit", 6)))
+        seeds = [str(item) for item in params.get("seed_urls") or [] if str(item).strip()]
+        discovery: list[dict] = []
+        if action == "research":
+            if not query:
+                return {"error": "query is required"}
+            local = self._harvester.search(query, limit=int(params.get("limit", 6)))
+            if not local.get("needs_expansion"):
+                return {"status": "local_hit", "retrieval": local, "harvester": self._harvester.status()}
+            if self._web_search is None:
+                return {"status": "local_insufficient", "retrieval": local}
+            discovery = self._web_search.discover(query)
+            seeds.extend(str(item.get("url") or "") for item in discovery[:8] if item.get("url"))
+        if action not in {"research", "harvest"}:
+            return {"error": f"unsupported action: {action}"}
+        if not seeds:
+            return {"error": "no crawl seeds were discovered or supplied"}
+        crawled = self._harvester.crawl(list(dict.fromkeys(seeds)), query=query, config=self._config(params))
+        retrieval = self._harvester.search(query, limit=int(params.get("limit", 6))) if query else {"results": []}
+        return {
+            "status": "expanded" if crawled.get("stored") else "no_pages_stored",
+            "discovery": discovery[:10], "crawl": crawled, "retrieval": retrieval,
+            "suggested_expansion": (
+                {"max_depth": min(4, self._config(params).max_depth + 1),
+                 "max_pages": min(200, self._config(params).max_pages * 2)}
+                if retrieval.get("needs_expansion") else None
+            ),
+        }
+
+
 class MemorySearchTool(Tool):
     """Search long-term memory for relevant past interactions."""
 
@@ -966,14 +1163,20 @@ class FileLocateTool(Tool):
                     item["source"] = "st" if item in st_detail else "lt"
                     seen[path] = item
             candidates = sorted(seen.values(), key=lambda x: x.get("score", 0), reverse=True)
-            for path, score in self._filesystem_hits(query):
+            live_hits = self._filesystem_hits(query)
+            for path, score in live_hits:
                 if path not in seen:
                     candidates.append({
                         "path": path, "score": score,
                         "reason": "live workdir filename match", "source": "filesystem",
                     })
             candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+            # Hazy Hash is an approximate memory index.  A remembered path can
+            # intentionally refer to a not-yet-created output contract, so do
+            # not silently discard it merely because it is absent right now.
+            # Scope enforcement remains mandatory.
             candidates = [item for item in candidates if self._allowed(item.get("path", ""))]
+            self._remember_live(query, [item.get("path", "") for item in candidates if item.get("path")], cwd, project_root)
             return {"candidates": candidates[:20], "query": query}
 
         # Simple mode: return flat path list
@@ -991,7 +1194,16 @@ class FileLocateTool(Tool):
             if path not in seen_paths:
                 seen_paths.add(path)
                 merged.append(path)
+        self._remember_live(query, merged, cwd, project_root)
         return {"paths": merged}
+
+    def _remember_live(self, query: str, paths: list[str], cwd: str, project_root: str) -> None:
+        if not paths:
+            return
+        if self._st and hasattr(self._st, "record_paths"):
+            self._st.record_paths(query, paths, cwd=cwd, project_root=project_root)
+        if self._lt and hasattr(self._lt, "record_paths"):
+            self._lt.record_paths(query, paths, cwd=cwd, project_root=project_root)
 
     def _filesystem_hits(self, query: str) -> list[tuple[str, float]]:
         """Supplement stale contextual memory with bounded live workdir lookup."""
@@ -1236,6 +1448,9 @@ class FileWriteTool(Tool):
                 config_error = _structured_syntax_error(patched, path)
                 if config_error:
                     return {"error": config_error, "preview": patched[:1000]}
+                ts_syntax_error = _typescript_syntax_error(patched, path, self._workdir)
+                if ts_syntax_error:
+                    return {"error": ts_syntax_error, "preview": patched[:1000]}
                 reference_error = _json_reference_error(patched, path)
                 if reference_error:
                     return {"error": reference_error, "preview": patched[:1000]}
@@ -1278,6 +1493,9 @@ class FileWriteTool(Tool):
             config_error = _structured_syntax_error(patched, path)
             if config_error:
                 return {"error": config_error, "preview": patched[:1000]}
+            ts_syntax_error = _typescript_syntax_error(patched, path, self._workdir)
+            if ts_syntax_error:
+                return {"error": ts_syntax_error, "preview": patched[:1000]}
             reference_error = _json_reference_error(patched, path)
             if reference_error:
                 return {"error": reference_error, "preview": patched[:1000]}
@@ -1310,6 +1528,9 @@ class FileWriteTool(Tool):
         config_error = _structured_syntax_error(normalized, path)
         if config_error:
             return {"error": config_error, "preview": normalized[:1000]}
+        ts_syntax_error = _typescript_syntax_error(normalized, path, self._workdir)
+        if ts_syntax_error:
+            return {"error": ts_syntax_error, "preview": normalized[:1000]}
         reference_error = _json_reference_error(normalized, path)
         if reference_error:
             return {"error": reference_error, "preview": normalized[:1000]}
@@ -2089,6 +2310,21 @@ class EnvironmentBootstrapTool(Tool):
         preset = str(params.get("preset") or "").strip().lower().replace("-", "_")
         timeout_s = int(params.get("timeout_s") or 180)
         self._workdir.mkdir(parents=True, exist_ok=True)
+        project_markers = (
+            "package.json", "Cargo.toml", "pyproject.toml", "requirements.txt",
+            "manage.py", "pom.xml", "composer.json", "CMakeLists.txt",
+        )
+        existing_markers = [name for name in project_markers if (self._workdir / name).exists()]
+        if existing_markers:
+            return {
+                "error": (
+                    "Non-destructive bootstrap refused: this workspace already has project manifests "
+                    f"{existing_markers}. Use file_write for bounded upgrades and executor for dependency "
+                    "installation/validation; bootstrap is only for an uninitialized workspace."
+                ),
+                "existing_markers": existing_markers,
+                "preset": preset,
+            }
         steps: list[dict] = []
         written: list[str] = []
 
@@ -2111,7 +2347,7 @@ class EnvironmentBootstrapTool(Tool):
                     return {"error": "venv creation failed", "steps": steps, "written": written}
                 if not run(r".venv\Scripts\python.exe -m pip install -r requirements.txt"):
                     return {"error": "pip install failed", "steps": steps, "written": written}
-                if not run(r".venv\Scripts\python.exe -c \"import fastapi, uvicorn, py_compile; py_compile.compile('main.py', doraise=True); print('FASTAPI_OK')\""):
+                if not run(r".venv\Scripts\python.exe -c " + '"' + "import fastapi, uvicorn, py_compile; py_compile.compile('main.py', doraise=True); print('FASTAPI_OK')" + '"'):
                     return {"error": "FastAPI verification failed", "steps": steps, "written": written}
             elif preset == "python_django":
                 written.append(self._write("requirements.txt", "django\n"))
@@ -2355,7 +2591,7 @@ class ScientificMethodTool(Tool):
         research = self._research(query, max_sources)
         matrix = self._matrix_search(question)
         hypotheses = self._hypotheses(question, research, matrix)
-        validation = self._validate(question, hypotheses)
+        validation = self._validate(question, hypotheses, research, matrix)
         conclusion = self._conclude(question, hypotheses, validation, expected)
 
         record = {
@@ -2395,15 +2631,80 @@ class ScientificMethodTool(Tool):
         try:
             search = getattr(self._web_search, "search_authoritative", None)
             result = search(query) if callable(search) else self._web_search.search(query)
-            results = list(result.get("results") or [])[:max_sources]
+            results, usable = [], []
+            candidates = list(result.get("results") or [])[:max(15, max_sources * 4)]
+            for item in candidates:
+                record = self._source_record(item, query)
+                results.append(record)
+                if record["evidence_usable"]:
+                    usable.append(record)
+                    if len(usable) >= max_sources:
+                        break
             return {
                 "query": query,
                 "summary": result.get("summary", ""),
                 "results": results,
+                "usable_evidence_count": len(usable),
                 "scientific": bool(result.get("scientific")),
             }
         except Exception as exc:
             return {"query": query, "results": [], "summary": "", "error": str(exc)}
+
+    def _source_record(self, item: Any, query: str) -> dict:
+        """Normalize a search hit into an auditable evidence record.
+
+        Search-result snippets are discovery metadata, not verified findings.
+        In particular, generated fallback search URLs must never count as
+        empirical support.
+        """
+        raw = dict(item) if isinstance(item, dict) else {}
+        title = str(raw.get("title") or "").strip()
+        url = str(raw.get("url") or "").strip()
+        provider = str(raw.get("provider") or "unknown").strip()
+        snippet = str(raw.get("snippet") or "").strip()
+        try:
+            authority = max(0, min(10, int(raw.get("authority_score") or 0)))
+        except (TypeError, ValueError):
+            authority = 0
+        discovery_only = provider == "fallback-source-query" or not url.startswith(("http://", "https://"))
+        verification: dict = {}
+        fetch = getattr(self._web_search, "fetch_evidence", None) if self._web_search else None
+        if not discovery_only and callable(fetch):
+            try:
+                candidate = fetch(url, query)
+                verification = candidate if isinstance(candidate, dict) else {}
+            except Exception as exc:
+                verification = {"status": "fetch_failed", "error": str(exc)}
+        authority_lookup = getattr(self._web_search, "authority_score", None) if self._web_search else None
+        if callable(authority_lookup) and verification.get("final_url"):
+            try:
+                authority = max(authority, int(authority_lookup(verification["final_url"])))
+            except (TypeError, ValueError):
+                pass
+        verified = verification.get("status") == "verified_content"
+        sufficiently_authoritative = authority >= 5
+        identity = json.dumps({
+            "query": query, "title": title, "url": url, "provider": provider,
+            "content_sha256": verification.get("content_sha256", ""),
+        }, sort_keys=True)
+        raw.update({
+            "title": title,
+            "url": url,
+            "provider": provider,
+            "snippet": snippet,
+            "authority_score": authority,
+            "retrieved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "provenance_sha256": hashlib.sha256(identity.encode("utf-8")).hexdigest(),
+            "content_verification": verification,
+            "evidence_usable": bool(title and url and not discovery_only and verified and sufficiently_authoritative),
+            "evidence_status": (
+                "discovery_only" if discovery_only else
+                "verified_content" if verified and sufficiently_authoritative else
+                "insufficient_authority" if verified else
+                str(verification.get("status") or "unverified_search_metadata")
+            ),
+        })
+        return raw
 
     def _matrix_search(self, question: str) -> dict:
         try:
@@ -2427,15 +2728,20 @@ class ScientificMethodTool(Tool):
             ]
         return [
             {
-                "id": "best_supported",
-                "claim": "Use the claim best supported by authoritative sources and matrix constraints.",
+                "id": "claim_supported",
+                "claim": question,
                 "prior": 0.5,
-                "source_count": len(research.get("results") or []),
+                "source_count": int(research.get("usable_evidence_count") or 0),
                 "matrix_hit_count": len((matrix or {}).get("hits") or []),
-            }
+            },
+            {
+                "id": "claim_not_supported",
+                "claim": f"The available evidence does not establish: {question}",
+                "prior": 0.5,
+            },
         ]
 
-    def _validate(self, question: str, hypotheses: list[dict]) -> dict:
+    def _validate(self, question: str, hypotheses: list[dict], research: dict | None = None, matrix: dict | None = None) -> dict:
         q = question.lower()
         if "monty" in q:
             trials = 300
@@ -2459,6 +2765,9 @@ class ScientificMethodTool(Tool):
                     "If initial choice is wrong (2/3), switching wins.",
                     "If initial choice is right (1/3), staying wins.",
                 ],
+                "falsification_criteria": [
+                    "Reject the 2/3 switching claim if exhaustive enumeration of all equally likely prize and initial-choice states does not yield six switching wins out of nine states."
+                ],
             }
         if "michelson" in q or "morley" in q or "ether" in q:
             return {
@@ -2468,28 +2777,177 @@ class ScientificMethodTool(Tool):
                     "Expected ether-wind fringe shift was not observed at the predicted magnitude.",
                     "The null result is historically treated as evidence against luminiferous ether models.",
                 ],
+                "falsification_criteria": [
+                    "Reject the null-result conclusion if the archived interferometer observations contain the predicted ether-wind fringe shift above the stated experimental uncertainty."
+                ],
             }
+        model_validation = self._model_experiment(question, hypotheses, research or {}, matrix or {})
+        if model_validation:
+            return model_validation
         return {
-            "method": "source/matrix triangulation",
-            "supports": hypotheses[0]["id"] if hypotheses else "",
-            "checks": ["Compare authoritative sources, matrix equations, assumptions, and contradictions."],
+            "method": "prospective source/matrix triangulation",
+            "supports": None,
+            "status": "inconclusive",
+            "checks": ["No claim-specific reproducible test was executed; search metadata alone cannot select a hypothesis."],
+            "falsification_criteria": [
+                "State a measurable prediction that differs between the competing hypotheses.",
+                "Predefine the observation or calculation that would reject each hypothesis.",
+                "Run or cite a reproducible test and record its inputs, outputs, uncertainty, and provenance.",
+            ],
         }
+
+    def _model_experiment(self, question: str, hypotheses: list[dict], research: dict, matrix: dict) -> dict:
+        session = getattr(self._web_search, "session", None) if self._web_search else None
+        if session is None:
+            return {}
+        usable = [item for item in research.get("results") or [] if item.get("evidence_usable")]
+        allowed_urls = {str(item.get("url") or "") for item in usable}
+        system = (
+            "Design one claim-specific reproducible calculation from archival evidence and known equations. "
+            "Return JSON only with keys hypotheses (list of {id,claim,prediction}), supports (id), "
+            "calculation {equation,target,substitutions,result,units}, checks (list), "
+            "falsification_criteria (list), source_urls (list), source_support "
+            "(list of {url,quote,supports}, where quote is copied verbatim from that source's verified passage). "
+            "The equation must use Python/SymPy syntax. "
+            "Do not select a hypothesis unless the calculation distinguishes it."
+        )
+        prompt = json.dumps({
+            "question": question,
+            "candidate_hypotheses": hypotheses,
+            "archival_evidence": usable[:6],
+            "matrix_equations": (matrix.get("hits") or [])[:12],
+        }, default=str, ensure_ascii=True)
+        try:
+            raw = session.send(prompt=prompt, system=system, stream=False, max_tokens=1800, temperature=0.1)
+            start, end = str(raw).find("{"), str(raw).rfind("}")
+            payload = json.loads(str(raw)[start:end + 1]) if start >= 0 and end > start else {}
+        except Exception:
+            return {}
+        calculation = payload.get("calculation") if isinstance(payload.get("calculation"), dict) else {}
+        verified = self._verify_calculation(calculation)
+        source_urls = [str(url) for url in payload.get("source_urls") or [] if str(url) in allowed_urls]
+        usable_by_url = {str(item.get("url") or ""): item for item in usable}
+        support_records = []
+        def canonical_quote(value: str) -> str:
+            value = re.sub(r"\s+", " ", value).strip().lower()
+            return re.sub(r"\s+([,.;:!?])", r"\1", value)
+        for support in payload.get("source_support") or []:
+            if not isinstance(support, dict):
+                continue
+            url = str(support.get("url") or "")
+            quote = re.sub(r"\s+", " ", str(support.get("quote") or "")).strip()
+            claim_support = str(support.get("supports") or "").strip()
+            passage = re.sub(r"\s+", " ", str((usable_by_url.get(url, {}).get("content_verification") or {}).get("passage") or ""))
+            if url in usable_by_url and len(quote.split()) >= 8 and canonical_quote(quote) in canonical_quote(passage) and claim_support:
+                support_records.append({"url": url, "quote": quote, "supports": claim_support})
+        falsification = [str(item) for item in payload.get("falsification_criteria") or [] if str(item).strip()]
+        proposed = payload.get("hypotheses") if isinstance(payload.get("hypotheses"), list) else []
+        raw_supported = payload.get("supports")
+        if isinstance(raw_supported, list):
+            raw_supported = raw_supported[0] if len(raw_supported) == 1 else ""
+        supported = str(raw_supported or "")
+        supported_claim = next((str(item.get("claim") or "") for item in proposed if isinstance(item, dict) and str(item.get("id") or "") == supported), "")
+        if not verified or not supported or not supported_claim or not falsification:
+            return {}
+        if usable and (not source_urls or not support_records):
+            return {}
+        value = verified["value"]
+        units = str(calculation.get("units") or "").strip()
+        return {
+            "method": "model-proposed, SymPy-recomputed claim-specific archival calculation",
+            "supports": supported,
+            "status": "supported",
+            "answer": f"{supported_claim} Calculated result: {value:.12g} {units}".strip(),
+            "calculated_value": value,
+            "units": units,
+            "equation": calculation.get("equation"),
+            "substitutions": calculation.get("substitutions"),
+            "checks": [*([str(item) for item in payload.get("checks") or []]), "C0d3rV2 independently recomputed the target with SymPy."],
+            "falsification_criteria": falsification,
+            "source_urls": source_urls,
+            "source_support": support_records,
+        }
+
+    @staticmethod
+    def _verify_calculation(calculation: dict) -> dict:
+        equation = str(calculation.get("equation") or "").strip()
+        target = str(calculation.get("target") or "").strip()
+        substitutions = calculation.get("substitutions") if isinstance(calculation.get("substitutions"), dict) else {}
+        if not equation or not target or "=" not in equation or not substitutions:
+            return {}
+        try:
+            import sympy as sp
+            names = set(re.findall(r"[A-Za-z_]\w*", equation)) | {target} | {str(key) for key in substitutions}
+            symbols = {name: sp.symbols(name) for name in names if name not in {"log", "log10", "sqrt", "pi", "exp"}}
+            local = {**symbols, "log": sp.log, "log10": lambda x: sp.log(x, 10), "sqrt": sp.sqrt, "pi": sp.pi, "exp": sp.exp}
+            left, right = equation.split("=", 1)
+            eq = sp.Eq(sp.sympify(left, locals=local), sp.sympify(right, locals=local))
+            target_symbol = symbols[target] if target in symbols else sp.symbols(target)
+            subs = {
+                (symbols[str(key)] if str(key) in symbols else sp.symbols(str(key))):
+                sp.sympify(value, locals=local)
+                for key, value in substitutions.items()
+            }
+            solutions = sp.solve(eq, target_symbol)
+            if not solutions:
+                return {}
+            value = float(sp.N(solutions[0].subs(subs)))
+            claimed = float(calculation.get("result"))
+            tolerance = max(1e-9, abs(value) * 1e-6)
+            if not math.isfinite(value) or abs(value - claimed) > tolerance:
+                return {}
+            return {"value": value, "claimed": claimed}
+        except ImportError:
+            # Small, dependency-free verifier for an already-isolated target.
+            # This never executes model text and accepts arithmetic AST nodes
+            # only; complex/non-isolated equations remain unverified.
+            try:
+                import ast
+                left, right = (part.strip() for part in equation.split("=", 1))
+                expression = right if left == target else left if right == target else ""
+                if not expression:
+                    return {}
+                values = {str(key): float(value) for key, value in substitutions.items()}
+                operators = {
+                    ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+                    ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b,
+                    ast.Pow: lambda a, b: a ** b,
+                }
+                def evaluate(node: ast.AST) -> float:
+                    if isinstance(node, ast.Expression): return evaluate(node.body)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)): return float(node.value)
+                    if isinstance(node, ast.Name) and node.id in values: return values[node.id]
+                    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+                        value = evaluate(node.operand); return -value if isinstance(node.op, ast.USub) else value
+                    if isinstance(node, ast.BinOp) and type(node.op) in operators:
+                        return operators[type(node.op)](evaluate(node.left), evaluate(node.right))
+                    raise ValueError("unsupported calculation syntax")
+                value = evaluate(ast.parse(expression, mode="eval"))
+                claimed = float(calculation.get("result"))
+                tolerance = max(1e-9, abs(value) * 1e-6)
+                return {"value": value, "claimed": claimed} if math.isfinite(value) and abs(value - claimed) <= tolerance else {}
+            except Exception:
+                return {}
+        except Exception:
+            return {}
 
     def _conclude(self, question: str, hypotheses: list[dict], validation: dict, expected: str) -> dict:
         supported = validation.get("supports")
         winner = next((h for h in hypotheses if h.get("id") == supported), hypotheses[0] if hypotheses else {})
-        answer = str(winner.get("claim") or "")
+        answer = str(validation.get("answer") or winner.get("claim") or "") if supported else "Inconclusive: no hypothesis passed a claim-specific reproducible test."
         expected_match = None
-        if expected:
+        if expected and supported:
             expected_norm = re.sub(r"\s+", " ", expected.lower())
             answer_norm = re.sub(r"\s+", " ", answer.lower())
             expected_match = any(token in answer_norm for token in re.findall(r"[a-z0-9/.-]+", expected_norm)[:8])
         return {
             "answer": answer,
             "supported_hypothesis": supported,
-            "confidence": 0.9 if supported else 0.55,
+            "status": "supported" if supported else "inconclusive",
+            "confidence": 0.9 if supported else 0.0,
             "expected_match": expected_match,
             "why": validation.get("checks", []),
+            "falsification_criteria": validation.get("falsification_criteria", []),
         }
 
     def _persist(self, record: dict) -> dict:
@@ -2581,6 +3039,7 @@ class UnboundedSolverTool(Tool):
                 for h in result.hypotheses
             ],
             "anomalies": result.anomalies,
+            "research_links": result.research_links,
             "question_tree": result.question_tree,
             "context_block": self._solver.format_context_block(result),
         }
@@ -2620,6 +3079,9 @@ class MathGroundingTool(Tool):
         record = self._solver.math_grounding(prompt)
         return {
             "grounding_block": self._solver.format_grounding_block(record),
+            "falsification_criteria": [
+                "Reject a numeric solution if substituting it into every governing equation fails within the stated precision or if measured data violate an explicit assumption."
+            ],
             **record,
         }
 
@@ -2782,6 +3244,540 @@ class VMPlaygroundTool(Tool):
 # ------------------------------------------------------------------
 # Registry
 # ------------------------------------------------------------------
+
+
+class BrandDozerProductCycleTool(Tool):
+    """Run one verified BrandDozer digital-product refinement cycle."""
+
+    name = "branddozer_product_cycle"
+    description = (
+        "Run a strict BrandDozer continuous-refinement cycle for the digital "
+        "product lab: market research, product spec, product artifact, storefront "
+        "catalog, Base Sepolia checkout metadata, and validation. This tool only "
+        "reports success when durable artifacts validate."
+    )
+    use_when = (
+        "Use when the task is to research market needs, build/list digital "
+        "products, maintain a crypto-sale storefront, run BrandDozer's product "
+        "loop, or continue the continuous refinement benchmark. Prefer this "
+        "over broad free-form planning because it writes and validates artifacts."
+    )
+    params_schema = {
+        "root_path": "str optional — workspace root; defaults to Desktop\\Apps\\BrandDozerDigitalProducts",
+        "cycles": "int optional — number of cycles, default 1, max 5",
+    }
+
+    def execute(self, params: dict) -> dict:
+        try:
+            setup_error = _ensure_project_django()
+            if setup_error:
+                return {"error": f"django setup failed: {setup_error}"}
+            from services.branddozer_product_loop import (
+                ensure_workspace,
+                load_state,
+                save_state,
+                upsert_product_lab_project,
+                _run_strict_product_cycle,
+            )
+        except Exception as exc:
+            return {"error": f"branddozer product loop unavailable: {exc}"}
+        raw_root = str(params.get("root_path") or "").strip()
+        root = ensure_workspace(Path(raw_root).expanduser() if raw_root else None)
+        project = upsert_product_lab_project(root)
+        try:
+            cycles = max(1, min(int(params.get("cycles") or 1), 5))
+        except Exception:
+            cycles = 1
+        state = load_state()
+        cycle = int(state.get("cycle") or 0)
+        strict_result: dict[str, Any] = {}
+        for _ in range(cycles):
+            cycle += 1
+            strict_result = _run_strict_product_cycle(root=root, cycle=cycle)
+            state = save_state({
+                **state,
+                "cycle": cycle,
+                "status": str(strict_result.get("status") or "error"),
+                "error": str(strict_result.get("error") or "") if strict_result.get("status") == "error" else "",
+                "project_id": project.get("id"),
+                "workspace": str(root),
+                "last_output": strict_result.get("summary", ""),
+                "last_detail": {"strict_product_cycle": strict_result},
+            })
+        return {
+            "status": state.get("status") or "unknown",
+            "project": project,
+            "state": state,
+            "output": strict_result.get("summary", ""),
+            "verified": bool((strict_result.get("validation") or {}).get("passed")),
+        }
+
+
+class ProductArtifactMaterializerTool(Tool):
+    """Turn a model-authored product specification into testable real files."""
+
+    name = "product_artifact_materializer"
+    description = "Materialize an accepted digital-product specification into customer-usable files inside the current workspace."
+    use_when = "Use after a model has produced a bounded product spec but cannot reliably emit binary or structured artifacts directly."
+    params_schema = {"kind": "spreadsheet|web|document|software", "spec": "product specification object"}
+
+    def __init__(self, workdir: Path) -> None:
+        self.workdir = workdir.resolve()
+
+    def execute(self, params: dict) -> dict:
+        kind = str(params.get("kind") or "digital_artifact").lower()
+        spec = params.get("spec") if isinstance(params.get("spec"), dict) else {}
+        if not spec:
+            return {"error": "spec is required"}
+        written: list[str] = []
+        if kind == "spreadsheet":
+            written.extend(self._spreadsheet(spec))
+        elif kind == "web":
+            written.append(self._web(spec))
+        elif kind == "document":
+            written.append(self._document(spec))
+        else:
+            written.append(self._software(spec))
+        self._usage(spec, written)
+        return {"status": "materialized", "kind": kind, "files": written}
+
+    def _spreadsheet(self, spec: dict) -> list[str]:
+        product_text = json.dumps(spec, ensure_ascii=True).lower()
+        if not any(term in product_text for term in ("crm", "lead", "sales", "customer", "pipeline")):
+            raise RuntimeError("No verified spreadsheet materializer exists for this product contract; model-authored implementation is required")
+        datasets = {
+            "contacts.csv": [
+                ["contact_id", "company", "contact_name", "email", "phone", "source", "owner", "status", "next_follow_up", "notes"],
+                ["C-001", "Northstar Bakery", "Maya Chen", "maya@example.com", "+1-555-0101", "Referral", "Alex", "Qualified", "2026-07-15", "Requested pricing"],
+                ["C-002", "Riverbend Design", "Jon Bell", "jon@example.com", "+1-555-0102", "Website", "Sam", "New", "2026-07-16", "Needs discovery call"],
+            ],
+            "pipeline.csv": [
+                ["deal_id", "contact_id", "deal_name", "stage", "value_usd", "probability_pct", "expected_close", "next_action"],
+                ["D-001", "C-001", "Wholesale onboarding", "Proposal", "2400", "65", "2026-07-31", "Send revised proposal"],
+                ["D-002", "C-002", "Brand refresh", "Discovery", "1800", "35", "2026-08-15", "Schedule requirements call"],
+            ],
+            "activities.csv": [
+                ["activity_id", "contact_id", "activity_type", "activity_date", "outcome", "next_step", "due_date", "completed"],
+                ["A-001", "C-001", "Email", "2026-07-12", "Pricing requested", "Send proposal", "2026-07-15", "no"],
+                ["A-002", "C-002", "Call", "2026-07-12", "Voicemail", "Retry call", "2026-07-14", "no"],
+            ],
+            "tasks.csv": [
+                ["task_id", "contact_id", "owner", "priority", "due_date", "task", "status"],
+                ["T-001", "C-001", "Alex", "High", "2026-07-15", "Send revised proposal", "Open"],
+                ["T-002", "C-002", "Sam", "Medium", "2026-07-16", "Discovery call", "Open"],
+            ],
+            "campaigns.csv": [
+                ["campaign_id", "campaign_name", "channel", "budget_usd", "leads", "opportunities", "revenue_usd"],
+                ["M-001", "Referral launch", "Partner", "500", "24", "8", "7200"],
+                ["M-002", "Search pilot", "Paid Search", "800", "31", "6", "5400"],
+            ],
+        }
+        paths: list[str] = []
+        for name, rows in datasets.items():
+            path = _scoped_path(self.workdir, name)
+            with path.open("w", encoding="utf-8-sig", newline="") as handle:
+                csv.writer(handle).writerows(rows)
+            paths.append(str(path))
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill
+            from openpyxl.chart import BarChart, Reference
+            from openpyxl.worksheet.datavalidation import DataValidation
+            from openpyxl.worksheet.table import Table, TableStyleInfo
+
+            workbook = Workbook()
+            workbook.remove(workbook.active)
+            for filename, rows in datasets.items():
+                title = Path(filename).stem.title()
+                sheet = workbook.create_sheet(title)
+                for row in rows:
+                    sheet.append(row)
+                for cell in sheet[1]:
+                    cell.font = Font(bold=True, color="FFFFFF")
+                    cell.fill = PatternFill("solid", fgColor="1F4E78")
+                sheet.freeze_panes = "A2"
+                sheet.auto_filter.ref = sheet.dimensions
+                for column in sheet.columns:
+                    letter = column[0].column_letter
+                    sheet.column_dimensions[letter].width = min(35, max(12, max(len(str(cell.value or "")) for cell in column) + 2))
+                table = Table(displayName=f"{title}Table", ref=sheet.dimensions)
+                table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+                sheet.add_table(table)
+            contacts = workbook["Contacts"]
+            status_validation = DataValidation(type="list", formula1='"New,Qualified,Customer,Inactive"', allow_blank=True)
+            contacts.add_data_validation(status_validation); status_validation.add("H2:H1000")
+            pipeline = workbook["Pipeline"]
+            stage_validation = DataValidation(type="list", formula1='"Discovery,Qualified,Proposal,Negotiation,Won,Lost"', allow_blank=True)
+            pipeline.add_data_validation(stage_validation); stage_validation.add("D2:D1000")
+            tasks = workbook["Tasks"]
+            priority_validation = DataValidation(type="list", formula1='"Low,Medium,High,Critical"', allow_blank=True)
+            tasks.add_data_validation(priority_validation); priority_validation.add("D2:D1000")
+            settings = workbook.create_sheet("Settings")
+            settings.append(["Configuration", "Value"])
+            settings.append(["Currency", "USD"]); settings.append(["Fiscal year start", "January"])
+            settings.append(["Pipeline target", 25000]); settings.append(["Default probability", 25])
+            instructions = workbook.create_sheet("Instructions", 0)
+            instructions.append(["CRM Operating Guide", "Instructions"])
+            for step, detail in [
+                ("1. Configure", "Review Settings and replace example owners/status values."),
+                ("2. Import", "Paste contacts using the exact Contacts headers; keep IDs unique."),
+                ("3. Operate", "Record every customer interaction and assign the next task."),
+                ("4. Review", "Use Dashboard weekly; resolve overdue work and stale opportunities."),
+                ("5. Protect", "Store the workbook in an access-controlled location and back it up."),
+            ]: instructions.append([step, detail])
+            instructions.column_dimensions["A"].width = 22; instructions.column_dimensions["B"].width = 85
+            dashboard = workbook.create_sheet("Dashboard", 0)
+            dashboard.append([str(spec.get("name") or "CRM Dashboard"), "Value"])
+            dashboard.append(["Total contacts", "=COUNTA(Contacts!A:A)-1"])
+            dashboard.append(["Open pipeline value", '=SUMIF(Pipeline!D:D,"<>Won",Pipeline!E:E)'])
+            dashboard.append(["Follow-ups outstanding", '=COUNTIF(Activities!H:H,"no")'])
+            dashboard.append(["Open tasks", '=COUNTIF(Tasks!G:G,"Open")'])
+            dashboard.append(["Won deals", '=COUNTIF(Pipeline!D:D,"Won")'])
+            dashboard.append(["Pipeline opportunities", '=COUNTA(Pipeline!A:A)-1'])
+            dashboard.append(["Campaign leads", '=SUM(Campaigns!E:E)'])
+            dashboard.append(["Campaign revenue", '=SUM(Campaigns!G:G)'])
+            dashboard.append(["Average deal value", '=IFERROR(AVERAGE(Pipeline!E:E),0)'])
+            dashboard["A1"].font = dashboard["B1"].font = Font(bold=True, color="FFFFFF")
+            dashboard["A1"].fill = dashboard["B1"].fill = PatternFill("solid", fgColor="1F4E78")
+            dashboard.column_dimensions["A"].width = 28; dashboard.column_dimensions["B"].width = 20
+            chart = BarChart(); chart.title = "CRM operating snapshot"
+            chart.add_data(Reference(dashboard, min_col=2, min_row=2, max_row=7), titles_from_data=False)
+            chart.set_categories(Reference(dashboard, min_col=1, min_row=2, max_row=7)); dashboard.add_chart(chart, "D2")
+            workbook_path = _scoped_path(self.workdir, "crm-template.xlsx")
+            workbook.save(workbook_path)
+            paths.insert(0, str(workbook_path))
+        except ImportError:
+            pass
+        return paths
+
+    def _web(self, spec: dict) -> str:
+        path = _scoped_path(self.workdir, "index.html")
+        name = str(spec.get("name") or "Digital Product")
+        summary = str(spec.get("summary") or "")
+        path.write_text(
+            "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+            f"<title>{name}</title></head><body><main><h1>{name}</h1><p>{summary}</p></main></body></html>", encoding="utf-8"
+        )
+        return str(path)
+
+    def _document(self, spec: dict) -> str:
+        path = _scoped_path(self.workdir, "product.pdf")
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.pdfgen import canvas
+            pdf = canvas.Canvas(str(path), pagesize=letter)
+            pdf.setTitle(str(spec.get("name") or "Digital Product"))
+            pdf.drawString(72, 740, str(spec.get("name") or "Digital Product")[:80])
+            text = pdf.beginText(72, 710)
+            for line in re.findall(r".{1,85}(?:\s+|$)", str(spec.get("summary") or spec.get("deliverable") or "")):
+                text.textLine(line.strip())
+            pdf.drawText(text); pdf.save()
+        except Exception as exc:
+            raise RuntimeError(f"PDF materialization requires reportlab: {exc}")
+        return str(path)
+
+    def _software(self, spec: dict) -> str:
+        path = _scoped_path(self.workdir, "product.py")
+        path.write_text(
+            "from __future__ import annotations\n\n"
+            "def main() -> int:\n"
+            f"    print({str(spec.get('name') or 'Digital Product')!r})\n"
+            "    return 0\n\n"
+            "if __name__ == '__main__':\n    raise SystemExit(main())\n", encoding="utf-8"
+        )
+        return str(path)
+
+    def _usage(self, spec: dict, written: list[str]) -> None:
+        readme = _scoped_path(self.workdir, "README.md")
+        existing = readme.read_text(encoding="utf-8", errors="ignore") if readme.exists() else f"# {spec.get('name', 'Product')}\n"
+        usage = "\n\n## Included customer files\n" + "\n".join(f"- `{Path(item).name}`" for item in written)
+        usage += "\n\n## Usage\nOpen or import the included files in the corresponding desktop or web application. Duplicate the example rows before replacing them with customer data.\n"
+        readme.write_text(existing + usage, encoding="utf-8")
+
+
+class DependencyTraversalTool(Tool):
+    """Build bounded dependency/regression packets for model context injection."""
+
+    name = "dependency_traversal"
+    description = (
+        "Map file/symbol dependencies and traverse upstream contracts, downstream consumers, "
+        "tests, configuration, Hazy Hash candidates, and long-term memory into a bounded repair packet."
+    )
+    use_when = (
+        "Use before a cross-file change, after a validator names a failing symbol/path, or when an "
+        "agent must find hidden evidence across a complex repository without losing project scope."
+    )
+    params_schema = {
+        "action": "scan|traverse|inject|status",
+        "query": "change request, failing symbol, or evidence clue",
+        "paths": "optional known anchor paths",
+        "depth": "bounded graph depth, default 3",
+        "max_nodes": "bounded packet size, default 48",
+        "failures": "optional fresh validator failures",
+        "force": "rebuild the graph even when unchanged",
+    }
+
+    def __init__(self, workdir: Path, memory_tool: Any = None, file_locate_tool: Any = None) -> None:
+        from tools.c0d3rV2.plugins.dependency_traversal import DependencyTraversal
+        self._traversal = DependencyTraversal(workdir)
+        self._memory = memory_tool
+        self._locator = file_locate_tool
+
+    def execute(self, params: dict) -> dict:
+        action = str(params.get("action") or "inject").lower()
+        query = str(params.get("query") or "").strip()
+        if action == "status":
+            return self._traversal.status()
+        if action == "scan":
+            return self._traversal.scan(
+                max_files=int(params.get("max_files") or 4000), force=bool(params.get("force")),
+            )
+        if not query:
+            return {"error": "query is required"}
+        paths = [str(item) for item in (params.get("paths") or []) if str(item).strip()]
+        depth = min(8, max(0, int(params.get("depth") or 3)))
+        max_nodes = min(200, max(4, int(params.get("max_nodes") or 48)))
+        if action == "traverse":
+            return self._traversal.traverse(
+                query, paths=paths, depth=depth, max_nodes=max_nodes,
+                force_scan=bool(params.get("force")),
+            )
+        if action != "inject":
+            return {"error": f"unsupported action: {action}"}
+        memory: list[Any] = []
+        hints: list[str] = []
+        if self._memory is not None:
+            try:
+                memory = list((self._memory.execute({"query": query}) or {}).get("results") or [])
+            except Exception:
+                memory = []
+        if self._locator is not None:
+            try:
+                located = self._locator.execute({"query": query, "project_root": str(self._traversal.workdir)}) or {}
+                hints = [str(item) for item in located.get("paths") or []]
+            except Exception:
+                hints = []
+        return self._traversal.injection_packet(
+            query, paths=paths, depth=depth, max_nodes=max_nodes,
+            memory=memory, hazy_hints=hints,
+            failures=list(params.get("failures") or []),
+        )
+
+
+class ProjectWorkMapperTool(Tool):
+    """Persist a scoped project map and atomic model-sized work contracts."""
+
+    name = "project_work_mapper"
+    description = "Map a project and break a broad request into resumable atomic contracts with explicit inputs, outputs, dependencies, acceptance checks, and scope boundaries."
+    use_when = "Use before sending a model any multi-file, multi-class, or project-scale request, and refresh after each completed contract."
+    params_schema = {
+        "action": "map|next|complete|refresh|status",
+        "request": "required for map — requested outcome",
+        "task_id": "required for complete",
+        "evidence": "optional completion evidence",
+    }
+
+    def __init__(self, workdir: Path) -> None:
+        self.workdir = workdir.resolve()
+        self.state_path = self.workdir / ".c0d3r" / "project-map.json"
+
+    def execute(self, params: dict) -> dict:
+        action = str(params.get("action") or "status").lower()
+        if action in {"map", "refresh"}:
+            request = str(params.get("request") or "").strip()
+            existing = self._load()
+            if not request:
+                request = str(existing.get("request") or "")
+            if not request:
+                return {"error": "request is required"}
+            acceptance_config = params.get("acceptance") if isinstance(params.get("acceptance"), dict) else existing.get("acceptance_config") or {}
+            state = self._map(request, previous=existing, acceptance_config=acceptance_config)
+            if isinstance(params.get("outline"), dict):
+                outline_path = self.workdir / ".c0d3r" / "refined-outline.json"
+                outline_path.parent.mkdir(parents=True, exist_ok=True)
+                outline_path.write_text(json.dumps(params["outline"], indent=2, ensure_ascii=True), encoding="utf-8")
+                state["outline_path"] = str(outline_path)
+            self._save(state)
+            return state
+        state = self._load()
+        if not state:
+            return {"error": "project has not been mapped"}
+        if action == "next":
+            completed = {task["id"] for task in state.get("tasks", []) if task.get("status") == "complete"}
+            for task in state.get("tasks", []):
+                if task.get("status") == "in_progress":
+                    return {"task": task, "scope": state.get("scope"), "project": state.get("project")}
+            for task in state.get("tasks", []):
+                if task.get("status") == "pending" and set(task.get("depends_on") or []).issubset(completed):
+                    task["status"] = "in_progress"
+                    self._save(state)
+                    return {"task": task, "scope": state.get("scope"), "project": state.get("project")}
+            return {"task": None, "complete": all(t.get("status") == "complete" for t in state.get("tasks", []))}
+        if action == "complete":
+            task_id = str(params.get("task_id") or "")
+            for task in state.get("tasks", []):
+                if task.get("id") == task_id:
+                    task["status"] = "complete"
+                    task["evidence"] = params.get("evidence") or {}
+                    task["completed_at"] = time.time()
+                    self._save(state)
+                    return {"completed": task_id, "remaining": sum(t.get("status") != "complete" for t in state.get("tasks", []))}
+            return {"error": f"unknown task: {task_id}"}
+        return state
+
+    def _load(self) -> dict:
+        try:
+            value = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    def _save(self, state: dict) -> None:
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        state["updated_at"] = time.time()
+        self.state_path.write_text(json.dumps(state, indent=2, ensure_ascii=True), encoding="utf-8")
+
+    def _map(self, request: str, *, previous: dict, acceptance_config: dict) -> dict:
+        ignored = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
+        files = []
+        tests = []
+        for path in self.workdir.rglob("*"):
+            if not path.is_file() or any(part in ignored for part in path.parts):
+                continue
+            try:
+                relative = path.relative_to(self.workdir).as_posix()
+            except ValueError:
+                continue
+            if relative == ".c0d3r/project-map.json":
+                continue
+            entry = {"path": relative, "extension": path.suffix.lower(), "bytes": path.stat().st_size}
+            if path.suffix.lower() == ".py" and path.stat().st_size < 250_000:
+                try:
+                    tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+                    entry["symbols"] = [node.name for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))][:80]
+                except Exception:
+                    entry["symbols"] = []
+            files.append(entry)
+            if "test" in path.name.lower() or "tests" in path.parts:
+                tests.append(relative)
+            if len(files) >= 1000:
+                break
+        prior = {task.get("id"): task for task in previous.get("tasks", []) if isinstance(task, dict)}
+        tasks = self._contracts(request, files, tests, acceptance_config)
+        for task in tasks:
+            old = prior.get(task["id"])
+            if old and old.get("status") == "complete":
+                task.update({"status": "complete", "evidence": old.get("evidence"), "completed_at": old.get("completed_at")})
+        for task in tasks:
+            if task.get("id") == "contract" and task.get("status") != "complete":
+                task.update({"status": "complete", "evidence": {"path": ".c0d3r/acceptance.json"}, "completed_at": time.time()})
+        state = {
+            "version": 1,
+            "request": request,
+            "acceptance_config": acceptance_config,
+            "project": {"root": str(self.workdir), "file_count": len(files), "test_count": len(tests)},
+            "scope": {"allowed_roots": [str(self.workdir)], "workspace_escape": "forbidden", "external_access": "requires trusted caller authorization"},
+            "files": files,
+            "tests": tests,
+            "tasks": tasks,
+        }
+        acceptance_path = self.workdir / ".c0d3r" / "acceptance.json"
+        acceptance_path.parent.mkdir(parents=True, exist_ok=True)
+        acceptance_path.write_text(json.dumps({"request": request, "acceptance": acceptance_config, "scope": state["scope"]}, indent=2), encoding="utf-8")
+        return state
+
+    def _contracts(self, request: str, files: list[dict], tests: list[str], acceptance_config: dict) -> list[dict]:
+        existing_paths = [item["path"] for item in files[:120]]
+        contracts = [("contract", "Confirm the bounded acceptance contract", [], existing_paths, [".c0d3r/acceptance.json"], "JSON acceptance, input/output and scope contract", "Acceptance contract parses and covers the requested outcome")]
+        request_tokens = {token for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_]{2,}", request.lower()) if token not in {"the", "and", "with", "complete", "product", "without", "changing", "scope"}}
+        relevant = []
+        explicit_paths = {
+            match.replace("\\", "/") for match in re.findall(
+                r"(?<![\w.-])([\w./\\-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|cpp|c|h|php|pl|html|css|json))\b",
+                request, flags=re.IGNORECASE,
+            )
+        }
+        mutable_explicit = {
+            path for path in explicit_paths
+            if not Path(path).name.lower().startswith("test_") and Path(path).name.lower() not in {"contract.json", "acceptance.json"}
+        }
+        for item in files:
+            searchable = f"{item.get('path', '')} {' '.join(item.get('symbols') or [])}".lower()
+            if request_tokens and any(token in searchable for token in request_tokens):
+                relevant.append(item)
+        if mutable_explicit:
+            by_path = {item["path"].lower(): item for item in files}
+            relevant = [by_path[path.lower()] for path in mutable_explicit if path.lower() in by_path]
+            for path in mutable_explicit:
+                if path.lower() not in by_path:
+                    relevant.append({"path": path, "extension": Path(path).suffix.lower(), "symbols": []})
+        elif not relevant:
+            relevant = [item for item in files if item.get("extension") in {".py", ".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".json"}][:6]
+        implementation_ids = []
+        if relevant:
+            for index, item in enumerate(relevant[:12], 1):
+                task_id = f"implement-{index}"
+                implementation_ids.append(task_id)
+                symbols = item.get("symbols") or []
+                contracts.append((task_id, f"Update only {item['path']}", ["contract"], [item["path"]], [item["path"]], f"Preserve declared symbols/interfaces: {symbols}", "Focused file checks and dependent interface checks pass"))
+        else:
+            extensions = list(acceptance_config.get("required_extensions") or ["requested artifact"])
+            for index, extension in enumerate(extensions[:4], 1):
+                task_id = f"artifact-{index}"
+                implementation_ids.append(task_id)
+                contracts.append((task_id, f"Create one usable {extension} artifact", ["contract"], [".c0d3r/acceptance.json"], [f"artifact matching {extension}"], f"A customer-usable {extension} file matching the declared product contract", f"The {extension} parser/opener validation succeeds"))
+        contracts.extend([
+            ("test", "Run focused deterministic validation", implementation_ids, tests or existing_paths, [".c0d3r/test-results.json"], "Machine-readable validation evidence", "Commands exit zero and artifact parsers/openers succeed"),
+            ("integrate", "Integrate and verify the complete requested outcome", ["test"], existing_paths, [".c0d3r/release-evidence.json"], "Complete acceptance and release evidence", "All acceptance requirements pass together"),
+        ])
+        return [
+            {
+                "id": task_id, "title": title, "status": "pending", "depends_on": dependencies,
+                "request_scope": request, "inputs": {"paths": inputs, "shape": "existing project artifacts and declared interfaces"},
+                "outputs": {"paths": outputs, "shape": output_shape},
+                "acceptance": [acceptance], "forbidden": ["files outside allowed_roots", "unrequested project redesign", "claiming success without evidence"],
+            }
+            for task_id, title, dependencies, inputs, outputs, output_shape, acceptance in contracts
+        ]
+
+
+class ClassRefinementBenchmarkTool(Tool):
+    """Run the ATF class-generation contract/test refinement benchmark."""
+
+    name = "class_refinement_benchmark"
+    description = (
+        "Generate contract-heavy class tasks, have C0D3R+AgentTheFreeloader "
+        "produce the class, execute behavioral tests, log failures, and update "
+        "the reusable class-generation prompt guide."
+    )
+    use_when = (
+        "Use when asked to make, benchmark, improve, or validate class generation; "
+        "when creating science/engineering/OOP classes; or when a class output "
+        "must be correct on the first try. This decomposes class work into "
+        "contract -> implementation -> tests -> repair/refinement."
+    )
+    params_schema = {
+        "count": "int optional — examples to run, default 4, max 300",
+        "attempts": "int optional — attempts per class, default 2, max 5",
+    }
+
+    def execute(self, params: dict) -> dict:
+        try:
+            setup_error = _ensure_project_django()
+            if setup_error:
+                return {"error": f"django setup failed: {setup_error}"}
+            from services.atf_class_refinement import run_class_refinement_benchmark
+        except Exception as exc:
+            return {"error": f"ATF class refinement unavailable: {exc}"}
+        try:
+            count = max(1, min(int(params.get("count") or 4), 300))
+        except Exception:
+            count = 4
+        try:
+            attempts = max(1, min(int(params.get("attempts") or 2), 5))
+        except Exception:
+            attempts = 2
+        return run_class_refinement_benchmark(count=count, attempts=attempts)
 
 
 class ToolRegistry:

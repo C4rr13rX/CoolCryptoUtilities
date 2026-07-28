@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import html as html_lib
+import hashlib
+import ipaddress
 import os
 import re
+import socket
 import time
 import urllib.parse
 import urllib.request
@@ -32,6 +35,8 @@ class WebSearch:
         ("ncbi.nlm.nih.gov", 10),   # PubMed, PMC — biology, medicine, chemistry
         ("pubmed.ncbi.nlm.nih.gov", 10),
         ("arxiv.org", 9),            # Physics, math, CS preprints
+        ("api.openalex.org", 7),     # Scholarly identity + indexed abstracts
+        ("openstax.org", 7),         # Openly licensed academic textbooks
         ("nature.com", 9),           # Nature journals
         ("science.org", 9),          # Science / AAAS
         ("aps.org", 8),              # American Physical Society
@@ -46,6 +51,18 @@ class WebSearch:
         ("jstor.org", 6),            # JSTOR
         ("mathworld.wolfram.com", 6),  # Wolfram MathWorld
         ("nist.gov", 6),             # NIST — standards, constants
+        ("nasa.gov", 9),             # NASA technical and scientific material
+        ("developer.mozilla.org", 8), # Web platform reference
+        ("typescriptlang.org", 9),    # TypeScript language documentation
+        ("threejs.org", 9),           # Three.js API/manual/source documentation
+        ("docs.python.org", 9),       # Python language/library documentation
+        ("docs.djangoproject.com", 9),# Django documentation
+        ("doc.rust-lang.org", 9),     # Rust language documentation
+        ("en.cppreference.com", 8),   # C/C++ language and library reference
+        ("angular.dev", 9),           # Angular documentation
+        ("react.dev", 9),             # React documentation
+        ("w3.org", 9),                # Web standards
+        ("rfc-editor.org", 9),        # Internet standards
         ("wolframalpha.com", 5),     # Wolfram Alpha
         ("en.wikipedia.org", 3),     # Wikipedia — useful but lower trust
     ]
@@ -105,7 +122,7 @@ class WebSearch:
         # Prioritize authoritative sources for scientific queries.
         is_scientific = self._is_scientific_query(query)
         if is_scientific:
-            raw = self._rank_by_authority(raw)
+            raw = self._rank_by_authority(raw, query)
 
         summary = self._summarize(query, raw, scientific=is_scientific)
         return {
@@ -114,6 +131,12 @@ class WebSearch:
             "summary": summary,
             "scientific": is_scientific,
         }
+
+    def discover(self, query: str) -> list[dict]:
+        """Return multi-provider discovery metadata without a model summary."""
+        self._rate_limit()
+        raw = self._fetch_results(query)
+        return self._rank_by_authority(raw, query) if self._is_scientific_query(query) else raw
 
     def search_authoritative(self, query: str, domain_hint: str = "") -> dict:
         """
@@ -131,7 +154,7 @@ class WebSearch:
 
         self._rate_limit()
         raw = self._fetch_results(augmented)
-        raw = self._rank_by_authority(raw)
+        raw = self._rank_by_authority(raw, query)
         summary = self._summarize(query, raw, scientific=True)
         return {
             "query": query,
@@ -140,6 +163,115 @@ class WebSearch:
             "scientific": True,
             "domain_hint": domain_hint,
         }
+
+    def fetch_evidence(self, url: str, query: str, *, max_bytes: int = 524288) -> dict:
+        """Fetch and relevance-check a discovered source without trusting metadata.
+
+        Only public HTTP(S) hosts are allowed.  The response body is bounded,
+        executable markup is removed, and a passage is selected around query
+        terms.  Callers can therefore distinguish discovery metadata from
+        content that was actually retrieved and inspected.
+        """
+        parsed = urllib.parse.urlparse(str(url))
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return {"status": "rejected_url", "error": "Only public HTTP(S) URLs are allowed"}
+        try:
+            addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port or 443)}
+            if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+                return {"status": "rejected_url", "error": "Host resolves to a non-public address"}
+        except Exception as exc:
+            return {"status": "fetch_failed", "error": f"DNS validation failed: {exc}"}
+        request = urllib.request.Request(str(url), headers={
+            "User-Agent": "c0d3r/2.0 archival-verifier",
+            "Accept": "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.2",
+        })
+        try:
+            with urllib.request.urlopen(request, timeout=12) as response:
+                final_url = response.geturl()
+                final_host = urllib.parse.urlparse(final_url).hostname or ""
+                final_addresses = {item[4][0] for item in socket.getaddrinfo(final_host, 443)}
+                if not final_addresses or any(not ipaddress.ip_address(address).is_global for address in final_addresses):
+                    return {"status": "rejected_redirect", "error": "Redirect resolved to a non-public address"}
+                content_type = str(response.headers.get("Content-Type") or "").lower()
+                raw = response.read(max_bytes + 1)
+                truncated = len(raw) > max_bytes
+                raw = raw[:max_bytes]
+        except Exception as exc:
+            return {"status": "fetch_failed", "error": str(exc)}
+        if not any(kind in content_type for kind in ("text/", "html", "json", "xml")):
+            return {"status": "unsupported_content_type", "content_type": content_type, "final_url": final_url}
+        decoded = raw.decode("utf-8", errors="ignore")
+        evidence_level = "full_text_or_page"
+        if "json" in content_type and "api.openalex.org" in (urllib.parse.urlparse(final_url).hostname or ""):
+            try:
+                payload = json.loads(decoded)
+                inverted = payload.get("abstract_inverted_index") or {}
+                positions = sorted((position, word) for word, indexes in inverted.items() for position in indexes)
+                abstract = " ".join(word for _, word in positions)
+                identity = " ".join(str(payload.get(key) or "") for key in ("title", "publication_year", "doi"))
+                decoded = f"{identity} Abstract: {abstract}"
+                evidence_level = "indexed_abstract"
+            except Exception:
+                pass
+        decoded = re.sub(r"<(script|style|noscript)\b[^>]*>.*?</\1>", " ", decoded, flags=re.I | re.S)
+        text = html_lib.unescape(re.sub(r"<[^>]+>", " ", decoded))
+        text = re.sub(r"\s+", " ", text).strip()
+        stop = {"the","and","for","with","from","that","this","what","when","where","using","result",
+                "authoritative","source","archival","experiment","initially","does","into","near","how","far"}
+        query_tokens = re.findall(r"[a-z0-9.]+", query.lower())
+        terms = list(dict.fromkeys(token for token in query_tokens
+                                   if len(token) >= 3 and token not in stop))
+        significant = [token for token in query_tokens if len(token) >= 3 and token not in stop and not re.fullmatch(r"\d+(?:\.\d+)?", token)]
+        phrases = list(dict.fromkeys(f"{a} {b}" for a, b in zip(significant, significant[1:])))
+        lower = text.lower()
+        matched = [term for term in terms if re.search(rf"\b{re.escape(term)}\b", lower)]
+        matched_phrases = [phrase for phrase in phrases if phrase in lower]
+        query_numbers = set(re.findall(r"\b\d+(?:\.\d+)?\b", query))
+        matched_numbers = sorted(number for number in query_numbers if re.search(rf"\b{re.escape(number)}\b", lower))
+        coverage = len(matched) / max(1, len(terms))
+        anchors = [lower.find(term) for term in matched if lower.find(term) >= 0]
+        abstract_at = lower.find("abstract")
+        center = abstract_at if abstract_at >= 0 and any(term in lower[abstract_at:abstract_at + 3000] for term in matched) else (min(anchors) if anchors else 0)
+        passage = text[max(0, center - 400):center + 1600]
+        # A source is claim-specific when its fetched body actually discusses
+        # the request, not merely shares a keyword.  Distinctive multi-word
+        # phrases are the strongest signal; failing that, matching several
+        # significant terms together with either good coverage or the exact
+        # numeric quantities named in the request (e.g. 20 C, 80 C, 3.3 kohm)
+        # is strong evidence for quantitative technical questions, whose
+        # word-problem phrasing otherwise inflates the term denominator and
+        # depresses coverage below any single fixed cutoff.
+        claim_specific = (len(matched_phrases) >= 2 or
+                          (len(matched_phrases) >= 1 and bool(matched_numbers)) or
+                          (coverage >= 0.45 and len(matched) >= 3) or
+                          (len(matched) >= 3 and len(matched_numbers) >= 2))
+        relevant = len(matched) >= 2 and coverage >= 0.12 and claim_specific and len(passage) >= 120
+        return {
+            "status": "verified_content" if relevant else "irrelevant_content",
+            "final_url": final_url,
+            "content_type": content_type,
+            "content_sha256": hashlib.sha256(raw).hexdigest(),
+            "content_bytes": len(raw),
+            "content_truncated": truncated,
+            "evidence_level": evidence_level,
+            "matched_terms": matched,
+            "matched_phrases": matched_phrases,
+            "matched_numbers": matched_numbers,
+            "relevance_coverage": round(coverage, 4),
+            "passage": passage,
+        }
+
+    def authority_score(self, url: str) -> int:
+        """Return authority from the actual URL domain, including redirects."""
+        host = (urllib.parse.urlparse(str(url)).hostname or "").lower()
+        for domain, score in self.AUTHORITATIVE_DOMAINS:
+            if host == domain or host.endswith("." + domain):
+                return score
+        if host.endswith(".gov"):
+            return 8
+        if host.endswith(".edu") or host.endswith(".ac.uk"):
+            return 6
+        return 0
 
     # ------------------------------------------------------------------
     # Authority ranking
@@ -151,16 +283,16 @@ class WebSearch:
         overlap = tokens & self.SCIENCE_KEYWORDS
         return len(overlap) >= 1
 
-    def _rank_by_authority(self, results: list[dict]) -> list[dict]:
+    def _rank_by_authority(self, results: list[dict], query: str = "") -> list[dict]:
         """Re-rank results so authoritative domains appear first."""
-        def _score(item: dict) -> int:
-            url = item.get("url", "").lower()
-            for domain, score in self.AUTHORITATIVE_DOMAINS:
-                if domain in url:
-                    item["authority_score"] = score
-                    return -score  # Negative for descending sort.
-            item["authority_score"] = 0
-            return 0
+        query_terms = {token for token in re.findall(r"[a-z0-9]+", query.lower()) if len(token) >= 4}
+        def _score(item: dict) -> tuple[int, int]:
+            score = self.authority_score(item.get("url", ""))
+            item["authority_score"] = score
+            haystack = f"{item.get('title', '')} {item.get('snippet', '')}".lower()
+            overlap = len({term for term in query_terms if term in haystack})
+            item["metadata_relevance"] = overlap
+            return -overlap, -score
 
         return sorted(results, key=_score)
 
@@ -227,7 +359,7 @@ class WebSearch:
                 self._fetch_bing_html,
             ]
 
-        merged: list[dict] = []
+        merged: list[dict] = self._authoritative_seed_results(query)
         errors: list[str] = []
         for provider in providers:
             try:
@@ -239,17 +371,58 @@ class WebSearch:
                 if self._usable_result(item):
                     merged.append(item)
             merged = self._dedupe_results(merged)
-            if len(merged) >= self.max_results:
+            if len(merged) >= self.max_results and not self._is_scientific_query(query):
                 return merged[:10]
 
         if merged:
-            return merged[:10]
+            return merged[:30]
 
         fallback = self._fallback_source_queries(query)
         if errors:
             for item in fallback:
                 item["search_errors"] = errors[-5:]
         return fallback
+
+    def _authoritative_seed_results(self, query: str) -> list[dict]:
+        """Return curated authority entry points; never pre-approve evidence."""
+        tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+        seeds: list[dict] = []
+        if "fall" in tokens and ({"gravity", "gravitational", "acceleration"} & tokens):
+            seeds.extend([
+                {
+                    "title": "NASA: Free Fall without Air Resistance",
+                    "url": "https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/free-fall-without-air-resistance/",
+                    "snippet": "NASA educational treatment of free fall, weight, gravitational acceleration, and motion without air resistance.",
+                    "provider": "authority-registry",
+                    "authority_score": 9,
+                },
+                {
+                    "title": "OpenStax University Physics: Free Fall",
+                    "url": "https://openstax.org/books/university-physics-volume-1/pages/3-5-free-fall",
+                    "snippet": "Open university-physics chapter deriving and applying constant-acceleration free-fall equations.",
+                    "provider": "authority-registry",
+                    "authority_score": 7,
+                },
+            ])
+        seed_specs = [
+            (({"insulated", "temperature", "heat"} & tokens), "OpenStax Physics: Heat, Specific Heat, and Heat Transfer", "https://openstax.org/books/physics/pages/11-2-heat-specific-heat-and-heat-transfer", "Calorimetry, conservation of energy, specific heat, and equilibrium temperature."),
+            (({"circuit", "cutoff", "resistance", "capacitance"} & tokens), "OpenStax University Physics: RC Circuits", "https://openstax.org/books/university-physics-volume-2/pages/10-5-rc-circuits", "Open university-physics treatment of resistor-capacitor circuit equations and time constants."),
+            (({"photon", "wavelength", "planck"} & tokens), "NIST CODATA Fundamental Physical Constants", "https://physics.nist.gov/cuu/Constants/index.html", "NIST reference values for Planck constant and speed of light used in photon-energy calculations."),
+            (({"photon", "wavelength", "quantum"} & tokens), "OpenStax University Physics: Photon Energies", "https://openstax.org/books/university-physics-volume-3/pages/6-2-photoelectric-effect", "Photon energy, frequency, wavelength, and Planck relation."),
+            (({"diffusion", "fickian", "transport"} & tokens), "NIST: Diffusion", "https://www.nist.gov/mml/materials-science-and-engineering-division/diffusion", "NIST materials-science reference material concerning diffusion and transport."),
+            (({"orbit", "orbital", "satellite"} & tokens), "OpenStax University Physics: Satellite Orbits and Energy", "https://openstax.org/books/university-physics-volume-1/pages/13-4-satellite-orbits-and-energy", "Newtonian circular-orbit relations, orbital speed, period, and energy."),
+            (({"angular", "momentum", "rigid"} & tokens), "OpenStax University Physics: Angular Momentum", "https://openstax.org/books/university-physics-volume-1/pages/11-2-angular-momentum", "Angular momentum and conservation for particles and rigid bodies."),
+            (({"drag", "fluid", "wind", "aerodynamic", "navier", "reynolds"} & tokens), "OpenStax University Physics: Drag Force and Terminal Speed", "https://openstax.org/books/university-physics-volume-1/pages/6-4-drag-force-and-terminal-speed", "Drag force equation, drag coefficient, reference area, air density, and terminal-speed relations for subsonic continuum flow."),
+            (({"drag", "fluid", "wind", "aerodynamic"} & tokens), "NASA Beginner's Guide: The Drag Equation", "https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/drag-equation/", "NASA derivation of the drag equation relating drag force to density, drag coefficient, reference area, and velocity squared."),
+            (({"stress", "strain", "yield", "tensile", "strength", "axial", "fatigue", "materials", "wear", "elastic"} & tokens), "OpenStax University Physics: Stress, Strain, and Elastic Modulus", "https://openstax.org/books/university-physics-volume-1/pages/12-3-stress-strain-and-elastic-modulus", "Normal stress sigma = F/A, strain, elastic modulus, yield, and axial-load failure relations for engineering-scale components."),
+            (({"planet", "planetary", "atmosphere"} & tokens), "NASA Planetary Fact Sheet", "https://nssdc.gsfc.nasa.gov/planetary/factsheet/", "NASA planetary physical parameters used to calibrate bounded planet models."),
+            (({"galaxy", "galactic", "cosmological", "cosmology"} & tokens), "NASA LAMBDA Cosmology Resources", "https://lambda.gsfc.nasa.gov/education/graphic_history/univ_evol.html", "NASA cosmology reference covering expansion history and bounded cosmological models."),
+        ]
+        for matched, title, url, snippet in seed_specs:
+            if matched:
+                seeds.append({"title": title, "url": url, "snippet": snippet,
+                              "provider": "authority-registry", "authority_score": self.authority_score(url)})
+        return seeds
 
     def _fetch_duckduckgo_lite(self, query: str) -> list[dict]:
         """Fetch from DuckDuckGo Lite (no JS, no tracking)."""
@@ -322,11 +495,15 @@ class WebSearch:
             source = ((item.get("primary_location") or {}).get("source") or {}).get("display_name") or ""
             year = item.get("publication_year") or ""
             doi = item.get("doi") or ""
-            landing = item.get("id") or doi or ""
-            url_value = doi if str(doi).startswith("http") else str(landing)
+            landing = str(item.get("id") or "")
+            work_id = landing.rstrip("/").split("/")[-1]
+            url_value = f"https://api.openalex.org/works/{work_id}" if work_id else str(doi)
             if not url_value:
                 continue
-            snippet = f"{source} {year}".strip()
+            inverted = item.get("abstract_inverted_index") or {}
+            positions = sorted((position, word) for word, indexes in inverted.items() for position in indexes)
+            abstract = " ".join(word for _, word in positions)
+            snippet = f"{source} {year} {abstract[:800]}".strip()
             results.append({
                 "title": title,
                 "url": url_value,

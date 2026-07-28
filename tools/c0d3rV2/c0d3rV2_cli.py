@@ -112,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         ScientificMethodTool,
         UnboundedSolverTool,
         MathGroundingTool,
+        ProjectWorkMapperTool,
+        DependencyTraversalTool,
     )
     from unbounded_solver import UnboundedSolver
     from process_flow import ProcessFlow
@@ -142,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     runtime_root = _runtime_root()
     lt_memory = LongTermMemory(runtime_root)
     st_memory = STSideLoadedMemory(session_id, runtime_root)
+    from st_memory import STMemory
+    short_memory = STMemory(session, session_id=session_id, runtime_root=runtime_root)
     lt_side_memory = LTSideLoadedMemory(runtime_root)
 
     # Shared web-search instance (reused by solver so research feeds the matrix)
@@ -158,10 +162,14 @@ def main(argv: list[str] | None = None) -> int:
     tools.register(DirectoryEnsureTool(workdir))
     tools.register(WorkspaceScaffoldTool(workdir))
     tools.register(EnvironmentBootstrapTool(workdir))
+    tools.register(ProjectWorkMapperTool(workdir))
     tools.register(WebSearchTool(web_search))
     tools.register(ScientificMethodTool(web_search, runtime_dir=runtime_root))
-    tools.register(MemorySearchTool(lt_memory))
-    tools.register(FileLocateTool(st_memory, lt_side_memory))
+    memory_tool = MemorySearchTool(lt_memory)
+    file_locate_tool = FileLocateTool(st_memory, lt_side_memory, workdir=workdir)
+    tools.register(memory_tool)
+    tools.register(file_locate_tool)
+    tools.register(DependencyTraversalTool(workdir, memory_tool, file_locate_tool))
     tools.register(MatrixSearchTool())
     tools.register(UnboundedSolverTool(solver))
     tools.register(MathGroundingTool(solver))
@@ -196,7 +204,8 @@ def main(argv: list[str] | None = None) -> int:
         tools=tools,
         session_id=session_id,
         lt_memory=lt_memory,
-        st_memory=st_memory,
+        short_memory=short_memory,
+        st_side_memory=st_memory,
         lt_side_memory=lt_side_memory,
         usage_tracker=usage,
         header=header,

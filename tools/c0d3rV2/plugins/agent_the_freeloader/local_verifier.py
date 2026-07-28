@@ -19,7 +19,12 @@ class LocalCorrectionVerifier:
 
     def __init__(self) -> None:
         self._embedder = None
-        self._disabled = os.getenv("ATF_LOCAL_VERIFIER", "1").lower() in {"0", "false", "no", "off"}
+        # Correction retrieval runs on every agent step. Loading and executing
+        # an ONNX embedding model here can consume gigabytes and minutes on a
+        # CPU-only host, hiding provider latency behind local work. Keep the
+        # deterministic lexical ranker as the zero-cost default; embeddings
+        # remain available as an explicit deployment choice.
+        self._disabled = os.getenv("ATF_LOCAL_VERIFIER", "0").lower() in {"0", "false", "no", "off"}
 
     def rank(self, query: str, events: list[dict], *, limit: int = 8) -> list[dict]:
         if not query.strip() or not events:

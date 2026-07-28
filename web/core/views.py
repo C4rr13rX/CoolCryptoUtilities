@@ -323,6 +323,11 @@ class ModelControlPageView(BaseSecureView):
     initial_route = "model-control"
 
 
+def guardian_health(request: HttpRequest) -> JsonResponse:
+    """Dependency-light health probe for the external Guardian process."""
+    return JsonResponse({"status": "ok", "service": "django", "timestamp": time.time()})
+
+
 def guardian_failure_response(request, *args, **kwargs):
     view = GuardianFallbackView.as_view()
     response = view(request, *args, **kwargs)

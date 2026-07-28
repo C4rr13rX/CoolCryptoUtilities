@@ -50,6 +50,13 @@ from services.branddozer_state import delete_project, get_project, list_projects
 from services.branddozer_jobs import enqueue_job, get_job, job_payload, update_job
 from services.api_integrations import get_integration_value
 from services.logging_utils import log_message
+from services.branddozer_product_loop import (
+    load_state as load_product_loop_state,
+    run_product_loop_cycle,
+    tail_log as tail_product_loop_log,
+    upsert_product_lab_project,
+)
+from services.atf_class_refinement import run_class_refinement_benchmark
 
 
 def _normalize_repo_full_name(raw_path: str) -> str:
@@ -450,6 +457,11 @@ class ProjectListView(APIView):
         for project in projects:
             entry = dict(project)
             entry.update(runtime_map.get(project.get("id"), {}))
+            try:
+                from services.branddozer_lifecycle import lifecycle_status
+                entry["lifecycle"] = lifecycle_status(project)
+            except Exception as exc:
+                entry["lifecycle"] = {"error": str(exc)}
             payload.append(entry)
         return Response({"projects": payload}, status=status.HTTP_200_OK)
 
@@ -457,6 +469,8 @@ class ProjectListView(APIView):
         data = request.data or {}
         try:
             project = save_project(data)
+            from services.branddozer_lifecycle import ensure_lifecycle
+            project["lifecycle"] = ensure_lifecycle(project)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(project, status=status.HTTP_201_CREATED)
@@ -473,6 +487,8 @@ class ProjectDetailView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if not project:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        from services.branddozer_lifecycle import ensure_lifecycle
+        project["lifecycle"] = ensure_lifecycle(project)
         return Response(project, status=status.HTTP_200_OK)
 
     def delete(self, request: Request, project_id: str, *args, **kwargs) -> Response:
@@ -489,6 +505,29 @@ class ProjectStartView(APIView):
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
         result = branddozer_manager.start(project_id)
         return Response(result, status=status.HTTP_200_OK)
+
+
+class ProjectLifecycleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, project_id: str, *args, **kwargs) -> Response:
+        project = get_project(project_id)
+        if not project:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        from services.branddozer_lifecycle import ensure_lifecycle
+        return Response(ensure_lifecycle(project), status=status.HTTP_200_OK)
+
+
+class ProjectPreviewView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, project_id: str, *args, **kwargs) -> Response:
+        project = get_project(project_id)
+        if not project:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        from services.branddozer_lifecycle import launch_preview
+        open_on_pc = bool((request.data or {}).get("open_on_pc", True))
+        return Response(launch_preview(project, open_on_pc=open_on_pc), status=status.HTTP_200_OK)
 
 
 class ProjectStopView(APIView):
@@ -533,6 +572,56 @@ class ProjectInterjectionSuggestView(APIView):
         if interjections:
             update_project_fields(project_id, {"interjections": interjections, "last_ai_generated": int(time.time())})
         return Response({"interjections": interjections}, status=status.HTTP_200_OK)
+
+
+class ProductLoopStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        project = upsert_product_lab_project()
+        limit = int(request.query_params.get("limit", "100") or 100)
+        return Response(
+            {
+                "project": project,
+                "state": load_product_loop_state(),
+                "logs": tail_product_loop_log(limit=limit),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProductLoopCycleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        data = request.data or {}
+        cycles = int(data.get("cycles") or 1)
+        root = data.get("root")
+        result = run_product_loop_cycle(root=Path(root).expanduser() if root else None, max_cycles=cycles)
+        return Response(
+            {
+                "project": result.project,
+                "state": result.state,
+                "output": result.output,
+                "detail": result.detail,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AtfClassBenchmarkView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        data = request.data or {}
+        count = int(data.get("count") or 4)
+        attempts = int(data.get("attempts") or 2)
+        count = max(1, min(count, 300))
+        attempts = max(1, min(attempts, 5))
+        return Response(
+            run_class_refinement_benchmark(count=count, attempts=attempts),
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProjectInterjectionPreviewView(APIView):

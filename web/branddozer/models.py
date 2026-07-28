@@ -28,6 +28,10 @@ class BrandProject(models.Model):
     log_path = models.TextField(default=_default_log_path)
     repo_url = models.TextField(blank=True, default="")
     repo_branch = models.CharField(max_length=120, blank=True, default="")
+    workflow_kind = models.CharField(max_length=120, blank=True, default="")
+    workflow_config = models.JSONField(default=dict, blank=True)
+    license_key = models.CharField(max_length=40, blank=True, default="unlicensed")
+    git_auto_promote = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -276,6 +280,12 @@ class DeliverySession(models.Model):
         ("dev", "C0d3rV2Session"),
         ("qa", "QA"),
         ("ux_audit", "UX Audit"),
+        ("research_planner", "Research Planner"),
+        ("literature_reviewer", "Literature Reviewer"),
+        ("methods_reviewer", "Methods Reviewer"),
+        ("research_writer", "Research Writer"),
+        ("citation_auditor", "Citation Auditor"),
+        ("peer_reviewer", "Peer Reviewer"),
     ]
 
     STATUS_CHOICES = [
@@ -437,3 +447,145 @@ class AcceptanceRecord(models.Model):
 
     class Meta:
         ordering = ("-accepted_at",)
+
+
+class ResearchPaper(models.Model):
+    """A versioned archival-research paper produced by Brand Dozer."""
+
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("validating", "Validating"),
+        ("revision_required", "Revision Required"),
+        ("validated", "Validated"),
+        ("archived", "Archived"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        BrandProject, on_delete=models.CASCADE, related_name="research_papers"
+    )
+    run = models.ForeignKey(
+        DeliveryRun, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="research_papers",
+    )
+    title = models.CharField(max_length=500)
+    research_question = models.TextField()
+    abstract = models.TextField(blank=True, default="")
+    content_markdown = models.TextField(blank=True, default="")
+    keywords = models.JSONField(default=list, blank=True)
+    status = models.CharField(
+        max_length=32, choices=STATUS_CHOICES, default="draft"
+    )
+    version = models.PositiveIntegerField(default=1)
+    citation_style = models.CharField(max_length=32, default="apa")
+    target_journal = models.CharField(max_length=255, blank=True, default="")
+    validation_report = models.JSONField(default=dict, blank=True)
+    word_count = models.PositiveIntegerField(default=0)
+    content_sha256 = models.CharField(max_length=64, blank=True, default="")
+    markdown_path = models.TextField(blank=True, default="")
+    pdf_path = models.TextField(blank=True, default="")
+    validated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-updated_at",)
+        indexes = [
+            models.Index(
+                fields=["status", "-updated_at"],
+                name="branddozer_paper_status",
+            ),
+            models.Index(
+                fields=["project", "-updated_at"],
+                name="branddozer_paper_project",
+            ),
+        ]
+
+
+class ResearchSource(models.Model):
+    """A source whose identity and fetched content are independently recorded."""
+
+    VERIFICATION_CHOICES = [
+        ("pending", "Pending"),
+        ("verified", "Verified"),
+        ("rejected", "Rejected"),
+    ]
+
+    paper = models.ForeignKey(
+        ResearchPaper, on_delete=models.CASCADE, related_name="sources"
+    )
+    citation_key = models.CharField(max_length=120)
+    title = models.TextField()
+    authors = models.JSONField(default=list, blank=True)
+    publication_year = models.PositiveIntegerField(null=True, blank=True)
+    publisher = models.CharField(max_length=255, blank=True, default="")
+    url = models.URLField(max_length=2000)
+    doi = models.CharField(max_length=255, blank=True, default="")
+    retrieved_at = models.DateTimeField(null=True, blank=True)
+    content_sha256 = models.CharField(max_length=64, blank=True, default="")
+    authority_tier = models.PositiveSmallIntegerField(default=0)
+    peer_reviewed = models.BooleanField(default=False)
+    archival = models.BooleanField(default=True)
+    verified_passage = models.TextField(blank=True, default="")
+    verification_status = models.CharField(
+        max_length=16, choices=VERIFICATION_CHOICES, default="pending"
+    )
+    verification_detail = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("citation_key",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["paper", "citation_key"],
+                name="branddozer_unique_paper_citation",
+            )
+        ]
+
+
+class ResearchClaim(models.Model):
+    """A paper claim with explicit source support and audit disposition."""
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("supported", "Supported"),
+        ("qualified", "Qualified"),
+        ("rejected", "Rejected"),
+    ]
+
+    paper = models.ForeignKey(
+        ResearchPaper, on_delete=models.CASCADE, related_name="claims"
+    )
+    section = models.CharField(max_length=160, blank=True, default="")
+    claim_text = models.TextField()
+    source_keys = models.JSONField(default=list, blank=True)
+    verification_status = models.CharField(
+        max_length=16, choices=STATUS_CHOICES, default="pending"
+    )
+    rationale = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("id",)
+
+
+class ResearchPaperRevision(models.Model):
+    """Immutable paper snapshots retained across critique/rewrite rounds."""
+
+    paper = models.ForeignKey(
+        ResearchPaper, on_delete=models.CASCADE, related_name="revisions"
+    )
+    version = models.PositiveIntegerField()
+    content_markdown = models.TextField()
+    change_summary = models.TextField(blank=True, default="")
+    validation_report = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-version",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["paper", "version"],
+                name="branddozer_unique_paper_revision",
+            )
+        ]

@@ -827,6 +827,16 @@ export async function stopBrandProject(id: string) {
   return data;
 }
 
+export async function fetchBrandProjectLifecycle(id: string) {
+  const { data } = await api.get(`/branddozer/projects/${id}/lifecycle/`);
+  return data;
+}
+
+export async function launchBrandProjectPreview(id: string, openOnPc = true) {
+  const { data } = await api.post(`/branddozer/projects/${id}/preview/`, { open_on_pc: openOnPc });
+  return data;
+}
+
 export async function fetchBrandLogs(id: string, limit = 200) {
   const { data } = await api.get(`/branddozer/projects/${id}/logs/`, { params: { limit } });
   return data;
@@ -869,6 +879,9 @@ export async function startBrandDeliveryRun(payload: {
   project_id: string;
   prompt: string;
   mode?: string;
+  project_type?: 'software' | 'research';
+  research_mode?: boolean;
+  research_config?: Record<string, any>;
   team_mode?: string;
   session_provider?: string;
   codex_model?: string;
@@ -945,6 +958,29 @@ export async function acceptBrandDeliveryRun(runId: string, payload: { notes?: s
 export async function stopBrandDeliveryRun(runId: string) {
   const { data } = await api.post(`/branddozer/delivery/runs/${runId}/stop/`, {}, { timeout: 20000 });
   return data;
+}
+
+export async function fetchBrandResearchPapers(params?: {
+  q?: string;
+  project_id?: string;
+  status?: string;
+  limit?: number;
+}) {
+  const { data } = await api.get('/branddozer/research/papers/', { params });
+  return data;
+}
+
+export async function fetchBrandResearchPaper(paperId: string) {
+  const { data } = await api.get(`/branddozer/research/papers/${paperId}/`);
+  return data;
+}
+
+export function brandResearchPaperDownloadUrl(
+  paperId: string,
+  format: 'pdf' | 'markdown' | 'json' = 'pdf',
+) {
+  const base = String(api.defaults.baseURL || '').replace(/\/$/, '');
+  return `${base}/branddozer/research/papers/${paperId}/download/?kind=${encodeURIComponent(format)}`;
 }
 
 // ----------------------------- U53RxR080T (UX robot) -------------------------

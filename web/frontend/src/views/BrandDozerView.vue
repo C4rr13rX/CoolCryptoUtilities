@@ -29,6 +29,20 @@
             {{ project.interjections?.length || 0 }}
           </p>
           <p v-if="project.repo_url" class="meta">{{ t('branddozer.repo') }}: {{ project.repo_url }}</p>
+          <div class="project-work" v-if="project.lifecycle">
+            <strong>Currently working on</strong>
+            <p>{{ project.lifecycle.working_on || project.default_prompt }}</p>
+            <p class="meta" v-if="project.lifecycle.active_work?.status">
+              Product status: {{ project.lifecycle.active_work.status }} · inner iteration
+              {{ project.lifecycle.active_work.inner_iteration || 0 }} · validation
+              {{ project.lifecycle.active_work.validation_passed ? 'passed' : 'pending' }}
+            </p>
+            <p class="meta" v-if="project.lifecycle.git?.initialized">
+              Local Git: {{ project.lifecycle.git.current_branch || 'initializing' }} ·
+              {{ project.lifecycle.git.head || 'no commit' }} · stable: {{ project.lifecycle.git.stable_branch }}
+            </p>
+            <p class="meta">License: {{ project.license_key || 'unlicensed' }} · Preview: {{ project.lifecycle.preview?.kind || 'detecting' }}</p>
+          </div>
           <p class="meta">{{ t('branddozer.last') }}: {{ formatTime(project.last_run) }} · {{ project.last_message || t('common.na') }}</p>
           <div class="card-actions">
             <button
@@ -40,6 +54,7 @@
               {{ t('common.start') }}
             </button>
             <button type="button" class="btn ghost" @click.stop="openPublish(project)">{{ t('branddozer.push') }}</button>
+            <button type="button" class="btn ghost" @click.stop="previewProject(project)">Preview / Open</button>
             <button
               type="button"
               class="btn ghost danger"
@@ -92,6 +107,18 @@
               <label>
                 <span>{{ t('branddozer.interval_minutes') }}</span>
                 <input v-model.number="form.interval_minutes" type="number" min="5" max="720" />
+              </label>
+              <label>
+                <span>License</span>
+                <select v-model="form.license_key">
+                  <option value="unlicensed">No license</option>
+                  <option value="mit">MIT</option>
+                  <option value="proprietary">Proprietary / all rights reserved</option>
+                </select>
+              </label>
+              <label class="switch-field">
+                <span>Version lifecycle</span>
+                <span><input v-model="form.git_auto_promote" type="checkbox" /> Promote validated cycles to main</span>
               </label>
             </div>
             <label>
@@ -165,6 +192,13 @@
             </select>
           </label>
           <label>
+            <span>Project output</span>
+            <select v-model="deliveryForm.project_type">
+              <option value="software">Software / technology</option>
+              <option value="research">Archival research paper</option>
+            </select>
+          </label>
+          <label>
             <span>{{ t('branddozer.team_mode') }}</span>
             <select v-model="deliveryForm.team_mode">
               <option value="full">{{ t('branddozer.team_full') }}</option>
@@ -199,8 +233,37 @@
           </label>
           <label class="full">
             <span>{{ t('branddozer.prompt') }}</span>
-            <textarea v-model="deliveryForm.prompt" rows="3" :placeholder="t('branddozer.prompt_placeholder')" />
+            <textarea
+              v-model="deliveryForm.prompt"
+              rows="3"
+              :placeholder="deliveryForm.project_type === 'research'
+                ? 'State the research goal, question, scope, and intended scientific or engineering audience.'
+                : t('branddozer.prompt_placeholder')"
+            />
           </label>
+          <template v-if="deliveryForm.project_type === 'research'">
+            <label>
+              <span>Target journal or discipline</span>
+              <input v-model="deliveryForm.target_journal" placeholder="e.g. systems engineering" />
+            </label>
+            <label>
+              <span>Citation style</span>
+              <select v-model="deliveryForm.citation_style">
+                <option value="apa">APA</option>
+                <option value="ieee">IEEE</option>
+                <option value="chicago">Chicago author-date</option>
+                <option value="vancouver">Vancouver</option>
+              </select>
+            </label>
+            <label>
+              <span>Minimum paper words</span>
+              <input v-model.number="deliveryForm.min_words" type="number" min="500" max="30000" />
+            </label>
+            <label>
+              <span>Minimum independently verified sources</span>
+              <input v-model.number="deliveryForm.min_verified_sources" type="number" min="2" max="100" />
+            </label>
+          </template>
           <label class="full">
             <span>{{ t('branddozer.smoke_test') }}</span>
             <input v-model="deliveryForm.smoke_test_cmd" :placeholder="t('branddozer.smoke_test_placeholder')" />
@@ -460,6 +523,103 @@
         </div>
       </div>
     </section>
+
+    <section class="panel research-library-panel">
+      <header>
+        <div>
+          <h2>Research paper library</h2>
+          <p class="caption">
+            Search, inspect validation evidence, and download Brand Dozer research papers.
+          </p>
+        </div>
+        <button type="button" class="btn ghost" @click="loadResearchPapers" :disabled="store.researchLoading">
+          {{ store.researchLoading ? 'Loading…' : 'Refresh' }}
+        </button>
+      </header>
+      <div class="research-search">
+        <input
+          v-model="researchQuery"
+          type="search"
+          placeholder="Search titles, questions, abstracts, keywords, or paper text"
+          @keyup.enter="loadResearchPapers"
+        />
+        <select v-model="researchStatus" @change="loadResearchPapers">
+          <option value="">All statuses</option>
+          <option value="validated">Validated</option>
+          <option value="revision_required">Revision required</option>
+          <option value="draft">Draft</option>
+          <option value="archived">Archived</option>
+        </select>
+        <button type="button" class="btn" @click="loadResearchPapers">Search</button>
+      </div>
+      <div class="research-paper-grid">
+        <article v-for="paper in store.researchPapers" :key="paper.id" class="research-paper-card">
+          <header>
+            <div>
+              <strong>{{ paper.title }}</strong>
+              <p class="meta">{{ paper.project_name }} · v{{ paper.version }} · {{ paper.word_count }} words</p>
+            </div>
+            <span class="status-pill" :class="paper.status === 'validated' ? 'ok' : 'warn'">
+              {{ paper.status }}
+            </span>
+          </header>
+          <p>{{ paper.abstract || paper.research_question }}</p>
+          <p class="meta">
+            {{ (paper.keywords || []).join(', ') }}
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn ghost" @click="openResearchPaper(paper.id)">View paper</button>
+            <button type="button" class="btn ghost" @click="downloadResearchPaper(paper.id, 'pdf')">PDF</button>
+            <button type="button" class="btn ghost" @click="downloadResearchPaper(paper.id, 'markdown')">Markdown</button>
+            <button type="button" class="btn ghost" @click="downloadResearchPaper(paper.id, 'json')">Evidence JSON</button>
+          </div>
+        </article>
+        <div v-if="!store.researchPapers.length && !store.researchLoading" class="empty">
+          No research papers match this search.
+        </div>
+      </div>
+    </section>
+
+    <div v-if="researchPaperOpen" class="modal research-paper-modal" @click.self="closeResearchPaper">
+      <div class="modal-card research-paper-viewer">
+        <header>
+          <div>
+            <h2>{{ store.activeResearchPaper?.title || 'Research paper' }}</h2>
+            <p class="caption">
+              {{ store.activeResearchPaper?.status }} · version {{ store.activeResearchPaper?.version }}
+            </p>
+          </div>
+          <button type="button" class="btn ghost" @click="closeResearchPaper">Close</button>
+        </header>
+        <div v-if="store.activeResearchPaper" class="research-paper-summary">
+          <div class="validation-summary">
+            <strong>Validation</strong>
+            <span
+              v-for="(passed, check) in store.activeResearchPaper.validation_report?.checks || {}"
+              :key="check"
+              class="status-chip"
+              :class="passed ? 'ok' : 'warn'"
+            >
+              {{ check }}: {{ passed ? 'pass' : 'fail' }}
+            </span>
+          </div>
+          <p><strong>Research question:</strong> {{ store.activeResearchPaper.research_question }}</p>
+          <p><strong>Abstract:</strong> {{ store.activeResearchPaper.abstract }}</p>
+          <p>
+            <strong>Evidence:</strong>
+            {{ store.activeResearchPaper.sources?.length || 0 }} sources ·
+            {{ store.activeResearchPaper.claims?.length || 0 }} audited claims ·
+            {{ store.activeResearchPaper.revisions?.length || 0 }} retained revisions
+          </p>
+          <div class="card-actions">
+            <button type="button" class="btn" @click="downloadResearchPaper(store.activeResearchPaper.id, 'pdf')">Download PDF</button>
+            <button type="button" class="btn ghost" @click="downloadResearchPaper(store.activeResearchPaper.id, 'markdown')">Download Markdown</button>
+            <button type="button" class="btn ghost" @click="downloadResearchPaper(store.activeResearchPaper.id, 'json')">Download evidence</button>
+          </div>
+        </div>
+        <pre class="research-paper-content">{{ store.activeResearchPaper?.content_markdown || 'Loading paper…' }}</pre>
+      </div>
+    </div>
 
     <section class="panel logs-panel">
       <header>
@@ -880,7 +1040,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBrandDozerStore } from '@/stores/branddozer';
 import { t } from '@/i18n';
 import ModelSelect from '@/components/ModelSelect.vue';
-import { fetchModelOptions } from '@/api';
+import { brandResearchPaperDownloadUrl, fetchModelOptions } from '@/api';
 
 const store = useBrandDozerStore();
 const selectedId = ref<string>('');
@@ -892,6 +1052,8 @@ const form = ref({
   default_prompt: '',
   interjections: [] as string[],
   interval_minutes: 120,
+  license_key: 'unlicensed',
+  git_auto_promote: true,
 });
 const folderModalOpen = ref(false);
 const folderLoading = ref(false);
@@ -926,6 +1088,7 @@ const logBox = ref<HTMLElement | null>(null);
 const deliveryForm = ref({
   project_id: '',
   mode: 'auto',
+  project_type: 'software' as 'software' | 'research',
   team_mode: 'full',
   session_provider: 'c0d3r',
   codex_model: '',
@@ -934,7 +1097,15 @@ const deliveryForm = ref({
   c0d3r_reasoning: 'high',
   prompt: '',
   smoke_test_cmd: '',
+  target_journal: '',
+  citation_style: 'apa',
+  min_words: 5000,
+  min_verified_sources: 10,
 });
+const researchQuery = ref('');
+const researchStatus = ref('');
+const researchPaperOpen = ref(false);
+const researchLibraryRunId = ref('');
 const publishOpen = ref(false);
 const publishError = ref('');
 const publishStatus = ref('');
@@ -1042,6 +1213,7 @@ onMounted(async () => {
   }
   startLogTimer();
   await refreshDelivery();
+  await loadResearchPapers();
 });
 
 onBeforeUnmount(() => {
@@ -1498,6 +1670,11 @@ async function refreshDelivery() {
         tasks.push(store.fetchDeliveryGovernance(runId), store.fetchDeliverySprints(runId));
       }
       await Promise.all(tasks);
+      const paperId = store.activeDeliveryRun?.context?.research_paper_id || '';
+      if (paperId && researchLibraryRunId.value !== store.activeDeliveryRun.id) {
+        researchLibraryRunId.value = store.activeDeliveryRun.id;
+        await loadResearchPapers();
+      }
       const now = Date.now();
       if (desktopLiveLogs.value && desktopRunId.value && now - lastSessionLogFetch >= deliveryLogIntervalMs.value) {
         lastSessionLogFetch = now;
@@ -1804,7 +1981,21 @@ async function startDeliveryRun() {
       project_id: deliveryForm.value.project_id,
       prompt: deliveryForm.value.prompt,
       mode: deliveryForm.value.mode,
-      team_mode: deliveryForm.value.team_mode,
+      project_type: deliveryForm.value.project_type,
+      research_mode: deliveryForm.value.project_type === 'research',
+      research_config: deliveryForm.value.project_type === 'research'
+        ? {
+            target_journal: deliveryForm.value.target_journal,
+            citation_style: deliveryForm.value.citation_style,
+            min_words: deliveryForm.value.min_words,
+            min_verified_sources: deliveryForm.value.min_verified_sources,
+            min_sources: Math.max(deliveryForm.value.min_verified_sources, 12),
+            min_high_authority_sources: Math.max(3, Math.ceil(deliveryForm.value.min_verified_sources * 0.6)),
+            min_source_domains: 4,
+            max_revision_rounds: 4,
+          }
+        : undefined,
+      team_mode: deliveryForm.value.project_type === 'research' ? 'full' : deliveryForm.value.team_mode,
       session_provider: deliveryForm.value.session_provider,
       codex_model: deliveryForm.value.codex_model,
       codex_reasoning: deliveryForm.value.codex_reasoning,
@@ -1824,6 +2015,40 @@ async function startDeliveryRun() {
   } catch (err: any) {
     deliveryError.value = err?.message || t('branddozer.error_start_delivery');
   }
+}
+
+async function loadResearchPapers() {
+  try {
+    await store.fetchResearchPapers({
+      q: researchQuery.value.trim() || undefined,
+      status: researchStatus.value || undefined,
+      limit: 60,
+    });
+  } catch (err: any) {
+    deliveryError.value = err?.message || 'Unable to load research papers.';
+  }
+}
+
+async function openResearchPaper(paperId: string) {
+  researchPaperOpen.value = true;
+  try {
+    await store.fetchResearchPaper(paperId);
+  } catch (err: any) {
+    researchPaperOpen.value = false;
+    deliveryError.value = err?.message || 'Unable to open research paper.';
+  }
+}
+
+function closeResearchPaper() {
+  researchPaperOpen.value = false;
+  store.activeResearchPaper = null;
+}
+
+function downloadResearchPaper(
+  paperId: string,
+  format: 'pdf' | 'markdown' | 'json',
+) {
+  window.open(brandResearchPaperDownloadUrl(paperId, format), '_blank', 'noopener,noreferrer');
 }
 
 async function stopDeliveryRun() {
@@ -1991,6 +2216,8 @@ function resetForm() {
     default_prompt: '',
     interjections: [],
     interval_minutes: 120,
+    license_key: 'unlicensed',
+    git_auto_promote: true,
   };
   interjectionError.value = '';
   showForm.value = false;
@@ -2056,6 +2283,8 @@ function editProject(project: any) {
     default_prompt: project.default_prompt,
     interjections: [...(project.interjections || [])],
     interval_minutes: project.interval_minutes,
+    license_key: project.license_key || 'unlicensed',
+    git_auto_promote: project.git_auto_promote !== false,
   };
   interjectionError.value = '';
   showForm.value = true;
@@ -2076,6 +2305,16 @@ async function start(id: string) {
 
 async function stop(id: string) {
   await store.stop(id);
+}
+
+async function previewProject(project: any) {
+  try {
+    const result = await store.preview(project.id, true);
+    if (result?.url) window.open(result.url, '_blank', 'noopener');
+    else if (result?.detail) window.alert(`${result.detail}\n${result.launcher || ''}`);
+  } catch (err: any) {
+    window.alert(err?.message || 'Unable to start project preview.');
+  }
 }
 
 async function refreshLogs() {
@@ -2716,6 +2955,80 @@ function formatTime(ts?: number | string | null) {
   width: min(720px, 95vw);
 }
 
+.research-library-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.research-search {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, 220px) auto;
+  gap: 0.65rem;
+}
+
+.research-paper-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0.85rem;
+}
+
+.research-paper-card {
+  display: grid;
+  align-content: start;
+  gap: 0.65rem;
+  padding: 1rem;
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  border-radius: 14px;
+  background: rgba(8, 15, 28, 0.72);
+}
+
+.research-paper-card header,
+.research-paper-viewer > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.research-paper-modal {
+  z-index: 4200;
+}
+
+.modal-card.research-paper-viewer {
+  width: min(1180px, 96vw);
+  height: min(92vh, 1000px);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0.85rem;
+}
+
+.research-paper-summary {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  border-radius: 10px;
+}
+
+.validation-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.research-paper-content {
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 1.25rem;
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(2, 8, 17, 0.86);
+  line-height: 1.55;
+}
+
 .publish-card {
   background: rgba(8, 12, 22, 0.95);
   border: 1px solid rgba(126, 168, 255, 0.35);
@@ -3225,6 +3538,9 @@ function formatTime(ts?: number | string | null) {
 
 @media (max-width: 960px) {
   .branddozer {
+    grid-template-columns: 1fr;
+  }
+  .research-search {
     grid-template-columns: 1fr;
   }
   .desktop-shell {

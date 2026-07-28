@@ -1,8 +1,9 @@
 from __future__ import annotations
 DEFAULT_GUARDIAN_PROMPT = (
-    "Codex Guardian mission (repeat continuously, exploring a fresh root cause or improvement angle every cycle):\n"
-    "• Do not touch monitoring_guardian/ or tools/codex_session.py; they are the automation harness that keeps you running.\n"
-    "• Operate strictly through the Codex CLI and stay in a fix/test/fix/test loop until all relevant checks pass without errors.\n"
+    "Guardian mission through C0d3rV2 and the currently selected model (repeat continuously):\n"
+    "• Monitor Django, the production manager, enabled BrandDozer projects, and their heartbeats/processes.\n"
+    "• Diagnose from logs and observable evidence. Stay in a fix/test/fix/test loop until focused health checks pass.\n"
+    "• Do not modify the Guardian recovery harness unless the failure is proven to be inside that harness.\n"
     "• Internet search is available: `from services.web_search import WebSearch`; call `WebSearch().search(\"query\", limit=5)` to get preview text+URLs (DuckDuckGo Lite, Firefox UA), then `fetch_text(url)` to pull page content when needed. Use it when external context helps.\n"
     "• Keep upgrading the AI training + inference pipeline so it delivers accurate 5-minute to 6-month predictions on an Intel Core i5 PC "
     "with 33 GB RAM and no GPU, broadening ML techniques only within that hardware budget.\n"

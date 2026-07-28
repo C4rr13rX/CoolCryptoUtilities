@@ -1079,8 +1079,10 @@ class TestOrchestratorRun:
         session = _DirectScrutinySession()
         orch = Orchestrator(session=session, tools=_build_registry(tmp_path), context="[test]")
         results, tree = orch.run("hello")
-        assert session.calls == 0
-        assert orch._total_model_calls == 0
+        # The response is the selected model's single conversational call;
+        # there is deliberately no canned local greeting shortcut.
+        assert session.calls == 1
+        assert orch._total_model_calls == 1
         assert results[0].output == "Hello! Good to hear from you."
         assert tree.root.is_done
 
@@ -1194,6 +1196,238 @@ class TestOrchestratorRun:
             "Corrective state requires file_write; navigation allowance is exhausted"
         )
 
+    def test_atomic_schema_violation_is_model_caused(self):
+        assert Orchestrator._looks_model_caused(
+            "Atomic navigation budget exhausted. Use file_write now."
+        )
+
+    def test_atomic_executor_blocks_manifest_initialization_bypass(self):
+        error = Orchestrator._atomic_executor_mutation_error({
+            "command": "npm init -y && npm install jsdom",
+        })
+        assert "npm init" in error
+        assert "use file_write" in error
+
+    def test_atomic_executor_allows_validation_and_dependency_install(self):
+        assert not Orchestrator._atomic_executor_mutation_error({
+            "command": "npm test && npm run build",
+        })
+        assert not Orchestrator._atomic_executor_mutation_error({
+            "command": "npm install --save-dev jsdom",
+        })
+
+    def test_atomic_source_rewrite_preserves_existing_exports(self, tmp_path):
+        target = tmp_path / "scene.ts"
+        target.write_text(
+            "export function createScene() { return {}; }\n"
+            "export function addGridHelper() {}\n",
+            encoding="utf-8",
+        )
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description="Validator-directed repair paths: [\"scene.ts\"]")
+        node.add_tool_output("file_read", {
+            "path": str(target), "content": target.read_text(encoding="utf-8"),
+        })
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {
+                "path": "scene.ts", "content": "export function createScene() { return { fixed: true }; }\n",
+            },
+        }], MagicMock())
+        assert "removes established exports" in result.error
+        assert "addGridHelper" in result.error
+
+    def test_read_only_contract_does_not_require_mutation_evidence(self):
+        assert not Orchestrator._task_requests_mutation(
+            "Read-only evidence task. Do not write or modify files; return the answer."
+        )
+        assert Orchestrator._task_requests_mutation(
+            "Repair the renderer adapter and update its regression tests."
+        )
+
+    def test_validator_directed_atomic_repair_limits_navigation_to_three(self, tmp_path):
+        target = tmp_path / "broken.ts"
+        target.write_text("export {};", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description="Validator-directed repair paths: tests/broken.ts")
+        node.add_tool_output("file_locate", {"paths": [str(target)]})
+        node.add_tool_output("file_read", {"content": "export {};"})
+        node.add_tool_output("file_read", {"content": "interface contract"})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_read", "params": {"path": "broken.ts"},
+        }], MagicMock())
+        assert "Atomic navigation budget exhausted" in result.error
+
+    def test_validator_directed_unique_locate_is_translated_to_read(self, tmp_path):
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        target = tests / "broken.ts"
+        target.write_text("export const fixed = false;", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(
+            description='Validator-directed repair paths: ["tests/broken.ts"]',
+        )
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_locate", "params": {"query": "broken.ts"},
+        }], MagicMock())
+        assert result.success
+        assert result.tool_outputs[0]["tool"] == "file_read"
+        assert "fixed = false" in result.output
+
+    def test_validator_directed_provider_handoff_cannot_repeat_reads_after_mutation(self, tmp_path):
+        target = tmp_path / "broken.ts"
+        target.write_text("export const fixed = true;", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(
+            description='Validator-directed repair paths: ["broken.ts"]',
+        )
+        node.add_tool_output("file_read", {"content": "export const fixed = false;"})
+        node.add_tool_output("file_write", {"path": "broken.ts"})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_read", "params": {"path": "broken.ts"},
+        }], MagicMock())
+        assert not result.success
+        assert "validate it with executor" in result.error
+
+        repeated_write = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {
+                "path": "broken.ts", "content": "export const fixed = true;",
+            },
+        }], MagicMock())
+        assert not repeated_write.success
+        assert "validate it with executor" in repeated_write.error
+
+    def test_validator_directed_batch_prioritizes_evidence_paths(self, tmp_path):
+        source = tmp_path / "src"
+        source.mkdir()
+        target = source / "main.ts"
+        target.write_text("export const evidence = true;", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(
+            description='Validator-directed repair paths: ["src/main.ts"]',
+        )
+        node.add_tool_output("file_locate", {"paths": ["unrelated-a"]})
+        node.add_tool_output("file_locate", {"paths": ["unrelated-b"]})
+        result = orch._dispatch_tool_calls(node, [
+            {"tool": "file_locate", "params": {"query": "package.json"}},
+            {"tool": "file_locate", "params": {"query": "main.ts"}},
+        ], MagicMock())
+        assert result.tool_outputs[0]["tool"] == "file_read"
+        assert "evidence = true" in result.tool_outputs[0]["result"]["content"]
+        assert "navigation budget exhausted" in result.tool_outputs[1]["result"]["error"].lower()
+
+    def test_validator_navigation_budget_expands_to_declared_contract(self):
+        node = TaskNode(description=(
+            'Validator-directed repair paths: '
+            '["src/a.ts", "src/b.ts", "src/c.ts", "tests/a.test.ts", "tests/b.test.ts"]'
+        ))
+        assert Orchestrator._atomic_navigation_limit(node) == 5
+
+        oversized = TaskNode(description=(
+            'Validator-directed repair paths: ['
+            + ", ".join(f'"src/{index}.ts"' for index in range(20))
+            + "]"
+        ))
+        assert Orchestrator._atomic_navigation_limit(oversized) == 8
+
+    def test_atomic_task_compaction_keeps_active_contract_and_drops_old_noise(self):
+        text = (
+            "Current plan summary: Build a bounded renderer.\n"
+            + ("old validator noise\n" * 4000)
+            + "Next step: Repair composition root\n"
+            + 'Validator-directed repair paths: ["src/main.ts", "tests/main.test.ts"].\n'
+            + 'Persisted deterministic repair packet (authoritative):\n'
+            + '{"focus_paths":["src/main.ts"],"required_transition":"write then validate"}'
+        )
+
+        compact = Orchestrator._compact_atomic_task_text(text, max_chars=3000)
+
+        assert len(compact) <= 3000
+        assert "Current plan summary" in compact
+        assert "Next step: Repair composition root" in compact
+        assert "Validator-directed repair paths" in compact
+        assert '"required_transition":"write then validate"' in compact
+        assert compact.count("old validator noise") < 5
+
+    def test_validator_repair_priority_applies_before_batch_truncation(self):
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["src/main.ts", "tests/main.test.ts"]'
+        ))
+        calls = [
+            {"tool": "file_read", "params": {"path": "vitest.config.ts"}},
+            {"tool": "file_read", "params": {"path": "src/main.ts"}},
+            {"tool": "file_read", "params": {"path": "package.json"}},
+            {"tool": "file_read", "params": {"path": "tests/main.test.ts"}},
+        ]
+        prioritized = Orchestrator._prioritize_repair_calls(node, calls)
+        assert [call["params"]["path"] for call in prioritized[:2]] == [
+            "src/main.ts", "tests/main.test.ts",
+        ]
+
+    def test_validator_context_is_preloaded_before_first_model_turn(self, tmp_path):
+        source = tmp_path / "src"
+        source.mkdir()
+        (source / "main.ts").write_text(
+            "export interface Input { value: number }", encoding="utf-8",
+        )
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "main.test.ts").write_text(
+            "import '../src/main';", encoding="utf-8",
+        )
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["src/main.ts", "tests/main.test.ts"]'
+        ))
+        orch._seed_validator_context(node)
+        reads = [entry for entry in node.tool_outputs if entry["tool"] == "file_read"]
+        assert len(reads) == 2
+        assert "interface Input" in reads[0]["result"]["content"]
+        assert "import '../src/main'" in reads[1]["result"]["content"]
+
+    def test_validator_read_context_survives_generic_history_compaction(self):
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["src/scene.ts", "tests/scene.test.ts"]'
+        ))
+        node.add_tool_output("file_read", {
+            "path": r"C:\work\src\scene.ts",
+            "content": "export const scene = createScene();",
+        })
+        node.add_tool_output("file_read", {
+            "path": r"C:\work\tests\scene.test.ts",
+            "content": "expect(scene).toBeDefined();",
+        })
+        # Later navigation/protocol events may displace these reads from the
+        # generic accumulated-results summary. The bounded validator context
+        # must still carry both exact files into a write-only correction turn.
+        for index in range(12):
+            node.add_tool_output("response_normalizer", {"status": index})
+
+        context = Orchestrator._validator_read_context(node)
+
+        assert "--- src/scene.ts (current validator context) ---" in context
+        assert "export const scene = createScene();" in context
+        assert "--- tests/scene.test.ts (current validator context) ---" in context
+        assert "expect(scene).toBeDefined();" in context
+
     def test_failed_fix_attributes_actual_fix_model(self):
         fixed = StepResult(
             step_id="x", description="repair", output="", success=False,
@@ -1228,6 +1462,261 @@ class TestOrchestratorRun:
         }], MagicMock())
         assert "requires executor" in second.error
         assert target.read_text(encoding="utf-8") == "value = 2\n"
+
+    def test_atomic_failed_validation_reopens_one_write(self, tmp_path):
+        target = tmp_path / "package.json"
+        target.write_text('{"devDependencies": {}}', encoding="utf-8")
+        session = _CorrectiveSession()
+        orch = Orchestrator(
+            session=session, tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description='Validator-directed repair paths: ["package.json"]')
+        node.add_tool_output("file_read", {"path": str(target), "content": target.read_text()})
+        node.add_tool_output("file_write", {"path": str(target), "bytes": 23})
+        node.add_tool_output("executor", {"return_code": 1, "error": "Cannot find module transitive-dependency"})
+
+        orch._agent_step(node, MagicMock(), 1)
+
+        system = session.systems[-1]
+        assert '"name": "file_write"' in system
+        assert '"name": "executor"' not in system
+        assert "Fresh executor validation failed" in system
+
+    def test_failed_validation_allows_one_read_of_newly_named_caller(self, tmp_path):
+        source = tmp_path / "src" / "scene.ts"
+        caller = tmp_path / "tests" / "smoke.test.ts"
+        source.parent.mkdir()
+        caller.parent.mkdir()
+        source.write_text("export interface RendererPort {}", encoding="utf-8")
+        caller.write_text("createScene();", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description='Validator-directed repair paths: ["src/scene.ts"]')
+        node.add_tool_output("file_read", {"path": str(source), "content": source.read_text()})
+        node.add_tool_output("file_write", {"path": str(source), "bytes": 32})
+        node.add_tool_output("executor", {
+            "return_code": 1, "stderr": "failure at tests/smoke.test.ts:7:4",
+        })
+
+        first = orch._dispatch_tool_calls(node, [{
+            "tool": "file_read", "params": {"path": "tests/smoke.test.ts"},
+        }], MagicMock())
+        second = orch._dispatch_tool_calls(node, [{
+            "tool": "file_read", "params": {"path": "tests/smoke.test.ts"},
+        }], MagicMock())
+
+        assert first.success
+        assert "createScene" in first.tool_outputs[0]["result"]["content"]
+        assert not second.success
+        assert "already" in second.error.lower() or "mutation already landed" in second.error.lower()
+
+    def test_atomic_evidence_rejects_counterfeit_before_write(self, tmp_path):
+        target = tmp_path / "src" / "scene.ts"
+        target.parent.mkdir()
+        target.write_text("export const scene = true;", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["src/scene.ts"]. '
+            "source counterfeits a WebGLRenderer with an unsafe double assertion"
+        ))
+        node.add_tool_output("file_read", {"path": str(target), "content": target.read_text()})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write",
+            "params": {"path": "src/scene.ts", "content": "const x = {} as unknown as THREE.WebGLRenderer;"},
+        }], MagicMock())
+        assert not result.success
+        assert "counterfeit" in result.error
+        assert target.read_text(encoding="utf-8") == "export const scene = true;"
+
+    def test_atomic_evidence_allows_explicit_double_only_in_test_path(self, tmp_path):
+        target = tmp_path / "tests" / "scene.test.ts"
+        target.parent.mkdir()
+        target.write_text("const factory = oldFactory;", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["tests/scene.test.ts"]. '
+            "source counterfeits a WebGLRenderer with an unsafe double assertion; use explicit test doubles"
+        ))
+        node.add_tool_output("file_read", {"path": str(target), "content": target.read_text()})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write",
+            "params": {
+                "path": "tests/scene.test.ts",
+                "old_string": "const factory = oldFactory;",
+                "new_string": "const factory = {} as unknown as THREE.WebGLRenderer;",
+            },
+        }], MagicMock())
+        assert result.success
+        assert "as unknown as THREE.WebGLRenderer" in target.read_text(encoding="utf-8")
+
+    def test_atomic_evidence_rejects_partial_injection_migration_in_one_test_file(self, tmp_path):
+        target = tmp_path / "tests" / "scene.test.ts"
+        target.parent.mkdir()
+        target.write_text("createScene();", encoding="utf-8")
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["tests/scene.test.ts"]. '
+            "dependency injection contract: function createScene(rendererFactory: RendererFactory)"
+        ))
+        node.add_tool_output("file_read", {"path": str(target), "content": target.read_text()})
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        proposed = "createScene(factory);\ncreateScene();\ncreateScene();\n"
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {"path": "tests/scene.test.ts", "content": proposed},
+        }], MagicMock())
+        assert not result.success
+        assert "partial dependency-injection migration" in result.error
+
+    def test_atomic_evidence_rejects_instanceof_assertion_for_structural_double(self, tmp_path):
+        target = tmp_path / "tests" / "scene.test.ts"
+        target.parent.mkdir()
+        target.write_text("const renderer = old;", encoding="utf-8")
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["tests/scene.test.ts"]. use explicit test doubles'
+        ))
+        node.add_tool_output("file_read", {"path": str(target), "content": target.read_text()})
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        proposed = (
+            "const renderer = {} as unknown as THREE.WebGLRenderer;\n"
+            "expect(renderer).toBeInstanceOf(THREE.WebGLRenderer);\n"
+        )
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {"path": "tests/scene.test.ts", "content": proposed},
+        }], MagicMock())
+        assert not result.success
+        assert "structural test double" in result.error
+
+    def test_atomic_evidence_judges_effective_patched_file(self, tmp_path):
+        target = tmp_path / "src" / "scene.ts"
+        target.parent.mkdir()
+        original = (
+            "const renderer = {} as unknown as THREE.WebGLRenderer;\n"
+            "const aspect = window.innerWidth / window.innerHeight;\n"
+        )
+        target.write_text(original, encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description=(
+            'Validator-directed repair paths: ["src/scene.ts"]. '
+            "source counterfeits a WebGLRenderer with an unsafe double assertion"
+        ))
+        node.add_tool_output("file_read", {"path": str(target), "content": original})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write",
+            "params": {
+                "path": "src/scene.ts",
+                "old_string": "window.innerWidth / window.innerHeight",
+                "new_string": "Math.max(window.innerWidth, 1) / Math.max(window.innerHeight, 1)",
+            },
+        }], MagicMock())
+        assert not result.success
+        assert "counterfeit" in result.error
+        assert target.read_text(encoding="utf-8") == original
+
+    def test_atomic_rejects_duplicate_preloaded_read(self, tmp_path):
+        target = tmp_path / "src" / "scene.ts"
+        target.parent.mkdir()
+        target.write_text("export const scene = true;", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description='Validator-directed repair paths: ["src/scene.ts"]')
+        node.add_tool_output("file_read", {"path": str(target), "content": target.read_text()})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_read", "params": {"path": str(target)},
+        }], MagicMock())
+        assert not result.success
+        assert "already preloaded" in result.error
+
+    def test_atomic_rejects_write_outside_validator_surface(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scene.ts").write_text("export const scene = true;", encoding="utf-8")
+        manifest = tmp_path / "package.json"
+        manifest.write_text('{"three":"keep"}', encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description='Validator-directed repair paths: ["src/scene.ts"]')
+        node.add_tool_output("file_read", {"path": str(tmp_path / "src" / "scene.ts"), "content": "ok"})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write", "params": {"path": "package.json", "content": '{"three":"downgrade"}'},
+        }], MagicMock())
+        assert not result.success
+        assert "outside the declared repair paths" in result.error
+        assert manifest.read_text(encoding="utf-8") == '{"three":"keep"}'
+
+    def test_failed_validation_expands_surface_to_named_consumer(self, tmp_path):
+        source = tmp_path / "src" / "scene.ts"
+        consumer = tmp_path / "tests" / "scene.test.ts"
+        source.parent.mkdir()
+        consumer.parent.mkdir()
+        source.write_text("export interface Port {}", encoding="utf-8")
+        consumer.write_text("createScene();", encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description='Validator-directed repair paths: ["src/scene.ts"]')
+        node.add_tool_output("file_read", {"path": str(source), "content": source.read_text()})
+        node.add_tool_output("file_write", {"path": str(source), "bytes": 24})
+        node.add_tool_output("executor", {
+            "return_code": 1,
+            "stderr": "TypeError at tests/scene.test.ts:12:9 after src/scene.ts:4:2",
+        })
+        node.add_tool_output("file_read", {"path": str(consumer), "content": consumer.read_text()})
+
+        assert orch._validator_repair_paths(node) == ["src/scene.ts", "tests/scene.test.ts"]
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write",
+            "params": {
+                "path": "tests/scene.test.ts",
+                "old_string": "createScene();",
+                "new_string": "createScene(rendererFactory);",
+            },
+        }], MagicMock())
+        assert result.success
+        assert consumer.read_text(encoding="utf-8") == "createScene(rendererFactory);"
+
+    def test_corrective_manifest_rewrite_cannot_erase_unrelated_entries(self, tmp_path):
+        manifest = tmp_path / "package.json"
+        original = '{"scripts":{"test":"vitest","build":"tsc"},"devDependencies":{"vite":"^5","@vitejs/plugin-react":"^4"}}'
+        manifest.write_text(original, encoding="utf-8")
+        orch = Orchestrator(
+            session=_CorrectiveSession(), tools=_build_registry(tmp_path),
+            context="unattended atomic workday job",
+        )
+        node = TaskNode(description='Validator-directed repair paths: ["package.json"] missing @types/three')
+        node.add_tool_output("file_read", {"path": str(manifest), "content": original})
+        result = orch._dispatch_tool_calls(node, [{
+            "tool": "file_write",
+            "params": {
+                "path": "package.json",
+                "content": '{"scripts":{"test":"vitest"},"devDependencies":{"@types/three":"^0.166"}}',
+            },
+        }], MagicMock())
+        assert not result.success
+        assert "removes established entries" in result.error
+        assert "scripts.build" in result.error
+        assert "devDependencies.vite" in result.error
+        assert manifest.read_text(encoding="utf-8") == original
 
 
 # ---------------------------------------------------------------------------

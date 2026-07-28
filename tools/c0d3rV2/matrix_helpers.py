@@ -16,8 +16,12 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from collections import Counter
 
-import helpers
+try:
+    import helpers
+except ModuleNotFoundError:  # package import (tests and library consumers)
+    from . import helpers
 
 
 _MATRIX_SEED_VERSION = "2026-03-08"
@@ -40,9 +44,9 @@ def _seed_base_matrix_django() -> None:
         from core.models import Equation, EquationDiscipline, EquationSource
         from django.utils import timezone
 
-        if Equation.objects.filter(
-            domains__contains=["ClassicalMechanics"]
-        ).exists():
+        # JSONField ``contains`` is unsupported by SQLite, which is the local
+        # and test deployment. Use a portable sentinel equation instead.
+        if Equation.objects.filter(text="F = m * a").exists():
             return
 
         base = [
@@ -194,13 +198,11 @@ def _matrix_search(query: str, limit: int = 12) -> dict:
 
         # Discipline-based search.
         if tokens:
-            discipline_qs = Equation.objects.none()
-            for t in tokens:
-                discipline_qs = discipline_qs | Equation.objects.filter(
-                    disciplines__contains=[t]
-                )
-            for eq in discipline_qs[:limit]:
-                hits.append(_eq_to_hit(eq))
+            for eq in Equation.objects.all()[:500]:
+                tags = {str(item).lower() for item in (eq.disciplines or [])}
+                domains = {str(item).lower() for item in (eq.domains or [])}
+                if any(t.lower() in tags or t.lower() in domains for t in tokens):
+                    hits.append(_eq_to_hit(eq))
 
         # Token-based fuzzy search across all equations.
         if tokens:
@@ -227,8 +229,13 @@ def _matrix_search_by_discipline(discipline: str, limit: int = 20) -> list[dict]
     try:
         from core.models import Equation
         hits: list[dict] = []
-        for eq in Equation.objects.filter(disciplines__contains=[discipline])[:limit]:
-            hits.append(_eq_to_hit(eq))
+        needle = discipline.strip().lower()
+        for eq in Equation.objects.all()[:500]:
+            tags = {str(item).lower() for item in [*(eq.disciplines or []), *(eq.domains or [])]}
+            if needle in tags:
+                hits.append(_eq_to_hit(eq))
+                if len(hits) >= limit:
+                    break
         return hits
     except Exception:
         return []
@@ -242,8 +249,10 @@ def _matrix_search_by_variables(variables: list[str], limit: int = 20) -> list[d
     try:
         from core.models import Equation
         hits: list[dict] = []
-        for var in variables:
-            for eq in Equation.objects.filter(variables__contains=[var])[:limit]:
+        needles = {str(var).lower() for var in variables}
+        for eq in Equation.objects.all()[:500]:
+            eq_vars = {str(var).lower() for var in (eq.variables or [])}
+            if needles & eq_vars:
                 hits.append(_eq_to_hit(eq))
         return _dedupe(hits, limit)
     except Exception:
@@ -261,8 +270,13 @@ def _matrix_find_gaps(discipline_a: str, discipline_b: str) -> list[dict]:
     try:
         from core.models import Equation, EquationLink
 
-        eqs_a = list(Equation.objects.filter(disciplines__contains=[discipline_a])[:50])
-        eqs_b = list(Equation.objects.filter(disciplines__contains=[discipline_b])[:50])
+        equations = list(Equation.objects.all()[:1000])
+        def in_discipline(eq: Any, name: str) -> bool:
+            needle = name.strip().lower()
+            tags = {str(item).lower() for item in [*(eq.disciplines or []), *(eq.domains or [])]}
+            return needle in tags
+        eqs_a = [eq for eq in equations if in_discipline(eq, discipline_a)][:50]
+        eqs_b = [eq for eq in equations if in_discipline(eq, discipline_b)][:50]
 
         gaps: list[dict] = []
         for ea in eqs_a:
@@ -377,3 +391,183 @@ def _dedupe(hits: list[dict], limit: int) -> list[dict]:
         if len(unique) >= limit:
             break
     return unique
+
+
+# ------------------------------------------------------------------
+# Pure, database-independent binding analysis
+# ------------------------------------------------------------------
+
+_DOMAIN_TERMS = {
+    "mechanics": {"force", "mass", "motion", "velocity", "acceleration", "momentum", "torque"},
+    "thermodynamics": {"heat", "temperature", "entropy", "pressure", "gas", "energy", "efficiency"},
+    "electromagnetism": {"voltage", "current", "charge", "electric", "magnetic", "resistance", "field"},
+    "fluid_dynamics": {"fluid", "flow", "viscosity", "drag", "lift", "pipe", "pressure"},
+    "information_theory": {"information", "entropy", "channel", "signal", "noise", "compression", "bits"},
+    "statistics": {"probability", "distribution", "sample", "variance", "confidence", "estimate", "risk"},
+    "economics": {"price", "cost", "demand", "supply", "market", "profit", "revenue", "utility"},
+    "computing": {"algorithm", "runtime", "memory", "network", "database", "latency", "throughput"},
+    "geometry": {"area", "volume", "radius", "distance", "angle", "shape", "length"},
+}
+
+
+def classify_domains(text: str, max_domains: int = 4) -> list[dict]:
+    """Return explainable, multi-label domain classifications.
+
+    This is deliberately deterministic so an unbounded solve still has a
+    useful starting point when a model or database is unavailable.
+    """
+    tokens = set(_query_tokens(text))
+    scored = []
+    for domain, terms in _DOMAIN_TERMS.items():
+        matches = sorted(tokens & terms)
+        if matches:
+            scored.append({"domain": domain, "score": len(matches) / len(terms), "evidence": matches})
+    scored.sort(key=lambda x: (-x["score"], x["domain"]))
+    return scored[:max_domains] or [{"domain": "general_systems", "score": 0.0, "evidence": []}]
+
+
+def equation_variables(equation: str) -> set[str]:
+    """Extract identifiers while excluding common functions and unit words."""
+    ignored = {"sin", "cos", "tan", "log", "ln", "exp", "sqrt", "sum", "pi"}
+    return {t for t in re.findall(r"[A-Za-z_][A-Za-z_0-9]*", str(equation))
+            if t.lower() not in ignored and t != "e"}
+
+
+def build_equation_chain(equations: list[str], knowns: list[str], targets: list[str]) -> dict:
+    """Find the shortest variable/equation chain from knowns to targets."""
+    target_set = set(map(str, targets))
+    # A model occasionally repeats its requested outputs in ``knowns``.  Do
+    # not permit that circular declaration to count as a proof of closure.
+    reached = set(map(str, knowns)) - target_set
+    paths: dict[str, list[str]] = {}
+    variable_paths: dict[str, list[str]] = {v: [] for v in reached}
+    rules = []
+    for equation in equations:
+        if equation.count("=") != 1:
+            continue
+        left, right = equation.split("=", 1)
+        left_vars, right_vars = equation_variables(left), equation_variables(right)
+        # A single-symbol side can be computed from every symbol on the other.
+        if len(left_vars) == 1:
+            rules.append((next(iter(left_vars)), right_vars, equation))
+        if len(right_vars) == 1:
+            rules.append((next(iter(right_vars)), left_vars, equation))
+    changed = True
+    while changed:
+        changed = False
+        for output, required, equation in rules:
+            if output in reached or not required <= reached:
+                continue
+            prefix = max((variable_paths[v] for v in required), key=len, default=[])
+            variable_paths[output] = prefix + [equation]
+            reached.add(output)
+            changed = True
+    for target in target_set & reached:
+        paths[target] = variable_paths.get(target, [])
+    return {"paths": paths, "reachable": sorted(reached), "unreachable": sorted(target_set - reached)}
+
+
+def validate_dimensions(equations: list[str], dimensions: dict[str, str]) -> dict:
+    """Check equality dimensions using declared symbolic dimensions.
+
+    Expressions are normalized as products/divisions of dimension labels.
+    Unknown or additive compound expressions are reported as unverifiable,
+    never silently accepted as valid.
+    """
+    invalid, unverifiable = [], []
+    try:
+        import sympy as sp
+    except ImportError:
+        # Dependency-free multiplicative dimensional algebra.
+        def declared_signature(value: str) -> Counter:
+            text, out = value.replace(" ", "").replace("^", "**"), Counter()
+            for match in re.finditer(r"([A-Za-z_]\w*)(?:\*\*(-?\d+))?", text):
+                name = match.group(1)
+                if name.lower() == "dimensionless": continue
+                prefix = text[:match.start()]
+                sign = -1 if prefix.rfind("/") > prefix.rfind("*") else 1
+                out[name] += sign * int(match.group(2) or 1)
+            return out
+        declared = {name: declared_signature(str(value)) for name, value in dimensions.items()}
+        def expression_signature(expr: str) -> Counter | None:
+            total = Counter()
+            normalized = re.sub(r"\([-+]?\d+(?:\.\d+)?/\d+(?:\.\d+)?\)\*?", "", expr.replace(" ", ""))
+            for match in re.finditer(r"([A-Za-z_]\w*)(?:\*\*(-?\d+))?", normalized):
+                name, power = match.group(1), int(match.group(2) or 1)
+                if name not in declared: return None
+                prefix = normalized[:match.start()]
+                sign = -1 if prefix.rfind("/") > prefix.rfind("*") else 1
+                for base, exponent in declared[name].items(): total[base] += sign * power * exponent
+            return total
+        for equation in equations:
+            if equation.count("=") != 1:
+                unverifiable.append({"equation": equation, "reason": "not an equality"}); continue
+            left, right = (part.strip() for part in equation.split("=", 1))
+            ls, rs = expression_signature(left), expression_signature(right)
+            if ls is None or rs is None:
+                unverifiable.append({"equation": equation, "reason": "missing or compound dimension metadata"})
+            elif ls != rs:
+                invalid.append({"equation": equation, "left": dict(ls), "right": dict(rs)})
+        return {"valid": not invalid, "invalid": invalid, "unverifiable": unverifiable}
+    base_names = set()
+    for declared in dimensions.values():
+        base_names.update(equation_variables(str(declared)))
+    base_symbols = {name: sp.Symbol(name, positive=True) for name in base_names}
+    variable_dimensions = {}
+    for name, declared in dimensions.items():
+        text = str(declared).strip().replace("^", "**")
+        if text.lower() in {"dimensionless", "none", "1"}:
+            variable_dimensions[str(name)] = sp.Integer(1)
+        else:
+            try:
+                variable_dimensions[str(name)] = sp.sympify(text, locals=base_symbols)
+            except Exception:
+                pass
+    for equation in equations:
+        if equation.count("=") != 1:
+            unverifiable.append({"equation": equation, "reason": "not an equality"})
+            continue
+        left, right = (s.strip() for s in equation.split("=", 1))
+        names = equation_variables(left) | equation_variables(right)
+        if any(name not in variable_dimensions for name in names):
+            unverifiable.append({"equation": equation, "reason": "missing or compound dimension metadata"})
+            continue
+        try:
+            ls = sp.sympify(left.replace("^", "**"), locals=variable_dimensions)
+            rs = sp.sympify(right.replace("^", "**"), locals=variable_dimensions)
+            if sp.simplify(ls / rs) != 1:
+                invalid.append({"equation": equation, "left": str(ls), "right": str(rs)})
+        except Exception as exc:
+            unverifiable.append({"equation": equation, "reason": str(exc)})
+    return {"valid": not invalid, "invalid": invalid, "unverifiable": unverifiable}
+
+
+def assess_binding(*, equations: list[str], knowns: list[str], targets: list[str],
+                   dimensions: dict[str, str] | None = None) -> dict:
+    """Assess closure without confusing a plausible narrative with a solution."""
+    parseable, rejected = [], []
+    try:
+        import sympy as sp
+    except ImportError:  # graph closure remains useful without SymPy
+        sp = None
+    for equation in equations:
+        try:
+            if equation.count("=") != 1:
+                raise ValueError("equation must contain exactly one equality")
+            if sp:
+                left, right = equation.split("=", 1)
+                sp.sympify(left); sp.sympify(right)
+            parseable.append(equation)
+        except Exception as exc:
+            rejected.append({"equation": equation, "reason": str(exc)})
+    chain = build_equation_chain(parseable, knowns, targets)
+    dimensional = validate_dimensions(parseable, dimensions or {}) if dimensions else {
+        "valid": True, "invalid": [], "unverifiable": []}
+    # A malformed *extra* equation is an audit warning, not grounds to throw
+    # away a sufficient valid derivation.  An all-malformed set still cannot
+    # close because its targets remain unreachable.
+    bound = bool(targets) and not chain["unreachable"] and dimensional["valid"]
+    return {"bound": bound, "closure": "closed" if bound else "open", "chain": chain,
+            "parseable_equations": parseable, "rejected_equations": rejected,
+            "dimensional_validation": dimensional,
+            "missing": chain["unreachable"]}

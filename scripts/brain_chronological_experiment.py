@@ -178,6 +178,9 @@ def run(bars: list[dict[str, Any]], bridge: BrainBridge, *, train_n: int, test_n
     if len(bars) < train_n + horizon + test_n + 1:
         raise ValueError("corpus is too short for requested train/gap/test windows")
     lookback = news_lookback_hours * 3600
+    predictor = getattr(bridge, "predict_outcome", None)
+    if predictor is None:
+        predictor = bridge.query_confidence
     # Purge `horizon` bars: no training target may land in the test period.
     train_indices: list[int] = list(range(1, train_n + 1))
     test_start = train_n + horizon + 1
@@ -206,8 +209,14 @@ def run(bars: list[dict[str, Any]], bridge: BrainBridge, *, train_n: int, test_n
             # Supervised surface: /brain/consolidate binds features→outcome
             # explicitly (observe_outcome's Hebbian co-firing is the live-path
             # alternative, but consolidate is the measurable training contract).
-            if not bridge.train_binding(features(bars, i, symbol, chain, news, lookback),
-                                        f"outcome {LABEL_TOKEN[target]}"):
+            trainer = getattr(bridge, "train_binding", None)
+            if trainer is None:
+                # Preserve the original live-learning bridge contract for
+                # lightweight/older nodes while preferring explicit
+                # consolidation on current production nodes.
+                trainer = bridge.observe_outcome
+            if not trainer(features(bars, i, symbol, chain, news, lookback),
+                           f"outcome {LABEL_TOKEN[target]}"):
                 failures += 1
     training_seconds = time.perf_counter() - started
     majority = Counter(train_labels).most_common(1)[0][0]
@@ -221,7 +230,7 @@ def run(bars: list[dict[str, Any]], bridge: BrainBridge, *, train_n: int, test_n
         hits = 0
         answered = 0
         for i in sample:
-            answer, _conf = bridge.predict_outcome(
+            answer, _conf = predictor(
                 features(bars, i, symbol, chain, news, lookback))
             predicted = label(answer)
             if predicted is not None:
@@ -241,7 +250,7 @@ def run(bars: list[dict[str, Any]], bridge: BrainBridge, *, train_n: int, test_n
         t0 = time.perf_counter()
         # Read-only /brain/predict: test features never enter the
         # learning moment, so held-out evaluation stays leak-free.
-        answer, confidence = bridge.predict_outcome(query)
+        answer, confidence = predictor(query)
         latency = time.perf_counter() - t0
         predicted = label(answer)
         previous = float(bars[i - 1]["close"])

@@ -112,6 +112,7 @@ class STMemory:
         *,
         has_error: bool = False,
         has_tool_calls: bool = False,
+        update_summary_model: bool = True,
     ) -> None:
         """
         Record a conversation turn and update the rolling summary.
@@ -141,7 +142,11 @@ class STMemory:
         self._ring.append(entry)
 
         # Update rolling summary via model.
-        self._update_summary(user_input, system_output)
+        if update_summary_model:
+            self._update_summary(user_input, system_output)
+        else:
+            self._deterministic_summary(user_input, system_output)
+        self._save()
 
     # ------------------------------------------------------------------
     # Public: build context sections for ContextBuilder
@@ -266,7 +271,20 @@ class STMemory:
                 ]
                 self._save()
         except Exception:
-            pass
+            self._deterministic_summary(user_input, output)
+
+    def _deterministic_summary(self, user_input: str, output: str) -> None:
+        prior=self._summary.strip()
+        new=f"User: {user_input.strip()[:700]} Assistant: {output.strip()[:900]}"
+        combined=(prior+" "+new).strip()
+        words=combined.split()
+        self._summary=" ".join(words[-self.DEFAULT_SUMMARY_MAX_WORDS:])
+        points=list(self._key_points)
+        if self._detect_instruction(user_input): points.append(user_input.strip()[:350])
+        for path in re.findall(r"[A-Za-z]:[/\\][^\s\"']+|(?:\.?\.?[/\\])?[\w.-]+(?:[/\\][\w.-]+)+",f"{user_input} {output}")[:8]:
+            points.append(f"Relevant path: {path.rstrip('.,;:')}")
+        if "error" in output.lower() or "failed" in output.lower(): points.append(f"Unresolved/observed result: {output.strip()[:350]}")
+        self._key_points=list(dict.fromkeys(point for point in points if point))[-self.DEFAULT_MAX_KEY_POINTS:]
 
     # ------------------------------------------------------------------
     # Importance scoring
@@ -365,6 +383,7 @@ class STMemory:
             "key_points": self._key_points,
             "turn_count": self._turn_count,
             "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "transcript": [entry.__dict__ for entry in self._ring],
         }
         try:
             path.write_text(
@@ -391,5 +410,8 @@ class STMemory:
                 if str(p).strip()
             ]
             self._turn_count = int(payload.get("turn_count", 0))
+            for raw in payload.get("transcript") or []:
+                if isinstance(raw, dict):
+                    self._ring.append(TranscriptEntry(**{key:raw[key] for key in TranscriptEntry.__dataclass_fields__ if key in raw}))
         except Exception:
             pass

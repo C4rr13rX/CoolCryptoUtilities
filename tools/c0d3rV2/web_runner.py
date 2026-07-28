@@ -61,19 +61,35 @@ def _build_flow(session_key: str, workdir: Path, backend: str = "wizard", model:
         VirtualHardwareSimScaffoldTool,
         BaseCryptoPaperTradeBenchmarkTool,
         ATFStaticTradingStrategyTool,
+        ProjectWorkMapperTool,
+        DependencyTraversalTool,
+        ResearchHarvesterTool,
+        FileLocateTool,
     )
     from lt_mem import LongTermMemory
+    from st_memory import STMemory
+    from side_load_st_mem_file_location import STSideLoadedMemory
+    from side_load_lt_mem_file_location import LTSideLoadedMemory
     from web_search import WebSearch
+    from tools.c0d3rV2.plugins.research_harvester import ResearchHarvester
 
     session = _make_session(backend, session_key, model=model, atf_models=atf_models)
     rt = _RUNTIME_ROOT
     rt.mkdir(parents=True, exist_ok=True)
 
     lt_memory = LongTermMemory(rt)
+    short_memory = STMemory(session, session_id=session_key, runtime_root=rt)
+    st_side_memory = STSideLoadedMemory(session_key, rt)
+    lt_side_memory = LTSideLoadedMemory(rt)
 
     tools = ToolRegistry()
-    tools.register(WebSearchTool(WebSearch(session)))
-    tools.register(MemorySearchTool(lt_memory))
+    web_search = WebSearch(session)
+    tools.register(WebSearchTool(web_search))
+    tools.register(ResearchHarvesterTool(ResearchHarvester(rt), web_search))
+    memory_tool = MemorySearchTool(lt_memory)
+    file_locate_tool = FileLocateTool(st_side_memory, lt_side_memory, workdir=workdir)
+    tools.register(memory_tool)
+    tools.register(file_locate_tool)
     tools.register(MatrixSearchTool())
     tools.register(NativeOsTool())
     tools.register(ReactPwaScaffoldTool())
@@ -81,6 +97,8 @@ def _build_flow(session_key: str, workdir: Path, backend: str = "wizard", model:
     tools.register(VirtualHardwareSimScaffoldTool())
     tools.register(BaseCryptoPaperTradeBenchmarkTool())
     tools.register(ATFStaticTradingStrategyTool())
+    tools.register(ProjectWorkMapperTool(workdir))
+    tools.register(DependencyTraversalTool(workdir, memory_tool, file_locate_tool))
 
     flow = ProcessFlow(
         session=session,
@@ -88,6 +106,9 @@ def _build_flow(session_key: str, workdir: Path, backend: str = "wizard", model:
         tools=tools,
         session_id=session_key,
         lt_memory=lt_memory,
+        short_memory=short_memory,
+        st_side_memory=st_side_memory,
+        lt_side_memory=lt_side_memory,
     )
     return flow
 
@@ -650,6 +671,12 @@ def _record_compact_turn(flow: Any, prompt: str, output: str) -> None:
         history = list(getattr(flow, "_compact_history", []))
         history.append({"user": prompt, "assistant": output[:4000]})
         flow._compact_history = history[-8:]
+        if getattr(flow,"lt_memory",None):
+            flow.lt_memory.append(prompt,output[:8000],workdir=str(flow.workdir),model_id=getattr(flow.session,"get_model_id",lambda:"")(),session_id=str(flow.session_id or ""))
+        short=getattr(flow,"_st_mem",None)
+        if short and hasattr(short,"record_turn"):
+            short.record_turn(prompt,output,update_summary_model=False)
+            flow._summary_bundle=short.summary_bundle
     except Exception:
         pass
 

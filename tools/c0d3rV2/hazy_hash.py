@@ -497,6 +497,32 @@ class HazyHash:
     # Maintenance
     # ------------------------------------------------------------------
 
+    def all_paths(self, *, min_access_count: int = 1, limit: int = 10000) -> list[str]:
+        """Export concrete paths so a separate LT database can absorb ST data."""
+        paths: list[str] = []
+        if self._kuzu_ok:
+            try:
+                result = self._conn.execute(
+                    f'MATCH (n:LocationNode) WHERE n.scope = "{_esc(self._scope)}" '
+                    f'AND n.level = {LEVEL_PATH} AND n.access_count >= {max(1, int(min_access_count))} '
+                    f'RETURN n.abs_path ORDER BY n.last_accessed DESC LIMIT {max(1, int(limit))}'
+                )
+                while result.has_next():
+                    value = str(result.get_next()[0] or "")
+                    if value and value not in paths:
+                        paths.append(value)
+                return paths
+            except Exception:
+                return []
+        for bucket in self._fallback.values():
+            for entry in reversed(bucket):
+                value = str(entry.get("abs_path") or "")
+                if value and value not in paths:
+                    paths.append(value)
+                if len(paths) >= limit:
+                    return paths
+        return paths
+
     def promote_to_scope(self, target_scope: str) -> int:
         """
         Copy high-value nodes from this scope into a target scope.

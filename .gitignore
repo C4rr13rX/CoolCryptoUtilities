@@ -120,3 +120,5 @@ tools/c0d3rV2/native_os_service/target/
 data/news/free_news.json
 # Generated per-chain pair indexes (rebuilt by make2000index at runtime)
 data/pair_index_*.json
+# Generated diagnostic transcript from scratch_rebuild_catalogue.py
+scratch_rebuild.out

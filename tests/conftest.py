@@ -39,36 +39,21 @@ def pytest_configure():
     os.environ["ALLOW_SQLITE_FALLBACK"] = "1"
 
 
-@pytest.fixture(scope="session", autouse=True)
-def django_test_environment():
-    """
-    Stand up a Django test environment so DRF APITestCase suites run under pytest
-    without needing pytest-django. Mirrors Django's DiscoverRunner setup/teardown.
-    """
-    if not os.environ.get("DJANGO_SETTINGS_MODULE"):
-        os.environ["DJANGO_SETTINGS_MODULE"] = "coolcrypto_dashboard.settings"
-
-    import django
-    from django.test.utils import (
-        setup_databases,
-        setup_test_environment,
-        teardown_databases,
-        teardown_test_environment,
-    )
-
-    django.setup()
-    setup_test_environment()
-    old_config = None
+@pytest.fixture(autouse=True)
+def _isolate_market_endpoint_selection(monkeypatch):
+    """A developer .env must not silently change unit-test endpoint topology."""
+    monkeypatch.delenv("MARKET_ENDPOINT_INCLUDE", raising=False)
+    monkeypatch.setenv("MARKET_ENDPOINT_EXCLUDE", "dexscreener")
     try:
-        old_config = setup_databases(verbosity=0, interactive=False, keepdb=False)
-    except RuntimeError as exc:
-        # pytest-django blocks DB access unless explicitly marked; fallback to a
-        # DB-less environment for unit tests that do not hit the ORM.
-        if "Database access not allowed" not in str(exc):
-            raise
-    try:
-        yield
-    finally:
-        if old_config:
-            teardown_databases(old_config, verbosity=0)
-        teardown_test_environment()
+        from trading import data_stream
+
+        monkeypatch.setattr(data_stream, "_ENV_ENDPOINT_INCLUDE", set())
+        monkeypatch.setattr(data_stream, "_ENV_ENDPOINT_EXCLUDE", set())
+    except Exception:
+        pass
+
+
+# pytest-django owns Django setup, test-environment setup, and database
+# teardown. Keeping a second hand-rolled session fixture here caused Django's
+# setup_test_environment() to run twice and prevented every ORM-backed suite
+# from collecting.

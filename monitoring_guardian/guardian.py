@@ -18,20 +18,11 @@ try:
 except Exception:
     psutil = None  # type: ignore
 
-# --- Robust import that works in both package and script contexts ----------------
-try:
-    # When run as a module from project root: python -m monitoring_guardian.guardian
-    from ..tools.codex_session import CodexSession  # type: ignore[relative-beyond-top-level]
-except (ImportError, ValueError):
-    try:
-        # When PYTHONPATH includes project root: python monitoring_guardian/guardian.py
-        from tools.codex_session import CodexSession  # type: ignore[no-redef]
-    except ImportError:
-        PROJECT_ROOT = Path(__file__).resolve().parents[1]
-        if str(PROJECT_ROOT) not in sys.path:
-            sys.path.insert(0, str(PROJECT_ROOT))
-        from tools.codex_session import CodexSession  # type: ignore[no-redef]
-# -------------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if str(PROJECT_ROOT / "web") not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT / "web"))
 
 from monitoring_guardian.prompt_text import DEFAULT_GUARDIAN_PROMPT
 try:
@@ -64,8 +55,6 @@ TRANSCRIPT_DIR = Path("runtime/guardian/transcripts")
 TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
 RUN_REQUEST_PATH = Path("runtime/guardian/request_run")
 
-session = CodexSession("guardian-session", transcript_dir=TRANSCRIPT_DIR)
-
 if "DJANGO_SETTINGS_MODULE" not in os.environ:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "coolcrypto_dashboard.settings")
 try:  # pragma: no cover - guardian may already run inside Django
@@ -74,6 +63,29 @@ try:  # pragma: no cover - guardian may already run inside Django
     django.setup()
 except Exception:
     pass
+
+from monitoring_guardian.recovery import RecoveryCoordinator
+
+
+def _agent_send(prompt: str) -> str:
+    """Run Guardian remediation through C0d3rV2 using the selected backend."""
+    from tools.ai_backend_mode import configured_backend
+    from tools.c0d3rV2.delivery_runner import run_delivery_turn_detailed
+
+    backend = configured_backend("freeloader") or "freeloader"
+    detail = run_delivery_turn_detailed(
+        prompt,
+        session_key=f"guardian-recovery:{int(time.time())}",
+        workdir=PROJECT_ROOT,
+        backend=backend,
+        system_context=(
+            "You are the independent Guardian recovery agent operating through C0d3rV2. "
+            "Diagnose from evidence, make scoped repairs, test them, and do not hide failures. "
+            "Never start duplicate services and never weaken authentication or safety controls."
+        ),
+        reset=True,
+    )
+    return str(detail.get("output") or detail.get("error") or "C0d3rV2 returned no repair output")
 
 DEFAULT_CONFIG: Dict[str, object] = {
     "log_files": ["logs/system.log"],
@@ -140,6 +152,7 @@ def parse_args() -> argparse.Namespace:
         default=Path(__file__).with_name("config.json"),
         help="Path to configuration JSON (defaults to monitoring_guardian/config.json if present, else example file).",
     )
+    parser.add_argument("--health-once", action="store_true", help="Check/recover components once without running an AI report.")
     return parser.parse_args()
 
 
@@ -179,6 +192,7 @@ class Guardian:
         )
         self.prompt_provider = prompt_provider
         self.status_hook = status_hook
+        self.recovery = RecoveryCoordinator(agent_repair=_agent_send)
 
     def run(self) -> None:
         self.last_report_ts = time.time()
@@ -201,6 +215,7 @@ class Guardian:
             print("[guardian] stopping...")
         finally:
             self.shutdown.set()
+            self.recovery.close()
 
     def _poll_logs(self) -> None:
         aggregated: List[str] = []
@@ -243,6 +258,13 @@ class Guardian:
         return normalized
 
     def _check_process_health(self) -> None:
+        try:
+            component_state = self.recovery.tick()
+            for name, state in component_state.items():
+                if state.get("status") in {"down", "stale", "unknown"}:
+                    self.recent_events.append((time.time(), f"{name}: {state}", f"{name}_unhealthy", "WARNING"))
+        except Exception as exc:
+            self.recent_events.append((time.time(), f"Recovery monitor error: {exc}", "recovery_monitor_error", "ERROR"))
         proc = detect_main_process()
         if proc is None:
             self.recent_events.append(
@@ -302,11 +324,11 @@ class Guardian:
                 try:
                     if mark_slot_running and ticket_id:
                         mark_slot_running("codex", ticket_id)
-                    response = session.send(report)
+                    response = _agent_send(report)
                 finally:
                     lease.release()
             else:
-                response = session.send(report)
+                response = _agent_send(report)
             if mark_slot_finished and ticket_id:
                 mark_slot_finished("codex", ticket_id, outcome="success")
             print(response)
@@ -396,11 +418,11 @@ class Guardian:
                 try:
                     if mark_slot_running and ticket_id:
                         mark_slot_running("guardian", ticket_id)
-                    response = session.send(prompt)
+                    response = _agent_send(prompt)
                 finally:
                     lease.release()
             else:
-                response = session.send(prompt)
+                response = _agent_send(prompt)
             print(response)
             if mark_slot_finished and ticket_id:
                 mark_slot_finished("guardian", ticket_id, outcome="success")
@@ -415,6 +437,13 @@ class Guardian:
 
 def main() -> None:
     args = parse_args()
+    if args.health_once:
+        coordinator = RecoveryCoordinator(agent_repair=None)
+        try:
+            print(json.dumps(coordinator.tick(), indent=2))
+        finally:
+            coordinator.close()
+        return
     config = load_config(args.config)
     lease = None
     if GuardianLease is not None:

@@ -4,10 +4,14 @@ from django.urls import path
 
 from . import views
 from . import delivery_views
+from . import research_views
 
 app_name = "branddozer"
 
 urlpatterns = [
+    path("research/papers/", research_views.ResearchPaperListView.as_view(), name="research-papers"),
+    path("research/papers/<str:paper_id>/", research_views.ResearchPaperDetailView.as_view(), name="research-paper"),
+    path("research/papers/<str:paper_id>/download/", research_views.ResearchPaperDownloadView.as_view(), name="research-paper-download"),
     path("projects/", views.ProjectListView.as_view(), name="projects"),
     path("projects/roots/", views.ProjectRootListView.as_view(), name="project-roots"),
     path("projects/github/account/", views.ProjectGitHubAccountView.as_view(), name="project-github-account"),
@@ -36,7 +40,12 @@ urlpatterns = [
     path("delivery/runs/<str:run_id>/accept/", delivery_views.DeliveryRunAcceptView.as_view(), name="delivery-accept"),
     path("projects/<str:project_id>/", views.ProjectDetailView.as_view(), name="project-detail"),
     path("projects/<str:project_id>/start/", views.ProjectStartView.as_view(), name="project-start"),
+    path("projects/<str:project_id>/lifecycle/", views.ProjectLifecycleView.as_view(), name="project-lifecycle"),
+    path("projects/<str:project_id>/preview/", views.ProjectPreviewView.as_view(), name="project-preview"),
     path("projects/<str:project_id>/stop/", views.ProjectStopView.as_view(), name="project-stop"),
     path("projects/<str:project_id>/logs/", views.ProjectLogView.as_view(), name="project-logs"),
     path("projects/<str:project_id>/interjections/", views.ProjectInterjectionSuggestView.as_view(), name="project-interjections"),
+    path("product-loop/status/", views.ProductLoopStatusView.as_view(), name="product-loop-status"),
+    path("product-loop/cycle/", views.ProductLoopCycleView.as_view(), name="product-loop-cycle"),
+    path("atf/class-benchmark/", views.AtfClassBenchmarkView.as_view(), name="atf-class-benchmark"),
 ]

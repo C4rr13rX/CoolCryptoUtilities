@@ -26,6 +26,8 @@ from django.utils import timezone
 
 from tools.ai_session import get_session_class, settings_for_role, session_provider_from_context
 from tools.c0d3rV2.delivery_runner import run_delivery_turn as _c0d3rv2_run
+from tools.c0d3rV2.model_response_normalizer import ModelResponseNormalizer
+from tools.c0d3rV2.repair_packet import advance_repair_state
 from services.branddozer_ui import UISnapshotResult, capture_ui_screenshots
 from services.branddozer_jobs import update_job
 from services.branddozer_github import publish_project
@@ -95,9 +97,10 @@ PHASES = [
     "awaiting_acceptance",
 ]
 
-SESSION_LOG_ROOT = Path("runtime/branddozer/sessions")
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SESSION_LOG_ROOT = _PROJECT_ROOT / "runtime/branddozer/sessions"
 SESSION_LOG_ROOT.mkdir(parents=True, exist_ok=True)
-SOLO_PLAN_ROOT = Path("runtime/branddozer/solo_plans")
+SOLO_PLAN_ROOT = _PROJECT_ROOT / "runtime/branddozer/solo_plans"
 SOLO_PLAN_ROOT.mkdir(parents=True, exist_ok=True)
 WORKTREE_LOCK = threading.Lock()
 PLACEHOLDER_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")
@@ -237,15 +240,280 @@ def _normalize_plan_steps(raw: Any) -> List[Dict[str, Any]]:
             if isinstance(item, str):
                 steps.append({"id": idx, "title": item.strip(), "status": "todo"})
             elif isinstance(item, dict):
-                title = (item.get("title") or item.get("step") or item.get("name") or f"Step {idx}").strip()
-                status = (item.get("status") or "todo").strip().lower()
+                raw_title = item.get("title") or item.get("description") or item.get("name")
+                if not raw_title and isinstance(item.get("step"), str):
+                    raw_title = item.get("step")
+                title = str(raw_title or f"Step {idx}").strip()
+                status = str(item.get("status") or "todo").strip().lower()
                 steps.append({"id": item.get("id") or idx, "title": title, "status": status, "detail": item.get("detail")})
     elif isinstance(raw, dict):
+        if isinstance(raw.get("steps"), list):
+            return _normalize_plan_steps(raw["steps"])
         for idx, (key, val) in enumerate(raw.items(), start=1):
             title = str(key).strip()
             detail = val if isinstance(val, str) else json.dumps(val)
             steps.append({"id": idx, "title": title, "status": "todo", "detail": detail})
     return steps
+
+
+def _fallback_solo_steps(run: DeliveryRun) -> List[Dict[str, Any]]:
+    """Build an executable plan when a planning model violates its schema."""
+    criteria = [str(item).strip() for item in (run.definition_of_done or []) if str(item).strip()]
+    titles = [
+        "Initialize the repository, toolchain, application skeleton, and documented one-command launcher",
+        "Research the requested domain and create traceable requirements, architecture, contracts, and validation plans",
+    ]
+    titles.extend(f"Implement and prove acceptance criterion: {criterion}" for criterion in criteria)
+    titles.append("Run the complete test, build, browser, performance, and acceptance suite; fix every failure and publish completion evidence")
+    return [{"id": index, "title": title, "status": "todo"} for index, title in enumerate(titles, start=1)]
+
+
+def _preserve_completed_steps(previous: List[Dict[str, Any]], updated: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    completed = {str(step.get("title") or ""): step for step in previous
+                 if str(step.get("status") or "").lower() in {"done", "complete"}}
+    for step in updated:
+        prior = completed.get(str(step.get("title") or ""))
+        if prior:
+            step["status"] = "done"
+            if prior.get("detail") and not step.get("detail"):
+                step["detail"] = prior["detail"]
+    return updated
+
+
+def _substantive_workspace_files(root: Path) -> List[Path]:
+    ignored = {".git", ".c0d3r", "node_modules", "dist", "build", "coverage", "__pycache__"}
+    return [path for path in root.rglob("*") if path.is_file() and not any(part in ignored for part in path.relative_to(root).parts)]
+
+
+def _builtin_solo_step(root: Path, title: str) -> Optional[str]:
+    """Execute deterministic discovery work without spending a model call."""
+    lowered = title.lower()
+    if "research" in lowered and ("model" in lowered or "scientific" in lowered):
+        from services.branddozer_scientific_catalogue import build_catalogue
+        raw_limit = os.getenv("BRANDDOZER_RESEARCH_MAX_TARGETS", "").strip()
+        result = build_catalogue(root, max_targets=int(raw_limit) if raw_limit else None)
+        if result.get("status") != "complete":
+            raise RuntimeError(f"Scientific catalogue readiness gate failed: {json.dumps(result.get('coverage', {}))}")
+        return f"Scientific catalogue persisted with source-to-code traceability: {json.dumps(result)}"
+    if "validation matrix" in lowered:
+        from services.branddozer_scientific_catalogue import build_validation_matrix
+        result = build_validation_matrix(root)
+        return f"Research-to-implementation validation matrix persisted: {json.dumps(result)}"
+    if not any(phrase in lowered for phrase in ("explore repository", "inspect repository", "review project structure")):
+        return None
+    ignored = {".git", "node_modules", "dist", "build", "coverage", "__pycache__"}
+    files = []
+    for path in root.rglob("*"):
+        if not path.is_file() or any(part in ignored for part in path.relative_to(root).parts):
+            continue
+        files.append({"path": str(path.relative_to(root)), "bytes": path.stat().st_size})
+        if len(files) >= 2000:
+            break
+    report = {
+        "root": str(root), "file_count": len(files), "files": files,
+        "substantive_file_count": len(_substantive_workspace_files(root)),
+        "observed_at": timezone.now().isoformat(),
+        "conclusion": "new_or_metadata_only" if not _substantive_workspace_files(root) else "existing_project",
+    }
+    target = root / ".c0d3r" / "repository-inventory.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return f"Repository inventory completed deterministically: {len(files)} files; conclusion={report['conclusion']}; report={target}"
+
+
+def _solo_step_contract(title: str) -> Dict[str, Any]:
+    """Give each work package observable outputs and downstream consumers."""
+    lowered = title.lower()
+    if "research" in lowered and ("model" in lowered or "scientific" in lowered):
+        return {
+            "outputs": ["research/model-catalogue.json", "research/model-catalogue.md"],
+            "acceptance": [
+                "Each record has a domain, question, governing equations, symbols/units, assumptions, validity bounds, and uncertainty/tolerance.",
+                "Each supported premise has fetched source evidence with URL, title, retrieval time, content hash, evidence level, and verified passage.",
+                "Each record names implementation_targets and test_targets so research is consumed by code and validation.",
+                "Unsupported regimes are marked inconclusive rather than invented.",
+            ],
+        }
+    if "validation matrix" in lowered:
+        return {
+            "outputs": ["research/validation-matrix.json", "research/traceability-matrix.md"],
+            "acceptance": [
+                "Every model catalogue entry maps to implementation modules, reference fixtures, tests, tolerance, conservation checks, and adjacent-scale transition checks.",
+                "No supported model is left without a consumer and no physics module is left without validation evidence.",
+            ],
+        }
+    if any(term in lowered for term in ("set up typescript", "project foundation", "application skeleton")):
+        return {
+            "outputs": ["package.json", "tsconfig.json", "src/**/*.ts", "src/**/*.tsx", "tests/**/*.test.ts"],
+            "acceptance": [
+                "The application uses strict TypeScript; placeholder-only JavaScript/JSX is not accepted.",
+                "Three.js is installed and a source module constructs a Scene and WebGLRenderer.",
+                "Package scripts provide build, test, and typecheck commands and all three pass from the project root.",
+                "The foundation has documented module boundaries and at least one executable unit or smoke test.",
+            ],
+        }
+    return {"outputs": [], "acceptance": ["Produce concrete, inspectable progress and validation evidence for this exact work package."]}
+
+
+def _foundation_quality_gaps(root: Path) -> List[str]:
+    """Return deterministic foundation failures that a model cannot wave away."""
+    gaps: List[str] = []
+    package_path = root / "package.json"
+    if not package_path.exists():
+        return ["package.json is missing"]
+    try:
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return [f"package.json is invalid JSON: {exc}"]
+
+    dependencies = {**(package.get("dependencies") or {}), **(package.get("devDependencies") or {})}
+    scripts = package.get("scripts") or {}
+    if "three" not in dependencies:
+        gaps.append("package.json does not declare the three dependency")
+    for script in ("build", "test", "typecheck"):
+        if not str(scripts.get(script) or "").strip():
+            gaps.append(f"package.json is missing the {script} script")
+
+    tsconfig = root / "tsconfig.json"
+    if not tsconfig.exists():
+        gaps.append("tsconfig.json is missing")
+    else:
+        try:
+            compiler = (json.loads(tsconfig.read_text(encoding="utf-8")).get("compilerOptions") or {})
+            if compiler.get("strict") is not True:
+                gaps.append("tsconfig.json must enable compilerOptions.strict=true")
+        except Exception as exc:
+            gaps.append(f"tsconfig.json is invalid JSON: {exc}")
+
+    source_files = list((root / "src").rglob("*.ts")) + list((root / "src").rglob("*.tsx")) if (root / "src").exists() else []
+    if not source_files:
+        gaps.append("src contains no TypeScript .ts/.tsx files")
+    else:
+        source_text = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in source_files)
+        if "THREE.Scene" not in source_text and "new Scene" not in source_text:
+            gaps.append("source does not construct a Three.js Scene")
+        if "WebGLRenderer" not in source_text:
+            gaps.append("source does not construct a Three.js WebGLRenderer")
+        if re.search(r"\bplaceholder\b", source_text, flags=re.IGNORECASE):
+            gaps.append("source still identifies its implementation as a placeholder")
+        if re.search(r"as\s+unknown\s+as\s+THREE\.WebGLRenderer", source_text):
+            gaps.append(
+                "source counterfeits a WebGLRenderer with an unsafe double assertion; "
+                "use dependency injection/platform adapters and explicit test doubles"
+            )
+        if (
+            re.search(r"\bjsdom\b", source_text, flags=re.IGNORECASE)
+            or re.search(r"(?:HTMLCanvasElement|globalThis|window)\b[^\n]{0,120}\.prototype\.[A-Za-z_$][\w$]*\s*=", source_text)
+            or re.search(r"\b(?:minimal|fake|mock|stub)\s+(?:WebGL\s+)?context\b", source_text, flags=re.IGNORECASE)
+        ):
+            gaps.append(
+                "production source embeds a test-environment shim or platform mock; "
+                "keep production adapters real and inject explicit test doubles from test code"
+            )
+
+    test_files = []
+    for base in (root / "tests", root / "src"):
+        if base.exists():
+            test_files.extend(base.rglob("*.test.ts"))
+            test_files.extend(base.rglob("*.test.tsx"))
+            test_files.extend(base.rglob("*.spec.ts"))
+            test_files.extend(base.rglob("*.spec.tsx"))
+    if not list(test_files):
+        gaps.append("no TypeScript unit/smoke test file exists")
+    return gaps
+
+
+def _solo_step_quality_gaps(root: Path, title: str) -> List[str]:
+    lowered = str(title or "").lower()
+    if any(term in lowered for term in ("set up typescript", "project foundation", "application skeleton")):
+        return _foundation_quality_gaps(root)
+    return []
+
+
+def _is_transient_atf_capacity_failure(error: BaseException | str) -> bool:
+    """Classify provider-pool availability separately from product failure."""
+    text = str(error or "").lower()
+    return any(marker in text for marker in (
+        "agentthefreeloader exhausted eligible fallbacks",
+        "agent the freeloader exhausted eligible fallbacks",
+        "hard wall-clock deadline",
+        "has no eligible model",
+        "turn model-call budget exhausted",
+        "atf sane-response cooldown required",
+        "protocol_hallucination",
+        "unparseable structured response",
+        "shared quota",
+        "cooldown",
+    ))
+
+
+def _validator_repair_paths(evidence: str, root: Path) -> List[str]:
+    """Map deterministic validator evidence to a small, portable repair surface."""
+    normalized = str(evidence or "").replace("\\\\", "/").replace("\\", "/")
+    paths = set(re.findall(
+        r"(?:src|tests)/[A-Za-z0-9_./-]+\.(?:ts|tsx|js|jsx|py|rs|go|java|cpp|c|h|php|pl)",
+        normalized,
+        flags=re.IGNORECASE,
+    ))
+    lowered = normalized.lower()
+    ecosystem_manifests = (
+        (("npm ", "npm error", "npm warn", "vite", "vitest", "node_modules"), ("package.json",)),
+        (("pip ", "pytest", "python dependency", "poetry"), ("pyproject.toml", "requirements.txt")),
+        (("cargo ", "rustc", "crates.io"), ("Cargo.toml",)),
+        (("composer ", "packagist"), ("composer.json",)),
+        (("maven ", "mvn "), ("pom.xml",)),
+        (("gradle ", "gradlew"), ("build.gradle", "build.gradle.kts")),
+        (("go mod", "go: downloading"), ("go.mod",)),
+    )
+    for markers, manifests in ecosystem_manifests:
+        if any(marker in lowered for marker in markers):
+            existing = [name for name in manifests if (root / name).exists()]
+            paths.update(existing or manifests[:1])
+    quality_scans: List[re.Pattern[str]] = []
+    if "placeholder" in lowered:
+        quality_scans.append(re.compile(r"\bplaceholder\b", flags=re.IGNORECASE))
+    if any(marker in lowered for marker in (
+        "test-environment shim", "platform mock", "counterfeits a webglrenderer",
+        "unsafe double assertion", "dummy object", "fake object", "mock renderer",
+    )):
+        quality_scans.extend((
+            re.compile(r"\bjsdom\b", flags=re.IGNORECASE),
+            re.compile(r"(?:HTMLCanvasElement|globalThis|window)\b[^\n]{0,120}\.prototype\.[A-Za-z_$][\w$]*\s*="),
+            re.compile(r"\b(?:minimal|fake|mock|stub|dummy)\s+(?:WebGL\s+)?(?:context|renderer|canvas)\b", flags=re.IGNORECASE),
+            re.compile(r"\bas\s+unknown\s+as\s+(?:THREE\.)?WebGLRenderer\b", flags=re.IGNORECASE),
+        ))
+    if quality_scans:
+        source_extensions = {".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go", ".java", ".cpp", ".c", ".h", ".php", ".pl"}
+        for base_name in ("src", "app", "lib"):
+            base = root / base_name
+            if not base.exists():
+                continue
+            for candidate in base.rglob("*"):
+                if not candidate.is_file() or candidate.suffix.lower() not in source_extensions:
+                    continue
+                text = candidate.read_text(encoding="utf-8", errors="ignore")
+                if any(pattern.search(text) for pattern in quality_scans):
+                    paths.add(candidate.relative_to(root).as_posix())
+    return sorted(paths)
+
+
+def _research_consumer_gaps(root: Path) -> List[str]:
+    matrix_path = root / "research" / "validation-matrix.json"
+    if not matrix_path.exists():
+        return ["research/validation-matrix.json is missing"] if (root / "research" / "model-catalogue.json").exists() else []
+    try:
+        rows = json.loads(matrix_path.read_text(encoding="utf-8")).get("rows", [])
+    except Exception as exc:
+        return [f"validation matrix unreadable: {exc}"]
+    gaps = []
+    for row in rows:
+        if row.get("translation_status") != "ready":
+            continue
+        for kind in ("implementation_targets", "test_targets"):
+            for raw in row.get(kind) or []:
+                if not (root / str(raw)).exists():
+                    gaps.append(f"{row.get('model_id')}: missing {kind} path {raw}")
+    return gaps
 
 
 def _resolve_smoke_command(run: DeliveryRun, root: Path) -> Optional[List[str]]:
@@ -256,6 +524,50 @@ def _resolve_smoke_command(run: DeliveryRun, root: Path) -> Optional[List[str]]:
     if raw:
         return shlex.split(raw)
     return None
+
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _concise_process_diagnostics(stdout: str, stderr: str, limit: int = 6000) -> str:
+    """Preserve distinct validator failures in a small, model-readable form."""
+    clean = _ANSI_ESCAPE_RE.sub("", f"{stdout or ''}\n{stderr or ''}")
+    lines = [line.rstrip() for line in clean.splitlines()]
+    selected: List[str] = []
+    context_remaining = 0
+    marker = re.compile(
+        r"(?:\bFAIL\b|\bERROR\b|Error:|Expected .+ but found|"
+        r"[A-Za-z0-9_./% -]+\.(?:ts|tsx|js|jsx|py):\d+(?::\d+)?|"
+        r"Test Files|Tests\s+\d|exit code)",
+        re.IGNORECASE,
+    )
+    for line in lines:
+        if marker.search(line):
+            if line.strip() and line not in selected:
+                selected.append(line)
+            context_remaining = 2
+        elif context_remaining and line.strip():
+            selected.append(line)
+            context_remaining -= 1
+    result = "\n".join(selected)
+    if len(result) <= limit:
+        return result
+    half = max(1, limit // 2)
+    return result[:half] + "\n... diagnostics truncated ...\n" + result[-half:]
+
+
+def _compact_validation_evidence(evidence: str, limit: int = 2200) -> str:
+    """Reduce repeated raw logs while retaining actionable errors and gates."""
+    raw = str(evidence or "")
+    diagnostics = _concise_process_diagnostics("", raw, limit=max(400, limit - 500))
+    quality = ""
+    match = re.search(r'"quality_gaps"\s*:\s*(\[[^\]]*\])', raw, flags=re.IGNORECASE)
+    if match:
+        quality = f"Quality gates: {match.group(1)}"
+    compact = "\n".join(item for item in (diagnostics, quality) if item.strip())
+    if not compact:
+        compact = raw[-limit:]
+    return compact[:limit]
 
 
 def _default_solo_smoke() -> Dict[str, Any]:
@@ -284,32 +596,137 @@ def _default_solo_smoke() -> Dict[str, Any]:
     return {"status": "passed", "score": score}
 
 
-def _run_smoke_test(run: DeliveryRun, root: Path, session: Optional[DeliverySession] = None) -> Dict[str, Any]:
+def _run_smoke_test(
+    run: DeliveryRun,
+    root: Path,
+    session: Optional[DeliverySession] = None,
+    step_title: str = "",
+) -> Dict[str, Any]:
     cmd = _resolve_smoke_command(run, root)
+    dependency_setup: Optional[Dict[str, Any]] = None
+    package_path = root / "package.json"
+    lock_path = root / "package-lock.json"
+    if package_path.exists() and (
+        not (root / "node_modules").exists()
+        or not lock_path.exists()
+        or lock_path.stat().st_mtime < package_path.stat().st_mtime
+    ):
+        npm = "npm.cmd" if os.name == "nt" else "npm"
+        try:
+            install = subprocess.run(
+                [npm, "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+                cwd=str(root), capture_output=True, text=True, encoding="utf-8",
+                errors="replace", check=False, timeout=300,
+            )
+            dependency_setup = {
+                "command": [npm, "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+                "exit_code": install.returncode,
+                "stdout": (install.stdout or "")[-4000:],
+                "stderr": (install.stderr or "")[-4000:],
+            }
+            if install.returncode != 0:
+                return {"status": "failed", "command": "dependency-setup", "dependency_setup": dependency_setup}
+        except Exception as exc:
+            return {"status": "error", "command": "dependency-setup", "error": str(exc)}
     if not cmd:
-        result = _default_solo_smoke()
-        result["command"] = "internal"
+        if package_path.exists():
+            try:
+                package = json.loads(package_path.read_text(encoding="utf-8"))
+                scripts = package.get("scripts") or {}
+            except Exception as exc:
+                return {"status": "failed", "command": "package-validation", "error": str(exc)}
+            npm = "npm.cmd" if os.name == "nt" else "npm"
+            commands = [[npm, "run", name] for name in ("typecheck", "test", "build") if scripts.get(name)]
+            if not commands:
+                return {"status": "failed", "command": "npm", "error": "No typecheck, test, or build scripts are defined."}
+            started = time.time()
+            outputs: List[Dict[str, Any]] = []
+            for candidate in commands:
+                proc = subprocess.run(
+                    candidate, cwd=str(root), capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", check=False, timeout=300,
+                )
+                outputs.append({
+                    "command": candidate,
+                    "exit_code": proc.returncode,
+                    "stdout": (proc.stdout or "")[-4000:],
+                    "stderr": (proc.stderr or "")[-4000:],
+                    "diagnostics": _concise_process_diagnostics(proc.stdout or "", proc.stderr or ""),
+                })
+                # Typecheck, tests, and build are independent observations.
+                # Collect the complete repair frontier in one bounded pass so
+                # a weak model does not spend a full cycle discovering each
+                # already-present failure serially.
+            result = {
+                "status": "passed" if outputs and all(item["exit_code"] == 0 for item in outputs) else "failed",
+                "command": " && ".join(" ".join(item["command"]) for item in outputs),
+                "duration_ms": int((time.time() - started) * 1000),
+                "commands": outputs,
+            }
+        else:
+            result = _default_solo_smoke()
+            result["command"] = "internal"
+        quality_gaps = _solo_step_quality_gaps(root, step_title)
+        if quality_gaps:
+            result["status"] = "failed"
+            result["quality_gaps"] = quality_gaps
+        if dependency_setup:
+            result["dependency_setup"] = dependency_setup
         return result
     start = time.time()
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        # Execute explicit compound checks without invoking a shell. This supports
+        # portable contracts such as "npm test && npm run build" while avoiding
+        # shell injection and platform-specific parsing.
+        command_groups: List[List[str]] = []
+        current: List[str] = []
+        for token in cmd:
+            if token == "&&":
+                if current:
+                    command_groups.append(current)
+                    current = []
+            else:
+                current.append(token)
+        if current:
+            command_groups.append(current)
+        command_results: List[Dict[str, Any]] = []
+        for command in command_groups:
+            if os.name == "nt" and command and command[0].lower() == "npm":
+                command = ["npm.cmd", *command[1:]]
+            proc = subprocess.run(
+                command,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=300,
+            )
+            command_results.append({
+                "command": command,
+                "exit_code": proc.returncode,
+                "stdout": (proc.stdout or "")[-4000:],
+                "stderr": (proc.stderr or "")[-4000:],
+                "diagnostics": _concise_process_diagnostics(proc.stdout or "", proc.stderr or ""),
+            })
+            # Keep executing explicitly declared compound checks. No shell is
+            # involved, and each result remains independently attributable.
     except Exception as exc:
         return {"status": "error", "command": cmd, "error": str(exc)}
     duration_ms = int((time.time() - start) * 1000)
     result = {
-        "status": "passed" if proc.returncode == 0 else "failed",
+        "status": "passed" if command_results and all(item["exit_code"] == 0 for item in command_results) else "failed",
         "command": cmd,
-        "exit_code": proc.returncode,
         "duration_ms": duration_ms,
-        "stdout": (proc.stdout or "")[-8000:],
-        "stderr": (proc.stderr or "")[-8000:],
+        "commands": command_results,
     }
+    if dependency_setup:
+        result["dependency_setup"] = dependency_setup
+    quality_gaps = _solo_step_quality_gaps(root, step_title)
+    if quality_gaps:
+        result["status"] = "failed"
+        result["quality_gaps"] = quality_gaps
     try:
         DeliveryArtifact.objects.create(
             project=run.project,
@@ -519,6 +936,32 @@ def _store_ux_audit_report(run: DeliveryRun) -> Optional[str]:
 
 
 def _notify_run_summary(run: DeliveryRun, ux_report_path: Optional[str]) -> None:
+    # Always leave a local, machine-readable completion signal and a desktop
+    # landmark.  Webhooks are optional and must not be the only feedback path.
+    try:
+        gates = _latest_gate_statuses(run)
+        open_backlog = BacklogItem.objects.filter(run=run).exclude(status="done").count()
+        marker = _PROJECT_ROOT / "runtime/branddozer/completions" / f"{run.id}.json"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({
+            "run_id": str(run.id), "project_id": str(run.project_id),
+            "project": run.project.name, "root_path": run.project.root_path,
+            "status": run.status, "phase": run.phase, "error": run.error,
+            "iteration": run.iteration, "sprint_count": run.sprint_count,
+            "gate_statuses": gates, "open_backlog": open_backlog,
+            "ux_report_path": ux_report_path or "",
+            "completed_at": run.completed_at.isoformat() if run.completed_at else "",
+            "requires_review": True,
+        }, indent=2), encoding="utf-8")
+        from tools.c0d3rV2.plugins.agent_the_freeloader.notifications import WorkdayNotifier
+        level = "info" if run.status in {"complete", "awaiting_acceptance"} else "warning"
+        WorkdayNotifier(_PROJECT_ROOT / "runtime/branddozer/notifications.jsonl").send(
+            f"BrandDozer: {run.project.name}",
+            f"Run {run.status}; {open_backlog} open items. Review required before acceptance.",
+            level=level, job_id=str(run.id),
+        )
+    except Exception:
+        pass
     webhook = os.getenv("BRANDDOZER_WEBHOOK_URL")
     if not webhook:
         return
@@ -1741,9 +2184,11 @@ class DeliveryOrchestrator:
     def _run_solo_pipeline(self, run: DeliveryRun, root: Path) -> None:
         run.status = "running"
         run.phase = "execution"
+        run.error = ""
+        run.completed_at = None
         if not run.started_at:
             run.started_at = timezone.now()
-        run.save(update_fields=["status", "phase", "started_at"])
+        run.save(update_fields=["status", "phase", "error", "completed_at", "started_at"])
 
         provider = session_provider_from_context(run.context or {})
         session = DeliverySession.objects.create(
@@ -1795,15 +2240,9 @@ class DeliveryOrchestrator:
                 f"Run ID: {run.id}\n"
                 f"Provider: {provider}\n"
             )
-            output = _c0d3rv2_run(
-                plan_prompt,
-                session_key=f"branddozer:{run.id}:plan",
-                workdir=root,
-                backend=provider if provider in (
-                    "wizard", "bedrock", "c0d3r", "coder", "freeloader",
-                    "agentthefreeloader", "agent_the_freeloader",
-                ) else "wizard",
-                system_context=system_ctx,
+            output = codex.send(
+                plan_prompt, stream=False,
+                system="Return strict JSON only. Never emit tool calls. A new or incomplete project is never done.",
             )
             exhausted = _codex_quota_exhausted(output)
             if exhausted:
@@ -1819,15 +2258,23 @@ class DeliveryOrchestrator:
                 session.completed_at = timezone.now()
                 session.save(update_fields=["status", "completed_at"])
                 raise StopDelivery(refusal)
-            payload = _extract_json_payload(output)
+            normalized_plan = ModelResponseNormalizer().normalize_plan(output)
+            payload = normalized_plan.value if normalized_plan.valid else _extract_json_payload(output)
             steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps"))
+            if not steps:
+                steps = _fallback_solo_steps(run)
+                payload = {
+                    "summary": "Deterministic fallback plan generated because the model returned no valid executable steps.",
+                    "next_step": steps[0]["title"], "done": False,
+                    "suggestions": "Execute and validate every definition-of-done criterion.",
+                }
             plan = {
                 "version": 1,
                 "status": "planning",
                 "summary": payload.get("summary") or "",
                 "steps": steps,
                 "next_step": payload.get("next_step") or "",
-                "done": bool(payload.get("done")),
+                "done": bool(payload.get("done")) and bool(steps) and all(step.get("status") in {"done", "complete"} for step in steps),
                 "suggestions": payload.get("suggestions") or "",
             }
             _write_solo_plan(run.id, plan)
@@ -1859,22 +2306,109 @@ class DeliveryOrchestrator:
                         next_step = step.get("title") or ""
                         break
             if not next_step:
-                plan["done"] = True
-                plan["suggestions"] = plan.get("suggestions") or "No remaining steps. Consider closing the run."
+                plan["done"] = bool(steps) and all(str(step.get("status") or "").lower() in {"done", "complete"} for step in steps)
+                plan["suggestions"] = plan.get("suggestions") or ("All planned steps report complete." if plan["done"] else "Plan has no executable next step and requires repair.")
                 _write_solo_plan(run.id, plan)
-                _append_solo_history(run.id, {"event": "plan_completed", "note": "no next step"})
+                _append_solo_history(run.id, {"event": "plan_terminal_check", "done": plan["done"], "note": "no next step"})
                 break
 
             _append_session_log(session, f"Executing step: {next_step}")
             _set_run_note(run, "Solo", f"Executing: {next_step}")
+            builtin_output = _builtin_solo_step(root, str(next_step))
+            if builtin_output is not None:
+                for step in steps:
+                    if (step.get("title") or "") == next_step:
+                        step["status"] = "done"
+                        step["detail"] = builtin_output
+                        break
+                following = next((step.get("title") for step in steps if str(step.get("status") or "").lower() not in {"done", "complete"}), "")
+                plan.update({"status": "execution", "steps": steps, "next_step": following,
+                             "done": bool(steps) and not following,
+                             "suggestions": builtin_output})
+                _write_solo_plan(run.id, plan)
+                _append_solo_history(run.id, {"event": "builtin_step_completed", "step": next_step, "result": builtin_output})
+                run.iteration += 1
+                run.save(update_fields=["iteration"])
+                continue
+            step_contract = _solo_step_contract(str(next_step))
+            validation_evidence = str(plan.get("suggestions") or "")
+            compact_evidence = _compact_validation_evidence(validation_evidence)
+            repair_paths = _validator_repair_paths(validation_evidence, root)
+            repair_state = plan.get("repair_state") or {}
+            if repair_state.get("step") == str(next_step):
+                repair_paths = list(dict.fromkeys(
+                    list(repair_state.get("focus_paths") or repair_state.get("repair_paths") or [])
+                    + repair_paths
+                ))
+                if repair_state.get("focus_paths"):
+                    repair_paths = list(repair_state["focus_paths"])
             exec_prompt = (
                 "You are the solo delivery agent. Execute the next step in the repo. "
                 "Follow the existing project conventions, run a quick smoke test when done, "
                 "and summarize what changed. If blocked, explain why.\n"
                 f"Current plan summary: {plan.get('summary')}\n"
+                f"Previous validation/correction evidence: {compact_evidence or 'none'}\n"
                 f"Next step: {next_step}\n"
             )
-            output = codex.send(exec_prompt, stream=True)
+            repair_directive = ""
+            if validation_evidence.lower().startswith("fix these deterministic acceptance failures") and repair_paths:
+                repair_directive = (
+                    f"Validator-directed repair paths: {json.dumps(repair_paths[:12])}. "
+                    "Inspect only the failing paths and their immediately required interfaces; "
+                    "make the smallest production-quality repair, then rerun the validator.\n"
+                )
+            atomic_contract = (
+                f"Atomic work package: {next_step}\n"
+                "Project-wide scope and acceptance criteria are persisted in .c0d3r/acceptance.json, "
+                ".c0d3r/refined-outline.json, and the BrandDozer plan. Read only the sections needed "
+                "for this work package. Do not re-plan or re-expand the entire project. "
+                "Make concrete progress for this package, validate it, and stop.\n"
+                f"Expected outputs: {json.dumps(step_contract['outputs'])}\n"
+                f"Acceptance checks: {json.dumps(step_contract['acceptance'])}\n"
+                f"{repair_directive}"
+                "If research/validation-matrix.json exists, consume every row applicable to this package: "
+                "use its equations, validity bounds, source IDs, tolerance, implementation_targets, and test_targets. "
+                "Reference the model_id in code documentation and validation fixtures; never implement an inconclusive record as established physics.\n"
+            )
+            if repair_state.get("step") == str(next_step) and repair_state.get("active_failures"):
+                atomic_contract += (
+                    "Persisted deterministic repair packet (authoritative; fresh validation supersedes prose):\n"
+                    + json.dumps(repair_state, indent=2, default=str)[:12000]
+                    + "\n"
+                )
+            try:
+                output = _c0d3rv2_run(
+                    exec_prompt + "\n" + atomic_contract,
+                    session_key=f"branddozer:{run.id}:step:{run.iteration + 1}",
+                    workdir=root,
+                    backend=provider if provider in ("wizard", "bedrock", "c0d3r", "coder", "freeloader", "agentthefreeloader", "agent_the_freeloader") else "wizard",
+                    system_context=(
+                        f"Project: {run.project.name}\nWorkdir: {root}\nRun ID: {run.id}\n"
+                        "This is an unattended atomic workday job. Execute only the named work package, "
+                        "use bounded context, perform changes/tests when requested, and return a user-facing result."
+                    ),
+                )
+            except RuntimeError as exc:
+                if not _is_transient_atf_capacity_failure(exc):
+                    raise
+                note = str(exc)[:700]
+                _append_session_log(session, f"ATF capacity cooldown; preserving step: {note}")
+                _set_run_note(run, "ATF cooldown", note)
+                _append_solo_history(run.id, {
+                    "event": "atf_capacity_cooldown",
+                    "step": next_step,
+                    "error": note,
+                })
+                run.status = "running"
+                run.phase = "execution"
+                run.error = ""
+                run.completed_at = None
+                run.save(update_fields=["status", "phase", "error", "completed_at"])
+                # A cooldown is deliberately long enough to let free-provider
+                # quotas and model quality recover; the same step is preserved
+                # and retried after the timer rather than spending paid calls.
+                time.sleep(max(0.1, float(os.getenv("BRANDDOZER_ATF_COOLDOWN_SEC", "300"))))
+                continue
             if _is_codex_provider(provider):
                 exhausted = _codex_quota_exhausted(output)
                 if exhausted:
@@ -1897,37 +2431,104 @@ class DeliveryOrchestrator:
             except Exception:
                 pass
 
-            smoke_result = _run_smoke_test(run, root, session=session)
+            prebootstrap = not (root / "package.json").exists() and any(
+                term in str(next_step).lower() for term in ("explore", "research", "validation matrix")
+            )
+            smoke_result = ({"status": "passed", "command": "deferred-until-project-bootstrap", "deferred": True}
+                            if prebootstrap else _run_smoke_test(run, root, session=session, step_title=str(next_step)))
             _append_session_log(session, f"Smoke test: {smoke_result.get('status')}")
 
-            reflect_prompt = (
-                "You are the solo delivery agent maintaining the plan. "
-                "Update the plan status and select the next step. "
-                "Return ONLY JSON with keys: plan, next_step, done, summary, suggestions.\n"
-                f"Previous plan: {json.dumps(plan, indent=2)}\n"
-                f"Last step output summary:\n{output[-1500:]}\n"
-                f"Smoke test result: {smoke_result.get('status')}\n"
-            )
-            reflect_output = codex.send(reflect_prompt, stream=True)
-            if _is_codex_provider(provider):
-                exhausted = _codex_quota_exhausted(reflect_output)
-                if exhausted:
-                    _pause_run_for_codex(run, session, exhausted)
-                    raise StopDelivery(exhausted)
-                refusal = _codex_refusal(reflect_output)
-                if refusal:
-                    _handle_codex_refusal(run, session, refusal)
-                    raise StopDelivery(refusal)
-            payload = _extract_json_payload(reflect_output)
+            if smoke_result.get("status") != "passed":
+                # Deterministic validation already owns this transition. Do
+                # not spend another fallible model call asking whether a
+                # failed command passed, and never let reflection capacity
+                # convert a repairable product failure into a terminal run.
+                payload = {
+                    "plan": plan.get("steps") or [],
+                    "next_step": str(next_step),
+                    "done": False,
+                    "summary": plan.get("summary") or "",
+                    "suggestions": "",
+                }
+            else:
+                reflect_prompt = (
+                    "You are the solo delivery agent maintaining the plan. "
+                    "Update the plan status and select the next step. "
+                    "Return ONLY JSON with keys: plan, next_step, done, summary, suggestions.\n"
+                    f"Previous plan: {json.dumps(plan, indent=2)}\n"
+                    f"Last step output summary:\n{output[-1500:]}\n"
+                    f"Smoke test result: {json.dumps(smoke_result, default=str)[-6000:]}\n"
+                )
+                try:
+                    reflect_output = codex.send(
+                        reflect_prompt, stream=False,
+                        system="Return strict JSON only. Mark done only when every plan step and smoke test is complete.",
+                    )
+                except RuntimeError as exc:
+                    if not _is_transient_atf_capacity_failure(exc):
+                        raise
+                    note = str(exc)[:700]
+                    _append_session_log(session, f"ATF reflection cooldown; preserving step: {note}")
+                    _append_solo_history(run.id, {
+                        "event": "atf_reflection_cooldown",
+                        "step": next_step,
+                        "error": note,
+                    })
+                    time.sleep(max(0.1, float(os.getenv("BRANDDOZER_ATF_COOLDOWN_SEC", "300"))))
+                    continue
+                if _is_codex_provider(provider):
+                    exhausted = _codex_quota_exhausted(reflect_output)
+                    if exhausted:
+                        _pause_run_for_codex(run, session, exhausted)
+                        raise StopDelivery(exhausted)
+                    refusal = _codex_refusal(reflect_output)
+                    if refusal:
+                        _handle_codex_refusal(run, session, refusal)
+                        raise StopDelivery(refusal)
+                normalized_plan = ModelResponseNormalizer().normalize_plan(reflect_output)
+                payload = normalized_plan.value if normalized_plan.valid else _extract_json_payload(reflect_output)
             steps = _normalize_plan_steps(payload.get("plan") or payload.get("steps") or plan.get("steps"))
+            steps = _preserve_completed_steps(plan.get("steps") or [], steps)
+            if smoke_result.get("status") != "passed":
+                # Validation, not a fallible model reflection, owns completion state.
+                matched = False
+                for step in steps:
+                    if str(step.get("title") or "") == str(next_step):
+                        step["status"] = "todo"
+                        step["detail"] = f"Acceptance failed: {json.dumps(smoke_result, default=str)[-4000:]}"
+                        matched = True
+                        break
+                if not matched:
+                    steps.insert(0, {"title": str(next_step), "status": "todo", "detail": "Acceptance failed."})
+                payload["next_step"] = str(next_step)
+                payload["done"] = False
+                fresh_evidence = json.dumps(smoke_result, default=str)
+                fresh_paths = _validator_repair_paths(fresh_evidence, root)
+                repair_state, repair_packet = advance_repair_state(
+                    plan.get("repair_state") if plan.get("repair_state", {}).get("step") == str(next_step) else {},
+                    smoke_result,
+                    step=str(next_step),
+                    paths=fresh_paths,
+                    root=root,
+                )
+                payload["repair_state"] = repair_state
+                payload["suggestions"] = (
+                    "Fix these deterministic acceptance failures: "
+                    + _compact_validation_evidence(fresh_evidence)
+                    + "\n"
+                    + repair_packet.to_prompt()
+                )
+            else:
+                payload["repair_state"] = {}
             plan = {
                 "version": plan.get("version", 1),
                 "status": "execution",
                 "summary": payload.get("summary") or plan.get("summary") or "",
                 "steps": steps,
                 "next_step": payload.get("next_step") or "",
-                "done": bool(payload.get("done")),
+                "done": bool(payload.get("done")) and bool(steps) and all(step.get("status") in {"done", "complete"} for step in steps),
                 "suggestions": payload.get("suggestions") or "",
+                "repair_state": payload.get("repair_state") or {},
             }
             _write_solo_plan(run.id, plan)
             _append_solo_history(
@@ -1943,6 +2544,18 @@ class DeliveryOrchestrator:
             run.save(update_fields=["iteration"])
 
         plan = _load_solo_plan(run.id) or plan
+        if plan.get("done"):
+            final_smoke = _run_smoke_test(run, root, session=session)
+            substantive = _substantive_workspace_files(root)
+            research_gaps = _research_consumer_gaps(root)
+            if final_smoke.get("status") != "passed" or not substantive or research_gaps:
+                plan["done"] = False
+                plan["suggestions"] = (
+                    f"Completion rejected: final smoke={final_smoke.get('status')}; "
+                    f"substantive_files={len(substantive)}; research_consumer_gaps={research_gaps[:20]}."
+                )
+                _write_solo_plan(run.id, plan)
+                _append_solo_history(run.id, {"event": "completion_rejected", "smoke": final_smoke, "substantive_files": len(substantive), "research_consumer_gaps": research_gaps})
         if plan.get("done"):
             suggestion = plan.get("suggestions") or "Solo plan completed."
             _set_run_note(run, "Solo", suggestion)
@@ -1983,6 +2596,29 @@ class DeliveryOrchestrator:
         project = run.project
         setpoints = load_setpoints()
         root = Path(project.root_path)
+        if bool((run.context or {}).get("research_mode")):
+            try:
+                from branddozer.research import run_research_workflow
+
+                run_research_workflow(run, root)
+            except StopDelivery as exc:
+                run.status = "blocked"
+                run.phase = "stopped"
+                run.error = str(exc)
+                run.completed_at = timezone.now()
+                run.save(
+                    update_fields=["status", "phase", "error", "completed_at"]
+                )
+            except Exception as exc:
+                run.status = "error"
+                run.phase = "research_error"
+                run.error = str(exc)
+                run.completed_at = timezone.now()
+                run.save(
+                    update_fields=["status", "phase", "error", "completed_at"]
+                )
+            close_old_connections()
+            return
         team_mode = str((run.context or {}).get("team_mode") or "full").strip().lower()
         if team_mode in {"solo", "single", "one"}:
             try:

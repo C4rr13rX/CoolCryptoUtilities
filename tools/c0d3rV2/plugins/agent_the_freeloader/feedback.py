@@ -91,9 +91,9 @@ class ModelFeedbackStore:
             return 1.0
         successes, failures = int(row[0]), int(row[1])
         evidence = successes + failures
-        # A four-observation prior prevents one noisy validation from banning a
-        # model, while repeated failures can still move it out of the top tier.
-        return max(0.5, min(1.35, 1.0 + 0.7 * (successes - failures) / (evidence + 4)))
+        # A small prior tolerates one noisy observation, while repeated empty,
+        # invalid, or failed responses quickly stop consuming benchmark time.
+        return max(0.15, min(1.35, 1.0 + (successes - failures) / (evidence + 2)))
 
     def record_correction(
         self,

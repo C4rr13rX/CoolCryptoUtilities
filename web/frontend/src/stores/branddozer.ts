@@ -6,6 +6,8 @@ import {
   deleteBrandProject,
   startBrandProject,
   stopBrandProject,
+  fetchBrandProjectLifecycle,
+  launchBrandProjectPreview,
   fetchBrandLogs,
   generateBrandInterjections,
   fetchBrandRoots,
@@ -32,6 +34,8 @@ import {
   fetchBrandDeliverySprints,
   acceptBrandDeliveryRun,
   stopBrandDeliveryRun,
+  fetchBrandResearchPapers,
+  fetchBrandResearchPaper,
 } from '@/api';
 
 interface BrandProject {
@@ -51,6 +55,11 @@ interface BrandProject {
   repo_branch?: string;
   created_at?: string;
   updated_at?: string;
+  license_key?: string;
+  git_auto_promote?: boolean;
+  workflow_kind?: string;
+  workflow_config?: Record<string, any>;
+  lifecycle?: Record<string, any>;
 }
 
 interface BrandDozerState {
@@ -85,6 +94,9 @@ interface BrandDozerState {
   deliverySprints: any[];
   deliveryLoading: boolean;
   publishing: boolean;
+  researchPapers: any[];
+  activeResearchPaper: any | null;
+  researchLoading: boolean;
   error: string | null;
 }
 
@@ -121,6 +133,9 @@ export const useBrandDozerStore = defineStore('branddozer', {
     deliverySprints: [],
     deliveryLoading: false,
     publishing: false,
+    researchPapers: [],
+    activeResearchPaper: null,
+    researchLoading: false,
     error: null,
   }),
   actions: {
@@ -178,6 +193,14 @@ export const useBrandDozerStore = defineStore('branddozer', {
     async stop(id: string) {
       await stopBrandProject(id);
       await this.load();
+    },
+    async lifecycle(id: string) {
+      return await fetchBrandProjectLifecycle(id);
+    },
+    async preview(id: string, openOnPc = true) {
+      const result = await launchBrandProjectPreview(id, openOnPc);
+      await this.load();
+      return result;
     },
     async refreshLogs(id: string, limit = 200) {
       this.logLoading = true;
@@ -280,6 +303,9 @@ export const useBrandDozerStore = defineStore('branddozer', {
       project_id: string;
       prompt: string;
       mode?: string;
+      project_type?: 'software' | 'research';
+      research_mode?: boolean;
+      research_config?: Record<string, any>;
       team_mode?: string;
       session_provider?: string;
       codex_model?: string;
@@ -393,6 +419,31 @@ export const useBrandDozerStore = defineStore('branddozer', {
       const data = await stopBrandDeliveryRun(runId);
       this.activeDeliveryRun = data.run || null;
       return this.activeDeliveryRun;
+    },
+    async fetchResearchPapers(params?: {
+      q?: string;
+      project_id?: string;
+      status?: string;
+      limit?: number;
+    }) {
+      this.researchLoading = true;
+      try {
+        const data = await fetchBrandResearchPapers(params);
+        this.researchPapers = data.papers || [];
+        return this.researchPapers;
+      } finally {
+        this.researchLoading = false;
+      }
+    },
+    async fetchResearchPaper(paperId: string) {
+      this.researchLoading = true;
+      try {
+        const data = await fetchBrandResearchPaper(paperId);
+        this.activeResearchPaper = data.paper || null;
+        return this.activeResearchPaper;
+      } finally {
+        this.researchLoading = false;
+      }
     },
     async importFromGitHub(payload: Record<string, any>) {
       this.importing = true;

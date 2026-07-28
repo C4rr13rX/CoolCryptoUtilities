@@ -53,7 +53,7 @@
           </button>
         </div>
       </header>
-      <div class="status-grid">
+        <div class="status-grid">
         <article>
           <h3>{{ t('guardian.loop_title') }}</h3>
           <p class="metric">{{ guardianStatus }}</p>
@@ -83,6 +83,16 @@
           <h2>{{ t('guardian.default_prompt') }}</h2>
           <p>{{ t('guardian.default_prompt_caption') }}</p>
         </div>
+        <section class="component-health" v-if="Object.keys(store.status?.components || {}).length">
+          <h3>Guardian monitored components</h3>
+          <div class="status-grid">
+            <article v-for="(component, name) in store.status.components" :key="String(name)">
+              <h3>{{ String(name).replaceAll('_', ' ') }}</h3>
+              <p class="metric" :class="{ online: component.status === 'running' }">{{ component.status }}</p>
+              <small>Attempts: {{ component.attempts || 0 }} · {{ component.detail || '' }}</small>
+            </article>
+          </div>
+        </section>
         <button type="button" class="btn" @click="saveDefault" :disabled="store.saving">
           {{ store.saving ? t('common.saving') : t('guardian.save_default') }}
         </button>

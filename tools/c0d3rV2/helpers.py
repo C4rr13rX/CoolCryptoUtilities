@@ -85,16 +85,30 @@ def _runtime_path(*parts: str) -> Path:
 
 
 def _ensure_django_ready() -> bool:
+    secure_env_was_set = "SECURE_ENV_HYDRATED" in os.environ
     try:
         import os as _os
         if not _os.getenv("DJANGO_SETTINGS_MODULE"):
             _os.environ["DJANGO_SETTINGS_MODULE"] = (
                 "coolcrypto_dashboard.settings"
             )
+        # settings.py's secure environment loader may call django.setup().
+        # Mark bootstrap-in-progress so a standalone C0d3r tool does not enter
+        # recursive setup and silently lose access to registered models.
+        _os.environ["SECURE_ENV_HYDRATED"] = "1"
         import django
         django.setup()
+        if not secure_env_was_set:
+            _os.environ.pop("SECURE_ENV_HYDRATED", None)
+            try:
+                from services.env_loader import EnvLoader
+                EnvLoader.load()
+            except Exception:
+                pass
         return True
     except Exception:
+        if not secure_env_was_set:
+            os.environ.pop("SECURE_ENV_HYDRATED", None)
         return False
 
 

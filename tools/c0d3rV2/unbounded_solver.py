@@ -17,9 +17,9 @@ matrix.  The solver:
   6. The process terminates when the root question — the user's original
      request — is answered.
 
-No caps.  No predefined disciplines.  No artificial limits.  The problem
-defines the disciplines.  Everything is physics — proven with research
-and equations.  It runs until the problem is solved.
+No predefined disciplines.  The problem defines the disciplines.  A solve
+uses explicit resource budgets and can terminate honestly as unresolved;
+finite compute must never be confused with proof that a problem is soluble.
 
 This resembles Einstein/Planck thought experiments: hypotheses must fit
 into known models, equations must be each other's answers, and paradoxes
@@ -143,7 +143,7 @@ class UnboundedSolver:
     Resolve unbounded problems by recursively decomposing questions and
     filling the environmental equation matrix.
 
-    No predefined disciplines.  No cycle caps.  No equation limits.
+    No predefined disciplines or fixed equation catalogue.
     The problem defines the disciplines.  It runs until the original
     question is answered — even if that means answering a question to a
     question to a question, and then propagating answers back up.
@@ -174,6 +174,13 @@ class UnboundedSolver:
         self._MAX_HYPOTHESES = 200
         self._MAX_LINKS = 500
         self._MAX_ANOMALIES = 200
+        self._MAX_NODES = 64
+        self._MAX_DEPTH = 8
+        self._MAX_MODEL_CALLS = 96
+        self._MAX_WALL_SECONDS = 300.0
+        self._nodes_visited = 0
+        self._model_calls = 0
+        self._started_at = 0.0
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -192,6 +199,9 @@ class UnboundedSolver:
         self._all_hypotheses = []
         self._all_research_links = []
         self._all_anomalies = []
+        self._nodes_visited = 0
+        self._model_calls = 0
+        self._started_at = time.monotonic()
 
         # Build the root question node.
         root = QuestionNode(question=prompt)
@@ -241,6 +251,23 @@ class UnboundedSolver:
         5. After all children are answered, attempt to answer this node
            again using the accumulated child answers.
         """
+        self._nodes_visited += 1
+        budget_reason = ""
+        if self._nodes_visited > self._MAX_NODES:
+            budget_reason = "node budget reached"
+        elif node.depth > self._MAX_DEPTH:
+            budget_reason = "decomposition depth budget reached"
+        elif time.monotonic() - self._started_at > self._MAX_WALL_SECONDS:
+            budget_reason = "wall-time budget reached"
+        elif self._model_calls >= self._MAX_MODEL_CALLS:
+            budget_reason = "model-call budget reached"
+        if budget_reason:
+            node.status = "blocked"
+            message = f"Unresolved with current evidence: {budget_reason}."
+            if message not in self._all_anomalies:
+                self._all_anomalies.append(message)
+            return
+
         # Step 1: Attempt to answer directly.
         direct = self._attempt_answer(node, ai_context)
 
@@ -338,6 +365,7 @@ class UnboundedSolver:
         Returns {answerable: bool, answer: str, equations: [str],
                  sub_questions: [str], anomalies: [str]}.
         """
+        self._model_calls += 1
         # Gather all equations accumulated so far in the tree.
         all_eqs = node.all_equations()
 
@@ -352,6 +380,9 @@ class UnboundedSolver:
             "sub_questions (list of strings — questions that must be answered first, "
             "if not answerable), "
             "anomalies (list of paradoxes or unknowns encountered), "
+            "knowns (list of known variable names), targets (list of variable names "
+            "that constitute an answer), dimensions (object mapping variables to "
+            "dimension symbols such as L, T, M), domains (list of relevant fields), "
             "research_needed (list of specific research queries if not answerable). "
             "IMPORTANT: Do NOT say something is impossible.  If you cannot answer "
             "directly, break it into sub-questions that CAN be researched and "
@@ -396,10 +427,47 @@ class UnboundedSolver:
             )
             result = self._safe_json(raw or "")
             if isinstance(result, dict):
+                self._attach_binding_analysis(result, node.question)
                 return result
         except Exception:
             pass
         return {"answerable": False, "sub_questions": [], "equations": []}
+
+    @staticmethod
+    def _attach_binding_analysis(result: dict, question: str) -> None:
+        """Attach deterministic closure evidence and reject false closure.
+
+        Older model responses do not contain explicit known/target variables, so
+        they retain compatibility while still receiving equation validation and
+        domain classification. New schema-compliant responses must actually
+        connect their knowns to every target before being called answerable.
+        """
+        try:
+            from matrix_helpers import assess_binding, classify_domains
+        except ModuleNotFoundError:
+            from .matrix_helpers import assess_binding, classify_domains
+        equations = [str(e) for e in (result.get("equations") or [])]
+        knowns = [str(v) for v in (result.get("knowns") or [])]
+        targets = [str(v) for v in (result.get("targets") or [])]
+        dimensions = result.get("dimensions") if isinstance(result.get("dimensions"), dict) else None
+        analysis = assess_binding(equations=equations, knowns=knowns,
+                                  targets=targets, dimensions=dimensions)
+        result["binding"] = analysis
+        result["domains"] = result.get("domains") or classify_domains(question)
+        if analysis["rejected_equations"]:
+            result.setdefault("anomalies", []).append(
+                "Ignored malformed supplemental equations: "
+                + "; ".join(item["equation"] for item in analysis["rejected_equations"][:3])
+            )
+        if result.get("answerable") and (targets and not analysis["bound"]):
+            result["answerable"] = False
+            result.setdefault("anomalies", []).append(
+                "Claimed answer failed equation-matrix closure validation"
+            )
+            result.setdefault("sub_questions", []).extend(
+                f"What validated relation connects the knowns to {target}?"
+                for target in analysis["missing"]
+            )
 
     def _research_and_decompose(self, node: QuestionNode) -> list[str]:
         """
@@ -627,6 +695,9 @@ class UnboundedSolver:
             "Express the request as math; if you cannot form explicit "
             "equations, provide symbolic placeholders AND research_questions "
             "to identify missing constants/relations. "
+            "Encode every numeric value stated in the request as an explicit "
+            "symbol equality (for example, t = 3), and use identifier-only "
+            "symbol names so SymPy can solve the system. "
             "Provide units for equations and define symbols explicitly "
             "so they are measurable.  No limit on equations."
         )
@@ -642,6 +713,11 @@ class UnboundedSolver:
         if not isinstance(payload, dict):
             payload = {}
 
+        # Solve the first-pass formulation before paying for another model
+        # call.  Archival search still supplies provenance, but research is
+        # only translated by a second model when the initial system is open.
+        preliminary_solutions = self._solve_with_sympy(payload)
+
         # Research missing pieces.
         research_questions = payload.get("research_questions") or [
             f"Find equations, constants, or constraints needed to model: {base_request}"
@@ -649,7 +725,7 @@ class UnboundedSolver:
         research_notes = self._research_questions(research_questions)
 
         # Pass 2: convert research into equations.
-        if research_notes:
+        if research_notes and not preliminary_solutions:
             system2 = (
                 self.CONTROL_PREFIX
                 + " Return ONLY JSON with keys: equations (list), constraints (list), "
@@ -702,8 +778,11 @@ class UnboundedSolver:
             except Exception:
                 pass
 
+        if research_notes and not payload.get("research_links"):
+            payload["research_links"] = list(dict.fromkeys(self._all_research_links))[-20:]
+
         # Solve with SymPy.
-        solutions = self._solve_with_sympy(payload)
+        solutions = preliminary_solutions or self._solve_with_sympy(payload)
 
         record = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -799,7 +878,7 @@ class UnboundedSolver:
         try:
             import sympy as _sp
         except ImportError:
-            return []
+            return self._solve_arithmetic_payload(payload)
 
         eqs = []
         symbols: dict[str, Any] = {}
@@ -828,9 +907,61 @@ class UnboundedSolver:
                 return []
         return []
 
+    @staticmethod
+    def _solve_arithmetic_payload(payload: dict) -> list:
+        """Safely solve isolated arithmetic equations when SymPy is absent."""
+        import ast
+        raw_items = [*(payload.get("equations") or []), *(payload.get("mapping") or []),
+                     *(payload.get("constraints") or [])]
+        equations = []
+        for item in raw_items:
+            if not isinstance(item, str) or item.count("=") != 1:
+                continue
+            text = re.sub(r"<\s*([A-Za-z_]\w*)\s*\^\s*2\s*>", r"\1**2", item).replace("^", "**")
+            left, right = (part.strip() for part in text.split("=", 1))
+            # Unit-bearing given values remain numerically usable because the
+            # unit contract is validated separately.
+            numeric = re.match(r"^([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?)\s+[A-Za-zµΩ]", right, re.I)
+            if numeric:
+                right = numeric.group(1)
+            equations.append(f"{left} = {right}")
+        values: dict[str, float] = {}
+        operations = {ast.Add: lambda a,b:a+b, ast.Sub: lambda a,b:a-b,
+                      ast.Mult: lambda a,b:a*b, ast.Div: lambda a,b:a/b,
+                      ast.Pow: lambda a,b:a**b}
+        def evaluate(text: str) -> float:
+            def walk(node):
+                if isinstance(node, ast.Expression): return walk(node.body)
+                if isinstance(node, ast.Constant) and isinstance(node.value,(int,float)): return float(node.value)
+                if isinstance(node, ast.Name) and node.id in values: return values[node.id]
+                if isinstance(node, ast.Name) and node.id == "pi": return 3.141592653589793
+                if isinstance(node, ast.UnaryOp) and isinstance(node.op,(ast.USub,ast.UAdd)):
+                    value=walk(node.operand); return -value if isinstance(node.op,ast.USub) else value
+                if isinstance(node, ast.BinOp) and type(node.op) in operations:
+                    return operations[type(node.op)](walk(node.left),walk(node.right))
+                raise ValueError("unsupported arithmetic")
+            return float(walk(ast.parse(text, mode="eval")))
+        for _ in range(len(equations) + 1):
+            changed = False
+            for equation in equations:
+                left, right = (part.strip() for part in equation.split("=", 1))
+                if re.fullmatch(r"[A-Za-z_]\w*", left) and left not in values:
+                    try: values[left] = evaluate(right); changed = True
+                    except Exception: pass
+                elif re.fullmatch(r"[A-Za-z_]\w*", right) and right not in values:
+                    try: values[right] = evaluate(left); changed = True
+                    except Exception: pass
+            if not changed: break
+        answers = {str(name): values[str(name)] for name in payload.get("unknowns") or [] if str(name) in values}
+        return [answers] if answers else []
+
     def _build_payload(self, root: QuestionNode) -> dict:
         """Build a flat payload dict from the question tree for persistence."""
         all_eqs = root.all_equations()
+        try:
+            from matrix_helpers import classify_domains
+        except ModuleNotFoundError:
+            from .matrix_helpers import classify_domains
         return {
             "question": root.question,
             "answered": root.is_answered,
@@ -845,6 +976,7 @@ class UnboundedSolver:
             "question_tree": root.tree_summary(),
             "total_questions": root.count_open() + root.count_answered(),
             "answered_questions": root.count_answered(),
+            "domains": classify_domains(root.question),
         }
 
     def _persist(self, prompt: str, result: SolverResult, payload: dict) -> None:

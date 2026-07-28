@@ -232,9 +232,21 @@ class TestSwarmConsensus:
 
 
 class TestRegistry:
-    def test_default_registry_has_eight(self):
+    def test_default_registry_contains_core_and_multihorizon_strategies(self):
         reg = build_default_registry()
-        assert len(reg.ids()) == 8
+        ids = set(reg.ids())
+        core = {
+            "mean_reversion",
+            "momentum_breakout",
+            "ema_cross",
+            "rsi_reversal",
+            "bollinger_squeeze",
+            "volume_spike",
+            "vwap_reversion",
+            "swarm_consensus",
+        }
+        assert core <= ids
+        assert len(ids) > len(core)
 
     def test_evaluate_all_tags_strategy_meta(self, monkeypatch):
         monkeypatch.setenv("MEAN_REVERSION_Z_ENTRY", "1.5")

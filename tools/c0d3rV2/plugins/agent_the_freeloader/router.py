@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 from dataclasses import dataclass
@@ -120,13 +121,12 @@ class FreeloaderRouter:
                 "semantic_health": round(candidate.semantic_health, 4),
             }
             try:
-                response = self.invoker(
+                response = self._invoke_with_deadline(
                     spec,
                     prompt=prompt,
                     system=system,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    timeout_s=self.timeout_s,
                 )
                 if not response.text:
                     raise ProviderError(502, "provider returned an empty response")
@@ -157,6 +157,61 @@ class FreeloaderRouter:
         self.last_trace = trace
         detail = " | ".join(failures[-4:])
         raise RuntimeError(f"AgentTheFreeloader exhausted eligible fallbacks: {detail}")
+
+    def _invoke_with_deadline(
+        self,
+        spec: ModelSpec,
+        *,
+        prompt: str,
+        system: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> ProviderResponse:
+        """Enforce a wall-clock deadline even when an HTTP adapter stalls.
+
+        Socket timeouts are not total request deadlines: DNS, TLS, or a server
+        that trickles bytes can outlive them. A daemon worker lets routing move
+        to the next provider without blocking process shutdown. The underlying
+        adapter still receives the same timeout so healthy calls clean up
+        normally.
+        """
+        result: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+
+        def invoke_one() -> None:
+            try:
+                value = self.invoker(
+                    spec,
+                    prompt=prompt,
+                    system=system,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout_s=self.timeout_s,
+                )
+                result.put_nowait((True, value))
+            except BaseException as exc:  # propagate adapter errors on caller thread
+                result.put_nowait((False, exc))
+
+        worker = threading.Thread(
+            target=invoke_one,
+            name=f"atf-provider-{spec.provider}-{spec.model_id}"[:120],
+            daemon=True,
+        )
+        worker.start()
+        worker.join(max(0.1, float(self.timeout_s)))
+        if worker.is_alive():
+            raise ProviderError(
+                504,
+                f"provider exceeded hard wall-clock deadline ({self.timeout_s:g}s)",
+            )
+        try:
+            ok, value = result.get_nowait()
+        except queue.Empty as exc:
+            raise ProviderError(503, "provider invocation ended without a result") from exc
+        if not ok:
+            raise value  # type: ignore[misc]
+        if not isinstance(value, ProviderResponse):
+            raise ProviderError(502, "provider adapter returned an invalid response type")
+        return value
 
     def rank(self, profile: RequestProfile) -> list[RankedCandidate]:
         allowed_providers = _csv_env("AGENT_FREELOADER_PROVIDERS")
@@ -234,6 +289,8 @@ class FreeloaderRouter:
             self._health[spec.identity] = max(0.05, previous * 0.55)
             if error.is_auth:
                 self._provider_blocked_until[spec.provider] = time.time() + 300.0
+        if not spec.api_key_env.startswith("TEST_"):
+            self.feedback.record(spec.provider, spec.model_id, success=False, reason=f"transport:{error}")
 
 
 def _diversified_attempt_list(ranked: list[RankedCandidate]) -> list[RankedCandidate]:

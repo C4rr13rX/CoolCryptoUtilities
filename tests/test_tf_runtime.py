@@ -30,4 +30,7 @@ def test_configure_tensorflow_uses_profile(monkeypatch):
     monkeypatch.setattr(tf_runtime, "detect_system_profile", lambda: SystemProfile(4, 32.0, 4, False, False))
     monkeypatch.setitem(__import__("sys").modules, "tensorflow", stub)
     tf_runtime.configure_tensorflow()
-    assert threading_stub.intra == 4
+    # The resource governor may reserve a core when the host is busy, but the
+    # configured pool must remain bounded by the detected profile.
+    assert 2 <= threading_stub.intra <= 4
+    assert threading_stub.inter == max(1, threading_stub.intra // 2)

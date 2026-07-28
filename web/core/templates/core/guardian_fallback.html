@@ -104,7 +104,7 @@
       {% endif %}
     </section>
 
-    {% with slots=queue_state.slots|default:{} %}
+    {% with slots=queue_state.slots %}
       {% if slots.codex %}
         <section>
           <h3>Active Codex Session</h3>
@@ -113,7 +113,7 @@
       {% endif %}
     {% endwith %}
 
-    {% with queue=queue_state.queue|default:{} %}
+    {% with queue=queue_state.queue %}
       {% if queue.codex %}
         <section>
           <h3>Waiting Queue</h3>
@@ -126,7 +126,7 @@
       {% endif %}
     {% endwith %}
 
-    {% with history=queue_state.history|default:{} %}
+    {% with history=queue_state.history %}
       {% if history.codex %}
         <section>
           <h3>Recent Runs</h3>

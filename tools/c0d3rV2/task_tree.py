@@ -18,6 +18,27 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _handoff_result(tool: str, result: Any) -> Any:
+    """Keep decision-bearing fields when passing one tool's work onward."""
+    if not isinstance(result, dict):
+        return result
+    preferred: dict[str, tuple[str, ...]] = {
+        "scientific_method": (
+            "question", "domain", "conclusion", "validation", "hypotheses",
+            "expected_answer", "persisted", "error",
+        ),
+        "web_search": ("query", "summary", "results", "scientific", "error"),
+        "equation_matrix": ("hits", "gaps", "linked", "missing", "error"),
+        "project_work_mapper": ("request", "scope", "tasks", "project", "error"),
+        "environment_bootstrap": ("status", "error", "written", "steps"),
+        "executor": ("return_code", "stdout", "stderr", "error"),
+    }
+    keys = preferred.get(tool)
+    if not keys:
+        return result
+    return {key: result[key] for key in keys if key in result}
+
+
 @dataclass
 class TaskNode:
     """A single node in the task tree (branch or leaf)."""
@@ -224,8 +245,8 @@ class TaskTree:
             # mapping keys (for example SymPy Symbol keys returned by
             # math_grounding). Normalize the full structure first so one tool
             # result cannot crash the orchestration feedback loop.
-            result_str = json.dumps(_json_safe(result), default=str)
-            entry_limit = 2200 if tool == "file_read" else 700
+            result_str = json.dumps(_json_safe(_handoff_result(tool, result)), default=str)
+            entry_limit = 2200 if tool in {"file_read", "scientific_method", "web_search"} else 1000
             if len(result_str) > entry_limit:
                 result_str = result_str[:entry_limit] + "..."
             line = f"- [{tool}] (branch: {branch[:80]}): {result_str}"

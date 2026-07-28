@@ -71,6 +71,7 @@ class GuardianRunView(APIView):
 class GuardianLogView(APIView):
     permission_classes = [IsAuthenticated]
     LOG_CANDIDATES = [
+        Path("runtime/guardian/recovery.log"),
         Path("runtime/guardian/transcripts/guardian-session.log"),
     ]
     PRODUCTION_LOG_CANDIDATES = [

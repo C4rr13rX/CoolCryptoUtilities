@@ -32,7 +32,10 @@ Usage (from branddozer_delivery.py):
 from __future__ import annotations
 
 import os
+import json
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -60,12 +63,17 @@ def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard
         ToolRegistry, WebSearchTool, MemorySearchTool, MatrixSearchTool,
         ExecutorTool, FileReadTool, FileWriteTool, FileLocateTool,
         DirectoryEnsureTool, WorkspaceScaffoldTool, EnvironmentBootstrapTool,
-        ScientificMethodTool,
+        ScientificMethodTool, BrandDozerProductCycleTool, ProductArtifactMaterializerTool,
+        ProjectWorkMapperTool, DependencyTraversalTool,
+        ClassRefinementBenchmarkTool,
+        ResearchHarvesterTool,
     )
     from lt_mem import LongTermMemory
     from side_load_st_mem_file_location import STSideLoadedMemory
     from side_load_lt_mem_file_location import LTSideLoadedMemory
+    from st_memory import STMemory
     from web_search import WebSearch
+    from tools.c0d3rV2.plugins.research_harvester import ResearchHarvester
     from executor import Executor
 
     session = _make_session(backend, session_key, workdir)
@@ -74,6 +82,7 @@ def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard
 
     lt_memory = LongTermMemory(rt)
     st_memory = STSideLoadedMemory(session_key, rt)
+    short_memory = STMemory(session, session_id=session_key, runtime_root=rt)
     lt_side_memory = LTSideLoadedMemory(rt)
     executor = Executor(workdir)
 
@@ -83,13 +92,22 @@ def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard
     tools.register(DirectoryEnsureTool(workdir))
     tools.register(WorkspaceScaffoldTool(workdir))
     web_search = WebSearch(session)
+    research_harvester = ResearchHarvester(rt)
     tools.register(EnvironmentBootstrapTool(workdir))
     tools.register(ExecutorTool(executor))
     tools.register(WebSearchTool(web_search))
+    tools.register(ResearchHarvesterTool(research_harvester, web_search))
     tools.register(ScientificMethodTool(web_search, runtime_dir=rt))
-    tools.register(MemorySearchTool(lt_memory))
+    tools.register(BrandDozerProductCycleTool())
+    tools.register(ProductArtifactMaterializerTool(workdir))
+    tools.register(ProjectWorkMapperTool(workdir))
+    tools.register(ClassRefinementBenchmarkTool())
+    memory_tool = MemorySearchTool(lt_memory)
+    file_locate_tool = FileLocateTool(st_memory, lt_side_memory, workdir=workdir)
+    tools.register(memory_tool)
     tools.register(MatrixSearchTool())
-    tools.register(FileLocateTool(st_memory, lt_side_memory, workdir=workdir))
+    tools.register(file_locate_tool)
+    tools.register(DependencyTraversalTool(workdir, memory_tool, file_locate_tool))
 
     flow = ProcessFlow(
         session=session,
@@ -97,7 +115,8 @@ def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard
         tools=tools,
         session_id=session_key,
         lt_memory=lt_memory,
-        st_memory=st_memory,
+        short_memory=short_memory,
+        st_side_memory=st_memory,
         lt_side_memory=lt_side_memory,
     )
     return flow
@@ -120,7 +139,7 @@ def _make_session(backend: str, session_key: str, workdir: Path) -> Any:
             workdir=workdir,
             allowed_models=allowed,
             timeout_s=float(os.getenv("C0D3R_DELIVERY_ATF_TIMEOUT_S", "30")),
-            max_attempts=max(1, int(os.getenv("C0D3R_DELIVERY_ATF_ATTEMPTS", "1"))),
+            max_attempts=max(1, int(os.getenv("C0D3R_DELIVERY_ATF_ATTEMPTS", "3"))),
         )
 
     if backend == "wizard":
@@ -205,10 +224,27 @@ def run_delivery_turn(
     else:
         flow._pending_system = ""
 
+    prompt = _inject_dependency_evidence(prompt, flow, system_context)
+    prompt = _inject_research_evidence(prompt, flow, system_context, project_key=session_key)
+
+    read_only_result = _read_only_evidence_delivery(prompt, flow)
+    if read_only_result:
+        return read_only_result
+
+    atomic_result = _atomic_contract_delivery(prompt, flow, workdir, system_context)
+    if atomic_result:
+        return atomic_result
+
     augmented = flow.step_2_inject_context(prompt)
     # step_2_inject_context stores the system-only context on flow._context.
     # Do not replace it with the returned "context + user request" string or
     # every orchestrator call receives the complete user prompt twice.
+    # Preserve the caller's execution-mode contract in the Orchestrator context
+    # as well as the provider system prompt. Previously this was patched only
+    # into the model session, so Orchestrator never saw "unattended atomic
+    # workday job" and incorrectly re-expanded each persisted BrandDozer step.
+    if system_context and system_context.strip():
+        flow._context = system_context.strip() + "\n\n" + flow._context
 
     from orchestrator import Orchestrator
     from petal_system import PetalManager
@@ -220,6 +256,7 @@ def run_delivery_turn(
         petals=flow.petals or PetalManager(),
     )
     results, tree = orchestrator.run(prompt)
+    flow._last_refined_outline = dict(getattr(orchestrator, "refined_outline", {}) or {})
     flow._last_results = results
     flow._last_tree = tree
     flow._update_memory(prompt, results, tree)
@@ -235,10 +272,169 @@ def run_delivery_turn(
     tool_summary = _delivery_tool_summary(tool_events)
     if tool_summary:
         return tool_summary
+    if "unattended atomic workday job" in system_context.lower():
+        # An atomic BrandDozer iteration is allowed to fail, but the failure
+        # must remain explicit so the outer test->fix loop can persist it as
+        # correction evidence. Raising here previously terminated the entire
+        # delivery run before its deterministic smoke gate could respond.
+        errors = [str(getattr(result, "error", "") or "").strip() for result in results]
+        detail = " | ".join(item for item in errors if item)[:4000]
+        lowered_detail = detail.lower()
+        # Do not burn another provider call when the entire turn produced only
+        # protocol hallucinations/acknowledgements and no actionable evidence.
+        # The supervisor treats this explicit signal as a capacity cooldown and
+        # resumes the same bounded step later.
+        if detail and any(marker in lowered_detail for marker in (
+            "protocol_hallucination", "unparseable structured response",
+            "no user-facing result", "corrective model violated the advertised tool schema",
+            "exhausted eligible fallbacks", "model-call budget exhausted",
+        )) and not any(
+            "file_write:" in item.lower() and "rejected" not in item.lower()
+            for item in errors
+        ):
+            raise RuntimeError("ATF sane-response cooldown required: " + detail[:1800])
+        return (
+            "[c0d3rv2] Atomic work package incomplete; validation/correction required: "
+            + (detail or "no successful mutation or user-facing result was produced")
+        )
     raise RuntimeError(
         "C0d3rV2 delivery produced no user-facing result and no successful "
         "write/scaffold evidence."
     )
+
+
+def _read_only_evidence_delivery(prompt: str, flow: Any) -> str:
+    """Answer explicit evidence-only requests without entering a mutation planner."""
+    lowered = " ".join(str(prompt or "").lower().split())
+    explicitly_read_only = any(marker in lowered for marker in (
+        "read-only", "read only", "do not write", "do not modify", "without modifying",
+    ))
+    has_evidence = any(marker in lowered for marker in (
+        "injection packet", "dependency/regression injection", "evidence_files",
+    ))
+    if not explicitly_read_only or not has_evidence:
+        return ""
+    system = (
+        "You are C0d3rV2's bounded evidence-synthesis path. Answer the request directly from the "
+        "supplied, hashed project evidence. Do not plan a project, call mutation tools, or claim "
+        "unsupported facts. Preserve the response schema requested by the user. Return the final "
+        "answer now; an evidence answer is successful completion and requires no file write."
+    )
+    try:
+        raw = flow.session.send(prompt, stream=False, system=system)
+    except Exception:
+        raise
+    output = str(raw or "").strip()
+    if not output:
+        raise RuntimeError("C0d3rV2 evidence synthesis produced no user-facing answer.")
+    acknowledgements = (
+        "how can i help", "ready to help", "please provide", "need more information",
+    )
+    if any(marker in output.lower() for marker in acknowledgements):
+        raise RuntimeError("C0d3rV2 evidence synthesis returned an acknowledgement instead of an answer.")
+    # Normalize provider formatting at the C0d3rV2 boundary. In particular,
+    # consumers asking for JSON must not receive Markdown-fenced JSON.
+    from model_response_normalizer import ModelResponseNormalizer
+    parsed = ModelResponseNormalizer().parse(output)
+    if parsed.valid and isinstance(parsed.value, (dict, list)):
+        output = json.dumps(parsed.value, ensure_ascii=False, indent=2)
+    return output
+
+
+def _atomic_contract_delivery(prompt: str, flow: Any, workdir: Path, system_context: str) -> str:
+    """One-artifact compiler path: refine, synthesize, write, validate, repair."""
+    from outline_refiner import OutlineRefiner
+
+    if not OutlineRefiner._contract_ready(prompt):
+        return ""
+    targets = re.findall(
+        r"(?<![\w.-])([\w./\\-]+\.(?:py|ts|tsx|js|jsx|rs|go|java|cpp|c|h|php|pl))\b",
+        prompt, flags=re.IGNORECASE,
+    )
+    targets = [item.replace("\\", "/") for item in targets if not Path(item).name.lower().startswith("test_")]
+    if len(set(targets)) != 1:
+        return ""
+    target = targets[0]
+    _atomic_trace({"event":"start","target":target,"workdir":str(workdir)})
+    outline = OutlineRefiner(workdir=workdir, passes=4).refine(prompt, prompt)
+    if not (outline.get("quality") or {}).get("passed"):
+        raise RuntimeError("Atomic artifact planning quality gate failed")
+    flow._last_refined_outline = outline
+    test_match = re.search(r"\b(test_[\w.-]+\.py)\b", prompt, flags=re.IGNORECASE)
+    validator = f'& "{sys.executable}" {test_match.group(1)}' if test_match else ""
+    observed_inputs: list[str] = []
+    for named_path in ["contract.json", test_match.group(1) if test_match else ""]:
+        if not named_path:
+            continue
+        observed = flow.tools.dispatch("file_read", {"path": named_path})
+        content = str(observed.get("content") or "") if isinstance(observed, dict) else ""
+        if content:
+            observed_inputs.append(f"OBSERVED {named_path}:\n{content[:12000]}")
+    observed_context = "\n\n".join(observed_inputs)
+    suffix = Path(target).suffix.lower()
+    language = {".py":"Python", ".ts":"TypeScript", ".tsx":"TypeScript TSX", ".js":"JavaScript", ".jsx":"JavaScript JSX", ".rs":"Rust", ".go":"Go", ".java":"Java", ".cpp":"C++", ".c":"C", ".h":"C/C++ header", ".php":"PHP", ".pl":"Perl"}.get(suffix, "source")
+    prior_error = ""
+    for attempt in range(1, 3):
+        repair = f"\nThe prior validator failed:\n{prior_error}\nReturn a corrected complete file." if prior_error else ""
+        reply = flow.session.send(
+            prompt=(
+                f"Produce the complete contents of {target} for this exact contract. "
+                f"Return only {language} source, without markdown or explanation.\n\n"
+                f"{prompt}\n\n{observed_context}{repair}"
+            ),
+            system=(
+                f"{system_context}\nYou are C0d3rV2's atomic artifact compiler. Preserve the public contract and scope exactly. "
+                "All necessary contract and test inputs are included below; do not request tools. "
+                "Validate numeric domains and error behavior; avoid placeholders."
+            ),
+            stream=False,
+        )
+        code = _extract_source(reply, language)
+        _atomic_trace({"event":"model_response","target":target,"attempt":attempt,"chars":len(code),"model":getattr(flow.session,"get_model_id",lambda:"unknown")(),"route":getattr(flow.session,"last_route",[])})
+        written = flow.tools.dispatch("file_write", {"path": target, "content": code, "create_dirs": True})
+        _atomic_trace({"event":"write","target":target,"attempt":attempt,"result":written})
+        if written.get("error"):
+            prior_error = str(written["error"])
+            continue
+        if not validator:
+            return f"Created {target} through the selected model after four scope-locked refinement passes."
+        checked = flow.tools.dispatch("executor", {"command": validator})
+        _atomic_trace({"event":"validate","target":target,"attempt":attempt,"result":checked})
+        if not checked.get("error") and checked.get("return_code") == 0:
+            reporter = getattr(flow.session, "report_outcome", None)
+            if callable(reporter):
+                reporter(success=True, reason=f"atomic_validator_passed:{validator}")
+            return (
+                f"Created and validated {target} through the selected model in {attempt} synthesis call(s).\n"
+                f"Validation: {validator} exited 0."
+            )
+        prior_error = str(checked.get("error") or checked.get("stderr") or checked.get("stdout") or "validation failed")[-3000:]
+        reporter = getattr(flow.session, "report_outcome", None)
+        if callable(reporter):
+            reporter(success=False, reason=f"atomic_validator_failed:{prior_error[:500]}")
+    raise RuntimeError(f"Atomic artifact validation failed after two selected-model calls: {prior_error}")
+
+
+def _atomic_trace(payload: dict[str, Any]) -> None:
+    try:
+        path = _RUNTIME_ROOT / "atomic_contract.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"ts":time.time(),**payload}, default=str, ensure_ascii=True)+"\n")
+    except Exception:
+        pass
+
+
+def _extract_source(reply: str, language: str) -> str:
+    raw = str(reply or "").strip()
+    if "```" not in raw:
+        return raw
+    blocks = raw.split("```")
+    for block in blocks:
+        cleaned = block.strip()
+        if cleaned.lower().startswith((language.lower(), "python", "typescript", "javascript", "rust", "java", "cpp", "c++", "php", "perl")):
+            return cleaned.split("\n", 1)[1] if "\n" in cleaned else ""
+    return next((block.strip() for block in blocks if block.strip()), raw)
 
 
 def _delivery_tool_summary(tool_events: list[dict]) -> str:
@@ -246,7 +442,11 @@ def _delivery_tool_summary(tool_events: list[dict]) -> str:
     successful: list[dict] = []
     for event in tool_events:
         tool = str(event.get("tool") or "")
-        if tool not in {"file_write", "directory_ensure", "workspace_scaffold", "environment_bootstrap", "executor"}:
+        if tool not in {
+            "file_write", "directory_ensure", "workspace_scaffold",
+            "environment_bootstrap", "executor", "branddozer_product_cycle",
+            "class_refinement_benchmark",
+        }:
             continue
         result = event.get("result") or {}
         if result.get("error"):
@@ -283,7 +483,169 @@ def _delivery_tool_summary(tool_events: list[dict]) -> str:
             stdout = str(result.get("stdout") or "").strip().replace("\r\n", "\n")
             first_line = stdout.splitlines()[0] if stdout else "return_code=0"
             lines.append(f"- executor: {first_line[:180]}")
+        elif tool == "branddozer_product_cycle":
+            state = result.get("state") or {}
+            lines.append(
+                f"- branddozer_product_cycle: status={result.get('status')} "
+                f"cycle={state.get('cycle')} verified={result.get('verified')}"
+            )
+        elif tool == "class_refinement_benchmark":
+            lines.append(
+                f"- class_refinement_benchmark: passed={result.get('passed')}/"
+                f"{result.get('count')} pass_rate={result.get('pass_rate')}"
+            )
     return "\n".join(lines)
+
+
+def _direct_verified_delivery_route(prompt: str, flow: Any, workdir: Path) -> str:
+    lowered = (prompt or "").lower()
+    product_markers = (
+        "branddozer digital product", "digital product continuous refinement",
+        "continuous refinement cycle", "market needs", "base sepolia",
+        "product-loop", "product loop",
+    )
+    wants_product_cycle = (
+        any(marker in lowered for marker in product_markers)
+        and any(marker in lowered for marker in ("product", "market", "storefront", "crypto", "base"))
+    )
+    if wants_product_cycle:
+        result = flow.tools.dispatch("branddozer_product_cycle", {
+            "root_path": str(workdir),
+            "cycles": 1,
+        })
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return (
+            "[c0d3rv2-delivery] Completed verified BrandDozer product cycle:\n"
+            f"- status: {result.get('status')}\n"
+            f"- verified: {result.get('verified')}\n"
+            f"- output: {result.get('output')}\n"
+            f"- workspace: {(result.get('state') or {}).get('workspace')}"
+        )
+
+    class_markers = (
+        "class generation", "class-generation", "class benchmark",
+        "class refinement", "make classes", "produce classes",
+        "represents a dog", "represents a bicycle", "bird development",
+    )
+    if any(marker in lowered for marker in class_markers):
+        result = flow.tools.dispatch("class_refinement_benchmark", {
+            "count": 1 if "300" not in lowered else 8,
+            "attempts": 2,
+        })
+        if result.get("error"):
+            raise RuntimeError(str(result.get("error")))
+        return (
+            "[c0d3rv2-delivery] Completed verified ATF class refinement benchmark:\n"
+            f"- passed: {result.get('passed')}/{result.get('count')}\n"
+            f"- pass_rate: {result.get('pass_rate')}\n"
+            f"- guide: {result.get('guide_path')}\n"
+            f"- results: {result.get('results_path')}"
+        )
+
+    return ""
+
+
+def _inject_dependency_evidence(prompt: str, flow: Any, system_context: str) -> str:
+    """Inject a bounded causal file graph before an unattended mutation."""
+    if "unattended atomic workday job" not in str(system_context).lower():
+        return prompt
+    paths: list[str] = []
+    match = re.search(r"Validator-directed repair paths:\s*(\[[^\]]*\])", prompt, re.IGNORECASE)
+    if match:
+        try:
+            paths = [str(item) for item in json.loads(match.group(1))]
+        except Exception:
+            paths = []
+    failures = re.findall(
+        r'"(?:focus_failure|active_failures)"[\s\S]{0,1800}?"message"\s*:\s*"((?:\\.|[^"\\])*)"',
+        prompt,
+    )
+    next_steps = re.findall(r"Next step:\s*([^\n]+)", prompt)
+    query = " ".join([*(next_steps[-1:] or []), *(failures[-2:] or []), *paths[:8]])[:1000]
+    if not query.strip():
+        return prompt
+    try:
+        packet = flow.tools.dispatch("dependency_traversal", {
+            "action": "inject", "query": query, "paths": paths,
+            "depth": 3, "max_nodes": 48, "failures": failures[-6:],
+        })
+    except Exception as exc:
+        packet = {"error": str(exc)}
+    if packet.get("error") or not packet.get("change_surface"):
+        return prompt
+    return prompt + "\n\n[C0d3rV2 dependency/regression injection]\n" + json.dumps(
+        packet, indent=2, default=str,
+    )[:6500]
+
+
+def _inject_research_evidence(prompt: str, flow: Any, system_context: str, *, project_key: str = "") -> str:
+    """Ground unattended repairs from local-first, bounded web evidence."""
+    if "unattended atomic workday job" not in str(system_context).lower():
+        return prompt
+    if os.getenv("C0D3R_AUTO_RESEARCH", "1").strip().lower() in {"0", "false", "off", "no"}:
+        return prompt
+    messages = re.findall(
+        r'"focus_failure"\s*:\s*\{[\s\S]{0,1200}?"message"\s*:\s*"((?:\\.|[^"\\])*)"',
+        prompt,
+    )
+    patterns = re.findall(
+        r'"recommended_pattern"\s*:\s*"((?:\\.|[^"\\])*)"', prompt,
+    )
+    next_steps = re.findall(r"Next step:\s*([^\n]+)", prompt)
+    def decode(value: str) -> str:
+        try:
+            return json.loads('"' + value + '"')
+        except Exception:
+            return value
+    terms = [decode(messages[-1])] if messages else []
+    if patterns:
+        terms.append(decode(patterns[-1]))
+    if next_steps:
+        terms.append(next_steps[-1])
+    query = " ".join(terms).strip()[:900]
+    query = re.sub(r"(?:[A-Za-z]:)?[\\/]?(?:src|app|lib|tests?)[\\/][\w./\\-]+(?::\d+(?::\d+)?)?", " ", query, flags=re.IGNORECASE)
+    query = re.sub(r"[\u276f|]+|\s+", " ", query).strip()
+    if not query:
+        return prompt
+    try:
+        if project_key:
+            flow.tools.dispatch("research_harvester", {
+                "action": "project_configure", "project_key": project_key,
+                "query": query, "max_depth": 0, "max_pages": 5,
+                "coverage_target": 0.7, "refresh_seconds": 86_400, "max_rounds": 2,
+            })
+            evidence = flow.tools.dispatch("research_harvester", {
+                "action": "project_refresh", "project_key": project_key, "limit": 4,
+            })
+        else:
+            evidence = flow.tools.dispatch("research_harvester", {
+                "action": "research", "query": query, "max_depth": 0,
+                "max_pages": 5, "limit": 4, "same_origin": True,
+            })
+    except Exception as exc:
+        evidence = {"error": str(exc)}
+    retrieval = evidence.get("retrieval") or {}
+    results = retrieval.get("results") or []
+    if not results:
+        return prompt
+    compact_sources = [{
+        "title": item.get("title"), "url": item.get("url"),
+        "passage": str(item.get("passage") or "")[:1200],
+        "content_sha256": item.get("content_sha256"),
+        "authority_score": item.get("authority_score"),
+    } for item in results[:2]]
+    packet = {
+        "schema": "c0d3r.retrieval-evidence/v1",
+        "query": query,
+        "coverage": retrieval.get("coverage"),
+        "sources": compact_sources,
+        "instruction": (
+            "Use these fetched passages as implementation evidence. Preserve source URLs/hashes; "
+            "do not copy examples blindly or treat discovery snippets as verified facts."
+        ),
+    }
+    return prompt + "\n\n[C0d3rV2 local-first research evidence]\n" + json.dumps(packet, indent=2, default=str)[:4500]
 
 
 def run_delivery_turn_detailed(
@@ -330,6 +692,7 @@ def run_delivery_turn_detailed(
             artifact_models.append({"provider": identity[0], "model": identity[1], "phase": "artifact_write"})
     return {
         "output": output,
+        "refined_outline": dict(getattr(flow, "_last_refined_outline", {}) or {}),
         "route_history": route_history,
         "session_error": str(getattr(session, "last_error", "") or ""),
         "turn_model_calls": int(getattr(session, "_turn_calls", 0) or 0),

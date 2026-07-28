@@ -120,6 +120,10 @@ def _serialize_project(project: BrandProject) -> Dict[str, Any]:
         "log_path": project.log_path,
         "repo_url": project.repo_url,
         "repo_branch": project.repo_branch,
+        "workflow_kind": project.workflow_kind,
+        "workflow_config": project.workflow_config or {},
+        "license_key": project.license_key,
+        "git_auto_promote": project.git_auto_promote,
         "created_at": project.created_at.isoformat(),
         "updated_at": project.updated_at.isoformat(),
     }
@@ -183,6 +187,10 @@ def save_project(payload: Dict[str, Any], db: Optional[Any] = None) -> Dict[str,
     log_path = payload.get("log_path") or (existing.log_path if existing and existing.log_path else f"runtime/branddozer/{project_uuid}.log")
     repo_url = payload.get("repo_url") or (existing.repo_url if existing else "")
     repo_branch = payload.get("repo_branch") or (existing.repo_branch if existing else "")
+    workflow_kind = payload.get("workflow_kind") if "workflow_kind" in payload else (existing.workflow_kind if existing else "")
+    workflow_config = payload.get("workflow_config") if "workflow_config" in payload else (existing.workflow_config if existing else {})
+    license_key = payload.get("license_key") if "license_key" in payload else (existing.license_key if existing else "unlicensed")
+    git_auto_promote = bool(payload.get("git_auto_promote") if "git_auto_promote" in payload else (existing.git_auto_promote if existing else True))
 
     defaults = {
         "name": name,
@@ -194,6 +202,10 @@ def save_project(payload: Dict[str, Any], db: Optional[Any] = None) -> Dict[str,
         "log_path": log_path,
         "repo_url": repo_url,
         "repo_branch": repo_branch,
+        "workflow_kind": str(workflow_kind or ""),
+        "workflow_config": workflow_config if isinstance(workflow_config, dict) else {},
+        "license_key": str(license_key or "unlicensed"),
+        "git_auto_promote": git_auto_promote,
     }
     if payload.get("last_run") is not None:
         defaults["last_run"] = _coerce_timestamp(payload.get("last_run"))
@@ -235,6 +247,18 @@ def update_project_fields(project_id: str, updates: Dict[str, Any], db: Optional
         obj.repo_url = str(updates.get("repo_url") or "")
     if "repo_branch" in updates:
         obj.repo_branch = str(updates.get("repo_branch") or "")
+    if "workflow_kind" in updates:
+        obj.workflow_kind = str(updates.get("workflow_kind") or "")
+    if "workflow_config" in updates:
+        config = updates.get("workflow_config")
+        obj.workflow_config = config if isinstance(config, dict) else {}
+    if "license_key" in updates:
+        key = str(updates.get("license_key") or "unlicensed").lower()
+        if key not in {"unlicensed", "mit", "proprietary"}:
+            raise ValueError("Unsupported license")
+        obj.license_key = key
+    if "git_auto_promote" in updates:
+        obj.git_auto_promote = bool(updates.get("git_auto_promote"))
     if "last_run" in updates:
         obj.last_run = _coerce_timestamp(updates.get("last_run"))
     if "last_ai_generated" in updates:

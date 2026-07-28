@@ -673,10 +673,13 @@ def _validation_progress_metric(stdout: str, stderr: str) -> int:
         if marker.lower() in text.lower():
             build_stage = max(build_stage, score)
     ts_errors = len(re.findall(r"\berror TS\d+:", text))
-    typescript_progress = (10_000 - min(ts_errors, 9_999)) if ts_errors else 0
+    # A compiler error is negative evidence. The former 10,000-point bonus for
+    # having one TypeScript error made an early missing-config failure outrank a
+    # build that had reached bundle generation.
+    typescript_penalty = min(ts_errors, 9_999)
     return (
         passed * 10_000 + max(hidden_lines or [0]) * 100
-        + max(test_lines or [0]) + build_stage + typescript_progress
+        + max(test_lines or [0]) + build_stage - typescript_penalty
     )
 
 

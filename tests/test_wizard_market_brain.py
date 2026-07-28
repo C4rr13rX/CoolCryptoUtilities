@@ -1,7 +1,7 @@
 from trading.wizard_trainer import WizardTrainer, _build_training_package
 
 
-def test_ohlcv_training_uses_full_candle_and_observed_future_outcome(monkeypatch):
+def test_ohlcv_training_uses_recurring_symbolic_candle_and_outcome(monkeypatch):
     trainer = WizardTrainer("http://example.invalid")
     monkeypatch.setattr(trainer, "is_online", lambda: True)
     captured = []
@@ -15,10 +15,11 @@ def test_ohlcv_training_uses_full_candle_and_observed_future_outcome(monkeypatch
     ]
     assert trainer.push_ohlcv_batch("AAA-USDC", rows) == 1
     feature, outcome = captured[0]
-    assert "open=10" in feature and "high=12" in feature and "low=9" in feature
-    assert "close=11" in feature and "volume=100" in feature
-    assert "future_direction=up" in outcome
-    assert "future_close=13.2" in outcome and "horizon_seconds=3600" in outcome
+    assert "market=AAA-USDC/USD" in feature
+    assert "barret=b" in feature and "range=b" in feature and "pos=b" in feature
+    assert "trend=unknown" in feature and "volatility=unknown" in feature
+    assert "open=" not in feature and "close=" not in feature
+    assert outcome == "outcome surge"
 
 
 def test_training_package_preserves_ohlcv_shape():

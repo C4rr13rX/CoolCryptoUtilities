@@ -8,6 +8,7 @@ from . import views
 app_name = "core"
 
 urlpatterns = [
+    path("health/guardian/", views.guardian_health, name="guardian-health"),
     path("", views.LandingView.as_view(), name="index"),
     path("signup/", views.SignupView.as_view(), name="signup"),
     path("signup", views.SignupView.as_view()),
