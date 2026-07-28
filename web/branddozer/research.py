@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import urllib.parse
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -166,6 +167,58 @@ def _extract_json(
 def _clean_key(value: Any, fallback: str) -> str:
     key = re.sub(r"[^A-Za-z0-9_.:-]+", "-", str(value or "")).strip("-")
     return (key or fallback)[:120]
+
+
+def _enforce_current_temporal_scope(plan: dict[str, Any]) -> dict[str, Any]:
+    """Prevent a current-events study from silently truncating recent years."""
+    guarded = deepcopy(plan)
+    today = timezone.localdate()
+    current_year = today.year
+    prior_year = current_year - 1
+    as_of = today.isoformat()
+    guard_text = (
+        f" Mandatory temporal guard: discovery and inclusion screening remain "
+        f"open through {as_of}. Earlier date ranges are historical subwindows, "
+        "not exclusion cutoffs. Identify competing Target boycott events before "
+        "selecting the focal event."
+    )
+    scope = str(guarded.get("scope") or "").strip()
+    if guard_text.strip() not in scope:
+        guarded["scope"] = scope + guard_text
+    strategy = guarded.get("search_strategy")
+    if isinstance(strategy, dict):
+        guarded["search_strategy"] = {
+            **strategy,
+            "as_of_date": as_of,
+            "temporal_inclusion_rule": (
+                f"Search through {as_of}; do not exclude {prior_year} or "
+                f"{current_year} records before event identity is resolved."
+            ),
+        }
+    else:
+        guarded["search_strategy"] = (
+            str(strategy or "").strip() + guard_text
+        ).strip()
+    guarded["temporal_scope_guard"] = {
+        "as_of_date": as_of,
+        "required_recent_years": [prior_year, current_year],
+        "event_identity_precedes_focal_window": True,
+    }
+    recent_query = (
+        f'("Target boycott" AND (DEI OR diversity OR minority) '
+        f"AND ({prior_year} OR {current_year} OR current))"
+    )
+    packages = []
+    for package in guarded.get("work_packages") or []:
+        if not isinstance(package, dict):
+            continue
+        updated = dict(package)
+        query = str(updated.get("query") or "").strip()
+        if str(current_year) not in query and "current" not in query.lower():
+            updated["query"] = f"({query}) OR {recent_query}" if query else recent_query
+        packages.append(updated)
+    guarded["work_packages"] = packages
+    return guarded
 
 
 def _word_count(markdown: str) -> int:
@@ -575,6 +628,23 @@ class ResearchWorkflow:
             )
         )
         if existing:
+            packages = [
+                package
+                for package in (plan.get("work_packages") or [])
+                if isinstance(package, dict)
+            ]
+            for index, item in enumerate(existing):
+                if index >= len(packages):
+                    break
+                package = packages[index]
+                item.description = json.dumps(package, indent=2)
+                item.acceptance_criteria = package.get("acceptance_criteria") or []
+                item.meta = {**(item.meta or {}), "research_package": package}
+                item.save(
+                    update_fields=[
+                        "description", "acceptance_criteria", "meta", "updated_at"
+                    ]
+                )
             return existing
         items: list[BacklogItem] = []
         for index, package in enumerate((plan.get("work_packages") or [])[:8], start=1):
@@ -922,6 +992,8 @@ class ResearchWorkflow:
             plan = checkpoint
         else:
             plan = self._plan()
+        plan = _enforce_current_temporal_scope(plan)
+        if plan != checkpoint:
             context = dict(self.run.context or {})
             context["research_plan"] = plan
             context["research_plan_checkpointed_at"] = timezone.now().isoformat()

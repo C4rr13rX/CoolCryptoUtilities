@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from branddozer.models import (
@@ -22,6 +23,7 @@ from branddozer.models import (
 from branddozer.research import (
     ResearchPolicy,
     ResearchWorkflow,
+    _enforce_current_temporal_scope,
     _extract_json,
     _verify_source,
     validate_paper_payload,
@@ -143,6 +145,24 @@ class ResearchValidationTests(TestCase):
         )
         self.assertEqual(selected["title"], "complete")
         self.assertEqual(selected["work_packages"][0]["title"], "chronology")
+
+    def test_current_event_plan_cannot_end_before_current_search_horizon(self) -> None:
+        plan = _enforce_current_temporal_scope(
+            {
+                "scope": "Approximately 2015-2024.",
+                "search_strategy": "Limit searches to 2015-2024.",
+                "work_packages": [
+                    {"title": "Identity", "query": "Target boycott 2023 OR 2024"}
+                ],
+            }
+        )
+        current_year = timezone.localdate().year
+        self.assertEqual(
+            plan["temporal_scope_guard"]["as_of_date"],
+            timezone.localdate().isoformat(),
+        )
+        self.assertIn(str(current_year), plan["work_packages"][0]["query"])
+        self.assertIn(str(current_year), str(plan["search_strategy"]))
 
     def test_source_is_verified_only_when_quoted_passage_was_fetched(self) -> None:
         class Harvester:
