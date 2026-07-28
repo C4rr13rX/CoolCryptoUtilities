@@ -162,6 +162,7 @@ class ResearchValidationTests(TestCase):
             timezone.localdate().isoformat(),
         )
         self.assertIn(str(current_year), plan["work_packages"][0]["query"])
+        self.assertIn("Target Corporation", plan["work_packages"][0]["query"])
         self.assertIn(str(current_year), str(plan["search_strategy"]))
 
     def test_source_is_verified_only_when_quoted_passage_was_fetched(self) -> None:

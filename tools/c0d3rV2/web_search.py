@@ -136,7 +136,12 @@ class WebSearch:
         """Return multi-provider discovery metadata without a model summary."""
         self._rate_limit()
         raw = self._fetch_results(query)
-        return self._rank_by_authority(raw, query) if self._is_scientific_query(query) else raw
+        ranked = self._rank_by_authority(raw, query)
+        relevant = [
+            item for item in ranked
+            if int(item.get("metadata_relevance") or 0) > 0
+        ]
+        return (relevant or ranked)[: self.max_results]
 
     def search_authoritative(self, query: str, domain_hint: str = "") -> dict:
         """

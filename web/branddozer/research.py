@@ -205,7 +205,7 @@ def _enforce_current_temporal_scope(plan: dict[str, Any]) -> dict[str, Any]:
         "event_identity_precedes_focal_window": True,
     }
     recent_query = (
-        f'("Target boycott" AND (DEI OR diversity OR minority) '
+        f'("Target Corporation" AND boycott AND (DEI OR diversity OR minority) '
         f"AND ({prior_year} OR {current_year} OR current))"
     )
     packages = []
@@ -698,9 +698,85 @@ class ResearchWorkflow:
         try:
             from tools.c0d3rV2.web_search import WebSearch
 
-            discovered = WebSearch(
-                None, delay_s=0.5, max_results=12
-            ).discover(str(package.get("query") or item.title))
+            base_query = str(package.get("query") or item.title)
+            current_year = timezone.localdate().year
+            queries = [
+                base_query,
+                (
+                    f'"Target Corporation" boycott DEI rollback '
+                    f"{current_year - 1} {current_year}"
+                ),
+                (
+                    'site:corporate.target.com "diversity, equity and inclusion" '
+                    f"{current_year - 1} {current_year}"
+                ),
+            ]
+            package_text = " ".join(
+                str(package.get(key) or "")
+                for key in ("title", "angle", "deliverable")
+            ).lower()
+            if any(
+                marker in package_text
+                for marker in ("program", "fund", "supplier", "governance")
+            ):
+                queries.append(
+                    'site:corporate.target.com Target supplier diversity '
+                    '"community engagement" fund'
+                )
+            if any(
+                marker in package_text
+                for marker in ("impact", "psychological", "mental", "counterfactual")
+            ):
+                queries.append(
+                    '"DEI rollback" employee belonging mental health '
+                    "systematic review"
+                )
+            search = WebSearch(None, delay_s=0.25, max_results=8)
+            unique: dict[str, dict[str, Any]] = {}
+            for query in queries:
+                for candidate in search.discover(query):
+                    url = str(candidate.get("url") or "").strip()
+                    haystack = (
+                        f"{candidate.get('title', '')} "
+                        f"{candidate.get('snippet', '')} {url}"
+                    ).lower()
+                    target_context = (
+                        "target corporation" in haystack
+                        or "target's" in haystack
+                        or "corporate.target.com" in haystack
+                        or (
+                            "target" in haystack
+                            and any(
+                                marker in haystack
+                                for marker in (
+                                    "boycott", "dei", "diversity", "equity",
+                                    "minority", "supplier", "community",
+                                )
+                            )
+                        )
+                    )
+                    broader_evidence = (
+                        query.startswith('"DEI rollback"')
+                        and any(
+                            marker in haystack
+                            for marker in (
+                                "dei", "diversity", "belonging",
+                                "mental health", "employee",
+                            )
+                        )
+                    )
+                    if not (target_context or broader_evidence):
+                        continue
+                    key = re.sub(r"[?#].*$", "", url.lower())
+                    if key:
+                        unique[key] = candidate
+            discovered = sorted(
+                unique.values(),
+                key=lambda candidate: (
+                    -int(candidate.get("metadata_relevance") or 0),
+                    -int(candidate.get("authority_score") or 0),
+                ),
+            )[:24]
         except Exception:
             discovered = []
         result = self._call(
