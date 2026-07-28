@@ -330,6 +330,43 @@ class ResearchPaperApiTests(TestCase):
 
 
 class ResearchWorkflowPersistenceTests(TestCase):
+    def test_checkpointed_plan_reuses_existing_scrum_backlog(self) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        project = BrandProject.objects.create(
+            name="Checkpoint Research",
+            root_path=temp.name,
+            default_prompt="Resume evidence",
+        )
+        plan = {
+            "title": "Checkpointed",
+            "research_question": "Can the run resume?",
+            "keywords": ["checkpoint"],
+            "scope": "bounded",
+            "search_strategy": {},
+            "work_packages": [{"title": "Existing evidence", "query": "q"}],
+        }
+        run = DeliveryRun.objects.create(
+            project=project,
+            prompt="Resume evidence",
+            context={"research_mode": True, "research_plan": plan},
+        )
+        existing = BacklogItem.objects.create(
+            project=project,
+            run=run,
+            source="research",
+            title="Existing evidence",
+            priority=1,
+        )
+        workflow = ResearchWorkflow(run, Path(temp.name))
+
+        with patch.object(workflow, "_plan") as planner:
+            items = workflow._create_scrum(run.context["research_plan"])
+
+        planner.assert_not_called()
+        self.assertEqual([item.id for item in items], [existing.id])
+        self.assertEqual(BacklogItem.objects.filter(run=run).count(), 1)
+
     def test_failed_evidence_package_is_quarantined_while_success_continues(
         self
     ) -> None:

@@ -569,6 +569,13 @@ class ResearchWorkflow:
         )
 
     def _create_scrum(self, plan: dict[str, Any]) -> list[BacklogItem]:
+        existing = list(
+            BacklogItem.objects.filter(run=self.run, source="research").order_by(
+                "priority", "created_at"
+            )
+        )
+        if existing:
+            return existing
         items: list[BacklogItem] = []
         for index, package in enumerate((plan.get("work_packages") or [])[:8], start=1):
             if not isinstance(package, dict):
@@ -909,7 +916,17 @@ class ResearchWorkflow:
         self.run.started_at = self.run.started_at or timezone.now()
         self.run.error = ""
         self.run.save(update_fields=["status", "phase", "started_at", "error"])
-        plan = self._plan()
+        context = dict(self.run.context or {})
+        checkpoint = context.get("research_plan")
+        if isinstance(checkpoint, dict) and checkpoint.get("work_packages"):
+            plan = checkpoint
+        else:
+            plan = self._plan()
+            context = dict(self.run.context or {})
+            context["research_plan"] = plan
+            context["research_plan_checkpointed_at"] = timezone.now().isoformat()
+            self.run.context = context
+            self.run.save(update_fields=["context"])
         items = self._create_scrum(plan)
         self.run.phase = "research_evidence"
         self.run.save(update_fields=["phase"])
