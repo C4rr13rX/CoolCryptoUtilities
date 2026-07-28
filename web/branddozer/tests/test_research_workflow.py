@@ -21,6 +21,7 @@ from branddozer.models import (
 from branddozer.research import (
     ResearchPolicy,
     ResearchWorkflow,
+    _extract_json,
     _verify_source,
     validate_paper_payload,
 )
@@ -118,6 +119,29 @@ class ResearchValidationTests(TestCase):
         )
         self.assertFalse(result["checks"]["peer_review"])
         self.assertIn("Causal conclusion", result["peer_review_blockers"][0])
+
+    def test_c0d3r_multibranch_output_selects_role_complete_payload(self) -> None:
+        output = "\n\n".join(
+            [
+                '{"action":"answer","output":{"title":"partial"}}',
+                (
+                    '{"action":"answer","output":'
+                    '{"title":"complete","research_question":"q","keywords":["k"],'
+                    '"scope":"bounded","search_strategy":{"queries":[]},'
+                    '"work_packages":[{"title":"chronology"}]}}'
+                ),
+                '{"action":"complete","output":"done"}',
+            ]
+        )
+        selected = _extract_json(
+            output,
+            expected_keys={
+                "title", "research_question", "keywords", "scope",
+                "search_strategy", "work_packages",
+            },
+        )
+        self.assertEqual(selected["title"], "complete")
+        self.assertEqual(selected["work_packages"][0]["title"], "chronology")
 
     def test_source_is_verified_only_when_quoted_passage_was_fetched(self) -> None:
         class Harvester:
@@ -269,7 +293,11 @@ class ResearchPaperApiTests(TestCase):
     @patch("branddozer.research.run_delivery_turn_detailed")
     def test_c0d3r_agent_uses_separate_freeloader_model_backend(self, routed) -> None:
         routed.return_value = {
-            "output": '{"answer": "bounded"}',
+            "output": (
+                '{"title":"bounded","research_question":"q","keywords":["k"],'
+                '"scope":"s","search_strategy":{"queries":[]},'
+                '"work_packages":[{"title":"chronology"}]}'
+            ),
             "route_history": [[{"outcome": "selected", "provider": "free"}]],
             "models": [{"provider": "free", "model": "test-model"}],
             "turn_model_calls": 1,
@@ -293,7 +321,7 @@ class ResearchPaperApiTests(TestCase):
             system="Return JSON only.",
         )
 
-        self.assertEqual(result, {"answer": "bounded"})
+        self.assertEqual(result["title"], "bounded")
         self.assertEqual(routed.call_args.kwargs["backend"], "freeloader")
         session = DeliverySession.objects.get(run=run)
         self.assertEqual(session.meta["agent_provider"], "c0d3r")

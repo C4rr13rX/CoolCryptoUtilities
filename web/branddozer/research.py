@@ -51,6 +51,17 @@ REQUIRED_SECTIONS = (
 )
 CITATION_RE = re.compile(r"\[@([A-Za-z0-9_.:-]+)\]")
 HEADING_RE = re.compile(r"(?m)^#{1,6}\s+(.+?)\s*$")
+ROLE_SCHEMA_KEYS: dict[str, set[str]] = {
+    "research_planner": {
+        "title", "research_question", "keywords", "scope",
+        "search_strategy", "work_packages",
+    },
+    "literature_reviewer": {"findings", "sources", "claims"},
+    "methods_reviewer": {"method", "bias_risks", "validity_limits"},
+    "research_writer": {"title", "abstract", "markdown", "claims"},
+    "citation_auditor": {"claims", "blocking_issues"},
+    "peer_reviewer": {"recommendation", "blocking_issues"},
+}
 
 
 @dataclass(frozen=True)
@@ -87,26 +98,69 @@ class ResearchPolicy:
         )
 
 
-def _extract_json(text: str) -> dict[str, Any]:
+def _json_object_candidates(text: str) -> list[dict[str, Any]]:
+    """Recover every complete object from a C0D3R multi-branch response."""
     raw = str(text or "").strip()
-    if raw.startswith("```"):
-        for block in raw.split("```"):
-            candidate = block.strip()
-            if candidate.lower().startswith("json"):
-                candidate = candidate[4:].strip()
-            if candidate.startswith("{"):
-                raw = candidate
-                break
-    start, end = raw.find("{"), raw.rfind("}")
-    if start >= 0 and end > start:
-        raw = raw[start : end + 1]
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"research agent returned invalid JSON: {exc}") from exc
-    if not isinstance(value, dict):
-        raise RuntimeError("research agent response must be a JSON object")
-    return value
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+    index = 0
+    while index < len(raw):
+        start = raw.find("{", index)
+        if start < 0:
+            break
+        try:
+            value, consumed = decoder.raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        index = start + consumed
+        if isinstance(value, dict):
+            found.append(value)
+
+    expanded: list[dict[str, Any]] = []
+    queue = list(found)
+    seen: set[str] = set()
+    while queue:
+        value = queue.pop(0)
+        fingerprint = json.dumps(value, sort_keys=True, default=str)
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        expanded.append(value)
+        for key in ("answer", "output", "result", "payload"):
+            nested = value.get(key)
+            if isinstance(nested, dict):
+                queue.append(nested)
+            elif isinstance(nested, str) and "{" in nested:
+                queue.extend(_json_object_candidates(nested))
+    return expanded
+
+
+def _extract_json(
+    text: str, *, expected_keys: set[str] | None = None
+) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    candidates = _json_object_candidates(raw)
+    if not candidates:
+        raise RuntimeError("research agent returned no complete JSON object")
+    required = set(expected_keys or ())
+
+    def score(value: dict[str, Any]) -> tuple[int, int, int]:
+        matched = len(required.intersection(value))
+        return (
+            matched,
+            len(value),
+            len(json.dumps(value, default=str)),
+        )
+
+    selected = max(candidates, key=score)
+    if required and not required.issubset(selected):
+        missing = sorted(required.difference(selected))
+        raise RuntimeError(
+            "research agent JSON did not satisfy the role schema; missing "
+            + ", ".join(missing)
+        )
+    return selected
 
 
 def _clean_key(value: Any, fallback: str) -> str:
@@ -477,7 +531,9 @@ class ResearchWorkflow:
                     raise RuntimeError("research model client was not initialized")
                 output = client.send(prompt, stream=False, system=system)
             self._write_log(record, f"OUTPUT\n{output}")
-            payload = _extract_json(output)
+            payload = _extract_json(
+                output, expected_keys=ROLE_SCHEMA_KEYS.get(role)
+            )
             record.status = "done"
             record.completed_at = timezone.now()
             record.save(update_fields=["status", "completed_at", "meta"])
