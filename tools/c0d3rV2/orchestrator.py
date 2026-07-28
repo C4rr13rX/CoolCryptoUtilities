@@ -200,6 +200,9 @@ class Orchestrator:
         self.max_step_attempts = max_step_attempts
         self._atomic_workday = "unattended atomic workday job" in context.lower()
         self._corrective_retry = "corrective retry" in context.lower()
+        self._bounded_read_only = (
+            "bounded read-only archival-research role" in context.lower()
+        )
         self._total_agent_iterations = 0
         self._total_model_calls = 0
         self.refined_outline: dict[str, Any] = {}
@@ -268,7 +271,9 @@ class Orchestrator:
             }
         elif not corrective_retry:
             scrutiny = self._scrutinize(request)
-            if scrutiny.get("decision") == "direct" and not is_creation_request(request):
+            if scrutiny.get("decision") == "direct" and (
+                self._bounded_read_only or not is_creation_request(request)
+            ):
                 answer = str(scrutiny.get("answer") or "").strip()
                 root = TaskTree(root_description=request, scientific_form=request)
                 root.mark_root_complete()
@@ -289,7 +294,12 @@ class Orchestrator:
         # scope-locked outline and project map. Refining them again wastes
         # several scarce calls and commonly expands one class/scaffold into
         # redundant branches before any file is written.
-        if not corrective_retry and not self._atomic_workday and is_creation_request(request):
+        if (
+            not corrective_retry
+            and not self._atomic_workday
+            and not self._bounded_read_only
+            and is_creation_request(request)
+        ):
             self.refined_outline, refined_branches = self._refine_creation_request(
                 request, scientific_request,
             )

@@ -459,6 +459,7 @@ class ResearchWorkflow:
                     system_context=(
                         "Brand Dozer selected C0D3R V2 as the research agent. "
                         f"C0D3R V2 selected {self.model_provider} as its model backend. "
+                        "Execution mode: bounded read-only archival-research role. "
                         f"{system}"
                     ),
                     reset=True,

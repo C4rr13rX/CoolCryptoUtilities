@@ -1086,6 +1086,30 @@ class TestOrchestratorRun:
         assert results[0].output == "Hello! Good to hear from you."
         assert tree.root.is_done
 
+    def test_bounded_research_creation_returns_direct_json_without_software_refinement(
+        self, tmp_path
+    ):
+        session = _DirectScrutinySession()
+        session.send = MagicMock(
+            return_value=json.dumps(
+                {
+                    "decision": "direct",
+                    "answer": '{"work_packages":[{"title":"chronology"}]}',
+                }
+            )
+        )
+        orch = Orchestrator(
+            session=session,
+            tools=_build_registry(tmp_path),
+            context="Execution mode: bounded read-only archival-research role.",
+        )
+
+        results, tree = orch.run("Produce a publication-grade research paper plan.")
+
+        assert session.send.call_count == 1
+        assert results[0].output == '{"work_packages":[{"title":"chronology"}]}'
+        assert tree.root.is_done
+
     def test_corrective_retry_skips_reformulation_and_planning(self, tmp_path):
         (tmp_path / "repair.txt").write_text("broken", encoding="utf-8")
         session = _CorrectiveSession()

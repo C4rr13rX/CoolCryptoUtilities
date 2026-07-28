@@ -322,15 +322,20 @@ def _diversified_attempt_list(ranked: list[RankedCandidate]) -> list[RankedCandi
 def classify_request(prompt: str, system: str, *, max_tokens: int) -> RequestProfile:
     text = f"{system}\n{prompt}".lower()
     weights = {"general": 1.0}
+    bounded_research = "bounded read-only archival-research role" in text
 
     def add(name: str, weight: float, markers: tuple[str, ...]) -> None:
         if any(marker in text for marker in markers):
             weights[name] = weight
 
-    add("coding", 2.4, ("code", "repository", "function", "class ", "pytest", "debug", "refactor", "implement"))
-    add("tools", 2.5, ("tool_calls", "available tools", "function calling", "call a tool", "executor", "file_write"))
+    if not bounded_research:
+        add("coding", 2.4, ("code", "repository", "function", "class ", "pytest", "debug", "refactor", "implement"))
+        add("tools", 2.5, ("tool_calls", "available tools", "function calling", "call a tool", "executor", "file_write"))
     add("reasoning", 2.0, ("reason", "analy", "plan", "prove", "tradeoff", "architecture", "diagnose"))
     add("structured", 1.8, ("return only json", "json object", "schema", "structured", "extract"))
+    if bounded_research:
+        weights["reasoning"] = max(weights.get("reasoning", 0.0), 2.8)
+        weights["structured"] = max(weights.get("structured", 0.0), 2.4)
     add("multimodal", 2.2, ("image", "screenshot", "visual", "video"))
     add("multilingual", 1.6, ("translate", "multilingual", "language"))
     add("speed", 1.4, ("fast", "quick", "low latency", "classify", "route"))
