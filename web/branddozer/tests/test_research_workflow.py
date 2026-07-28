@@ -10,6 +10,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from branddozer.models import (
+    BacklogItem,
     BrandProject,
     DeliveryRun,
     DeliverySession,
@@ -329,6 +330,49 @@ class ResearchPaperApiTests(TestCase):
 
 
 class ResearchWorkflowPersistenceTests(TestCase):
+    def test_failed_evidence_package_is_quarantined_while_success_continues(
+        self
+    ) -> None:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        project = BrandProject.objects.create(
+            name="Quarantine Research",
+            root_path=temp.name,
+            default_prompt="Research with partial provider failure",
+        )
+        run = DeliveryRun.objects.create(
+            project=project,
+            prompt="Research with partial provider failure",
+            context={
+                "research_mode": True,
+                "research_config": {"max_parallel_agents": 1},
+            },
+        )
+        workflow = ResearchWorkflow(run, Path(temp.name))
+        good = BacklogItem.objects.create(
+            project=project, run=run, title="Good package", meta={}
+        )
+        failed = BacklogItem.objects.create(
+            project=project, run=run, title="Failed package", meta={}
+        )
+
+        def review(item, plan):
+            if item.id == failed.id:
+                raise RuntimeError("provider exhausted")
+            return {"findings": ["bounded"], "sources": [], "claims": []}
+
+        with patch.object(workflow, "_review_package", side_effect=review):
+            evidence = workflow._collect_evidence([good, failed], {})
+
+        run.refresh_from_db()
+        failed.refresh_from_db()
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(failed.status, "blocked")
+        self.assertEqual(run.context["research_quarantine_count"], 1)
+        self.assertEqual(
+            run.context["research_quarantine"][0]["title"], "Failed package"
+        )
+
     def test_failed_draft_is_rewritten_and_only_validated_revision_finishes(self) -> None:
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

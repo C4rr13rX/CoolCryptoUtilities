@@ -659,6 +659,7 @@ class ResearchWorkflow:
         self, items: list[BacklogItem], plan: dict[str, Any]
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
+        quarantined: list[dict[str, Any]] = []
         workers = min(self.policy.max_parallel_agents, len(items))
         with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
             futures = {
@@ -673,7 +674,30 @@ class ResearchWorkflow:
                     item.meta = {**(item.meta or {}), "error": str(exc)}
                     item.save(update_fields=["status", "meta", "updated_at"])
                     SprintItem.objects.filter(backlog_item=item).update(status="blocked")
-                    raise
+                    quarantined.append(
+                        {
+                            "backlog_item_id": str(item.id),
+                            "title": item.title,
+                            "error": str(exc),
+                            "quarantined_at": timezone.now().isoformat(),
+                        }
+                    )
+        if quarantined:
+            context = dict(self.run.context or {})
+            context["research_quarantine"] = [
+                *(context.get("research_quarantine") or []),
+                *quarantined,
+            ][-100:]
+            context["research_quarantine_count"] = len(
+                context["research_quarantine"]
+            )
+            self.run.context = context
+            self.run.save(update_fields=["context"])
+        if not results:
+            raise RuntimeError(
+                "all archival evidence work packages failed; "
+                f"{len(quarantined)} package(s) quarantined"
+            )
         return results
 
     def _verify_sources(
