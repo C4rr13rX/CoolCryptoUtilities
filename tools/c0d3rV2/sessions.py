@@ -59,6 +59,7 @@ class SessionManager:
         backend: str | None = None,
         # Wizard-specific
         wizard_endpoint: str | None = None,
+        wizard_chat_path: str | None = None,
         # Bedrock-specific
         model: str | None = None,
         region: str | None = None,
@@ -83,6 +84,7 @@ class SessionManager:
         self._session = self._create_session(
             backend=self._backend,
             wizard_endpoint=wizard_endpoint,
+            wizard_chat_path=wizard_chat_path,
             model=model,
             region=region,
             profile=profile,
@@ -96,6 +98,7 @@ class SessionManager:
         backend: str,
         *,
         wizard_endpoint: str | None,
+        wizard_chat_path: str | None,
         model: str | None,
         region: str | None,
         profile: str | None,
@@ -122,6 +125,7 @@ class SessionManager:
                 return WizardSession(
                     session_name="c0d3rv2",
                     endpoint=wizard_endpoint,
+                    chat_path=wizard_chat_path,
                     transcript_dir=transcript_dir,
                     workdir=workdir,
                 )

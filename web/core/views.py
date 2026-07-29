@@ -931,6 +931,8 @@ class C0d3rRunView(LoginRequiredMixin, View):
             backend = ""
         model = _setting_value(request.user, "C0D3R_MODEL")
         atf_models = [item.strip() for item in _setting_value(request.user, "AGENT_FREELOADER_MODELS").split(",") if item.strip()]
+        from modelcontrol.wizard_brains import selected_wizard_brain
+        wizard_brain = selected_wizard_brain(request.user, "operations")
         session_id = payload.get("session_id")
 
         if not session_id and not reset and not prompt:
@@ -985,6 +987,9 @@ class C0d3rRunView(LoginRequiredMixin, View):
             run = C0d3rWebRun.objects.create(
                 session=session_obj, prompt=prompt, backend=backend,
                 model=model or "", atf_models=atf_models,
+                wizard_brain_id=wizard_brain["id"],
+                wizard_endpoint=wizard_brain["endpoint"],
+                wizard_chat_path=wizard_brain["chat_path"],
             )
         session_obj.last_active = timezone.now()
         session_obj.save(update_fields=["last_active", "updated_at"])

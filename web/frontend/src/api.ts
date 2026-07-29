@@ -662,7 +662,8 @@ export interface ModelControlCredential {
 }
 
 export interface ModelControlPayload {
-  config: { backend: string; model: string; atf_models: string[] };
+  config: { backend: string; model: string; atf_models: string[]; wizard_brain_id: string };
+  wizard_brains: WizardBrain[];
   backends: { id: string; label: string; description: string }[];
   credentials: ModelControlCredential[];
   providers: {
@@ -690,7 +691,8 @@ export async function fetchModelControl() {
 }
 
 export interface ModelOptions {
-  default: { backend: string; model: string; label: string };
+  default: { backend: string; model: string; label: string; wizard_brain_id: string };
+  wizard_brains: WizardBrain[];
   backends: Array<{ id: string; label: string; description: string }>;
   curated: Record<string, string[]>;
   catalog: Array<{ id: string; provider: string; best_at: string; configured: boolean }>;
@@ -704,7 +706,46 @@ export async function fetchModelOptions(force = false): Promise<ModelOptions> {
   return _modelOptionsCache;
 }
 
-export async function saveModelControl(payload: { backend: string; model: string; atf_models: string[] }) {
+export interface WizardBrain {
+  id: string;
+  name: string;
+  endpoint: string;
+  chat_path: '/brain/chat' | '/chat';
+}
+
+export interface WizardBrainRegistry {
+  brains: WizardBrain[];
+  selected: { operations: string; chat: string };
+}
+
+export async function fetchWizardBrains(): Promise<WizardBrainRegistry> {
+  const { data } = await api.get('/model-control/wizard-brains/');
+  return data as WizardBrainRegistry;
+}
+
+export async function createWizardBrain(payload: { name: string; endpoint: string; chat_path: string }) {
+  const { data } = await api.post('/model-control/wizard-brains/', payload);
+  return data as { brain: WizardBrain };
+}
+
+export async function deleteWizardBrain(brainId: string) {
+  await api.delete(`/model-control/wizard-brains/${encodeURIComponent(brainId)}/`);
+}
+
+export async function selectWizardBrain(purpose: 'operations' | 'chat', brainId: string) {
+  const { data } = await api.post('/model-control/wizard-brains/selection/', {
+    purpose,
+    brain_id: brainId,
+  });
+  return data;
+}
+
+export async function saveModelControl(payload: {
+  backend: string;
+  model: string;
+  atf_models: string[];
+  wizard_brain_id: string;
+}) {
   const { data } = await api.post('/model-control/config/', payload);
   return data;
 }

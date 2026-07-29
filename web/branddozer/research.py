@@ -620,7 +620,7 @@ class ResearchWorkflow:
         record.save(update_fields=["log_path"])
         client = None
         if self.agent_provider not in {"c0d3r", "coder", "c0d3rv2"}:
-            SessionClass = get_session_class(self.model_provider)
+            SessionClass = get_session_class(self.model_provider, explicit=True)
             client = SessionClass(
                 session_name=f"research-{role}-{record.id}",
                 transcript_dir=self.transcript_root,
@@ -662,6 +662,8 @@ class ResearchWorkflow:
                         f"{system}"
                     ),
                     reset=True,
+                    wizard_endpoint=str((self.run.context or {}).get("wizard_endpoint") or ""),
+                    wizard_chat_path=str((self.run.context or {}).get("wizard_chat_path") or ""),
                 )
                 output = str(routed.get("output") or "")
                 record.meta = {

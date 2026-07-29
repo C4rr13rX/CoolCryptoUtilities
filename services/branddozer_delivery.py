@@ -192,6 +192,12 @@ def _session_settings_for_run(run: DeliveryRun, role: str) -> Dict[str, Any]:
         settings["model"] = model
     if reasoning:
         settings["reasoning_effort"] = reasoning
+    if ctx.get("wizard_endpoint"):
+        settings["endpoint"] = str(ctx["wizard_endpoint"])
+    if ctx.get("wizard_chat_path"):
+        settings["chat_path"] = str(ctx["wizard_chat_path"])
+    if provider in {"wizard", "w1z4rd", "wizard_node", "c0d3r", "coder"} and ctx.get("wizard_endpoint"):
+        settings["allow_in_freeloader_mode"] = True
     return settings
 
 
@@ -1260,7 +1266,7 @@ def _trigger_unstick_session(run: DeliveryRun, root: Path, reason: str) -> None:
         f"Gates: {list(GateRun.objects.filter(run=run).values('name','status'))}"
     )
     try:
-        SessionClass = get_session_class(provider)
+        SessionClass = get_session_class(provider, explicit=True)
         codex = SessionClass(
             session_name=f"unstick-{run.id}",
             transcript_dir=Path("runtime/branddozer/transcripts"),
@@ -2214,7 +2220,7 @@ class DeliveryOrchestrator:
 
         provider = session_provider_from_context(run.context or {})
         ai_settings = _session_settings_for_run(run, "worker")
-        SessionClass = get_session_class(provider)
+        SessionClass = get_session_class(provider, explicit=True)
         codex = SessionClass(
             session_name=f"solo-{run.id}",
             transcript_dir=Path("runtime/branddozer/transcripts") / str(run.id),
@@ -2387,6 +2393,8 @@ class DeliveryOrchestrator:
                         "This is an unattended atomic workday job. Execute only the named work package, "
                         "use bounded context, perform changes/tests when requested, and return a user-facing result."
                     ),
+                    wizard_endpoint=str((run.context or {}).get("wizard_endpoint") or ""),
+                    wizard_chat_path=str((run.context or {}).get("wizard_chat_path") or ""),
                 )
             except RuntimeError as exc:
                 if not _is_transient_atf_capacity_failure(exc):
@@ -3742,7 +3750,7 @@ class DeliveryOrchestrator:
 
         transcript_dir = Path("runtime/branddozer/transcripts") / str(session.id)
         transcript_dir.mkdir(parents=True, exist_ok=True)
-        SessionClass = get_session_class(provider)
+        SessionClass = get_session_class(provider, explicit=True)
         codex = SessionClass(
             session_name=f"ux-audit-{session.id}",
             transcript_dir=transcript_dir,
@@ -4012,7 +4020,7 @@ class DeliveryOrchestrator:
             "For UI checks, run `python scripts/branddozer_ui_capture.py --base-url http://127.0.0.1:8000` "
             "and include the screenshot paths in your output (or review them with `codex --image <path>` when available)."
         )
-        SessionClass = get_session_class(provider)
+        SessionClass = get_session_class(provider, explicit=True)
         codex = SessionClass(
             session_name=f"delivery-{session.id}",
             transcript_dir=transcript_dir,
@@ -4612,7 +4620,7 @@ class DeliveryOrchestrator:
             f"\nProject prompt:\n{run.prompt}\n\nBacklog acceptance:\n{backlog_summary}"
         )
         _append_session_log(session, "UX rubric: hierarchy, spacing, typography scale, contrast, alignment, responsiveness.")
-        SessionClass = get_session_class(provider)
+        SessionClass = get_session_class(provider, explicit=True)
         review_codex = SessionClass(
             session_name=f"ui-review-{session.id}",
             transcript_dir=Path("runtime/branddozer/transcripts") / str(session.id),
@@ -4771,7 +4779,7 @@ class DeliveryOrchestrator:
         codex_error = ""
         if provider_available:
             try:
-                SessionClass = get_session_class(provider)
+                SessionClass = get_session_class(provider, explicit=True)
                 ai_settings = _session_settings_for_run(run, "planner")
                 codex = SessionClass(
                     session_name=f"{fallback_kind}-{run.id}",

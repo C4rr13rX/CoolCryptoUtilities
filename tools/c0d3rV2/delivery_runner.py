@@ -56,7 +56,14 @@ _RUNTIME_ROOT = _PROJECT_ROOT / "runtime" / "c0d3rv2_delivery"
 _FLOW_CACHE: dict[str, Any] = {}
 
 
-def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard") -> Any:
+def _build_delivery_flow(
+    session_key: str,
+    workdir: Path,
+    backend: str = "wizard",
+    *,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
+) -> Any:
     """Wire up a full-capability ProcessFlow for delivery/background-job use."""
     from process_flow import ProcessFlow
     from tool_registry import (
@@ -76,7 +83,13 @@ def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard
     from tools.c0d3rV2.plugins.research_harvester import ResearchHarvester
     from executor import Executor
 
-    session = _make_session(backend, session_key, workdir)
+    session = _make_session(
+        backend,
+        session_key,
+        workdir,
+        wizard_endpoint=wizard_endpoint,
+        wizard_chat_path=wizard_chat_path,
+    )
     rt = _RUNTIME_ROOT
     rt.mkdir(parents=True, exist_ok=True)
 
@@ -122,11 +135,18 @@ def _build_delivery_flow(session_key: str, workdir: Path, backend: str = "wizard
     return flow
 
 
-def _make_session(backend: str, session_key: str, workdir: Path) -> Any:
+def _make_session(
+    backend: str,
+    session_key: str,
+    workdir: Path,
+    *,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
+) -> Any:
     from tools.ai_backend_mode import freeloader_mode_active
 
     backend = (backend or "wizard").lower().strip()
-    if freeloader_mode_active():
+    if freeloader_mode_active() and not (backend == "wizard" and wizard_endpoint):
         backend = "freeloader"
 
     if backend in ("freeloader", "agentthefreeloader", "agent_the_freeloader"):
@@ -148,12 +168,17 @@ def _make_session(backend: str, session_key: str, workdir: Path) -> Any:
 
     if backend == "wizard":
         from tools.wizard_session import WizardSession
-        probe = WizardSession.probe()
+        # An explicitly selected per-run brain is authoritative. Do not let
+        # the process-wide default-mode flag redirect it to another model.
+        probe = {"online": True, "error": ""} if wizard_endpoint else WizardSession.probe()
         if probe["online"]:
             return WizardSession(
                 session_name=f"delivery-{session_key[:24]}",
                 transcript_dir=_RUNTIME_ROOT / "transcripts",
                 workdir=workdir,
+                endpoint=wizard_endpoint or None,
+                chat_path=wizard_chat_path or None,
+                allow_in_freeloader_mode=bool(wizard_endpoint),
             )
         print(
             f"[c0d3rv2-delivery] W1z4rD node offline ({probe['error']}); "
@@ -194,6 +219,8 @@ def run_delivery_turn(
     backend: str = "wizard",
     system_context: str = "",
     reset: bool = False,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
 ) -> str:
     """
     Run one delivery turn of the C0d3rV2 agent with full file+executor access.
@@ -211,8 +238,19 @@ def run_delivery_turn(
         del _FLOW_CACHE[session_key]
 
     flow = _FLOW_CACHE.get(session_key)
+    selected_route = (backend, wizard_endpoint, wizard_chat_path)
+    if flow is not None and getattr(flow, "_wizard_route", None) != selected_route:
+        del _FLOW_CACHE[session_key]
+        flow = None
     if flow is None:
-        flow = _build_delivery_flow(session_key, workdir, backend=backend)
+        flow = _build_delivery_flow(
+            session_key,
+            workdir,
+            backend=backend,
+            wizard_endpoint=wizard_endpoint,
+            wizard_chat_path=wizard_chat_path,
+        )
+        flow._wizard_route = selected_route
         _FLOW_CACHE[session_key] = flow
 
     begin_turn = getattr(flow.session, "begin_turn", None)
@@ -722,6 +760,8 @@ def run_delivery_turn_detailed(
     backend: str = "wizard",
     system_context: str = "",
     reset: bool = False,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
 ) -> dict:
     """Run a turn and include ATF route metadata for durable supervisors."""
     output = run_delivery_turn(
@@ -731,6 +771,8 @@ def run_delivery_turn_detailed(
         backend=backend,
         system_context=system_context,
         reset=reset,
+        wizard_endpoint=wizard_endpoint,
+        wizard_chat_path=wizard_chat_path,
     )
     flow = _FLOW_CACHE.get(session_key)
     session = getattr(flow, "session", None)

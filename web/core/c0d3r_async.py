@@ -130,6 +130,8 @@ def execute_run(run_id: str) -> None:
                     run.prompt, session_key=session_key, workdir=ROOT,
                     backend=run.backend, model=run.model,
                     atf_models=list(run.atf_models or []), system_context=context,
+                    wizard_endpoint=run.wizard_endpoint,
+                    wizard_chat_path=run.wizard_chat_path,
                 )
                 if cancel_event.is_set():
                     return

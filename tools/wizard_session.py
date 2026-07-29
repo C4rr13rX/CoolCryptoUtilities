@@ -119,19 +119,24 @@ class WizardSession:
         session_name: str = "wizard",
         *,
         endpoint: str | None = None,
+        chat_path: str | None = None,
         timeout_s: float | None = None,
         transcript_dir: str | Path | None = None,
         workdir: str | Path | None = None,
         meta_role: Optional[str] = None,
+        allow_in_freeloader_mode: bool = False,
         # Accept and ignore Bedrock-specific kwargs so the factory can pass
         # them without conditional checks.
         **_ignored: Any,
     ) -> None:
         self.session_name = session_name
         self.endpoint = (endpoint or _wizard_endpoint()).rstrip("/")
+        selected_path = str(chat_path or _wizard_chat_path()).strip()
+        self.chat_path = selected_path if selected_path.startswith("/") else f"/{selected_path}"
         self.timeout_s = timeout_s if timeout_s is not None else _wizard_timeout()
         self.workdir = Path(workdir).resolve() if workdir else Path.cwd()
         self.meta_role = meta_role
+        self.allow_in_freeloader_mode = allow_in_freeloader_mode
         self._session_id = str(uuid.uuid4())
         self._transcript_dir = Path(transcript_dir) if transcript_dir else None
         if self._transcript_dir:
@@ -162,7 +167,7 @@ class WizardSession:
         """
         from tools.ai_backend_mode import freeloader_mode_active
 
-        if freeloader_mode_active():
+        if freeloader_mode_active() and not self.allow_in_freeloader_mode:
             raise RuntimeError(
                 "WizardSession is disabled while AgentTheFreeloader exclusive mode is active"
             )
@@ -221,7 +226,7 @@ class WizardSession:
                 "min_strength": 0.05,
             }).encode()
         else:
-            url = f"{self.endpoint}{_wizard_chat_path()}"
+            url = f"{self.endpoint}{self.chat_path}"
             payload = json.dumps({"text": text}).encode()
 
         req = urllib.request.Request(

@@ -161,7 +161,13 @@ def _build_shell_tools(workdir: Path, session_key: str) -> tuple[Any, Any]:
 
 # ── Flow construction ───────────────────────────────────────────────────────
 
-def _make_session(backend: str, session_key: str) -> Any:
+def _make_session(
+    backend: str,
+    session_key: str,
+    *,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
+) -> Any:
     """Cascading backend selection: wizard → bedrock → claude → openai.
 
     Wizard-chat agent mode is normally hard-pinned to the wizard node by
@@ -181,7 +187,8 @@ def _make_session(backend: str, session_key: str) -> Any:
         )
 
     from tools.ai_session import resolve_with_fallback
-    chosen = resolve_with_fallback(backend)
+    requested = (backend or "").lower().strip()
+    chosen = "wizard" if requested == "wizard" and wizard_endpoint else resolve_with_fallback(backend)
 
     if chosen == "freeloader":
         from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
@@ -212,6 +219,9 @@ def _make_session(backend: str, session_key: str) -> Any:
         return WizardSession(
             session_name=f"agent-{session_key[:16]}",
             transcript_dir=_RUNTIME_ROOT / "transcripts",
+            endpoint=wizard_endpoint or None,
+            chat_path=wizard_chat_path or None,
+            allow_in_freeloader_mode=bool(wizard_endpoint),
         )
 
     # bedrock fallback
@@ -232,8 +242,15 @@ def _make_session(backend: str, session_key: str) -> Any:
     )
 
 
-def _build_flow(session_key: str, workdir: Path, backend: str,
-                  allow_admin: bool) -> Any:
+def _build_flow(
+    session_key: str,
+    workdir: Path,
+    backend: str,
+    allow_admin: bool,
+    *,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
+) -> Any:
     """Same as web_runner._build_flow but with shell tools added (and
     optionally the admin variant)."""
     from process_flow import ProcessFlow
@@ -241,7 +258,12 @@ def _build_flow(session_key: str, workdir: Path, backend: str,
     from lt_mem import LongTermMemory
     from web_search import WebSearch
 
-    session = _make_session(backend, session_key)
+    session = _make_session(
+        backend,
+        session_key,
+        wizard_endpoint=wizard_endpoint,
+        wizard_chat_path=wizard_chat_path,
+    )
     rt = _RUNTIME_ROOT
     rt.mkdir(parents=True, exist_ok=True)
     lt_memory = LongTermMemory(rt)
@@ -279,6 +301,8 @@ def run(
     system_context: str = "",
     reset: bool = False,
     allow_admin: bool = False,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
 ) -> str:
     """Run a single agent turn with executor (and optionally shell_admin)
     available as tools.
@@ -307,9 +331,22 @@ def run(
                new_admin=allow_admin)
         del _FLOW_CACHE[session_key]
         flow = None
+    selected_route = (wizard_endpoint, wizard_chat_path)
+    if flow is not None and getattr(flow, "_wizard_route", None) != selected_route:
+        _audit("flow_rebuild_wizard_brain", session=session_key)
+        del _FLOW_CACHE[session_key]
+        flow = None
     if flow is None:
-        flow = _build_flow(session_key, workdir, backend, allow_admin)
+        flow = _build_flow(
+            session_key,
+            workdir,
+            backend,
+            allow_admin,
+            wizard_endpoint=wizard_endpoint,
+            wizard_chat_path=wizard_chat_path,
+        )
         flow._agent_admin_enabled = allow_admin
+        flow._wizard_route = selected_route
         _FLOW_CACHE[session_key] = flow
 
     if system_context and system_context.strip():

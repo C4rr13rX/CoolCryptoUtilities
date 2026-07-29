@@ -214,11 +214,19 @@
           <label>
             <span>C0D3R model backend</span>
             <select v-model="deliveryForm.model_provider">
-              <option value="c0d3r">{{ t('branddozer.provider_c0d3r') }}</option>
+              <option value="wizard">Wizard node</option>
               <option value="bedrock">{{ t('branddozer.provider_bedrock') }}</option>
               <option value="claude">{{ t('branddozer.provider_claude') }}</option>
               <option value="openai">{{ t('branddozer.provider_openai') }}</option>
               <option value="freeloader">{{ t('branddozer.provider_freeloader') }}</option>
+            </select>
+          </label>
+          <label v-if="deliveryForm.model_provider === 'wizard'">
+            <span>Wizard programming brain</span>
+            <select v-model="deliveryForm.wizard_brain_id">
+              <option v-for="brain in wizardBrains" :key="brain.id" :value="brain.id">
+                {{ brain.name }} · {{ brain.endpoint }}{{ brain.chat_path }}
+              </option>
             </select>
           </label>
           <label>
@@ -1103,6 +1111,7 @@ const deliveryForm = ref({
   codex_reasoning: 'medium',
   c0d3r_model: '',
   c0d3r_reasoning: 'high',
+  wizard_brain_id: '',
   prompt: '',
   smoke_test_cmd: '',
   target_journal: '',
@@ -1111,6 +1120,7 @@ const deliveryForm = ref({
   min_verified_sources: 10,
 });
 const researchQuery = ref('');
+const wizardBrains = ref<Array<{ id: string; name: string; endpoint: string; chat_path: string }>>([]);
 const researchStatus = ref('');
 const researchPaperOpen = ref(false);
 const researchLibraryRunId = ref('');
@@ -1170,11 +1180,14 @@ onMounted(async () => {
   // the dropdowns then act as a per-run override.
   try {
     const opts = await fetchModelOptions();
-    const backendMap: Record<string, string> = { wizard: 'c0d3r', auto: 'c0d3r' };
+    const backendMap: Record<string, string> = { auto: 'wizard' };
     const backend = opts.default?.backend || '';
     deliveryForm.value.model_provider = backendMap[backend] || backend || 'freeloader';
     deliveryForm.value.session_provider = deliveryForm.value.model_provider;
     deliveryForm.value.c0d3r_model = opts.default?.model || '';
+    wizardBrains.value = opts.wizard_brains || [];
+    deliveryForm.value.wizard_brain_id =
+      opts.default?.wizard_brain_id || wizardBrains.value[0]?.id || '';
   } catch {
     /* keep static defaults if options are unavailable */
   }
@@ -2012,6 +2025,7 @@ async function startDeliveryRun() {
       codex_reasoning: deliveryForm.value.codex_reasoning,
       c0d3r_model: deliveryForm.value.c0d3r_model,
       c0d3r_reasoning: deliveryForm.value.c0d3r_reasoning,
+      wizard_brain_id: deliveryForm.value.wizard_brain_id,
       smoke_test_cmd: deliveryForm.value.smoke_test_cmd,
     });
     store.activeDeliveryRun = run;

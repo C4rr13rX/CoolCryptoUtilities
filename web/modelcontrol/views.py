@@ -13,10 +13,22 @@ from services.secure_settings import decrypt_secret, encrypt_secret
 from tools.c0d3rV2.plugins.agent_the_freeloader.adapters import has_credential
 from tools.c0d3rV2.plugins.agent_the_freeloader.models import load_catalog
 from tools.c0d3rV2.plugins.agent_the_freeloader.feedback import ModelFeedbackStore
+from .wizard_brains import (
+    create_wizard_brain,
+    delete_wizard_brain,
+    get_wizard_brain,
+    list_wizard_brains,
+    select_wizard_brain,
+    selected_wizard_brain,
+    update_wizard_brain,
+)
 
 
 CATEGORY = "ai"
-CONFIG_KEYS = frozenset({"C0D3R_BACKEND", "C0D3R_MODEL", "AGENT_FREELOADER_MODELS"})
+CONFIG_KEYS = frozenset({
+    "C0D3R_BACKEND", "C0D3R_MODEL", "AGENT_FREELOADER_MODELS",
+    "C0D3R_WIZARD_BRAIN_ID", "WIZARD_CHAT_BRAIN_ID",
+})
 BACKENDS = (
     {"id": "auto", "label": "Automatic", "description": "Use the first available configured backend."},
     {"id": "wizard", "label": "Wizard node", "description": "Use the local W1z4rD brain."},
@@ -193,7 +205,13 @@ class ModelControlView(APIView):
             for provider, models in sorted(provider_models.items())
         ]
         return Response({
-            "config": {"backend": backend, "model": model, "atf_models": selected_atf_models},
+            "config": {
+                "backend": backend,
+                "model": model,
+                "atf_models": selected_atf_models,
+                "wizard_brain_id": selected_wizard_brain(request.user, "operations")["id"],
+            },
+            "wizard_brains": list_wizard_brains(request.user),
             "backends": BACKENDS,
             "credentials": credentials,
             "providers": providers,
@@ -236,7 +254,13 @@ class ModelOptionsView(APIView):
         backend_label = {item["id"]: item["label"] for item in BACKENDS}.get(backend, backend)
         default_label = backend_label + (f" · {model}" if model else "")
         return Response({
-            "default": {"backend": backend, "model": model, "label": default_label},
+            "default": {
+                "backend": backend,
+                "model": model,
+                "label": default_label,
+                "wizard_brain_id": selected_wizard_brain(request.user, "operations")["id"],
+            },
+            "wizard_brains": list_wizard_brains(request.user),
             "backends": BACKENDS,
             "curated": CURATED_MODELS,
             "catalog": catalog,
@@ -260,15 +284,89 @@ class ModelControlConfigView(APIView):
         unknown = [item for item in atf_models if item not in catalog_ids]
         if unknown:
             return Response({"detail": f"Unknown ATF model: {unknown[0]}"}, status=status.HTTP_400_BAD_REQUEST)
+        wizard_brain_id = str(request.data.get("wizard_brain_id") or "").strip()
+        if not wizard_brain_id:
+            wizard_brain_id = selected_wizard_brain(request.user, "operations")["id"]
+        if get_wizard_brain(request.user, wizard_brain_id) is None:
+            return Response({"detail": "Unknown Wizard brain."}, status=status.HTTP_400_BAD_REQUEST)
 
         _save_setting(request.user, "C0D3R_BACKEND", backend, secret=False)
         _save_setting(request.user, "C0D3R_MODEL", model, secret=False)
         _save_setting(request.user, "AGENT_FREELOADER_MODELS", ",".join(atf_models), secret=False)
+        select_wizard_brain(request.user, "operations", wizard_brain_id)
         _clear_user_flows(request.user.id)
 
         from tools.ai_backend_mode import set_freeloader_mode
         set_freeloader_mode(backend == "freeloader")
-        return Response({"saved": True, "backend": backend, "model": model, "atf_models": atf_models})
+        return Response({
+            "saved": True,
+            "backend": backend,
+            "model": model,
+            "atf_models": atf_models,
+            "wizard_brain_id": wizard_brain_id,
+        })
+
+
+class WizardBrainListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        return Response({
+            "brains": list_wizard_brains(request.user),
+            "selected": {
+                purpose: selected_wizard_brain(request.user, purpose)["id"]
+                for purpose in ("operations", "chat")
+            },
+        })
+
+    def post(self, request, *args, **kwargs):
+        try:
+            profile = create_wizard_brain(request.user, {
+                key: request.data.get(key)
+                for key in ("name", "endpoint", "chat_path")
+            })
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"brain": profile}, status=status.HTTP_201_CREATED)
+
+
+class WizardBrainDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, brain_id: str, *args, **kwargs):
+        try:
+            profile = update_wizard_brain(request.user, brain_id, {
+                key: request.data.get(key)
+                for key in ("name", "endpoint", "chat_path")
+                if key in request.data
+            })
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        _clear_user_flows(request.user.id)
+        return Response({"brain": profile})
+
+    def delete(self, request, brain_id: str, *args, **kwargs):
+        try:
+            delete_wizard_brain(request.user, brain_id)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        _clear_user_flows(request.user.id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class WizardBrainSelectionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        purpose = str(request.data.get("purpose") or "").strip().lower()
+        brain_id = str(request.data.get("brain_id") or "").strip()
+        try:
+            profile = select_wizard_brain(request.user, purpose, brain_id)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if purpose == "operations":
+            _clear_user_flows(request.user.id)
+        return Response({"selected": profile, "purpose": purpose})
 
 
 class ModelCredentialView(APIView):

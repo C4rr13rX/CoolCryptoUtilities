@@ -17,6 +17,17 @@
           <span class="top-bar__glyph">⬡</span> W1z4rD V1510n
         </span>
         <div class="top-bar__right">
+          <select
+            v-model="selectedBrainId"
+            class="brain-picker"
+            title="Wizard brain used by this chat only"
+            @click.stop
+            @change="changeChatBrain"
+          >
+            <option v-for="brain in wizardBrains" :key="brain.id" :value="brain.id">
+              {{ brain.name }}
+            </option>
+          </select>
           <button class="pools-btn" @click.stop="togglePools">
             ⬡ Pools
           </button>
@@ -586,6 +597,7 @@
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import AudioVisualizerOverlay from '@/components/AudioVisualizerOverlay.vue'
 import TrainingLivePanel from '@/components/TrainingLivePanel.vue'
+import { fetchWizardBrains, selectWizardBrain, type WizardBrain } from '@/api'
 
 interface Attachment { name: string; text: string; size: number; type: string; error?: boolean }
 interface StagedFile { name: string; text: string; size: number; uploading: boolean; error: boolean; file: File }
@@ -632,6 +644,8 @@ const brainData       = ref<Record<string, any>>({})
 const wizardStatus    = ref<Record<string, any>>({})
 const hypothesisQueue = ref<HypothesisItem[]>([])
 const sessionId       = ref(crypto.randomUUID())
+const wizardBrains    = ref<WizardBrain[]>([])
+const selectedBrainId = ref('')
 
 const headerOpen    = ref(false)
 const inspectorOpen = ref(false)
@@ -880,7 +894,8 @@ const activePool = computed(() => poolsData.value?.[poolsTab.value])
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
-onMounted(() => {
+onMounted(async () => {
+  await loadChatBrains()
   checkNodeStatus()
   const iv = setInterval(checkNodeStatus, 30_000)
   // Esc exits fullscreen so users can collapse without hunting for
@@ -929,6 +944,26 @@ async function checkNodeStatus() {
     brainData.value      = d.brain  || {}
     wizardStatus.value   = d
   } catch { nodeOnline.value = false }
+}
+
+async function loadChatBrains() {
+  try {
+    const registry = await fetchWizardBrains()
+    wizardBrains.value = registry.brains
+    selectedBrainId.value = registry.selected.chat || registry.brains[0]?.id || ''
+  } catch {
+    wizardBrains.value = []
+  }
+}
+
+async function changeChatBrain() {
+  if (!selectedBrainId.value) return
+  await selectWizardBrain('chat', selectedBrainId.value)
+  nodeOnline.value = null
+  nodeHealthData.value = {}
+  brainData.value = {}
+  wizardStatus.value = {}
+  await checkNodeStatus()
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,6 +1424,16 @@ function renderMarkdown(text: string): string {
   color: var(--accent-3, #b6ccff);
   font-family: inherit;
   overflow: hidden; position: relative;
+}
+
+.brain-picker {
+  max-width: 190px;
+  min-width: 120px;
+  background: rgba(8, 16, 28, .9);
+  color: inherit;
+  border: 1px solid rgba(126, 160, 220, .35);
+  border-radius: 6px;
+  padding: 4px 7px;
 }
 
 /* Fullscreen mode: pin the entire panel to the viewport.  All inner

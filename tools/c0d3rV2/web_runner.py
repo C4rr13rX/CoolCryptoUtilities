@@ -47,7 +47,15 @@ _RUNTIME_ROOT = _PROJECT_ROOT / "runtime" / "c0d3rv2"
 _FLOW_CACHE: dict[str, Any] = {}
 
 
-def _build_flow(session_key: str, workdir: Path, backend: str = "wizard", model: str = "", atf_models: list[str] | None = None) -> Any:
+def _build_flow(
+    session_key: str,
+    workdir: Path,
+    backend: str = "wizard",
+    model: str = "",
+    atf_models: list[str] | None = None,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
+) -> Any:
     """Wire up a ProcessFlow for web use — one per user+session."""
     from process_flow import ProcessFlow
     from tool_registry import (
@@ -73,7 +81,14 @@ def _build_flow(session_key: str, workdir: Path, backend: str = "wizard", model:
     from web_search import WebSearch
     from tools.c0d3rV2.plugins.research_harvester import ResearchHarvester
 
-    session = _make_session(backend, session_key, model=model, atf_models=atf_models)
+    session = _make_session(
+        backend,
+        session_key,
+        model=model,
+        atf_models=atf_models,
+        wizard_endpoint=wizard_endpoint,
+        wizard_chat_path=wizard_chat_path,
+    )
     rt = _RUNTIME_ROOT
     rt.mkdir(parents=True, exist_ok=True)
 
@@ -113,7 +128,15 @@ def _build_flow(session_key: str, workdir: Path, backend: str = "wizard", model:
     return flow
 
 
-def _make_session(backend: str, session_key: str, *, model: str = "", atf_models: list[str] | None = None) -> Any:
+def _make_session(
+    backend: str,
+    session_key: str,
+    *,
+    model: str = "",
+    atf_models: list[str] | None = None,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
+) -> Any:
     """
     Create an AI session for the given backend preference.
 
@@ -135,7 +158,8 @@ def _make_session(backend: str, session_key: str, *, model: str = "", atf_models
         )
 
     from tools.ai_session import resolve_with_fallback
-    chosen = resolve_with_fallback(backend)
+    requested = (backend or "").lower().strip()
+    chosen = "wizard" if requested == "wizard" and wizard_endpoint else resolve_with_fallback(backend)
 
     if chosen == "freeloader":
         from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
@@ -172,6 +196,9 @@ def _make_session(backend: str, session_key: str, *, model: str = "", atf_models
         return WizardSession(
             session_name=f"web-{session_key[:16]}",
             transcript_dir=_RUNTIME_ROOT / "transcripts",
+            endpoint=wizard_endpoint or None,
+            chat_path=wizard_chat_path or None,
+            allow_in_freeloader_mode=bool(wizard_endpoint),
         )
 
     # bedrock (default fallback when nothing else available)
@@ -206,6 +233,8 @@ def run(
     system_context: str = "",
     model: str = "",
     atf_models: list[str] | None = None,
+    wizard_endpoint: str = "",
+    wizard_chat_path: str = "",
     reset: bool = False,
 ) -> str:
     """
@@ -228,7 +257,15 @@ def run(
 
     flow = _FLOW_CACHE.get(session_key)
     if flow is None:
-        flow = _build_flow(session_key, workdir, backend=backend, model=model, atf_models=atf_models)
+        flow = _build_flow(
+            session_key,
+            workdir,
+            backend=backend,
+            model=model,
+            atf_models=atf_models,
+            wizard_endpoint=wizard_endpoint,
+            wizard_chat_path=wizard_chat_path,
+        )
         _FLOW_CACHE[session_key] = flow
 
     if _should_use_conversationalist_path(prompt):

@@ -43,6 +43,7 @@ _node_refresher_paths: list[tuple[str, float]] = [
 # off its own node round-trip — collapsing waitress thread pool
 # while every fetch serializes on the node's inner lock.
 _node_inflight: dict[str, _threading.Event] = {}
+_node_refresher_endpoints: set[str] = set()
 
 def _node_refresher_loop() -> None:
     """Single background thread that walks the slow status fetches at
@@ -56,27 +57,33 @@ def _node_refresher_loop() -> None:
     the value is stale; the background thread does the heavy lifting.
     """
     while True:
-        for path, _ in _node_refresher_paths:
-            try:
-                with urllib.request.urlopen(f"{WIZARD_ENDPOINT}{path}", timeout=30) as r:
-                    data = json.loads(r.read())
-                with _node_cache_lock:
-                    _node_cache[path] = (time.time(), data)
-            except Exception:
-                pass
-            # Each fetch holds the node's inner Mutex (esp. /brain which
-            # iterates the motif layer).  Longer inter-path delay so
-            # drive_corpora's training POSTs get more clock time.
+        with _node_refresher_lock:
+            endpoints = list(_node_refresher_endpoints)
+        for endpoint in endpoints:
+            for path, _ in _node_refresher_paths:
+                key = f"{endpoint}{path}"
+                try:
+                    with urllib.request.urlopen(key, timeout=30) as r:
+                        data = json.loads(r.read())
+                    with _node_cache_lock:
+                        _node_cache[key] = (time.time(), data)
+                except Exception:
+                    pass
+                # Each fetch holds the node's inner Mutex (esp. /brain which
+                # iterates the motif layer).  Leave training clock time.
+                time.sleep(8.0)
+        if not endpoints:
             time.sleep(8.0)
 
 
-def _ensure_node_refresher() -> None:
+def _ensure_node_refresher(endpoint: str) -> None:
     """Idempotent — first request that touches the cache spins up the
     background refresher.  We don't start it at module import because
     Django manage.py / migrate also imports this module and shouldn't
     leave a daemon thread behind."""
     global _node_refresher_started
     with _node_refresher_lock:
+        _node_refresher_endpoints.add(endpoint.rstrip("/"))
         if _node_refresher_started:
             return
         t = _threading.Thread(target=_node_refresher_loop,
@@ -86,7 +93,9 @@ def _ensure_node_refresher() -> None:
         _node_refresher_started = True
 
 
-def _node_fetch_cached(path: str, ttl: float = 1.5, timeout: float = 10.0) -> dict:
+def _node_fetch_cached(
+    path: str, ttl: float = 1.5, timeout: float = 10.0, *, endpoint: str
+) -> dict:
     """GET path on the wizard node — stale-while-revalidate semantics.
     Request threads never block on an upstream fetch.  If the cache
     has ANY value (fresh or stale), return it immediately.  If the
@@ -95,15 +104,15 @@ def _node_fetch_cached(path: str, ttl: float = 1.5, timeout: float = 10.0) -> di
     do a singleflight fetch with a short timeout so the first request
     after Django boot doesn't return totally empty data.
     """
+    key = f"{endpoint.rstrip('/')}{path}"
     with _node_cache_lock:
-        entry = _node_cache.get(path)
+        entry = _node_cache.get(key)
     # Any cached value — return it immediately.  Even if stale (refresher
     # will pick it up).  Keeps request threads off the slow node path.
     if entry is not None:
         return entry[1]
     # COLD: no entry at all.  Singleflight a single short fetch so the
     # first request post-boot has something to show, then waiters share.
-    key = path
     with _node_cache_lock:
         inflight = _node_inflight.get(key)
         if inflight is not None:
@@ -119,7 +128,7 @@ def _node_fetch_cached(path: str, ttl: float = 1.5, timeout: float = 10.0) -> di
         return entry[1] if entry else {}
 
     try:
-        with urllib.request.urlopen(f"{WIZARD_ENDPOINT}{path}", timeout=timeout) as r:
+        with urllib.request.urlopen(key, timeout=timeout) as r:
             data = json.loads(r.read())
     except Exception:
         data = {}
@@ -167,6 +176,12 @@ TRAIN_LR      = 0.40 # vs 0.14 for background; corrections are deliberate
 TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
 
 
+def _brain_for_request(request) -> dict[str, str]:
+    from modelcontrol.wizard_brains import selected_wizard_brain
+
+    return selected_wizard_brain(request.user, "chat")
+
+
 # ── /sensor/observe routing for uploaded files ──────────────────────────────
 
 
@@ -201,14 +216,14 @@ def _sensor_kind_for_file(
     return None, {}
 
 
-def _post_sensor_observe(kind: str, body: dict, timeout: float = 15.0
+def _post_sensor_observe(kind: str, body: dict, endpoint: str, timeout: float = 15.0
                           ) -> tuple[bool, str]:
     """POST one observation to the node.  Returns (ok, error_msg)."""
     body = {"kind": kind, **body}
     try:
         raw = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
-            f"{WIZARD_ENDPOINT}/sensor/observe",
+            f"{endpoint}/sensor/observe",
             data=raw, method="POST",
             headers={"Content-Type": "application/json"},
         )
@@ -225,7 +240,9 @@ def _post_sensor_observe(kind: str, body: dict, timeout: float = 15.0
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _wizard_ask(text: str, session_id: str = "") -> dict:
+def _wizard_ask(
+    text: str, session_id: str = "", *, endpoint: str, chat_path: str
+) -> dict:
     """POST to /chat; always returns a normalised dict.
 
     /chat routes through multi_pool first (where Phase 29 concept bindings
@@ -240,9 +257,8 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
         "hops": 2,
         "min_strength": 0.05,
     }).encode()
-    chat_base = WIZARD_BRAIN_CHAT_URL or WIZARD_ENDPOINT
     req = urllib.request.Request(
-        f"{chat_base}{WIZARD_BRAIN_CHAT_PATH}",
+        f"{endpoint}{chat_path}",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -284,7 +300,14 @@ def _wizard_ask(text: str, session_id: str = "") -> dict:
                 "confidence_tier": "error", "activated_concepts": []}
 
 
-def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
+def _wizard_train(
+    question: str,
+    answer: str,
+    session_id: str = "",
+    *,
+    endpoint: str,
+    chat_path: str,
+) -> dict:
     """
     Train the Hebbian graph with a Q->A human correction.
 
@@ -325,7 +348,7 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
 
     def _post(path: str, payload: bytes, timeout: float) -> dict:
         req = urllib.request.Request(
-            f"{WIZARD_ENDPOINT}{path}",
+            f"{endpoint}{path}",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -455,7 +478,7 @@ def _wizard_train(question: str, answer: str, session_id: str = "") -> dict:
     verify_conf = None
     verify_match = False
     try:
-        chat_result = _post("/chat", json.dumps({
+        chat_result = _post(chat_path, json.dumps({
             "text": question, "hops": 2, "min_strength": 0.05,
         }).encode(), timeout=10)
         verify_actual  = (chat_result.get("answer") or "").strip()
@@ -690,7 +713,13 @@ class WizardChatMessageView(View):
             parts.append(f"[Now answer concisely]\n{text}")
         full_prompt = "\n\n".join(parts)
 
-        wizard_data = _wizard_ask(full_prompt, session_id)
+        brain = _brain_for_request(request)
+        wizard_data = _wizard_ask(
+            full_prompt,
+            session_id,
+            endpoint=brain["endpoint"],
+            chat_path=brain["chat_path"],
+        )
 
         # Derive online status from the response — no separate health ping needed.
         node_up = wizard_data.get("confidence_tier") not in ("offline", "error")
@@ -780,12 +809,16 @@ class WizardChatTrainingLiveView(View):
             limit = 80
         limit = max(1, min(self.MAX_LIMIT, limit))
 
-        _ensure_node_refresher()
+        brain_profile = _brain_for_request(request)
+        endpoint = brain_profile["endpoint"]
+        _ensure_node_refresher(endpoint)
         events = self._read_events_tail(_TRAINING_EVENTS_PATH, limit, since_ts)
         # Shared TTL cache with the status view — same node round-trips,
         # same data, no duplicate work when both endpoints poll.
-        brain            = _node_fetch_cached("/brain",            ttl=10.0, timeout=15.0)
-        multi_pool_stats = _node_fetch_cached("/multi_pool/stats", ttl=5.0,  timeout=12.0)
+        brain            = _node_fetch_cached("/brain", ttl=10.0, timeout=15.0, endpoint=endpoint)
+        multi_pool_stats = _node_fetch_cached(
+            "/multi_pool/stats", ttl=5.0, timeout=12.0, endpoint=endpoint
+        )
         latest_ts = events[-1].get("ts", "") if events else since_ts
         return JsonResponse({
             "brain":            brain,
@@ -876,7 +909,7 @@ class WizardChatUploadView(View):
                 sensor_err = ""
                 if sensor_kind is not None:
                     sensor_ok, sensor_err = _post_sensor_observe(
-                        sensor_kind, sensor_body,
+                    sensor_kind, sensor_body, _brain_for_request(request)["endpoint"],
                     )
                 results.append({
                     "name": f.name,
@@ -921,7 +954,14 @@ class WizardChatTrainView(View):
         if not question or not answer:
             return JsonResponse({"error": "Both question and answer are required"}, status=400)
 
-        result = _wizard_train(question, answer, session_id)
+        brain = _brain_for_request(request)
+        result = _wizard_train(
+            question,
+            answer,
+            session_id,
+            endpoint=brain["endpoint"],
+            chat_path=brain["chat_path"],
+        )
         return JsonResponse(result)
 
 
@@ -937,7 +977,7 @@ class WizardChatTopologyView(View):
     """
     def get(self, request):
         qs = request.META.get("QUERY_STRING", "")
-        url = f"{WIZARD_ENDPOINT}/multi_pool/topology"
+        url = f"{_brain_for_request(request)['endpoint']}/multi_pool/topology"
         if qs:
             url = f"{url}?{qs}"
         try:
@@ -960,7 +1000,7 @@ class WizardChatActivityView(View):
     """
     def get(self, request):
         qs = request.META.get("QUERY_STRING", "")
-        url = f"{WIZARD_ENDPOINT}/multi_pool/activity"
+        url = f"{_brain_for_request(request)['endpoint']}/multi_pool/activity"
         if qs:
             url = f"{url}?{qs}"
         try:
@@ -990,46 +1030,54 @@ class WizardChatStatusView(View):
         # running it polls the slow node endpoints every ~2 s on its
         # OWN thread, so request handlers always hit cache.  Cold
         # request cost drops from 15+ s (under training load) to ~5 ms.
-        _ensure_node_refresher()
+        brain_profile = _brain_for_request(request)
+        endpoint = brain_profile["endpoint"]
+        _ensure_node_refresher(endpoint)
         # Short timeouts on cold-cache fetches.  Stale-while-revalidate
         # in `_node_fetch_cached` makes warm fetches instant, but the
         # very first call after Django boot has to wait for SOMETHING.
         # 3-4 s is plenty: if the node is too slow even for that, we
         # return empty payloads and the background refresher will
         # populate the cache for the SPA's next poll (5 s later).
-        health = _node_fetch_cached("/health", ttl=2.0, timeout=3.0)
+        health = _node_fetch_cached("/health", ttl=2.0, timeout=3.0, endpoint=endpoint)
         if not health:
             return JsonResponse({
                 "online": False,
-                "endpoint": WIZARD_ENDPOINT,
+                "endpoint": endpoint,
+                "selected_brain": brain_profile,
                 "health": {},
                 "brain": {},
                 "multi_pool_stats": {},
             })
-        brain            = _node_fetch_cached("/brain",            ttl=10.0, timeout=4.0)
-        multi_pool_stats = _node_fetch_cached("/multi_pool/stats", ttl=5.0,  timeout=4.0)
+        brain = _node_fetch_cached("/brain", ttl=10.0, timeout=4.0, endpoint=endpoint)
+        multi_pool_stats = _node_fetch_cached(
+            "/multi_pool/stats", ttl=5.0, timeout=4.0, endpoint=endpoint
+        )
         return JsonResponse({
             "online": True,
-            "endpoint": WIZARD_ENDPOINT,
+            "endpoint": endpoint,
+            "selected_brain": brain_profile,
             "health": health,
             "brain": brain,
             "multi_pool_stats": multi_pool_stats,
         })
 
 
-def _node_fetch(path: str, timeout: float = 5.0) -> dict:
+def _node_fetch(path: str, timeout: float = 5.0, *, endpoint: str = WIZARD_ENDPOINT) -> dict:
     """GET from the wizard node; returns {} on error."""
     try:
-        with urllib.request.urlopen(f"{WIZARD_ENDPOINT}{path}", timeout=timeout) as r:
+        with urllib.request.urlopen(f"{endpoint}{path}", timeout=timeout) as r:
             return json.loads(r.read())
     except Exception:
         return {}
 
 
-def _qa_query(pool_name: str = "knowledge", top_k: int = 50) -> dict:
+def _qa_query(
+    pool_name: str = "knowledge", top_k: int = 50, *, endpoint: str = WIZARD_ENDPOINT
+) -> dict:
     payload = json.dumps({"query": "", "top_k": top_k, "pool": pool_name}).encode()
     req = urllib.request.Request(
-        f"{WIZARD_ENDPOINT}/qa/query",
+        f"{endpoint}/qa/query",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -1063,13 +1111,14 @@ class WizardChatPoolsView(View):
 
     def get(self, request):
         only = request.GET.get("pool")  # optional filter
+        endpoint = _brain_for_request(request)["endpoint"]
 
         def _fetch_one(endpoint_key, method, path, payload):
             if method == "GET":
-                return endpoint_key, _node_fetch(path, timeout=6)
+                return endpoint_key, _node_fetch(path, timeout=6, endpoint=endpoint)
             payload_bytes = json.dumps(payload).encode() if payload else b"{}"
             req = urllib.request.Request(
-                f"{WIZARD_ENDPOINT}{path}",
+                f"{endpoint}{path}",
                 data=payload_bytes,
                 headers={"Content-Type": "application/json"},
                 method=method,
@@ -1087,8 +1136,12 @@ class WizardChatPoolsView(View):
         # Always include both QA pools (knowledge + corrections)
         qa_futures = {}
         if not only or only in ("qa_knowledge", "qa_corrections"):
-            qa_futures["qa_knowledge"]    = _thread_pool.submit(_qa_query, "knowledge", 50)
-            qa_futures["qa_corrections"]  = _thread_pool.submit(_qa_query, "corrections", 50)
+            qa_futures["qa_knowledge"] = _thread_pool.submit(
+                _qa_query, "knowledge", 50, endpoint=endpoint
+            )
+            qa_futures["qa_corrections"] = _thread_pool.submit(
+                _qa_query, "corrections", 50, endpoint=endpoint
+            )
 
         futs = {key: _thread_pool.submit(_fetch_one, key, m, p, body)
                 for key, m, p, body in endpoint_list}

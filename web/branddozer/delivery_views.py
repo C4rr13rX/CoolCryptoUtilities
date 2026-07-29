@@ -132,11 +132,20 @@ class DeliveryRunListView(APIView):
         codex_reasoning = data.get("reasoning_effort") or data.get("codex_reasoning")
         c0d3r_model = data.get("c0d3r_model")
         c0d3r_reasoning = data.get("c0d3r_reasoning")
+        wizard_brain_id = str(data.get("wizard_brain_id") or "").strip()
         smoke_test_cmd = data.get("smoke_test_cmd")
         if not project_id:
             return Response({"detail": "project_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         if not prompt:
             return Response({"detail": "prompt is required"}, status=status.HTTP_400_BAD_REQUEST)
+        from modelcontrol.wizard_brains import get_wizard_brain, selected_wizard_brain
+        wizard_brain = (
+            get_wizard_brain(request.user, wizard_brain_id)
+            if wizard_brain_id
+            else selected_wizard_brain(request.user, "operations")
+        )
+        if wizard_brain_id and wizard_brain is None:
+            return Response({"detail": "Unknown Wizard brain."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             run = delivery_orchestrator.create_run(
                 project_id,
@@ -154,6 +163,12 @@ class DeliveryRunListView(APIView):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         context = dict(run.context or {})
+        if wizard_brain:
+            context.update({
+                "wizard_brain_id": wizard_brain["id"],
+                "wizard_endpoint": wizard_brain["endpoint"],
+                "wizard_chat_path": wizard_brain["chat_path"],
+            })
         if research_mode:
             context["research_mode"] = True
             context["research_config"] = research_config

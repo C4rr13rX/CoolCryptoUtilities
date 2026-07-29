@@ -18,6 +18,38 @@
     <section class="panel">
       <header>
         <div>
+          <h2>Wizard brain registry</h2>
+          <p>Name each node once, then select it independently for operations, Wizard Chat, or a BrandDozer run.</p>
+        </div>
+      </header>
+      <div class="credential-grid">
+        <article v-for="brain in data?.wizard_brains || []" :key="brain.id" class="credential-card">
+          <div class="credential-title">
+            <strong>{{ brain.name }}</strong>
+            <span class="connection-dot online">{{ brain.chat_path }}</span>
+          </div>
+          <code>{{ brain.endpoint }}</code>
+          <div v-if="brain.id !== 'environment-default'" class="card-actions">
+            <button type="button" class="btn ghost small" @click="removeBrain(brain.id)">Remove</button>
+          </div>
+        </article>
+      </div>
+      <div class="brain-create-grid">
+        <input v-model="brainDraft.name" placeholder="Brain name, e.g. Programming brain" />
+        <input v-model="brainDraft.endpoint" placeholder="http://127.0.0.1:18095" />
+        <select v-model="brainDraft.chat_path">
+          <option value="/brain/chat">Merged node · /brain/chat</option>
+          <option value="/chat">Standalone brain · /chat</option>
+        </select>
+        <button type="button" class="btn" :disabled="addingBrain" @click="addBrain">
+          {{ addingBrain ? 'Adding…' : 'Add brain' }}
+        </button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <header>
+        <div>
           <h2>Active C0d3rV2 backend</h2>
           <p>Saving this selection resets cached C0d3rV2 sessions so the next request uses it.</p>
         </div>
@@ -44,6 +76,14 @@
           :kind="form.backend === 'openai' ? 'codex' : 'c0d3r'"
           empty-label="Backend default"
         />
+      </label>
+      <label v-if="form.backend === 'wizard'" class="model-field">
+        <span>Operations brain <small>(used by C0D3R V2 and site operations)</small></span>
+        <select v-model="form.wizard_brain_id">
+          <option v-for="brain in data?.wizard_brains || []" :key="brain.id" :value="brain.id">
+            {{ brain.name }} · {{ brain.endpoint }}{{ brain.chat_path }}
+          </option>
+        </select>
       </label>
 
       <div class="actions">
@@ -166,6 +206,8 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import {
   deleteModelCredential,
+  createWizardBrain,
+  deleteWizardBrain,
   fetchModelControl,
   saveModelControl,
   saveModelCredential,
@@ -180,9 +222,11 @@ const saving = ref(false);
 const error = ref('');
 const notice = ref('');
 const busyCredential = ref('');
+const addingBrain = ref(false);
 const credentialDrafts = reactive<Record<string, string>>({});
 const visible = reactive<Record<string, boolean>>({});
-const form = reactive({ backend: 'wizard', model: '', atf_models: [] as string[] });
+const form = reactive({ backend: 'wizard', model: '', atf_models: [] as string[], wizard_brain_id: '' });
+const brainDraft = reactive({ name: '', endpoint: '', chat_path: '/brain/chat' });
 
 const selectedBackendLabel = computed(() => data.value?.backends.find(item => item.id === form.backend)?.label || form.backend);
 const configuredCredentialCount = computed(() => data.value?.credentials.filter(item => item.configured).length || 0);
@@ -200,6 +244,7 @@ const load = async () => {
     form.backend = data.value.config.backend || 'wizard';
     form.model = data.value.config.model || '';
     form.atf_models = [...(data.value.config.atf_models || [])];
+    form.wizard_brain_id = data.value.config.wizard_brain_id || data.value.wizard_brains?.[0]?.id || '';
   } catch (err: any) {
     error.value = err?.response?.data?.detail || err?.message || 'Unable to load model control.';
   } finally {
@@ -226,6 +271,34 @@ const toggleProvider = (provider: NonNullable<ModelControlPayload['providers']>[
   const allSelected = ids.length > 0 && ids.every(id => form.atf_models.includes(id));
   if (allSelected) form.atf_models = form.atf_models.filter(id => !ids.includes(id));
   else form.atf_models = Array.from(new Set([...form.atf_models, ...ids]));
+};
+
+const addBrain = async () => {
+  if (!brainDraft.name.trim() || !brainDraft.endpoint.trim()) return;
+  addingBrain.value = true;
+  error.value = '';
+  try {
+    await createWizardBrain({ ...brainDraft });
+    brainDraft.name = '';
+    brainDraft.endpoint = '';
+    showMessage('Wizard brain added.');
+    await load();
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || err?.message || 'Unable to add Wizard brain.';
+  } finally {
+    addingBrain.value = false;
+  }
+};
+
+const removeBrain = async (brainId: string) => {
+  error.value = '';
+  try {
+    await deleteWizardBrain(brainId);
+    showMessage('Wizard brain removed.');
+    await load();
+  } catch (err: any) {
+    error.value = err?.response?.data?.detail || err?.message || 'Unable to remove Wizard brain.';
+  }
 };
 
 const saveCredential = async (credential: ModelControlCredential) => {
@@ -276,7 +349,7 @@ header p { margin: 0; color: var(--muted, #91a2b7); }
 .backend-card:hover { border-color: rgba(127,176,255,.55); }
 .backend-card.selected { border-color: #4d94e8; box-shadow: inset 0 0 0 1px #4d94e8; background: rgba(45,117,196,.16); }
 .model-field { display: grid; gap: .45rem; margin-top: 1rem; max-width: 640px; }
-.model-field input, .credential-entry input { width: 100%; min-width: 0; padding: .68rem .75rem; color: #e9f1fb; background: #080f18; border: 1px solid rgba(148,163,184,.25); border-radius: 8px; }
+.model-field input, .model-field select, .credential-entry input { width: 100%; min-width: 0; padding: .68rem .75rem; color: #e9f1fb; background: #080f18; border: 1px solid rgba(148,163,184,.25); border-radius: 8px; }
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: .75rem; margin-top: 1rem; }
 .status-pill, .connection-dot { border-radius: 99px; padding: .28rem .6rem; font-size: .72rem; background: rgba(148,163,184,.13); color: #aab8ca; white-space: nowrap; }
 .connection-dot.online { background: rgba(52,211,153,.13); color: #55e3af; }
@@ -300,6 +373,8 @@ header p { margin: 0; color: var(--muted, #91a2b7); }
 .credential-card > p { min-height: 2.4em; color: #91a2b7; font-size: .82rem; }
 .credential-entry { display: flex; align-items: center; gap: .55rem; }
 .card-actions { display: flex; gap: .55rem; margin-top: .7rem; }
+.brain-create-grid { display: grid; grid-template-columns: 1fr 2fr 1fr auto; gap: .65rem; margin-top: 1rem; }
+.brain-create-grid input, .brain-create-grid select { min-width: 0; padding: .68rem .75rem; color: #e9f1fb; background: #080f18; border: 1px solid rgba(148,163,184,.25); border-radius: 8px; }
 .btn.small { padding: .45rem .72rem; font-size: .78rem; }
 .link { color: #7fb0ff; border: 0; background: transparent; cursor: pointer; }
 .link:disabled { opacity: .4; cursor: default; }
@@ -312,5 +387,5 @@ header p { margin: 0; color: var(--muted, #91a2b7); }
 .correction-row p { margin: .55rem 0; color: #c0ccda; overflow-wrap: anywhere; }
 .correction-row small { color: #718096; }
 .connection-dot.hallucination { background: rgba(255,90,95,.12); color: #ff9c9f; }
-@media (max-width: 700px) { header { flex-direction: column; } .credential-grid, .model-list { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { header { flex-direction: column; } .credential-grid, .model-list, .brain-create-grid { grid-template-columns: 1fr; } }
 </style>

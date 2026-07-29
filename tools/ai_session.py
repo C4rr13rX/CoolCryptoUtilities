@@ -87,23 +87,21 @@ def _normalise(raw: str) -> str:
 def session_provider_from_context(ctx: Dict[str, Any] | None = None) -> str:
     from tools.ai_backend_mode import freeloader_mode_active
 
+    ctx = ctx or {}
+    explicit = ctx.get("session_provider") or ctx.get("model_provider") or ctx.get("provider")
+    if explicit:
+        return _normalise(str(explicit))
     if freeloader_mode_active():
         return "freeloader"
-    ctx = ctx or {}
-    raw = (
-        ctx.get("session_provider")
-        or ctx.get("provider")
-        or os.getenv("BRANDDOZER_SESSION_PROVIDER")
-        or "wizard"
-    )
+    raw = os.getenv("BRANDDOZER_SESSION_PROVIDER") or "wizard"
     return _normalise(str(raw))
 
 
-def get_session_class(provider: str) -> Type:
+def get_session_class(provider: str, *, explicit: bool = False) -> Type:
     from tools.ai_backend_mode import freeloader_mode_active
 
     norm = _normalise(provider or "wizard")
-    if freeloader_mode_active() or norm in _FREELOADER_ALIASES:
+    if (freeloader_mode_active() and not explicit) or norm in _FREELOADER_ALIASES:
         from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
         return AgentTheFreeloaderSession
     if norm in _OPENAI_ALIASES:
@@ -120,7 +118,7 @@ def get_session_class(provider: str) -> Type:
 def default_settings(provider: str) -> Dict[str, Any]:
     from tools.ai_backend_mode import freeloader_mode_active
 
-    if freeloader_mode_active():
+    if freeloader_mode_active() and not provider:
         return {}
     norm = _normalise(provider or "wizard")
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
@@ -134,7 +132,7 @@ def default_settings(provider: str) -> Dict[str, Any]:
 def settings_for_role(provider: str, role: str | None = None) -> Dict[str, Any]:
     from tools.ai_backend_mode import freeloader_mode_active
 
-    if freeloader_mode_active():
+    if freeloader_mode_active() and not provider:
         return {}
     norm = _normalise(provider or "wizard")
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:

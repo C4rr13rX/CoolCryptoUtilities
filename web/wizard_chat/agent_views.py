@@ -75,6 +75,8 @@ class WizardChatAgentView(View):
         # backends should call tools/c0d3rV2 directly, not this view.
         # An explicit `backend` field in the request body is ignored.
         backend = "wizard"
+        from modelcontrol.wizard_brains import selected_wizard_brain
+        wizard_brain = selected_wizard_brain(request.user, "chat")
 
         if not text:
             return JsonResponse({"error": "text required"}, status=400)
@@ -95,6 +97,8 @@ class WizardChatAgentView(View):
                 reset=reset,
                 allow_admin=allow_admin,
                 system_context=context_blob,
+                wizard_endpoint=wizard_brain["endpoint"],
+                wizard_chat_path=wizard_brain["chat_path"],
             )
         except Exception as exc:
             return JsonResponse({

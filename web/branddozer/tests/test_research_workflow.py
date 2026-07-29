@@ -338,6 +338,34 @@ class ResearchPaperApiTests(TestCase):
         self.assertEqual(context["model_provider"], "freeloader")
         self.assertIn("job_id", context)
 
+    def test_delivery_api_snapshots_selected_wizard_brain(self) -> None:
+        from modelcontrol.wizard_brains import create_wizard_brain
+
+        brain = create_wizard_brain(self.user, {
+            "name": "Programming brain",
+            "endpoint": "http://10.73.1.130:18095",
+            "chat_path": "/chat",
+        })
+        response = self.client.post(
+            "/api/branddozer/delivery/runs/",
+            {
+                "project_id": str(self.project.id),
+                "prompt": "Build the requested engineering project.",
+                "agent_provider": "c0d3r",
+                "model_provider": "wizard",
+                "session_provider": "wizard",
+                "wizard_brain_id": brain["id"],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        context = response.data["run"]["context"]
+        self.assertEqual(context["agent_provider"], "c0d3r")
+        self.assertEqual(context["model_provider"], "wizard")
+        self.assertEqual(context["wizard_brain_id"], brain["id"])
+        self.assertEqual(context["wizard_endpoint"], "http://10.73.1.130:18095")
+        self.assertEqual(context["wizard_chat_path"], "/chat")
+
     @patch("branddozer.research.run_delivery_turn_detailed")
     def test_c0d3r_agent_uses_separate_freeloader_model_backend(self, routed) -> None:
         routed.return_value = {
@@ -374,6 +402,42 @@ class ResearchPaperApiTests(TestCase):
         session = DeliverySession.objects.get(run=run)
         self.assertEqual(session.meta["agent_provider"], "c0d3r")
         self.assertEqual(session.meta["model_provider"], "freeloader")
+
+    @patch("branddozer.research.run_delivery_turn_detailed")
+    def test_c0d3r_agent_routes_through_selected_wizard_brain(self, routed) -> None:
+        routed.return_value = {
+            "output": (
+                '{"title":"bounded","research_question":"q","keywords":["k"],'
+                '"scope":"s","search_strategy":{"queries":[]},'
+                '"work_packages":[{"title":"chronology"}]}'
+            ),
+            "route_history": [],
+            "models": [],
+            "turn_model_calls": 1,
+            "tool_events": [],
+        }
+        run = DeliveryRun.objects.create(
+            project=self.project,
+            prompt="Research a bounded question.",
+            context={
+                "research_mode": True,
+                "agent_provider": "c0d3r",
+                "model_provider": "wizard",
+                "wizard_endpoint": "http://10.73.1.130:18095",
+                "wizard_chat_path": "/chat",
+            },
+        )
+        workflow = ResearchWorkflow(run, Path(self.temp.name))
+        workflow._call(
+            "research_planner",
+            "route contract",
+            "Return bounded JSON.",
+            system="Return JSON only.",
+        )
+        kwargs = routed.call_args.kwargs
+        self.assertEqual(kwargs["backend"], "wizard")
+        self.assertEqual(kwargs["wizard_endpoint"], "http://10.73.1.130:18095")
+        self.assertEqual(kwargs["wizard_chat_path"], "/chat")
 
 
 class ResearchWorkflowPersistenceTests(TestCase):

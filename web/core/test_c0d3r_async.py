@@ -85,3 +85,24 @@ class C0d3rAsyncRunTests(TestCase):
         self.assertEqual(response.status_code, 202)
         run = C0d3rWebRun.objects.get(id=response.json()["run_id"])
         self.assertEqual(run.backend, "freeloader")
+
+    @patch("core.c0d3r_async.submit_run")
+    def test_queued_run_snapshots_selected_wizard_brain(self, submit_run) -> None:
+        from modelcontrol.wizard_brains import create_wizard_brain, select_wizard_brain
+
+        brain = create_wizard_brain(self.user, {
+            "name": "Programming",
+            "endpoint": "http://10.73.1.130:18095",
+            "chat_path": "/chat",
+        })
+        select_wizard_brain(self.user, "operations", brain["id"])
+        response = self.client.post(
+            reverse("core:c0d3r-run"),
+            data=json.dumps({"prompt": "Implement a service", "backend": "wizard"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 202)
+        run = C0d3rWebRun.objects.get(id=response.json()["run_id"])
+        self.assertEqual(run.wizard_brain_id, brain["id"])
+        self.assertEqual(run.wizard_endpoint, "http://10.73.1.130:18095")
+        self.assertEqual(run.wizard_chat_path, "/chat")
