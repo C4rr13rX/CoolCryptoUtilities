@@ -1080,11 +1080,43 @@ class ResearchWorkflow:
             "Clearly label inference, disagreement, uncertainty, and the absence of "
             "primary evidence. Never report original experiments."
         )
+        # The acceptance gate scores the paper against these thresholds
+        # (see _evaluate_gates). Without stating them here the writer is
+        # judged on a bar it was never told, which produced short drafts
+        # that failed minimum_word_count on every revision round.
+        instruction += (
+            f"\n\nPUBLICATION REQUIREMENTS (enforced by an automated gate; a paper "
+            f"that misses any of these is rejected):\n"
+            f"- markdown body must be at least {self.policy.min_words} words. This is a "
+            f"floor, not a target; a substantially longer paper is expected for this "
+            f"scope. Reaching it through depth of analysis and evidence, never padding.\n"
+            f"- cite at least {self.policy.min_verified_sources} independently verified "
+            f"sources drawn from the VERIFIED SOURCE REGISTRY below.\n"
+            f"- every required section must be substantive; no placeholder or stub "
+            f"sections.\n"
+            f"- Findings and Discussion carry the analytical weight; do not compress "
+            f"them into summary bullets."
+        )
         if previous:
             instruction += (
                 " Rewrite the full prior paper to resolve every supplied deterministic "
                 "gate and peer-review issue; do not merely append an errata section."
             )
+            # Name the shortfall explicitly. The raw report is JSON-dumped
+            # further down, but an explicit delta is far harder to overlook.
+            metrics = (revision_feedback or {}).get("metrics") or {}
+            checks = (revision_feedback or {}).get("checks") or {}
+            if checks.get("minimum_word_count") is False:
+                actual = int(metrics.get("word_count") or 0)
+                instruction += (
+                    f" The previous draft was {actual} words against a "
+                    f"{self.policy.min_words}-word minimum: it must grow by at least "
+                    f"{max(0, self.policy.min_words - actual)} words of substantive "
+                    f"analysis, not restatement."
+                )
+            failed = [name for name, ok in checks.items() if ok is False]
+            if failed:
+                instruction += f" Failed gates to fix: {', '.join(sorted(failed))}."
         return self._call(
             "research_writer",
             "Research synthesis and paper revision" if previous else "Research synthesis",
