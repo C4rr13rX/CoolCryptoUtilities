@@ -61,7 +61,9 @@ ROLE_SCHEMA_KEYS: dict[str, set[str]] = {
     },
     "literature_reviewer": {"findings", "sources", "claims"},
     "methods_reviewer": {"method", "bias_risks", "validity_limits"},
-    "research_writer": {"title", "abstract", "markdown", "claims"},
+    "research_writer": {
+        "title", "abstract", "markdown", "claims", "rival_hypotheses",
+    },
     "citation_auditor": {"claims", "blocking_issues"},
     "peer_reviewer": {"recommendation", "blocking_issues"},
 }
@@ -347,8 +349,14 @@ def validate_paper_payload(
     claims: Iterable[dict[str, Any]],
     policy: ResearchPolicy,
     peer_review: dict[str, Any] | None = None,
+    epistemic_config: dict[str, Any] | None = None,
+    rival_hypotheses: Iterable[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run deterministic publication-readiness gates over a candidate paper."""
+    """Run deterministic publication-readiness gates over a candidate paper.
+
+    Covers two orthogonal axes: evidence sufficiency (counting gates) and
+    reasoning quality (see branddozer.epistemics).
+    """
     source_list = list(sources)
     claim_list = list(claims)
     source_by_key = {
@@ -435,9 +443,22 @@ def validate_paper_payload(
         and str(peer_review.get("recommendation") or "").lower()
         in {"accept", "minor_revision", "minor revision"},
     }
+    # Reasoning-quality gates run alongside the counting gates: a paper must
+    # be both well-evidenced *and* well-argued to pass.
+    from branddozer.epistemics import EpistemicPolicy, evaluate_reasoning
+
+    reasoning = evaluate_reasoning(
+        claims=claim_list,
+        sources=source_list,
+        policy=EpistemicPolicy.from_config(epistemic_config),
+        rival_hypotheses=rival_hypotheses or [],
+    )
+    checks.update(reasoning["checks"])
+
     return {
         "passed": all(checks.values()),
         "checks": checks,
+        "reasoning": reasoning,
         "metrics": {
             "word_count": _word_count(markdown),
             "sources": len(source_list),
@@ -1082,11 +1103,18 @@ class ResearchWorkflow:
     ) -> dict[str, Any]:
         instruction = (
             "Write a complete journal-style archival research paper. Return JSON with "
-            "title, abstract, keywords, markdown, and claims. markdown must contain "
+            "title, abstract, keywords, markdown, claims, and rival_hypotheses. "
+            "markdown must contain "
             "Abstract, Keywords, Introduction, Methodology, Literature Review, Findings, "
-            "Discussion, Limitations, Conclusion, and References. Cite only the supplied "
+            "Rival Explanations, Discussion, Limitations, Conclusion, and References. "
+            "Cite only the supplied "
             "citation keys using [@key]. Each claims item must have section, claim_text, "
-            "source_keys, verification_status ('supported' or 'qualified'), and rationale. "
+            "source_keys, verification_status ('supported' or 'qualified'), rationale, "
+            "claim_type, modality, premise_modality, inference_depth, and uncertainty; "
+            "causal claims add causal_design and identification_strategy; claims resting "
+            "on the subject's own documents add quoted_wording and deniability. "
+            "Each rival_hypotheses item must have hypothesis, discriminating_evidence, "
+            "and status ('favoured', 'disfavoured', or 'unsettled'). "
             "Clearly label inference, disagreement, uncertainty, and the absence of "
             "primary evidence. Never report original experiments."
         )
@@ -1106,6 +1134,16 @@ class ResearchWorkflow:
             f"sections.\n"
             f"- Findings and Discussion carry the analytical weight; do not compress "
             f"them into summary bullets."
+        )
+        # Reasoning-quality contract: typed claims, causal warrant, modality,
+        # deniability, rival explanations. Stated here so the writer is told
+        # exactly what evaluate_reasoning will score it on.
+        from branddozer.epistemics import EpistemicPolicy, writer_requirements
+
+        instruction += writer_requirements(
+            EpistemicPolicy.from_config(
+                (self.run.context or {}).get("research_config") or {}
+            )
         )
         if previous:
             instruction += (
@@ -1157,7 +1195,14 @@ class ResearchWorkflow:
                 "Audit each submitted claim against the verified source registry and "
                 "paper context. Return JSON with claims, where every item repeats "
                 "claim_text and source_keys and sets verification_status to supported, "
-                "qualified, or rejected with rationale. Also return fabricated_or_unknown "
+                "qualified, or rejected with rationale. Preserve each claim's "
+                "claim_type, modality, premise_modality, inference_depth, uncertainty, "
+                "causal_design, identification_strategy, quoted_wording, and deniability "
+                "fields; correct them where the evidence does not bear them out — in "
+                "particular, downgrade a causal claim whose identification strategy does "
+                "not rule out confounding, flag any possible->actual or actual->necessary "
+                "escalation, and mark wording as deniable where the quoted text is hedged "
+                "or non-binding. Also return fabricated_or_unknown "
                 "citation keys and blocking_issues. A source URL alone is not support. "
                 "Reject or qualify any claim that treats an unverified or disputed leaked "
                 "document as authenticated external fact, or that confuses a company's "
@@ -1335,6 +1380,8 @@ class ResearchWorkflow:
                 claims=claims,
                 policy=self.policy,
                 peer_review=peer_review,
+                epistemic_config=(self.run.context or {}).get("research_config") or {},
+                rival_hypotheses=candidate.get("rival_hypotheses") or [],
             )
             report.update(
                 {

@@ -72,13 +72,27 @@ class ResearchValidationTests(TestCase):
             }
             for i in range(3)
         ]
+        # Claims carry the epistemic fields the reasoning gates score:
+        # typed, modalised, uncertainty-labelled, and (for first-party
+        # sources) assessed for how deniable the quoted wording is.
         self.claims = [
             {
                 "claim_text": f"Qualified claim {i}",
                 "source_keys": [f"source{i}"],
                 "verification_status": "qualified",
+                "claim_type": "correlational" if i == 0 else "descriptive",
+                "modality": "probable" if i == 0 else "actual",
+                "premise_modality": "probable" if i == 0 else "actual",
+                "inference_depth": 1,
+                "uncertainty": "bounded by archival coverage",
+                "deniability": "qualified",
+                "quoted_wording": f"verbatim passage {i}",
             }
             for i in range(3)
+        ]
+        self.rival_hypotheses = [
+            {"hypothesis": "Macro retail downturn", "status": "unsettled"},
+            {"hypothesis": "Seasonal assortment change", "status": "disfavoured"},
         ]
 
     def test_complete_supported_paper_passes(self) -> None:
@@ -88,6 +102,7 @@ class ResearchValidationTests(TestCase):
             claims=self.claims,
             policy=self.policy,
             peer_review={"recommendation": "accept", "blocking_issues": []},
+            rival_hypotheses=self.rival_hypotheses,
         )
         self.assertTrue(result["passed"], result)
         self.assertTrue(all(result["checks"].values()))
@@ -578,8 +593,20 @@ class ResearchWorkflowPersistenceTests(TestCase):
                 "source_keys": [f"source{i}"],
                 "verification_status": "qualified",
                 "rationale": "Bounded by the cited archival evidence.",
+                # Epistemic fields scored by the reasoning gates.
+                "claim_type": "correlational" if i == 0 else "descriptive",
+                "modality": "probable" if i == 0 else "actual",
+                "premise_modality": "probable" if i == 0 else "actual",
+                "inference_depth": 1,
+                "uncertainty": "bounded by archival coverage",
+                "deniability": "qualified",
+                "quoted_wording": f"verbatim passage {i}",
             }
             for i in range(3)
+        ]
+        good_rivals = [
+            {"hypothesis": "Alternative mechanism", "status": "unsettled"},
+            {"hypothesis": "Measurement artefact", "status": "disfavoured"},
         ]
         calls = {"write": 0}
 
@@ -594,6 +621,7 @@ class ResearchWorkflowPersistenceTests(TestCase):
                 "keywords": plan["keywords"],
                 "markdown": _paper_markdown(keys),
                 "claims": good_claims,
+                "rival_hypotheses": good_rivals,
                 "change_summary": f"revision {calls['write']}",
             }
 
