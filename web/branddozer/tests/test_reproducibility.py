@@ -190,3 +190,55 @@ class ManifestTests(TestCase):
         m = build_manifest([])
         self.assertEqual(m["totals"]["sources"], 0)
         self.assertIsNone(m["totals"]["verified_rate_of_checkable"])
+
+
+class PassageExtractionTests(TestCase):
+    """Agents return supporting quotations in several legitimate shapes.
+
+    Regression guard: a live reviewer emitted `verified_passages` (plural,
+    a list of {passage, locator} objects) while verification read only the
+    singular `verified_passage` string. Every one of its sources was
+    rejected for "no passage" despite carrying good verbatim quotes.
+    """
+
+    def _extract(self, source):
+        from branddozer.research import _extract_passages
+
+        return _extract_passages(source)
+
+    def test_singular_string_form(self):
+        got = self._extract({"verified_passage": "a verbatim sentence from the page"})
+        self.assertEqual(got, ["a verbatim sentence from the page"])
+
+    def test_plural_list_of_objects(self):
+        got = self._extract(
+            {
+                "verified_passages": [
+                    {"passage": "first quoted sentence", "locator": "section 1"},
+                    {"passage": "second quoted sentence here", "locator": "section 2"},
+                ]
+            }
+        )
+        self.assertEqual(len(got), 2)
+        self.assertIn("first quoted sentence", got)
+
+    def test_plural_list_of_strings(self):
+        got = self._extract({"verified_passages": ["alpha quote", "beta quote"]})
+        self.assertEqual(len(got), 2)
+
+    def test_longest_passage_comes_first(self):
+        """The most specific quote is the strongest evidence."""
+        got = self._extract({"verified_passages": ["short", "a much longer passage"]})
+        self.assertEqual(got[0], "a much longer passage")
+
+    def test_duplicates_are_collapsed(self):
+        got = self._extract({"verified_passages": ["same quote", "same quote"]})
+        self.assertEqual(len(got), 1)
+
+    def test_blank_and_missing_yield_nothing(self):
+        self.assertEqual(self._extract({}), [])
+        self.assertEqual(self._extract({"verified_passage": "   "}), [])
+
+    def test_alternate_object_keys_are_read(self):
+        got = self._extract({"verified_passages": [{"quote": "via quote key"}]})
+        self.assertEqual(got, ["via quote key"])

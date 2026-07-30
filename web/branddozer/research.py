@@ -490,6 +490,39 @@ def validate_paper_payload(
     }
 
 
+def _extract_passages(source: dict[str, Any]) -> list[str]:
+    """Collect candidate supporting quotations from a source record.
+
+    Agents legitimately return this in several shapes — a single
+    ``verified_passage`` string, or a ``verified_passages`` list whose
+    items are either strings or ``{"passage": ..., "locator": ...}``
+    objects. Reading only the singular string form silently dropped every
+    quotation from agents using the plural form, so *all* their sources
+    failed verification for "no passage" rather than on their merits.
+    """
+    out: list[str] = []
+
+    def _add(value: Any) -> None:
+        if isinstance(value, str):
+            if value.strip():
+                out.append(value.strip())
+        elif isinstance(value, dict):
+            for key in ("passage", "quote", "text", "verbatim"):
+                inner = value.get(key)
+                if isinstance(inner, str) and inner.strip():
+                    out.append(inner.strip())
+                    return
+        elif isinstance(value, list):
+            for item in value:
+                _add(item)
+
+    for key in ("verified_passage", "verified_passages", "passages", "quotes"):
+        _add(source.get(key))
+    # Longest first: the most specific quotation is the strongest evidence
+    # and the least likely to match incidentally.
+    return sorted(dict.fromkeys(out), key=len, reverse=True)
+
+
 def _verify_source(
     harvester: ResearchHarvester, source: dict[str, Any], question: str
 ) -> dict[str, Any]:
@@ -534,14 +567,28 @@ def _verify_source(
         return candidate
     record = stored[0]
     document = harvester.document(str(record.get("url") or url))
-    passage = str(candidate.get("verified_passage") or "")
     content = str((document or {}).get("content") or "")
     # Normalised matching: publishers substitute non-breaking hyphens, curly
     # quotes and nbsp, which made correct quotations fail a naive compare.
     # The words must still match verbatim; only typography is folded.
     from branddozer.reproducibility import passage_matches, snapshot_id
 
-    match = passage_matches(passage, content)
+    passages = _extract_passages(candidate)
+    passage = passages[0] if passages else ""
+    match = {
+        "matched": False,
+        "outcome": "passage_too_short",
+        "detail": "no supporting quotation was supplied",
+    }
+    # A source may cite several passages; any one that checks out verifies
+    # it. Keep the matching quotation as the source's evidence of record.
+    for candidate_passage in passages:
+        attempt = passage_matches(candidate_passage, content)
+        if attempt["matched"]:
+            match, passage = attempt, candidate_passage
+            break
+        match = attempt
+    candidate["verified_passage"] = passage
     if not match["matched"]:
         candidate.update(
             verification_status="rejected",
@@ -1038,8 +1085,13 @@ class ResearchWorkflow:
                 "Perform the assigned archival literature work package. Return strict "
                 "JSON with findings, counterevidence, uncertainties, sources, and claims. "
                 "Every source needs citation_key, exact title, authors, publication_year, "
-                "publisher, URL, DOI when available, peer_reviewed, and a short "
-                "verified_passage to locate. Classify source_class, first_party, "
+                "publisher, URL, DOI when available, peer_reviewed, and "
+                "`verified_passage`: a single string containing at least 40 "
+                "characters copied VERBATIM from the fetched page (not a "
+                "paraphrase or summary). This exact string is re-matched "
+                "against the retrieved document, and the source is rejected "
+                "if it is absent, so copy it character-for-character. "
+                "Classify source_class, first_party, "
                 "provenance_status, and provenance_detail. Search official releases, "
                 "filings, court/FOIA records, public archives, WikiLeaks, and comparable "
                 "public document repositories. A leak is direct evidence of its contents "
