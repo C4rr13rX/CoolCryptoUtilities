@@ -45,6 +45,7 @@ urlpatterns = [
     path("projects/<str:project_id>/stop/", views.ProjectStopView.as_view(), name="project-stop"),
     path("projects/<str:project_id>/logs/", views.ProjectLogView.as_view(), name="project-logs"),
     path("projects/<str:project_id>/interjections/", views.ProjectInterjectionSuggestView.as_view(), name="project-interjections"),
+    path("modes/", views.ProjectModeCatalogView.as_view(), name="project-modes"),
     path("product-loop/status/", views.ProductLoopStatusView.as_view(), name="product-loop-status"),
     path("product-loop/cycle/", views.ProductLoopCycleView.as_view(), name="product-loop-cycle"),
     path("atf/class-benchmark/", views.AtfClassBenchmarkView.as_view(), name="atf-class-benchmark"),

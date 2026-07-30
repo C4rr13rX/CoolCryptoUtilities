@@ -819,6 +819,49 @@ export async function fetchBrandProjects() {
   return data;
 }
 
+export interface BrandPhase {
+  role: string;
+  label: string;
+  detail: string;
+  consumes_run_prompt: boolean;
+}
+
+export interface BrandProjectMode {
+  id: string;
+  label: string;
+  summary: string;
+  uses_prompt_loop: boolean;
+  prompt_label: string;
+  prompt_help: string;
+  supports_interjections: boolean;
+  uses_interval: boolean;
+}
+
+export interface BrandDeliveryMode {
+  id: string;
+  label: string;
+  summary: string;
+  prompt_label: string;
+  prompt_help: string;
+  prompt_placeholder: string;
+  prompt_role: string;
+  phases: BrandPhase[];
+  fields: string[];
+}
+
+export interface BrandModeCatalog {
+  project_modes: BrandProjectMode[];
+  delivery_modes: BrandDeliveryMode[];
+}
+
+let _brandModeCache: BrandModeCatalog | null = null;
+export async function fetchBrandModes(force = false): Promise<BrandModeCatalog> {
+  if (_brandModeCache && !force) return _brandModeCache;
+  const { data } = await api.get('/branddozer/modes/');
+  _brandModeCache = data as BrandModeCatalog;
+  return _brandModeCache;
+}
+
 export async function fetchBrandRoots(path?: string) {
   const params = path ? { path } : undefined;
   const { data } = await api.get('/branddozer/projects/roots/', { params });

@@ -574,6 +574,21 @@ class ProjectInterjectionSuggestView(APIView):
         return Response({"interjections": interjections}, status=status.HTTP_200_OK)
 
 
+class ProjectModeCatalogView(APIView):
+    """Describes how each project/delivery mode actually executes.
+
+    The UI reads this to label prompts accurately per mode instead of
+    hardcoding "runs every cycle" for projects that never use a prompt loop.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        from branddozer.modes import catalog
+
+        return Response(catalog(), status=status.HTTP_200_OK)
+
+
 class ProductLoopStatusView(APIView):
     permission_classes = [IsAuthenticated]
 

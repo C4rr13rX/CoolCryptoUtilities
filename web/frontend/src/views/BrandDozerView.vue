@@ -31,7 +31,9 @@
           <p v-if="project.repo_url" class="meta">{{ t('branddozer.repo') }}: {{ project.repo_url }}</p>
           <div class="project-work" v-if="project.lifecycle">
             <strong>Currently working on</strong>
-            <p>{{ project.lifecycle.working_on || project.default_prompt }}</p>
+            <p class="work-summary" :title="project.lifecycle.working_on || project.default_prompt">
+              {{ project.lifecycle.working_on || project.default_prompt }}
+            </p>
             <p class="meta" v-if="project.lifecycle.active_work?.status">
               Product status: {{ project.lifecycle.active_work.status }} · inner iteration
               {{ project.lifecycle.active_work.inner_iteration || 0 }} · validation
@@ -121,11 +123,21 @@
                 <span><input v-model="form.git_auto_promote" type="checkbox" /> Promote validated cycles to main</span>
               </label>
             </div>
+            <p class="mode-banner">
+              <strong>{{ activeProjectMode.label }}</strong> · {{ activeProjectMode.summary }}
+            </p>
             <label>
-              <span>{{ t('branddozer.default_prompt') }}</span>
-              <textarea v-model="form.default_prompt" rows="4" required />
+              <span>{{ activeProjectMode.prompt_label }}</span>
+              <textarea
+                v-model="form.default_prompt"
+                rows="4"
+                :required="activeProjectMode.uses_prompt_loop"
+              />
+              <small class="caption">{{ activeProjectMode.prompt_help }}</small>
             </label>
-            <div class="interjections">
+            <!-- Interjections only exist in the generic prompt loop; workflow
+                 projects never read them, so the section is hidden there. -->
+            <div class="interjections" v-if="activeProjectMode.supports_interjections">
               <div class="interjections-header">
                 <span>{{ t('branddozer.interjections_prompt') }}</span>
                 <div class="interjection-actions">
@@ -194,11 +206,15 @@
           <label>
             <span>Project output</span>
             <select v-model="deliveryForm.project_type">
-              <option value="software">Software / technology</option>
-              <option value="research">Archival research paper</option>
+              <option v-for="mode in modeCatalog.delivery_modes" :key="mode.id" :value="mode.id">
+                {{ mode.label }}
+              </option>
             </select>
+            <small class="caption">{{ activeDeliveryMode.summary }}</small>
           </label>
-          <label>
+          <!-- Research runs the full role team by definition (the submit path
+               forces team_mode=full), so the choice is software-only. -->
+          <label v-if="deliveryModeHasField('team_mode')">
             <span>{{ t('branddozer.team_mode') }}</span>
             <select v-model="deliveryForm.team_mode">
               <option value="full">{{ t('branddozer.team_full') }}</option>
@@ -259,16 +275,34 @@
           </label>
           <p v-if="activeAgentWarning" class="agent-warning full">{{ activeAgentWarning }}</p>
           <label class="full">
-            <span>{{ t('branddozer.prompt') }}</span>
+            <span>{{ activeDeliveryMode.prompt_label }}</span>
             <textarea
               v-model="deliveryForm.prompt"
               rows="3"
-              :placeholder="deliveryForm.project_type === 'research'
-                ? 'State the research goal, question, scope, and intended scientific or engineering audience.'
-                : t('branddozer.prompt_placeholder')"
+              :placeholder="activeDeliveryMode.prompt_placeholder"
             />
+            <small class="caption">{{ activeDeliveryMode.prompt_help }}</small>
           </label>
-          <template v-if="deliveryForm.project_type === 'research'">
+          <!-- Show the real execution pipeline so it's clear the prompt seeds
+               the first phase rather than repeating every cycle. -->
+          <div v-if="activeDeliveryMode.phases.length" class="phase-strip full">
+            <span class="phase-strip-title">{{ activeDeliveryMode.label }} pipeline</span>
+            <ol>
+              <li
+                v-for="(phase, idx) in activeDeliveryMode.phases"
+                :key="phase.role"
+                :class="{ seeded: phase.consumes_run_prompt }"
+              >
+                <span class="phase-idx">{{ idx + 1 }}</span>
+                <span class="phase-body">
+                  <strong>{{ phase.label }}</strong>
+                  <em v-if="phase.consumes_run_prompt">reads your prompt</em>
+                  <small>{{ phase.detail }}</small>
+                </span>
+              </li>
+            </ol>
+          </div>
+          <template v-if="deliveryModeHasField('target_journal')">
             <label>
               <span>Target journal or discipline</span>
               <input v-model="deliveryForm.target_journal" placeholder="e.g. systems engineering" />
@@ -291,7 +325,8 @@
               <input v-model.number="deliveryForm.min_verified_sources" type="number" min="2" max="100" />
             </label>
           </template>
-          <label class="full">
+          <!-- A smoke test command only means something for software output. -->
+          <label class="full" v-if="deliveryModeHasField('smoke_test_cmd')">
             <span>{{ t('branddozer.smoke_test') }}</span>
             <input v-model="deliveryForm.smoke_test_cmd" :placeholder="t('branddozer.smoke_test_placeholder')" />
           </label>
@@ -1069,7 +1104,15 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBrandDozerStore } from '@/stores/branddozer';
 import { t } from '@/i18n';
 import ModelSelect from '@/components/ModelSelect.vue';
-import { brandResearchPaperDownloadUrl, fetchModelOptions, type ModelOptions } from '@/api';
+import {
+  brandResearchPaperDownloadUrl,
+  fetchBrandModes,
+  fetchModelOptions,
+  type BrandDeliveryMode,
+  type BrandModeCatalog,
+  type BrandProjectMode,
+  type ModelOptions,
+} from '@/api';
 
 const store = useBrandDozerStore();
 const selectedId = ref<string>('');
@@ -1083,6 +1126,7 @@ const form = ref({
   interval_minutes: 120,
   license_key: 'unlicensed',
   git_auto_promote: true,
+  workflow_kind: '',
 });
 const folderModalOpen = ref(false);
 const folderLoading = ref(false);
@@ -1155,6 +1199,63 @@ const agentOptions = ref<ModelOptions['agents']>([
     reasoning: ['low', 'medium', 'high', 'extra_high'],
   },
 ]);
+
+// Mode catalog from /branddozer/modes/ — the backend's description of how each
+// project/delivery mode actually executes. Fallbacks keep the form usable if
+// the endpoint is unreachable.
+const FALLBACK_PROJECT_MODE: BrandProjectMode = {
+  id: '',
+  label: 'Continuous prompt loop',
+  summary: 'Sends your prompts on a repeating schedule.',
+  uses_prompt_loop: true,
+  prompt_label: 'Default prompt (runs every cycle)',
+  prompt_help: '',
+  supports_interjections: true,
+  uses_interval: true,
+};
+const FALLBACK_DELIVERY_MODE: BrandDeliveryMode = {
+  id: 'software',
+  label: 'Software / technology',
+  summary: '',
+  prompt_label: 'Build goal',
+  prompt_help: '',
+  prompt_placeholder: '',
+  prompt_role: 'planner',
+  phases: [],
+  fields: ['team_mode', 'smoke_test_cmd'],
+};
+const modeCatalog = ref<BrandModeCatalog>({
+  project_modes: [FALLBACK_PROJECT_MODE],
+  delivery_modes: [FALLBACK_DELIVERY_MODE],
+});
+
+const activeProjectMode = computed<BrandProjectMode>(() => {
+  const kind = form.value.workflow_kind || '';
+  const found = modeCatalog.value.project_modes.find((m) => m.id === kind);
+  if (found) return found;
+  if (!kind) return FALLBACK_PROJECT_MODE;
+  // Unknown workflow: it still bypasses the prompt loop, so say so.
+  return {
+    ...FALLBACK_PROJECT_MODE,
+    id: kind,
+    label: kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+    summary: 'Custom workflow; your prompts are not used as cycle input.',
+    uses_prompt_loop: false,
+    prompt_label: 'Mission (context only)',
+    prompt_help: 'This workflow does not send the prompt each cycle.',
+    supports_interjections: false,
+  };
+});
+
+const activeDeliveryMode = computed<BrandDeliveryMode>(
+  () =>
+    modeCatalog.value.delivery_modes.find((m) => m.id === deliveryForm.value.project_type) ||
+    FALLBACK_DELIVERY_MODE
+);
+
+function deliveryModeHasField(field: string): boolean {
+  return activeDeliveryMode.value.fields.includes(field);
+}
 
 const activeAgent = computed(
   () => agentOptions.value.find((a) => a.id === deliveryForm.value.agent_provider) || null
@@ -1245,6 +1346,13 @@ let visibilityHandler: (() => void) | null = null;
 const desktopSeededRunId = ref('');
 
 onMounted(async () => {
+  // Load how each mode actually executes, so prompt labels and field
+  // visibility match the real pipeline rather than a generic loop.
+  try {
+    modeCatalog.value = await fetchBrandModes();
+  } catch {
+    /* keep fallback mode descriptors */
+  }
   // Seed the delivery provider/model from the site-wide default (Model Control);
   // the dropdowns then act as a per-run override.
   try {
@@ -2107,7 +2215,10 @@ async function startDeliveryRun() {
         : deliveryForm.value.c0d3r_model,
       c0d3r_reasoning: deliveryForm.value.c0d3r_reasoning,
       wizard_brain_id: deliveryForm.value.wizard_brain_id,
-      smoke_test_cmd: deliveryForm.value.smoke_test_cmd,
+      // Only meaningful for software output; research runs have no smoke test.
+      smoke_test_cmd: deliveryModeHasField('smoke_test_cmd')
+        ? deliveryForm.value.smoke_test_cmd
+        : '',
     });
     store.activeDeliveryRun = run;
     deliveryStatusNote.value = 'Delivery run started.';
@@ -2324,6 +2435,7 @@ function resetForm() {
     interval_minutes: 120,
     license_key: 'unlicensed',
     git_auto_promote: true,
+    workflow_kind: '',
   };
   interjectionError.value = '';
   showForm.value = false;
@@ -2391,6 +2503,9 @@ function editProject(project: any) {
     interval_minutes: project.interval_minutes,
     license_key: project.license_key || 'unlicensed',
     git_auto_promote: project.git_auto_promote !== false,
+    // Carried so the form can describe how this project actually executes.
+    // Workflow projects bypass the prompt loop entirely.
+    workflow_kind: project.workflow_kind || '',
   };
   interjectionError.value = '';
   showForm.value = true;
@@ -2747,6 +2862,24 @@ function formatTime(ts?: number | string | null) {
   grid-column: 1 / -1;
 }
 
+/* Grid cells stack label -> control -> help text. Without this, a
+   full-width textarea and its caption can overlap the label. */
+.form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.form-grid label > textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.form-grid label > .caption {
+  line-height: 1.35;
+}
+
 .import-card {
   background: rgba(6, 12, 22, 0.8);
   border: 1px dashed rgba(126, 168, 255, 0.4);
@@ -2804,6 +2937,98 @@ function formatTime(ts?: number | string | null) {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
+}
+
+/* Project prompts can be many paragraphs; clamp the card preview so a
+   long prompt doesn't turn the project list into a wall of text.
+   Full text stays available via the title tooltip. */
+.work-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0.2rem 0 0;
+}
+
+/* Mode banner: states which execution model the open form describes. */
+.mode-banner {
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(126, 168, 255, 0.1);
+  border: 1px solid rgba(126, 168, 255, 0.28);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+/* Pipeline strip: makes it explicit that the run prompt seeds the first
+   phase and that later phases write their own prompts. */
+.phase-strip {
+  border: 1px solid rgba(126, 168, 255, 0.25);
+  border-radius: 12px;
+  padding: 0.6rem 0.75rem;
+  background: rgba(5, 12, 24, 0.55);
+}
+
+.phase-strip-title {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+
+.phase-strip ol {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.phase-strip li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  flex: 1 1 13rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  background: rgba(126, 168, 255, 0.06);
+  border: 1px solid transparent;
+}
+
+.phase-strip li.seeded {
+  border-color: rgba(126, 168, 255, 0.45);
+  background: rgba(126, 168, 255, 0.13);
+}
+
+.phase-idx {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  min-width: 1rem;
+}
+
+.phase-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.phase-body strong {
+  font-size: 0.85rem;
+}
+
+.phase-body em {
+  font-size: 0.72rem;
+  font-style: normal;
+  color: #9ec1ff;
+}
+
+.phase-body small {
+  font-size: 0.72rem;
+  opacity: 0.7;
+  line-height: 1.3;
 }
 
 /* Cap long session lists (~5 rows) so a run with dozens of role sessions
