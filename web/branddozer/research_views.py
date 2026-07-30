@@ -82,6 +82,10 @@ def paper_payload(paper: ResearchPaper, *, detail: bool = False) -> dict[str, An
                 f"/branddozer/research/papers/{paper.id}/download/?kind=markdown"
             ),
             "json": f"/branddozer/research/papers/{paper.id}/download/?kind=json",
+            # Replayable record of every source check, for fact-checking.
+            "verification": (
+                f"/branddozer/research/papers/{paper.id}/download/?kind=verification"
+            ),
         },
     }
     if detail:
@@ -191,8 +195,48 @@ class ResearchPaperDownloadView(APIView):
                 f'attachment; filename="{filename}-v{paper.version}.json"'
             )
             return response
+        if output_format in {"verification", "manifest"}:
+            # The fact-checking manifest: every source check, replayable.
+            from branddozer.reproducibility import build_manifest
+
+            manifest = build_manifest(
+                [
+                    {
+                        "citation_key": source.citation_key,
+                        "url": source.url,
+                        "verification_status": source.verification_status,
+                        "verification_detail": source.verification_detail,
+                        "content_sha256": source.content_sha256,
+                        "retrieved_at": (
+                            source.retrieved_at.isoformat()
+                            if source.retrieved_at
+                            else ""
+                        ),
+                        "verified_passage": source.verified_passage,
+                    }
+                    for source in paper.sources.all()
+                ],
+                paper_sha256=paper.content_sha256,
+                claims=[
+                    {
+                        "claim_text": claim.claim_text,
+                        "source_keys": claim.source_keys,
+                    }
+                    for claim in paper.claims.all()
+                ],
+            )
+            response = HttpResponse(
+                json.dumps(manifest, indent=2, ensure_ascii=False),
+                content_type="application/json; charset=utf-8",
+            )
+            response["Content-Disposition"] = (
+                f'attachment; filename="{filename}-v{paper.version}-verification.json"'
+            )
+            return response
         if output_format != "pdf":
-            return HttpResponse("kind must be pdf, markdown, or json", status=400)
+            return HttpResponse(
+                "kind must be pdf, markdown, json, or verification", status=400
+            )
         path = Path(paper.pdf_path) if paper.pdf_path else Path()
         try:
             safe_root = RUNTIME_ROOT.resolve()

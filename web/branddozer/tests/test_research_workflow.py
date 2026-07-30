@@ -326,6 +326,30 @@ class ResearchPaperApiTests(TestCase):
         self.assertIn("attachment;", download["Content-Disposition"])
         self.assertIn(b"## Methodology", download.content)
 
+    def test_verification_manifest_is_downloadable(self) -> None:
+        """Fact-checkers need the replayable record, not just the paper."""
+        import json as _json
+
+        response = self.client.get(
+            f"/api/branddozer/research/papers/{self.paper.id}/download/",
+            {"kind": "verification"},
+        )
+        self.assertEqual(response.status_code, 200)
+        manifest = _json.loads(response.content.decode("utf-8"))
+        self.assertIn("match_rules_version", manifest)
+        self.assertIn("how_to_reproduce", manifest)
+        self.assertIn("checks", manifest)
+        # Access failures must never be tallied as integrity failures.
+        self.assertIn("access_failures", manifest["totals"])
+        self.assertIn("integrity_failures", manifest["totals"])
+
+    def test_unknown_download_kind_is_rejected(self) -> None:
+        response = self.client.get(
+            f"/api/branddozer/research/papers/{self.paper.id}/download/",
+            {"kind": "bogus"},
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_delivery_api_records_research_configuration_before_queueing(self) -> None:
         response = self.client.post(
             "/api/branddozer/delivery/runs/",
