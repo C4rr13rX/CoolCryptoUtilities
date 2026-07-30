@@ -128,6 +128,7 @@ class DeliveryRunListView(APIView):
         session_provider = data.get("session_provider") or data.get("provider")
         agent_provider = data.get("agent_provider")
         model_provider = data.get("model_provider")
+        agent_model = data.get("agent_model")
         codex_model = data.get("model") or data.get("codex_model")
         codex_reasoning = data.get("reasoning_effort") or data.get("codex_reasoning")
         c0d3r_model = data.get("c0d3r_model")
@@ -146,6 +147,29 @@ class DeliveryRunListView(APIView):
         )
         if wizard_brain_id and wizard_brain is None:
             return Response({"detail": "Unknown Wizard brain."}, status=status.HTTP_400_BAD_REQUEST)
+        # Validate the requested agent, and refuse up front when a CLI agent
+        # isn't installed — otherwise the run starts and every session fails.
+        if agent_provider:
+            from modelcontrol.views import _agent_catalog
+
+            catalog = {item["id"]: item for item in _agent_catalog()}
+            chosen = catalog.get(str(agent_provider).strip().lower())
+            if chosen is None:
+                return Response(
+                    {"detail": f"Unknown agent: {agent_provider}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not chosen["available"]:
+                return Response(
+                    {"detail": f"{chosen['label']} is not available: {chosen['detail']}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if chosen["owns_model"] and agent_model:
+                if str(agent_model) not in chosen["models"]:
+                    return Response(
+                        {"detail": f"{chosen['label']} does not support model {agent_model}."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
         try:
             run = delivery_orchestrator.create_run(
                 project_id,
@@ -178,6 +202,8 @@ class DeliveryRunListView(APIView):
             context["agent_provider"] = str(agent_provider)
         if model_provider:
             context["model_provider"] = str(model_provider)
+        if agent_model:
+            context["agent_model"] = str(agent_model)
         run.context = context
         run.save(update_fields=["context"])
         job = enqueue_job(

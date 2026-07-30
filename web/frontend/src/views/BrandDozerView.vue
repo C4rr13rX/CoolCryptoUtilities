@@ -208,10 +208,14 @@
           <label>
             <span>Agent</span>
             <select v-model="deliveryForm.agent_provider">
-              <option value="c0d3r">C0D3R V2</option>
+              <option v-for="agent in agentOptions" :key="agent.id" :value="agent.id">
+                {{ agent.label }}{{ agent.available ? '' : ' · not installed' }}
+              </option>
             </select>
           </label>
-          <label>
+          <!-- CLI agents (Codex / Claude Code) bring their own models, so the
+               model-backend picker only applies to C0D3R V2. -->
+          <label v-if="!activeAgentOwnsModel">
             <span>C0D3R model backend</span>
             <select v-model="deliveryForm.model_provider">
               <option value="wizard">Wizard node</option>
@@ -221,7 +225,7 @@
               <option value="freeloader">{{ t('branddozer.provider_freeloader') }}</option>
             </select>
           </label>
-          <label v-if="deliveryForm.model_provider === 'wizard'">
+          <label v-if="!activeAgentOwnsModel && deliveryForm.model_provider === 'wizard'">
             <span>Wizard programming brain</span>
             <select v-model="deliveryForm.wizard_brain_id">
               <option v-for="brain in wizardBrains" :key="brain.id" :value="brain.id">
@@ -231,7 +235,12 @@
           </label>
           <label>
             <span>{{ t('branddozer.model') }}</span>
+            <!-- Agent-owned model set: a plain list of the CLI's own models. -->
+            <select v-if="activeAgentOwnsModel" v-model="deliveryForm.agent_model">
+              <option v-for="m in activeAgentModels" :key="m" :value="m">{{ m }}</option>
+            </select>
             <ModelSelect
+              v-else
               v-model="deliveryForm.c0d3r_model"
               :kind="deliveryForm.model_provider === 'openai' ? 'codex' : 'c0d3r'"
             />
@@ -239,12 +248,16 @@
           <label>
             <span>{{ t('branddozer.reasoning') }}</span>
             <select v-model="deliveryForm.c0d3r_reasoning">
-              <option value="medium">{{ t('branddozer.reasoning_medium') }}</option>
-              <option value="high">{{ t('branddozer.reasoning_high') }}</option>
-              <option value="extra_high">{{ t('branddozer.reasoning_extra_high') }}</option>
-              <option value="low">{{ t('branddozer.reasoning_low') }}</option>
+              <option
+                v-for="level in activeAgentReasoning"
+                :key="level"
+                :value="level"
+              >
+                {{ t(`branddozer.reasoning_${level}`) }}
+              </option>
             </select>
           </label>
+          <p v-if="activeAgentWarning" class="agent-warning full">{{ activeAgentWarning }}</p>
           <label class="full">
             <span>{{ t('branddozer.prompt') }}</span>
             <textarea
@@ -349,9 +362,11 @@
           <div class="delivery-block">
             <h4>{{ t('branddozer.sessions') }}</h4>
             <div v-if="!store.deliverySessions.length" class="empty">{{ t('branddozer.no_sessions') }}</div>
-            <div v-for="session in store.deliverySessions" :key="session.id" class="delivery-row">
-              <span>{{ session.role }}</span>
-              <span class="status-pill" :class="session.status === 'done' ? 'ok' : 'warn'">{{ session.status }}</span>
+            <div v-else class="delivery-scroll">
+              <div v-for="session in store.deliverySessions" :key="session.id" class="delivery-row">
+                <span>{{ session.role }}</span>
+                <span class="status-pill" :class="session.status === 'done' ? 'ok' : 'warn'">{{ session.status }}</span>
+              </div>
             </div>
           </div>
           <div class="delivery-block">
@@ -1054,7 +1069,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useBrandDozerStore } from '@/stores/branddozer';
 import { t } from '@/i18n';
 import ModelSelect from '@/components/ModelSelect.vue';
-import { brandResearchPaperDownloadUrl, fetchModelOptions } from '@/api';
+import { brandResearchPaperDownloadUrl, fetchModelOptions, type ModelOptions } from '@/api';
 
 const store = useBrandDozerStore();
 const selectedId = ref<string>('');
@@ -1111,6 +1126,8 @@ const deliveryForm = ref({
   codex_reasoning: 'medium',
   c0d3r_model: '',
   c0d3r_reasoning: 'high',
+  // Model chosen from a CLI agent's own set (Codex / Claude Code).
+  agent_model: '',
   wizard_brain_id: '',
   prompt: '',
   smoke_test_cmd: '',
@@ -1121,6 +1138,58 @@ const deliveryForm = ref({
 });
 const researchQuery = ref('');
 const wizardBrains = ref<Array<{ id: string; name: string; endpoint: string; chat_path: string }>>([]);
+
+// Agent catalog from /model-control/options/. Falls back to C0D3R V2 only, so
+// the picker still works if the endpoint is unreachable.
+const agentOptions = ref<ModelOptions['agents']>([
+  {
+    id: 'c0d3r',
+    label: 'C0D3R V2',
+    description: '',
+    owns_model: false,
+    models_key: '',
+    requires_cli: '',
+    available: true,
+    detail: '',
+    models: [],
+    reasoning: ['low', 'medium', 'high', 'extra_high'],
+  },
+]);
+
+const activeAgent = computed(
+  () => agentOptions.value.find((a) => a.id === deliveryForm.value.agent_provider) || null
+);
+const activeAgentOwnsModel = computed(() => activeAgent.value?.owns_model === true);
+const activeAgentModels = computed(() => activeAgent.value?.models || []);
+const activeAgentReasoning = computed(
+  () => activeAgent.value?.reasoning || ['low', 'medium', 'high', 'extra_high']
+);
+const activeAgentWarning = computed(() => {
+  const agent = activeAgent.value;
+  if (!agent || agent.available) return '';
+  return `${agent.label} is not installed on the server: ${agent.detail}. Runs using it will fail until the CLI is on PATH.`;
+});
+
+// Keep the model selection valid whenever the agent changes: CLI agents must
+// land on a model from their own set, C0D3R keeps the backend-driven picker.
+watch(
+  () => deliveryForm.value.agent_provider,
+  () => {
+    const models = activeAgentModels.value;
+    if (activeAgentOwnsModel.value) {
+      if (!models.includes(deliveryForm.value.agent_model)) {
+        deliveryForm.value.agent_model = models[0] || '';
+      }
+    } else {
+      deliveryForm.value.agent_model = '';
+    }
+    if (!activeAgentReasoning.value.includes(deliveryForm.value.c0d3r_reasoning)) {
+      deliveryForm.value.c0d3r_reasoning = activeAgentReasoning.value.includes('medium')
+        ? 'medium'
+        : activeAgentReasoning.value[0] || 'medium';
+    }
+  }
+);
 const researchStatus = ref('');
 const researchPaperOpen = ref(false);
 const researchLibraryRunId = ref('');
@@ -1185,6 +1254,7 @@ onMounted(async () => {
     deliveryForm.value.model_provider = backendMap[backend] || backend || 'freeloader';
     deliveryForm.value.session_provider = deliveryForm.value.model_provider;
     deliveryForm.value.c0d3r_model = opts.default?.model || '';
+    if (opts.agents?.length) agentOptions.value = opts.agents;
     wizardBrains.value = opts.wizard_brains || [];
     deliveryForm.value.wizard_brain_id =
       opts.default?.wizard_brain_id || wizardBrains.value[0]?.id || '';
@@ -2019,11 +2089,22 @@ async function startDeliveryRun() {
         : undefined,
       team_mode: deliveryForm.value.project_type === 'research' ? 'full' : deliveryForm.value.team_mode,
       agent_provider: deliveryForm.value.agent_provider,
-      model_provider: deliveryForm.value.model_provider,
-      session_provider: deliveryForm.value.model_provider,
-      codex_model: deliveryForm.value.codex_model,
+      // A CLI agent *is* the provider and supplies its own model; C0D3R V2
+      // instead delegates to the separately chosen model backend.
+      model_provider: activeAgentOwnsModel.value
+        ? deliveryForm.value.agent_provider
+        : deliveryForm.value.model_provider,
+      session_provider: activeAgentOwnsModel.value
+        ? deliveryForm.value.agent_provider
+        : deliveryForm.value.model_provider,
+      agent_model: activeAgentOwnsModel.value ? deliveryForm.value.agent_model : '',
+      codex_model: deliveryForm.value.agent_provider === 'codex'
+        ? deliveryForm.value.agent_model
+        : deliveryForm.value.codex_model,
       codex_reasoning: deliveryForm.value.codex_reasoning,
-      c0d3r_model: deliveryForm.value.c0d3r_model,
+      c0d3r_model: activeAgentOwnsModel.value
+        ? deliveryForm.value.agent_model
+        : deliveryForm.value.c0d3r_model,
       c0d3r_reasoning: deliveryForm.value.c0d3r_reasoning,
       wizard_brain_id: deliveryForm.value.wizard_brain_id,
       smoke_test_cmd: deliveryForm.value.smoke_test_cmd,
@@ -2723,6 +2804,29 @@ function formatTime(ts?: number | string | null) {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
+}
+
+/* Cap long session lists (~5 rows) so a run with dozens of role sessions
+   scrolls in place instead of stretching the whole delivery card. */
+.delivery-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 9.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(126, 168, 255, 0.45) transparent;
+  padding-right: 0.25rem;
+}
+
+.delivery-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.delivery-scroll::-webkit-scrollbar-thumb {
+  background: rgba(126, 168, 255, 0.45);
+  border-radius: 3px;
 }
 
 .import-head {

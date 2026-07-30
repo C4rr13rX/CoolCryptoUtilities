@@ -38,6 +38,8 @@ from tools.c0d3rV2.plugins.research_harvester import HarvestConfig, ResearchHarv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT = PROJECT_ROOT / "runtime" / "branddozer" / "research_papers"
+# CLI agents that act as their own provider and supply their own model set.
+_CLI_AGENTS = frozenset({"codex", "claude_code"})
 REQUIRED_SECTIONS = (
     "abstract",
     "keywords",
@@ -579,6 +581,7 @@ class ResearchWorkflow:
         self.policy = ResearchPolicy.from_context(run.context or {})
         context = run.context or {}
         self.agent_provider = str(context.get("agent_provider") or "c0d3r").strip().lower()
+        self.agent_model = str(context.get("agent_model") or "").strip()
         self.model_provider = str(
             context.get("model_provider")
             or session_provider_from_context(context)
@@ -620,13 +623,21 @@ class ResearchWorkflow:
         record.save(update_fields=["log_path"])
         client = None
         if self.agent_provider not in {"c0d3r", "coder", "c0d3rv2"}:
-            SessionClass = get_session_class(self.model_provider, explicit=True)
+            # CLI agents (Codex / Claude Code) are their own provider and carry
+            # their own model namespace; everything else routes by model backend.
+            provider = (
+                self.agent_provider if self.agent_provider in _CLI_AGENTS else self.model_provider
+            )
+            settings = default_settings(provider)
+            if self.agent_provider in _CLI_AGENTS and self.agent_model:
+                settings["model"] = self.agent_model
+            SessionClass = get_session_class(provider, explicit=True)
             client = SessionClass(
                 session_name=f"research-{role}-{record.id}",
                 transcript_dir=self.transcript_root,
                 read_timeout_s=None,
                 workdir=str(self.root),
-                **default_settings(self.model_provider),
+                **settings,
             )
         return record, client
 

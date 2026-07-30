@@ -172,8 +172,16 @@ def _is_bedrock_provider(provider: str) -> bool:
 
 
 def _is_codex_provider(provider: str) -> bool:
-    # Codex CLI removed — always False so legacy codex-specific checks are no-ops.
-    return False
+    # Codex CLI is a supported agent again; these checks gate CLI-specific
+    # handling (transcript/rate-limit behaviour) in the delivery loop.
+    return provider.strip().lower() in {"codex", "codex_cli", "openai_codex"}
+
+
+def _is_cli_agent(provider: str) -> bool:
+    """True for agents that drive themselves and own their model namespace."""
+    return provider.strip().lower() in {
+        "codex", "codex_cli", "openai_codex", "claude_code", "claudecode", "cc",
+    }
 
 
 
@@ -184,7 +192,12 @@ def _session_settings_for_run(run: DeliveryRun, role: str) -> Dict[str, Any]:
     provider = session_provider_from_context(run.context or {})
     settings = settings_for_role(provider, role)
     ctx = run.context or {}
-    model = (ctx.get("c0d3r_model") or ctx.get("model") or ctx.get("codex_model") or "").strip()
+    # A CLI agent's own model selection wins over the C0D3R backend model,
+    # since the two draw from different namespaces.
+    if _is_cli_agent(provider) and str(ctx.get("agent_model") or "").strip():
+        model = str(ctx["agent_model"]).strip()
+    else:
+        model = (ctx.get("c0d3r_model") or ctx.get("model") or ctx.get("codex_model") or "").strip()
     reasoning = _normalize_reasoning(
         ctx.get("c0d3r_reasoning") or ctx.get("reasoning_effort") or ctx.get("codex_reasoning")
     )

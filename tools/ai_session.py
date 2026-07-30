@@ -23,12 +23,18 @@ context["session_provider"]):
   claude   — Anthropic API direct (ClaudeSession).
   openai   — OpenAI API (OpenAISession) — last resort.
   freeloader — AgentTheFreeloader quota-aware free-model router.
+  codex    — The Codex CLI AGENT (CodexSession).  Like c0d3r, this is an
+             agent, not an LLM backend: it brings its own model set
+             (gpt-*-codex) and does its own planning/editing.
+  claude_code — The Claude Code CLI AGENT (ClaudeCodeSession).  Also an
+             agent with its own model set (claude-*).
 
 Preferred fallback order when none is specified or when `auto` is
 requested: wizard → bedrock → claude → openai.
 
-Codex CLI is no longer supported.  Any legacy "codex" references are
-silently mapped to "wizard".
+Note: "codex" used to be mapped to "wizard" when the Codex CLI was
+unsupported.  It is now a first-class agent provider again, so that
+legacy alias has been removed.
 """
 from __future__ import annotations
 
@@ -68,15 +74,18 @@ _OPENAI_ALIASES  = {"openai", "gpt", "openai_api"}
 _FREELOADER_ALIASES = {
     "freeloader", "agentthefreeloader", "agent_the_freeloader", "free_models",
 }
+# CLI agents.  These are agents (they plan/edit/run on their own) and own
+# their model namespaces, so they are never part of the LLM-backend
+# fallback cascade — an explicit request is required.
+_CODEX_ALIASES = {"codex", "codex_cli", "openai_codex"}
+_CLAUDE_CODE_ALIASES = {
+    "claude_code", "claudecode", "claude_code_cli", "cc",
+}
 
 # Cascading preference order — wizard first, OpenAI last by policy.
 _FALLBACK_ORDER  = ("wizard", "bedrock", "claude", "openai")
 
-# Legacy aliases: map old "codex" to wizard
-_LEGACY_MAP: Dict[str, str] = {
-    "codex": "wizard",
-    "openai_codex": "wizard",
-}
+_LEGACY_MAP: Dict[str, str] = {}
 
 
 def _normalise(raw: str) -> str:
@@ -101,6 +110,15 @@ def get_session_class(provider: str, *, explicit: bool = False) -> Type:
     from tools.ai_backend_mode import freeloader_mode_active
 
     norm = _normalise(provider or "wizard")
+    # CLI agents win over global freeloader mode: picking Codex or Claude
+    # Code is an explicit choice of agent, not of LLM backend, so the
+    # free-model router must not hijack it.
+    if norm in _CODEX_ALIASES:
+        from tools.codex_session import CodexSession
+        return CodexSession
+    if norm in _CLAUDE_CODE_ALIASES:
+        from tools.claude_code_session import ClaudeCodeSession
+        return ClaudeCodeSession
     if (freeloader_mode_active() and not explicit) or norm in _FREELOADER_ALIASES:
         from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
         return AgentTheFreeloaderSession
@@ -121,6 +139,12 @@ def default_settings(provider: str) -> Dict[str, Any]:
     if freeloader_mode_active() and not provider:
         return {}
     norm = _normalise(provider or "wizard")
+    if norm in _CODEX_ALIASES:
+        from tools.codex_session import codex_default_settings
+        return codex_default_settings()
+    if norm in _CLAUDE_CODE_ALIASES:
+        from tools.claude_code_session import claude_code_default_settings
+        return claude_code_default_settings()
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
         return {}
     if norm in _BEDROCK_ALIASES:
@@ -135,6 +159,12 @@ def settings_for_role(provider: str, role: str | None = None) -> Dict[str, Any]:
     if freeloader_mode_active() and not provider:
         return {}
     norm = _normalise(provider or "wizard")
+    if norm in _CODEX_ALIASES:
+        from tools.codex_session import codex_settings_for_role
+        return codex_settings_for_role(role)
+    if norm in _CLAUDE_CODE_ALIASES:
+        from tools.claude_code_session import claude_code_settings_for_role
+        return claude_code_settings_for_role(role)
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
         return {}
     if norm in _BEDROCK_ALIASES:
@@ -148,6 +178,12 @@ def _probe(provider: str) -> bool:
     will accept a real request right now."""
     norm = _normalise(provider)
     try:
+        if norm in _CODEX_ALIASES:
+            import shutil
+            return shutil.which(os.getenv("CODEX_EXECUTABLE", "codex")) is not None
+        if norm in _CLAUDE_CODE_ALIASES:
+            from tools.claude_code_session import claude_code_available
+            return claude_code_available()
         if norm in _FREELOADER_ALIASES:
             from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
             return bool(AgentTheFreeloaderSession.probe().get("online"))

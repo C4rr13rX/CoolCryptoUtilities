@@ -111,7 +111,76 @@ CURATED_MODELS = {
         "gpt-5.2",
         "o4-mini",
     ],
+    # Claude Code CLI drives its own model set; these are the IDs the CLI
+    # accepts for --model.
+    "claude_code": [
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5-20251001",
+        "claude-fable-5",
+    ],
 }
+
+# Agents that can *drive* a delivery run, as opposed to LLM backends that
+# merely answer prompts.  C0D3R V2 delegates to a selectable model
+# backend; the CLI agents (Codex, Claude Code) bring their own model
+# namespace and therefore ignore the backend picker.
+AGENTS = (
+    {
+        "id": "c0d3r",
+        "label": "C0D3R V2",
+        "description": "In-house recursive agent; you choose its model backend.",
+        "owns_model": False,
+        "models_key": "",
+        "requires_cli": "",
+    },
+    {
+        "id": "codex",
+        "label": "Codex CLI",
+        "description": "OpenAI Codex CLI agent; uses its own gpt-*-codex models.",
+        "owns_model": True,
+        "models_key": "codex",
+        "requires_cli": "codex",
+    },
+    {
+        "id": "claude_code",
+        "label": "Claude Code",
+        "description": "Anthropic Claude Code CLI agent; uses its own claude-* models.",
+        "owns_model": True,
+        "models_key": "claude_code",
+        "requires_cli": "claude",
+    },
+)
+
+# Reasoning/effort vocabularies differ per agent.
+AGENT_REASONING = {
+    "c0d3r": ["low", "medium", "high", "extra_high"],
+    "codex": ["low", "medium", "high", "extra_high"],
+    "claude_code": ["low", "medium", "high", "extra_high"],
+}
+
+
+def _agent_catalog() -> list[dict[str, Any]]:
+    """Agents plus live CLI availability, so the UI can flag missing tools."""
+    import shutil
+
+    out = []
+    for agent in AGENTS:
+        cli = agent["requires_cli"]
+        available = True
+        detail = ""
+        if cli:
+            resolved = shutil.which(cli)
+            available = resolved is not None
+            detail = resolved or f"`{cli}` not found on PATH"
+        out.append({
+            **agent,
+            "available": available,
+            "detail": detail,
+            "models": CURATED_MODELS.get(agent["models_key"], []) if agent["owns_model"] else [],
+            "reasoning": AGENT_REASONING.get(agent["id"], ["medium"]),
+        })
+    return out
 
 
 def _setting_value(user, name: str) -> str:
@@ -262,6 +331,7 @@ class ModelOptionsView(APIView):
             },
             "wizard_brains": list_wizard_brains(request.user),
             "backends": BACKENDS,
+            "agents": _agent_catalog(),
             "curated": CURATED_MODELS,
             "catalog": catalog,
         })

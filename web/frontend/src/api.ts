@@ -694,6 +694,18 @@ export interface ModelOptions {
   default: { backend: string; model: string; label: string; wizard_brain_id: string };
   wizard_brains: WizardBrain[];
   backends: Array<{ id: string; label: string; description: string }>;
+  agents: Array<{
+    id: string;
+    label: string;
+    description: string;
+    owns_model: boolean;
+    models_key: string;
+    requires_cli: string;
+    available: boolean;
+    detail: string;
+    models: string[];
+    reasoning: string[];
+  }>;
   curated: Record<string, string[]>;
   catalog: Array<{ id: string; provider: string; best_at: string; configured: boolean }>;
 }
@@ -927,11 +939,13 @@ export async function startBrandDeliveryRun(payload: {
   session_provider?: string;
   agent_provider?: string;
   model_provider?: string;
+  agent_model?: string;
   codex_model?: string;
   codex_reasoning?: string;
   c0d3r_model?: string;
   c0d3r_reasoning?: string;
   smoke_test_cmd?: string;
+  wizard_brain_id?: string;
 }) {
   const { data } = await api.post('/branddozer/delivery/runs/', payload, { timeout: 120000 });
   return data;
