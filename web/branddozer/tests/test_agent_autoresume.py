@@ -153,3 +153,35 @@ class HeartbeatSweepTests(TestCase):
 
         hb.sweep(force=True)
         self.assertTrue(hb.sweep().get("skipped"))
+
+
+class RealAgentMessageTests(TestCase):
+    """Detection must match what the CLIs actually print.
+
+    Regression guard: a live run failed with Claude Code's real wording,
+    "You've hit your session limit - resets 7pm (America/New_York)", which
+    matched none of the original markers. The run errored instead of
+    pausing, so auto-resume never engaged.
+    """
+
+    def test_claude_code_session_limit_is_a_cooldown(self):
+        msg = "You've hit your session limit - resets 7pm (America/New_York)"
+        self.assertEqual(classify_block(msg), "cooldown")
+
+    def test_claude_code_reset_time_is_parsed(self):
+        msg = "You've hit your session limit - resets 7pm (America/New_York)"
+        got = parse_reset_at(msg, now=NOW)
+        self.assertIsNotNone(got)
+        # 7pm America/New_York is 23:00 UTC during daylight saving.
+        self.assertEqual(got.hour, 23)
+
+    def test_wall_clock_reset_with_minutes(self):
+        got = parse_reset_at("usage limit; resets at 3:30am (America/Chicago)", now=NOW)
+        self.assertIsNotNone(got)
+        self.assertEqual(got.minute, 30)
+
+    def test_reset_time_already_past_rolls_to_tomorrow(self):
+        """A reset earlier than now refers to the next occurrence."""
+        got = parse_reset_at("resets at 1am (UTC)", now=NOW)
+        self.assertIsNotNone(got)
+        self.assertGreater(got, NOW)

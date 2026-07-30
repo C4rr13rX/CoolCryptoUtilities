@@ -2629,9 +2629,10 @@ class DeliveryOrchestrator:
         setpoints = load_setpoints()
         root = Path(project.root_path)
         if bool((run.context or {}).get("research_mode")):
-            try:
-                from branddozer.research import run_research_workflow
+            # Imported before the try so the except clause can name it.
+            from branddozer.research import AgentLimited, run_research_workflow
 
+            try:
                 run_research_workflow(run, root)
             except StopDelivery as exc:
                 run.status = "blocked"
@@ -2641,6 +2642,13 @@ class DeliveryOrchestrator:
                 run.save(
                     update_fields=["status", "phase", "error", "completed_at"]
                 )
+            except AgentLimited as exc:
+                # The agent is rate-limited, not broken. Pause so the
+                # auto-resume heartbeat can restart the run once the
+                # cooldown clears; evidence already gathered is preserved.
+                _pause_run_for_codex(run, None, str(exc))
+                run.phase = "research_paused"
+                run.save(update_fields=["phase"])
             except Exception as exc:
                 run.status = "error"
                 run.phase = "research_error"

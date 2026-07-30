@@ -28,7 +28,14 @@ from typing import Any, Optional
 
 # Cooldowns clear on their own; these are safe to retry automatically.
 COOLDOWN_MARKERS = (
+    # Claude Code's real wording, observed in a live run:
+    #   "You've hit your session limit · resets 7pm (America/New_York)"
+    "session limit",
+    "hit your limit",
+    "usage limit",
     "usage limit reached",
+    "resets ",
+    "limit will reset",
     "rate limit",
     "rate_limit",
     "too many requests",
@@ -140,6 +147,43 @@ def parse_reset_at(text: str, *, now: Optional[datetime] = None) -> Optional[dat
         unit = rel.group(2)
         factor = 1 if unit.startswith("s") else 60 if unit.startswith("m") else 3600
         return now + timedelta(seconds=amount * factor)
+
+    # Wall-clock reset, which is what Claude Code actually prints:
+    #   "You've hit your session limit · resets 7pm (America/New_York)"
+    # An explicit IANA zone may follow; without one, interpret in local time.
+    clock = re.search(
+        r"resets?(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?"
+        r"(?:\s*\(([A-Za-z]+/[A-Za-z_]+)\))?",
+        lowered,
+    )
+    if clock:
+        hour = int(clock.group(1))
+        minute = int(clock.group(2) or 0)
+        meridiem = clock.group(3)
+        zone_name = clock.group(4)
+        if meridiem == "pm" and hour != 12:
+            hour += 12
+        elif meridiem == "am" and hour == 12:
+            hour = 0
+        if 0 <= hour <= 23:
+            tz: Any = dt_timezone.utc
+            if zone_name:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    tz = ZoneInfo(zone_name)
+                except Exception:
+                    tz = now.astimezone().tzinfo or dt_timezone.utc
+            else:
+                tz = now.astimezone().tzinfo or dt_timezone.utc
+            local_now = now.astimezone(tz)
+            candidate = local_now.replace(
+                hour=hour, minute=minute, second=0, microsecond=0
+            )
+            # A reset time already past today refers to tomorrow.
+            if candidate <= local_now:
+                candidate += timedelta(days=1)
+            return candidate.astimezone(dt_timezone.utc)
 
     return None
 

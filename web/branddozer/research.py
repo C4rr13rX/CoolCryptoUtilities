@@ -38,6 +38,19 @@ from tools.c0d3rV2.plugins.research_harvester import HarvestConfig, ResearchHarv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT = PROJECT_ROOT / "runtime" / "branddozer" / "research_papers"
+
+
+class AgentLimited(RuntimeError):
+    """The agent hit a usage limit; the run should pause, not fail.
+
+    Carries the reset time so the auto-resume heartbeat knows when the
+    agent is expected back.
+    """
+
+    def __init__(self, message: str, *, block_kind: str = "cooldown", reset_at=None):
+        super().__init__(message)
+        self.block_kind = block_kind
+        self.reset_at = reset_at
 # CLI agents that act as their own provider and supply their own model set.
 _CLI_AGENTS = frozenset({"codex", "claude_code"})
 REQUIRED_SECTIONS = (
@@ -504,30 +517,40 @@ def _verify_source(
     )
     stored = result.get("stored") or []
     if not stored:
+        error_detail = (
+            (result.get("errors") or [{}])[-1].get("error")
+            or "source could not be independently retrieved"
+        )
+        # Record *why* retrieval failed. A robots.txt block or size limit is
+        # an access problem, not evidence that the source is unsound, and a
+        # fact-checker must be able to tell those apart.
+        from branddozer.reproducibility import classify_failure
+
         candidate.update(
             verification_status="rejected",
-            verification_detail=(
-                (result.get("errors") or [{}])[-1].get("error")
-                or "source could not be independently retrieved"
-            ),
+            verification_detail=error_detail,
+            failure_kind=classify_failure(error_detail),
         )
         return candidate
     record = stored[0]
     document = harvester.document(str(record.get("url") or url))
-    passage = re.sub(
-        r"\s+", " ", str(candidate.get("verified_passage") or "")
-    ).strip()
-    content = re.sub(
-        r"\s+", " ", str((document or {}).get("content") or "")
-    ).strip()
-    if len(passage) < 40 or passage.casefold() not in content.casefold():
+    passage = str(candidate.get("verified_passage") or "")
+    content = str((document or {}).get("content") or "")
+    # Normalised matching: publishers substitute non-breaking hyphens, curly
+    # quotes and nbsp, which made correct quotations fail a naive compare.
+    # The words must still match verbatim; only typography is folded.
+    from branddozer.reproducibility import passage_matches, snapshot_id
+
+    match = passage_matches(passage, content)
+    if not match["matched"]:
         candidate.update(
             verification_status="rejected",
             verification_detail=(
-                "source was retrieved, but the agent's purported supporting passage "
-                "was not found verbatim in the fetched document"
+                f"source was retrieved, but {match['detail']}"
             ),
+            failure_kind=match["outcome"],
             content_sha256=str(record.get("sha256") or ""),
+            snapshot=snapshot_id(url, content),
         )
         return candidate
     doi = str(candidate.get("doi") or "").strip()
@@ -540,6 +563,10 @@ def _verify_source(
         retrieved_at=timezone.now().isoformat(),
         verification_status="verified",
         verification_detail="retrieved and content-hashed by ResearchHarvester",
+        failure_kind="",
+        # Snapshot id ties the verdict to the exact text that was matched,
+        # so the check can be replayed offline and drift can be detected.
+        snapshot=snapshot_id(url, content),
     )
     return candidate
 
@@ -593,6 +620,39 @@ def persist_paper_files(paper: ResearchPaper) -> None:
     paper.markdown_path = str(markdown_path)
     paper.pdf_path = str(pdf_path)
     paper.save(update_fields=["markdown_path", "pdf_path", "updated_at"])
+
+    # Publish the verification manifest next to the paper so any later
+    # fact-checker — human or model — can replay every source check.
+    try:
+        from branddozer.reproducibility import build_manifest
+
+        manifest = build_manifest(
+            [
+                {
+                    "citation_key": source.citation_key,
+                    "url": source.url,
+                    "verification_status": source.verification_status,
+                    "verification_detail": source.verification_detail,
+                    "content_sha256": source.content_sha256,
+                    "retrieved_at": (
+                        source.retrieved_at.isoformat() if source.retrieved_at else ""
+                    ),
+                    "verified_passage": source.verified_passage,
+                }
+                for source in paper.sources.all()
+            ],
+            paper_sha256=paper.content_sha256,
+            claims=[
+                {"claim_text": claim.claim_text, "source_keys": claim.source_keys}
+                for claim in paper.claims.all()
+            ],
+        )
+        (directory / f"verification-v{paper.version}.json").write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
+    except Exception:
+        # A manifest failure must never lose the paper itself.
+        pass
 
 
 class ResearchWorkflow:
@@ -672,6 +732,32 @@ class ResearchWorkflow:
             )
         return record, client
 
+    def _raise_if_agent_limited(self, output: str, record: DeliverySession) -> None:
+        """Turn an agent usage-limit reply into a pausable AgentLimited error.
+
+        Claude Code and Codex report limits as ordinary output, e.g.
+        "You've hit your session limit · resets 7pm (America/New_York)".
+        Without this the text simply fails JSON extraction and the run dies
+        with a misleading "no complete JSON object".
+        """
+        text = (output or "").strip()
+        if not text or len(text) > 2000:
+            # Real role output is long JSON; limit notices are short.
+            return
+        from services.branddozer_agent_watch import classify_block, parse_reset_at
+
+        kind = classify_block(text)
+        if kind == "unknown":
+            return
+        reset_at = parse_reset_at(text)
+        record.meta = {
+            **(record.meta or {}),
+            "agent_limited": True,
+            "block_kind": kind,
+            "reset_at": reset_at.isoformat() if reset_at else None,
+        }
+        raise AgentLimited(text, block_kind=kind, reset_at=reset_at)
+
     @staticmethod
     def _write_log(record: DeliverySession, text: str) -> None:
         if record.log_path:
@@ -720,6 +806,11 @@ class ResearchWorkflow:
                     raise RuntimeError("research model client was not initialized")
                 output = client.send(prompt, stream=False, system=system)
             self._write_log(record, f"OUTPUT\n{output}")
+            # An agent that reports a usage limit has not produced a bad
+            # answer — it produced no answer. Surface that as a pausable
+            # cooldown so the heartbeat can resume the run when the limit
+            # clears, instead of failing it as malformed JSON.
+            self._raise_if_agent_limited(output, record)
             payload = _extract_json(
                 output, expected_keys=ROLE_SCHEMA_KEYS.get(role)
             )
