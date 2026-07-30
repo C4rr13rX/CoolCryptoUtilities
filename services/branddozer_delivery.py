@@ -1087,8 +1087,19 @@ def _pause_run_for_codex(run: DeliveryRun, session: Optional[DeliverySession], r
     run.status = "blocked"
     run.error = note
     context = dict(run.context or {})
+    # Classify at pause time against the *full* reason: `note` is truncated
+    # to 400 chars and an explicit reset timestamp often sits past that cut.
+    try:
+        from services.branddozer_agent_watch import classify_block, parse_reset_at
+
+        block_kind = classify_block(reason)
+        reset_at = parse_reset_at(reason)
+    except Exception:
+        block_kind, reset_at = "unknown", None
     context["ai_paused"] = {
         "reason": note,
+        "block_kind": block_kind,
+        "reset_at": reset_at.isoformat() if reset_at else None,
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "session": str(session.id) if session else None,
     }

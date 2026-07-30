@@ -55,6 +55,9 @@ class Command(BaseCommand):
             if not job:
                 if run_once:
                     break
+                # Idle time is the right moment to check whether a run that
+                # was paused on a Claude Code / Codex cooldown can restart.
+                self._agent_heartbeat()
                 time.sleep(idle_sleep)
                 continue
 
@@ -67,6 +70,29 @@ class Command(BaseCommand):
                 break
 
         close_old_connections()
+
+    def _agent_heartbeat(self):
+        """Auto-resume runs whose agent cooldown has elapsed.
+
+        Self-throttled to HEARTBEAT_INTERVAL_SEC, so calling it on every
+        idle tick is cheap. Never allowed to kill the worker loop.
+        """
+        if os.getenv("BRANDDOZER_AGENT_AUTORESUME", "1").strip().lower() in {
+            "0", "false", "no", "off"
+        }:
+            return
+        try:
+            from services.branddozer_agent_heartbeat import sweep
+
+            result = sweep()
+            if result.get("resumed"):
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Auto-resumed {result['resumed']} run(s) after agent cooldown."
+                    )
+                )
+        except Exception as exc:
+            self.stdout.write(self.style.WARNING(f"Agent heartbeat error: {exc}"))
 
     def _process_job(self, job):
         if job.kind == "github_import":
