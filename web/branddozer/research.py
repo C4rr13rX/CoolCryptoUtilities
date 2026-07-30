@@ -259,6 +259,16 @@ def _authority_tier(source: dict[str, Any]) -> int:
         marker in publisher for marker in ("university", "institute", "journal")
     ):
         return 2
+    # A first-party record authenticated by provenance classification (the
+    # subject's own corporate domain, a court docket, a regulatory filing) is
+    # authoritative *for claims about the subject* — often more so than
+    # secondary coverage. Without this, a study of a company's own programs
+    # scores its primary documents no higher than an anonymous blog and can
+    # never satisfy the authoritative-sources gate.
+    if bool(source.get("first_party")) and source.get("provenance_status") in {
+        "verified", "corroborated"
+    }:
+        return 2
     return 1
 
 

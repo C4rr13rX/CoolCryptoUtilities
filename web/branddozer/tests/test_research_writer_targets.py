@@ -89,3 +89,34 @@ class WriterInstructionTests(TestCase):
         workflow = self._workflow(min_words=5000)
         prompt = self._capture_prompt(workflow)
         self.assertNotIn("Failed gates to fix", prompt)
+
+
+class AuthorityTierTests(TestCase):
+    """First-party records must count as authoritative for the subject.
+
+    Regression guard: corporate.target.com was classified first-party and
+    provenance-verified, yet scored tier 1 (same as an anonymous blog), so a
+    study of a company's own programs could never satisfy the
+    authoritative-sources gate.
+    """
+
+    def _tier(self, source):
+        from branddozer.research import _authority_tier, _classify_source_provenance
+
+        return _authority_tier(_classify_source_provenance(source))
+
+    def test_corporate_primary_domain_is_authoritative(self):
+        tier = self._tier({"url": "https://corporate.target.com/press/releases/x"})
+        self.assertGreaterEqual(tier, 2)
+
+    def test_government_domain_stays_top_tier(self):
+        self.assertEqual(self._tier({"url": "https://cbc.house.gov/news/x"}), 3)
+
+    def test_doi_source_is_authoritative(self):
+        self.assertGreaterEqual(self._tier({"url": "https://doi.org/10.1234/x"}), 2)
+
+    def test_unaffiliated_blog_stays_lowest_tier(self):
+        self.assertEqual(self._tier({"url": "https://some-random-blog.example/post"}), 1)
+
+    def test_encyclopedia_is_not_authoritative(self):
+        self.assertEqual(self._tier({"url": "https://en.wikipedia.org/wiki/Target"}), 1)
