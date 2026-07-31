@@ -242,3 +242,56 @@ class PassageExtractionTests(TestCase):
     def test_alternate_object_keys_are_read(self):
         got = self._extract({"verified_passages": [{"quote": "via quote key"}]})
         self.assertEqual(got, ["via quote key"])
+
+
+class DiscoveryRankingTests(TestCase):
+    """Candidates must be ranked by the authority the gate actually scores.
+
+    Regression guard: discovery ranked only by the search provider's
+    relevance score, so journalism crowded out corporate filings and DOIs
+    within the 24-candidate cap. Reviewers then cited what they were
+    shown, and the paper failed the authoritative-sources gate on evidence
+    it was never offered.
+    """
+
+    def _rank(self, candidates):
+        from branddozer.research import _authority_tier, _classify_source_provenance
+
+        return sorted(
+            candidates,
+            key=lambda c: (
+                -_authority_tier(_classify_source_provenance(c)),
+                -int(bool(_classify_source_provenance(c).get("first_party"))),
+                -int(c.get("metadata_relevance") or 0),
+                -int(c.get("authority_score") or 0),
+            ),
+        )
+
+    def test_primary_records_outrank_high_relevance_journalism(self):
+        ranked = self._rank(
+            [
+                {"url": "https://www.forbes.com/a", "metadata_relevance": 10},
+                {"url": "https://corporate.target.com/press/x", "metadata_relevance": 1},
+                {"url": "https://doi.org/10.1/x", "metadata_relevance": 1},
+            ]
+        )
+        self.assertIn("doi.org", ranked[0]["url"])
+        self.assertIn("forbes.com", ranked[-1]["url"])
+
+    def test_government_records_rank_top(self):
+        ranked = self._rank(
+            [
+                {"url": "https://en.wikipedia.org/wiki/X", "metadata_relevance": 9},
+                {"url": "https://cbc.house.gov/news/x", "metadata_relevance": 1},
+            ]
+        )
+        self.assertIn("house.gov", ranked[0]["url"])
+
+    def test_relevance_still_breaks_ties_within_a_tier(self):
+        ranked = self._rank(
+            [
+                {"url": "https://a.example/1", "metadata_relevance": 2},
+                {"url": "https://b.example/2", "metadata_relevance": 8},
+            ]
+        )
+        self.assertIn("b.example", ranked[0]["url"])

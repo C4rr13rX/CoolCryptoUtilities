@@ -1069,9 +1069,15 @@ class ResearchWorkflow:
                     key = re.sub(r"[?#].*$", "", url.lower())
                     if key:
                         unique[key] = candidate
+            # Rank by the same authority tier the acceptance gate scores, not
+            # only by the search provider's own relevance. The candidate list
+            # is truncated to 24, so without this a page of journalism can
+            # crowd out the corporate filings and DOIs the gate requires.
             discovered = sorted(
                 unique.values(),
                 key=lambda candidate: (
+                    -_authority_tier(_classify_source_provenance(candidate)),
+                    -int(bool(_classify_source_provenance(candidate).get("first_party"))),
                     -int(candidate.get("metadata_relevance") or 0),
                     -int(candidate.get("authority_score") or 0),
                 ),
@@ -1092,7 +1098,23 @@ class ResearchWorkflow:
                 "against the retrieved document, and the source is rejected "
                 "if it is absent, so copy it character-for-character. "
                 "Classify source_class, first_party, "
-                "provenance_status, and provenance_detail. Search official releases, "
+                "provenance_status, and provenance_detail. "
+                # The acceptance gate scores sources by authority tier and
+                # first-party status. Without stating the hierarchy here,
+                # reviewers pick readable journalism over the primary records
+                # the gate actually requires, and the paper fails on evidence
+                # quality it was never asked for.
+                "SOURCE PRIORITY (the acceptance gate scores this): prefer, in "
+                "order, (1) the subject's own filings and press releases on its "
+                "official corporate domain, (2) government, court, and "
+                "regulatory records on .gov domains, (3) peer-reviewed work "
+                "with a DOI, then (4) reputable journalism. When a candidate "
+                "URL below is a corporate, .gov, or doi.org source that bears "
+                "on your work package, you must use it rather than a secondary "
+                "article reporting on it; cite journalism only for facts no "
+                "primary record covers. Encyclopedia entries are pointers to "
+                "primary sources, not evidence for program attributes. "
+                "Search official releases, "
                 "filings, court/FOIA records, public archives, WikiLeaks, and comparable "
                 "public document repositories. A leak is direct evidence of its contents "
                 "only until authenticity, completeness, chain of custody, and context "
