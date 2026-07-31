@@ -89,6 +89,10 @@ urlpatterns = [
     path("api/diag", views.ApiDiagView.as_view()),
     path("advisories/", views.AdvisoriesPageView.as_view(), name="advisories"),
     path("advisories", views.AdvisoriesPageView.as_view()),
+    # The presentation player is a multi-segment SPA route, so the single
+    # <slug:route> catch-all below cannot serve it.
+    path("paper/<str:paper_id>/present/", views.PaperPresentView.as_view(), name="paper-present"),
+    path("paper/<str:paper_id>/present", views.PaperPresentView.as_view()),
     path("<slug:route>/", views.SpaRouteView.as_view(), name="spa-route"),
     path("<slug:route>", views.SpaRouteView.as_view()),
 ]

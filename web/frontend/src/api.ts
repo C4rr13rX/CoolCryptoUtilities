@@ -819,6 +819,85 @@ export async function fetchBrandProjects() {
   return data;
 }
 
+export interface PresentationWord {
+  word: string;
+  start_ms: number;
+  end_ms: number;
+}
+
+export interface PresentationSlide {
+  index: number;
+  kind: string;
+  text: string;
+  section: string;
+  words: PresentationWord[];
+  audio_ms: number | null;
+  duration_ms: number;
+  audio_url: string;
+  background_url: string;
+  notes: string;
+}
+
+export interface PresentationDeck {
+  schema_version: string;
+  paper_id: string;
+  title: string;
+  abstract: string;
+  slide_count: number;
+  estimated_duration_ms: number;
+  narrated: boolean;
+  slides: PresentationSlide[];
+  timeline: Array<{ slide_index: number; at_ms: number; kind: string; accent: boolean }>;
+  options: {
+    transitions: string[];
+    word_animations: string[];
+    color_schemes: Record<string, string>;
+    color_ratios: Record<string, number[]>;
+  };
+  paper_status?: string;
+  media_failures?: Array<{ index: number; error: string }>;
+  score?: {
+    composed: boolean;
+    key?: string;
+    bpm?: number;
+    rationale?: string;
+    alignment?: { transitions: number; aligned: number; alignment_rate: number };
+    error?: string;
+  };
+}
+
+export async function fetchResearchPresentation(paperId: string): Promise<PresentationDeck> {
+  const { data } = await api.get(`/branddozer/research/papers/${paperId}/presentation/`);
+  return data as PresentationDeck;
+}
+
+export async function generateResearchPresentationMedia(
+  paperId: string,
+  payload: {
+    limit?: number;
+    voice_id?: string;
+    transition?: string;
+    word_animation?: string;
+    score?: boolean;
+  },
+): Promise<PresentationDeck> {
+  // Narration is two Polly calls per slide, so this can run long.
+  const { data } = await api.post(
+    `/branddozer/research/papers/${paperId}/presentation/media/`,
+    payload,
+    { timeout: 1800000 },
+  );
+  return data as PresentationDeck;
+}
+
+export function researchPresentationAudioUrl(paperId: string, index: number): string {
+  return `${api.defaults.baseURL}/branddozer/research/papers/${paperId}/presentation/audio/${index}/`;
+}
+
+export function researchPresentationScoreUrl(paperId: string): string {
+  return `${api.defaults.baseURL}/branddozer/research/papers/${paperId}/presentation/score/`;
+}
+
 export interface BrandPhase {
   role: string;
   label: string;

@@ -14,6 +14,10 @@ import CodeGraphView from '@/views/CodeGraphView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 import BrandDozerView from '@/views/BrandDozerView.vue';
+// Statically imported like every other view: Vite has no `base` configured,
+// so a lazy chunk requests /assets/... while Django serves /static/assets/...,
+// and the route fails to load its stylesheet.
+import PresentationView from '@/views/PresentationView.vue';
 import U53RxRobotView from '@/views/U53RxRobotView.vue';
 import AddressBookView from '@/views/AddressBookView.vue';
 import C0d3rView from '@/views/C0d3rView.vue';
@@ -120,6 +124,13 @@ const routes: RouteRecordRaw[] = [
     name: 'branddozer_solo',
     component: BrandDozerView,
     meta: { layout: 'solo', title: 'BrandDozer' },
+  },
+  {
+    path: '/paper/:paperId/present',
+    name: 'paper_present',
+    component: PresentationView,
+    // Full-screen player: no site chrome, so it reads as its own app on a phone.
+    meta: { layout: 'solo', title: 'Presentation' },
   },
   {
     path: '/u53rxr080t',

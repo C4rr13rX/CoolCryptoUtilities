@@ -443,6 +443,17 @@ class SpaRouteView(BaseSecureView):
         return super().dispatch(request, *args, **kwargs)
 
 
+class PaperPresentView(BaseSecureView):
+    """SPA shell for the full-screen presentation player.
+
+    Separate from SpaRouteView because that view matches a single slug
+    against a fixed allowlist, while this route carries a paper id
+    (/paper/<uuid>/present). Authentication still applies.
+    """
+
+    initial_route = "paper_present"
+
+
 class SystemLogListView(View):
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
         component = str(request.GET.get("component") or "").strip()
