@@ -244,3 +244,45 @@ class EvidenceLoopAgentLimitTests(TestCase):
         # Packages return to todo so a resumed run retries them.
         for item in items:
             self.assertEqual(item.status, "todo")
+
+
+class TransientFailureTests(TestCase):
+    """A dropped connection is retried, not quarantined.
+
+    Regression guard: three work packages died on "API Error: Connection
+    closed mid-response", surfaced as "research agent returned no complete
+    JSON object" — which reads as a model defect and permanently
+    quarantined the package for what was a momentary network blip.
+    """
+
+    def _transient(self, text):
+        from branddozer.research import _is_transient
+
+        return _is_transient(text)
+
+    def test_detects_the_real_dropped_connection(self):
+        self.assertTrue(
+            self._transient(
+                "API Error: Connection closed mid-response. "
+                "The response above may be incomplete."
+            )
+        )
+
+    def test_detects_common_transport_errors(self):
+        for text in ("503 Service Unavailable", "read timed out", "502 Bad Gateway"):
+            self.assertTrue(self._transient(text), text)
+
+    def test_valid_output_is_not_transient(self):
+        self.assertFalse(self._transient('{"findings": [], "sources": []}'))
+
+    def test_agent_limit_is_not_transient(self):
+        """Limits need a pause; retrying immediately would just re-fail."""
+        self.assertFalse(
+            self._transient("You've hit your session limit - resets 7pm (America/New_York)")
+        )
+
+    def test_retry_budget_is_bounded(self):
+        from branddozer.research import MAX_TRANSIENT_RETRIES
+
+        self.assertGreaterEqual(MAX_TRANSIENT_RETRIES, 1)
+        self.assertLessEqual(MAX_TRANSIENT_RETRIES, 3)

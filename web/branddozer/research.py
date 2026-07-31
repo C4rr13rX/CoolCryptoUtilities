@@ -40,6 +40,33 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT = PROJECT_ROOT / "runtime" / "branddozer" / "research_papers"
 
 
+# Transport-level failures that say nothing about the model's answer. A
+# dropped connection mid-response permanently quarantined a work package;
+# these are worth one bounded retry before giving up on real work.
+_TRANSIENT_MARKERS = (
+    "connection closed mid-response",
+    "connection reset",
+    "connection aborted",
+    "connection error",
+    "read timed out",
+    "timeout while",
+    "temporarily unavailable",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway",
+    "eof occurred",
+)
+
+# One retry: enough to ride out a blip, not enough to hammer a sick provider
+# or multiply cost across eight parallel packages.
+MAX_TRANSIENT_RETRIES = 1
+
+
+def _is_transient(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _TRANSIENT_MARKERS)
+
+
 class AgentLimited(RuntimeError):
     """The agent hit a usage limit; the run should pause, not fail.
 
@@ -852,12 +879,33 @@ class ResearchWorkflow:
                 if client is None:
                     raise RuntimeError("research model client was not initialized")
                 output = client.send(prompt, stream=False, system=system)
+                # A dropped connection is a transport failure, not a bad
+                # answer. Without a retry it permanently quarantines a work
+                # package, so a momentary blip costs an entire evidence
+                # stream. Agent limits are excluded: those need a pause, not
+                # an immediate retry.
+                for attempt in range(MAX_TRANSIENT_RETRIES):
+                    if not _is_transient(output):
+                        break
+                    self._write_log(
+                        record,
+                        f"TRANSIENT (attempt {attempt + 1}) retrying: {output.strip()[:200]}",
+                    )
+                    output = client.send(prompt, stream=False, system=system)
             self._write_log(record, f"OUTPUT\n{output}")
             # An agent that reports a usage limit has not produced a bad
             # answer — it produced no answer. Surface that as a pausable
             # cooldown so the heartbeat can resume the run when the limit
             # clears, instead of failing it as malformed JSON.
             self._raise_if_agent_limited(output, record)
+            # Report a transport failure as such. "no complete JSON object"
+            # reads as a model defect and sent earlier debugging down the
+            # wrong path when the real cause was a dropped connection.
+            if _is_transient(output):
+                raise RuntimeError(
+                    f"provider transport failure after "
+                    f"{MAX_TRANSIENT_RETRIES} retry: {output.strip()[:200]}"
+                )
             payload = _extract_json(
                 output, expected_keys=ROLE_SCHEMA_KEYS.get(role)
             )
