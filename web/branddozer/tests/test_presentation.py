@@ -16,7 +16,6 @@ from branddozer.presentation_media import (
     TRANSITIONS,
     WORD_ANIMATIONS,
     background_prompt,
-    music_prompt,
     palette_prompt,
     score_sync_points,
 )
@@ -167,14 +166,6 @@ class MediaPromptTests(TestCase):
         self.assertIn("No text", text)
         self.assertIn("Findings", text)
 
-    def test_music_prompt_states_the_target_model_and_length(self):
-        text = music_prompt(
-            "Title", "Abstract", {"mood": ["sober"]}, 90000, "facebook/musicgen-small"
-        )
-        self.assertIn("facebook/musicgen-small", text)
-        self.assertIn("90 seconds", text)
-        self.assertIn("no vocals", text.lower())
-
     def test_known_ratios_and_effects_are_declared(self):
         self.assertIn("60_30_10", COLOR_RATIOS)
         self.assertIn("crossfade", TRANSITIONS)
@@ -191,7 +182,7 @@ class ScoreSyncTests(TestCase):
         points = score_sync_points(slides)
         self.assertEqual([p["at_ms"] for p in points], [0, 2000, 5000])
 
-    def test_section_changes_are_musical_accents(self):
+    def test_section_changes_are_accented(self):
         slides = [
             {"index": 0, "kind": "body", "duration_ms": 1000},
             {"index": 1, "kind": "heading", "duration_ms": 1000},

@@ -1,4 +1,4 @@
-"""branddozer/presentation_media.py — narration, artwork, palette and score.
+"""branddozer/presentation_media.py — narration, artwork and palette.
 
 Turns the adjacent presentation schema into playable media:
 
@@ -14,17 +14,14 @@ Turns the adjacent presentation schema into playable media:
   sampled at random, and justified against the paper's subject so the
   choice carries the intended psychological reading.
 
-* **Score** — background music generated from an agent-written prompt and
-  stretched/looped to the exact presentation length, with beat hints
-  aligned to slide boundaries so transitions land on the music.
-
-Provider notes
---------------
-Music generation has no key configured on this machine yet. The layer is
-written provider-agnostic and defaults to Hugging Face's hosted
-`facebook/musicgen-small` (free tier, no card required); set `HF_TOKEN` in
-the vault to enable it. `generate_score` degrades to a silent track of the
-right length rather than failing the presentation.
+No background score
+-------------------
+Music generation is deliberately absent. This machine has no CUDA GPU
+(i5-8500 / Intel UHD 630), and MusicGen-class models run roughly 50x
+slower than realtime on CPU — scoring one 81-minute deck measured out at
+7+ hours. ``score_sync_points`` is kept because the timeline marks it
+produces are what drive *visual* transitions; if a scoring provider is
+added later it can consume the same marks unchanged.
 """
 from __future__ import annotations
 
@@ -79,10 +76,7 @@ class MediaConfig:
     color_ratio: str = "60_30_10"
     transition: str = "crossfade"
     word_animation: str = "highlight"
-    music_provider: str = "huggingface"
-    music_model: str = "facebook/musicgen-small"
     generate_backgrounds: bool = True
-    generate_music: bool = True
 
 
 # --- Narration ------------------------------------------------------------
@@ -251,101 +245,14 @@ def generate_background(
     return ""
 
 
-# --- Score ----------------------------------------------------------------
-
-def music_prompt(
-    title: str, abstract: str, palette: dict[str, Any], duration_ms: int, model: str
-) -> str:
-    """Ask the agent for a music prompt written *for the target model*.
-
-    Text-to-music models respond to instrumentation, tempo and texture, not
-    to narrative description, so the agent is told which model will render
-    the prompt and asked to write in that model's idiom.
-    """
-    seconds = max(1, duration_ms // 1000)
-    mood = ", ".join(palette.get("mood") or []) or "measured, serious"
-    return (
-        "Write a text-to-music prompt for a research-paper video score. "
-        "Return STRICT JSON only.\n\n"
-        f"TARGET MODEL: {model}. This model responds best to concrete "
-        "instrumentation, tempo in BPM, key, and texture — not to plot or "
-        "narrative. Keep the prompt under 200 characters and name specific "
-        "instruments.\n"
-        f"PAPER: {title}\n"
-        f"ABSTRACT: {abstract[:900]}\n"
-        f"VISUAL MOOD: {mood}\n"
-        f"REQUIRED LENGTH: {seconds} seconds\n\n"
-        "The score must sit under spoken narration: no vocals, no sudden "
-        "dynamics, nothing that competes with speech intelligibility. "
-        "Return JSON with: prompt (the text-to-music prompt), bpm (int), "
-        "key (e.g. 'A minor'), instruments (list), and rationale (why this "
-        "suits the paper's subject and findings)."
-    )
-
-
-def generate_score(
-    prompt: str,
-    *,
-    duration_ms: int,
-    out_dir: Path,
-    name: str = "score",
-    config: MediaConfig | None = None,
-    token: str = "",
-) -> dict[str, Any]:
-    """Generate a background score of at least `duration_ms`.
-
-    Returns {"path": str, "duration_ms": int, "provider": str, "detail": str}.
-    Degrades to an empty path rather than failing the presentation, so a
-    missing music key never blocks a playable deck.
-    """
-    config = config or MediaConfig()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    api_token = token or os.getenv("HF_TOKEN", "")
-    if not api_token:
-        return {
-            "path": "",
-            "duration_ms": duration_ms,
-            "provider": config.music_provider,
-            "detail": (
-                "no music API token configured; set HF_TOKEN in the vault to "
-                "enable score generation"
-            ),
-        }
-    try:
-        import urllib.request
-
-        request = urllib.request.Request(
-            f"https://api-inference.huggingface.co/models/{config.music_model}",
-            data=json.dumps({"inputs": prompt}).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_token}",
-                "Content-Type": "application/json",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=300) as response:
-            audio = response.read()
-        path = out_dir / f"{name}.wav"
-        path.write_bytes(audio)
-        return {
-            "path": str(path),
-            "duration_ms": duration_ms,
-            "provider": config.music_provider,
-            "detail": f"generated by {config.music_model}",
-        }
-    except Exception as exc:
-        return {
-            "path": "",
-            "duration_ms": duration_ms,
-            "provider": config.music_provider,
-            "detail": f"music generation failed: {exc!r}",
-        }
-
+# --- Timeline -------------------------------------------------------------
 
 def score_sync_points(slides: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Cumulative timeline marks where the score should hit a transition.
+    """Cumulative timeline marks for slide changes.
 
-    The player uses these to align musical accents with slide changes, so
-    the score follows the deck rather than merely running underneath it.
+    Gives each slide its absolute start time, so the player can drive
+    transitions and word animation from one timeline. Section boundaries
+    are marked `accent` — the natural place for a stronger transition.
     """
     points: list[dict[str, Any]] = []
     elapsed = 0
@@ -355,7 +262,6 @@ def score_sync_points(slides: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "slide_index": slide.get("index"),
                 "at_ms": elapsed,
                 "kind": slide.get("kind"),
-                # Section changes are the natural place for a musical lift.
                 "accent": slide.get("kind") in {"title", "heading", "subtitle"},
             }
         )
@@ -374,7 +280,5 @@ __all__ = [
     "choose_palette",
     "background_prompt",
     "generate_background",
-    "music_prompt",
-    "generate_score",
     "score_sync_points",
 ]
