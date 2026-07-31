@@ -113,14 +113,63 @@ def _wrap(draw, words: list[str], font, max_width: int) -> list[list[int]]:
     return lines
 
 
+_BACKGROUND_CACHE: dict[str, Any] = {}
+
+
+def _load_background(path: str, size: tuple[int, int]):
+    """Load, crop-to-fill, blur and dim a background image.
+
+    Cached: a section's slides share one image, and re-decoding a 1.5MB
+    PNG for every one of 30 frames per second would dominate render time.
+    """
+    key = f"{path}|{size[0]}x{size[1]}"
+    if key in _BACKGROUND_CACHE:
+        return _BACKGROUND_CACHE[key]
+    try:
+        from PIL import Image, ImageEnhance, ImageFilter
+
+        source = Image.open(path).convert("RGB")
+        target_ratio = size[0] / size[1]
+        ratio = source.width / source.height
+        # Crop to fill rather than stretch: a squashed background reads as
+        # a mistake even when the type on top is correct.
+        if ratio > target_ratio:
+            new_width = int(source.height * target_ratio)
+            left = (source.width - new_width) // 2
+            source = source.crop((left, 0, left + new_width, source.height))
+        else:
+            new_height = int(source.width / target_ratio)
+            top = (source.height - new_height) // 2
+            source = source.crop((0, top, source.width, top + new_height))
+        source = source.resize(size, Image.LANCZOS)
+        source = source.filter(ImageFilter.GaussianBlur(radius=size[0] / 180))
+        # Dim hard: the text is the content, the artwork is atmosphere.
+        source = ImageEnhance.Brightness(source).enhance(0.42)
+        _BACKGROUND_CACHE[key] = source
+        return source
+    except Exception:
+        _BACKGROUND_CACHE[key] = None
+        return None
+
+
 def render_slide_frame(
     slide: dict[str, Any], elapsed_ms: int, config: VideoConfig
 ):
     """Compose one frame of a slide at `elapsed_ms` into its narration."""
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
     width, height = config.size()
     image = Image.new("RGB", (width, height), _hex(config.background))
+
+    # Section artwork, dimmed and blurred so large type stays legible on
+    # top of it. Cached per path because consecutive slides in a section
+    # share one background.
+    art_path = slide.get("background_path") or ""
+    if art_path:
+        art = _load_background(art_path, (width, height))
+        if art is not None:
+            image.paste(art, (0, 0))
+
     draw = ImageDraw.Draw(image)
 
     kind = slide.get("kind", "body")
@@ -280,20 +329,35 @@ def _blend(frame_a, frame_b, progress: float, mode: str):
 
 
 def build_audio_track(
-    slides: list[dict[str, Any]], audio_dir: Path, out_path: Path, *, fps: int
+    slides: list[dict[str, Any]],
+    audio_dir: Path,
+    out_path: Path,
+    *,
+    fps: int,
+    transition_ms: int = 0,
+    score_path: str = "",
+    score_gain: float = 0.16,
 ) -> dict[str, Any]:
-    """Concatenate per-slide narration, padding to each slide's duration."""
+    """Concatenate per-slide narration, padding to each slide's duration.
+
+    `transition_ms` must match what the video renderer inserts between
+    slides. Omitting it desynchronises progressively: at 420ms across 153
+    transitions the narration ended 64 seconds behind the picture.
+    """
     import numpy as np
 
     rate = 44100
     chunks: list[Any] = []
-    for slide in slides:
+    for position, slide in enumerate(slides):
         duration_ms = int(slide.get("duration_ms") or 0)
+        # Silence covering the transition that precedes this slide.
+        if position > 0 and transition_ms > 0:
+            chunks.append(np.zeros(int(rate * transition_ms / 1000), dtype="float32"))
         want = int(rate * duration_ms / 1000)
         clip = audio_dir / f"slide-{int(slide['index']):05d}.mp3"
         samples = None
         if clip.is_file():
-            samples = _decode_mp3(clip, rate)
+            samples = _decode_audio(clip, rate)
         if samples is None:
             samples = np.zeros(want, dtype="float32")
         if len(samples) < want:
@@ -303,13 +367,31 @@ def build_audio_track(
         chunks.append(samples[:want])
 
     track = np.concatenate(chunks) if chunks else np.zeros(1, dtype="float32")
+
+    # Mix the score underneath at low gain. Narration intelligibility wins
+    # every time: the music is atmosphere, not a duet.
+    if score_path and Path(score_path).is_file():
+        music = _decode_audio(Path(score_path), rate)
+        if music is not None and len(music) > 0:
+            if len(music) < len(track):
+                # Loop the cue to cover the full deck.
+                repeats = int(np.ceil(len(track) / len(music)))
+                music = np.tile(music, repeats)
+            music = music[: len(track)] * score_gain
+            # Short fades so the loop seam and the ending are not abrupt.
+            fade = min(rate * 2, len(music) // 4)
+            if fade > 0:
+                music[:fade] *= np.linspace(0, 1, fade, dtype="float32")
+                music[-fade:] *= np.linspace(1, 0, fade, dtype="float32")
+            track = track + music
+
     pcm = np.clip(track, -1, 1)
     _write_wav(out_path, (pcm * 32767).astype("<i2").tobytes(), rate)
     return {"path": str(out_path), "duration_ms": int(len(track) / rate * 1000)}
 
 
-def _decode_mp3(path: Path, rate: int):
-    """Decode an MP3 to mono float32 via the bundled ffmpeg."""
+def _decode_audio(path: Path, rate: int):
+    """Decode any audio file to mono float32 via the bundled ffmpeg."""
     import numpy as np
 
     try:
@@ -336,6 +418,65 @@ def _write_wav(path: Path, pcm: bytes, rate: int) -> None:
     path.write_bytes(header + pcm)
 
 
+def attach_backgrounds(
+    deck: dict[str, Any],
+    *,
+    out_dir: Path,
+    palette: dict[str, Any] | None = None,
+    api_key: str = "",
+    max_images: int = 12,
+) -> dict[str, Any]:
+    """Generate one background per section and attach it to that section's slides.
+
+    Per *section*, not per slide: 154 slides would mean 154 image calls,
+    and the artwork is atmosphere that should persist while a section is
+    being read rather than flickering on every sentence.
+    """
+    from branddozer.presentation_media import background_prompt, generate_background
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    palette = palette or {"scheme": "achromatic_accent", "mood": ["sober", "evidential"]}
+
+    sections: list[str] = []
+    for slide in deck.get("slides") or []:
+        name = str(slide.get("section") or "").strip() or "opening"
+        if name not in sections:
+            sections.append(name)
+
+    generated: dict[str, str] = {}
+    failures: list[dict[str, str]] = []
+    for index, name in enumerate(sections[:max_images]):
+        sample = next(
+            (
+                s["text"]
+                for s in deck["slides"]
+                if (s.get("section") or "opening") == name and s.get("kind") == "body"
+            ),
+            name,
+        )
+        path = generate_background(
+            background_prompt(sample, name, palette),
+            out_dir=out_dir,
+            name=f"bg-{index:02d}",
+            api_key=api_key,
+        )
+        if path:
+            generated[name] = path
+        else:
+            failures.append({"section": name, "error": "generation failed"})
+
+    for slide in deck.get("slides") or []:
+        name = str(slide.get("section") or "").strip() or "opening"
+        if name in generated:
+            slide["background_path"] = generated[name]
+
+    return {
+        "sections": len(sections),
+        "generated": len(generated),
+        "failures": failures,
+    }
+
+
 def export_mp4(
     deck: dict[str, Any],
     *,
@@ -343,6 +484,7 @@ def export_mp4(
     audio_dir: Path | None = None,
     config: VideoConfig | None = None,
     max_slides: int = 0,
+    score_path: str = "",
     progress=None,
 ) -> dict[str, Any]:
     """Render a deck to an MP4 and return a summary."""
@@ -368,6 +510,11 @@ def export_mp4(
             "-i", "-",
             "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
             "-preset", "veryfast", "-crf", "20",
+            # Square pixels + an explicit display aspect ratio: without
+            # these some players infer landscape from the codec defaults
+            # and letterbox a portrait video sideways.
+            "-aspect", f"{width}:{height}",
+            "-vf", "setsar=1:1",
             str(silent),
         ]
         process = subprocess.Popen(command, stdin=subprocess.PIPE)
@@ -406,12 +553,24 @@ def export_mp4(
         # Mux narration if it exists; otherwise ship the silent render.
         if audio_dir and audio_dir.is_dir():
             audio_path = tmp_dir / "audio.wav"
-            build_audio_track(slides, audio_dir, audio_path, fps=config.fps)
+            # Must match the frames actually written below, or narration
+            # drifts behind the picture by one transition per slide.
+            build_audio_track(
+                slides,
+                audio_dir,
+                audio_path,
+                fps=config.fps,
+                transition_ms=0 if config.transition == "cut" else TRANSITION_MS,
+                score_path=score_path,
+            )
             subprocess.run(
                 [
                     ffmpeg_exe(), "-y", "-v", "error",
                     "-i", str(silent), "-i", str(audio_path),
                     "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+                    # Move the index to the front so a phone can start
+                    # playing before the whole file has downloaded.
+                    "-movflags", "+faststart",
                     "-shortest", str(out_path),
                 ],
                 check=True,
@@ -441,6 +600,8 @@ __all__ = [
     "VIDEO_TRANSITIONS",
     "VIDEO_WORD_ANIMATIONS",
     "VideoConfig",
+    "TRANSITION_MS",
+    "attach_backgrounds",
     "export_mp4",
     "render_slide_frame",
     "build_audio_track",

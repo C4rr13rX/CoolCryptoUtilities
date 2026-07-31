@@ -943,6 +943,30 @@ class ResearchWorkflow:
                 "work_packages must contain 3-8 independent objects with title, query, "
                 "angle, deliverable, and acceptance_criteria. Include competing "
                 "interpretations and negative evidence. Do not invent sources.\n\n"
+                # A live run dropped the goal's central method entirely: the
+                # prompt asked for rules-as-attractor structural comparison,
+                # the planner made it 1 of 8 packages, retrieval for the
+                # focal case was blocked, and the paper reported only that
+                # its goals were unexecutable. Method is not optional.
+                "EXECUTING THE REQUESTED METHOD IS MANDATORY:\n"
+                "- If the goal names a specific analytical method (structural "
+                "analogy, attractor/dynamical-systems comparison, process "
+                "tracing, comparative case analysis, and so on), that method "
+                "must be the SPINE of the plan, not one package among many. "
+                "Devote at least half the work packages to executing it.\n"
+                "- Methods that compare RULES across cases do not depend on "
+                "retrieving documents about the focal subject. If the focal "
+                "case is poorly documented or access-blocked, the comparative "
+                "work still proceeds: reconstruct the rule set from whatever "
+                "is reachable, then search other times, places, industries "
+                "and institutions for structurally similar rule systems and "
+                "analyse how context shaped their outcomes.\n"
+                "- A plan whose packages can ALL fail together because one "
+                "subject is hard to retrieve is a bad plan. No more than half "
+                "the packages may depend on focal-case retrieval.\n"
+                "- 'The evidence was unavailable' is a finding of last "
+                "resort, never a plan. Never write a plan whose expected "
+                "deliverable is a report that the work could not be done.\n\n"
                 f"GOAL:\n{self.run.prompt}\n\n"
                 f"REQUESTED PUBLICATION SETTINGS:\n{json.dumps(requested_config)}"
             ),
