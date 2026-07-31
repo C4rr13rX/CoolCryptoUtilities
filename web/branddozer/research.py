@@ -149,6 +149,13 @@ def _json_object_candidates(text: str) -> list[dict[str, Any]]:
     """Recover every complete object from a C0D3R multi-branch response."""
     raw = str(text or "").strip()
     decoder = json.JSONDecoder()
+    # Agents routinely emit a literal newline or tab inside a long markdown
+    # string. Strict JSON forbids that, and rejecting the whole object over
+    # one unescaped character discarded a complete 145k-char paper — the
+    # run then failed as "missing title, abstract, markdown". The lenient
+    # decoder accepts raw control characters inside strings; everything
+    # else about the parse stays strict.
+    lenient = json.JSONDecoder(strict=False)
     found: list[dict[str, Any]] = []
     index = 0
     while index < len(raw):
@@ -158,8 +165,11 @@ def _json_object_candidates(text: str) -> list[dict[str, Any]]:
         try:
             value, consumed = decoder.raw_decode(raw[start:])
         except json.JSONDecodeError:
-            index = start + 1
-            continue
+            try:
+                value, consumed = lenient.raw_decode(raw[start:])
+            except json.JSONDecodeError:
+                index = start + 1
+                continue
         index = start + consumed
         if isinstance(value, dict):
             found.append(value)
