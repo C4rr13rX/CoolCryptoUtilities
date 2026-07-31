@@ -1056,44 +1056,53 @@ class ResearchWorkflow:
 
             base_query = str(package.get("query") or item.title)
             current_year = timezone.localdate().year
-            queries = [
-                base_query,
-                (
-                    f'"Target Corporation" boycott DEI rollback '
-                    f"{current_year - 1} {current_year}"
-                ),
-                (
-                    'site:corporate.target.com "diversity, equity and inclusion" '
-                    f"{current_year - 1} {current_year}"
-                ),
-                f"site:wikileaks.org ({base_query})",
-                (
-                    "(site:documentcloud.org OR site:muckrock.com OR "
-                    f"site:courtlistener.com) ({base_query})"
-                ),
-                f"site:sec.gov ({base_query})",
-                f"(site:archive.org OR site:web.archive.org) ({base_query})",
-            ]
             package_text = " ".join(
                 str(package.get(key) or "")
-                for key in ("title", "angle", "deliverable")
+                for key in ("title", "angle", "deliverable", "query")
             ).lower()
-            if any(
+            # Comparative packages look for structurally similar rule systems
+            # in OTHER cases. Injecting focal-subject queries starved them: a
+            # package asking for guild ordinances and set-aside schemes was
+            # handed four URLs, all about the focal company, and reported
+            # "zero comparative cases were retrievable".
+            comparative = any(
                 marker in package_text
-                for marker in ("program", "fund", "supplier", "governance")
-            ):
-                queries.append(
-                    'site:corporate.target.com Target supplier diversity '
-                    '"community engagement" fund'
+                for marker in (
+                    "comparative", "structural", "analog", "attractor",
+                    "cross-scale", "cross-cultural", "historical case",
+                    "similar rule",
                 )
-            if any(
-                marker in package_text
-                for marker in ("impact", "psychological", "mental", "counterfactual")
-            ):
-                queries.append(
-                    '"DEI rollback" employee belonging mental health '
-                    "systematic review"
-                )
+            )
+            queries = [base_query]
+            if comparative:
+                queries += [
+                    f"historical examples {base_query}",
+                    f"case study {base_query} 19th century OR 20th century",
+                    (
+                        "preferential procurement OR set-aside OR reserved quota "
+                        "scheme history evaluation"
+                    ),
+                    (
+                        "(site:jstor.org OR site:doi.org OR site:archive.org) "
+                        f"({base_query})"
+                    ),
+                    (
+                        "targeted eligibility replaced by universal eligibility "
+                        "policy outcome study"
+                    ),
+                ]
+            else:
+                # Focal-case packages keep the document-repository sweeps.
+                queries += [
+                    f"site:wikileaks.org ({base_query})",
+                    (
+                        "(site:documentcloud.org OR site:muckrock.com OR "
+                        f"site:courtlistener.com) ({base_query})"
+                    ),
+                    f"site:sec.gov ({base_query})",
+                    f"(site:archive.org OR site:web.archive.org) ({base_query})",
+                    f"{base_query} {current_year - 1} {current_year}",
+                ]
             search = WebSearch(None, delay_s=0.25, max_results=8)
             unique: dict[str, dict[str, Any]] = {}
             for seed in (self.run.context or {}).get("research_seed_sources") or []:
@@ -1146,7 +1155,13 @@ class ResearchWorkflow:
                             )
                         )
                     )
-                    if not (target_context or broader_evidence):
+                    # A comparative package is *supposed* to return cases that
+                    # have nothing to do with the focal subject. Requiring the
+                    # subject's name here discarded every analogue and left the
+                    # reviewer with four focal-case URLs.
+                    if comparative:
+                        pass
+                    elif not (target_context or broader_evidence):
                         continue
                     key = re.sub(r"[?#].*$", "", url.lower())
                     if key:

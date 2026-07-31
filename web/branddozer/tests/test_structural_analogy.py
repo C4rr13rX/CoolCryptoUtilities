@@ -145,3 +145,54 @@ class InconclusiveTests(TestCase):
         self.assertFalse(report["publishable"])
         self.assertIn("Inconclusive", report["headline"])
         self.assertEqual(len(report["methods_attempted"]), 2)
+
+
+class ComparativeDiscoveryTests(TestCase):
+    """Comparative packages must not be starved by focal-case search.
+
+    Regression guard: discovery hardcoded '"Target Corporation" boycott'
+    into every package's queries and then discarded any candidate whose
+    text lacked the subject's name. A package asking for guild ordinances
+    and set-aside schemes received four URLs, all about the focal company,
+    and reported "zero comparative cases were retrievable".
+    """
+
+    def _queries_for(self, package_text):
+        """Mirror the query-selection branch in _review_package."""
+        markers = (
+            "comparative", "structural", "analog", "attractor",
+            "cross-scale", "cross-cultural", "historical case", "similar rule",
+        )
+        return any(m in package_text.lower() for m in markers)
+
+    def test_comparative_package_is_detected(self):
+        self.assertTrue(
+            self._queries_for("WP4 - Comparative retrieval: structurally similar")
+        )
+        self.assertTrue(self._queries_for("Cross-scale structural analogy test"))
+        self.assertTrue(self._queries_for("candidate attractor specification"))
+
+    def test_focal_package_is_not_treated_as_comparative(self):
+        self.assertFalse(
+            self._queries_for("WP1 - Event identification and dated chronology")
+        )
+        self.assertFalse(self._queries_for("Program lineage reconstruction"))
+
+    def test_research_module_builds_comparative_queries(self):
+        """The focal-subject name must not be hardcoded into every query."""
+        import inspect
+
+        from branddozer.research import ResearchWorkflow
+
+        source = inspect.getsource(ResearchWorkflow._review_package)
+        # The old code injected the benchmark subject into all packages.
+        self.assertNotIn('"Target Corporation" boycott', source)
+        self.assertIn("comparative", source)
+
+    def test_comparative_candidates_bypass_the_subject_filter(self):
+        import inspect
+
+        from branddozer.research import ResearchWorkflow
+
+        source = inspect.getsource(ResearchWorkflow._review_package)
+        self.assertIn("if comparative:", source)
