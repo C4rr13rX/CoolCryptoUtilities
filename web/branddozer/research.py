@@ -1141,10 +1141,24 @@ class ResearchWorkflow:
                 executor.submit(review_with_isolated_connection, item): item
                 for item in items
             }
+            agent_limit: AgentLimited | None = None
             for future in as_completed(futures):
                 item = futures[future]
                 try:
                     results.append(future.result())
+                except AgentLimited as exc:
+                    # The agent is rate-limited, so *every* remaining package
+                    # will fail for the same reason. Quarantining them would
+                    # burn the whole backlog on a transient cooldown and
+                    # surface as "all work packages failed". Reset the item so
+                    # it is retried on resume, and re-raise once the pool
+                    # drains so the run pauses instead of erroring.
+                    agent_limit = agent_limit or exc
+                    item.status = "todo"
+                    item.meta = {**(item.meta or {}), "agent_limited": str(exc)[:400]}
+                    item.save(update_fields=["status", "meta", "updated_at"])
+                    SprintItem.objects.filter(backlog_item=item).update(status="todo")
+                    continue
                 except Exception as exc:
                     item.status = "blocked"
                     item.meta = {**(item.meta or {}), "error": str(exc)}
@@ -1172,6 +1186,10 @@ class ResearchWorkflow:
                     )
                     self.run.context = context
                     self.run.save(update_fields=["context"])
+        # A cooldown is not a product failure: pause the run (preserving the
+        # packages for resume) rather than reporting the backlog as failed.
+        if agent_limit is not None and not results:
+            raise agent_limit
         if not results:
             raise RuntimeError(
                 "all archival evidence work packages failed; "

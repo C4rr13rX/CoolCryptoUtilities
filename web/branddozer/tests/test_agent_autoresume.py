@@ -185,3 +185,62 @@ class RealAgentMessageTests(TestCase):
         got = parse_reset_at("resets at 1am (UTC)", now=NOW)
         self.assertIsNotNone(got)
         self.assertGreater(got, NOW)
+
+
+class EvidenceLoopAgentLimitTests(TestCase):
+    """A cooldown mid-evidence must pause the run, not fail the backlog.
+
+    Regression guard: the work-package pool caught every exception and
+    quarantined the package. When Claude Code hit its session limit, all 8
+    packages were quarantined and the run died with "all archival evidence
+    work packages failed" — so AgentLimited never reached the handler that
+    pauses for auto-resume, and the gathered evidence was thrown away.
+    """
+
+    def test_agent_limited_propagates_instead_of_quarantining(self):
+        from unittest.mock import patch
+
+        from branddozer.research import AgentLimited, ResearchWorkflow
+
+        workflow = ResearchWorkflow.__new__(ResearchWorkflow)
+
+        class _Run:
+            id = "r"
+            context = {}
+
+            def refresh_from_db(self, fields=None):
+                pass
+
+            def save(self, update_fields=None):
+                pass
+
+        class _Item:
+            def __init__(self, name):
+                self.id = name
+                self.title = name
+                self.status = "todo"
+                self.meta = {}
+
+            def save(self, update_fields=None):
+                pass
+
+        workflow.run = _Run()
+
+        class _Policy:
+            max_parallel_agents = 2
+
+        workflow.policy = _Policy()
+        items = [_Item("wp1"), _Item("wp2")]
+
+        def _boom(item, *args, **kwargs):
+            raise AgentLimited("You've hit your session limit", block_kind="cooldown")
+
+        with patch.object(ResearchWorkflow, "_review_package", _boom), patch(
+            "branddozer.research.SprintItem"
+        ):
+            with self.assertRaises(AgentLimited):
+                workflow._collect_evidence(items, {})
+
+        # Packages return to todo so a resumed run retries them.
+        for item in items:
+            self.assertEqual(item.status, "todo")
