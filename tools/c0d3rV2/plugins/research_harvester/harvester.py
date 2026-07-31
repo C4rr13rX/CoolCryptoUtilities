@@ -112,6 +112,20 @@ class ResearchHarvester:
         self.db_path = self.root / "knowledge.sqlite3"
         self._init_db()
 
+    def _opener(self) -> urllib.request.OpenerDirector:
+        """URL opener that can complete cookie-gated redirect chains.
+
+        Built per crawl rather than shared, so cookies from one site never
+        leak into requests for another.
+        """
+        if getattr(self, "_cached_opener", None) is None:
+            import http.cookiejar
+
+            self._cached_opener = urllib.request.build_opener(
+                urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+            )
+        return self._cached_opener
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=20)
         connection.row_factory = sqlite3.Row
@@ -207,7 +221,12 @@ class ResearchHarvester:
                     continue
             try:
                 request = urllib.request.Request(canonical, headers={"User-Agent": self.USER_AGENT, "Accept": "text/html,text/plain,application/json;q=0.8"})
-                with urllib.request.urlopen(request, timeout=15) as response:
+                # DOI links (and many publishers) bounce through a
+                # cookie-setting redirect. Without a cookie jar the chain
+                # re-redirects to the same place and urllib aborts with
+                # "HTTP Error 302 ... infinite loop", which silently loses
+                # exactly the peer-reviewed sources research values most.
+                with self._opener().open(request, timeout=15) as response:
                     final_url = response.geturl()
                     final_valid, final_reason = self._public_host(final_url)
                     if not final_valid:

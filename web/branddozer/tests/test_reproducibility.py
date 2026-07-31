@@ -295,3 +295,52 @@ class DiscoveryRankingTests(TestCase):
             ]
         )
         self.assertIn("b.example", ranked[0]["url"])
+
+
+class HarvesterRedirectTests(TestCase):
+    """DOI links resolve through cookie-gated redirects.
+
+    Regression guard: without a cookie jar, urllib aborts DOI resolution
+    with "HTTP Error 302 ... infinite loop". All six 302 failures on a live
+    paper were doi.org — i.e. the tier-3 peer-reviewed sources the
+    acceptance gate values most were the ones being silently lost.
+    """
+
+    def _harvester(self):
+        """Build a harvester in a temp dir.
+
+        Cleanup is left to the OS: the harvester holds the SQLite file open,
+        and Windows refuses to delete it while that handle lives.
+        """
+        import tempfile
+
+        from tools.c0d3rV2.plugins.research_harvester.harvester import (
+            ResearchHarvester,
+        )
+
+        return ResearchHarvester(tempfile.mkdtemp())
+
+    def test_harvester_uses_a_cookie_aware_opener(self):
+        import urllib.request
+
+        opener = self._harvester()._opener()
+        self.assertIsInstance(opener, urllib.request.OpenerDirector)
+        self.assertTrue(
+            any(
+                isinstance(h, urllib.request.HTTPCookieProcessor)
+                for h in opener.handlers
+            ),
+            "opener must carry cookies so redirect chains can complete",
+        )
+
+    def test_opener_is_reused_within_a_harvester(self):
+        harvester = self._harvester()
+        self.assertIs(harvester._opener(), harvester._opener())
+
+    def test_redirect_failure_is_an_access_failure_not_integrity(self):
+        from branddozer.reproducibility import ACCESS_FAILURES, classify_failure
+
+        outcome = classify_failure(
+            "HTTP Error 302: The HTTP server returned a redirect error"
+        )
+        self.assertIn(outcome, ACCESS_FAILURES)
