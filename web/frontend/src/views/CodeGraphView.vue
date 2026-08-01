@@ -1,1668 +1,948 @@
 <template>
   <div class="codegraph-view">
-    <section class="panel toolbar">
-      <div class="controls">
-        <button class="btn" type="button" @click="refreshGraph(true)" :disabled="loading || building">
-          <span v-if="loading">{{ t('codegraph.loading') }}</span>
-          <span v-else-if="building">{{ t('codegraph.building') }}</span>
-          <span v-else>{{ t('codegraph.refresh') }}</span>
-        </button>
-        <button class="btn ghost" type="button" @click="resetView" :disabled="loading">
-          {{ t('codegraph.reset_view') }}
-        </button>
-        <button class="btn warning" type="button" @click="captureSnapshots('warnings')" :disabled="capturing || !graphReady">
-          {{ t('codegraph.snapshot_warnings') }}
-        </button>
-        <button class="btn danger" type="button" @click="captureSnapshots('errors')" :disabled="capturing || !graphReady">
-          {{ t('codegraph.snapshot_errors') }}
-        </button>
+    <section class="panel repository-bar">
+      <div class="repository-picker">
+        <div class="eyebrow">CODEGRAPH / REPOSITORY</div>
+        <select v-model="selectedRepositoryId" :disabled="switching" @change="switchRepository">
+          <option v-for="repo in repositories" :key="repo.id" :value="repo.id">
+            {{ repo.name }} · {{ repo.source_type }}
+          </option>
+        </select>
+        <span class="source-path" :title="activeRepository?.location">{{ activeRepository?.location || 'No repository selected' }}</span>
       </div>
-      <div class="loading-bar" v-if="loading || building || loadingProgress > 0">
-        <div class="bar">
-          <span class="fill" :style="{ width: `${Math.min(loadingProgress * 100, 100)}%` }"></span>
-        </div>
-        <div class="loading-meta">
-          <span class="file-name">{{ loadingLabel }}</span>
-          <span class="build-name">{{ buildingLabel }}</span>
-        </div>
-        <div class="loading-files" v-if="recentFiles.length">
-          <span v-for="file in recentFiles" :key="file">{{ file }}</span>
-        </div>
+      <div class="repository-actions">
+        <button class="btn ghost" type="button" @click="showAddRepository = !showAddRepository">Add codebase</button>
+        <button class="btn ghost" type="button" :disabled="repositories.length <= 1 || switching" @click="removeActiveRepository">Remove</button>
+        <button class="btn" type="button" :disabled="building || switching" @click="refreshGraph(true)">
+          {{ building ? 'Indexing…' : 'Re-index' }}
+        </button>
+        <button class="btn ghost" type="button" :disabled="!graphReady" @click="fitGraph">Center graph</button>
       </div>
+      <form v-if="showAddRepository" class="repository-form" @submit.prevent="saveRepository">
+        <label>
+          <span>Source</span>
+          <select v-model="repositoryDraft.source_type">
+            <option value="local">Local folder</option>
+            <option value="github">GitHub repository</option>
+          </select>
+        </label>
+        <label>
+          <span>Name</span>
+          <input v-model="repositoryDraft.name" placeholder="Optional display name" />
+        </label>
+        <label class="location-field">
+          <span>{{ repositoryDraft.source_type === 'github' ? 'GitHub URL' : 'Folder path' }}</span>
+          <input
+            v-model="repositoryDraft.location"
+            :placeholder="repositoryDraft.source_type === 'github' ? 'https://github.com/owner/repository' : 'D:\\Projects\\MyProject'"
+            required
+          />
+        </label>
+        <label v-if="repositoryDraft.source_type === 'github'">
+          <span>Branch</span>
+          <input v-model="repositoryDraft.branch" placeholder="Default branch" />
+        </label>
+        <button class="btn" type="submit" :disabled="addingRepository">{{ addingRepository ? 'Adding…' : 'Add and inspect' }}</button>
+        <button class="btn ghost" type="button" @click="showAddRepository = false">Cancel</button>
+        <p v-if="repositoryError" class="form-error">{{ repositoryError }}</p>
+      </form>
+    </section>
+
+    <section class="panel graph-status">
+      <div class="status-copy">
+        <span class="status-dot" :class="statusState"></span>
+        <strong>{{ statusMessage }}</strong>
+        <span v-if="building">{{ Math.round(statusProgress * 100) }}%</span>
+      </div>
+      <div v-if="building" class="progress-track"><span :style="{ width: `${statusProgress * 100}%` }"></span></div>
       <div class="summary">
-        <div>
-          <span class="label">{{ t('codegraph.files') }}</span>
-          <span class="value">{{ summary.files || 0 }}</span>
-        </div>
-        <div>
-          <span class="label">{{ t('codegraph.classes') }}</span>
-          <span class="value">{{ summary.classes || 0 }}</span>
-        </div>
-        <div>
-          <span class="label">{{ t('codegraph.functions') }}</span>
-          <span class="value">{{ summary.functions || 0 }}</span>
-        </div>
-        <div>
-          <span class="label">{{ t('codegraph.warnings') }}</span>
-          <span class="value warn">{{ warnings.length }}</span>
-        </div>
-        <div>
-          <span class="label">{{ t('codegraph.errors') }}</span>
-          <span class="value error">{{ errors.length }}</span>
-        </div>
+        <span><b>{{ summary.modules || 0 }}</b> modules</span>
+        <span><b>{{ summary.files || 0 }}</b> files</span>
+        <span><b>{{ summary.classes || 0 }}</b> classes</span>
+        <span><b>{{ summary.functions || 0 }}</b> functions</span>
+        <span><b>{{ summary.relationships || 0 }}</b> wires</span>
       </div>
     </section>
-    <section class="panel canvas-panel">
-      <div ref="canvasContainer" class="canvas-host"></div>
-      <div class="canvas-overlay">
-        <div class="pad-wrapper">
-          <div class="dpad-grid">
-            <div class="pad-cell empty" />
-            <button
-              type="button"
-              class="pad-button up"
-              @mousedown="startPad('forward')"
-              @mouseup="stopPad('forward')"
-              @mouseleave="stopPad('forward')"
-              @touchstart.prevent="startPad('forward')"
-              @touchend.prevent="stopPad('forward')"
-              @touchcancel.prevent="stopPad('forward')"
-            >
-              ▲
-            </button>
-            <div class="pad-cell empty" />
-            <button
-              type="button"
-              class="pad-button left"
-              @mousedown="startPad('left')"
-              @mouseup="stopPad('left')"
-              @mouseleave="stopPad('left')"
-              @touchstart.prevent="startPad('left')"
-              @touchend.prevent="stopPad('left')"
-              @touchcancel.prevent="stopPad('left')"
-            >
-              ◄
-            </button>
-            <button type="button" class="pad-button center" @click="resetView">✣</button>
-            <button
-              type="button"
-              class="pad-button right"
-              @mousedown="startPad('right')"
-              @mouseup="stopPad('right')"
-              @mouseleave="stopPad('right')"
-              @touchstart.prevent="startPad('right')"
-              @touchend.prevent="stopPad('right')"
-              @touchcancel.prevent="stopPad('right')"
-            >
-              ►
-            </button>
-            <div class="pad-cell empty" />
-            <button
-              type="button"
-              class="pad-button down"
-              @mousedown="startPad('back')"
-              @mouseup="stopPad('back')"
-              @mouseleave="stopPad('back')"
-              @touchstart.prevent="startPad('back')"
-              @touchend.prevent="stopPad('back')"
-              @touchcancel.prevent="stopPad('back')"
-            >
-              ▼
-            </button>
-            <div class="pad-cell empty" />
-          </div>
-          <div class="zoom-pad">
-            <button type="button" @click="nudgeZoom(-1)" @touchstart.prevent.stop="nudgeZoom(-1)">＋</button>
-            <span>{{ zoomLabel }}</span>
-            <button type="button" @click="nudgeZoom(1)" @touchstart.prevent.stop="nudgeZoom(1)">－</button>
-          </div>
+
+    <section class="panel graph-shell">
+      <aside class="graph-tools">
+        <label class="search-field">
+          <span>Find symbol</span>
+          <input v-model="searchText" placeholder="Class, method, file…" @keydown.enter.prevent="focusFirstSearch" />
+        </label>
+        <div class="relation-filters">
+          <label v-for="kind in relationshipKinds" :key="kind">
+            <input v-model="visibleRelationships" type="checkbox" :value="kind" @change="applyRelationshipVisibility" />
+            <span class="wire-key" :class="kind"></span>{{ kind }}
+          </label>
+        </div>
+        <div class="legend">
+          <span v-for="kind in nodeKinds" :key="kind"><i :style="{ background: nodeColorCss(kind) }"></i>{{ kind }}</span>
+        </div>
+      </aside>
+
+      <div ref="canvasContainer" class="canvas-host">
+        <div v-if="hoveredNode" class="node-tooltip" :style="tooltipStyle">
+          <div class="tooltip-kind">{{ hoveredNode.kind }}</div>
+          <strong>{{ hoveredNode.label }}</strong>
+          <span>{{ hoveredNode.file }}<template v-if="hoveredNode.line">:{{ hoveredNode.line }}</template></span>
+          <span>{{ ioLabel(hoveredNode) }}</span>
+          <small>Click to open source</small>
+        </div>
+        <div v-if="graphError" class="canvas-message error">{{ graphError }}</div>
+        <div v-else-if="!graphReady" class="canvas-message">
+          {{ building ? 'Building the dependency map in the background…' : 'No indexed symbols yet.' }}
         </div>
       </div>
-      <div v-if="graphError" class="hint hint-error">
-        {{ graphError }}
-      </div>
-      <div v-else-if="!graphReady" class="hint">{{ t('codegraph.hint_ready') }}</div>
+
+      <aside v-if="selectedNode" class="selection-card">
+        <button type="button" class="close-mini" @click="selectedNode = null">×</button>
+        <div class="eyebrow">{{ selectedNode.kind }}</div>
+        <h3>{{ selectedNode.label }}</h3>
+        <p>{{ selectedNode.file }}<template v-if="selectedNode.line">:{{ selectedNode.line }}</template></p>
+        <code v-if="selectedNode.meta?.signature">{{ selectedNode.meta.signature }}</code>
+        <dl>
+          <template v-if="selectedNode.meta?.inputs?.length">
+            <dt>Inputs</dt><dd>{{ formatPorts(selectedNode.meta.inputs) }}</dd>
+          </template>
+          <template v-if="selectedNode.meta?.outputs?.length">
+            <dt>Outputs</dt><dd>{{ selectedNode.meta.outputs.join(', ') }}</dd>
+          </template>
+        </dl>
+        <button class="btn" type="button" :disabled="!selectedNode.file" @click="openCodeNode(selectedNode)">Open source</button>
+      </aside>
     </section>
+
+    <div v-if="codeWorkspaceOpen" class="code-workspace" role="dialog" aria-modal="true">
+      <header class="workspace-header">
+        <div>
+          <div class="eyebrow">SOURCE WORKSPACE</div>
+          <h2>{{ workspaceMode === 'grid' ? `${codePanels.length} source panels` : activeCodePanel?.title }}</h2>
+        </div>
+        <div class="workspace-actions">
+          <button class="btn ghost" type="button" :class="{ active: workspaceMode === 'single' }" @click="workspaceMode = 'single'">Focus</button>
+          <button class="btn ghost" type="button" :class="{ active: workspaceMode === 'grid' }" @click="workspaceMode = 'grid'">Grid</button>
+          <button class="btn ghost" type="button" @click="codeWorkspaceOpen = false">Return to graph</button>
+        </div>
+      </header>
+
+      <main v-if="codePanels.length" class="code-grid" :class="workspaceMode">
+        <article
+          v-for="panel in visibleCodePanels"
+          :key="panel.id"
+          class="code-panel"
+          :class="{ active: panel.id === activePanelId }"
+          :style="workspaceMode === 'grid' ? { gridColumn: `span ${panel.colSpan}`, gridRow: `span ${panel.rowSpan}` } : {}"
+          draggable="true"
+          @dragstart="draggedPanelId = panel.id"
+          @dragover.prevent
+          @drop="dropPanel(panel.id)"
+          @click="activePanelId = panel.id"
+        >
+          <header>
+            <div>
+              <strong>{{ panel.title }}</strong>
+              <span>{{ panel.path }}<template v-if="panel.line">:{{ panel.line }}</template></span>
+            </div>
+            <div class="panel-controls">
+              <template v-if="workspaceMode === 'grid'">
+                <button type="button" title="Narrower" @click.stop="resizePanel(panel, -2, 0)">−W</button>
+                <button type="button" title="Wider" @click.stop="resizePanel(panel, 2, 0)">+W</button>
+                <button type="button" title="Shorter" @click.stop="resizePanel(panel, 0, -1)">−H</button>
+                <button type="button" title="Taller" @click.stop="resizePanel(panel, 0, 1)">+H</button>
+              </template>
+              <button type="button" title="Focus panel" @click.stop="focusPanel(panel.id)">□</button>
+              <button type="button" title="Close panel" @click.stop="removePanel(panel.id)">×</button>
+            </div>
+          </header>
+          <div class="source-scroll" :data-panel="panel.id">
+            <div
+              v-for="(line, index) in panel.lines"
+              :key="index"
+              class="source-line"
+              :class="{ target: index + 1 === panel.line }"
+              :data-line="index + 1"
+            ><span>{{ index + 1 }}</span><code>{{ line || ' ' }}</code></div>
+          </div>
+        </article>
+      </main>
+      <div v-else class="workspace-empty">Select a node in the graph to load its source.</div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, nextTick, watch, computed } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { fetchCodeGraph, fetchCodeGraphFiles, uploadCodeGraphSnapshot } from '@/api';
-import { t } from '@/i18n';
+import {
+  activateCodeGraphRepository,
+  addCodeGraphRepository,
+  fetchCodeGraph,
+  fetchCodeGraphChunk,
+  fetchCodeGraphRepositories,
+  fetchCodeGraphSource,
+  removeCodeGraphRepository,
+} from '@/api';
 
 type GraphNodePayload = {
-  id: string;
-  label: string;
-  kind: string;
-  file: string;
-  status: string;
-  line?: number;
-  column?: number;
-  meta?: Record<string, any>;
+  id: string; label: string; kind: string; file: string; status: string;
+  line?: number; column?: number; meta?: Record<string, any>;
 };
-
-type GraphEdgePayload = {
-  id: string;
-  source: string;
-  target: string;
-  kind: string;
+type GraphEdgePayload = { id: string; source: string; target: string; kind: string; meta?: Record<string, any> };
+type Repository = {
+  id: string; name: string; source_type: string; location: string; branch?: string;
+  status?: string; progress?: number; message?: string; error?: string; active?: boolean; building?: boolean;
 };
-
-type FileLinkPayload = {
-  source: string;
-  target: string;
-  imports: number;
-  calls: number;
-  weight: number;
+type CodePanel = {
+  id: string; title: string; path: string; line: number; language: string;
+  lines: string[]; colSpan: number; rowSpan: number;
 };
-
-declare global {
-  interface WindowEventMap {
-    'codegraph-ready': CustomEvent<{ nodes: number }>;
-  }
-}
 
 const canvasContainer = ref<HTMLElement | null>(null);
-const loading = ref(false);
-const capturing = ref(false);
-const graphReady = ref(false);
-const graphError = ref<string | null>(null);
-const summary = ref<Record<string, number>>({});
-const warnings = ref<string[]>([]);
-const errors = ref<string[]>([]);
+const repositories = ref<Repository[]>([]);
+const selectedRepositoryId = ref('');
+const switching = ref(false);
+const addingRepository = ref(false);
+const showAddRepository = ref(false);
+const repositoryError = ref('');
+const repositoryDraft = reactive({ name: '', source_type: 'local' as 'local' | 'github', location: '', branch: '' });
 const nodes = ref<GraphNodePayload[]>([]);
-const graphEdges = ref<GraphEdgePayload[]>([]);
-const graphLinks = ref<FileLinkPayload[]>([]);
+const edges = ref<GraphEdgePayload[]>([]);
+const entryPoints = ref<string[]>([]);
+const summary = ref<Record<string, any>>({});
+const graphReady = ref(false);
+const graphError = ref('');
 const building = ref(false);
-const buildingCompletionPending = ref(false);
-const fileNames = ref<string[]>([]);
-const currentFileName = ref('');
-const loadingProgress = ref(0);
-const loadingPhase = ref<'idle' | 'loading' | 'building' | 'done'>('idle');
-const loadingLabel = ref(t('codegraph.idle'));
-const buildingLabel = ref(t('codegraph.awaiting_plan'));
-const recentFiles = ref<string[]>([]);
+const statusState = ref('idle');
+const statusProgress = ref(0);
+const statusMessage = ref('Select a repository');
+const searchText = ref('');
+const selectedNode = ref<GraphNodePayload | null>(null);
+const hoveredNode = ref<GraphNodePayload | null>(null);
+const tooltipX = ref(0);
+const tooltipY = ref(0);
+const visibleRelationships = ref<string[]>(['contains', 'imports', 'calls', 'inherits']);
+const relationshipKinds = ['contains', 'imports', 'calls', 'inherits'];
+const nodeKinds = ['repository', 'module', 'file', 'class', 'function', 'method'];
+const codeWorkspaceOpen = ref(false);
+const workspaceMode = ref<'single' | 'grid'>('single');
+const codePanels = ref<CodePanel[]>([]);
+const activePanelId = ref('');
+const draggedPanelId = ref('');
 
 let renderer: THREE.WebGLRenderer | null = null;
 let scene: THREE.Scene | null = null;
-let camera: THREE.OrthographicCamera | null = null;
+let camera: THREE.PerspectiveCamera | null = null;
 let controls: OrbitControls | null = null;
-let animationId: number | null = null;
-let lastInteraction = performance.now();
-let defaultCameraPos = new THREE.Vector3(0, 2400, 1);
-let defaultTarget = new THREE.Vector3(0, 0, 0);
-let inactivityResetMs = 8000;
-const GRAPH_READY_EVENT = 'codegraph-ready';
-const nodeMeshes = new Map<string, THREE.Object3D>();
-const labelTextureCache = new Map<string, THREE.Texture>();
-const STATUS_COLORS: Record<string, number> = {
-  ok: 0x4c8eda,
-  unused: 0xffa726,
-  broken: 0xef5350,
+let animationFrame = 0;
+let pollTimer = 0;
+let requestGeneration = 0;
+const instancedMeshes: THREE.InstancedMesh[] = [];
+const nodePositions = new Map<string, THREE.Vector3>();
+const edgeObjects = new Map<string, THREE.Object3D>();
+const labelTextures: THREE.Texture[] = [];
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const graphBounds = new THREE.Box3();
+const loadedFileDetails = new Set<string>();
+const loadingFileDetails = new Set<string>();
+let lastDetailLoad = 0;
+let highlightHalo: THREE.Mesh | null = null;
+
+const NODE_COLORS: Record<string, number> = {
+  repository: 0xf7c65c,
+  module: 0x9b7cff,
+  file: 0x35a7ff,
+  class: 0x35d6a1,
+  function: 0xff9f43,
+  method: 0xff6b9d,
 };
-let loadingTimer: number | null = null;
-let progressTimer: number | null = null;
-let buildingLabelTimer: number | null = null;
-let pollTimer: number | null = null;
-let fileIndex = 0;
-let buildingIndex = 0;
-let phaseStart = performance.now();
-let graphSettledAt = 0;
-const LOADING_EXPECTED_MS = 9000;
-const BUILD_EXPECTED_MS = 15000;
-const movementState = {
-  forward: false,
-  back: false,
-  left: false,
-  right: false,
+const EDGE_COLORS: Record<string, number> = {
+  contains: 0x426987,
+  imports: 0x8a7dff,
+  calls: 0x27d7c4,
+  inherits: 0xffbf69,
 };
-let lastFrameTime = performance.now();
-const CAMERA_MIN_HEIGHT = 180;
-const CAMERA_MAX_HEIGHT = 2800;
-const CAMERA_SPEED = 450;
-const CAMERA_LIMITS = { x: 2600, z: 1800 };
-const zoomLevel = ref(1);
-const zoomLabel = computed(() => `${zoomLevel.value.toFixed(1)}x`);
-const ZOOM_STEP = 0.18;
-const ZOOM_MIN = 0.12;
-const ZOOM_MAX = 3.2;
-const ZOOM_DURATION_MS = 260;
-let zoomAnimation: number | null = null;
-let zoomStartTime = 0;
-let zoomFrom = 1;
-let zoomTo = 1;
-const FILE_NODE_WIDTH = 240;
-const FILE_NODE_HEIGHT = 170;
-const FILE_NODE_RADIUS = Math.sqrt((FILE_NODE_WIDTH / 2) ** 2 + (FILE_NODE_HEIGHT / 2) ** 2);
-const MAX_LINKS_PER_FILE = 6;
-const LABEL_CANVAS_WIDTH = 768;
-const LABEL_CANVAS_HEIGHT = 256;
-const MAX_LABEL_LINES = 3;
-const BUILDING_MESSAGES = [
-  t('codegraph.build_linking'),
-  t('codegraph.build_resolving'),
-  t('codegraph.build_indexing'),
-  t('codegraph.build_scoring'),
-  t('codegraph.build_drawing'),
-  t('codegraph.build_assembling'),
-];
+
+const activeRepository = computed(() => repositories.value.find((repo) => repo.id === selectedRepositoryId.value) || null);
+const tooltipStyle = computed(() => ({ left: `${tooltipX.value + 16}px`, top: `${tooltipY.value + 16}px` }));
+const activeCodePanel = computed(() => codePanels.value.find((panel) => panel.id === activePanelId.value) || codePanels.value[0]);
+const visibleCodePanels = computed(() => workspaceMode.value === 'single' ? (activeCodePanel.value ? [activeCodePanel.value] : []) : codePanels.value);
+
+async function loadRepositories() {
+  const payload = await fetchCodeGraphRepositories();
+  repositories.value = payload.repositories || [];
+  if (!selectedRepositoryId.value || !repositories.value.some((repo) => repo.id === selectedRepositoryId.value)) {
+    selectedRepositoryId.value = payload.active_id || repositories.value[0]?.id || '';
+  }
+}
+
+async function switchRepository() {
+  if (!selectedRepositoryId.value) return;
+  switching.value = true;
+  requestGeneration += 1;
+  clearPoll();
+  clearGraph();
+  loadedFileDetails.clear();
+  loadingFileDetails.clear();
+  codePanels.value = [];
+  activePanelId.value = '';
+  codeWorkspaceOpen.value = false;
+  graphError.value = '';
+  statusMessage.value = 'Switching repository…';
+  try {
+    await activateCodeGraphRepository(selectedRepositoryId.value);
+    await loadRepositories();
+    await refreshGraph(false);
+  } catch (error: any) {
+    graphError.value = apiError(error);
+  } finally {
+    switching.value = false;
+  }
+}
+
+async function removeActiveRepository() {
+  if (!selectedRepositoryId.value || repositories.value.length <= 1) return;
+  const repositoryId = selectedRepositoryId.value;
+  switching.value = true;
+  try {
+    await removeCodeGraphRepository(repositoryId);
+    selectedRepositoryId.value = '';
+    await loadRepositories();
+    await switchRepository();
+  } catch (error: any) {
+    repositoryError.value = apiError(error);
+  } finally {
+    switching.value = false;
+  }
+}
+
+async function saveRepository() {
+  repositoryError.value = '';
+  addingRepository.value = true;
+  try {
+    const payload = await addCodeGraphRepository({ ...repositoryDraft, activate: true });
+    selectedRepositoryId.value = payload.repository.id;
+    repositoryDraft.name = '';
+    repositoryDraft.location = '';
+    repositoryDraft.branch = '';
+    showAddRepository.value = false;
+    await loadRepositories();
+    await refreshGraph(false);
+  } catch (error: any) {
+    repositoryError.value = apiError(error);
+  } finally {
+    addingRepository.value = false;
+  }
+}
 
 async function refreshGraph(force = false) {
-  loading.value = true;
-  graphError.value = null;
-  startLoadingTicker();
-  setPhase('loading');
+  const generation = ++requestGeneration;
+  graphError.value = '';
   try {
-    const data = await fetchCodeGraph(force);
-    building.value = Boolean(data?.building);
-    summary.value = data?.summary || {};
-    warnings.value = data?.warnings || [];
-    errors.value = data?.errors || [];
-    nodes.value = (data?.nodes || []) as GraphNodePayload[];
-    graphEdges.value = (data?.edges || []) as GraphEdgePayload[];
-    graphLinks.value = (data?.file_links || []) as FileLinkPayload[];
-    graphReady.value = Boolean(nodes.value.length);
-    if (graphReady.value) {
-      try {
-        buildScene(data);
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error('[codegraph] failed to render scene', error);
-        graphReady.value = false;
-        graphError.value = t('codegraph.error_render');
-      }
+    const payload = await fetchCodeGraph(force, selectedRepositoryId.value);
+    if (generation !== requestGeneration) return;
+    building.value = Boolean(payload.building);
+    statusState.value = payload.status?.state || (building.value ? 'indexing' : 'ready');
+    statusProgress.value = Number(payload.status?.progress || 0);
+    statusMessage.value = payload.status?.error || payload.status?.message || (building.value ? 'Indexing codebase…' : 'Index ready');
+    summary.value = payload.summary || {};
+    const retainedDetailNodes = force ? [] : nodes.value.filter((node) => !['repository', 'module', 'file'].includes(node.kind));
+    const retainedDetailIds = new Set(retainedDetailNodes.map((node) => node.id));
+    const retainedDetailEdges = force ? [] : edges.value.filter((edge) => retainedDetailIds.has(edge.source) || retainedDetailIds.has(edge.target));
+    nodes.value = mergeById(payload.nodes || [], retainedDetailNodes);
+    edges.value = mergeById(payload.edges || [], retainedDetailEdges);
+    entryPoints.value = payload.entry_points || entryPoints.value;
+    if (nodes.value.length) {
+      const shouldFit = !graphReady.value;
+      buildGraphScene(nodes.value, edges.value, shouldFit);
+      graphReady.value = true;
+      void maybeLoadNearbyDetails(true);
     } else {
-      if (building.value) {
-        graphError.value = t('codegraph.build_pending');
-      } else {
-        graphError.value = graphError.value || t('codegraph.no_artifacts');
-      }
-      await resetView();
+      graphReady.value = false;
+      clearGraph();
     }
+    await loadRepositories();
     schedulePoll();
   } catch (error: any) {
-    const friendly = describeGraphError(error);
-    loadingLabel.value = t('codegraph.awaiting_response');
-    buildingLabel.value = friendly;
-    graphError.value = friendly;
+    if (generation !== requestGeneration) return;
+    graphError.value = apiError(error);
+    statusState.value = 'error';
+    statusMessage.value = graphError.value;
     schedulePoll();
-  } finally {
-    if (!building.value) {
-      stopLoadingTicker();
-    }
-    loading.value = false;
-  }
-}
-
-function initScene() {
-  if (!canvasContainer.value) return;
-  const container = canvasContainer.value;
-  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(window.devicePixelRatio || 1);
-  const width = container.clientWidth || container.parentElement?.clientWidth || 800;
-  const height = container.clientHeight || 540;
-  renderer.setSize(width, height);
-  container.appendChild(renderer.domElement);
-
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050b16);
-
-  camera = createTopCamera(width, height);
-  camera.position.copy(defaultCameraPos);
-  camera.up.set(0, 0, -1);
-  camera.lookAt(defaultTarget);
-
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableRotate = false;
-  controls.enablePan = false;
-  controls.enableZoom = false;
-  controls.maxPolarAngle = 0;
-  controls.minPolarAngle = 0;
-  controls.addEventListener('change', () => markInteraction());
-  renderer.domElement.addEventListener('pointerdown', onPointerDown);
-  renderer.domElement.addEventListener('wheel', onCanvasWheel, { passive: false });
-
-  const ambient = new THREE.AmbientLight(0xffffff, 0.9);
-  scene.add(ambient);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.45);
-  dir.position.set(500, 1000, -500);
-  scene.add(dir);
-
-  clampCameraState();
-  window.addEventListener('resize', handleResize);
-  animate();
-}
-
-function clearScene() {
-  if (!scene) return;
-  const lights = scene.children.filter((child) => child.type.toLowerCase().includes('light'));
-  scene.children.slice().forEach((child) => {
-    if (!lights.includes(child)) {
-      scene!.remove(child);
-    }
-  });
-  nodeMeshes.clear();
-}
-
-function buildScene(payload: { nodes: GraphNodePayload[]; edges: GraphEdgePayload[]; file_links?: FileLinkPayload[] }) {
-  if (!scene) return;
-  clearScene();
-  addBasePlane();
-
-  const fileNodes = payload.nodes.filter((node) => node.kind === 'file');
-  if (!fileNodes.length) {
-    graphReady.value = false;
-    return;
-  }
-
-  const layout = computeGridLayout(fileNodes, payload.file_links || []);
-  const childrenByFile = groupChildren(payload.nodes);
-  const ioStats = computeIoStats(payload.edges || []);
-
-  fileNodes.forEach((file) => {
-    const entry = layout[file.id] || { position: new THREE.Vector3(0, 2, 0), grid: { row: 0, col: 0 } };
-    const mesh = createFileMesh(file, entry.position, ioStats);
-    scene!.add(mesh);
-    nodeMeshes.set(file.id, mesh);
-    placeChildren(file, childrenByFile.get(file.file) || [], entry.position, ioStats);
-  });
-
-  drawFileRelationshipEdges(payload.file_links || [], layout);
-  graphReady.value = true;
-  announceGraphReady();
-}
-
-function addBasePlane() {
-  if (!scene) return;
-  const planeGeometry = new THREE.PlaneGeometry(5200, 3200);
-  const planeMaterial = new THREE.MeshBasicMaterial({ color: 0x040913, side: THREE.DoubleSide });
-  const plane = new THREE.Mesh(planeGeometry, planeMaterial);
-  plane.rotation.x = -Math.PI / 2;
-  plane.position.y = -1;
-  scene.add(plane);
-
-  const gridHelper = new THREE.GridHelper(5200, 80, 0x123456, 0x0e223f);
-  scene.add(gridHelper);
-}
-
-function computeGridLayout(files: GraphNodePayload[], links: FileLinkPayload[]) {
-  const layout: Record<string, { position: THREE.Vector3; grid: { row: number; col: number } }> = {};
-  if (!files.length) {
-    return layout;
-  }
-  const order = orderFilesForGrid(files, links);
-  const columns = Math.max(1, Math.ceil(Math.sqrt(order.length) * 1.25));
-  const rows = Math.max(1, Math.ceil(order.length / columns));
-  const spacingX = 360;
-  const spacingZ = 260;
-  order.forEach((file, index) => {
-    const row = Math.floor(index / columns);
-    const col = index % columns;
-    const centeredCol = col - (columns - 1) / 2;
-    const centeredRow = row - (rows - 1) / 2;
-    const position = new THREE.Vector3(centeredCol * spacingX, 3, centeredRow * spacingZ);
-    layout[file.id] = { position, grid: { row, col } };
-  });
-  return layout;
-}
-
-function orderFilesForGrid(files: GraphNodePayload[], links: FileLinkPayload[]) {
-  const degree = new Map<string, number>();
-  links.forEach((link) => {
-    degree.set(link.source, (degree.get(link.source) || 0) + (link.weight || 1));
-    degree.set(link.target, (degree.get(link.target) || 0) + (link.weight || 1));
-  });
-  return [...files].sort((a, b) => {
-    const moduleA = a.file.split('/')[0] || '';
-    const moduleB = b.file.split('/')[0] || '';
-    if (moduleA !== moduleB) {
-      return moduleA.localeCompare(moduleB);
-    }
-    const degA = degree.get(a.id) || 0;
-    const degB = degree.get(b.id) || 0;
-    if (degA !== degB) {
-      return degB - degA;
-    }
-    return a.file.localeCompare(b.file);
-  });
-}
-
-function groupChildren(nodes: GraphNodePayload[]) {
-  const map = new Map<string, GraphNodePayload[]>();
-  nodes.forEach((node) => {
-    if (node.kind === 'file') return;
-    if (!map.has(node.file)) {
-      map.set(node.file, []);
-    }
-    map.get(node.file)!.push(node);
-  });
-  return map;
-}
-
-type IoStats = { inbound: number; outbound: number };
-
-function computeIoStats(edges: GraphEdgePayload[]) {
-  const stats = new Map<string, IoStats>();
-  edges.forEach((edge) => {
-    if (edge.kind !== 'calls') return;
-    if (!stats.has(edge.source)) stats.set(edge.source, { inbound: 0, outbound: 0 });
-    if (!stats.has(edge.target)) stats.set(edge.target, { inbound: 0, outbound: 0 });
-    stats.get(edge.source)!.outbound += 1;
-    stats.get(edge.target)!.inbound += 1;
-  });
-  return stats;
-}
-
-function getIoStats(map: Map<string, IoStats>, nodeId: string): IoStats {
-  return map.get(nodeId) || { inbound: 0, outbound: 0 };
-}
-
-function createFileMesh(node: GraphNodePayload, position: THREE.Vector3, ioStats: Map<string, IoStats>) {
-  const width = FILE_NODE_WIDTH;
-  const height = FILE_NODE_HEIGHT;
-  const shape = roundedRectShape(width, height, 28);
-  const geometry = extrudeShape(shape, 10);
-  const color = STATUS_COLORS[node.status] || STATUS_COLORS.ok;
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    metalness: 0.35,
-    roughness: 0.55,
-    transparent: true,
-    opacity: 0.92,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.copy(position.clone());
-  mesh.position.y = 6;
-  mesh.userData = { node };
-  const stats = aggregateFileStats(node);
-  const label = createLabelPlane(
-    node.label,
-    t('codegraph.label_classes')
-      .replace('{classes}', String(stats.classes))
-      .replace('{functions}', String(stats.functions)),
-    width - 30
-  );
-  mesh.add(label);
-  const dots = createIoDots(getIoStats(ioStats, node.id), width - 40);
-  mesh.add(dots);
-  return mesh;
-}
-
-function aggregateFileStats(node: GraphNodePayload) {
-  const definitions: string[] = (node.meta?.definitions || []) as string[];
-  const classCount = definitions.filter((label) => /^[A-Z]/.test(label || '')).length;
-  const functionCount = Math.max(definitions.length - classCount, 0);
-  return { classes: classCount, functions: functionCount };
-}
-
-function placeChildren(
-  fileNode: GraphNodePayload,
-  children: GraphNodePayload[],
-  basePosition: THREE.Vector3,
-  ioStats: Map<string, IoStats>
-) {
-  if (!children.length || !scene) return;
-  const sorted = [...children].sort((a, b) => {
-    if (a.kind === b.kind) {
-      return a.label.localeCompare(b.label);
-    }
-    const order = ['class', 'function', 'method'];
-    return order.indexOf(a.kind) - order.indexOf(b.kind);
-  });
-  const perRing = 12;
-  const radiusStep = 70;
-  sorted.forEach((child, index) => {
-    const ring = Math.floor(index / perRing);
-    const angle = ((index % perRing) / perRing) * Math.PI * 2;
-    const radius = 110 + ring * radiusStep;
-    const x = basePosition.x + Math.cos(angle) * radius;
-    const z = basePosition.z + Math.sin(angle) * radius;
-    const mesh = createFlowNodeMesh(child, new THREE.Vector3(x, 4.5, z), ioStats);
-    scene!.add(mesh);
-    nodeMeshes.set(child.id, mesh);
-  });
-}
-
-function createFlowNodeMesh(node: GraphNodePayload, position: THREE.Vector3, ioStats: Map<string, IoStats>) {
-  const stats = getIoStats(ioStats, node.id);
-  const color = STATUS_COLORS[node.status] || STATUS_COLORS.ok;
-  const { geometry, labelWidth } = geometryForNode(node);
-  const material = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.55,
-    metalness: 0.25,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.copy(position);
-  mesh.userData = { node };
-  const subtitle = t('codegraph.io_stats')
-    .replace('{in}', String(stats.inbound))
-    .replace('{out}', String(stats.outbound));
-  const label = createLabelPlane(node.label, subtitle, labelWidth);
-  mesh.add(label);
-  const dots = createIoDots(stats, labelWidth - 12);
-  mesh.add(dots);
-  return mesh;
-}
-
-function geometryForNode(node: GraphNodePayload) {
-  switch (node.kind) {
-    case 'class':
-      return { geometry: extrudeShape(rectShape(120, 80), 6), labelWidth: 90 };
-    case 'method':
-      return { geometry: extrudeShape(diamondShape(90, 90), 5), labelWidth: 80 };
-    default:
-      return { geometry: extrudeShape(parallelogramShape(100, 70, 18), 5), labelWidth: 84 };
-  }
-}
-
-function roundedRectShape(width: number, height: number, radius: number) {
-  const shape = new THREE.Shape();
-  const hw = width / 2;
-  const hh = height / 2;
-  const r = Math.min(radius, hw, hh);
-  shape.moveTo(-hw + r, -hh);
-  shape.lineTo(hw - r, -hh);
-  shape.quadraticCurveTo(hw, -hh, hw, -hh + r);
-  shape.lineTo(hw, hh - r);
-  shape.quadraticCurveTo(hw, hh, hw - r, hh);
-  shape.lineTo(-hw + r, hh);
-  shape.quadraticCurveTo(-hw, hh, -hw, hh - r);
-  shape.lineTo(-hw, -hh + r);
-  shape.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
-  return shape;
-}
-
-function rectShape(width: number, height: number) {
-  const shape = new THREE.Shape();
-  const hw = width / 2;
-  const hh = height / 2;
-  shape.moveTo(-hw, -hh);
-  shape.lineTo(hw, -hh);
-  shape.lineTo(hw, hh);
-  shape.lineTo(-hw, hh);
-  shape.lineTo(-hw, -hh);
-  return shape;
-}
-
-function parallelogramShape(width: number, height: number, skew: number) {
-  const shape = new THREE.Shape();
-  const hw = width / 2;
-  const hh = height / 2;
-  shape.moveTo(-hw + skew, -hh);
-  shape.lineTo(hw + skew, -hh);
-  shape.lineTo(hw - skew, hh);
-  shape.lineTo(-hw - skew, hh);
-  shape.lineTo(-hw + skew, -hh);
-  return shape;
-}
-
-function diamondShape(width: number, height: number) {
-  const shape = new THREE.Shape();
-  const hw = width / 2;
-  const hh = height / 2;
-  shape.moveTo(0, hh);
-  shape.lineTo(hw, 0);
-  shape.lineTo(0, -hh);
-  shape.lineTo(-hw, 0);
-  shape.lineTo(0, hh);
-  return shape;
-}
-
-function extrudeShape(shape: THREE.Shape, depth: number) {
-  const geometry = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: true,
-    bevelSize: 2,
-    bevelThickness: 1.2,
-    bevelSegments: 1,
-    curveSegments: 10,
-  });
-  geometry.center();
-  return geometry;
-}
-
-function createLabelPlane(text: string, subtitle: string, width: number) {
-  const texture = getLabelTexture(text, subtitle);
-  const texImage = texture.image as HTMLCanvasElement | HTMLImageElement;
-  const aspect = texImage && texImage.height ? texImage.width / texImage.height : 2;
-  const planeWidth = width;
-  const planeHeight = planeWidth / aspect;
-  const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-  const material = new THREE.MeshBasicMaterial({
-    map: texture,
-    transparent: true,
-    depthWrite: false,
-  });
-  const plane = new THREE.Mesh(geometry, material);
-  plane.rotation.x = -Math.PI / 2;
-  plane.position.y = 4.2;
-  return plane;
-}
-
-function getLabelTexture(text: string, subtitle: string) {
-  const key = `${text}|${subtitle}`;
-  if (labelTextureCache.has(key)) {
-    return labelTextureCache.get(key)!;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = LABEL_CANVAS_WIDTH;
-  canvas.height = LABEL_CANVAS_HEIGHT;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    throw new Error('Canvas 2D unavailable');
-  }
-  drawLabelBackdrop(ctx, canvas.width, canvas.height);
-  ctx.textBaseline = 'top';
-  const textLines = wrapLabelText(ctx, text, canvas.width - 160, MAX_LABEL_LINES);
-  ctx.fillStyle = '#e9f2ff';
-  ctx.font = '600 58px "Inter", "Segoe UI", sans-serif';
-  textLines.forEach((line, index) => {
-    ctx.fillText(line, 60, 36 + index * 64);
-  });
-  ctx.fillStyle = '#9bd2ff';
-  ctx.font = '500 40px "Inter", "Segoe UI", sans-serif';
-  ctx.fillText(subtitle, 60, canvas.height - 86);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.needsUpdate = true;
-  labelTextureCache.set(key, texture);
-  return texture;
-}
-
-function drawLabelBackdrop(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  const gradient = ctx.createLinearGradient(0, 0, width, height);
-  gradient.addColorStop(0, 'rgba(12, 26, 60, 0.95)');
-  gradient.addColorStop(1, 'rgba(7, 16, 32, 0.92)');
-  ctx.fillStyle = gradient;
-  const radius = 40;
-  ctx.beginPath();
-  ctx.moveTo(radius, 0);
-  ctx.lineTo(width - radius, 0);
-  ctx.quadraticCurveTo(width, 0, width, radius);
-  ctx.lineTo(width, height - radius);
-  ctx.quadraticCurveTo(width, height, width - radius, height);
-  ctx.lineTo(radius, height);
-  ctx.quadraticCurveTo(0, height, 0, height - radius);
-  ctx.lineTo(0, radius);
-  ctx.quadraticCurveTo(0, 0, radius, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(122, 181, 255, 0.45)';
-  ctx.lineWidth = 4;
-  ctx.stroke();
-}
-
-function wrapLabelText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number) {
-  const sanitized = text.replace(/\\/g, '/');
-  const tokens = sanitized.split(/(?=[/._-])/);
-  const lines: string[] = [];
-  let current = '';
-  const pushLine = (line: string) => {
-    if (lines.length < maxLines) {
-      lines.push(line.trim());
-    }
-  };
-  tokens.forEach((token) => {
-    const candidate = current ? `${current}${token}` : token;
-    if (ctx.measureText(candidate).width <= maxWidth) {
-      current = candidate;
-      return;
-    }
-    if (current) {
-      pushLine(current);
-      current = token.trimStart();
-    } else {
-      current = token;
-    }
-  });
-  if (current && lines.length < maxLines) {
-    pushLine(current);
-  }
-  if (lines.length > maxLines) {
-    return lines.slice(0, maxLines - 1).concat(`${lines[maxLines - 1]}…`);
-  }
-  if (lines.length === maxLines && tokens.length > lines.join('').length) {
-    const last = lines[maxLines - 1];
-    let trimmed = last;
-    while (ctx.measureText(`${trimmed}…`).width > maxWidth && trimmed.length > 1) {
-      trimmed = trimmed.slice(0, -1);
-    }
-    lines[maxLines - 1] = `${trimmed}…`;
-  }
-  return lines;
-}
-
-function createIoDots(stats: IoStats, width: number) {
-  const group = new THREE.Group();
-  const radius = 6;
-  if (stats.inbound > 0) {
-    const dot = new THREE.Mesh(
-      new THREE.CircleGeometry(radius, 24),
-      new THREE.MeshBasicMaterial({ color: 0x22c55e })
-    );
-    dot.rotation.x = -Math.PI / 2;
-    dot.position.set(-width / 2, 4.6, -radius * 0.6);
-    group.add(dot);
-  }
-  if (stats.outbound > 0) {
-    const dot = new THREE.Mesh(
-      new THREE.CircleGeometry(radius, 24),
-      new THREE.MeshBasicMaterial({ color: 0xf97316 })
-    );
-    dot.rotation.x = -Math.PI / 2;
-    dot.position.set(width / 2, 4.6, -radius * 0.6);
-    group.add(dot);
-  }
-  return group;
-}
-
-function drawFileRelationshipEdges(
-  links: FileLinkPayload[],
-  layout: Record<string, { position: THREE.Vector3; grid: { row: number; col: number } }>
-) {
-  if (!scene || !links.length) return;
-  const limited: FileLinkPayload[] = [];
-  const bySource = new Map<string, FileLinkPayload[]>();
-  links.forEach((link) => {
-    const sourcePlacement = layout[link.source];
-    const targetPlacement = layout[link.target];
-    if (!sourcePlacement || !targetPlacement) return;
-    if (!bySource.has(link.source)) {
-      bySource.set(link.source, []);
-    }
-    bySource.get(link.source)!.push(link);
-  });
-  bySource.forEach((entries) => {
-    entries.sort((a, b) => (b.weight || 0) - (a.weight || 0));
-    limited.push(...entries.slice(0, MAX_LINKS_PER_FILE));
-  });
-  limited.forEach((link, index) => {
-    const sourcePlacement = layout[link.source];
-    const targetPlacement = layout[link.target];
-    if (!sourcePlacement || !targetPlacement) return;
-    const direction = targetPlacement.position.clone().sub(sourcePlacement.position);
-    const distance = direction.length();
-    if (distance < 1) return;
-    const start = computeAnchorPoint(sourcePlacement.position, targetPlacement.position);
-    const end = computeAnchorPoint(targetPlacement.position, sourcePlacement.position);
-    const perp = new THREE.Vector3(-direction.z, 0, direction.x);
-    if (perp.lengthSq() === 0) {
-      perp.set(0, 0, 1);
-    }
-    perp.normalize();
-    const bendDistance = Math.min(distance * 0.25, 240);
-    const alternator = index % 2 === 0 ? 1 : -1;
-    perp.multiplyScalar(bendDistance * alternator);
-    const controlOffset = perp.clone().multiplyScalar(0.6);
-    const control1 = start.clone().add(controlOffset);
-    const control2 = end.clone().sub(controlOffset);
-    [start, end, control1, control2].forEach((point) => {
-      point.y = 1.2;
-    });
-    const curve = new THREE.CubicBezierCurve3(start, control1, control2, end);
-    const points = curve.getPoints(40);
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const opacity = THREE.MathUtils.clamp(0.18 + (link.weight || 0) / 90, 0.18, 0.78);
-    const material = new THREE.LineBasicMaterial({
-      color: 0x6f8bff,
-      transparent: true,
-      opacity,
-    });
-    const line = new THREE.Line(geometry, material);
-    scene!.add(line);
-  });
-}
-
-function computeAnchorPoint(origin: THREE.Vector3, towards: THREE.Vector3) {
-  const dir = towards.clone().sub(origin);
-  if (dir.lengthSq() === 0) {
-    dir.set(1, 0, 0);
-  }
-  dir.normalize();
-  const offset = FILE_NODE_RADIUS * 0.8 + 28;
-  const anchor = origin.clone().add(dir.multiplyScalar(offset));
-  anchor.y = 1.2;
-  return anchor;
-}
-
-function handleResize() {
-  if (!renderer || !camera || !canvasContainer.value) return;
-  const container = canvasContainer.value;
-  const width = container.clientWidth || container.parentElement?.clientWidth || 800;
-  const height = container.clientHeight || 540;
-  const nextCamera = createTopCamera(width, height);
-  nextCamera.position.copy(camera.position);
-  nextCamera.lookAt(controls?.target || defaultTarget);
-  camera = nextCamera;
-  controls?.update();
-  renderer.setSize(width, height);
-}
-
-function animate() {
-  if (!renderer || !scene || !camera) return;
-  animationId = requestAnimationFrame(animate);
-  const now = performance.now();
-  const delta = (now - lastFrameTime) / 1000;
-  lastFrameTime = now;
-  applyMovement(delta);
-  renderer.render(scene, camera);
-  if (performance.now() - lastInteraction > inactivityResetMs) {
-    lastInteraction = performance.now();
-    resetView();
-  }
-}
-
-function markInteraction() {
-  lastInteraction = performance.now();
-}
-
-function handleKeyDown(event: KeyboardEvent) {
-  switch (event.key.toLowerCase()) {
-    case 'w':
-    case 'arrowup':
-      movementState.forward = true;
-      break;
-    case 's':
-    case 'arrowdown':
-      movementState.back = true;
-      break;
-    case 'a':
-    case 'arrowleft':
-      movementState.left = true;
-      break;
-    case 'd':
-    case 'arrowright':
-      movementState.right = true;
-      break;
-    default:
-      return;
-  }
-  event.preventDefault();
-  markInteraction();
-}
-
-function handleKeyUp(event: KeyboardEvent) {
-  switch (event.key.toLowerCase()) {
-    case 'w':
-    case 'arrowup':
-      movementState.forward = false;
-      break;
-    case 's':
-    case 'arrowdown':
-      movementState.back = false;
-      break;
-    case 'a':
-    case 'arrowleft':
-      movementState.left = false;
-      break;
-    case 'd':
-    case 'arrowright':
-      movementState.right = false;
-      break;
-    default:
-      return;
-  }
-  event.preventDefault();
-  markInteraction();
-}
-
-function onCanvasWheel(event: WheelEvent) {
-  if (!camera || !controls) return;
-  event.preventDefault();
-  const delta = event.deltaY;
-  nudgeZoom(delta > 0 ? 1 : -1);
-  markInteraction();
-}
-
-function startPad(direction: 'forward' | 'back' | 'left' | 'right') {
-  movementState[direction] = true;
-  markInteraction();
-}
-
-function stopPad(direction: 'forward' | 'back' | 'left' | 'right') {
-  movementState[direction] = false;
-}
-
-function nudgeZoom(direction: number) {
-  const next = THREE.MathUtils.clamp(zoomLevel.value + direction * ZOOM_STEP, ZOOM_MIN, ZOOM_MAX);
-  animateZoomTo(next);
-}
-
-function applyMovement(delta: number) {
-  if (!camera || !controls) return;
-  const dx =
-    (movementState.right ? 1 : 0) -
-    (movementState.left ? 1 : 0);
-  const dz =
-    (movementState.back ? 1 : 0) -
-    (movementState.forward ? 1 : 0);
-  if (!dx && !dz) return;
-  const speed = CAMERA_SPEED * delta;
-  const move = new THREE.Vector3(dx, 0, dz).normalize().multiplyScalar(speed);
-  camera.position.add(move);
-  controls.target.add(move);
-  clampCameraState();
-}
-
-function onPointerDown(event: PointerEvent) {
-  markInteraction();
-  if (!renderer || !camera || !scene) return;
-  const bounds = renderer.domElement.getBoundingClientRect();
-  const pointer = new THREE.Vector2(
-    ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
-    -((event.clientY - bounds.top) / bounds.height) * 2 + 1
-  );
-  const raycaster = new THREE.Raycaster();
-  raycaster.setFromCamera(pointer, camera);
-  const intersects = raycaster.intersectObjects(Array.from(nodeMeshes.values()), true);
-  if (intersects.length) {
-    const hit = intersects[0].object;
-    const node = resolveNodeFromObject(hit);
-    if (node) {
-      focusOnNode(node.id);
-    }
-  }
-}
-
-async function focusOnNode(nodeId: string, zoomFactor = 0.35, duration = 700) {
-  const mesh = nodeMeshes.get(nodeId);
-  if (!mesh || !camera || !controls) return;
-  const target = mesh.position.clone();
-  const zoomTarget = THREE.MathUtils.clamp(1.9 - zoomFactor * 2.4, ZOOM_MIN, 2.1);
-  animateZoomTo(zoomTarget);
-  const offsetHeight = 220 + 520 * zoomFactor;
-  const offset = new THREE.Vector3(0, offsetHeight, 0);
-  const direction = target.clone().sub(new THREE.Vector3(0, 0, 0));
-  direction.y = 0;
-  if (direction.lengthSq() === 0) {
-    direction.set(1, 0, 0);
-  }
-  direction.normalize().multiplyScalar(120 + 240 * zoomFactor);
-  const destination = target.clone().add(offset).add(direction);
-  const boundedTarget = clampVectorToBounds(target.clone(), false);
-  boundedTarget.y = 0;
-  await animateCamera(clampVectorToBounds(destination, true), boundedTarget, duration);
-}
-
-async function animateCamera(position: THREE.Vector3, target: THREE.Vector3, duration = 600) {
-  if (!camera || !controls) return;
-  const boundedPosition = clampVectorToBounds(position.clone(), true);
-  const boundedTarget = clampVectorToBounds(target.clone(), false);
-  boundedTarget.y = 0;
-  const startPos = camera.position.clone();
-  const startTarget = controls.target.clone();
-  const start = performance.now();
-  return new Promise<void>((resolve) => {
-    const step = (now: number) => {
-      const t = Math.min(1, (now - start) / duration);
-      const eased = t * (2 - t);
-      camera!.position.lerpVectors(startPos, boundedPosition, eased);
-      controls!.target.lerpVectors(startTarget, boundedTarget, eased);
-      clampCameraState();
-      if (t < 1) {
-        requestAnimationFrame(step);
-      } else {
-        clampCameraState();
-        resolve();
-      }
-    };
-    requestAnimationFrame(step);
-  });
-}
-
-async function captureSnapshots(kind: 'warnings' | 'errors') {
-  if (!renderer || !graphReady.value) return;
-  capturing.value = true;
-  try {
-    await waitForGraphSettled();
-    const targets =
-      kind === 'errors'
-        ? nodes.value.filter((node) => node.status === 'broken')
-        : nodes.value.filter((node) => node.status === 'unused');
-    if (!targets.length) return;
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    for (const node of targets) {
-      await focusOnNode(node.id, kind === 'errors' ? 0.25 : 0.4, 550);
-      await nextTick();
-      markInteraction();
-      const dataUrl = renderer.domElement.toDataURL('image/png');
-      await uploadCodeGraphSnapshot({
-        timestamp,
-        node_id: node.id,
-        image: dataUrl,
-      });
-    }
-    await resetView();
-  } finally {
-    capturing.value = false;
-  }
-}
-
-async function resetView() {
-  if (!camera || !controls) return;
-  markInteraction();
-  await animateCamera(defaultCameraPos.clone(), defaultTarget.clone(), 700);
-  clampCameraState();
-}
-
-async function loadFileList() {
-  try {
-    const files = await fetchCodeGraphFiles();
-    if (Array.isArray(files) && files.length) {
-      fileNames.value = files;
-    }
-  } catch (error) {
-    // ignore
-  }
-}
-
-function startLoadingTicker() {
-  if (!fileNames.value.length) {
-    loadFileList();
-  }
-  if (loadingTimer) return;
-  loadingTimer = window.setInterval(() => {
-    if (!fileNames.value.length) {
-      currentFileName.value = t('codegraph.scanning');
-    } else {
-      currentFileName.value = fileNames.value[fileIndex % fileNames.value.length];
-      fileIndex += 1;
-    }
-    if (loadingPhase.value === 'loading') {
-      loadingLabel.value = currentFileName.value
-        ? t('codegraph.loading_file').replace('{file}', currentFileName.value)
-        : t('codegraph.scanning');
-      pushRecentFile(currentFileName.value);
-    }
-  }, 25);
-  startProgressLoop();
-}
-
-function stopLoadingTicker() {
-  if (building.value) {
-    return;
-  }
-  if (loadingTimer) {
-    window.clearInterval(loadingTimer);
-    loadingTimer = null;
-  }
-  currentFileName.value = '';
-}
-
-function setPhase(state: 'idle' | 'loading' | 'building' | 'done') {
-  loadingPhase.value = state;
-  phaseStart = performance.now();
-  if (state === 'loading') {
-    loadingProgress.value = 0;
-    loadingLabel.value = currentFileName.value || t('codegraph.scanning');
-    buildingLabel.value = t('codegraph.preparing_build');
-    recentFiles.value = [];
-    stopBuildingLabelTicker();
-  } else if (state === 'building') {
-    buildingLabel.value = BUILDING_MESSAGES[buildingIndex % BUILDING_MESSAGES.length];
-    startBuildingLabelTicker();
-  } else if (state === 'done') {
-    stopBuildingLabelTicker();
-    buildingLabel.value = t('codegraph.up_to_date');
-    loadingLabel.value = t('codegraph.idle');
-    currentFileName.value = '';
-    loadingProgress.value = 1;
-    stopProgressLoop();
-    window.setTimeout(() => {
-      loadingPhase.value = 'idle';
-      loadingProgress.value = 0;
-    }, 500);
-    return;
-  }
-  startProgressLoop();
-}
-
-function startProgressLoop() {
-  if (progressTimer) return;
-  const loop = () => {
-    updateProgress();
-    progressTimer = window.requestAnimationFrame(loop);
-  };
-  progressTimer = window.requestAnimationFrame(loop);
-}
-
-function stopProgressLoop() {
-  if (progressTimer) {
-    window.cancelAnimationFrame(progressTimer);
-    progressTimer = null;
-  }
-  if (loadingPhase.value === 'done' || loadingPhase.value === 'idle') {
-    loadingProgress.value = loadingPhase.value === 'done' ? 1 : 0;
-  }
-}
-
-function updateProgress() {
-  if (loadingPhase.value === 'idle') return;
-  const now = performance.now();
-  const elapsed = now - phaseStart;
-  if (loadingPhase.value === 'loading') {
-    const pct = Math.min(elapsed / LOADING_EXPECTED_MS, 1);
-    loadingProgress.value = Math.min(pct * 0.6, 0.6);
-    loadingLabel.value = currentFileName.value || t('codegraph.scanning');
-  } else if (loadingPhase.value === 'building') {
-    const pct = Math.min(elapsed / BUILD_EXPECTED_MS, 1);
-    loadingProgress.value = 0.6 + pct * 0.38;
-  }
-}
-
-function pushRecentFile(name: string) {
-  const cleaned = (name || '').trim();
-  if (!cleaned) return;
-  if (recentFiles.value[0] === cleaned) return;
-  recentFiles.value = [cleaned, ...recentFiles.value.filter((entry) => entry !== cleaned)].slice(0, 6);
-}
-
-function createTopCamera(width: number, height: number) {
-  const frustumSize = 2000;
-  const aspect = width / height;
-  const camera = new THREE.OrthographicCamera(
-    (-frustumSize * aspect) / 2,
-    (frustumSize * aspect) / 2,
-    frustumSize / 2,
-    -frustumSize / 2,
-    10,
-    6000,
-  );
-  camera.zoom = zoomLevel.value;
-  camera.updateProjectionMatrix();
-  return camera;
-}
-
-function animateZoomTo(target: number) {
-  if (!camera) return;
-  if (Math.abs(target - zoomLevel.value) < 0.001) return;
-  zoomFrom = zoomLevel.value;
-  zoomTo = target;
-  zoomStartTime = performance.now();
-  if (zoomAnimation) {
-    cancelAnimationFrame(zoomAnimation);
-  }
-  const tick = () => {
-    if (!camera) return;
-    const elapsed = performance.now() - zoomStartTime;
-    const t = Math.min(1, elapsed / ZOOM_DURATION_MS);
-    const eased = t * (2 - t);
-    const value = THREE.MathUtils.lerp(zoomFrom, zoomTo, eased);
-    setCameraZoom(value);
-    if (t < 1) {
-      zoomAnimation = requestAnimationFrame(tick);
-    } else {
-      zoomAnimation = null;
-    }
-  };
-  zoomAnimation = requestAnimationFrame(tick);
-}
-
-function setCameraZoom(value: number) {
-  if (!camera) return;
-  zoomLevel.value = value;
-  camera.zoom = value;
-  camera.updateProjectionMatrix();
-}
-
-function clampVectorToBounds(vector: THREE.Vector3, clampY = true) {
-  vector.x = THREE.MathUtils.clamp(vector.x, -CAMERA_LIMITS.x, CAMERA_LIMITS.x);
-  vector.z = THREE.MathUtils.clamp(vector.z, -CAMERA_LIMITS.z, CAMERA_LIMITS.z);
-  if (clampY) {
-    vector.y = THREE.MathUtils.clamp(vector.y, CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
-  }
-  return vector;
-}
-
-function clampCameraState() {
-  if (!camera || !controls) return;
-  clampVectorToBounds(camera.position, true);
-  const target = controls.target.clone();
-  clampVectorToBounds(target, false);
-  target.y = 0;
-  controls.target.copy(target);
-  controls.update();
-}
-
-function announceGraphReady() {
-  graphSettledAt = performance.now();
-  const event = new CustomEvent(GRAPH_READY_EVENT, { detail: { nodes: nodes.value.length } });
-  window.dispatchEvent(event);
-}
-
-async function waitForGraphSettled() {
-  if (!graphReady.value) {
-    await new Promise<void>((resolve) => {
-      const handler = () => resolve();
-      window.addEventListener(GRAPH_READY_EVENT, handler as EventListener, { once: true });
-    });
-  }
-  const elapsed = performance.now() - graphSettledAt;
-  const delayMs = Math.max(0, 140 - elapsed);
-  if (delayMs > 0) {
-    await wait(delayMs);
-  }
-  await nextFrame();
-  await nextFrame();
-}
-
-function wait(ms: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-}
-
-function nextFrame() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-}
-
-function describeGraphError(error: any): string {
-  if (error?.code === 'ECONNABORTED') {
-    const timeout = error?.config?.timeout ? `${error.config.timeout}ms` : 'the request';
-    return t('codegraph.timeout').replace('{timeout}', timeout);
-  }
-  if (error?.response) {
-    const status = error.response.status;
-    if (status === 403) {
-      return t('codegraph.error_session');
-    }
-    if (status === 404) {
-      return t('codegraph.error_404');
-    }
-    return t('codegraph.error_status').replace('{status}', String(status));
-  }
-  if (error?.request) {
-    return t('codegraph.error_unreachable');
-  }
-  const message = typeof error?.message === 'string' ? error.message : t('codegraph.error_unknown');
-  return t('codegraph.error_request').replace('{message}', message);
-}
-
-function resolveNodeFromObject(object: THREE.Object3D | null): GraphNodePayload | null {
-  let current: THREE.Object3D | null = object;
-  while (current) {
-    if (current.userData?.node) {
-      return current.userData.node as GraphNodePayload;
-    }
-    current = (current.parent as THREE.Object3D) || null;
-  }
-  return null;
-}
-
-function startBuildingLabelTicker() {
-  if (buildingLabelTimer) return;
-  buildingLabel.value = BUILDING_MESSAGES[buildingIndex % BUILDING_MESSAGES.length];
-  buildingIndex += 1;
-  buildingLabelTimer = window.setInterval(() => {
-    buildingLabel.value = BUILDING_MESSAGES[buildingIndex % BUILDING_MESSAGES.length];
-    buildingIndex += 1;
-  }, 600);
-}
-
-function stopBuildingLabelTicker() {
-  if (buildingLabelTimer) {
-    window.clearInterval(buildingLabelTimer);
-    buildingLabelTimer = null;
   }
 }
 
 function schedulePoll() {
-  if (!building.value) {
-    if (pollTimer) {
-      window.clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-    if (!loading.value) {
-      setPhase('done');
-      stopLoadingTicker();
-    }
-    return;
-  }
-  if (pollTimer) {
-    return;
-  }
-  pollTimer = window.setTimeout(() => {
-    pollTimer = null;
-    refreshGraph();
-  }, 2000);
+  clearPoll();
+  if (!building.value) return;
+  pollTimer = window.setTimeout(() => refreshGraph(false), 1000);
 }
 
-onMounted(() => {
-  initScene();
-  loadFileList();
-  refreshGraph();
-  window.addEventListener('keydown', handleKeyDown);
-  window.addEventListener('keyup', handleKeyUp);
-});
+function clearPoll() {
+  if (pollTimer) window.clearTimeout(pollTimer);
+  pollTimer = 0;
+}
 
-watch(building, async (value, previous) => {
-  if (value) {
-    buildingCompletionPending.value = true;
-    if (!loadingTimer) {
-      startLoadingTicker();
+async function maybeLoadNearbyDetails(force = false) {
+  if (!graphReady.value || !selectedRepositoryId.value || !controls) return;
+  const now = performance.now();
+  if (!force && now - lastDetailLoad < 900) return;
+  lastDetailLoad = now;
+  const files = nodes.value.filter((node) => node.kind === 'file');
+  const target = controls.target;
+  const candidates = files
+    .filter((node) => !loadedFileDetails.has(node.id) && !loadingFileDetails.has(node.id))
+    .sort((a, b) => {
+      const entryDelta = Number(b.meta?.entry_priority || 0) - Number(a.meta?.entry_priority || 0);
+      if (entryDelta) return entryDelta;
+      return (nodePositions.get(a.id)?.distanceToSquared(target) || Infinity) - (nodePositions.get(b.id)?.distanceToSquared(target) || Infinity);
+    })
+    .slice(0, 8);
+  if (!candidates.length) return;
+  const ids = candidates.map((node) => node.id);
+  ids.forEach((id) => loadingFileDetails.add(id));
+  try {
+    const payload = await fetchCodeGraphChunk(selectedRepositoryId.value, ids);
+    const detailNodes = (payload.nodes || []).filter((node: GraphNodePayload) => node.kind !== 'file');
+    if (detailNodes.length) {
+      nodes.value = mergeById(nodes.value, payload.nodes || []);
+      edges.value = mergeById(edges.value, payload.edges || []);
+      const filesWithDetail = new Set(detailNodes.map((node: GraphNodePayload) => `file::${node.file}`));
+      filesWithDetail.forEach((id) => loadedFileDetails.add(id));
+      buildGraphScene(nodes.value, edges.value, false);
     }
-    setPhase('building');
-  } else {
-    if (buildingCompletionPending.value && previous) {
-      buildingCompletionPending.value = false;
-      setPhase('done');
-      stopLoadingTicker();
-      await refreshGraph(false);
-    } else if (!loading.value) {
-      setPhase('done');
-      stopLoadingTicker();
+  } catch {
+    // A partial index may not have reached these files yet; the next camera tick retries.
+  } finally {
+    ids.forEach((id) => loadingFileDetails.delete(id));
+  }
+}
+
+function mergeById<T extends { id: string }>(first: T[], second: T[]): T[] {
+  const merged = new Map<string, T>();
+  first.forEach((item) => merged.set(item.id, item));
+  second.forEach((item) => merged.set(item.id, item));
+  return [...merged.values()];
+}
+
+function initScene() {
+  const host = canvasContainer.value;
+  if (!host) return;
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(host.clientWidth, host.clientHeight);
+  renderer.domElement.setAttribute('aria-label', 'Interactive three-dimensional source dependency graph');
+  host.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x030812);
+  scene.fog = new THREE.FogExp2(0x030812, 0.00018);
+  camera = new THREE.PerspectiveCamera(48, host.clientWidth / host.clientHeight, 1, 30000);
+  camera.position.set(0, 1500, 2400);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.screenSpacePanning = true;
+  controls.minDistance = 80;
+  controls.maxDistance = 14000;
+  scene.add(new THREE.AmbientLight(0xbad8ff, 1.45));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+  keyLight.position.set(800, 1400, 900);
+  scene.add(keyLight);
+  renderer.domElement.addEventListener('pointermove', onPointerMove);
+  renderer.domElement.addEventListener('pointerleave', clearHover);
+  renderer.domElement.addEventListener('click', onGraphClick);
+  window.addEventListener('resize', resizeRenderer);
+  animate();
+}
+
+function clearGraph() {
+  selectedNode.value = null;
+  hoveredNode.value = null;
+  graphReady.value = false;
+  instancedMeshes.splice(0);
+  nodePositions.clear();
+  edgeObjects.clear();
+  highlightHalo = null;
+  labelTextures.splice(0).forEach((texture) => texture.dispose());
+  if (!scene) return;
+  const keep = scene.children.filter((child) => child.type.includes('Light'));
+  scene.children.slice().forEach((child) => {
+    if (!keep.includes(child)) {
+      disposeObject(child);
+      scene!.remove(child);
+    }
+  });
+}
+
+function buildGraphScene(graphNodes: GraphNodePayload[], graphEdges: GraphEdgePayload[], fit = true) {
+  const savedCamera = camera?.position.clone();
+  const savedTarget = controls?.target.clone();
+  clearGraph();
+  if (!scene) return;
+  const positions = computeCentricLayout(graphNodes, graphEdges);
+  graphBounds.makeEmpty();
+  positions.forEach((position, nodeId) => {
+    nodePositions.set(nodeId, position);
+    graphBounds.expandByPoint(position);
+  });
+  createInstancedNodes(graphNodes, positions);
+  createEdges(graphEdges, positions);
+  addReferenceAxes();
+  highlightHalo = new THREE.Mesh(
+    new THREE.SphereGeometry(34, 18, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: .8 }),
+  );
+  highlightHalo.visible = false;
+  scene.add(highlightHalo);
+  applyRelationshipVisibility();
+  graphReady.value = true;
+  if (fit) nextTick(() => fitGraph(false));
+  else if (savedCamera && savedTarget && camera && controls) {
+    camera.position.copy(savedCamera);
+    controls.target.copy(savedTarget);
+    controls.update();
+  }
+}
+
+function computeCentricLayout(graphNodes: GraphNodePayload[], graphEdges: GraphEdgePayload[]) {
+  const positions = new Map<string, THREE.Vector3>();
+  const children = new Map<string, string[]>();
+  graphEdges.filter((edge) => edge.kind === 'contains').forEach((edge) => {
+    if (!children.has(edge.source)) children.set(edge.source, []);
+    children.get(edge.source)!.push(edge.target);
+  });
+  const repository = graphNodes.find((node) => node.kind === 'repository');
+  if (!repository) return positions;
+  positions.set(repository.id, new THREE.Vector3(0, -180, 0));
+  const modules = (children.get(repository.id) || []).sort();
+  const moduleRadius = Math.max(650, modules.length * 145);
+  modules.forEach((moduleId, moduleIndex) => {
+    const angle = (moduleIndex / Math.max(1, modules.length)) * Math.PI * 2;
+    const modulePosition = new THREE.Vector3(Math.cos(angle) * moduleRadius, 0, Math.sin(angle) * moduleRadius);
+    positions.set(moduleId, modulePosition);
+    const files = (children.get(moduleId) || []).sort();
+    const ringCapacity = 12;
+    files.forEach((fileId, fileIndex) => {
+      const ring = Math.floor(fileIndex / ringCapacity);
+      const slot = fileIndex % ringCapacity;
+      const capacity = Math.min(ringCapacity, files.length - ring * ringCapacity);
+      const localAngle = angle - 0.85 + (slot / Math.max(1, capacity - 1)) * 1.7;
+      const radius = 240 + ring * 180;
+      const y = ((fileIndex % 3) - 1) * 90;
+      const filePosition = modulePosition.clone().add(new THREE.Vector3(Math.cos(localAngle) * radius, y, Math.sin(localAngle) * radius));
+      positions.set(fileId, filePosition);
+      const symbols = (children.get(fileId) || []).sort();
+      symbols.forEach((symbolId, symbolIndex) => {
+        const layer = Math.floor(symbolIndex / 10);
+        const symbolAngle = (symbolIndex % 10) / Math.min(10, Math.max(1, symbols.length - layer * 10)) * Math.PI * 2;
+        const symbolRadius = 100 + layer * 72;
+        const symbolPosition = filePosition.clone().add(new THREE.Vector3(
+          Math.cos(symbolAngle) * symbolRadius,
+          (layer % 2 === 0 ? 1 : -1) * (80 + layer * 42),
+          Math.sin(symbolAngle) * symbolRadius,
+        ));
+        positions.set(symbolId, symbolPosition);
+        const nested = children.get(symbolId) || [];
+        nested.forEach((nestedId, nestedIndex) => {
+          positions.set(nestedId, symbolPosition.clone().add(new THREE.Vector3((nestedIndex - nested.length / 2) * 52, 90, 0)));
+        });
+      });
+    });
+  });
+  const primaryEntry = graphNodes
+    .filter((node) => node.kind === 'file' && node.meta?.entry_point)
+    .sort((a, b) => Number(b.meta?.entry_priority || 0) - Number(a.meta?.entry_priority || 0))[0];
+  if (primaryEntry) positions.set(primaryEntry.id, new THREE.Vector3(0, 0, 0));
+  return positions;
+}
+
+function createInstancedNodes(graphNodes: GraphNodePayload[], positions: Map<string, THREE.Vector3>) {
+  if (!scene) return;
+  const grouped = new Map<string, GraphNodePayload[]>();
+  graphNodes.forEach((node) => {
+    if (!grouped.has(node.kind)) grouped.set(node.kind, []);
+    grouped.get(node.kind)!.push(node);
+  });
+  grouped.forEach((kindNodes, kind) => {
+    const size = nodeSize(kind);
+    const geometry = geometryForKind(kind, size);
+    const material = new THREE.MeshStandardMaterial({
+      color: NODE_COLORS[kind] || 0x86a6c9,
+      emissive: NODE_COLORS[kind] || 0x86a6c9,
+      emissiveIntensity: .12,
+      metalness: .22,
+      roughness: .5,
+    });
+    const mesh = new THREE.InstancedMesh(geometry, material, kindNodes.length);
+    mesh.userData.nodes = kindNodes;
+    const matrix = new THREE.Matrix4();
+    kindNodes.forEach((node, index) => {
+      const position = positions.get(node.id) || new THREE.Vector3();
+      matrix.makeTranslation(position.x, position.y, position.z);
+      mesh.setMatrixAt(index, matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    scene!.add(mesh);
+    instancedMeshes.push(mesh);
+    const labelEveryNode = graphNodes.length < 1800;
+    if (labelEveryNode || ['repository', 'module', 'file'].includes(kind)) {
+      kindNodes.forEach((node) => {
+        const label = createTextLabel(node.label, node.kind, kind === 'repository' ? 1.45 : kind === 'module' ? 1.15 : .82);
+        const position = positions.get(node.id) || new THREE.Vector3();
+        label.position.copy(position).add(new THREE.Vector3(0, size + 18, 0));
+        scene!.add(label);
+      });
+    }
+  });
+}
+
+function nodeSize(kind: string) {
+  return kind === 'repository' ? 58 : kind === 'module' ? 42 : kind === 'file' ? 32 : kind === 'class' ? 25 : 18;
+}
+
+function geometryForKind(kind: string, size: number): THREE.BufferGeometry {
+  if (kind === 'repository') return new THREE.IcosahedronGeometry(size, 2);
+  if (kind === 'module') return new THREE.OctahedronGeometry(size, 1);
+  if (kind === 'file') return new THREE.BoxGeometry(size * 1.35, size * .34, size);
+  if (kind === 'class') return new THREE.BoxGeometry(size * 1.25, size, size * .55);
+  if (kind === 'method') return new THREE.CylinderGeometry(size * .72, size * .72, size * .55, 8);
+  return new THREE.SphereGeometry(size * .72, 12, 8);
+}
+
+function createTextLabel(text: string, subtitle: string, scale: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = 'rgba(3, 9, 20, .88)';
+  context.roundRect(1, 1, 254, 62, 12);
+  context.fill();
+  context.strokeStyle = 'rgba(132, 194, 255, .5)';
+  context.stroke();
+  context.fillStyle = '#eaf5ff';
+  context.font = '600 18px Segoe UI, sans-serif';
+  context.textAlign = 'center';
+  context.fillText(ellipsize(text, 25), 128, 27);
+  context.fillStyle = '#83bde7';
+  context.font = '11px Segoe UI, sans-serif';
+  context.fillText(subtitle.toUpperCase(), 128, 47);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  labelTextures.push(texture);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+  sprite.scale.set(150 * scale, 37.5 * scale, 1);
+  return sprite;
+}
+
+function createEdges(graphEdges: GraphEdgePayload[], positions: Map<string, THREE.Vector3>) {
+  if (!scene) return;
+  relationshipKinds.forEach((kind) => {
+    const points: number[] = [];
+    graphEdges.filter((edge) => edge.kind === kind).forEach((edge) => {
+      const source = positions.get(edge.source);
+      const target = positions.get(edge.target);
+      if (!source || !target) return;
+      points.push(source.x, source.y, source.z, target.x, target.y, target.z);
+    });
+    if (!points.length) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+    const material = new THREE.LineBasicMaterial({
+      color: EDGE_COLORS[kind] || 0x6b91b5,
+      transparent: true,
+      opacity: kind === 'contains' ? 0.24 : 0.68,
+    });
+    const lines = new THREE.LineSegments(geometry, material);
+    lines.userData.relationship = kind;
+    scene!.add(lines);
+    edgeObjects.set(kind, lines);
+  });
+}
+
+function addReferenceAxes() {
+  if (!scene) return;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(310, 312, 128),
+    new THREE.MeshBasicMaterial({ color: 0x173a61, transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  scene.add(ring);
+}
+
+function computeIo(graphEdges: GraphEdgePayload[]) {
+  const map = new Map<string, { inbound: number; outbound: number }>();
+  graphEdges.filter((edge) => edge.kind !== 'contains').forEach((edge) => {
+    if (!map.has(edge.source)) map.set(edge.source, { inbound: 0, outbound: 0 });
+    if (!map.has(edge.target)) map.set(edge.target, { inbound: 0, outbound: 0 });
+    map.get(edge.source)!.outbound += 1;
+    map.get(edge.target)!.inbound += 1;
+  });
+  return map;
+}
+
+function applyRelationshipVisibility() {
+  edgeObjects.forEach((object, kind) => { object.visible = visibleRelationships.value.includes(kind); });
+}
+
+function raycast(event: PointerEvent) {
+  if (!renderer || !camera) return null;
+  const bounds = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+  pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(instancedMeshes, false)[0] as THREE.Intersection<THREE.InstancedMesh> | undefined;
+  if (!hit || hit.instanceId === undefined) return null;
+  return (hit.object.userData.nodes?.[hit.instanceId] || null) as GraphNodePayload | null;
+}
+
+function onPointerMove(event: PointerEvent) {
+  if (!renderer) return;
+  const bounds = renderer.domElement.getBoundingClientRect();
+  tooltipX.value = event.clientX - bounds.left;
+  tooltipY.value = event.clientY - bounds.top;
+  const node = raycast(event);
+  if (node?.id !== hoveredNode.value?.id) {
+    setHighlighted(hoveredNode.value?.id, false);
+    hoveredNode.value = node;
+    setHighlighted(node?.id, true);
+  }
+  renderer.domElement.style.cursor = node ? 'pointer' : 'grab';
+}
+
+function clearHover() {
+  setHighlighted(hoveredNode.value?.id, false);
+  hoveredNode.value = null;
+}
+
+async function onGraphClick(event: PointerEvent) {
+  const node = raycast(event);
+  if (!node) return;
+  selectedNode.value = node;
+  focusNode(node.id);
+  if (node.file) await openCodeNode(node);
+}
+
+function setHighlighted(nodeId: string | undefined, active: boolean) {
+  if (!highlightHalo) return;
+  if (!active || !nodeId) {
+    highlightHalo.visible = false;
+    return;
+  }
+  const position = nodePositions.get(nodeId);
+  if (!position) return;
+  highlightHalo.position.copy(position);
+  highlightHalo.visible = true;
+}
+
+function focusNode(nodeId: string) {
+  const position = nodePositions.get(nodeId);
+  if (!position || !camera || !controls) return;
+  const target = position.clone();
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  controls.target.copy(target);
+  camera.position.copy(target.clone().add(direction.multiplyScalar(430)));
+  controls.update();
+}
+
+function focusFirstSearch() {
+  const query = searchText.value.trim().toLowerCase();
+  if (!query) return;
+  const node = nodes.value.find((candidate) => `${candidate.label} ${candidate.file}`.toLowerCase().includes(query));
+  if (node) {
+    selectedNode.value = node;
+    focusNode(node.id);
+    setHighlighted(node.id, true);
+  }
+}
+
+async function openCodeNode(node: GraphNodePayload) {
+  if (!node.file || !selectedRepositoryId.value) return;
+  activePanelId.value = node.id;
+  codeWorkspaceOpen.value = true;
+  let panel = codePanels.value.find((item) => item.id === node.id);
+  if (!panel) {
+    try {
+      const source = await fetchCodeGraphSource(selectedRepositoryId.value, node.file);
+      panel = {
+        id: node.id, title: node.label, path: source.path, line: Number(node.line || 1),
+        language: source.language, lines: source.content.split('\n'), colSpan: 6, rowSpan: 1,
+      };
+      codePanels.value.push(panel);
+    } catch (error: any) {
+      graphError.value = apiError(error);
+      codeWorkspaceOpen.value = false;
+      return;
     }
   }
-});
+  await nextTick();
+  scrollPanelToLine(panel.id, panel.line);
+}
 
-watch(loading, (value) => {
-  if (!value && !building.value) {
-    setPhase('done');
-    stopLoadingTicker();
+function scrollPanelToLine(panelId: string, line: number) {
+  const container = document.querySelector(`[data-panel="${CSS.escape(panelId)}"]`);
+  const target = container?.querySelector(`[data-line="${line}"]`);
+  target?.scrollIntoView({ block: 'center' });
+}
+
+function focusPanel(panelId: string) {
+  activePanelId.value = panelId;
+  workspaceMode.value = 'single';
+  nextTick(() => {
+    const panel = codePanels.value.find((item) => item.id === panelId);
+    if (panel) scrollPanelToLine(panel.id, panel.line);
+  });
+}
+
+function removePanel(panelId: string) {
+  codePanels.value = codePanels.value.filter((panel) => panel.id !== panelId);
+  if (activePanelId.value === panelId) activePanelId.value = codePanels.value[0]?.id || '';
+  if (!codePanels.value.length) codeWorkspaceOpen.value = false;
+}
+
+function resizePanel(panel: CodePanel, widthDelta: number, heightDelta: number) {
+  panel.colSpan = Math.max(2, Math.min(12, panel.colSpan + widthDelta));
+  panel.rowSpan = Math.max(1, Math.min(3, panel.rowSpan + heightDelta));
+}
+
+function dropPanel(targetId: string) {
+  const sourceId = draggedPanelId.value;
+  if (!sourceId || sourceId === targetId) return;
+  const sourceIndex = codePanels.value.findIndex((panel) => panel.id === sourceId);
+  const targetIndex = codePanels.value.findIndex((panel) => panel.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const next = [...codePanels.value];
+  const [panel] = next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, panel);
+  codePanels.value = next;
+  draggedPanelId.value = '';
+}
+
+function fitGraph(animate = true) {
+  if (!camera || !controls || graphBounds.isEmpty()) return;
+  const center = graphBounds.getCenter(new THREE.Vector3());
+  const size = graphBounds.getSize(new THREE.Vector3());
+  const distance = Math.max(800, Math.max(size.x, size.y, size.z) * 1.15);
+  controls.target.copy(center);
+  camera.position.copy(center.clone().add(new THREE.Vector3(distance * 0.22, distance * 0.7, distance)));
+  camera.near = Math.max(0.5, distance / 10000);
+  camera.far = distance * 8;
+  camera.updateProjectionMatrix();
+  controls.update();
+  void animate;
+}
+
+function resizeRenderer() {
+  const host = canvasContainer.value;
+  if (!host || !renderer || !camera) return;
+  renderer.setSize(host.clientWidth, host.clientHeight);
+  camera.aspect = host.clientWidth / host.clientHeight;
+  camera.updateProjectionMatrix();
+}
+
+function animate() {
+  animationFrame = requestAnimationFrame(animate);
+  controls?.update();
+  if (renderer && scene && camera) renderer.render(scene, camera);
+  void maybeLoadNearbyDetails(false);
+}
+
+function disposeObject(object: THREE.Object3D) {
+  object.traverse((child: any) => {
+    child.geometry?.dispose?.();
+    if (Array.isArray(child.material)) child.material.forEach((material: any) => material.dispose?.());
+    else child.material?.dispose?.();
+  });
+}
+
+function nodeColorCss(kind: string) {
+  return `#${(NODE_COLORS[kind] || 0x86a6c9).toString(16).padStart(6, '0')}`;
+}
+
+function ioLabel(node: GraphNodePayload) {
+  const inputCount = node.meta?.inputs?.length || 0;
+  const outputCount = node.meta?.outputs?.length || 0;
+  return `${inputCount} declared inputs · ${outputCount} declared outputs`;
+}
+
+function formatPorts(inputs: Array<Record<string, any>>) {
+  return inputs.map((input) => input.type ? `${input.name}: ${input.type}` : input.name).join(', ');
+}
+
+function ellipsize(value: string, length: number) {
+  return value.length <= length ? value : `${value.slice(0, length - 1)}…`;
+}
+
+function apiError(error: any) {
+  return error?.response?.data?.detail || error?.message || 'Unable to load CodeGraph';
+}
+
+onMounted(async () => {
+  initScene();
+  try {
+    await loadRepositories();
+    await refreshGraph(false);
+  } catch (error: any) {
+    graphError.value = apiError(error);
   }
 });
 
 onBeforeUnmount(() => {
-  if (animationId) cancelAnimationFrame(animationId);
-  stopLoadingTicker();
-  if (pollTimer) {
-    window.clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-  stopProgressLoop();
-  stopBuildingLabelTicker();
-  window.removeEventListener('keydown', handleKeyDown);
-  window.removeEventListener('keyup', handleKeyUp);
+  requestGeneration += 1;
+  clearPoll();
+  cancelAnimationFrame(animationFrame);
+  window.removeEventListener('resize', resizeRenderer);
   if (renderer) {
+    renderer.domElement.removeEventListener('pointermove', onPointerMove);
+    renderer.domElement.removeEventListener('pointerleave', clearHover);
+    renderer.domElement.removeEventListener('click', onGraphClick);
     renderer.dispose();
-    renderer = null;
   }
-  if (zoomAnimation) {
-    cancelAnimationFrame(zoomAnimation);
-    zoomAnimation = null;
-  }
-  nodeMeshes.clear();
-  window.removeEventListener('resize', handleResize);
+  clearGraph();
 });
 </script>
 
 <style scoped>
-.codegraph-view {
-  display: flex;
-  flex-direction: column;
-  gap: 1.4rem;
-  width: 100%;
-  min-height: 0;
-  flex: 1 1 auto;
-}
-
-.panel {
-  background: rgba(7, 14, 25, 0.92);
-  border: 1px solid rgba(66, 147, 255, 0.18);
-  border-radius: 18px;
-  padding: 1.2rem 1.5rem;
-}
-
-.toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.8rem;
-}
-
-.summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.8rem;
-}
-
-.loading-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.loading-bar .bar {
-  position: relative;
-  width: 100%;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-}
-
-.loading-bar .fill {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, rgba(71, 161, 255, 0.9), rgba(99, 255, 173, 0.9));
-  transition: width 0.1s linear;
-}
-
-.loading-bar .file-name {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.75);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.loading-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.loading-meta .build-name {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.75rem;
-  color: rgba(99, 255, 173, 0.85);
-}
-
-.loading-files {
-  margin-top: 0.35rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.loading-files span {
-  background: rgba(255, 255, 255, 0.06);
-  padding: 0.1rem 0.4rem;
-  border-radius: 6px;
-}
-
-.summary .label {
-  text-transform: uppercase;
-  font-size: 0.7rem;
-  letter-spacing: 0.1rem;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.summary .value {
-  font-size: 1.3rem;
-  font-weight: 600;
-}
-
-.summary .value.warn {
-  color: #f59e0b;
-}
-
-.summary .value.error {
-  color: #ef4444;
-}
-
-.canvas-panel {
-  position: relative;
-  min-height: 540px;
-  padding: 0;
-  overflow: hidden;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.canvas-host {
-  position: relative;
-  width: 100%;
-  min-height: 540px;
-  flex: 1 1 auto;
-  height: clamp(480px, 60vh, 1000px);
-}
-
-.hint {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  color: rgba(255, 255, 255, 0.75);
-  font-style: italic;
-}
-
-.hint-error {
-  color: #f87171;
-  font-style: normal;
-  font-weight: 600;
-}
-
-.canvas-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-end;
-  pointer-events: none;
-  padding: 1rem;
-}
-
-.pad-wrapper {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.6rem;
-  pointer-events: auto;
-}
-
-.dpad-grid {
-  display: grid;
-  grid-template-areas:
-    "cell1 cell2 cell3"
-    "cell4 cell5 cell6"
-    "cell7 cell8 cell9";
-  gap: 0.25rem;
-  padding: 0.45rem;
-  border-radius: 12px;
-  background: rgba(9, 16, 33, 0.82);
-  border: 1px solid rgba(124, 182, 255, 0.45);
-  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.45);
-}
-
-.dpad-grid .pad-cell,
-.dpad-grid .pad-button {
-  width: 46px;
-  height: 46px;
-}
-
-.pad-cell.empty {
-  border-radius: 10px;
-  background: rgba(14, 24, 44, 0.65);
-  pointer-events: none;
-}
-
-.pad-button {
-  border-radius: 10px;
-  border: 1px solid rgba(158, 196, 255, 0.4);
-  background: linear-gradient(145deg, rgba(32, 58, 104, 0.95), rgba(20, 37, 68, 0.95));
-  color: #eff6ff;
-  font-size: 1rem;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-}
-
-.pad-button:hover {
-  transform: translateY(-1px);
-  border-color: rgba(148, 214, 255, 0.9);
-  background: rgba(52, 98, 170, 0.95);
-}
-
-.pad-button.up {
-  grid-area: cell2;
-}
-
-.pad-button.down {
-  grid-area: cell8;
-}
-
-.pad-button.left {
-  grid-area: cell4;
-}
-
-.pad-button.right {
-  grid-area: cell6;
-}
-
-.pad-button.center {
-  grid-area: cell5;
-  background: rgba(74, 128, 210, 0.95);
-  border-color: rgba(168, 216, 255, 0.85);
-}
-
-.zoom-pad {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border-radius: 10px;
-  background: rgba(6, 12, 24, 0.85);
-  border: 1px solid rgba(122, 181, 255, 0.35);
-  padding: 0.25rem 0.5rem;
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.4);
-}
-
-.zoom-pad button {
-  width: 36px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid rgba(158, 196, 255, 0.35);
-  background: rgba(26, 46, 86, 0.95);
-  color: #f8fbff;
-  cursor: pointer;
-}
-
-.zoom-pad span {
-  font-size: 0.9rem;
-  color: rgba(230, 243, 255, 0.9);
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-}
-
-.btn.warning {
-  background: rgba(250, 174, 57, 0.16);
-  border: 1px solid rgba(250, 174, 57, 0.4);
-}
-
-.btn.danger {
-  background: rgba(239, 83, 80, 0.16);
-  border: 1px solid rgba(239, 83, 80, 0.4);
-}
-
-@media (max-width: 768px) {
-  .canvas-panel {
-    min-height: 360px;
-  }
-}
+.codegraph-view { display: flex; flex-direction: column; gap: 1rem; min-height: 0; }
+.panel { background: rgba(4, 11, 22, .94); border: 1px solid rgba(83, 157, 229, .24); border-radius: 16px; }
+.repository-bar { padding: 1rem 1.2rem; display: flex; gap: 1rem; align-items: end; flex-wrap: wrap; }
+.repository-picker { display: grid; gap: .28rem; min-width: min(480px, 100%); flex: 1; }
+.repository-picker select, .repository-form input, .repository-form select, .search-field input { background: #071426; color: #eef8ff; border: 1px solid #254d72; border-radius: 8px; padding: .65rem .75rem; }
+.source-path { color: #83a4be; font: .75rem ui-monospace, SFMono-Regular, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repository-actions { display: flex; gap: .55rem; }
+.eyebrow { color: #64b5f6; font-size: .68rem; letter-spacing: .16em; font-weight: 700; }
+.repository-form { width: 100%; display: grid; grid-template-columns: 150px 1fr minmax(280px, 2fr) 150px auto auto; gap: .65rem; align-items: end; padding-top: .8rem; border-top: 1px solid rgba(100, 181, 246, .16); }
+.repository-form label { display: grid; gap: .3rem; color: #a9bfd0; font-size: .75rem; }
+.form-error { grid-column: 1 / -1; color: #ff7b86; margin: 0; }
+.graph-status { padding: .75rem 1.1rem; display: grid; gap: .65rem; }
+.status-copy { display: flex; gap: .55rem; align-items: center; color: #bcd1e0; }
+.status-copy strong { color: #eef8ff; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #648099; box-shadow: 0 0 10px currentColor; }
+.status-dot.ready { background: #24d39a; }.status-dot.indexing,.status-dot.preparing,.status-dot.cloning { background: #56b8ff; animation: pulse 1s infinite; }.status-dot.error { background: #ff5363; }
+.progress-track { height: 5px; background: #0d2136; border-radius: 8px; overflow: hidden; }.progress-track span { display: block; height: 100%; background: linear-gradient(90deg,#498cff,#35d6a1); transition: width .25s; }
+.summary { display: flex; flex-wrap: wrap; gap: 1.1rem; color: #7f9bb0; font-size: .8rem; }.summary b { color: #e9f5ff; font-size: 1rem; }
+.graph-shell { position: relative; min-height: 680px; overflow: hidden; }
+.canvas-host { height: clamp(680px, 74vh, 1120px); width: 100%; position: relative; }
+.graph-tools { position: absolute; z-index: 3; top: 1rem; left: 1rem; width: min(290px, calc(100% - 2rem)); padding: .8rem; background: rgba(3, 10, 21, .88); border: 1px solid rgba(93, 168, 235, .3); border-radius: 12px; backdrop-filter: blur(10px); }
+.search-field { display: grid; gap: .35rem; color: #9db7ca; font-size: .72rem; }
+.relation-filters,.legend { display: flex; flex-wrap: wrap; gap: .55rem .8rem; margin-top: .7rem; font-size: .7rem; color: #b8cad8; }
+.relation-filters label,.legend span { display: flex; align-items: center; gap: .28rem; }
+.wire-key { width: 18px; height: 2px; background: #6385a3; }.wire-key.imports { background:#8a7dff }.wire-key.calls { background:#27d7c4 }.wire-key.inherits { background:#ffbf69 }
+.legend i { width: 8px; height: 8px; border-radius: 50%; }
+.node-tooltip { position: absolute; z-index: 5; pointer-events: none; display: grid; gap: .22rem; min-width: 220px; max-width: 340px; background: rgba(2, 8, 17, .96); border: 1px solid #32648f; border-radius: 10px; padding: .7rem .8rem; box-shadow: 0 18px 46px #000b; }
+.node-tooltip strong { color:#f3f9ff }.node-tooltip span,.node-tooltip small { color:#8facbf; font-size:.72rem }.node-tooltip small { color:#54d6af }.tooltip-kind { color:#6dbbfa; letter-spacing:.12em; font-size:.62rem; text-transform:uppercase; }
+.selection-card { position:absolute; z-index:3; right:1rem; bottom:1rem; width:min(360px,calc(100% - 2rem)); padding:1rem; background:rgba(3,10,21,.94); border:1px solid rgba(93,168,235,.38); border-radius:12px; box-shadow:0 18px 50px #000a; }
+.selection-card h3 { margin:.3rem 0; color:#eef8ff }.selection-card p { color:#87a5ba; font:.75rem ui-monospace,monospace; word-break:break-all }.selection-card code { display:block; color:#59dcb3; white-space:pre-wrap }.selection-card dl { font-size:.78rem }.selection-card dt { color:#6dbbfa }.selection-card dd { margin:0 0 .45rem; color:#bdcfdb }.close-mini { float:right; border:0; background:none; color:#9db5c8; font-size:1.25rem; cursor:pointer; }
+.canvas-message { position:absolute; inset:0; display:grid; place-items:center; color:#8ca9bd; pointer-events:none }.canvas-message.error { color:#ff6d79; }
+.code-workspace { position:fixed; z-index:10000; inset:0; background:#02060d; display:flex; flex-direction:column; color:#edf7ff; }
+.workspace-header { min-height:72px; display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.85rem 1.2rem; border-bottom:1px solid #17324d; background:#06101d; }.workspace-header h2 { margin:.2rem 0 0; font-size:1.05rem }.workspace-actions { display:flex; gap:.5rem }.workspace-actions .active { border-color:#48b7ff; color:#7fcfff; }
+.code-grid { flex:1; min-height:0; overflow:auto; padding:.8rem; display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); grid-auto-rows:minmax(390px, 46vh); gap:.8rem; }.code-grid.single { display:block; overflow:hidden; }.code-grid.single .code-panel { height:100%; }
+.code-panel { min-width:0; min-height:0; display:flex; flex-direction:column; background:#050b13; border:1px solid #183754; border-radius:10px; overflow:hidden; }.code-panel.active { border-color:#3f9dde; box-shadow:0 0 0 1px #3f9dde55; }.code-panel>header { display:flex; justify-content:space-between; gap:.7rem; padding:.55rem .7rem; background:#091727; border-bottom:1px solid #17334d; cursor:grab; }.code-panel>header>div:first-child { min-width:0; display:grid; gap:.15rem }.code-panel header strong { color:#dff2ff }.code-panel header span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#7798af; font:.68rem ui-monospace,monospace; }
+.panel-controls { display:flex; align-items:center; gap:.22rem }.panel-controls button { border:1px solid #2d506d; background:#0c2032; color:#a9c5d8; border-radius:5px; min-width:28px; height:26px; cursor:pointer; }
+.source-scroll { flex:1; min-height:0; overflow:auto; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; counter-reset:line; padding:.5rem 0 2rem; }.source-line { display:grid; grid-template-columns:58px minmax(max-content,1fr); min-height:1.55em; white-space:pre; }.source-line>span { position:sticky; left:0; z-index:1; text-align:right; padding-right:12px; color:#425e73; background:#050b13; user-select:none }.source-line code { color:#c8d9e5; padding-right:1rem }.source-line.target { background:#2b401b88; box-shadow:inset 3px 0 #b7e85b }.source-line.target>span { color:#d1ef8d; background:#14210f; }
+.workspace-empty { flex:1; display:grid; place-items:center; color:#7795aa; }
+.btn { border:1px solid #2f7db5; background:#0b4e7d; color:#eaf7ff; border-radius:8px; padding:.55rem .8rem; cursor:pointer }.btn.ghost { background:#0a1928; border-color:#294d69 }.btn:disabled { opacity:.48; cursor:not-allowed }
+@keyframes pulse { 50% { opacity:.35 } }
+@media (max-width: 900px) { .repository-form { grid-template-columns:1fr 1fr }.location-field,.form-error { grid-column:1/-1 }.graph-shell { min-height:560px }.canvas-host { height:70vh }.graph-tools { width:240px }.code-grid { grid-template-columns:1fr; }.code-panel { grid-column:1!important; }.workspace-header { align-items:flex-start; flex-direction:column; }.workspace-actions { flex-wrap:wrap; } }
 </style>

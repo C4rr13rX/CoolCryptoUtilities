@@ -33,7 +33,15 @@ if str(ROOT) not in sys.path:
 from db import get_db  # noqa: E402
 from opsconsole.manager import manager as console_manager
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
-from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
+from services.code_graph import (  # noqa: E402
+    activate_repository,
+    create_repository,
+    delete_repository,
+    get_code_graph,
+    list_repositories,
+    list_tracked_files,
+    read_repository_source,
+)
 from services.graph_store import search_graph_equations, graph_enabled  # noqa: E402
 from services.trading_accounting import trading_accounting_snapshot  # noqa: E402
 from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E402
@@ -554,13 +562,74 @@ class CodeGraphDataView(LoginRequiredMixin, View):
 
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
         refresh = str(request.GET.get("refresh", "")).lower() in {"1", "true", "yes"}
-        if refresh:
-            request_code_graph_refresh()
-            payload = get_code_graph(force_refresh=False)
-            payload["building"] = True
-        else:
-            payload = get_code_graph(force_refresh=False)
+        repository_id = str(request.GET.get("repository") or "").strip() or None
+        parent_ids = [value for value in str(request.GET.get("parents") or "").split(",") if value]
+        payload = get_code_graph(
+            force_refresh=refresh,
+            repository_id=repository_id,
+            parent_ids=parent_ids or None,
+        )
         return JsonResponse(payload, status=200)
+
+
+class CodeGraphRepositoryView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        return JsonResponse(list_repositories(), status=200)
+
+    def post(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        try:
+            payload = json.loads(request.body.decode("utf-8"))
+            repository = create_repository(
+                name=str(payload.get("name") or ""),
+                source_type=str(payload.get("source_type") or "local"),
+                location=str(payload.get("location") or ""),
+                branch=str(payload.get("branch") or ""),
+                activate=bool(payload.get("activate", True)),
+            )
+        except (ValueError, OSError) as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        return JsonResponse({"repository": repository}, status=201)
+
+
+class CodeGraphRepositoryDetailView(LoginRequiredMixin, View):
+    login_url = "core:index"
+    http_method_names = ["post", "delete"]
+
+    def post(self, request: HttpRequest, repository_id: str, *args, **kwargs) -> JsonResponse:
+        try:
+            repository = activate_repository(repository_id)
+        except KeyError as exc:
+            return JsonResponse({"detail": str(exc)}, status=404)
+        return JsonResponse({"repository": repository}, status=200)
+
+    def delete(self, request: HttpRequest, repository_id: str, *args, **kwargs) -> JsonResponse:
+        try:
+            delete_repository(repository_id)
+        except KeyError as exc:
+            return JsonResponse({"detail": str(exc)}, status=404)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
+        return JsonResponse({}, status=204)
+
+
+class CodeGraphSourceView(LoginRequiredMixin, View):
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        repository_id = str(request.GET.get("repository") or "").strip()
+        relative_path = str(request.GET.get("path") or "").strip()
+        if not repository_id or not relative_path:
+            return JsonResponse({"detail": "repository and path are required"}, status=400)
+        try:
+            return JsonResponse(read_repository_source(repository_id, relative_path), status=200)
+        except KeyError as exc:
+            return JsonResponse({"detail": str(exc)}, status=404)
+        except FileNotFoundError as exc:
+            return JsonResponse({"detail": str(exc)}, status=404)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=400)
 
 
 def _safe_snapshot_name(value: str) -> str:
@@ -601,7 +670,8 @@ class CodeGraphFilesView(LoginRequiredMixin, View):
     login_url = "core:index"
 
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
-        files = list_tracked_files()
+        repository_id = str(request.GET.get("repository") or "").strip() or None
+        files = list_tracked_files(repository_id)
         return JsonResponse({"files": files}, status=200)
 
 

@@ -792,15 +792,49 @@ export async function revealIntegrationValue(name: string) {
   return data;
 }
 
-export async function fetchCodeGraph(refresh = false) {
-  const params = refresh ? { refresh: '1' } : undefined;
-  const { data } = await api.get('/codegraph/', { params, timeout: 30000 });
+export async function fetchCodeGraph(refresh = false, repository = '') {
+  const params: Record<string, string> = {};
+  if (refresh) params.refresh = '1';
+  if (repository) params.repository = repository;
+  const { data } = await api.get('/codegraph/', { params, timeout: 10000 });
   return data;
 }
 
-export async function fetchCodeGraphFiles() {
-  const { data } = await api.get('/codegraph/files/', { timeout: 10000 });
+export async function fetchCodeGraphChunk(repository: string, parents: string[]) {
+  const { data } = await api.get('/codegraph/', {
+    params: { repository, parents: parents.join(',') },
+    timeout: 10000,
+  });
+  return data;
+}
+
+export async function fetchCodeGraphFiles(repository = '') {
+  const { data } = await api.get('/codegraph/files/', { params: repository ? { repository } : {}, timeout: 10000 });
   return data?.files || [];
+}
+
+export async function fetchCodeGraphRepositories() {
+  const { data } = await api.get('/codegraph/repositories/', { timeout: 10000 });
+  return data;
+}
+
+export async function addCodeGraphRepository(payload: { name?: string; source_type: 'local' | 'github'; location: string; branch?: string; activate?: boolean }) {
+  const { data } = await api.post('/codegraph/repositories/', payload, { timeout: 10000 });
+  return data;
+}
+
+export async function activateCodeGraphRepository(repositoryId: string) {
+  const { data } = await api.post(`/codegraph/repositories/${encodeURIComponent(repositoryId)}/`, {}, { timeout: 10000 });
+  return data;
+}
+
+export async function removeCodeGraphRepository(repositoryId: string) {
+  await api.delete(`/codegraph/repositories/${encodeURIComponent(repositoryId)}/`, { timeout: 10000 });
+}
+
+export async function fetchCodeGraphSource(repository: string, path: string) {
+  const { data } = await api.get('/codegraph/source/', { params: { repository, path }, timeout: 10000 });
+  return data as { repository_id: string; path: string; language: string; content: string; lines: number };
 }
 
 export async function uploadCodeGraphSnapshot(payload: { timestamp: string; node_id: string; image: string }) {
