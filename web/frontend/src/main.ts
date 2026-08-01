@@ -9,7 +9,7 @@ import './assets/theme.css';
 import { createDashboardRouter } from './router';
 import { useDashboardStore } from './stores/dashboard';
 import { useWalletStore } from './stores/wallet';
-import { startWalletRealtime } from './services/walletRealtime';
+import { startAppRealtime } from './services/appRealtime';
 
 const mountEl = document.getElementById('app');
 
@@ -174,13 +174,17 @@ if (mountEl) {
       fallbackContainer.remove();
     }
     store.refreshAll();
-    startWalletRealtime({
-      onSnapshot: (snapshot, reconciliation) => {
-        walletStore.applyRealtimeSnapshot(snapshot);
-        store.applyWalletSnapshot(reconciliation);
-        // Multi-wallet aggregation is authenticated and can include wallets
-        // other than the one carried by this event.
-        void walletStore.fetchMultiWallet();
+    let lastWalletRevision = '';
+    startAppRealtime({
+      onSnapshot: (summary, walletSnapshot, reconciliation) => {
+        store.applyRealtimeSnapshot(summary);
+        walletStore.applyRealtimeSnapshot(walletSnapshot);
+        const walletRevision = `${reconciliation?.updated_epoch || 0}:${reconciliation?.status || ''}`;
+        if (walletRevision !== lastWalletRevision) {
+          lastWalletRevision = walletRevision;
+          // Multi-wallet aggregation can contain wallets beyond this event.
+          void walletStore.fetchMultiWallet();
+        }
       },
       onFallbackHeartbeat: async () => {
         await Promise.allSettled([

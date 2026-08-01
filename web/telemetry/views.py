@@ -164,48 +164,48 @@ class AdvisoryListView(generics.ListAPIView):
         return qs.order_by("-ts")[:limit]
 
 
-class DashboardSummaryView(APIView):
-    def get(self, request: Request, *args, **kwargs) -> Response:
-        db = get_db()
-        metric_counts = MetricEntry.objects.values("stage").annotate(total=Count("id"))
-        feedback_counts = FeedbackEvent.objects.values("severity").annotate(total=Count("id"))
-        advisory_counts = Advisory.objects.filter(resolved=False).values("severity").annotate(total=Count("id"))
-        latest_metrics = MetricEntrySerializer(MetricEntry.objects.order_by("-ts")[:12], many=True).data
-        latest_feedback = FeedbackEventSerializer(FeedbackEvent.objects.order_by("-ts")[:10], many=True).data
-        recent_trades = TradeLogSerializer(TradeLog.objects.order_by("-ts")[:10], many=True).data
-        active_advisories = AdvisorySerializer(
-            Advisory.objects.filter(resolved=False).order_by("-ts")[:10],
-            many=True,
-        ).data
-        state = db.load_state() or {}
-        ghost_state = state.get("ghost_trading") or {}
-        stable_bank = float(ghost_state.get("stable_bank", 0.0))
-        total_profit = float(ghost_state.get("total_profit", 0.0))
+def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
+    """Build one coherent app revision for both HTTP and WebSocket clients."""
+    db = get_db()
+    metric_counts = MetricEntry.objects.values("stage").annotate(total=Count("id"))
+    feedback_counts = FeedbackEvent.objects.values("severity").annotate(total=Count("id"))
+    advisory_counts = Advisory.objects.filter(resolved=False).values("severity").annotate(total=Count("id"))
+    latest_metrics = MetricEntrySerializer(MetricEntry.objects.order_by("-ts")[:12], many=True).data
+    latest_feedback = FeedbackEventSerializer(FeedbackEvent.objects.order_by("-ts")[:10], many=True).data
+    recent_trades = TradeLogSerializer(TradeLog.objects.order_by("-ts")[:10], many=True).data
+    active_advisories = AdvisorySerializer(
+        Advisory.objects.filter(resolved=False).order_by("-ts")[:10],
+        many=True,
+    ).data
+    state = db.load_state() or {}
+    ghost_state = state.get("ghost_trading") or {}
+    stable_bank = float(ghost_state.get("stable_bank", 0.0))
+    total_profit = float(ghost_state.get("total_profit", 0.0))
 
-        live_readiness = _load_report(ROOT / "data/reports/live_readiness.json")
-        snapshot = db.fetch_latest_organism_snapshot() or {}
-        transition = snapshot.get("transition_plan") if isinstance(snapshot, dict) else {}
-        if not transition and isinstance(snapshot, dict):
-            pipeline_snapshot = snapshot.get("pipeline") or {}
-            if isinstance(pipeline_snapshot, dict):
-                transition = pipeline_snapshot.get("transition_plan") or {}
-        if not transition:
-            confusion = _load_report(ROOT / "data/reports/confusion_matrices.json")
-            transition = confusion.get("transition_plan") if isinstance(confusion, dict) else {}
-        transition = transition if isinstance(transition, dict) else {}
-        capital_plan = transition.get("capital_plan") if isinstance(transition, dict) else {}
-        capital_plan = capital_plan if isinstance(capital_plan, dict) else {}
-        funding_gate = capital_plan.get("funding_gate") or (
-            transition.get("risk_flags", {}).get("funding_gate")
-            if isinstance(transition.get("risk_flags"), dict) else {}
-        )
-        wallet_name = str((transition.get("wallet_state") or {}).get("wallet") or "guardian")
-        wallet_snapshot = reconciled_wallet_snapshot(wallet_name)
-        if not wallet_snapshot.get("fresh"):
-            request_wallet_refresh()
-        snapshot_ts = _safe_float(snapshot.get("timestamp")) if isinstance(snapshot, dict) else 0.0
-        readiness_ts = _safe_float(live_readiness.get("updated_at")) if live_readiness else 0.0
-        operational_state = {
+    live_readiness = _load_report(ROOT / "data/reports/live_readiness.json")
+    snapshot = db.fetch_latest_organism_snapshot() or {}
+    transition = snapshot.get("transition_plan") if isinstance(snapshot, dict) else {}
+    if not transition and isinstance(snapshot, dict):
+        pipeline_snapshot = snapshot.get("pipeline") or {}
+        if isinstance(pipeline_snapshot, dict):
+            transition = pipeline_snapshot.get("transition_plan") or {}
+    if not transition:
+        confusion = _load_report(ROOT / "data/reports/confusion_matrices.json")
+        transition = confusion.get("transition_plan") if isinstance(confusion, dict) else {}
+    transition = transition if isinstance(transition, dict) else {}
+    capital_plan = transition.get("capital_plan") if isinstance(transition, dict) else {}
+    capital_plan = capital_plan if isinstance(capital_plan, dict) else {}
+    funding_gate = capital_plan.get("funding_gate") or (
+        transition.get("risk_flags", {}).get("funding_gate")
+        if isinstance(transition.get("risk_flags"), dict) else {}
+    )
+    wallet_name = str((transition.get("wallet_state") or {}).get("wallet") or "guardian")
+    wallet_snapshot = reconciled_wallet_snapshot(wallet_name)
+    if request_refresh and not wallet_snapshot.get("fresh"):
+        request_wallet_refresh()
+    snapshot_ts = _safe_float(snapshot.get("timestamp")) if isinstance(snapshot, dict) else 0.0
+    readiness_ts = _safe_float(live_readiness.get("updated_at")) if live_readiness else 0.0
+    operational_state = {
             "revision": f"{int(max(snapshot_ts, readiness_ts))}:{len(recent_trades)}:{len(active_advisories)}",
             "generated_at": time.time(),
             "source_timestamps": {
@@ -220,8 +220,8 @@ class DashboardSummaryView(APIView):
             "ghost_trading": ghost_state,
             "recent_trades": recent_trades,
             "active_advisories": active_advisories,
-        }
-        summary = {
+    }
+    return {
             "metrics_by_stage": list(metric_counts),
             "feedback_by_severity": list(feedback_counts),
             "latest_metrics": latest_metrics,
@@ -236,8 +236,12 @@ class DashboardSummaryView(APIView):
             "transition_plan": transition,
             "funding_gate": funding_gate or {},
             "wallet": operational_state["wallet"],
-        }
-        return Response(summary, status=status.HTTP_200_OK)
+    }
+
+
+class DashboardSummaryView(APIView):
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        return Response(build_dashboard_summary(), status=status.HTTP_200_OK)
 
 
 class PipelineReadinessView(APIView):

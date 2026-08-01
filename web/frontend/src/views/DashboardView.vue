@@ -4,14 +4,14 @@
 
     <section class="kpi-grid">
       <article class="kpi-card">
-        <h3>{{ t('dashboard.kpi_stable_bank') }}</h3>
-        <p class="value">{{ stableBank }}</p>
-        <small class="meta">{{ t('dashboard.kpi_stable_bank_meta') }}</small>
+        <h3>{{ t('wallet.total_usd') }}</h3>
+        <p class="value">{{ walletTotal }}</p>
+        <small class="meta">{{ walletMeta }}</small>
       </article>
       <article class="kpi-card">
-        <h3>{{ t('dashboard.kpi_total_profit') }}</h3>
-        <p class="value">{{ totalProfit }}</p>
-        <small class="meta">{{ t('dashboard.kpi_total_profit_meta') }}</small>
+        <h3>Ghost {{ t('dashboard.kpi_total_profit') }}</h3>
+        <p class="value">{{ ghostTotalProfit }}</p>
+        <small class="meta">Simulation ledger; not spendable wallet funds</small>
       </article>
       <article class="kpi-card">
         <h3>{{ t('dashboard.kpi_active_advisories') }}</h3>
@@ -207,8 +207,22 @@ const currencyFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 2,
 });
 
-const stableBank = computed(() => currencyFormatter.format(Number(store.dashboard?.stable_bank ?? 0)));
-const totalProfit = computed(() => currencyFormatter.format(Number(store.dashboard?.total_profit ?? 0)));
+const walletReconciliation = computed(() => store.dashboard?.wallet || store.dashboard?.operational_state?.wallet || {});
+const walletTotal = computed(() => {
+  const wallet = walletReconciliation.value;
+  return wallet?.fresh && wallet?.total_usd != null
+    ? currencyFormatter.format(Number(wallet.total_usd))
+    : 'Refreshing…';
+});
+const walletMeta = computed(() => {
+  const wallet = walletReconciliation.value;
+  if (!wallet?.fresh) return 'Waiting for a fresh on-chain reconciliation';
+  const updated = wallet.updated_at || wallet.updated_epoch;
+  return updated ? `${t('wallet.last_updated')}: ${new Date(updated).toLocaleString()}` : 'Fresh on-chain reconciliation';
+});
+const ghostTotalProfit = computed(() => currencyFormatter.format(Number(
+  store.dashboard?.ghost_trading?.total_profit ?? store.dashboard?.total_profit ?? 0,
+)));
 const advisories = computed(() => store.advisories || []);
 
 const tickerItems = computed(() => {

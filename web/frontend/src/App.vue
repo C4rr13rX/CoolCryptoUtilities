@@ -32,12 +32,12 @@
       <footer class="sidebar__foot">
         <div class="sidebar__stats">
           <div>
-            <span class="label">{{ t('nav.stable_bank') }}</span>
-            <span class="value">{{ stableBankDisplay }}</span>
+            <span class="label">{{ t('nav.wallet') }}</span>
+            <span class="value">{{ walletBalanceDisplay }}</span>
           </div>
           <div>
-            <span class="label">{{ t('nav.total_profit') }}</span>
-            <span class="value">{{ totalProfitDisplay }}</span>
+            <span class="label">Ghost {{ t('nav.total_profit') }}</span>
+            <span class="value">{{ ghostProfitDisplay }}</span>
           </div>
         </div>
       </footer>
@@ -81,6 +81,7 @@ import StatusIndicator from '@/components/StatusIndicator.vue';
 import HackerIcon from '@/components/HackerIcon.vue';
 import { ambientAudio } from '@/audio/ambient';
 import { useDashboardStore } from '@/stores/dashboard';
+import { appRealtimeHealthy } from '@/services/appRealtime';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
 import { initDomTranslation, setLanguage, t } from '@/i18n';
@@ -107,7 +108,11 @@ let starfieldCleanup: (() => void) | undefined;
 let languageSelectCleanup: (() => void) | undefined;
 
 onMounted(() => {
-  refreshTimer = window.setInterval(() => store.refreshAll(), 20000);
+  // The WebSocket is authoritative; this is a low-rate HTTP safety net for
+  // deployments or proxies where WebSockets are unavailable.
+  refreshTimer = window.setInterval(() => {
+    if (!appRealtimeHealthy()) void store.refreshAll();
+  }, 30000);
   consoleTimer = window.setInterval(() => store.refreshConsole(), 5000);
   uiSettings.load();
   setupAutoScroll();
@@ -851,12 +856,15 @@ const currencyFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 2,
 });
 
-const stableBankDisplay = computed(() =>
-  currencyFormatter.format(Number(store.dashboard?.stable_bank ?? 0))
-);
-const totalProfitDisplay = computed(() =>
-  currencyFormatter.format(Number(store.dashboard?.total_profit ?? 0))
-);
+const walletBalanceDisplay = computed(() => {
+  const wallet = store.dashboard?.wallet || store.dashboard?.operational_state?.wallet || {};
+  return wallet?.fresh && wallet?.total_usd != null
+    ? currencyFormatter.format(Number(wallet.total_usd))
+    : 'Refreshing…';
+});
+const ghostProfitDisplay = computed(() => currencyFormatter.format(Number(
+  store.dashboard?.ghost_trading?.total_profit ?? store.dashboard?.total_profit ?? 0,
+)));
 </script>
 
 <style scoped>

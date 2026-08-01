@@ -47,6 +47,17 @@ export const useDashboardStore = defineStore('dashboard', {
     lastConsoleAttempt: 0,
   }),
   actions: {
+    applyRealtimeSnapshot(snapshot: Record<string, any>) {
+      if (!snapshot) return;
+      this.dashboard = { ...snapshot };
+      this.latestMetrics = snapshot.latest_metrics || [];
+      this.latestFeedback = snapshot.latest_feedback || [];
+      this.recentTrades = snapshot.recent_trades || [];
+      this.advisories = snapshot.active_advisories || [];
+      if (snapshot.streams) this.streams = snapshot.streams;
+      this.serverOnline = true;
+      this.error = null;
+    },
     applyWalletSnapshot(reconciliation: Record<string, any>) {
       if (!reconciliation) return;
       const current = this.dashboard || {};
