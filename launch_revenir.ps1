@@ -2,7 +2,7 @@
 #
 # Brings up (or leaves alone) every service the trading stack needs:
 #   1. Brain substrate    (w1z4rd_node.exe on :8090)
-#   2. R3V3N!R web panel  (waitress on :8000)
+#   2. R3V3N!R web panel  (Daphne ASGI + WebSockets on :8000)
 #   3. Production manager (main.py --action start_production)
 #   4. Brain feeder       (scripts/run_brain_feeder.py)  -- skipped if a
 #                          history supervisor is currently training
@@ -98,18 +98,18 @@ if ($brainProc) {
     Write-Host "  WARN: start_node.ps1 not found at $brainStarter (skipping brain)"
 }
 
-# -- 2. R3V3N!R web panel (waitress) ---------------------------------------
+# -- 2. R3V3N!R web panel (ASGI) -------------------------------------------
 
 Write-Host "[2/4] R3V3N!R web panel"
 if (Test-Port $panelPort) {
     Write-Host "  already running on :$panelPort"
 } else {
-    Write-Host "  starting waitress..."
+    Write-Host "  starting Daphne ASGI server..."
     $env:WAITRESS_HOST    = $panelHost
     $env:WAITRESS_PORT    = "$panelPort"
     $env:WAITRESS_THREADS = "$threads"
     Start-Process -FilePath $python `
-        -ArgumentList "run_waitress.py" `
+        -ArgumentList "run_asgi.py" `
         -WorkingDirectory $webRoot `
         -WindowStyle Minimized
     Wait-Port $panelPort "panel" 30 | Out-Null

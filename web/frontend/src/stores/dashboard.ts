@@ -47,6 +47,18 @@ export const useDashboardStore = defineStore('dashboard', {
     lastConsoleAttempt: 0,
   }),
   actions: {
+    applyWalletSnapshot(reconciliation: Record<string, any>) {
+      if (!reconciliation) return;
+      const current = this.dashboard || {};
+      this.dashboard = {
+        ...current,
+        wallet: reconciliation,
+        operational_state: {
+          ...(current.operational_state || {}),
+          wallet: reconciliation,
+        },
+      };
+    },
     hydrateFromSnapshot(snapshot: Record<string, any>) {
       if (!snapshot) return;
       const safe = snapshot || {};

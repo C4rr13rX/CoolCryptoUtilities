@@ -8,6 +8,8 @@ import '@quasar/extras/material-icons/material-icons.css';
 import './assets/theme.css';
 import { createDashboardRouter } from './router';
 import { useDashboardStore } from './stores/dashboard';
+import { useWalletStore } from './stores/wallet';
+import { startWalletRealtime } from './services/walletRealtime';
 
 const mountEl = document.getElementById('app');
 
@@ -53,6 +55,7 @@ if (mountEl) {
   });
 
   const store = useDashboardStore(pinia);
+  const walletStore = useWalletStore(pinia);
   if (fallbackSnapshot) {
     store.hydrateFromSnapshot(fallbackSnapshot);
   }
@@ -171,6 +174,22 @@ if (mountEl) {
       fallbackContainer.remove();
     }
     store.refreshAll();
+    startWalletRealtime({
+      onSnapshot: (snapshot, reconciliation) => {
+        walletStore.applyRealtimeSnapshot(snapshot);
+        store.applyWalletSnapshot(reconciliation);
+        // Multi-wallet aggregation is authenticated and can include wallets
+        // other than the one carried by this event.
+        void walletStore.fetchMultiWallet();
+      },
+      onFallbackHeartbeat: async () => {
+        await Promise.allSettled([
+          walletStore.fetchSnapshot(),
+          walletStore.fetchMultiWallet(),
+          store.refreshAll(),
+        ]);
+      },
+    });
   });
 } else {
   // No SPA mount point (likely unauthenticated view); skip Vue bootstrap quietly.

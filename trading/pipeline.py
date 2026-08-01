@@ -3631,8 +3631,10 @@ class TrainingPipeline:
             focus_chain_list.insert(0, focus_chain)
         chain_stats: Dict[str, Dict[str, Any]] = {}
         try:
-            db = getattr(self, "db", None)
-            balances = db.fetch_balances_flat(wallet=wallet, include_zero=False) if db else []
+            from services.wallet_reconciliation import reconciled_wallet_snapshot
+            wallet_snapshot = reconciled_wallet_snapshot(wallet)
+            balances = wallet_snapshot.get("balances") or []
+            balance_fresh = bool(wallet_snapshot.get("fresh"))
         except Exception as exc:
             return {
                 "wallet": wallet,
@@ -3701,6 +3703,8 @@ class TrainingPipeline:
         sparse_reasons: List[str] = []
         if focus_holdings == 0:
             sparse_reasons.append("focus_empty")
+        if not balance_fresh:
+            sparse_reasons.append("wallet_snapshot_stale")
         if capital_deficit > 0:
             sparse_reasons.append("stable_below_min")
         if native_starved:
@@ -3709,10 +3713,16 @@ class TrainingPipeline:
         # A native-heavy wallet with dust tokens is normal, not a blocker.
         if fragmented and capital_deficit > 0:
             sparse_reasons.append("fragmented")
-        sparse = bool(capital_deficit > 0 or native_starved or focus_holdings == 0)
+        sparse = bool(capital_deficit > 0 or native_starved or focus_holdings == 0 or not balance_fresh)
         micro_allowed = bool(micro_mode and not sparse)
         return {
             "wallet": wallet,
+            "resolved_wallet": wallet_snapshot.get("wallet"),
+            "balance_fresh": balance_fresh,
+            "balance_status": wallet_snapshot.get("status"),
+            "balance_updated_at": wallet_snapshot.get("updated_at"),
+            "balance_age_seconds": wallet_snapshot.get("age_seconds"),
+            "cached_capital_total_usd": wallet_snapshot.get("cached_total_usd", 0.0),
             "stable_usd": focus_stable_usd,
             "native_usd": focus_native_usd,
             "capital_total_usd": focus_total_usd,
@@ -4243,7 +4253,10 @@ class TrainingPipeline:
                     window_sec=swap_window_sec,
                 )
         externally_uncovered_native_gap = max(0.0, native_buffer_gap - max(0.0, stable_usd - capital_deficit))
-        funding_required_usd = max(0.0, capital_deficit + externally_uncovered_native_gap)
+        balance_fresh = bool(wallet_state.get("balance_fresh", True))
+        funding_required_usd = (
+            max(0.0, capital_deficit + externally_uncovered_native_gap) if balance_fresh else 0.0
+        )
         funding_gate = {
             "needs_funding": funding_required_usd > 0.0,
             "awaiting_funds": bool(funding_required_usd > 0.0 and plan["live_ready"] and ghost_ready),
@@ -4257,6 +4270,14 @@ class TrainingPipeline:
             "checked_at": time.time(),
             "resume_condition": "next_heartbeat_all_live_gates_pass",
         }
+        if not balance_fresh:
+            add_bus_action(
+                "refresh_wallet_balances",
+                "wallet_snapshot_stale",
+                priority=0,
+                wallet=funding_gate["wallet"],
+                last_updated=wallet_state.get("balance_updated_at"),
+            )
         if funding_gate["needs_funding"]:
             add_bus_action(
                 "notify_add_funds",

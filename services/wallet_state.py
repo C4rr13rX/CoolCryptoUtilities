@@ -737,6 +737,8 @@ def capture_wallet_state(
     cache_balances: CacheBalances | None = None,
     cache_transfers: CacheTransfers | None = None,
     registry: TokenSafetyRegistry | None = None,
+    refresh_transfers: bool = True,
+    refresh_nfts: bool = True,
 ) -> Dict[str, Any]:
     wallet_addr = _resolve_wallet_address(bridge=bridge, wallet=wallet)
     if not wallet_addr:
@@ -744,7 +746,8 @@ def capture_wallet_state(
     cb = cache_balances or CacheBalances()
     ct = cache_transfers or CacheTransfers()
     chain_list = [str(ch).lower() for ch in (chains or CHAINS.keys())]
-    _maybe_fast_transfer_refresh(bridge, ct, chain_list, wallet_addr)
+    if refresh_transfers:
+        _maybe_fast_transfer_refresh(bridge, ct, chain_list, wallet_addr)
     _maybe_fast_balance_refresh(bridge, cb, ct, chain_list, wallet_addr)
     registry = registry or getattr(bridge, "_token_safety", None)
     balances_payload = _collect_balances(wallet_addr, cache_balances=cb, registry=registry)
@@ -761,7 +764,7 @@ def capture_wallet_state(
             totals_usd = sum(_format_usd(row.get("usd")) for row in balances_payload["balances"])
             balances_payload["totals"]["usd"] = round(totals_usd, 2)
     transfers_payload = _collect_transfers(wallet_addr, chains=chain_list, cache_transfers=ct)
-    nfts_payload = _collect_nfts(wallet_addr, chains=chains)
+    nfts_payload = _collect_nfts(wallet_addr, chains=chains) if refresh_nfts else (_read_json("nfts") or [])
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     state = {
         "wallet": wallet_addr,

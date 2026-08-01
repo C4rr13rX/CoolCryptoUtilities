@@ -40,6 +40,7 @@ Django>=4.2
 djangorestframework>=3.14.0
 django-cors-headers>=4.3.0
 channels>=4.0.0
+daphne>=4.1.0
 psycopg[binary]>=3.1.0
 # Production WSGI server — launch_revenir.ps1 uses this instead of
 # manage.py runserver so the panel survives long-running use.

@@ -92,6 +92,11 @@ export const useWalletStore = defineStore('wallet', {
     },
   },
   actions: {
+    applyRealtimeSnapshot(snapshot: Record<string, any>) {
+      if (!snapshot) return;
+      this.snapshot = snapshot;
+      this.error = null;
+    },
     async refreshStatus() {
       this.loading = true;
       try {

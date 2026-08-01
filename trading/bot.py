@@ -1458,7 +1458,9 @@ class TradingBot:
         skipped: List[Dict[str, Any]] = []
         actionable: List[Dict[str, Any]] = []
         for action in actions:
-            if str(action.get("action") or "") in {"notify_add_funds", "scan_micro_opportunities"}:
+            if str(action.get("action") or "") in {
+                "notify_add_funds", "scan_micro_opportunities", "refresh_wallet_balances"
+            }:
                 # The advisory was persisted by the pipeline.  Acknowledge this
                 # control-plane action without initializing a chain or swapper.
                 # Pair schedulers consume the scan request; the bus must never
@@ -2342,6 +2344,21 @@ class TradingBot:
 
                 errors = await asyncio.to_thread(_sync_work)
             self._wallet_sync_last_ts = time.time()
+
+            # Publish one complete snapshot after every balance-changing
+            # event. This is the atomic source consumed by trading, HTTP and
+            # the wallet WebSocket; database rows may be mid-refresh.
+            try:
+                from services.wallet_state import capture_wallet_state
+                await asyncio.to_thread(
+                    capture_wallet_state,
+                    bridge=self._bridge,
+                    chains=chains,
+                    refresh_transfers=False,
+                    refresh_nfts=False,
+                )
+            except Exception as exc:
+                errors.append(("wallet_snapshot", str(exc)))
 
         try:
             self.portfolio.refresh(force=True)

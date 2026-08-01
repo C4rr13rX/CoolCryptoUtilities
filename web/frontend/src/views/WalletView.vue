@@ -1,5 +1,9 @@
 <template>
   <div class="wallet-view">
+    <section v-if="wallet.snapshot?.reconciliation && !wallet.snapshot.reconciliation.fresh" class="panel stale-wallet-warning">
+      <strong>Wallet balance is being reconciled</strong>
+      <span>The cached total is hidden because it is older than the freshness limit. Live trading remains blocked.</span>
+    </section>
     <!-- Wallet Tabs -->
     <section class="panel wallet-tabs-panel" v-if="wallet.walletCount > 1 || wallet.walletList.length > 1">
       <div class="wallet-tab-bar">

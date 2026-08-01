@@ -132,6 +132,16 @@ class WalletStateSnapshotView(APIView):
 
     def get(self, request: Request, *args, **kwargs) -> Response:
         snapshot = load_wallet_state()
+        from services.wallet_reconciliation import reconciled_wallet_snapshot, request_wallet_refresh
+
+        reconciliation = reconciled_wallet_snapshot("guardian")
+        snapshot = dict(snapshot or {})
+        snapshot["reconciliation"] = reconciliation
+        snapshot["totals"] = dict(snapshot.get("totals") or {})
+        snapshot["totals"]["cached_usd"] = reconciliation.get("cached_total_usd")
+        snapshot["totals"]["usd"] = reconciliation.get("total_usd")
+        if not reconciliation.get("fresh"):
+            request_wallet_refresh()
         return Response(snapshot, status=status.HTTP_200_OK)
 
 

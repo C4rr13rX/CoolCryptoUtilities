@@ -26,6 +26,10 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from db import get_db  # noqa: E402
+from services.wallet_reconciliation import (  # noqa: E402
+    reconciled_wallet_snapshot,
+    request_wallet_refresh,
+)
 
 
 def _load_report(path: Path) -> Dict[str, Any]:
@@ -196,11 +200,9 @@ class DashboardSummaryView(APIView):
             if isinstance(transition.get("risk_flags"), dict) else {}
         )
         wallet_name = str((transition.get("wallet_state") or {}).get("wallet") or "guardian")
-        try:
-            balance_rows = [dict(row) for row in db.fetch_balances_flat(wallet=wallet_name, include_zero=False)]
-        except Exception:
-            balance_rows = []
-        wallet_total_usd = sum(_safe_float(row.get("usd_amount")) for row in balance_rows)
+        wallet_snapshot = reconciled_wallet_snapshot(wallet_name)
+        if not wallet_snapshot.get("fresh"):
+            request_wallet_refresh()
         snapshot_ts = _safe_float(snapshot.get("timestamp")) if isinstance(snapshot, dict) else 0.0
         readiness_ts = _safe_float(live_readiness.get("updated_at")) if live_readiness else 0.0
         operational_state = {
@@ -211,11 +213,7 @@ class DashboardSummaryView(APIView):
                 "readiness": readiness_ts or None,
             },
             "mode": snapshot.get("mode", "ghost") if isinstance(snapshot, dict) else "ghost",
-            "wallet": {
-                "name": wallet_name,
-                "total_usd": wallet_total_usd,
-                "balances": balance_rows,
-            },
+            "wallet": wallet_snapshot,
             "funding_gate": funding_gate or {},
             "transition_plan": transition,
             "live_readiness": live_readiness or {"ready": False},
