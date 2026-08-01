@@ -3609,8 +3609,8 @@ class TrainingPipeline:
     def _wallet_state(self) -> Dict[str, Any]:
         wallet = (os.getenv("TRADING_WALLET") or os.getenv("WALLET_NAME") or "guardian").strip().lower()
         min_capital_usd = float(os.getenv("LIVE_MIN_CAPITAL_USD", "50"))
-        micro_min_capital = float(os.getenv("LIVE_MICRO_MIN_CAPITAL_USD", "5"))
-        allow_micro = (os.getenv("LIVE_ALLOW_MICRO", "0") or "0").lower() in {"1", "true", "yes", "on"}
+        micro_min_capital = float(os.getenv("LIVE_MICRO_MIN_CAPITAL_USD", "0.50"))
+        allow_micro = (os.getenv("LIVE_ALLOW_MICRO", "1") or "1").lower() in {"1", "true", "yes", "on"}
         dust_threshold = float(os.getenv("WALLET_DUST_USD", "5"))
         stable_tokens = {"USDC", "USDT", "DAI", "BUSD", "USDBC", "USDC.E", "TUSD", "USDP"}
         native_tokens = {"ETH", "WETH", "MATIC", "BNB", "AVAX", "SOL"}
@@ -3715,6 +3715,7 @@ class TrainingPipeline:
             "wallet": wallet,
             "stable_usd": focus_stable_usd,
             "native_usd": focus_native_usd,
+            "capital_total_usd": focus_total_usd,
             "stable_usd_total": stable_usd_total,
             "native_usd_total": native_usd_total,
             "sparse": sparse,
@@ -3917,6 +3918,34 @@ class TrainingPipeline:
         self._last_transition_plan = self._build_transition_plan()
         return json.loads(json.dumps(self._last_transition_plan))
 
+    def _sync_funding_advisory(self, gate: Dict[str, Any]) -> None:
+        """Maintain one dashboard-visible funding condition across heartbeats."""
+        db = getattr(self, "db", None)
+        if db is None:
+            return
+        wallet = str(gate.get("wallet") or "guardian")
+        needs_funding = bool(gate.get("needs_funding"))
+        if needs_funding:
+            required = float(gate.get("required_usd") or 0.0)
+            db.record_advisory(
+                topic="live_trading_funding",
+                scope=wallet,
+                severity="warning" if gate.get("promotion_ready") else "info",
+                message=f"Add at least ${required:.2f} of usable capital/gas to enable live trading.",
+                recommendation=(
+                    "Fund the configured wallet. The next heartbeat will validate balances "
+                    "and automatically start live trading if every model and risk gate still passes."
+                ),
+                meta=gate,
+            )
+            return
+        try:
+            for advisory in db.fetch_advisories(limit=100, include_resolved=False):
+                if advisory.get("topic") == "live_trading_funding" and advisory.get("scope") == wallet:
+                    db.resolve_advisory(int(advisory["id"]))
+        except Exception:
+            pass
+
     def _build_transition_plan(self) -> Dict[str, Any]:
         readiness = self.live_readiness_report()
         summary = self._last_confusion_summary or self._summarize_confusion_report(self._last_confusion_report or {})
@@ -3931,7 +3960,7 @@ class TrainingPipeline:
         min_live_capital = float(wallet_state.get("min_capital_usd", min_live_capital))
         if wallet_state.get("micro_mode"):
             try:
-                min_clip_usd = float(os.getenv("LIVE_MICRO_MIN_CLIP_USD", str(min_clip_usd)))
+                min_clip_usd = float(os.getenv("LIVE_MICRO_MIN_CLIP_USD", "0.05"))
             except Exception:
                 pass
         native_buffer_target = float(wallet_state.get("native_buffer_target_usd", os.getenv("LIVE_NATIVE_BUFFER_USD", "5")))
@@ -3948,9 +3977,10 @@ class TrainingPipeline:
         loss_rate_guard = float(ghost_check.get("loss_rate_guardrail", os.getenv("GHOST_MAX_LOSS_RATE", "0.6")))
         loss_streak = int(ghost_check.get("max_loss_streak", 0))
         loss_streak_guard = int(ghost_check.get("loss_streak_guardrail", os.getenv("GHOST_MAX_LOSS_STREAK", "5")))
+        capital_total_usd = float(wallet_state.get("capital_total_usd", stable_usd + native_usd))
         capital_deficit = max(
             0.0,
-            float(wallet_state.get("min_capital_usd", min_live_capital)) - float(wallet_state.get("stable_usd", 0.0)),
+            float(wallet_state.get("min_capital_usd", min_live_capital)) - capital_total_usd,
             stable_deficit,
         )
         tail_risk = float(ghost_check.get("tail_risk", 0.0))
@@ -4212,6 +4242,30 @@ class TrainingPipeline:
                     wallet=wallet_state.get("wallet"),
                     window_sec=swap_window_sec,
                 )
+        externally_uncovered_native_gap = max(0.0, native_buffer_gap - max(0.0, stable_usd - capital_deficit))
+        funding_required_usd = max(0.0, capital_deficit + externally_uncovered_native_gap)
+        funding_gate = {
+            "needs_funding": funding_required_usd > 0.0,
+            "awaiting_funds": bool(funding_required_usd > 0.0 and plan["live_ready"] and ghost_ready),
+            "promotion_ready": bool(plan["live_ready"] and ghost_ready),
+            "auto_resume_on_funding": True,
+            "required_usd": round(funding_required_usd, 6),
+            "capital_deficit_usd": round(capital_deficit, 6),
+            "native_buffer_gap_usd": round(native_buffer_gap, 6),
+            "wallet": wallet_state.get("wallet"),
+            "focus_chain": wallet_state.get("focus_chain"),
+            "checked_at": time.time(),
+            "resume_condition": "next_heartbeat_all_live_gates_pass",
+        }
+        if funding_gate["needs_funding"]:
+            add_bus_action(
+                "notify_add_funds",
+                "live_wallet_below_funding_floor",
+                priority=0,
+                required_usd=funding_gate["required_usd"],
+                wallet=funding_gate["wallet"],
+                auto_resume=True,
+            )
         if (
             native_buffer_gap > 0
             and capital_deficit <= 0
@@ -4235,12 +4289,13 @@ class TrainingPipeline:
             )
         if fragmented_wallet:
             add_bus_action(
-                "consolidate_fragments",
-                "wallet_fragmentation",
+                "scan_micro_opportunities",
+                "profitable_fragment_redeployment",
                 priority=3,
                 dust_tokens=(wallet_state.get("dust_tokens") or [])[:8],
                 wallet=wallet_state.get("wallet"),
                 dust_threshold_usd=wallet_state.get("dust_threshold_usd"),
+                profit_rule="positive_after_all_estimated_fees_and_fixed_costs",
             )
         bus_actions.sort(key=lambda act: (act.get("priority", 99), act.get("action") or ""))
         bus_actions_pending = bool(bus_actions)
@@ -4303,6 +4358,15 @@ class TrainingPipeline:
             "micro_mode": bool(wallet_state.get("micro_mode")),
             "micro_allowed": bool(wallet_state.get("micro_allowed")),
             "focus_chain": wallet_state.get("focus_chain"),
+            "funding_gate": funding_gate,
+            "micro_execution_policy": {
+                "enabled": bool(wallet_state.get("micro_allowed")),
+                "minimum_net_profit_usd": float(os.getenv("SMALL_PROFIT_FLOOR_USD", "0.02")),
+                "minimum_net_margin": float(os.getenv("MIN_NET_MARGIN", "0.0001")),
+                "fixed_cost_usd": float(os.getenv("MICRO_FIXED_COST_USD", "0")),
+                "repeat_while_profitable": True,
+                "forced_fragment_liquidation": False,
+            },
         }
         plan["guardrails"] = {
             "min_ghost_trades": ghost_min_trades,
@@ -4364,8 +4428,13 @@ class TrainingPipeline:
                 "min_clip_usd": min_clip_usd,
                 "halt_ghost": not ghost_collection_ready,
                 "ghost_halt_reason": ghost_halt_reason,
+                "funding_gate": funding_gate,
             }
         )
+        try:
+            self._sync_funding_advisory(funding_gate)
+        except Exception:
+            pass
         return plan
 
     def prime_confusion_windows(self, *, min_samples: int = 128, force: bool = False) -> bool:

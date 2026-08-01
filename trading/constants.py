@@ -67,7 +67,12 @@ PRIMARY_BASE, PRIMARY_QUOTE = (
 )
 
 MIN_CONFIDENCE = float(os.getenv("MIN_CONFIDENCE_REQUIRED", "0.9"))
-SMALL_PROFIT_FLOOR = float(os.getenv("SMALL_PROFIT_FLOOR", "0.25"))
+SMALL_PROFIT_FLOOR_USD = float(
+    os.getenv("SMALL_PROFIT_FLOOR_USD", os.getenv("SMALL_PROFIT_FLOOR", "0.02"))
+)
+MIN_NET_MARGIN = float(os.getenv("MIN_NET_MARGIN", "0.0001"))
+# Backward compatibility: this legacy name now has one unambiguous unit (USD).
+SMALL_PROFIT_FLOOR = SMALL_PROFIT_FLOOR_USD
 MAX_QUOTE_SHARE = float(os.getenv("MAX_QUOTE_SHARE", "0.25"))
 
 GAS_PROFIT_BUFFER = float(os.getenv("GAS_PROFIT_BUFFER", "1.25"))

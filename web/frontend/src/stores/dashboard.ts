@@ -84,10 +84,14 @@ export const useDashboardStore = defineStore('dashboard', {
         this.dashboard = summary || {};
         this.streams = streams || {};
         const advisoryList = advisories?.results || advisories || summary?.active_advisories || [];
-        this.advisories = advisoryList;
-        this.recentTrades = trades?.results || trades || summary?.recent_trades || [];
-        this.latestFeedback = feedback?.results || feedback || summary?.latest_feedback || [];
-        this.latestMetrics = metrics?.results || metrics || summary?.latest_metrics || [];
+        // The dashboard summary is one server-side revision across wallet,
+        // readiness, transition, trades and advisories.  Separate endpoints
+        // are fallbacks only; preferring them caused the UI to combine six
+        // different moments into values that could never have coexisted.
+        this.advisories = summary?.active_advisories ?? advisoryList;
+        this.recentTrades = summary?.recent_trades ?? trades?.results ?? trades ?? [];
+        this.latestFeedback = summary?.latest_feedback ?? feedback?.results ?? feedback ?? [];
+        this.latestMetrics = summary?.latest_metrics ?? metrics?.results ?? metrics ?? [];
         const anyFailed = results.some(r => r.status === 'rejected');
         const allFailed = results.every(r => r.status === 'rejected');
         this.serverOnline = !allFailed;

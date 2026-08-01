@@ -40,10 +40,12 @@ from trading.constants import (
     PRIMARY_SYMBOL,
     MIN_CONFIDENCE,
     SMALL_PROFIT_FLOOR,
+    MIN_NET_MARGIN,
     MAX_QUOTE_SHARE,
     GAS_PROFIT_BUFFER,
     FALLBACK_NATIVE_PRICE,
 )
+from trading.micro_profit import evaluate_micro_profit
 from trading.brain import (
     NeuroGraph,
     MultiResolutionSwarm,
@@ -1452,6 +1454,20 @@ class TradingBot:
         dry_run: bool,
     ) -> Dict[str, Any]:
         wallet_state = plan_snapshot.get("wallet_state") if isinstance(plan_snapshot, dict) else None
+        executed: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        actionable: List[Dict[str, Any]] = []
+        for action in actions:
+            if str(action.get("action") or "") in {"notify_add_funds", "scan_micro_opportunities"}:
+                # The advisory was persisted by the pipeline.  Acknowledge this
+                # control-plane action without initializing a chain or swapper.
+                # Pair schedulers consume the scan request; the bus must never
+                # liquidate fragments blindly just to make the wallet tidy.
+                executed.append({**action, "notification_only": True, "dry_run": dry_run})
+            else:
+                actionable.append(action)
+        if not actionable:
+            return {"ok": True, "dry_run": dry_run, "executed": executed, "skipped": skipped}
         focus_chain = self.primary_chain
         if isinstance(wallet_state, dict) and wallet_state.get("focus_chain"):
             focus_chain = str(wallet_state.get("focus_chain") or focus_chain).lower()
@@ -1493,9 +1509,7 @@ class TradingBot:
             os.getenv("FALLBACK_NATIVE_PRICE_USD", str(FALLBACK_NATIVE_PRICE))
         )
 
-        executed: List[Dict[str, Any]] = []
-        skipped: List[Dict[str, Any]] = []
-        for action in actions:
+        for action in actionable:
             name = str(action.get("action") or "")
             if name in {"freeze_live", "pause_live"}:
                 skipped.append({"action": name, "reason": "gate_only"})
@@ -3147,9 +3161,10 @@ class TradingBot:
         adjustments = self._get_pair_adjustment(symbol)
         trade_size *= float(max(0.1, min(3.0, adjustments.get("size_multiplier", 1.0))))
         trade_size = max(0.0, trade_size)
-        min_margin_required = max(fees * 1.5, SMALL_PROFIT_FLOOR)
+        min_margin_required = max(fees * 1.5, MIN_NET_MARGIN)
         min_margin_required = max(0.0, min_margin_required + float(adjustments.get("margin_offset", 0.0)))
-        expected_profit_units = margin * max(trade_size, 0.0) * max(price, 1e-9)
+        trade_notional_usd = max(trade_size, 0.0) * max(price, 1e-9)
+        expected_profit_units = max(0.0, margin - fees) * trade_notional_usd
         if trade_size <= 0.0 and pos is not None:
             # Position is held -- floor trade_size off the held size so
             # exit logic still gets a chance to evaluate. Without this
@@ -3229,7 +3244,7 @@ class TradingBot:
                 direction_prob >= enter_threshold
                 and exit_conf_val >= enter_threshold
                 and margin >= min_margin_gate
-                and net_margin_after_fees >= SMALL_PROFIT_FLOOR
+                and net_margin_after_fees >= MIN_NET_MARGIN
                 and expected_profit_units >= SMALL_PROFIT_FLOOR
                 and delta >= 0.0
             ):
@@ -3362,6 +3377,22 @@ class TradingBot:
             elif pnl < 0 and held_secs > float(os.getenv("GHOST_NEG_EXIT_SECONDS", str(60 * 45))):
                 should_exit = True
                 reason = "timed-exit"
+
+        if should_enter and not reason.startswith("ghost-explore"):
+            gross_return = max(0.0, margin)
+            if directive is not None and price > 0.0 and directive.target_price > price:
+                gross_return = (float(directive.target_price) - price) / price
+            micro_profit = evaluate_micro_profit(
+                notional_usd=max(0.0, trade_size * price),
+                gross_return=gross_return,
+                variable_cost_rate=fees,
+                fixed_cost_usd=float(os.getenv("MICRO_FIXED_COST_USD", "0") or 0.0),
+                minimum_net_profit_usd=SMALL_PROFIT_FLOOR,
+            )
+            decision["micro_profit"] = micro_profit.to_dict()
+            if not micro_profit.viable:
+                should_enter = False
+                reason = f"micro-profit-blocked:{micro_profit.reason}"
 
         if should_enter:
             await self._run_wallet_sync(reason="pre-enter")

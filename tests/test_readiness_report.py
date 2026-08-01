@@ -218,7 +218,9 @@ def test_transition_plan_never_graduates_with_non_positive_net_profit() -> None:
     pipeline = _pipeline_stub()
     pipeline._last_confusion_summary = {"horizons": {"5m": {"precision": 0.8, "samples": 140}}}
     pipeline._last_confusion_report = {}
-    pipeline.live_readiness_report = lambda: {"ready": True, "horizon": "5m", "threshold": 0.3}
+    pipeline.live_readiness_report = lambda: {
+        "ready": True, "ghost_collection_ready": True, "horizon": "5m", "threshold": 0.3
+    }
     pipeline._wallet_state = lambda: {
         "wallet": "guardian", "stable_usd": 200.0, "native_usd": 10.0,
         "sparse": False, "fragmented": False, "min_capital_usd": 50.0,
@@ -238,3 +240,56 @@ def test_transition_plan_never_graduates_with_non_positive_net_profit() -> None:
 
     assert plan["risk_flags"]["live_safe"] is False
     assert plan["capital_plan"]["recommended_live_usd"] == 0.0
+
+
+def test_ready_pipeline_waits_for_funds_alerts_and_auto_resumes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LIVE_MIN_CLIP_USD", "0.01")
+    pipeline = _pipeline_stub()
+    pipeline._last_confusion_summary = {"horizons": {"5m": {"precision": 0.8, "samples": 140}}}
+    pipeline._last_confusion_report = {}
+    pipeline.live_readiness_report = lambda: {
+        "ready": True, "ghost_collection_ready": True, "horizon": "5m", "threshold": 0.3
+    }
+    pipeline._ghost_validation = lambda: {
+        "ready": True, "reason": "", "samples": 100, "win_rate": 0.7,
+        "avg_profit": 0.01, "total_net_profit": 1.0,
+        "tail_risk": 0.0, "tail_guardrail": 0.08,
+        "max_drawdown": 0.0, "drawdown_guardrail": 0.1,
+        "min_trades": 50, "min_win_rate": 0.55,
+        "profit_factor": 1.2, "min_profit_factor": 0.95,
+        "loss_rate": 0.2, "loss_rate_guardrail": 0.6,
+        "max_loss_streak": 1, "loss_streak_guardrail": 5,
+    }
+    wallet = {
+        "wallet": "guardian", "stable_usd": 0.20, "native_usd": 0.10,
+        "capital_total_usd": 0.30, "sparse": True, "fragmented": False,
+        "min_capital_usd": 0.50, "native_buffer_gap_usd": 0.0,
+        "native_buffer_target_usd": 0.1, "sparse_reasons": ["stable_below_min"],
+        "stable_deficit_usd": 0.20,
+        "focus_chain": "base",
+    }
+    pipeline._wallet_state = lambda: dict(wallet)
+
+    class DB:
+        def __init__(self):
+            self.recorded = []
+
+        def record_advisory(self, **kwargs):
+            self.recorded.append(kwargs)
+            return 1
+
+    pipeline.db = DB()
+    blocked = pipeline._build_transition_plan()
+    gate = blocked["capital_plan"]["funding_gate"]
+    assert gate["awaiting_funds"] is True
+    assert gate["auto_resume_on_funding"] is True
+    assert gate["required_usd"] == pytest.approx(0.20)
+    assert any(action["action"] == "notify_add_funds" for action in blocked["bus_swap_actions"])
+    assert pipeline.db.recorded[-1]["topic"] == "live_trading_funding"
+
+    wallet.update({"stable_usd": 1.0, "capital_total_usd": 1.1, "sparse": False,
+                   "sparse_reasons": [], "stable_deficit_usd": 0.0})
+    resumed = pipeline._build_transition_plan()
+    assert resumed["capital_plan"]["funding_gate"]["needs_funding"] is False
+    assert resumed["risk_flags"]["halt_live"] is False
+    assert resumed["capital_plan"]["recommended_live_usd"] > 0.0

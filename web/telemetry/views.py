@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sys
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -178,6 +179,50 @@ class DashboardSummaryView(APIView):
         total_profit = float(ghost_state.get("total_profit", 0.0))
 
         live_readiness = _load_report(ROOT / "data/reports/live_readiness.json")
+        snapshot = db.fetch_latest_organism_snapshot() or {}
+        transition = snapshot.get("transition_plan") if isinstance(snapshot, dict) else {}
+        if not transition and isinstance(snapshot, dict):
+            pipeline_snapshot = snapshot.get("pipeline") or {}
+            if isinstance(pipeline_snapshot, dict):
+                transition = pipeline_snapshot.get("transition_plan") or {}
+        if not transition:
+            confusion = _load_report(ROOT / "data/reports/confusion_matrices.json")
+            transition = confusion.get("transition_plan") if isinstance(confusion, dict) else {}
+        transition = transition if isinstance(transition, dict) else {}
+        capital_plan = transition.get("capital_plan") if isinstance(transition, dict) else {}
+        capital_plan = capital_plan if isinstance(capital_plan, dict) else {}
+        funding_gate = capital_plan.get("funding_gate") or (
+            transition.get("risk_flags", {}).get("funding_gate")
+            if isinstance(transition.get("risk_flags"), dict) else {}
+        )
+        wallet_name = str((transition.get("wallet_state") or {}).get("wallet") or "guardian")
+        try:
+            balance_rows = [dict(row) for row in db.fetch_balances_flat(wallet=wallet_name, include_zero=False)]
+        except Exception:
+            balance_rows = []
+        wallet_total_usd = sum(_safe_float(row.get("usd_amount")) for row in balance_rows)
+        snapshot_ts = _safe_float(snapshot.get("timestamp")) if isinstance(snapshot, dict) else 0.0
+        readiness_ts = _safe_float(live_readiness.get("updated_at")) if live_readiness else 0.0
+        operational_state = {
+            "revision": f"{int(max(snapshot_ts, readiness_ts))}:{len(recent_trades)}:{len(active_advisories)}",
+            "generated_at": time.time(),
+            "source_timestamps": {
+                "organism": snapshot_ts or None,
+                "readiness": readiness_ts or None,
+            },
+            "mode": snapshot.get("mode", "ghost") if isinstance(snapshot, dict) else "ghost",
+            "wallet": {
+                "name": wallet_name,
+                "total_usd": wallet_total_usd,
+                "balances": balance_rows,
+            },
+            "funding_gate": funding_gate or {},
+            "transition_plan": transition,
+            "live_readiness": live_readiness or {"ready": False},
+            "ghost_trading": ghost_state,
+            "recent_trades": recent_trades,
+            "active_advisories": active_advisories,
+        }
         summary = {
             "metrics_by_stage": list(metric_counts),
             "feedback_by_severity": list(feedback_counts),
@@ -189,6 +234,10 @@ class DashboardSummaryView(APIView):
             "stable_bank": stable_bank,
             "total_profit": total_profit,
             "live_readiness": live_readiness or {"ready": False},
+            "operational_state": operational_state,
+            "transition_plan": transition,
+            "funding_gate": funding_gate or {},
+            "wallet": operational_state["wallet"],
         }
         return Response(summary, status=status.HTTP_200_OK)
 
