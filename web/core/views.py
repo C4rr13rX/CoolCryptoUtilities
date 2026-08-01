@@ -35,6 +35,7 @@ from opsconsole.manager import manager as console_manager
 from services.guardian_supervisor import guardian_supervisor  # noqa: E402
 from services.code_graph import get_code_graph, list_tracked_files, request_code_graph_refresh  # noqa: E402
 from services.graph_store import search_graph_equations, graph_enabled  # noqa: E402
+from services.trading_accounting import trading_accounting_snapshot  # noqa: E402
 from tools.c0d3r_session import C0d3rSession, c0d3r_default_settings  # noqa: E402
 from .models import C0d3rWebSession, C0d3rWebMessage, C0d3rWebRun, SystemLog
 
@@ -63,6 +64,12 @@ def _empty_payload() -> Dict[str, Any]:
         "live_trades": [],
         "stable_bank": 0.0,
         "total_profit": 0.0,
+        "accounting": {
+            "version": 2,
+            "source": "trade_outcomes",
+            "ghost": {"closed": 0, "profitable": 0, "unprofitable": 0, "open": 0, "total": 0, "net_profit": 0.0},
+            "live": {"closed": 0, "profitable": 0, "unprofitable": 0, "open": 0, "total": 0, "net_profit": 0.0},
+        },
         "advisories": [],
     }
 
@@ -112,7 +119,7 @@ class DashboardContextMixin:
 
         db = get_db()
         state = db.load_state() or {}
-        ghost_state = state.get("ghost_trading") or {}
+        accounting = trading_accounting_snapshot(db)
         readiness = _load_report(ROOT / "data/reports/live_readiness.json")
         confusion = _load_report(Path("data/reports/confusion_eval.json"))
         horizon = _load_report(Path("data/reports/horizon_profile.json"))
@@ -126,8 +133,9 @@ class DashboardContextMixin:
             "latest_feedback": db.fetch_feedback_events(limit=8),
             "ghost_trades": db.fetch_trades(wallets=["ghost"], limit=10),
             "live_trades": db.fetch_trades(wallets=["live"], limit=10),
-            "stable_bank": float(ghost_state.get("stable_bank", 0.0)),
-            "total_profit": float(ghost_state.get("total_profit", 0.0)),
+            "stable_bank": float(accounting["ghost"].get("checkpoint", 0.0)),
+            "total_profit": float(accounting["ghost"].get("net_profit", 0.0)),
+            "accounting": accounting,
             "advisories": db.fetch_advisories(limit=8, include_resolved=False),
             "live_readiness": readiness,
             "confusion_eval": confusion,

@@ -30,6 +30,7 @@ from services.wallet_reconciliation import (  # noqa: E402
     reconciled_wallet_snapshot,
     request_wallet_refresh,
 )
+from services.trading_accounting import trading_accounting_snapshot  # noqa: E402
 
 
 def _load_report(path: Path) -> Dict[str, Any]:
@@ -179,8 +180,9 @@ def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
     ).data
     state = db.load_state() or {}
     ghost_state = state.get("ghost_trading") or {}
-    stable_bank = float(ghost_state.get("stable_bank", 0.0))
-    total_profit = float(ghost_state.get("total_profit", 0.0))
+    accounting = trading_accounting_snapshot(db)
+    stable_bank = float(accounting["ghost"].get("checkpoint", 0.0))
+    total_profit = float(accounting["ghost"].get("net_profit", 0.0))
 
     live_readiness = _load_report(ROOT / "data/reports/live_readiness.json")
     snapshot = db.fetch_latest_organism_snapshot() or {}
@@ -218,6 +220,7 @@ def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
             "transition_plan": transition,
             "live_readiness": live_readiness or {"ready": False},
             "ghost_trading": ghost_state,
+            "accounting": accounting,
             "recent_trades": recent_trades,
             "active_advisories": active_advisories,
     }
@@ -231,6 +234,7 @@ def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
             "active_advisories": active_advisories,
             "stable_bank": stable_bank,
             "total_profit": total_profit,
+            "accounting": accounting,
             "live_readiness": live_readiness or {"ready": False},
             "operational_state": operational_state,
             "transition_plan": transition,

@@ -5,6 +5,7 @@ import json
 import math
 import os
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -55,6 +56,11 @@ from trading.brain import (
 )
 from trading.brain.event_engine import make_default_engine
 from services.organism_state import build_snapshot
+from services.trading_accounting import (
+    ACCOUNTING_VERSION,
+    is_usd_accounting_pair,
+    validate_outcome_math,
+)
 
 try:
     from router_wallet import UltraSwapBridge  # type: ignore
@@ -2937,6 +2943,33 @@ class TradingBot:
             "session_id": self.ghost_session_id,
             "brain": brain_payload,
         }
+        if not is_usd_accounting_pair(base_token, quote_token):
+            decision.update({
+                "status": "hold-price-domain",
+                "reason": "usd_pnl_requires_nonstable_base_and_stable_quote",
+                "accounting": {
+                    "base_token": base_token,
+                    "quote_token": quote_token,
+                    "pnl_currency": "unresolved",
+                },
+            })
+            return decision
+        if pos is not None:
+            entry_price_domain = float(pos.get("entry_price") or 0.0)
+            ratio = price / entry_price_domain if entry_price_domain > 0.0 else 0.0
+            max_price_ratio = max(1.01, float(os.getenv("MAX_POSITION_PRICE_RATIO", "5.0")))
+            if ratio <= 0.0 or ratio > max_price_ratio or ratio < (1.0 / max_price_ratio):
+                decision.update({
+                    "status": "hold-price-domain",
+                    "reason": "position_price_domain_mismatch",
+                    "accounting": {
+                        "entry_price": entry_price_domain,
+                        "observed_price": price,
+                        "ratio": ratio,
+                        "maximum_ratio": max_price_ratio,
+                    },
+                })
+                return decision
         if brain.get("opportunity"):
             decision["opportunity"] = brain["opportunity"]
         if chain_name != self.primary_chain:
@@ -3447,7 +3480,7 @@ class TradingBot:
                 self._tune_allocation(symbol, positive=False, negative=True)
                 return decision
             self._ghost_trade_counter += 1
-            trade_id = f"{symbol}-{self._ghost_trade_counter}"
+            trade_id = f"{self.ghost_session_id}:{symbol}:{uuid.uuid4().hex}"
             entry_reason = reason or (directive.reason if directive else "model")
 
             # Dual-track: even on a live bot, a strategy that has not yet
@@ -3628,6 +3661,7 @@ class TradingBot:
                     "base_symbol": base_balance_symbol,
                     "quote_symbol": quote_balance_symbol,
                     "trigger_state": {"high_watermark": executed_entry_price},
+                    "exit_sequence": 0,
                 }
                 if brain.get("fingerprint"):
                     try:
@@ -3749,6 +3783,7 @@ class TradingBot:
                 "entry_confidence": exit_conf_val,
                 "direction_prob": direction_prob,
                 "trigger_state": {"high_watermark": price},
+                "exit_sequence": 0,
             }
             if brain.get("fingerprint"):
                 try:
@@ -4055,24 +4090,49 @@ class TradingBot:
                 gross_profit = (price - entry_price) * exit_size
                 fee_cost = max(notional * fees, 0.0)
                 profit = gross_profit - fee_cost
-            self.total_trades += 1
-            if profit > 0:
-                self.wins += 1
-            # Per-strategy ledger: attribute the outcome to the strategy that
-            # opened this position; graduation/demotion re-evaluates inside.
-            try:
-                self.strategy_ledger.record(
-                    str(pos.get("strategy_id") or "") or "unclassified",
-                    profit=float(profit),
-                    mode=pos_mode,
-                    confidence=float(pos.get("entry_confidence") or 0.0) or None,
-                )
-                self._refresh_auto_execute()
-            except Exception:
-                pass
+            economic_profit = float(profit)
+            valid_outcome, invalid_reason = validate_outcome_math(
+                entry_price=entry_price,
+                exit_price=exit_price_effective,
+                quantity=exit_size,
+                gross_profit=gross_profit,
+                fee_cost=fee_cost,
+                net_profit=economic_profit,
+                base_token=base_token,
+                quote_token=quote_token,
+            )
+            if not valid_outcome:
+                decision.update({
+                    "status": "hold-accounting-invalid",
+                    "reason": invalid_reason,
+                    "accounting": {
+                        "entry_price": entry_price,
+                        "exit_price": exit_price_effective,
+                        "quantity": exit_size,
+                        "gross_profit": gross_profit,
+                        "fee_cost": fee_cost,
+                        "net_profit": economic_profit,
+                        "base_token": base_token,
+                        "quote_token": quote_token,
+                    },
+                })
+                return decision
+            protective_exit = str(reason or "").startswith(
+                ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
+            )
+            if (
+                (not pos_is_live)
+                and economic_profit <= 0
+                and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec
+                and not protective_exit
+            ):
+                # A proposed exit is not a completed outcome. It must not
+                # increment trades, losses, strategy learning, or P&L.
+                decision.update({"status": "hold-negative", "reason": reason or "hold"})
+                return decision
             checkpoint = 0.0
             next_stop = route[1] if len(route) > 1 else None
-            realized_margin = profit / notional if notional else 0.0
+            realized_margin = economic_profit / notional if notional else 0.0
             predicted_margin = float(pos.get("expected_margin_after_fees", pos.get("expected_margin", margin - fees)))
             entry_confidence = float(pos.get("entry_confidence", exit_conf_val))
             self.equilibrium.observe(
@@ -4086,46 +4146,120 @@ class TradingBot:
             savings_event = None
             equilibrium_score = self.equilibrium.score()
             trade_id = pos.get("trade_id") or f"{symbol}-{int(pos.get('ts', sample_ts))}"
-            if profit > 0 and equilibrium_ready:
-                checkpoint = profit * self.stable_checkpoint_ratio
+            checkpoint_candidate = 0.0
+            checkpoint_accepted = False
+            estimated_fees = 0.0
+            fee_guard = 0.0
+            min_batch_override = self._savings_min_batch_for_chain(chain_name)
+            if economic_profit > 0 and equilibrium_ready:
+                checkpoint_candidate = economic_profit * self.stable_checkpoint_ratio
                 estimated_fees = max(exit_size * price * fees, 0.0)
                 fee_guard = estimated_fees * 1.89
+                checkpoint_accepted = checkpoint_candidate >= fee_guard
+                checkpoint = checkpoint_candidate if checkpoint_accepted else 0.0
+
+            retained_profit = economic_profit - checkpoint
+            exit_sequence = int(pos.get("exit_sequence") or 0) + 1
+            outcome_id = f"{trade_id}:exit:{exit_sequence}"
+            try:
+                outcome_inserted = self.db.record_trade_outcome(
+                    outcome_id=outcome_id,
+                    trade_id=str(trade_id),
+                    wallet="live" if pos_is_live else "ghost",
+                    chain=chain_name,
+                    symbol=symbol,
+                    session_id=self.ghost_session_id,
+                    base_token=base_token,
+                    quote_token=quote_token,
+                    pnl_currency="USD",
+                    entry_price=entry_price,
+                    exit_price=exit_price_effective,
+                    quantity=exit_size,
+                    gross_profit=gross_profit,
+                    fee_cost=fee_cost,
+                    checkpoint=checkpoint,
+                    net_profit=economic_profit,
+                    status="closed",
+                    ts=sample_ts,
+                    details={
+                        "reason": reason,
+                        "mode": pos_mode,
+                        "remaining_size": max(0.0, held_size - exit_size),
+                        "retained_profit": retained_profit,
+                        "accounting_version": ACCOUNTING_VERSION,
+                    },
+                )
+            except Exception as exc:
+                decision.update({
+                    "status": "hold-accounting-commit",
+                    "reason": f"outcome_commit_failed:{type(exc).__name__}",
+                })
+                return decision
+            if not outcome_inserted:
+                decision.update({
+                    "status": "duplicate-outcome",
+                    "reason": "outcome_id_already_committed",
+                    "outcome_id": outcome_id,
+                })
+                return decision
+            pos["exit_sequence"] = exit_sequence
+
+            self.total_trades += 1
+            if economic_profit > 0:
+                self.wins += 1
+            try:
+                self.strategy_ledger.record(
+                    str(pos.get("strategy_id") or "") or "unclassified",
+                    profit=economic_profit,
+                    mode=pos_mode,
+                    confidence=float(pos.get("entry_confidence") or 0.0) or None,
+                )
+                self._refresh_auto_execute()
+            except Exception:
+                pass
+
+            if checkpoint_candidate > 0.0:
                 savings_slot = decision.setdefault("savings", {})
-                min_batch_override = self._savings_min_batch_for_chain(chain_name)
-                if checkpoint >= fee_guard:
+                if checkpoint_accepted:
                     self.stable_bank += checkpoint
-                    if not self.live_trading_enabled:
+                    if not pos_is_live:
                         self._adjust_quote_balance(chain_name, quote_token, -checkpoint)
-                    profit -= checkpoint
-                    savings_event = self.savings.record_allocation(
-                        amount=checkpoint,
-                        token=stable_target,
-                        mode="live" if self.live_trading_enabled else "ghost",
-                        equilibrium_score=self.equilibrium.score(),
-                        trade_id=trade_id,
-                        chain=chain_name,
-                        min_batch_override=min_batch_override,
-                    )
-                    checkpoint_payload = savings_event.to_dict()
-                    checkpoint_payload.update(
-                        {
-                            "fee_guard": fee_guard,
-                            "estimated_fees": estimated_fees,
-                            "checkpoint_ratio": self.stable_checkpoint_ratio,
+                    try:
+                        savings_event = self.savings.record_allocation(
+                            amount=checkpoint,
+                            token=stable_target,
+                            mode="live" if pos_is_live else "ghost",
+                            equilibrium_score=self.equilibrium.score(),
+                            trade_id=trade_id,
+                            chain=chain_name,
+                            min_batch_override=min_batch_override,
+                        )
+                        checkpoint_payload = savings_event.to_dict()
+                        checkpoint_payload.update(
+                            {
+                                "fee_guard": fee_guard,
+                                "estimated_fees": estimated_fees,
+                                "checkpoint_ratio": self.stable_checkpoint_ratio,
+                            }
+                        )
+                        savings_slot["checkpoint"] = checkpoint_payload
+                        self._log_savings_checkpoint(checkpoint_payload)
+                        transfers = self.savings.drain_ready_transfers()
+                        for transfer in transfers:
+                            self._handle_savings_transfer(transfer)
+                    except Exception as exc:
+                        savings_slot["checkpoint"] = {
+                            "amount": checkpoint,
+                            "status": "accounted_planner_unavailable",
+                            "error": type(exc).__name__,
                         }
-                    )
-                    savings_slot["checkpoint"] = checkpoint_payload
-                    self._log_savings_checkpoint(checkpoint_payload)
-                    transfers = self.savings.drain_ready_transfers()
-                    for transfer in transfers:
-                        self._handle_savings_transfer(transfer)
                 else:
                     skip_payload = {
                         "reason": "checkpoint_below_fee_buffer",
-                        "checkpoint": checkpoint,
+                        "checkpoint": checkpoint_candidate,
                         "required_min": fee_guard,
                         "estimated_fees": estimated_fees,
-                        "mode": "live" if self.live_trading_enabled else "ghost",
+                        "mode": "live" if pos_is_live else "ghost",
                         "trade_id": trade_id,
                         "token": stable_target,
                         "chain": chain_name,
@@ -4134,25 +4268,14 @@ class TradingBot:
                     }
                     savings_slot["skipped"] = skip_payload
                     self._log_savings_skip(skip_payload)
-                    checkpoint = 0.0
-            protective_exit = str(reason or "").startswith(
-                ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
-            )
-            if (
-                (not pos_is_live)
-                and profit <= 0
-                and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec
-                and not protective_exit
-            ):
-                decision.update({"status": "hold-negative", "reason": reason or "hold"})
-                return decision
+            profit = retained_profit
             self.total_profit += profit
             self.realized_profit += profit
             # Cross-token rotation: a profitable sell-high frees quote —
             # let the portfolio rotator pick the next buy-low across all
             # streamed pairs (SAT) or park in stable (UNSAT). Runs after
             # the stable-bank skim so savings are never re-risked.
-            if profit > 0 and self.rotator is not None:
+            if economic_profit > 0 and self.rotator is not None:
                 try:
                     freed_quote = quote_received if quote_received > 0 else exit_size * price
                     self.rotator.on_exit(
@@ -4160,17 +4283,17 @@ class TradingBot:
                         symbol=symbol,
                         chain=chain_name,
                         freed_quote=float(freed_quote),
-                        profit=float(profit),
+                        profit=economic_profit,
                     )
                 except Exception as exc:
                     log_message("rotation", f"on_exit failed: {exc}", severity="warning")
             # --- Live circuit breaker: revert to ghost on sustained losses ---
             if pos_is_live:
-                if profit > 0:
+                if economic_profit > 0:
                     self._live_consecutive_losses = 0
                 else:
                     self._live_consecutive_losses += 1
-                self._live_total_pnl += profit
+                self._live_total_pnl += economic_profit
                 self._live_peak_pnl = max(self._live_peak_pnl, self._live_total_pnl)
                 drawdown = (self._live_peak_pnl - self._live_total_pnl) if self._live_peak_pnl > 0 else abs(self._live_total_pnl)
                 wallet_value = sum(self.sim_quote_balances.values()) or 1.0
@@ -4214,11 +4337,11 @@ class TradingBot:
                     horizon = best_vote.get("horizon") if isinstance(best_vote, dict) else None
                     if horizon:
                         try:
-                            self.swarm_selector.update(str(horizon), profit, sample_ts)
+                            self.swarm_selector.update(str(horizon), economic_profit, sample_ts)
                             self.metrics.record(
                                 trade_stage,
                                 {
-                                    "swarm_profit": profit,
+                                    "swarm_profit": economic_profit,
                                     "swarm_score": self.swarm_selector.best()[1],
                                 },
                                 category="swarm_outcome",
@@ -4233,22 +4356,22 @@ class TradingBot:
                 try:
                     self.memory.add(
                         np.asarray(pos_fingerprint, dtype=np.float32),
-                        profit,
+                        economic_profit,
                         duration=duration_sec,
                         size=exit_size,
                     )
                 except Exception:
                     pass
-            if profit != 0.0:
+            if economic_profit != 0.0:
                 try:
                     self.graph.upsert_node(
                         f"{symbol}:pnl",
                         "portfolio",
-                        profit,
+                        economic_profit,
                         sample_ts,
                         duration=duration_sec,
                     )
-                    strength = float(np.tanh(profit / max(abs(entry_price), 1e-6)))
+                    strength = float(np.tanh(economic_profit / max(abs(entry_price), 1e-6)))
                     self.graph.reinforce(symbol, f"{symbol}:pnl", sample_ts, strength)
                 except Exception:
                     pass
@@ -4257,7 +4380,7 @@ class TradingBot:
                 del self.positions[symbol]
             else:
                 pos["size"] = remaining_size
-                if self.live_trading_enabled:
+                if pos_is_live:
                     pos["quote_spent"] = total_quote_spent
                     pos["gas_spent_native"] = total_gas_native
                     if remaining_size > 0.0 and total_quote_spent > 0.0:
@@ -4266,13 +4389,15 @@ class TradingBot:
             decision.update(
                 {
                     "action": "exit",
-                    "status": f"{'live' if self.live_trading_enabled else 'ghost'}-exit",
+                    "status": f"{'live' if pos_is_live else 'ghost'}-exit",
                     "exit_reason": reason,
                     "strategy_id": str(pos.get("strategy_id") or ""),
                     "size": exit_size,
                     "entry_price": entry_price,
                     "exit_price": exit_price_effective,
-                    "profit": profit,
+                    "profit": economic_profit,
+                    "retained_profit": retained_profit,
+                    "outcome_id": outcome_id,
                     "checkpoint": checkpoint,
                     "stable_token": stable_target,
                     "bank_balance": self.stable_bank,
@@ -4284,7 +4409,7 @@ class TradingBot:
                     "entry_ts": entry_ts,
                     "exit_ts": sample_ts,
                     "duration_sec": duration_sec,
-                    "wallet": "live" if self.live_trading_enabled else "ghost",
+                    "wallet": "live" if pos_is_live else "ghost",
                     "session_id": self.ghost_session_id,
                     "equilibrium_score": equilibrium_score,
                     "nash_equilibrium": equilibrium_ready,
@@ -4292,7 +4417,7 @@ class TradingBot:
                 }
             )
             if isinstance(decision.get("brain"), dict):
-                decision["brain"]["realized_profit"] = profit
+                decision["brain"]["realized_profit"] = economic_profit
             exposure_delta = exit_size * price
             remaining = max(0.0, self.active_exposure.get(symbol, 0.0) - exposure_delta)
             if remaining <= 1e-6:
@@ -4300,7 +4425,8 @@ class TradingBot:
             else:
                 self.active_exposure[symbol] = remaining
             exit_metrics = {
-                "profit": profit,
+                "profit": economic_profit,
+                "retained_profit": retained_profit,
                 "checkpoint": checkpoint,
                 "duration_sec": duration_sec,
                 "bank_balance": self.stable_bank,
@@ -4322,9 +4448,9 @@ class TradingBot:
                     "route": route,
                 },
             )
-            severity = FeedbackSeverity.INFO if profit > 0 else FeedbackSeverity.WARNING
-            if profit <= 0 or reason in {"negative_margin", "confidence_drop", "timed-exit"}:
-                severity = FeedbackSeverity.CRITICAL if profit < 0 else FeedbackSeverity.WARNING
+            severity = FeedbackSeverity.INFO if economic_profit > 0 else FeedbackSeverity.WARNING
+            if economic_profit <= 0 or reason in {"negative_margin", "confidence_drop", "timed-exit"}:
+                severity = FeedbackSeverity.CRITICAL if economic_profit < 0 else FeedbackSeverity.WARNING
             self.metrics.feedback(
                 feedback_channel,
                 severity=severity,
@@ -4332,7 +4458,9 @@ class TradingBot:
                 details={
                     "symbol": symbol,
                     "trade_id": trade_id,
-                    "profit": profit,
+                    "profit": economic_profit,
+                    "retained_profit": retained_profit,
+                    "outcome_id": outcome_id,
                     "duration_sec": duration_sec,
                     "reason": reason,
                     "expected_margin": margin,
@@ -4341,10 +4469,10 @@ class TradingBot:
             )
             print(
                 "%s exit %s size=%.6f price=%.4f profit=%.6f checkpoint=%.6f bank=%.6f reason=%s"
-                % (log_prefix, symbol, exit_size, exit_price_effective, profit, checkpoint, self.stable_bank, reason or "exit")
+                % (log_prefix, symbol, exit_size, exit_price_effective, economic_profit, checkpoint, self.stable_bank, reason or "exit")
             )
             self.scheduler.record_trade(symbol, "exit", exit_price_effective, exit_size)
-            if self.live_trading_enabled:
+            if pos_is_live:
                 try:
                     self.record_fill(
                         symbol=symbol,
@@ -4362,13 +4490,18 @@ class TradingBot:
                             "gas_price_usd": float(native_price_usd),
                             "fee_cost_usd": float(fee_cost),
                             "gross_profit": float(gross_profit),
-                            "profit": float(profit),
+                            "profit": economic_profit,
+                            "retained_profit": retained_profit,
+                            "checkpoint": checkpoint,
+                            "entry_price": entry_price,
+                            "pnl_currency": "USD",
+                            "outcome_id": outcome_id,
                             "remaining_size": float(remaining_size),
                         },
                     )
                 except Exception:
                     pass
-            if not self.live_trading_enabled:
+            if not pos_is_live:
                 quote_gain = exit_size * price - fee_cost
                 self._adjust_quote_balance(chain_name, quote_token, quote_gain)
                 self._consume_sim_gas(chain_name, gas_required)
@@ -4388,7 +4521,12 @@ class TradingBot:
                             "fee_rate": float(fees),
                             "fee_cost": float(fee_cost),
                             "gross_profit": float(gross_profit),
-                            "profit": float(profit),
+                            "profit": economic_profit,
+                            "retained_profit": retained_profit,
+                            "checkpoint": checkpoint,
+                            "entry_price": entry_price,
+                            "pnl_currency": "USD",
+                            "outcome_id": outcome_id,
                         },
                     )
                 except Exception:
@@ -4401,12 +4539,12 @@ class TradingBot:
                 quote_basis = float(decision.get("quote_spent", 0.0) or 0.0)
                 if quote_basis <= 0:
                     quote_basis = float(locals().get("cost_portion") or 0.0)
-                pnl_pct = (float(profit) / quote_basis) if quote_basis > 0 else 0.0
+                pnl_pct = (economic_profit / quote_basis) if quote_basis > 0 else 0.0
                 self._brain_record_exit(decision, pnl_pct=pnl_pct)
             except Exception:
                 pass
             self._maybe_promote_to_live()
-            if profit > 0 and decision.get("wallet", "ghost") == "live":
+            if economic_profit > 0 and decision.get("wallet", "ghost") == "live":
                 strategy = self._plan_gas_replenishment(
                     chain=chain_name,
                     route=route,
@@ -5487,13 +5625,34 @@ class TradingBot:
         ghost = state.get("ghost_trading") if isinstance(state, dict) else None
         if not isinstance(ghost, dict):
             return
-        self.stable_bank = float(ghost.get("stable_bank", self.stable_bank))
-        self.total_profit = float(ghost.get("total_profit", self.total_profit))
-        self.realized_profit = float(ghost.get("realized_profit", self.realized_profit))
-        self.total_trades = int(ghost.get("total_trades", self.total_trades))
-        self.wins = int(ghost.get("wins", self.wins))
+        accounting_version = int(ghost.get("accounting_version") or 0)
+        if accounting_version >= ACCOUNTING_VERSION:
+            verified = self.db.trade_outcome_summary("ghost")
+            self.stable_bank = float(verified.get("checkpoint") or 0.0)
+            self.total_profit = float(verified.get("net_profit") or 0.0) - self.stable_bank
+            self.realized_profit = self.total_profit
+            self.total_trades = int(verified.get("closed") or 0)
+            self.wins = int(verified.get("profitable") or 0)
+        else:
+            # Pre-v2 aggregates mixed non-USD pairs, proposed exits, and
+            # concurrent writers. Never promote or trade from those values.
+            self.stable_bank = 0.0
+            self.total_profit = 0.0
+            self.realized_profit = 0.0
+            self.total_trades = 0
+            self.wins = 0
+        latest_outcome_by_trade: Dict[str, Dict[str, Any]] = {}
+        if accounting_version >= ACCOUNTING_VERSION:
+            try:
+                for outcome in self.db.fetch_trade_outcomes(limit=10_000):
+                    trade_key = str(outcome.get("trade_id") or "")
+                    if trade_key and trade_key not in latest_outcome_by_trade:
+                        latest_outcome_by_trade[trade_key] = outcome
+            except Exception:
+                latest_outcome_by_trade = {}
         positions: Dict[str, Dict[str, Any]] = {}
-        for sym, pos in ghost.get("positions", {}).items():
+        saved_positions = ghost.get("positions", {}) if accounting_version >= ACCOUNTING_VERSION else {}
+        for sym, pos in saved_positions.items():
             if not isinstance(pos, dict):
                 continue
             payload = dict(pos)
@@ -5520,12 +5679,23 @@ class TradingBot:
                         payload[key] = float(payload.get(key) or 0.0)
                     except Exception:
                         payload[key] = 0.0
+            latest_outcome = latest_outcome_by_trade.get(str(payload.get("trade_id") or ""))
+            if latest_outcome:
+                latest_details = latest_outcome.get("details") or {}
+                remaining_size = float(latest_details.get("remaining_size") or 0.0)
+                if remaining_size <= 1e-6:
+                    continue
+                payload["size"] = remaining_size
+                try:
+                    payload["exit_sequence"] = int(str(latest_outcome.get("outcome_id") or "").rsplit(":", 1)[-1])
+                except (TypeError, ValueError):
+                    payload["exit_sequence"] = int(payload.get("exit_sequence") or 0)
             positions[str(sym)] = payload
         self.positions = positions
-        routes = ghost.get("routes")
+        routes = ghost.get("routes") if accounting_version >= ACCOUNTING_VERSION else None
         if isinstance(routes, dict):
             self.bus_routes = {sym: list(tokens) for sym, tokens in routes.items()}
-        sim_quotes = ghost.get("sim_quote_balances")
+        sim_quotes = ghost.get("sim_quote_balances") if accounting_version >= ACCOUNTING_VERSION else None
         if isinstance(sim_quotes, dict):
             balances: Dict[Tuple[str, str], float] = {}
             for key, value in sim_quotes.items():
@@ -5549,11 +5719,11 @@ class TradingBot:
                 except Exception:
                     continue
             self.sim_quote_balances = balances
-        sim_native = ghost.get("sim_native_balances")
+        sim_native = ghost.get("sim_native_balances") if accounting_version >= ACCOUNTING_VERSION else None
         if isinstance(sim_native, dict):
             self.sim_native_balances = {str(chain).lower(): float(value) for chain, value in sim_native.items()}
         self.ghost_session_id = int(ghost.get("session_id", self.ghost_session_id)) or 1
-        exposure = ghost.get("active_exposure")
+        exposure = ghost.get("active_exposure") if accounting_version >= ACCOUNTING_VERSION else None
         if isinstance(exposure, dict):
             self.active_exposure = {str(sym): float(value) for sym, value in exposure.items()}
         self._auto_execute_approved = bool(ghost.get("auto_execute_approved", False))
@@ -5655,7 +5825,11 @@ class TradingBot:
             if isinstance(fingerprint_val, np.ndarray):
                 pos_copy["fingerprint"] = fingerprint_val.tolist()
             positions_payload[str(sym)] = pos_copy
+        previous_ghost = state.get("ghost_trading") if isinstance(state.get("ghost_trading"), dict) else {}
         state["ghost_trading"] = {
+            "accounting_version": ACCOUNTING_VERSION,
+            "accounting_epoch": previous_ghost.get("accounting_epoch") or int(time.time()),
+            "legacy_quarantine": previous_ghost.get("legacy_quarantine"),
             "stable_bank": self.stable_bank,
             "total_profit": self.total_profit,
             "realized_profit": self.realized_profit,

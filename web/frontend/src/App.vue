@@ -36,7 +36,7 @@
             <span class="value">{{ walletBalanceDisplay }}</span>
           </div>
           <div>
-            <span class="label">Ghost {{ t('nav.total_profit') }}</span>
+            <span class="label">Verified Ghost P&amp;L</span>
             <span class="value">{{ ghostProfitDisplay }}</span>
           </div>
         </div>
@@ -863,7 +863,7 @@ const walletBalanceDisplay = computed(() => {
     : 'Refreshing…';
 });
 const ghostProfitDisplay = computed(() => currencyFormatter.format(Number(
-  store.dashboard?.ghost_trading?.total_profit ?? store.dashboard?.total_profit ?? 0,
+  store.dashboard?.accounting?.ghost?.net_profit ?? 0,
 )));
 </script>
 

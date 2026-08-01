@@ -228,6 +228,37 @@ class TradingDatabase:
             )
             self._conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS trade_outcomes (
+                    outcome_id TEXT PRIMARY KEY,
+                    trade_id TEXT NOT NULL,
+                    ts REAL NOT NULL,
+                    wallet TEXT NOT NULL,
+                    chain TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    session_id INTEGER NOT NULL,
+                    base_token TEXT NOT NULL,
+                    quote_token TEXT NOT NULL,
+                    pnl_currency TEXT NOT NULL,
+                    entry_price REAL NOT NULL,
+                    exit_price REAL NOT NULL,
+                    quantity REAL NOT NULL,
+                    gross_profit REAL NOT NULL,
+                    fee_cost REAL NOT NULL,
+                    checkpoint REAL NOT NULL,
+                    net_profit REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    details TEXT
+                );
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_trade_outcomes_wallet_ts
+                ON trade_outcomes(wallet, ts);
+                """
+            )
+            self._conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts REAL,
@@ -460,6 +491,31 @@ class TradingDatabase:
                 executed_price DOUBLE PRECISION,
                 details JSONB
             );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS trade_outcomes (
+                outcome_id TEXT PRIMARY KEY,
+                trade_id TEXT NOT NULL,
+                ts DOUBLE PRECISION NOT NULL,
+                wallet TEXT NOT NULL,
+                chain TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                session_id BIGINT NOT NULL,
+                base_token TEXT NOT NULL,
+                quote_token TEXT NOT NULL,
+                pnl_currency TEXT NOT NULL,
+                entry_price DOUBLE PRECISION NOT NULL,
+                exit_price DOUBLE PRECISION NOT NULL,
+                quantity DOUBLE PRECISION NOT NULL,
+                gross_profit DOUBLE PRECISION NOT NULL,
+                fee_cost DOUBLE PRECISION NOT NULL,
+                checkpoint DOUBLE PRECISION NOT NULL,
+                net_profit DOUBLE PRECISION NOT NULL,
+                status TEXT NOT NULL,
+                details JSONB
+            );
+            CREATE INDEX IF NOT EXISTS idx_trade_outcomes_wallet_ts
+            ON trade_outcomes(wallet, ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS metrics (
@@ -708,6 +764,136 @@ class TradingDatabase:
                 entry["details"] = {}
             results.append(entry)
         return results
+
+    def record_trade_outcome(
+        self,
+        *,
+        outcome_id: str,
+        trade_id: str,
+        wallet: str,
+        chain: str,
+        symbol: str,
+        session_id: int,
+        base_token: str,
+        quote_token: str,
+        pnl_currency: str,
+        entry_price: float,
+        exit_price: float,
+        quantity: float,
+        gross_profit: float,
+        fee_cost: float,
+        checkpoint: float,
+        net_profit: float,
+        status: str,
+        details: Optional[Dict[str, Any]] = None,
+        ts: Optional[float] = None,
+    ) -> bool:
+        """Atomically commit one economically completed outcome.
+
+        ``outcome_id`` is an idempotency key. Concurrent/stale bot processes
+        can therefore never count the same position exit twice.
+        """
+        with self._conn:
+            cur = self._conn.execute(
+                """
+                INSERT INTO trade_outcomes(
+                    outcome_id, trade_id, ts, wallet, chain, symbol, session_id,
+                    base_token, quote_token, pnl_currency, entry_price,
+                    exit_price, quantity, gross_profit, fee_cost, checkpoint,
+                    net_profit, status, details
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(outcome_id) DO NOTHING
+                RETURNING outcome_id
+                """,
+                (
+                    str(outcome_id),
+                    str(trade_id),
+                    float(ts if ts is not None else time.time()),
+                    str(wallet),
+                    str(chain),
+                    str(symbol),
+                    int(session_id),
+                    str(base_token),
+                    str(quote_token),
+                    str(pnl_currency),
+                    float(entry_price),
+                    float(exit_price),
+                    float(quantity),
+                    float(gross_profit),
+                    float(fee_cost),
+                    float(checkpoint),
+                    float(net_profit),
+                    str(status),
+                    json.dumps(details or {}),
+                ),
+            )
+            return cur.fetchone() is not None
+
+    def fetch_trade_outcomes(
+        self,
+        *,
+        wallet: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        where = "WHERE wallet=?" if wallet else ""
+        params: List[Any] = [str(wallet)] if wallet else []
+        params.append(max(1, int(limit)))
+        with self._cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT outcome_id, trade_id, ts, wallet, chain, symbol,
+                       session_id, base_token, quote_token, pnl_currency,
+                       entry_price, exit_price, quantity, gross_profit,
+                       fee_cost, checkpoint, net_profit, status, details
+                FROM trade_outcomes
+                {where}
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+        outcomes: List[Dict[str, Any]] = []
+        for row in rows:
+            entry = dict(row)
+            try:
+                raw_details = entry.get("details")
+                entry["details"] = raw_details if isinstance(raw_details, dict) else json.loads(raw_details or "{}")
+            except Exception:
+                entry["details"] = {}
+            outcomes.append(entry)
+        return outcomes
+
+    def trade_outcome_summary(self, wallet: str) -> Dict[str, Any]:
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) AS closed,
+                       COALESCE(SUM(net_profit), 0.0) AS net_profit,
+                       COALESCE(SUM(checkpoint), 0.0) AS checkpoint,
+                       COALESCE(SUM(fee_cost), 0.0) AS fees,
+                       COALESCE(SUM(CASE WHEN net_profit > 0 THEN 1 ELSE 0 END), 0) AS profitable,
+                       COALESCE(SUM(CASE WHEN net_profit <= 0 THEN 1 ELSE 0 END), 0) AS unprofitable,
+                       MAX(ts) AS updated_at
+                FROM trade_outcomes
+                WHERE wallet=? AND status='closed'
+                """,
+                (str(wallet),),
+            )
+            row = cur.fetchone()
+        payload = dict(row or {})
+        closed = int(payload.get("closed") or 0)
+        profitable = int(payload.get("profitable") or 0)
+        return {
+            "closed": closed,
+            "profitable": profitable,
+            "unprofitable": int(payload.get("unprofitable") or 0),
+            "net_profit": float(payload.get("net_profit") or 0.0),
+            "checkpoint": float(payload.get("checkpoint") or 0.0),
+            "fees": float(payload.get("fees") or 0.0),
+            "win_rate": profitable / closed if closed else 0.0,
+            "updated_at": payload.get("updated_at"),
+        }
 
     # ------------------------------------------------------------------
     # Balance operations

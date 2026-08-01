@@ -92,6 +92,20 @@ def _install_tf_stub() -> None:
 _install_tf_stub()
 
 from production import ProductionManager
+from services.guardian_lock import GuardianLease
+
+
+def test_trading_state_writer_lease_allows_only_one_process(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    first = GuardianLease("trading-state-writer", timeout=0.0)
+    second = GuardianLease("trading-state-writer", timeout=0.0)
+    assert first.acquire() is True
+    try:
+        assert second.acquire() is False
+    finally:
+        first.release()
+    assert second.acquire() is True
+    second.release()
 
 
 def test_stale_news_task_is_replaced() -> None:

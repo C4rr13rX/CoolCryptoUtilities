@@ -21,6 +21,7 @@ from services.stable_bank_notify import notifier as _stable_bank_notifier
 from services.multi_wallet import multi_wallet_manager as _multi_wallet_mgr
 from services.resource_governor import governor as _governor, Priority as _Priority
 from services.delegation_client import DelegationClient
+from services.guardian_lock import GuardianLease
 
 if TYPE_CHECKING:
     from trading.pipeline import TrainingPipeline
@@ -49,6 +50,7 @@ class ProductionManager:
         self._loop_thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop = threading.Event()
+        self._writer_lease: Optional[GuardianLease] = None
         if os.getenv("DISABLE_DATA_INGEST", "0").lower() in {"1", "true", "yes", "on"}:
             self._download_supervisor = None
         else:
@@ -128,6 +130,10 @@ class ProductionManager:
             log_message("production", "manager already running.")
             self._set_active_flag(True)
             return
+        lease = GuardianLease("trading-state-writer", timeout=0.0, poll_interval=0.05)
+        if not lease.acquire():
+            raise RuntimeError("another production manager owns the trading-state writer lease")
+        self._writer_lease = lease
         self._stop.clear()
         _governor.start()
         # Start delegation client if enabled and hosts exist
@@ -174,11 +180,17 @@ class ProductionManager:
         except Exception:
             self._set_active_flag(False)
             self.heartbeat.update("error", metadata={"reason": "startup_failed"})
+            if self._writer_lease:
+                self._writer_lease.release()
+                self._writer_lease = None
             raise
 
     def stop(self, timeout: float = 15.0) -> None:
         if not self.is_running:
             log_message("production", "manager is not running.")
+            if self._writer_lease:
+                self._writer_lease.release()
+                self._writer_lease = None
             return
         self._stop.set()
         if self._loop and self._loop.is_running():
@@ -201,6 +213,9 @@ class ProductionManager:
         self._set_active_flag(False)
         self.heartbeat.update("stopped", metadata={"iteration": self.pipeline.iteration})
         self.heartbeat.clear()
+        if self._writer_lease:
+            self._writer_lease.release()
+            self._writer_lease = None
         log_message("production", "manager stopped.")
 
     @property

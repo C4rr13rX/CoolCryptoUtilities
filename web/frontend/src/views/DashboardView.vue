@@ -9,9 +9,9 @@
         <small class="meta">{{ walletMeta }}</small>
       </article>
       <article class="kpi-card">
-        <h3>Ghost {{ t('dashboard.kpi_total_profit') }}</h3>
+        <h3>Verified Ghost P&amp;L</h3>
         <p class="value">{{ ghostTotalProfit }}</p>
-        <small class="meta">Simulation ledger; not spendable wallet funds</small>
+        <small class="meta">{{ ghostAccountingMeta }}</small>
       </article>
       <article class="kpi-card">
         <h3>{{ t('dashboard.kpi_active_advisories') }}</h3>
@@ -123,19 +123,19 @@
         <div class="trade-card">
           <h3>{{ t('dashboard.ghost_trading') }}</h3>
           <div class="stat-line">
-            <span>{{ t('dashboard.active_signals') }}</span>
+            <span>Tracked positions</span>
             <strong>{{ ghostSummary.total }}</strong>
           </div>
           <div class="stat-line">
-            <span>{{ t('dashboard.success') }}</span>
+            <span>Closed profitable</span>
             <strong class="text-ok">{{ ghostSummary.success }}</strong>
           </div>
           <div class="stat-line">
-            <span>{{ t('dashboard.failed') }}</span>
+            <span>Closed unprofitable</span>
             <strong class="text-error">{{ ghostSummary.failed }}</strong>
           </div>
           <div class="stat-line">
-            <span>{{ t('dashboard.pending') }}</span>
+            <span>Open</span>
             <strong class="text-warn">{{ ghostSummary.pending }}</strong>
           </div>
         </div>
@@ -146,15 +146,15 @@
             <strong>{{ liveSummary.total }}</strong>
           </div>
           <div class="stat-line">
-            <span>{{ t('dashboard.profitable') }}</span>
+            <span>Closed profitable</span>
             <strong class="text-ok">{{ liveSummary.success }}</strong>
           </div>
           <div class="stat-line">
-            <span>{{ t('dashboard.loss') }}</span>
+            <span>Closed unprofitable</span>
             <strong class="text-error">{{ liveSummary.failed }}</strong>
           </div>
           <div class="stat-line">
-            <span>{{ t('dashboard.pending') }}</span>
+            <span>Open</span>
             <strong class="text-warn">{{ liveSummary.pending }}</strong>
           </div>
         </div>
@@ -220,9 +220,19 @@ const walletMeta = computed(() => {
   const updated = wallet.updated_at || wallet.updated_epoch;
   return updated ? `${t('wallet.last_updated')}: ${new Date(updated).toLocaleString()}` : 'Fresh on-chain reconciliation';
 });
+const verifiedGhostAccounting = computed(() => store.dashboard?.accounting?.ghost || {});
 const ghostTotalProfit = computed(() => currencyFormatter.format(Number(
-  store.dashboard?.ghost_trading?.total_profit ?? store.dashboard?.total_profit ?? 0,
+  verifiedGhostAccounting.value?.net_profit ?? 0,
 )));
+const ghostAccountingMeta = computed(() => {
+  const accounting = store.dashboard?.accounting || {};
+  const closed = Number(accounting?.ghost?.closed || 0);
+  const integrity = accounting?.integrity || {};
+  const suffix = integrity.legacy_quarantined || !integrity.cache_consistent
+    ? ' • legacy aggregate excluded'
+    : '';
+  return `${closed} verified closed outcome${closed === 1 ? '' : 's'}${suffix}`;
+});
 const advisories = computed(() => store.advisories || []);
 
 const tickerItems = computed(() => {
@@ -250,35 +260,18 @@ const recentTrades = computed(() => {
   return trades.filter((trade: any) => trade.symbol && trade.symbol !== 'MODEL').slice(0, 12);
 });
 
-function buildSummary(trades: any[]) {
-  const successStates = new Set(['success', 'filled', 'executed', 'done']);
-  const failureStates = new Set(['error', 'failed', 'cancelled', 'rejected']);
-  let success = 0;
-  let failed = 0;
-  let pending = 0;
-  trades.forEach((trade) => {
-    const status = String(trade.status || '').toLowerCase();
-    if (successStates.has(status)) success += 1;
-    else if (failureStates.has(status)) failed += 1;
-    else pending += 1;
-  });
+function outcomeSummary(mode: 'ghost' | 'live') {
+  const summary = store.dashboard?.accounting?.[mode] || {};
   return {
-    total: trades.length,
-    success,
-    failed,
-    pending,
+    total: Number(summary.total || 0),
+    success: Number(summary.profitable || 0),
+    failed: Number(summary.unprofitable || 0),
+    pending: Number(summary.open || 0),
   };
 }
 
-const ghostSummary = computed(() => {
-  const ghost = (store.recentTrades || []).filter((trade: any) => (trade.wallet || '').includes('ghost'));
-  return buildSummary(ghost);
-});
-
-const liveSummary = computed(() => {
-  const live = (store.recentTrades || []).filter((trade: any) => !(trade.wallet || '').includes('ghost'));
-  return buildSummary(live);
-});
+const ghostSummary = computed(() => outcomeSummary('ghost'));
+const liveSummary = computed(() => outcomeSummary('live'));
 
 const healthCards = computed(() => {
   const advisories = store.advisories || [];
