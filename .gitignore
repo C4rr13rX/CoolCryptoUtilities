@@ -30,6 +30,7 @@ temp_*.ps1
 .backup_*
 web/frontend/node_modules/
 web/frontend/dist/
+web/frontend/dist-old-*/
 web/frontend/.vite/
 web/frontend/.cache/
 logs/

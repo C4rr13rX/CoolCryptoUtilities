@@ -44,6 +44,7 @@ MAX_FILES = max(100, int(os.getenv("CODE_GRAPH_MAX_FILES", "5000")))
 MAX_FILE_BYTES = max(32_768, int(os.getenv("CODE_GRAPH_MAX_FILE_BYTES", "1500000")))
 
 _CATALOG_LOCK = threading.RLock()
+_CACHE_LOCK = threading.RLock()
 _JOBS_LOCK = threading.RLock()
 _JOBS: Dict[str, "BuildJob"] = {}
 
@@ -840,7 +841,8 @@ def _cache_path(repository_id: str) -> Path:
 def _load_graph_cache(repository_id: str) -> Optional[Dict[str, Any]]:
     path = _cache_path(repository_id)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        with _CACHE_LOCK:
+            payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
@@ -849,10 +851,21 @@ def _load_graph_cache(repository_id: str) -> Optional[Dict[str, Any]]:
 def _save_graph_cache(repository_id: str, payload: Dict[str, Any]) -> None:
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     path = _cache_path(repository_id)
-    temp = path.with_suffix(".tmp")
+    temp = path.with_name(f"{path.stem}.{uuid.uuid4().hex}.tmp")
     serializable = {key: value for key, value in payload.items() if key not in {"building"}}
-    temp.write_text(json.dumps(serializable, separators=(",", ":")), encoding="utf-8")
-    temp.replace(path)
+    try:
+        temp.write_text(json.dumps(serializable, separators=(",", ":")), encoding="utf-8")
+        with _CACHE_LOCK:
+            for attempt in range(8):
+                try:
+                    os.replace(temp, path)
+                    break
+                except PermissionError:
+                    if attempt == 7:
+                        raise
+                    time.sleep(0.025 * (attempt + 1))
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _empty_payload() -> Dict[str, Any]:

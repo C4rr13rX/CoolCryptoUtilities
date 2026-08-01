@@ -143,3 +143,31 @@ def test_structure_stream_starts_at_primary_entry_and_chunks_its_children(tmp_pa
     assert entry["meta"]["entry_priority"] == 100
     assert {node["kind"] for node in structure["nodes"]} <= {"repository", "module", "file"}
     assert any(node["label"] == "main" and node["kind"] == "function" for node in chunk["nodes"])
+
+
+def test_graph_cache_supports_concurrent_readers_and_writers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    cache_root = tmp_path / "cache"
+    monkeypatch.setattr(code_graph, "CACHE_ROOT", cache_root)
+    failures = []
+
+    def writer(index: int) -> None:
+        try:
+            for revision in range(12):
+                code_graph._save_graph_cache(
+                    "shared",
+                    {"writer": index, "revision": revision, "nodes": [], "edges": []},
+                )
+                loaded = code_graph._load_graph_cache("shared")
+                assert loaded is None or isinstance(loaded.get("revision"), int)
+        except Exception as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(index,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not failures
+    assert code_graph._load_graph_cache("shared") is not None
+    assert not list(cache_root.glob("*.tmp"))

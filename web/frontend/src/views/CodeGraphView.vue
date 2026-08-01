@@ -392,14 +392,18 @@ async function maybeLoadNearbyDetails(force = false) {
   lastDetailLoad = now;
   const files = nodes.value.filter((node) => node.kind === 'file');
   const target = controls.target;
-  const candidates = files
-    .filter((node) => !loadedFileDetails.has(node.id) && !loadingFileDetails.has(node.id))
+  const available = files
+    .filter((node) => !loadedFileDetails.has(node.id) && !loadingFileDetails.has(node.id));
+  const candidates = available
+    .filter((node) => force
+      ? Number(node.meta?.entry_priority || 0) > 0
+      : (nodePositions.get(node.id)?.distanceToSquared(target) ?? Infinity) <= 450 ** 2)
     .sort((a, b) => {
       const entryDelta = Number(b.meta?.entry_priority || 0) - Number(a.meta?.entry_priority || 0);
       if (entryDelta) return entryDelta;
       return (nodePositions.get(a.id)?.distanceToSquared(target) || Infinity) - (nodePositions.get(b.id)?.distanceToSquared(target) || Infinity);
     })
-    .slice(0, 8);
+    .slice(0, force ? 1 : 6);
   if (!candidates.length) return;
   const ids = candidates.map((node) => node.id);
   ids.forEach((id) => loadingFileDetails.add(id));
@@ -721,7 +725,28 @@ async function onGraphClick(event: PointerEvent) {
   if (!node) return;
   selectedNode.value = node;
   focusNode(node.id);
+  if (node.kind === 'file') void loadFileDetails([node.id]);
   if (node.file) await openCodeNode(node);
+}
+
+async function loadFileDetails(ids: string[]) {
+  const pending = ids.filter((id) => !loadedFileDetails.has(id) && !loadingFileDetails.has(id));
+  if (!pending.length || !selectedRepositoryId.value) return;
+  pending.forEach((id) => loadingFileDetails.add(id));
+  try {
+    const payload = await fetchCodeGraphChunk(selectedRepositoryId.value, pending);
+    const detailNodes = (payload.nodes || []).filter((item: GraphNodePayload) => item.kind !== 'file');
+    if (detailNodes.length) {
+      nodes.value = mergeById(nodes.value, payload.nodes || []);
+      edges.value = mergeById(edges.value, payload.edges || []);
+      pending.forEach((id) => loadedFileDetails.add(id));
+      buildGraphScene(nodes.value, edges.value, false);
+    }
+  } catch {
+    // The index may still be reaching this file; proximity streaming will retry.
+  } finally {
+    pending.forEach((id) => loadingFileDetails.delete(id));
+  }
 }
 
 function setHighlighted(nodeId: string | undefined, active: boolean) {
