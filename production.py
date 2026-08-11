@@ -135,6 +135,14 @@ class ProductionManager:
             raise RuntimeError("another production manager owns the trading-state writer lease")
         self._writer_lease = lease
         self._stop.clear()
+        # Publish ownership before any network-bound bootstrap work. Wallet
+        # discovery and OHLCV hydration can legitimately take minutes; without
+        # this early signal, supervisors mistake the exclusive writer for a
+        # dead process and start a competing manager.
+        self.heartbeat.update(
+            "starting",
+            metadata={"phase": "bootstrap", "writer_lease": "acquired"},
+        )
         _governor.start()
         # Start delegation client if enabled and hosts exist
         if self._delegation_enabled:
