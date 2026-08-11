@@ -15,6 +15,7 @@ import pytest
 from trading.strategies import (
     BollingerSqueezeStrategy,
     EmaCrossStrategy,
+    DustMicroSwingStrategy,
     MeanReversionStrategy,
     MomentumBreakoutStrategy,
     RsiReversalStrategy,
@@ -229,6 +230,46 @@ class TestSwarmConsensus:
         extras = self._extras(0.03)
         extras["swarm_consensus"]["entropy"] = 0.95
         assert SwarmConsensusStrategy().evaluate(state, make_ctx(state, extras=extras)) is None
+
+
+class TestDustMicroSwing:
+    def _pattern(self):
+        # Thirty-minute oscillation, sharp dip, then confirmed five-minute bounce.
+        return [100.0] * 24 + [98.5, 96.0, 95.5, 95.8, 96.2, 97.0, 97.5]
+
+    def test_cost_covered_dust_targets_usdc_pair_in_ghost(self, monkeypatch):
+        monkeypatch.setenv("DUST_CONVERSION_COST_RATIO", "0.002")
+        state = make_state(self._pattern())
+        extras = {"dust_micro": {
+            "enabled": True,
+            "budget_usdc": 1.0,
+            "source_tokens": ["OLD", "TINY"],
+        }}
+        cand = DustMicroSwingStrategy().evaluate(state, make_ctx(state, quote=0.0, extras=extras))
+        assert cand is not None
+        directive = cand["directive"]
+        assert directive.strategy_id == "dust_micro_swing"
+        assert directive.horizon in {"5m", "15m", "30m"}
+        assert math.isclose(directive.size * state.samples[-1][1], 1.0, rel_tol=1e-6)
+        assert cand["meta"]["expected_net_usdc"] >= 0.01
+        assert cand["meta"]["target_token"] == "TEST"
+        assert cand["meta"]["ghost_only"] is True
+
+    def test_never_emits_in_live_mode(self):
+        state = make_state(self._pattern())
+        ctx = make_ctx(state, quote=100.0, extras={"dust_micro": {
+            "enabled": True, "budget_usdc": 1.0, "source_tokens": ["OLD"],
+        }})
+        ctx.live_trading = True
+        assert DustMicroSwingStrategy().evaluate(state, ctx) is None
+
+    def test_rejects_flat_or_uncosted_cent_profit(self, monkeypatch):
+        extras = {"dust_micro": {"enabled": True, "budget_usdc": 1.0, "source_tokens": ["OLD"]}}
+        flat = flat_state(31)
+        assert DustMicroSwingStrategy().evaluate(flat, make_ctx(flat, extras=extras)) is None
+        monkeypatch.setenv("DUST_CONVERSION_COST_RATIO", "0.20")
+        state = make_state(self._pattern())
+        assert DustMicroSwingStrategy().evaluate(state, make_ctx(state, extras=extras)) is None
 
 
 class TestRegistry:

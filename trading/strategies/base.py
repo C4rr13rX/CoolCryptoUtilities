@@ -161,6 +161,7 @@ class Strategy(ABC):
         reason: str,
         direction_prob: Optional[float] = None,
         horizon: Optional[str] = None,
+        quote_size: Optional[float] = None,
         extra_meta: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Build a sized `{"directive", "score", "meta"}` candidate.
@@ -175,7 +176,8 @@ class Strategy(ABC):
             return None
         confidence = max(0.01, min(1.0, float(confidence)))
         if action == "enter":
-            if ctx.available_quote <= 0 or ctx.last_price <= 0:
+            requested_quote = ctx.available_quote if quote_size is None else float(quote_size)
+            if requested_quote <= 0 or ctx.last_price <= 0:
                 return None
             # Only enter USD-stable-quoted pairs. Base/base pairs (JITOSOL-CBBTC,
             # WBTC-WETH, AERO-WETH ...) carry their 'price' as a token ratio, not
@@ -191,7 +193,10 @@ class Strategy(ABC):
                 # losses that dilute win rates and block graduation.
                 if str(getattr(state, "base_token", "")).upper() in _stable:
                     return None
-            size_quote = self._size_enter(ctx, expected_return - ctx.fee_rate)
+            size_quote = (
+                self._size_enter(ctx, expected_return - ctx.fee_rate)
+                if quote_size is None else requested_quote
+            )
             size = size_quote / max(ctx.last_price, 1e-12)
         elif action == "exit":
             if ctx.available_base <= 0:

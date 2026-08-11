@@ -11,6 +11,7 @@ from __future__ import annotations
 from trading.strategies.base import Strategy, StrategyContext, StrategyRegistry
 from trading.strategies.bollinger_squeeze import BollingerSqueezeStrategy
 from trading.strategies.donchian_breakout import DonchianBreakoutStrategy
+from trading.strategies.dust_micro_swing import DustMicroSwingStrategy
 from trading.strategies.ema_cross import EmaCrossStrategy
 from trading.strategies.horizons import build_multihorizon_strategies
 from trading.strategies.macd_momentum import MacdMomentumStrategy
@@ -44,6 +45,7 @@ __all__ = [
     "DonchianBreakoutStrategy",
     "SupertrendFollowStrategy",
     "ObvAccumulationStrategy",
+    "DustMicroSwingStrategy",
 ]
 
 
@@ -65,6 +67,7 @@ def build_default_registry() -> StrategyRegistry:
         DonchianBreakoutStrategy(),
         SupertrendFollowStrategy(),
         ObvAccumulationStrategy(),
+        DustMicroSwingStrategy(),
     ]
     # Multi-timescale sweep: the full-window strategies also hunt at 5h..1w
     # horizons off resampled stored history, so every time bucket the user

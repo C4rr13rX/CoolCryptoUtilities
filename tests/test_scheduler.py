@@ -3,8 +3,10 @@ from __future__ import annotations
 import math
 import time
 from typing import Dict
+from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from trading.scheduler import BusScheduler
 
@@ -112,3 +114,21 @@ def test_horizon_weight_prioritises_sparse_buckets() -> None:
     sparse_weight = scheduler._horizon_weight("5m", 300)
     saturated_weight = scheduler._horizon_weight("6m", 6 * 30 * 24 * 3600)
     assert sparse_weight > saturated_weight
+
+
+def test_dust_context_uses_real_nonstable_holdings_and_never_live() -> None:
+    scheduler = BusScheduler(prefill=False)
+    portfolio = SimpleNamespace(holdings={
+        ("base", "OLD"): SimpleNamespace(usd=0.65),
+        ("base", "TINY"): SimpleNamespace(usd=0.80),
+        ("base", "USDC"): SimpleNamespace(usd=0.40),
+        ("base", "ETH"): SimpleNamespace(usd=0.30),
+        ("arbitrum", "OTHER"): SimpleNamespace(usd=0.90),
+        ("base", "LARGE"): SimpleNamespace(usd=8.00),
+    })
+    context = scheduler._dust_micro_context(portfolio, "base", False)
+    assert context is not None
+    assert context["source_tokens"] == ["OLD", "TINY"]
+    assert context["source_usd"] == pytest.approx(1.45)
+    assert context["budget_usdc"] == 1.0
+    assert scheduler._dust_micro_context(portfolio, "base", True) is None

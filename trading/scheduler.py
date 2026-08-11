@@ -218,6 +218,40 @@ class BusScheduler:
         self._prefill_enabled = bool(prefill and not _is_test_env())
         self._pending_retries: Deque[Dict[str, Any]] = deque(maxlen=32)
 
+    def _dust_micro_context(self, portfolio: Any, chain_name: str,
+                            live_trading: bool) -> Optional[Dict[str, Any]]:
+        """Describe real wallet dust as a ghost USDC notional, never live."""
+        if live_trading or os.getenv("DUST_MICRO_GHOST_ENABLED", "1").lower() not in {"1", "true", "yes", "on"}:
+            return None
+        stable = {"USDC", "USDT", "DAI", "USDP", "BUSD", "TUSD", "USDBC", "USDC.E"}
+        native = {"ETH", "WETH", "MATIC", "BNB", "AVAX", "SOL"}
+        dust_threshold = _env_float("WALLET_DUST_USD", 5.0, min_value=0.01)
+        source_tokens: List[str] = []
+        source_usd = 0.0
+        for (holding_chain, symbol), holding in getattr(portfolio, "holdings", {}).items():
+            usd = float(getattr(holding, "usd", 0.0) or 0.0)
+            symbol_u = str(symbol).upper()
+            if (
+                str(holding_chain).lower() == chain_name
+                and symbol_u not in stable
+                and symbol_u not in native
+                and 0.0 < usd < dust_threshold
+            ):
+                source_tokens.append(symbol_u)
+                source_usd += usd
+        if source_usd <= 0.0:
+            return None
+        return {
+            "enabled": True,
+            "budget_usdc": min(
+                source_usd,
+                _env_float("DUST_MICRO_MAX_USDC", 1.0, min_value=0.25, max_value=5.0),
+            ),
+            "source_usd": source_usd,
+            "source_tokens": sorted(set(source_tokens)),
+            "settlement_token": "USDC",
+        }
+
     # ------------------------------------------------------------------
     # Gas-swap gate — routes gas refills through the same SAT/UNSAT
     # solver the trading pipeline uses, so they're not a back-channel
@@ -542,6 +576,10 @@ class BusScheduler:
         if self.strategy_registry is not None:
             try:
                 from trading.strategies import StrategyContext
+                strategy_extras = dict(self.external_signals)
+                dust_micro = self._dust_micro_context(portfolio, chain_name, live_trading)
+                if dust_micro:
+                    strategy_extras["dust_micro"] = dust_micro
                 strategy_ctx = StrategyContext(
                     chain=chain_name,
                     last_price=last_price,
@@ -555,7 +593,7 @@ class BusScheduler:
                     confidence=confidence,
                     net_margin=net_margin,
                     opportunity=self._opportunity_bias.get(state.symbol),
-                    extras=self.external_signals,
+                    extras=strategy_extras,
                 )
                 candidates.extend(self.strategy_registry.evaluate_all(state, strategy_ctx))
             except Exception:
