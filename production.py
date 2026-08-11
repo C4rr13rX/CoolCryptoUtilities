@@ -143,6 +143,21 @@ class ProductionManager:
             "starting",
             metadata={"phase": "bootstrap", "writer_lease": "acquired"},
         )
+        bootstrap_heartbeat_done = threading.Event()
+
+        def _pulse_bootstrap_heartbeat() -> None:
+            interval = max(5.0, float(os.getenv("PRODUCTION_BOOTSTRAP_HEARTBEAT_SECONDS", "30")))
+            while not bootstrap_heartbeat_done.wait(interval):
+                self.heartbeat.update(
+                    "starting",
+                    metadata={"phase": "bootstrap", "writer_lease": "acquired"},
+                )
+
+        threading.Thread(
+            target=_pulse_bootstrap_heartbeat,
+            daemon=True,
+            name="production-bootstrap-heartbeat",
+        ).start()
         _governor.start()
         # Start delegation client if enabled and hosts exist
         if self._delegation_enabled:
@@ -183,9 +198,11 @@ class ProductionManager:
                     "startup_prewarm": self._startup_prewarm,
                 },
             )
+            bootstrap_heartbeat_done.set()
             self._startup_prewarm_reported = True
             log_message("production", "manager started.")
         except Exception:
+            bootstrap_heartbeat_done.set()
             self._set_active_flag(False)
             self.heartbeat.update("error", metadata={"reason": "startup_failed"})
             if self._writer_lease:
