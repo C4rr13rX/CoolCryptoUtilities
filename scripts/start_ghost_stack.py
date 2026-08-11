@@ -86,6 +86,9 @@ def safe_environment() -> dict[str, str]:
         # manager. The launcher owns that decision, so suppress the implicit
         # copy and retain exactly one trading-state writer.
         "PRODUCTION_AUTO_DISABLED": "1",
+        # Ghost service readiness must not wait on synchronous wallet/OHLCV
+        # discovery. Periodic discovery continues after the manager is up.
+        "SKIP_WALLET_BOOTSTRAP": "1",
         # Index freshness work is valuable but must not hold the writer lease
         # for many minutes before the first ghost heartbeat. The existing
         # periodic discovery pipeline remains responsible for refreshes.
