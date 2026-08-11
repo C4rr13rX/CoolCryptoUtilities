@@ -11,6 +11,8 @@ def test_safe_environment_forces_all_live_interlocks_off(monkeypatch):
     assert env["EXECUTE_LIVE_TRADES"] == "0"
     assert env["LIVE_TRADES_DRY_RUN"] == "1"
     assert env["AUTO_PROMOTE_LIVE"] == "0"
+    assert env["PRODUCTION_AUTO_DISABLED"] == "1"
+    assert env["PAIR_INDEX_MAX_AGE_DAYS"] == "30"
 
 
 def test_fresh_heartbeat_requires_running_and_recent(tmp_path, monkeypatch):

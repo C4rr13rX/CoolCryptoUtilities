@@ -82,6 +82,14 @@ def safe_environment() -> dict[str, str]:
         "EXECUTE_LIVE_TRADES": "0",
         "LIVE_TRADES_DRY_RUN": "1",
         "AUTO_PROMOTE_LIVE": "0",
+        # Both the Django app registry and the explicit CLI can bootstrap the
+        # manager. The launcher owns that decision, so suppress the implicit
+        # copy and retain exactly one trading-state writer.
+        "PRODUCTION_AUTO_DISABLED": "1",
+        # Index freshness work is valuable but must not hold the writer lease
+        # for many minutes before the first ghost heartbeat. The existing
+        # periodic discovery pipeline remains responsible for refreshes.
+        "PAIR_INDEX_MAX_AGE_DAYS": os.getenv("PAIR_INDEX_MAX_AGE_DAYS", "30"),
         "WAITRESS_HOST": "127.0.0.1",
         "WAITRESS_PORT": "8001",
         "WAITRESS_THREADS": os.getenv("WAITRESS_THREADS", "8"),
@@ -114,7 +122,9 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     python = Path(sys.executable)
-    health_url = "http://127.0.0.1:8001/api/wizard-chat/status/"
+    # This dependency-light probe proves Django can serve requests even while
+    # the optional Wizard node is loading a large persisted brain.
+    health_url = "http://127.0.0.1:8001/health/guardian/"
     env = safe_environment()
     actions: list[dict[str, object]] = []
 
