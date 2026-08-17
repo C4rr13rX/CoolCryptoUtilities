@@ -1049,10 +1049,35 @@ def main():
         max_zero_chunks = _int_env("MAX_ZERO_LOG_CHUNKS", 3)  # aggressive: kill dead pairs fast
         total_logs_seen = 0
         dead_pair = False
+        # Adaptive chunk width for SPARSE pairs.
+        #
+        # The dead-pair guard below only fires when total_logs_seen == 0, so a
+        # pair that trades in bursts can never be retired -- correctly, it is
+        # not dead. But it then grinds through its quiet stretches one narrow
+        # chunk at a time. Measured 2026-08-17 on HYPE-BASEDHYPE: 1328 of 1465
+        # scans (91%) returned zero logs, with runs up to 169 consecutive empty
+        # chunks at CHUNK_SIZE_BLOCKS each. That single pair produced 1465 of
+        # the last 3000 log lines and kept the production backlog pinned at its
+        # max_pending ceiling.
+        #
+        # Empty ranges cost one RPC round-trip regardless of width, so widen
+        # the window geometrically while a pair stays quiet and snap back to
+        # the normal width the moment it produces logs again. No data is
+        # skipped: every block still falls inside exactly one scanned range.
+        sparse_after = _int_env("SPARSE_WIDEN_AFTER_ZERO_CHUNKS", 3)
+        sparse_max_mult = _int_env("SPARSE_WIDEN_MAX_MULTIPLIER", 32)
         while b < end_blk:
-            e_b = min(b + CHUNK_SIZE_BLOCKS, end_blk)
+            width = CHUNK_SIZE_BLOCKS
+            if consecutive_zero_logs >= sparse_after:
+                # 2x per extra empty chunk beyond the threshold, capped.
+                mult = min(sparse_max_mult, 2 ** (consecutive_zero_logs - sparse_after + 1))
+                width = CHUNK_SIZE_BLOCKS * mult
+            e_b = min(b + width, end_blk)
 
-            print(f"    [SCAN] Fetching chunk {chunk_idx+1}/{total_chunks} [{b}->{e_b}] for {sym}")
+            # total_chunks is a fixed-width estimate; with adaptive widening the
+            # real count is lower, so show it as an upper bound (~).
+            print(f"    [SCAN] Fetching chunk {chunk_idx+1}/~{total_chunks} "
+                  f"[{b}->{e_b}] ({e_b - b} blocks) for {sym}")
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
             if logs:
                 consecutive_zero_logs = 0
