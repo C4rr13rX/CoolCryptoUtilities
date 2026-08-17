@@ -379,7 +379,13 @@ def fetch_chunk(ev, b, e_b, sym, idx, total):
                 time.sleep(sleep_sec)
             else:
                 print(f"    [ERROR] giving up on chunk [{b}->{e_b}] after {len(delays)} attempts, skipping")
-                return []
+                # None, not [] — a fetch that never succeeded is NOT evidence
+                # that the range is empty. Returning [] made a failing RPC
+                # look identical to a quiet stretch, which would widen the
+                # scan window exactly when the provider is already struggling
+                # (and silently count toward the dead-pair guard). The caller
+                # already distinguishes these via `elif logs is not None`.
+                return None
 
 def get_block_with_retry(block_number, retries=7):
     for attempt in range(retries):
@@ -1066,12 +1072,22 @@ def main():
         # skipped: every block still falls inside exactly one scanned range.
         sparse_after = _int_env("SPARSE_WIDEN_AFTER_ZERO_CHUNKS", 3)
         sparse_max_mult = _int_env("SPARSE_WIDEN_MAX_MULTIPLIER", 32)
+        # Absolute ceiling on a single getLogs span. CHUNK_SIZE_BLOCKS is
+        # derived from the pair's total span, so a large corpus could push
+        # 32x past what RPC providers accept (most reject ranges beyond a
+        # few thousand blocks, and a rejected chunk becomes a logged gap).
+        sparse_max_span = _int_env("SPARSE_WIDEN_MAX_BLOCKS", 10_000)
+        # Widen based on empties seen in THIS run only. consecutive_zero_logs
+        # is restored from persisted metadata, so trusting it here would make
+        # a resuming pair open at maximum width on its very first request --
+        # before we have any evidence the quiet stretch is still ongoing.
+        run_zero_streak = 0
         while b < end_blk:
             width = CHUNK_SIZE_BLOCKS
-            if consecutive_zero_logs >= sparse_after:
+            if run_zero_streak >= sparse_after:
                 # 2x per extra empty chunk beyond the threshold, capped.
-                mult = min(sparse_max_mult, 2 ** (consecutive_zero_logs - sparse_after + 1))
-                width = CHUNK_SIZE_BLOCKS * mult
+                mult = min(sparse_max_mult, 2 ** (run_zero_streak - sparse_after + 1))
+                width = min(CHUNK_SIZE_BLOCKS * mult, sparse_max_span)
             e_b = min(b + width, end_blk)
 
             # total_chunks is a fixed-width estimate; with adaptive widening the
@@ -1081,6 +1097,7 @@ def main():
             logs = fetch_chunk(ev, b, e_b, sym, chunk_idx, total_chunks)
             if logs:
                 consecutive_zero_logs = 0
+                run_zero_streak = 0
                 total_logs_seen += len(logs)
                 log_batches = list(chunked(logs, LOGS_PER_PARSE_BATCH))
                 chunk_records_by_bar = {}
@@ -1104,6 +1121,7 @@ def main():
             elif logs is not None:
                 # fetch_chunk returned [] — zero logs in this block range
                 consecutive_zero_logs += 1
+                run_zero_streak += 1
                 if consecutive_zero_logs >= max_zero_chunks and total_logs_seen == 0:
                     print(f"   [DEAD] {sym}: {consecutive_zero_logs} consecutive chunks with 0 logs. Dead pair — removing.")
                     dead_pair = True
@@ -1111,6 +1129,13 @@ def main():
                 skipped_ranges.append([b, e_b])
                 update_assignment(assignment, addr, next_block=e_b, consecutive_zero_logs=consecutive_zero_logs)
             else:
+                # logs is None: the fetch failed after every retry. Record it
+                # as a gap so the backfill pass revisits it -- an unfetched
+                # range is unknown, not empty. Do NOT touch the zero-log
+                # streaks: a provider failure is not evidence of a quiet
+                # market, so it must neither widen the scan window nor count
+                # toward retiring the pair.
+                skipped_ranges.append([b, e_b])
                 update_assignment(assignment, addr, next_block=e_b)
             b = e_b
             chunk_idx += 1
