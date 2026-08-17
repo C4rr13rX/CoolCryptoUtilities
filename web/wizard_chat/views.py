@@ -45,6 +45,57 @@ _node_refresher_paths: list[tuple[str, float]] = [
 _node_inflight: dict[str, _threading.Event] = {}
 _node_refresher_endpoints: set[str] = set()
 
+def _is_slow_brain(endpoint: str) -> bool:
+    """True for brains behind the SSM relay proxy.
+
+    programming_brain_proxy.py tunnels each request through an SSM
+    SendCommand round-trip, so even /health takes ~11 s versus a few ms for
+    the local node.  Timeouts tuned for the local node read those brains as
+    permanently offline.  The proxy port is configurable, so honour an env
+    override and fall back to its documented default.
+    """
+    slow_ports = {
+        p.strip()
+        for p in os.getenv("WIZARD_SLOW_BRAIN_PORTS", "18096").split(",")
+        if p.strip()
+    }
+    try:
+        port = urllib.parse.urlsplit(endpoint).port
+    except ValueError:
+        return False
+    return port is not None and str(port) in slow_ports
+
+
+def _decode_node_body(raw: bytes, path: str) -> dict:
+    """Decode a node response body into a dict.
+
+    Brains do not agree on the shape of /health: the local node answers with
+    a JSON object, while the AWS senior-software brain (reached through the
+    SSM proxy) answers with the bare text "ok\\n".  json.loads() raised on
+    that, leaving the cache permanently empty and the status view reporting
+    online:False for a brain that was perfectly healthy.
+
+    Anything that decodes to a JSON object is returned as-is.  A non-object
+    JSON value or plain text is wrapped into a dict so callers -- which all
+    treat "empty dict" as "unreachable" -- see a truthy payload.
+    """
+    text = raw.decode("utf-8", errors="replace").strip()
+    if not text:
+        return {}
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = None
+    if isinstance(value, dict):
+        return value
+    if value is not None:
+        # Scalar/list JSON (e.g. /brain/tick's bare counter).
+        return {"status": "OK", "value": value, "raw": text}
+    # Plain text. Treat the conventional health words as healthy.
+    healthy = text.split()[0].lower() in {"ok", "healthy", "up", "alive", "ready"}
+    return {"status": "OK" if healthy else text, "raw": text}
+
+
 def _node_refresher_loop() -> None:
     """Single background thread that walks the slow status fetches at
     a relaxed cadence (one path every ~3 s, so the full set cycles
@@ -62,9 +113,13 @@ def _node_refresher_loop() -> None:
         for endpoint in endpoints:
             for path, _ in _node_refresher_paths:
                 key = f"{endpoint}{path}"
+                # 30 s covers the local node comfortably but clipped the slow
+                # tail of the SSM relay (15-58 s under training load), so the
+                # remote brain's cache never populated and it read as offline.
+                fetch_timeout = 90 if _is_slow_brain(endpoint) else 30
                 try:
-                    with urllib.request.urlopen(key, timeout=30) as r:
-                        data = json.loads(r.read())
+                    with urllib.request.urlopen(key, timeout=fetch_timeout) as r:
+                        data = _decode_node_body(r.read(), path)
                     with _node_cache_lock:
                         _node_cache[key] = (time.time(), data)
                 except Exception:
@@ -129,7 +184,7 @@ def _node_fetch_cached(
 
     try:
         with urllib.request.urlopen(key, timeout=timeout) as r:
-            data = json.loads(r.read())
+            data = _decode_node_body(r.read(), path)
     except Exception:
         data = {}
     with _node_cache_lock:
@@ -1039,19 +1094,38 @@ class WizardChatStatusView(View):
         # 3-4 s is plenty: if the node is too slow even for that, we
         # return empty payloads and the background refresher will
         # populate the cache for the SPA's next poll (5 s later).
-        health = _node_fetch_cached("/health", ttl=2.0, timeout=3.0, endpoint=endpoint)
+        # Remote brains reached through the SSM proxy are slow and highly
+        # variable: /health measured 11 s idle but 15-58 s once the curriculum
+        # was training.  We deliberately do NOT block a waitress thread for
+        # that long -- the background refresher (90 s budget for these
+        # endpoints) fills the cache, and a slightly longer cold budget here
+        # just improves the odds the very first poll catches it.
+        slow = _is_slow_brain(endpoint)
+        health = _node_fetch_cached(
+            "/health", ttl=2.0, timeout=8.0 if slow else 3.0, endpoint=endpoint
+        )
         if not health:
+            # An empty cache on a slow brain means "not warmed yet", not
+            # "offline" -- reporting False there made a healthy AWS brain
+            # show as Offline in the SPA.  `connecting` lets the UI say so
+            # honestly while the refresher catches up.
             return JsonResponse({
-                "online": False,
+                "online": None if slow else False,
+                "connecting": bool(slow),
                 "endpoint": endpoint,
                 "selected_brain": brain_profile,
                 "health": {},
                 "brain": {},
                 "multi_pool_stats": {},
             })
-        brain = _node_fetch_cached("/brain", ttl=10.0, timeout=4.0, endpoint=endpoint)
+        # Same reasoning as /health: give slow relays a little more cold-path
+        # room, but keep it short enough not to tie up a request thread.
+        detail_timeout = 8.0 if slow else 4.0
+        brain = _node_fetch_cached(
+            "/brain", ttl=10.0, timeout=detail_timeout, endpoint=endpoint
+        )
         multi_pool_stats = _node_fetch_cached(
-            "/multi_pool/stats", ttl=5.0, timeout=4.0, endpoint=endpoint
+            "/multi_pool/stats", ttl=5.0, timeout=detail_timeout, endpoint=endpoint
         )
         return JsonResponse({
             "online": True,
@@ -1067,7 +1141,7 @@ def _node_fetch(path: str, timeout: float = 5.0, *, endpoint: str = WIZARD_ENDPO
     """GET from the wizard node; returns {} on error."""
     try:
         with urllib.request.urlopen(f"{endpoint}{path}", timeout=timeout) as r:
-            return json.loads(r.read())
+            return _decode_node_body(r.read(), path)
     except Exception:
         return {}
 

@@ -28,7 +28,13 @@
               {{ brain.name }}
             </option>
           </select>
-          <button class="pools-btn" @click.stop="togglePools">
+          <button
+            class="pools-btn"
+            :title="selectedBrainIsRemote
+              ? 'Remote brain — pool introspection is not exposed over the relay'
+              : 'Neural pools exposed by this brain'"
+            @click.stop="togglePools"
+          >
             ⬡ Pools
           </button>
           <span class="node-badge" :class="nodeStatusClass">
@@ -399,6 +405,14 @@
 
           <div class="pools-body">
             <div v-if="poolsLoading" class="pools-loading">Loading pool data…</div>
+            <!-- A remote brain reached through the SSM proxy only exposes
+                 /health and the chat routes, so it legitimately reports no
+                 pools. Say so, rather than showing a bare "0" that reads as
+                 a broken connection. -->
+            <div v-else-if="!poolsCount && selectedBrainIsRemote" class="pools-empty">
+              This brain is remote — pool introspection isn’t exposed over the
+              relay. Chat works normally; switch to a local brain to inspect pools.
+            </div>
             <div v-else-if="!poolsData" class="pools-empty">No pool data. Click Refresh.</div>
             <!-- Dynamic pool renderer — works for any pool the node exposes -->
           <template v-else-if="activePool">
@@ -693,6 +707,22 @@ const poolTabs = computed(() => {
   return Object.entries(poolsData.value).map(([key, p]) => ({ key, label: p.label }))
 })
 
+const poolsCount = computed(() => Object.keys(poolsData.value || {}).length)
+
+// Brains served through the SSM relay proxy expose only /health and the chat
+// routes, so pool introspection is unavailable by design rather than broken.
+// Detect by endpoint port so a renamed profile still resolves correctly.
+const REMOTE_BRAIN_PORTS = new Set(['18096'])
+const selectedBrainIsRemote = computed(() => {
+  const brain = wizardBrains.value.find(b => b.id === selectedBrainId.value)
+  if (!brain?.endpoint) return false
+  try {
+    return REMOTE_BRAIN_PORTS.has(new URL(brain.endpoint).port)
+  } catch {
+    return false
+  }
+})
+
 const threadEl     = ref<HTMLElement | null>(null)
 const inputEl      = ref<HTMLTextAreaElement | null>(null)
 const filePickerEl = ref<HTMLInputElement | null>(null)
@@ -700,8 +730,16 @@ const filePickerEl = ref<HTMLInputElement | null>(null)
 // ---------------------------------------------------------------------------
 // Computed
 // ---------------------------------------------------------------------------
-const nodeStatusLabel = computed(() =>
-  nodeOnline.value === null ? 'Checking…' : nodeOnline.value ? 'Online' : 'Offline')
+// A remote brain's first poll lands before the backend cache is warm (the
+// SSM relay can take up to a minute under load). That is a connecting
+// state, not an unknown one.
+const nodeConnecting = ref(false)
+const nodeStatusLabel = computed(() => {
+  if (nodeOnline.value === null) {
+    return nodeConnecting.value ? 'Connecting…' : 'Checking…'
+  }
+  return nodeOnline.value ? 'Online' : 'Offline'
+})
 const nodeStatusClass = computed(() => ({
   online:   nodeOnline.value === true,
   offline:  nodeOnline.value === false,
@@ -939,11 +977,12 @@ async function checkNodeStatus() {
   try {
     const r = await fetch('/api/wizard-chat/status/')
     const d = await r.json()
-    nodeOnline.value     = d.online
+    nodeOnline.value     = d.online ?? null
+    nodeConnecting.value = Boolean(d.connecting)
     nodeHealthData.value = d.health || {}
     brainData.value      = d.brain  || {}
     wizardStatus.value   = d
-  } catch { nodeOnline.value = false }
+  } catch { nodeOnline.value = false; nodeConnecting.value = false }
 }
 
 async function loadChatBrains() {
@@ -963,7 +1002,14 @@ async function changeChatBrain() {
   nodeHealthData.value = {}
   brainData.value = {}
   wizardStatus.value = {}
+  // Pool data is per-brain, but this only refreshed node status -- so the
+  // Pools badge and panel kept showing the previous brain's numbers (a
+  // stale "0 Pools" being the visible symptom) until a manual refresh.
+  // Drop the cached payload so the panel refetches against the new brain.
+  poolsData.value = null
+  poolsTab.value = ''
   await checkNodeStatus()
+  if (poolsOpen.value) await fetchPools()
 }
 
 // ---------------------------------------------------------------------------

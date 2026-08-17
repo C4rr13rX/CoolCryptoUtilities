@@ -436,12 +436,17 @@ const graphEdges = computed<GraphEdge[]>(() => {
 
 function fmtTime(ts: string): string {
   if (!ts) return ''
-  // Show HH:MM:SS local
+  // MM/DD/YYYY HH:MM:SS local.  Time alone was ambiguous here: this feed
+  // replays historical training events (rows dated weeks back), so a bare
+  // "05:51:58" gave no way to tell a live event from an old one.
   try {
     const d = new Date(ts)
-    return d.toLocaleTimeString(undefined, { hour12: false })
+    if (Number.isNaN(d.getTime())) return ts
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()} ` +
+           `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
   } catch {
-    return ts.slice(11, 19)
+    return ts
   }
 }
 
@@ -669,7 +674,9 @@ onBeforeUnmount(() => {
 }
 .event-row {
   display: grid;
-  grid-template-columns: 56px 78px 1fr;
+  /* 132px fits the full "MM/DD/YYYY HH:MM:SS" stamp; at the old 56px
+     (time-only) width the added date clipped. */
+  grid-template-columns: 132px 78px 1fr;
   gap: 0.5rem;
   padding: 0.18rem 0.3rem;
   border-bottom: 1px solid rgba(127, 176, 255, 0.04);
@@ -680,6 +687,7 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 0.62rem;
   align-self: center;
+  white-space: nowrap;
 }
 .event-tag {
   font-size: 0.6rem;
