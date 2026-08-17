@@ -109,7 +109,7 @@
               {{ event.is_hallucination ? 'hallucination' : event.classification }} · {{ event.resolved ? 'corrected' : 'unresolved' }}
             </span>
           </div>
-          <p>{{ event.trigger }}</p>
+          <p>{{ cleanTrigger(event.trigger) }}</p>
           <small>{{ new Date(event.created_at * 1000).toLocaleString() }} · {{ event.session || 'unnamed session' }}</small>
         </article>
         <div v-if="!data?.corrections?.length" class="empty">No correction events recorded yet.</div>
@@ -230,6 +230,17 @@ const brainDraft = reactive({ name: '', endpoint: '', chat_path: '/brain/chat' }
 
 const selectedBackendLabel = computed(() => data.value?.backends.find(item => item.id === form.backend)?.label || form.backend);
 const configuredCredentialCount = computed(() => data.value?.credentials.filter(item => item.configured).length || 0);
+
+// Triggers are captured verbatim from tool stdout, so PowerShell/ANSI colour
+// codes ride along and render as literal "<ESC>[131;1m" noise in the feed.
+// Strip the escape sequences for display; the stored record stays untouched.
+const cleanTrigger = (text: string) =>
+  String(text ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\[[0-9;]*[A-Za-z]/g, '')
+    // Same sequences with the ESC byte already lost in transit.
+    .replace(/\[[0-9]{1,3}(;[0-9]{1,3})*m/g, '')
+    .trim();
 
 const showMessage = (message: string) => {
   notice.value = message;
@@ -381,7 +392,28 @@ header p { margin: 0; color: var(--muted, #91a2b7); }
 .notice { padding: .75rem 1rem; margin-top: 1rem; border-radius: 9px; }
 .notice.error { color: #ff9c9f; background: rgba(255,90,95,.12); }
 .notice.success { color: #55e3af; background: rgba(52,211,153,.1); }
-.correction-list { display: grid; gap: .65rem; margin-top: 1rem; }
+/* Cap the telemetry feed and scroll inside it: at 100 recent events an
+   unbounded grid pushed every panel below it off the page. min-height keeps
+   a short list from collapsing; padding-right leaves room for the scrollbar
+   so rows don't shift when it appears. */
+.correction-list {
+  display: grid;
+  gap: .65rem;
+  margin-top: 1rem;
+  max-height: 26rem;
+  min-height: 6rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: .35rem;
+}
+/* Slim, theme-matched scrollbar (WebKit + Firefox). */
+.correction-list::-webkit-scrollbar { width: 8px; }
+.correction-list::-webkit-scrollbar-track { background: rgba(8,15,24,.5); border-radius: 4px; }
+.correction-list::-webkit-scrollbar-thumb {
+  background: rgba(148,163,184,.35); border-radius: 4px;
+}
+.correction-list::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.55); }
+.correction-list { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.35) rgba(8,15,24,.5); }
 .correction-row { padding: .8rem 1rem; border: 1px solid rgba(148,163,184,.16); border-radius: 10px; background: rgba(8,15,24,.62); }
 .correction-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
 .correction-row p { margin: .55rem 0; color: #c0ccda; overflow-wrap: anywhere; }
