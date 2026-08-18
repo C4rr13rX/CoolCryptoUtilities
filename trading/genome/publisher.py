@@ -44,6 +44,10 @@ class GenomeSignalPublisher:
         self._last_built = 0.0
         self._cached: Dict[str, Dict[str, Any]] = {}
         self._interval = float(os.getenv("GENOME_SIGNAL_INTERVAL_SECONDS", "300"))
+        # Which genome the cached signals belong to, so a champion swap
+        # invalidates them immediately instead of trading the previous
+        # genome's directions until the interval lapses.
+        self._cached_genome_id = ""
         # Fitting is expensive, so hold the model per genome id.
         self._model: Any = None
         self._model_genome_id = ""
@@ -65,6 +69,15 @@ class GenomeSignalPublisher:
             return self._model
         if self._model_failed_for == champion.genome_id:
             return None
+
+        # Drop the previous champion's model BEFORE attempting a refit. If the
+        # refit fails we must not be left holding a model fitted for a
+        # different genome: a later call for that old genome would return it
+        # without re-validating, and a champion swap is exactly when this
+        # happens. Losing the cache costs one refit; keeping a stale model
+        # costs trades scored by the wrong genome.
+        self._model = None
+        self._model_genome_id = ""
 
         try:  # pragma: no cover - depends on the sibling GA checkout
             from scripts.market_evolution_service import (  # type: ignore
@@ -137,13 +150,20 @@ class GenomeSignalPublisher:
     ) -> Dict[str, Dict[str, Any]]:
         """Return asset -> signal dict, cached between intervals."""
         now = time.time()
-        if not force and self._cached and (now - self._last_built) < self._interval:
-            return self._cached
-
         champion = load_champion()
         if champion is None:
-            self._cached, self._last_built = {}, now
+            self._cached, self._last_built, self._cached_genome_id = {}, now, ""
             return {}
+
+        # A champion swap must take effect at once. Serving cached signals
+        # for up to GENOME_SIGNAL_INTERVAL_SECONDS after a handover would
+        # trade the OLD genome's directions under the new genome's ledger id,
+        # corrupting the ghost record that decides live promotion.
+        fresh = (self._cached
+                 and self._cached_genome_id == champion.genome_id
+                 and (now - self._last_built) < self._interval)
+        if not force and fresh:
+            return self._cached
 
         meets = champion_meets_objective(champion)
         features = self._builder.build(bars_by_asset)
@@ -172,4 +192,5 @@ class GenomeSignalPublisher:
             signals[asset] = signal
 
         self._cached, self._last_built = signals, now
+        self._cached_genome_id = champion.genome_id
         return signals

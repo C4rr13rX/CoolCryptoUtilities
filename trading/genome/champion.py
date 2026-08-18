@@ -112,7 +112,19 @@ def champion_meets_objective(champion: ChampionGenome) -> bool:
     Mirrors the GA's own objective: real profit, measured on the full
     walk-forward rather than a lucky fold.
     """
-    objective = float(os.getenv("GENOME_MIN_PROFIT_FACTOR", "1.10"))
+    # Prefer the GA's own declared objective so the two cannot drift apart.
+    # A live gate looser than the GA would trade genomes the search does not
+    # endorse; a stricter one would silently ignore champions it promoted.
+    # The env var still wins, for deliberate divergence.
+    default = 1.05
+    try:  # pragma: no cover - depends on the sibling GA checkout
+        from scripts.market_evolution_service import (  # type: ignore
+            OBJECTIVE_PROFIT_FACTOR,
+        )
+        default = float(OBJECTIVE_PROFIT_FACTOR)
+    except Exception:
+        pass
+    objective = float(os.getenv("GENOME_MIN_PROFIT_FACTOR", "") or default)
     min_folds = int(os.getenv("GENOME_MIN_FOLDS", "3"))
     return (champion.profit_factor >= objective
             and champion.evaluated_folds >= min_folds
