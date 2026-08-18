@@ -1,0 +1,112 @@
+"""Live genome scoring must reuse the GA's feature builders, or abstain.
+
+A genome evolved against one feature distribution and scored against a
+different one is a model nobody validated. These tests pin the contract:
+features come from the GA repo, incomplete vectors are refused, and a new
+champion never inherits the incumbent's ghost record.
+"""
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from trading.genome import LiveFeatureBuilder, load_champion
+from trading.genome.champion import ChampionGenome, champion_meets_objective
+from trading.genome.features import GENOME_REPO_AVAILABLE, REQUIRED_HISTORY_BARS
+
+
+def make_bars(seed: int, count: int = 200):
+    """Bars in the shape continuous_features requires."""
+    out = []
+    price = 100.0
+    for i in range(count):
+        price *= 1.0 + 0.002 * math.sin((i + seed) / 7.0)
+        volume = 1000.0 + 10.0 * i
+        buy = volume * (0.5 + 0.1 * math.sin((i + seed) / 5.0))
+        out.append({
+            "timestamp": 1_700_000_000 + i * 3600,
+            "open": price * 0.999, "high": price * 1.004,
+            "low": price * 0.996, "close": price,
+            "volume": volume, "buy_volume": buy, "sell_volume": volume - buy,
+        })
+    return out
+
+
+def test_short_history_abstains():
+    """Fewer than 168 bars cannot produce the rolling windows."""
+    short = {"BTC": make_bars(0, REQUIRED_HISTORY_BARS - 1)}
+    assert LiveFeatureBuilder("BTC").build(short) == {}
+
+
+def test_missing_reference_asset_abstains():
+    """Reference returns are required; without BTC there is no baseline."""
+    builder = LiveFeatureBuilder("BTC")
+    assert builder.build({"ETH": make_bars(3)}) == {}
+
+
+@pytest.mark.skipif(not GENOME_REPO_AVAILABLE,
+                    reason="W1z4rDV1510n repo not importable")
+def test_builds_cross_sectional_features():
+    """Breadth features are medians across the universe at one timestamp."""
+    data = {"BTC": make_bars(0), "ETH": make_bars(3), "SOL": make_bars(7)}
+    features = LiveFeatureBuilder("BTC").build(data)
+    assert set(features) == {"BTC", "ETH", "SOL"}
+    for values in features.values():
+        assert "market_median_r6" in values
+        assert "r12" in values
+
+
+@pytest.mark.skipif(not GENOME_REPO_AVAILABLE,
+                    reason="W1z4rDV1510n repo not importable")
+def test_ohlcv_without_order_flow_is_refused():
+    """buy_volume/sell_volume are required, not optional."""
+    plain = {}
+    for asset, seed in (("BTC", 0), ("ETH", 3)):
+        bars = make_bars(seed)
+        for bar in bars:
+            bar.pop("buy_volume", None)
+            bar.pop("sell_volume", None)
+        plain[asset] = bars
+    # The builder swallows per-asset failures, so the result is empty rather
+    # than a partial vector.
+    assert LiveFeatureBuilder("BTC").build(plain) == {}
+
+
+def test_incomplete_feature_vector_is_not_scorable():
+    """A genome must refuse to score when any feature is absent."""
+    genome = ChampionGenome(genome_id="abc123", features=["r2", "r12", "rv24"])
+    assert genome.is_scorable({"r2": 0.1, "r12": 0.2, "rv24": 0.3})
+    assert not genome.is_scorable({"r2": 0.1, "r12": 0.2})
+    assert genome.missing_features({"r2": 0.1}) == ["r12", "rv24"]
+
+
+def test_strategy_id_is_genome_specific():
+    """A new champion must earn its own ghost record, not inherit one."""
+    first = ChampionGenome(genome_id="aaaaaaaaaaaa1111", features=["r2"])
+    second = ChampionGenome(genome_id="bbbbbbbbbbbb2222", features=["r2"])
+    assert first.strategy_id != second.strategy_id
+    assert first.strategy_id.startswith("genome_")
+
+
+def test_objective_requires_measured_profit():
+    """Backtest profit only qualifies a genome when fully measured."""
+    good = ChampionGenome(genome_id="x", features=["r2"], profit_factor=1.12,
+                          evaluated_folds=3, expectancy=0.001)
+    thin = ChampionGenome(genome_id="x", features=["r2"], profit_factor=1.40,
+                          evaluated_folds=1, expectancy=0.004)
+    losing = ChampionGenome(genome_id="x", features=["r2"], profit_factor=1.12,
+                            evaluated_folds=3, expectancy=-0.001)
+    assert champion_meets_objective(good)
+    assert not champion_meets_objective(thin), "single-fold luck must not qualify"
+    assert not champion_meets_objective(losing)
+
+
+def test_champion_loads_from_the_live_ga_state():
+    """The strategy tracks whichever genome the GA currently favours."""
+    champion = load_champion()
+    if champion is None:
+        pytest.skip("no champion.json present")
+    assert champion.genome_id
+    assert champion.features
+    assert champion.strategy_id.startswith("genome_")
