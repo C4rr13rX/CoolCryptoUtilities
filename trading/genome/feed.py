@@ -107,10 +107,17 @@ class GenomeSignalFeed:
             signals = self._publisher.build(bars, force=True) if bars else {}
         except Exception as error:  # pragma: no cover - defensive
             self.last_error = repr(error)
+            print(f"[genome-feed] refresh failed: {error!r}", flush=True)
             return 0
         self._scheduler.external_signals["genome_signals"] = signals
         self.last_published = time.time()
         self.last_error = ""
+        scorable = sum(1 for value in signals.values() if value.get("scorable"))
+        # Say something on every refresh. A feed that publishes nothing and a
+        # feed that never started look identical in the logs otherwise, and
+        # that ambiguity is exactly what hid this path being disconnected.
+        print(f"[genome-feed] published={len(signals)} scorable={scorable} "
+              f"assets={len(bars)}", flush=True)
         return len(signals)
 
     # ------------------------------------------------------------------

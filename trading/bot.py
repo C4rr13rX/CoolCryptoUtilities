@@ -204,8 +204,13 @@ class TradingBot:
                 feed = GenomeSignalFeed(self.scheduler)
                 if feed.start():
                     self.genome_feed = feed
-            except Exception:
+                    print("[genome-feed] started", flush=True)
+                else:
+                    print("[genome-feed] unavailable (GA repo not importable)",
+                          flush=True)
+            except Exception as error:
                 self.genome_feed = None
+                print(f"[genome-feed] start failed: {error!r}", flush=True)
         self.metrics = MetricsCollector(self.db)
         self._ghost_trade_counter = 0
         self.swap_validator = SwapValidator(db=self.db)
