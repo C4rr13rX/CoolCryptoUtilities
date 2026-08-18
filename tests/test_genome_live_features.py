@@ -209,3 +209,39 @@ def test_the_reference_asset_resolves_to_what_the_corpus_carries():
     assert LiveFeatureBuilder("AAVE")._resolve_reference({"AAVE": [], "WBTC": []}) == "AAVE"
     # ...but must not silently anchor on an asset that is missing.
     assert LiveFeatureBuilder("BTC")._resolve_reference({"WBTC": [], "AAVE": []}) == "WBTC"
+
+def test_one_feed_per_process_not_one_per_pair():
+    """The selector builds a TradingBot per pair; the build is universe-wide.
+
+    A feed per bot would repeat the same ~27s cross-sectional build up to
+    GHOST_PAIR_LIMIT times and publish identical signals each time.
+    """
+    import trading.genome.feed as feed_module
+
+    class FakeScheduler:
+        def __init__(self):
+            self.external_signals = {}
+
+    class FakeFeed:
+        started = 0
+
+        def __init__(self, scheduler):
+            self._scheduler = scheduler
+
+        def start(self):
+            FakeFeed.started += 1
+            return True
+
+    original, shared = feed_module.GenomeSignalFeed, feed_module._SHARED_FEED
+    feed_module.GenomeSignalFeed, feed_module._SHARED_FEED = FakeFeed, None
+    try:
+        first, second = FakeScheduler(), FakeScheduler()
+        a = feed_module.ensure_feed(first)
+        b = feed_module.ensure_feed(second)
+        assert a is b, "every bot must share one feed"
+        assert FakeFeed.started == 1, "the universe build must start once"
+        # A rebuilt scheduler still receives publications.
+        assert b._scheduler is second
+    finally:
+        feed_module.GenomeSignalFeed, feed_module._SHARED_FEED = original, shared
+

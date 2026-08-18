@@ -199,13 +199,13 @@ class TradingBot:
         # is the same behaviour as before this feed existed.
         if os.getenv("GENOME_FEED_ENABLED", "1") not in ("0", "false", "False"):
             try:
-                from trading.genome.feed import GenomeSignalFeed
+                from trading.genome.feed import ensure_feed
 
-                feed = GenomeSignalFeed(self.scheduler)
-                if feed.start():
-                    self.genome_feed = feed
-                    print("[genome-feed] started", flush=True)
-                else:
+                # Process-wide: the selector builds one bot per pair and they
+                # all share this scheduler's external_signals, so the
+                # universe-wide build must not run once per bot.
+                self.genome_feed = ensure_feed(self.scheduler)
+                if self.genome_feed is None:
                     print("[genome-feed] unavailable (GA repo not importable)",
                           flush=True)
             except Exception as error:

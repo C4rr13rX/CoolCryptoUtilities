@@ -138,3 +138,33 @@ class GenomeSignalFeed:
 
     def stop(self) -> None:
         self._stop.set()
+
+#: One feed per process. The selector builds a TradingBot per pair (up to
+#: GHOST_PAIR_LIMIT of them) and every bot shares the same BusScheduler-owned
+#: external_signals, so a feed per bot would run the same ~27s universe-wide
+#: build dozens of times over and publish identical results. The signals are
+#: cross-sectional over the whole universe; there is exactly one of them.
+_SHARED_FEED: Optional["GenomeSignalFeed"] = None
+_SHARED_LOCK = threading.Lock()
+
+
+def ensure_feed(scheduler: Any) -> Optional["GenomeSignalFeed"]:
+    """Return the process-wide feed, starting it on first call.
+
+    Returns None when the GA repo is not importable, which is the same
+    condition under which the strategy abstains anyway.
+    """
+    global _SHARED_FEED
+    with _SHARED_LOCK:
+        if _SHARED_FEED is not None:
+            # Later bots share the running feed; point it at whichever
+            # scheduler asked most recently so a rebuilt scheduler still
+            # receives publications.
+            _SHARED_FEED._scheduler = scheduler
+            return _SHARED_FEED
+        feed = GenomeSignalFeed(scheduler)
+        if not feed.start():
+            return None
+        _SHARED_FEED = feed
+        return feed
+
