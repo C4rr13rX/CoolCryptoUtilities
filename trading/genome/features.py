@@ -29,6 +29,21 @@ _GENOME_REPO = Path(
 GENOME_REPO_AVAILABLE = False
 _continuous_features = None
 _attach_market_breadth = None
+_attach_news_features = None
+_add_derived_features = None
+_attach_causal_normalization = None
+
+_TRADING_DATA = os.getenv(
+    "GENOME_TRADING_DATA_ROOT",
+    os.path.join("D:", os.sep, "Projects", "CoolCryptoUtilities", "data"),
+)
+
+# The news archive the GA fitted against. Same file, so live sentiment
+# features match the training distribution.
+_NEWS_PATH = Path(os.getenv(
+    "GENOME_NEWS_PATH",
+    os.path.join(_TRADING_DATA, "news", "historical_deduplicated.json"),
+))
 
 if _GENOME_REPO.is_dir():
     if str(_GENOME_REPO) not in sys.path:
@@ -37,6 +52,11 @@ if _GENOME_REPO.is_dir():
         from scripts.market_signal_audit import (  # type: ignore
             attach_market_breadth as _attach_market_breadth,
             continuous_features as _continuous_features,
+        )
+        from scripts.market_evolution_service import (  # type: ignore
+            add_derived_features as _add_derived_features,
+            attach_causal_normalization as _attach_causal_normalization,
+            attach_news_features as _attach_news_features,
         )
         GENOME_REPO_AVAILABLE = True
     except Exception:
@@ -109,9 +129,15 @@ class LiveFeatureBuilder:
         if not rows:
             return {}
 
-        # Cross-sectional breadth needs every asset at the same timestamp.
+        # Reproduce load_dataset()'s enrichment chain in the SAME order.
+        # Order matters: derived features read breadth/news outputs, and the
+        # causal z-scores normalise whatever exists by then. Running these out
+        # of order silently yields different values than the genome trained on.
         try:
             _attach_market_breadth(rows)
+            _attach_news_features(rows, _NEWS_PATH if _NEWS_PATH.is_file() else None)
+            _add_derived_features(rows)
+            _attach_causal_normalization(rows)
         except Exception:
             return {}
 

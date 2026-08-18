@@ -59,6 +59,51 @@ def test_builds_cross_sectional_features():
 
 @pytest.mark.skipif(not GENOME_REPO_AVAILABLE,
                     reason="W1z4rDV1510n repo not importable")
+def test_the_live_champion_is_fully_scorable():
+    """The whole point: every feature the champion needs must build.
+
+    Previously only 29 of 41 built, because the builder ran market breadth
+    but skipped the news, derived and causal-normalisation passes that
+    load_dataset() applies. A partial vector was refused, so the champion
+    could never ghost-trade.
+    """
+    champion = load_champion()
+    if champion is None:
+        pytest.skip("no champion.json present")
+    data = {"BTC": make_bars(0), "ETH": make_bars(3), "SOL": make_bars(7)}
+    features = LiveFeatureBuilder("BTC").build(data)
+    assert features, "builder produced nothing"
+    missing = champion.missing_features(features["BTC"])
+    assert not missing, f"champion cannot be scored, missing: {missing}"
+    assert champion.is_scorable(features["BTC"])
+
+
+@pytest.mark.skipif(not GENOME_REPO_AVAILABLE,
+                    reason="W1z4rDV1510n repo not importable")
+def test_news_features_are_attached():
+    """News sentiment must come from the archive the GA fitted against."""
+    data = {"BTC": make_bars(0), "ETH": make_bars(3)}
+    features = LiveFeatureBuilder("BTC").build(data)
+    assert features
+    for name in ("news_count_24h", "news_polarity_24h",
+                 "asset_news_sentiment_24h", "news_macro_24h"):
+        assert name in features["BTC"], f"{name} was never attached"
+
+
+@pytest.mark.skipif(not GENOME_REPO_AVAILABLE,
+                    reason="W1z4rDV1510n repo not importable")
+def test_derived_and_causal_features_are_attached():
+    """Derived/rolling features depend on breadth+news running first."""
+    data = {"BTC": make_bars(0), "ETH": make_bars(3), "SOL": make_bars(7)}
+    features = LiveFeatureBuilder("BTC").build(data)
+    assert features
+    for name in ("vol_adjusted_r6", "flow_basis_pressure",
+                 "causal_z14_market_breadth_r6", "cross_rank_funding_rate"):
+        assert name in features["BTC"], f"{name} was never attached"
+
+
+@pytest.mark.skipif(not GENOME_REPO_AVAILABLE,
+                    reason="W1z4rDV1510n repo not importable")
 def test_ohlcv_without_order_flow_is_refused():
     """buy_volume/sell_volume are required, not optional."""
     plain = {}
