@@ -81,13 +81,35 @@ class GenomeChampionStrategy(Strategy):
 
         # The genome's own selectivity: it abstains on most bars by design,
         # and forcing it to act outside its confidence band is exactly the
-        # coverage-chasing that made the search unprofitable.
-        min_conf = env_float("GENOME_STRATEGY_MIN_CONFIDENCE", 0.55, lo=0.0, hi=1.0)
+        # coverage-chasing that made the search unprofitable. The publisher
+        # already zeroes direction below the genome's confidence_quantile, so
+        # that validated band is the gate. A fixed 0.55 default sat well above
+        # the champion's own quantile (0.271) and above every confidence it
+        # actually emits (max 0.568), so it only ever discarded signals the
+        # genome had already qualified.
+        # Default to the genome's own validated quantile when the signal
+        # carries one, so the gate tracks what the search actually qualified
+        # rather than a number chosen independently of it.
+        try:
+            genome_band = float(signal.get("confidence_quantile") or 0.0)
+        except (TypeError, ValueError):
+            genome_band = 0.0
+        min_conf = env_float("GENOME_STRATEGY_MIN_CONFIDENCE",
+                             max(0.25, genome_band), lo=0.0, hi=1.0)
         if confidence < min_conf:
             return None
 
         # Never trade an edge smaller than the round trip costs.
-        min_net = env_float("GENOME_STRATEGY_MIN_NET_RETURN", 0.0025, lo=0.0, hi=0.5)
+        #
+        # `expected_return` is anchored on the genome's measured expectancy,
+        # which the GA computes NET of its OBJECTIVE_COST_BPS (25bps = 0.0025)
+        # round trip. Defaulting this floor to 0.0025 therefore charged that
+        # cost a second time and demanded ~2.7x an edge the genome can ever
+        # report: with the champion at expectancy 0.00091, zero of 33 live
+        # signals cleared it, so the strategy could never have traded no
+        # matter how profitable the genome was. Compare against the fee this
+        # venue actually charges instead, which the next line already does.
+        min_net = env_float("GENOME_STRATEGY_MIN_NET_RETURN", 0.0, lo=0.0, hi=0.5)
         edge = abs(expected)
         if edge <= ctx.fee_rate or edge < min_net:
             return None

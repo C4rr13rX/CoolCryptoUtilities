@@ -117,8 +117,29 @@ class LiveFeatureBuilder:
     not what the genome learned.
     """
 
-    def __init__(self, reference_asset: str = "BTC") -> None:
+    #: Reference assets in the order load_dataset() resolves them. The GA
+    #: anchors every cross-asset feature on WBTC and falls back to WETH; the
+    #: corpus carries the wrapped names, so a plain "BTC" default never
+    #: matched and build() abstained on every tick -- returning zero signals
+    #: in 0.0s, which reads exactly like "not enough history" and is why the
+    #: champion never traded.
+    REFERENCE_PREFERENCE = ("WBTC", "WETH")
+
+    def __init__(self, reference_asset: str = "") -> None:
         self.reference_asset = reference_asset.upper()
+
+    def _resolve_reference(self, bars_by_asset: Dict[str, Any]) -> str:
+        """Pick the anchor asset that is actually present.
+
+        An explicit choice wins, but only if the universe carries it: silently
+        anchoring on a missing asset is what produced empty signal sets.
+        """
+        if self.reference_asset and self.reference_asset in bars_by_asset:
+            return self.reference_asset
+        for candidate in self.REFERENCE_PREFERENCE:
+            if candidate in bars_by_asset:
+                return candidate
+        return self.reference_asset
 
     def available(self) -> bool:
         return GENOME_REPO_AVAILABLE
@@ -138,8 +159,9 @@ class LiveFeatureBuilder:
         if not GENOME_REPO_AVAILABLE:
             return {}
 
+        reference_asset = self._resolve_reference(bars_by_asset)
         reference = [b for b in (normalize_bar(bar)
-                                 for bar in (bars_by_asset.get(self.reference_asset) or []))
+                                 for bar in (bars_by_asset.get(reference_asset) or []))
                      if b]
         if len(reference) < REQUIRED_HISTORY_BARS:
             return {}
@@ -186,7 +208,7 @@ class LiveFeatureBuilder:
 def build_live_features(
     bars_by_asset: Dict[str, Sequence[Dict[str, float]]],
     *,
-    reference_asset: str = "BTC",
+    reference_asset: str = "",
     supplemental: Optional[Dict[str, Dict[int, Dict[str, float]]]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """Convenience wrapper around :class:`LiveFeatureBuilder`."""

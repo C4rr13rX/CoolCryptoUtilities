@@ -175,6 +175,9 @@ class GenomeSignalPublisher:
             signal: Dict[str, Any] = {
                 "genome_id": champion.genome_id,
                 "profit_factor": champion.profit_factor,
+                # The genome's validated abstention band, so consumers gate on
+                # what the search qualified instead of a separate constant.
+                "confidence_quantile": float(champion.confidence_quantile or 0.0),
                 "coverage": champion.coverage,
                 "evaluated_folds": champion.evaluated_folds,
                 "meets_objective": meets,

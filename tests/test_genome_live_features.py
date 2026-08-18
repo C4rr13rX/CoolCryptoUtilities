@@ -191,3 +191,21 @@ def test_malformed_bars_are_dropped_not_guessed():
                           "low": 1.0, "close": 1.0}) is None
     assert normalize_bar({"timestamp": 1, "open": 1.0, "high": 1.0,
                           "low": 1.0, "close": 0.0}) is None
+
+def test_the_reference_asset_resolves_to_what_the_corpus_carries():
+    """A missing anchor makes build() abstain on every asset, silently.
+
+    The GA anchors cross-asset features on WBTC (falling back to WETH) and the
+    corpus carries those wrapped names. The live builder defaulted to "BTC",
+    which is never present, so every tick returned zero signals in 0.0s -- a
+    result indistinguishable from "not enough history yet". That is why the
+    champion never produced a ghost trade.
+    """
+    builder = LiveFeatureBuilder()
+    assert builder._resolve_reference({"WBTC": [], "AAVE": []}) == "WBTC"
+    # WETH is the documented fallback when WBTC is absent.
+    assert builder._resolve_reference({"WETH": [], "AAVE": []}) == "WETH"
+    # An explicit choice wins when the universe actually carries it...
+    assert LiveFeatureBuilder("AAVE")._resolve_reference({"AAVE": [], "WBTC": []}) == "AAVE"
+    # ...but must not silently anchor on an asset that is missing.
+    assert LiveFeatureBuilder("BTC")._resolve_reference({"WBTC": [], "AAVE": []}) == "WBTC"

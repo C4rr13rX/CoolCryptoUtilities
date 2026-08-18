@@ -129,6 +129,15 @@ class TradingBot:
         self.swarm = MultiResolutionSwarm(
             [("fast", 20), ("medium", 60), ("slow", 180)]
         )
+        # Champion genome signals for GenomeChampionStrategy. The strategy
+        # reads ctx.extras["genome_signals"], which nothing populated, so it
+        # abstained on every tick and no genome ever earned a ghost record --
+        # rung 2 of the GA -> ghost -> live ladder was simply not connected.
+        #
+        # This runs on its own timer rather than in the tick: the features are
+        # cross-sectional over the whole universe and cost ~27s to build, and
+        # the trading loop must not block on that.
+        self.genome_feed: Optional[Any] = None
         # Per-strategy ghost/live ledger: every strategy proves itself in
         # ghost independently and graduates to live on its own record.
         from trading.strategies.ledger import StrategyLedger
@@ -184,6 +193,19 @@ class TradingBot:
         self._portfolio_next_refresh: float = time.time() + self.portfolio.refresh_interval
         self.scheduler = BusScheduler(db=self.db)
         self.scheduler.set_gas_alert_callback(self._handle_gas_starvation)
+        # Start publishing champion genome signals now that the scheduler
+        # (which owns external_signals) exists. Failure here must never stop
+        # the bot: the strategy already abstains when the key is absent, which
+        # is the same behaviour as before this feed existed.
+        if os.getenv("GENOME_FEED_ENABLED", "1") not in ("0", "false", "False"):
+            try:
+                from trading.genome.feed import GenomeSignalFeed
+
+                feed = GenomeSignalFeed(self.scheduler)
+                if feed.start():
+                    self.genome_feed = feed
+            except Exception:
+                self.genome_feed = None
         self.metrics = MetricsCollector(self.db)
         self._ghost_trade_counter = 0
         self.swap_validator = SwapValidator(db=self.db)
