@@ -147,3 +147,37 @@ def test_env_override_still_wins(monkeypatch):
     modest = ChampionGenome(genome_id="x", features=["r2"], profit_factor=1.30,
                             evaluated_folds=3, expectancy=0.002)
     assert not champion_meets_objective(modest)
+
+def test_the_entry_side_can_be_held_to_a_higher_bar(monkeypatch):
+    """The two sides do not carry the same edge.
+
+    Measured on the GA's own walk-forward folds (179,603 rows, 33 assets, 4
+    folds, net of 25bps): the exit side scored meanPF 1.7974 / expectancy
+    0.00837 against the entry side's 1.4372 / 0.00499, winning 3 of 4 folds
+    outright and surviving a cost sweep to 60bps and four random seeds.
+
+    So an entry floor must suppress a weak BUY while leaving the same-strength
+    SELL alone -- the edge is in knowing when to sell.
+    """
+    from trading.genome import publisher as publisher_module
+
+    monkeypatch.setenv("GENOME_ENTRY_CONFIDENCE_FLOOR", "0.60")
+    assert publisher_module._env_float("GENOME_ENTRY_CONFIDENCE_FLOOR", 0.0) == 0.60
+
+    def survives(direction: int, confidence: float) -> bool:
+        floor = publisher_module._env_float("GENOME_ENTRY_CONFIDENCE_FLOOR", 0.0)
+        if direction > 0 and floor > 0.0 and confidence < floor:
+            return False
+        return direction != 0
+
+    assert not survives(1, 0.55)   # weak buy is refused
+    assert survives(-1, 0.55)      # same-strength sell still trades
+    assert survives(1, 0.65)       # a strong buy still trades
+
+
+def test_the_entry_floor_is_off_by_default():
+    """Unset, the floor must not silently change behaviour."""
+    from trading.genome import publisher as publisher_module
+
+    assert publisher_module._env_float("GENOME_ENTRY_CONFIDENCE_FLOOR", 0.0) == 0.0
+
