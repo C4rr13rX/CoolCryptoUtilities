@@ -68,6 +68,43 @@ if _GENOME_REPO.is_dir():
 REQUIRED_HISTORY_BARS = 168
 
 
+def normalize_bar(bar: Dict[str, Any]) -> Optional[Dict[str, float]]:
+    """Coerce a pipeline OHLCV row into the shape the GA features expect.
+
+    The trading store writes buy_volume/sell_volume/net_volume but no total
+    ``volume``; continuous_features requires ``volume`` and raises KeyError
+    without it. Total volume is buy + sell -- net_volume is the SIGNED
+    imbalance and must not be substituted, or every volume-derived feature
+    (volume_ratio168, flow_imbalance ...) silently inverts on sell-heavy
+    bars.
+
+    Returns None when a bar is unusable, so one malformed row cannot poison
+    an asset's whole series.
+    """
+    if bar.get("buy_volume") is None or bar.get("sell_volume") is None:
+        # Order flow is REQUIRED, never defaulted. Zeros here would make
+        # flow_imbalance and friends constant, which is not the distribution
+        # the genome was fitted on -- a confident signal from a model nobody
+        # validated. Refusing is the safe answer.
+        return None
+    try:
+        buy = float(bar["buy_volume"])
+        sell = float(bar["sell_volume"])
+        volume = bar.get("volume")
+        total = float(volume) if volume is not None else buy + sell
+        out = {
+            "timestamp": float(bar["timestamp"]),
+            "open": float(bar["open"]), "high": float(bar["high"]),
+            "low": float(bar["low"]), "close": float(bar["close"]),
+            "volume": total, "buy_volume": buy, "sell_volume": sell,
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    if out["close"] <= 0 or out["timestamp"] <= 0:
+        return None
+    return out
+
+
 class LiveFeatureBuilder:
     """Turn live OHLCV bars into the genome's expected feature dict.
 
@@ -101,14 +138,16 @@ class LiveFeatureBuilder:
         if not GENOME_REPO_AVAILABLE:
             return {}
 
-        reference = list(bars_by_asset.get(self.reference_asset) or [])
+        reference = [b for b in (normalize_bar(bar)
+                                 for bar in (bars_by_asset.get(self.reference_asset) or []))
+                     if b]
         if len(reference) < REQUIRED_HISTORY_BARS:
             return {}
         reference_times = [float(bar["timestamp"]) for bar in reference]
 
         rows: List[Dict[str, Any]] = []
         for asset, bars in bars_by_asset.items():
-            series = list(bars)
+            series = [b for b in (normalize_bar(bar) for bar in bars) if b]
             if len(series) < REQUIRED_HISTORY_BARS:
                 continue
             index = len(series) - 1

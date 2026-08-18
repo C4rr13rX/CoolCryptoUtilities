@@ -13,7 +13,11 @@ import pytest
 
 from trading.genome import LiveFeatureBuilder, load_champion
 from trading.genome.champion import ChampionGenome, champion_meets_objective
-from trading.genome.features import GENOME_REPO_AVAILABLE, REQUIRED_HISTORY_BARS
+from trading.genome.features import (
+    GENOME_REPO_AVAILABLE,
+    REQUIRED_HISTORY_BARS,
+    normalize_bar,
+)
 
 
 def make_bars(seed: int, count: int = 200):
@@ -155,3 +159,35 @@ def test_champion_loads_from_the_live_ga_state():
     assert champion.genome_id
     assert champion.features
     assert champion.strategy_id.startswith("genome_")
+
+
+def test_total_volume_is_buy_plus_sell_not_net():
+    """net_volume is a SIGNED imbalance and must never stand in for volume.
+
+    The trading store writes buy_volume/sell_volume/net_volume but no total
+    volume. Substituting net_volume would invert every volume-derived
+    feature on sell-heavy bars.
+    """
+    bar = normalize_bar({
+        "timestamp": 1_700_000_000, "open": 1.0, "high": 1.1,
+        "low": 0.9, "close": 1.05,
+        "buy_volume": 30.0, "sell_volume": 70.0, "net_volume": -40.0,
+    })
+    assert bar is not None
+    assert bar["volume"] == 100.0, "volume must be buy + sell"
+
+
+def test_explicit_volume_is_preserved():
+    bar = normalize_bar({
+        "timestamp": 1_700_000_000, "open": 1.0, "high": 1.1, "low": 0.9,
+        "close": 1.05, "volume": 250.0, "buy_volume": 1.0, "sell_volume": 2.0,
+    })
+    assert bar is not None and bar["volume"] == 250.0
+
+
+def test_malformed_bars_are_dropped_not_guessed():
+    assert normalize_bar({"timestamp": 1, "open": 1.0}) is None
+    assert normalize_bar({"timestamp": 0, "open": 1.0, "high": 1.0,
+                          "low": 1.0, "close": 1.0}) is None
+    assert normalize_bar({"timestamp": 1, "open": 1.0, "high": 1.0,
+                          "low": 1.0, "close": 0.0}) is None
