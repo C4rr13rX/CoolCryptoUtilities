@@ -34,3 +34,21 @@ def test_resolve_pair_limit_caps_on_low_power(monkeypatch) -> None:
     )
     assert limit == 6
     assert details["max_limit"] == 6
+
+
+def test_a_non_ascii_symbol_cannot_kill_pair_selection(capsys):
+    """One odd token symbol crash-looped the whole production manager.
+
+    Token symbols are arbitrary on-chain strings and Windows consoles default
+    to cp1252, so a suppressed pair with a non-ASCII name raised
+    UnicodeEncodeError inside a diagnostic print. That propagated out of
+    _has_live_price -> select_pairs -> supervisor.build() and killed the
+    manager, which the supervisor then relaunched every ~3 minutes: 46
+    relaunches on 2026-08-18 with the stack never reaching "running".
+
+    A diagnostic must never be able to stop trading.
+    """
+    from trading.selector import _safe_print
+
+    _safe_print("[pair-select] suppressed ★WEIRD-USDC: no_live_market_data")
+    assert "pair-select" in capsys.readouterr().out

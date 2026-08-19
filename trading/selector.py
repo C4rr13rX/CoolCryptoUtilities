@@ -4,6 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import math
@@ -157,6 +158,22 @@ def _has_historical_price(symbol: str) -> bool:
     return False
 
 
+
+def _safe_print(message: str) -> None:
+    """print() that cannot raise on a console that lacks the codepage.
+
+    Arbitrary on-chain token symbols reach the logs, so every diagnostic here
+    must survive a cp1252 stdout.
+    """
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(message.encode(encoding, "replace").decode(encoding, "replace"))
+    except Exception:
+        pass
+
+
 def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
     _bootstrap_always_live_symbols()
     key = _pair_key(symbol, chain)
@@ -169,8 +186,15 @@ def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
         remaining = float(record.get("release_ts", 0.0)) - time.time()
         wait_minutes = max(0.0, remaining / 60.0)
         reason = record.get("reason") or "suppressed"
-        print(
-            f"[pair-select] suppressed {symbol_u}: {reason}; retry in ~{wait_minutes:.1f} min."
+        # Windows consoles default to cp1252, and token symbols are arbitrary
+        # on-chain strings: one pair with a non-ASCII name raised
+        # UnicodeEncodeError here and took down pair selection -- and with it
+        # the whole production manager, which then crash-looped every ~3
+        # minutes under the supervisor. A diagnostic print must never be able
+        # to stop trading, so degrade the characters rather than the process.
+        _safe_print(
+            f"[pair-select] suppressed {symbol_u}: {reason}; "
+            f"retry in ~{wait_minutes:.1f} min."
         )
         _LIVE_PAIR_CACHE[key] = False
         return False
@@ -184,7 +208,7 @@ def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
         _db.clear_pair_suppression(key)
         return True
     if probe_result is None:
-        print(f"[pair-select] probe deferred for {symbol_u}: dexscreener unreachable.")
+        _safe_print(f"[pair-select] probe deferred for {symbol_u}: dexscreener unreachable.")
         result = _has_historical_price(symbol_u)
         _LIVE_PAIR_CACHE[key] = result
         return result
@@ -197,7 +221,7 @@ def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
             ttl_seconds=_SUPPRESSION_TTL,
             metadata={"checked_at": time.time()},
         )
-        print(f"[pair-select] skipping {symbol_u}: no live market data sources responded.")
+        _safe_print(f"[pair-select] skipping {symbol_u}: no live market data sources responded.")
     return result
 
 
