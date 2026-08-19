@@ -282,6 +282,20 @@ def tf_available() -> bool:
     return _load_tf() is not None
 
 
+
+class _EmbeddingTooSmall(RuntimeError):
+    """The asset embedding cannot cover the ids in the current batch.
+
+    Raised instead of letting GatherV2 fail, so the next cycle rebuilds at the
+    recorded high-water mark rather than dying inside Keras with a stack that
+    names none of this.
+    """
+
+    def __init__(self, needed: int) -> None:
+        super().__init__(f"asset embedding needs {needed} rows")
+        self.needed = needed
+
+
 class TrainingPipeline:
     """
     Coordinates model training, ghost validation, and promotion of candidate models.
@@ -848,11 +862,64 @@ class TrainingPipeline:
                 "score": self.active_accuracy,
             }
         try:
-            return self._train_candidate_impl()
+            try:
+                return self._train_candidate_impl()
+            except _EmbeddingTooSmall as too_small:
+                # The batch outgrew the embedding. _assert_embedding_covers has
+                # already raised the high-water mark, so building again now
+                # produces a table that fits. Retry once: the alternative is
+                # waiting a full cadence and very likely failing identically,
+                # which is what produced 887 consecutive training failures.
+                log_message(
+                    "training",
+                    "rebuilding model for larger asset vocabulary and retrying",
+                    severity="info",
+                    details={"needed": int(too_small.needed)},
+                )
+                return self._train_candidate_impl()
         finally:
             self._train_lock.release()
             if lease:
                 lease.release()
+
+
+    def _assert_embedding_covers(self, model, input_tensors, input_order) -> None:
+        """Rebuild the asset embedding if the batch outgrew it.
+
+        Sizing runs before the holdout split, and any path that reuses a
+        previously built or loaded model can arrive here with a table smaller
+        than the ids about to be looked up. Recovering is strictly better than
+        raising: a rebuild costs one model construction, while the alternative
+        is the entire training run dying in GatherV2.
+        """
+        try:
+            layer = model.get_layer("asset_embedding")
+        except Exception:
+            return
+        try:
+            position = list(input_order).index("asset_id_input")
+        except (ValueError, AttributeError):
+            return
+        try:
+            ids = np.asarray(input_tensors[position])
+            if ids.size == 0:
+                return
+            needed = int(np.max(ids)) + 1
+        except (TypeError, ValueError, IndexError):
+            return
+        capacity = int(getattr(layer, "input_dim", needed))
+        if needed <= capacity:
+            return
+        log_message(
+            "training",
+            "asset embedding too small for batch; rebuilding",
+            severity="warning",
+            details={"capacity": capacity, "needed": needed},
+        )
+        self._last_asset_vocab_requirement = max(
+            int(getattr(self, "_last_asset_vocab_requirement", 1)), needed
+        )
+        raise _EmbeddingTooSmall(needed)
 
     def _train_candidate_impl(self) -> Optional[Dict[str, Any]]:
         proposal = self.optimizer.propose()
@@ -1102,6 +1169,15 @@ class TrainingPipeline:
                     epochs = min(epochs, 2)
             except Exception:
                 pass
+            # Last line of defence before the embedding lookup.
+            #
+            # An id at or above input_dim raises inside GatherV2 and kills the
+            # whole run -- 887 of those in this log, which is why the model
+            # never trained and recall sat at 0.001. Sizing happens well
+            # upstream, so if the two ever disagree the failure lands here
+            # with a stack that names Keras internals and not the cause.
+            # Check it where the tensors are final, and say so plainly.
+            self._assert_embedding_covers(model, train_input_tensors, input_order)
             history = model.fit(train_ds, epochs=epochs, verbose=0, callbacks=callbacks)
             train_duration = time.perf_counter() - train_start
             self.metrics.record(
