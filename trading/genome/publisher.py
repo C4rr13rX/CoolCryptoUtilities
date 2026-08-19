@@ -95,15 +95,71 @@ class GenomeSignalPublisher:
             self._model_failed_for = champion.genome_id
             return None
 
+        # A fitted model is worth persisting: producing one loads the whole GA
+        # dataset, which is the single heaviest thing this process does.
+        cached = self._load_cached_model(champion.genome_id)
+        if cached is not None:
+            self._model, self._model_genome_id = cached, champion.genome_id
+            return cached
+
         try:
             model = fit_live_surrogate(champion.raw)
+        except MemoryError:
+            # Resource exhaustion is transient and says nothing about the
+            # genome. Latching it in _model_failed_for would mark a perfectly
+            # good champion permanently unscorable for the life of the
+            # process: measured 2026-08-19 with 0.65 GB free, every one of 33
+            # assets went unscorable and stayed that way even after memory
+            # was released. Leave the failure unlatched so the next refresh
+            # retries.
+            return None
         except Exception:
             model = None
         if model is None:
             self._model_failed_for = champion.genome_id
             return None
+        self._store_cached_model(champion.genome_id, model)
         self._model, self._model_genome_id = model, champion.genome_id
         return model
+
+
+    # ------------------------------------------------------------------
+    # On-disk model cache
+    # ------------------------------------------------------------------
+    def _model_cache_path(self, genome_id: str) -> Path:
+        root = Path(os.getenv("GENOME_MODEL_CACHE_DIR",
+                              str(Path("data") / "genome-models")))
+        return root / f"{genome_id}.joblib"
+
+    def _load_cached_model(self, genome_id: str) -> Any:
+        """Return a previously fitted model, or None.
+
+        A corrupt or unreadable cache is treated as absent rather than fatal:
+        the cost is one refit.
+        """
+        path = self._model_cache_path(genome_id)
+        if not path.exists():
+            return None
+        try:
+            import joblib
+
+            return joblib.load(path)
+        except Exception:
+            return None
+
+    def _store_cached_model(self, genome_id: str, model: Any) -> None:
+        """Persist a fitted model so the next process need not refit.
+
+        Failure here is not an error -- the model is already usable in memory.
+        """
+        try:
+            import joblib
+
+            path = self._model_cache_path(genome_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump(model, path)
+        except Exception:
+            pass
 
     def _score(self, champion: ChampionGenome, model: Any,
                values: Dict[str, float]) -> Optional[Dict[str, Any]]:

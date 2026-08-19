@@ -181,3 +181,46 @@ def test_the_entry_floor_is_off_by_default():
 
     assert publisher_module._env_float("GENOME_ENTRY_CONFIDENCE_FLOOR", 0.0) == 0.0
 
+
+def test_a_memory_error_is_not_latched_as_a_bad_genome(tmp_path, monkeypatch):
+    """Resource exhaustion says nothing about the champion.
+
+    Fitting loads the whole GA dataset. Measured 2026-08-19 with 0.65 GB
+    free, that raised MemoryError, and latching it in _model_failed_for made
+    a perfectly good champion permanently unscorable: all 33 assets went
+    unscorable and stayed that way even after memory was released.
+    """
+    monkeypatch.setenv("GENOME_MODEL_CACHE_DIR", str(tmp_path))
+    publisher = GenomeSignalPublisher("WBTC")
+
+    def boom(_payload):
+        raise MemoryError("cannot allocate")
+
+    monkeypatch.setattr(champion_module, "load_champion", lambda *a, **k: None,
+                        raising=False)
+    import scripts.market_evolution_service as ga
+    monkeypatch.setattr(ga, "fit_live_surrogate", boom)
+
+    genome = ChampionGenome(genome_id="mem0000000000000", features=["r2"],
+                            profit_factor=1.2, evaluated_folds=3,
+                            expectancy=0.001)
+    assert publisher._fitted_model(genome) is None
+    # The crucial part: NOT latched, so the next refresh retries.
+    assert publisher._model_failed_for != genome.genome_id
+
+
+def test_a_fitted_model_is_cached_to_disk(tmp_path, monkeypatch):
+    """Refitting loads the entire GA dataset -- the heaviest thing here.
+
+    Measured: a cold refresh took 448s, a warm one 19.8s (23x), and the warm
+    path never loads the dataset at all, which is what removes the memory
+    spike that broke scoring.
+    """
+    monkeypatch.setenv("GENOME_MODEL_CACHE_DIR", str(tmp_path))
+    publisher = GenomeSignalPublisher("WBTC")
+
+    sentinel = {"fitted": True}
+    publisher._store_cached_model("abc123def456", sentinel)
+    assert publisher._load_cached_model("abc123def456") == sentinel
+    # A genome never fitted has no cache, and that is not an error.
+    assert publisher._load_cached_model("never_fitted0") is None
