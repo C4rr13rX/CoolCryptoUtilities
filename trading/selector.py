@@ -580,6 +580,31 @@ def select_pairs(
     return []
 
 
+
+def _genome_universe_symbols(limit: int) -> List[str]:
+    """Quote-paired symbols for the current champion's tradeable universe.
+
+    Returns [] when disabled or unavailable, so a missing GA checkout or an
+    unscorable champion simply leaves pair selection exactly as it was.
+    """
+    if limit <= 0:
+        return []
+    try:
+        from trading.genome.champion import champion_meets_objective, load_champion
+        from trading.genome.feed import load_universe_bars
+    except Exception:
+        return []
+    champion = load_champion()
+    if champion is None or not champion_meets_objective(champion):
+        return []
+    try:
+        assets = sorted(load_universe_bars())
+    except Exception:
+        return []
+    quote = os.getenv("GENOME_PAIR_QUOTE", "USDC").upper()
+    return [f"{asset.upper()}-{quote}" for asset in assets[:limit]]
+
+
 class GhostTradingSupervisor:
     def __init__(
         self,
@@ -674,7 +699,20 @@ class GhostTradingSupervisor:
         select_limit = max(pair_limit, self.stream_total)
         pairs = select_pairs(limit=select_limit)
         prioritized: List[PairCandidate] = []
-        for symbol in list(dict.fromkeys(atf_priority + list(focus_assets or []))):
+        # The champion genome only scores the assets it was fitted on. When the
+        # focus rotation holds none of them the strategy abstains on every bot,
+        # which is why the ghost ledger stayed empty even with the feed
+        # publishing 33 scorable signals: measured 2026-08-18 the rotation was
+        # all Base memecoins (BASECAT, BSTONK, MEOW...) against a genome
+        # universe of established DeFi names, for an overlap of exactly zero.
+        #
+        # 21 of the 33 genome assets ARE streamed, so seeding a few of them
+        # gives the ladder something to record without displacing the neural
+        # pipeline's own picks -- they are appended after atf_priority and
+        # focus_assets, and the existing dedup keeps them from crowding.
+        genome_seed = _genome_universe_symbols(int(os.getenv("GENOME_PAIR_SEED", "0")))
+        for symbol in list(dict.fromkeys(
+                atf_priority + list(focus_assets or []) + genome_seed)):
             tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
             if not tokens:
                 tokens = [symbol.upper()]

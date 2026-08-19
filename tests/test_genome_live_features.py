@@ -245,3 +245,27 @@ def test_one_feed_per_process_not_one_per_pair():
     finally:
         feed_module.GenomeSignalFeed, feed_module._SHARED_FEED = original, shared
 
+def test_the_genome_universe_can_seed_pair_selection(monkeypatch):
+    """The champion only scores assets it was fitted on.
+
+    Measured 2026-08-18: the feed published 33 scorable signals every cycle
+    while the ledger stayed empty, because the focus rotation held only Base
+    memecoins (BASECAT, BSTONK, MEOW...) and the genome universe holds
+    established DeFi names -- an overlap of exactly zero, so every bot
+    abstained.
+    """
+    from trading.selector import _genome_universe_symbols
+
+    # Off by default: pair selection must be unchanged unless asked.
+    assert _genome_universe_symbols(0) == []
+    assert _genome_universe_symbols(-1) == []
+
+    seeded = _genome_universe_symbols(4)
+    assert len(seeded) == 4
+    # Quote-paired symbols the selector can actually route.
+    assert all(sym.endswith("-USDC") for sym in seeded), seeded
+    # And drawn from the genome's own universe, not arbitrary tickers.
+    from trading.genome.feed import load_universe_bars
+    universe = {a.upper() for a in load_universe_bars()}
+    assert all(sym.split("-")[0] in universe for sym in seeded), seeded
+
