@@ -957,3 +957,37 @@ def test_reference_override_accepts_multi_source_consensus(monkeypatch):
     accepted = stream._accept_consensus_price(251.0, confidence=0.8, live_sources=live_sources)
     assert accepted is True
     assert stream.reference_price == 251.0
+
+
+def test_include_list_wins_over_exclude(monkeypatch):
+    """A dead venue on the INCLUDE list is retried forever.
+
+    INCLUDE takes precedence over EXCLUDE, so listing a geo-blocked venue
+    there re-enables it no matter what EXCLUDE says. Probed 2026-08-19 from
+    this host: coinbase, okx, binance and dexscreener all return HTTP 403/451
+    (a permanent block, not an outage), while mexc, kucoin, coingecko and
+    bitstamp answer in under 0.5s.
+
+    Keeping the dead ones listed produced 71 endpoint failures and 27
+    "network outage detected" messages in a single log window, which pushed
+    streams into REST-only mode and left bots with no ticks -- so every
+    strategy abstained on last_price <= 0.
+    """
+    from trading.data_stream import _endpoint_allowed
+
+    monkeypatch.setenv("MARKET_ENDPOINT_INCLUDE", "mexc,kucoin,coingecko,bitstamp")
+    monkeypatch.setenv("MARKET_ENDPOINT_EXCLUDE", "binance")
+
+    for live in ("mexc", "kucoin", "coingecko", "bitstamp"):
+        assert _endpoint_allowed(live), live
+    for blocked in ("coinbase", "okx", "binance", "dexscreener"):
+        assert not _endpoint_allowed(blocked), blocked
+
+
+def test_a_venue_on_the_include_list_is_allowed_even_if_excluded(monkeypatch):
+    """Pin the precedence itself, since it is what made this subtle."""
+    from trading.data_stream import _endpoint_allowed
+
+    monkeypatch.setenv("MARKET_ENDPOINT_INCLUDE", "coinbase")
+    monkeypatch.setenv("MARKET_ENDPOINT_EXCLUDE", "coinbase")
+    assert _endpoint_allowed("coinbase"), "INCLUDE must win, as the code intends"
