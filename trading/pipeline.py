@@ -529,6 +529,27 @@ class TrainingPipeline:
         model = self._ensure_asset_embedding_capacity(model)
         return self._ensure_vectorizers_ready(model)
 
+
+    @staticmethod
+    def _observed_asset_vocab(inputs: Any) -> int:
+        """Rows the embedding needs to cover the asset ids in this batch.
+
+        An embedding lookup is a hard bound: an id at or above `input_dim`
+        raises inside GatherV2 and kills the whole training run, so this is
+        read from the tensors themselves rather than inferred.
+        """
+        try:
+            asset_ids = inputs["asset_id_input"]
+        except (TypeError, KeyError, IndexError):
+            return 1
+        try:
+            array = np.asarray(asset_ids)
+            if array.size == 0:
+                return 1
+            return max(1, int(np.max(array)) + 1)
+        except (TypeError, ValueError):
+            return 1
+
     def _ensure_asset_embedding_capacity(self, model: tf.keras.Model) -> tf.keras.Model:
         try:
             layer = model.get_layer("asset_embedding")
@@ -969,7 +990,19 @@ class TrainingPipeline:
                 }
 
             loader_vocab = int(self.data_loader.asset_vocab_size)
-            required_vocab = int(max(loader_vocab, getattr(self, "_last_asset_vocab_requirement", loader_vocab)))
+            # Size the embedding from the data actually about to be trained on,
+            # not just the loader's view or a remembered high-water mark. The
+            # loader reported a vocab of 1 while the tensors carried asset id
+            # 6, so the table was built with 5 rows and GatherV2 died with
+            # "indices[6,0] = 6 is not in [0, 5)" -- 13 consecutive training
+            # runs, which is why the model never learned and recall collapsed
+            # to 0.001.
+            observed_vocab = self._observed_asset_vocab(inputs)
+            required_vocab = int(max(
+                loader_vocab,
+                observed_vocab,
+                getattr(self, "_last_asset_vocab_requirement", loader_vocab),
+            ))
             if required_vocab > loader_vocab:
                 log_message(
                     "training",
@@ -1913,10 +1946,25 @@ class TrainingPipeline:
         asset_ids = _finite("asset_id_input", inputs["asset_id_input"])
         if np.any(asset_ids < 0):
             raise ValueError("Asset IDs must be non-negative.")
+        # HIGH-WATER MARK, not the latest batch.
+        #
+        # This used to be overwritten with each batch's own max, so a batch
+        # whose highest asset was 4 reset the requirement to 5, the model was
+        # rebuilt with an embedding table of 5, and the next batch containing
+        # asset 6 died inside GatherV2 with
+        # "indices[6,0] = 6 is not in [0, 5)". Measured 2026-08-19 that
+        # crashed every training run 13 times over, each one logging
+        # "expanding asset vocabulary ... {'required': 5, 'loader_vocab': 1}"
+        # and rebuilding to the same too-small size.
+        #
+        # The embedding must cover every asset id EVER seen, so this can only
+        # ever grow. Shrinking it invalidates the ids already baked into the
+        # trained weights.
         if asset_ids.size:
-            self._last_asset_vocab_requirement = max(1, int(np.max(asset_ids)) + 1)
-        else:
-            self._last_asset_vocab_requirement = 1
+            self._last_asset_vocab_requirement = max(
+                int(getattr(self, "_last_asset_vocab_requirement", 1)),
+                int(np.max(asset_ids)) + 1,
+            )
 
         gas = _finite("gas_fee_input", inputs["gas_fee_input"])
         tax = _finite("tax_rate_input", inputs["tax_rate_input"])
