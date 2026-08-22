@@ -1,0 +1,179 @@
+plugins {
+    id "com.android.application"
+    id "com.chaquo.python"
+}
+
+android {
+    namespace "com.coolcrypto.dashboard"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.coolcrypto.dashboard"
+        minSdk 26          // foreground services + adaptive icons
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+
+        ndk {
+            // arm64 only. Every shipping Android phone is arm64, and each
+            // extra ABI duplicates the whole CPython runtime plus numpy and
+            // pandas -- roughly +40 MB for hardware nobody is running this on.
+            abiFilters "arm64-v8a"
+        }
+
+        python {
+            // 3.12: the newest CPython Chaquopy ships wheels for. The project
+            // itself runs on 3.13 locally, and nothing here needs 3.13-only
+            // syntax.
+            version "3.12"
+
+            pip {
+                // Deliberately NOT requirements.txt. That file pulls
+                // tensorflow, opencv, kuzu and web3, none of which have
+                // Android wheels, and the request path does not need them.
+                // See serverless/local/build_package.py for the same split.
+                install "Django==5.1.4"
+                install "djangorestframework==3.15.2"
+                install "django-cors-headers==4.6.0"
+                install "whitenoise==6.8.2"
+
+                // Imported while Django builds the root URLconf -- the site
+                // 500s on the first request without them.
+                install "numpy"
+                install "pandas"
+                install "beautifulsoup4"
+
+                // Quantum-safe auth (serverless/hybrid/pq_auth.py).
+                install "argon2-cffi"
+                install "kyber-py"
+                install "cryptography"
+
+                install "requests"
+                install "python-dotenv"
+                install "PyYAML"
+                install "feedparser"
+            }
+
+            // Trim what ships. Test suites and vendored headers are dead
+            // weight in an APK and push past the install-size users tolerate.
+            pyc {
+                src false     // ship .pyc only: smaller and faster to import
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            // Chaquopy treats each srcDir as a package *root*, so the repo root
+            // is listed once rather than each package separately -- otherwise
+            // `import services.x` breaks because services/ contents become
+            // top-level modules.
+            //
+            // The staging directory is built by the `stagePython` task below,
+            // which copies only what ships. Pointing at the live repo instead
+            // makes Gradle try to hash runtime artefacts (lock files, sqlite
+            // WALs, logs) that the running trading system holds open, and the
+            // build dies with "Failed to create MD5 hash".
+            python.srcDirs = [
+                "src/main/python",              // android-only shims
+                "${buildDir}/pythonStage",      // filtered copy of the project
+            ]
+            // The Rust wizard node is shipped as a native library so Android
+            // extracts it with the APK and it survives app updates.
+            jniLibs.srcDirs = ["src/main/jniLibs"]
+            // The built Vue bundle. WhiteNoise also serves it from the staged
+            // web/frontend/dist, so this is belt-and-braces for direct access.
+            assets.srcDirs = ["src/main/assets"]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false     // Chaquopy reflects into Java; R8 breaks it
+            shrinkResources false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"),
+                    "proguard-rules.pro"
+        }
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs {
+            // false = extract-native-libs is off, so Android maps the libs
+            // straight out of the (uncompressed, page-aligned) APK. That is
+            // what lets the wizard node be exec'd: `useLegacyPackaging true`
+            // compresses it, and a compressed entry cannot be run in place.
+            useLegacyPackaging false
+        }
+        resources {
+            excludes += [
+                "META-INF/*",
+                "**/tests/**",
+                "**/*.pyi",
+            ]
+        }
+    }
+}
+
+/**
+ * Copy the Python project into a clean staging directory.
+ *
+ * Only source ships. Everything excluded below is either generated at runtime
+ * (and often held open by the running trading system, which makes Gradle's
+ * input hashing fail outright), or is desktop-only weight that would bloat the
+ * APK: virtualenvs, node_modules, the 27 GB of sqlite, collected static,
+ * benchmarks and test fixtures.
+ */
+tasks.register("stagePython", Sync) {
+    // rootProject is android/, so the repo root is one level up. Resolved
+    // explicitly rather than with a relative string so a wrong path fails
+    // loudly at configure time instead of silently staging nothing.
+    def repo = rootProject.projectDir.parentFile
+    into layout.buildDirectory.dir("pythonStage")
+
+    from(repo) {
+        include "web/**", "services/**", "serverless/**", "trading/**",
+                "monitoring_guardian/**", "config/**"
+        include "db.py", "cache.py", "balances.py", "router_wallet.py",
+                "filter_scams.py", "token_decimals.py", "dotenv_fallback.py",
+                "production.py"
+
+        // Runtime state: locked by the live system and meaningless on a phone.
+        exclude "**/runtime/**", "**/logs/**", "**/storage/**", "**/data/**"
+        exclude "**/*.lock", "**/*.pid", "**/*.log"
+        // Databases: the app creates its own in the sandbox.
+        exclude "**/*.db", "**/*.sqlite3", "**/*.db-wal", "**/*.db-shm"
+        // Desktop-only bulk.
+        exclude "**/.venv/**", "**/node_modules/**", "**/__pycache__/**"
+        exclude "**/frontend/node_modules/**", "**/collected_static/**"
+        exclude "**/tests/**", "**/benchmarks/**", "**/codex_transcripts/**"
+        // 229 MB of compiled Rust artefacts; nothing in the request path uses
+        // it (the Python under tools/c0d3rV2 is ~1 MB).
+        exclude "**/native_os_service/**", "**/target/**"
+    }
+
+    // A stale staging dir would silently ship deleted files; Sync mirrors.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+// Chaquopy reads the sources during merge, so staging must run first.
+tasks.matching { it.name.matches(/merge.*PythonSources/) }.configureEach {
+    dependsOn "stagePython"
+}
+
+dependencies {
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.core:core-ktx:1.15.0"
+    implementation "androidx.webkit:webkit:1.12.1"
+    // WorkManager drives the C4rr13rX update poller: it survives reboots and
+    // respects Doze, which a bare thread or AlarmManager would not.
+    implementation "androidx.work:work-runtime:2.10.0"
+    implementation "androidx.lifecycle:lifecycle-service:2.8.7"
+}

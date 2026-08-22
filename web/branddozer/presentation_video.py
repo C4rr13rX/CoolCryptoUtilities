@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -97,10 +98,24 @@ def _font(size: int):
 
 
 def _wrap(draw, words: list[str], font, max_width: int) -> list[list[int]]:
-    """Group word indices into lines that fit `max_width`."""
+    """
+    Group word indices into lines that fit `max_width`.
+
+    A word that is wider than `max_width` on its own gets a line to itself
+    rather than being merged into a neighbour: it will still overflow, but by
+    less, and the caller shrinks the font until it does not. Silently packing
+    it next to another word is what pushed text off the frame edge.
+    """
     lines: list[list[int]] = []
     current: list[int] = []
     for i, word in enumerate(words):
+        word_width = draw.textlength(word, font=font)
+        if word_width > max_width and current:
+            # Too wide even alone -- do not compound it by appending.
+            lines.append(current)
+            lines.append([i])
+            current = []
+            continue
         trial = current + [i]
         text = " ".join(words[j] for j in trial)
         if draw.textlength(text, font=font) > max_width and current:
@@ -111,6 +126,31 @@ def _wrap(draw, words: list[str], font, max_width: int) -> list[list[int]]:
     if current:
         lines.append(current)
     return lines
+
+
+def _fit_font(draw, words: list[str], size: int, max_width: int,
+              max_height: int, line_ratio: float = 1.3):
+    """
+    Shrink the font until the wrapped text fits the safe area.
+
+    Without this a long word or a dense slide simply overflowed the frame.
+    Ten steps at 6% each covers a ~45% reduction, which is enough for the
+    longest headings these decks produce while staying readable.
+    """
+    for _ in range(10):
+        font = _font(size)
+        lines = _wrap(draw, words, font, max_width)
+        widest = max(
+            (draw.textlength(" ".join(words[j] for j in line), font=font)
+             for line in lines),
+            default=0,
+        )
+        if widest <= max_width and len(lines) * size * line_ratio <= max_height:
+            return font, lines, size
+        size = max(12, int(size * 0.94))
+    # Floor reached: return the smallest attempt rather than looping forever.
+    font = _font(size)
+    return font, _wrap(draw, words, font, max_width), size
 
 
 _BACKGROUND_CACHE: dict[str, Any] = {}
@@ -191,8 +231,18 @@ def render_slide_frame(
     if not words:
         return image
 
-    margin = int(width * 0.08)
-    lines = _wrap(draw, words, font, width - margin * 2)
+    # 12% rather than 8%: the cube flip warps the frame inward, so text laid
+    # out to the old margin was sliced at the panel edge mid-transition.
+    # This is the "title safe" area broadcast has used for the same reason.
+    margin = int(width * 0.12)
+    max_text_width = width - margin * 2
+    max_text_height = int(height * 0.72)
+
+    # Shrink to fit rather than overflow. A single long word (these decks are
+    # academic titles) would otherwise run off both sides.
+    font, lines, size = _fit_font(
+        draw, words, size, max_text_width, max_text_height
+    )
     line_height = size * 1.3
     total_height = line_height * len(lines)
     y = (height - total_height) / 2
@@ -333,7 +383,9 @@ def build_audio_track(
     audio_dir: Path,
     out_path: Path,
     *,
-    fps: int,
+    # Needed to quantise the inter-slide silence to whole video frames; a
+    # mismatch here is what put the narration out of sync with the words.
+    fps: int = FPS,
     transition_ms: int = 0,
     score_path: str = "",
     score_gain: float = 0.16,
@@ -351,8 +403,15 @@ def build_audio_track(
     for position, slide in enumerate(slides):
         duration_ms = int(slide.get("duration_ms") or 0)
         # Silence covering the transition that precedes this slide.
+        #
+        # Quantised to whole frames, because that is what the video writes:
+        # int(fps * 420/1000) = 12 frames = 400ms, not 420ms. Using the
+        # nominal duration here instead makes every slide drift 20ms and the
+        # error accumulates across the deck.
         if position > 0 and transition_ms > 0:
-            chunks.append(np.zeros(int(rate * transition_ms / 1000), dtype="float32"))
+            transition_frames = int(fps * transition_ms / 1000)
+            silence_ms = transition_frames * 1000 / fps
+            chunks.append(np.zeros(int(rate * silence_ms / 1000), dtype="float32"))
         want = int(rate * duration_ms / 1000)
         clip = audio_dir / f"slide-{int(slide['index']):05d}.mp3"
         samples = None
@@ -525,7 +584,10 @@ def export_mp4(
             previous_last = None
             for position, slide in enumerate(slides):
                 duration_ms = max(1, int(slide.get("duration_ms") or 1000))
-                frames = max(1, int(config.fps * duration_ms / 1000))
+                # round(), not int(): truncating loses up to a frame per slide
+                # and the narration slides progressively later against the
+                # words. build_audio_track pads each slide to the same length.
+                frames = max(1, round(config.fps * duration_ms / 1000))
 
                 first = np.asarray(render_slide_frame(slide, 0, config))
                 # Transition in from the previous slide's final frame.
@@ -576,7 +638,12 @@ def export_mp4(
                 check=True,
             )
         else:
-            silent.replace(out_path)
+            # shutil.move, not Path.replace: the temp dir and the output often
+            # live on different drives (TEMP on C:, the project on D:), and
+            # os.replace cannot cross a filesystem -- it fails with
+            # "[WinError 17] The system cannot move the file to a different
+            # disk drive" after the whole render has already succeeded.
+            shutil.move(str(silent), str(out_path))
 
     size = out_path.stat().st_size
     total_ms = sum(int(s.get("duration_ms") or 0) for s in slides)

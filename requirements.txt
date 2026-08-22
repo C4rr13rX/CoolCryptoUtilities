@@ -51,6 +51,15 @@ whitenoise>=6.6
 
 # AWS
 boto3>=1.28.0
+# Serverless deployment (see serverless/README.md). Mangum adapts the ASGI app
+# to Lambda's (event, context) contract; django-storages puts media on S3
+# because the Lambda filesystem is read-only outside /tmp.
+mangum>=0.17
+django-storages>=1.14
+# Quantum-safe login (serverless/hybrid/pq_auth.py): Argon2id password
+# verifier and ML-KEM-768 encapsulation. kyber-py is already required above
+# for SecureVault, listed here so the auth path's dependency is explicit.
+argon2-cffi>=23.1
 
 # AI providers
 openai>=1.0.0

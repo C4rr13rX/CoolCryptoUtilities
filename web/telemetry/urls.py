@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import views
+from . import readiness_views, views
 
 app_name = "telemetry"
 
@@ -17,4 +17,8 @@ urlpatterns = [
     path("organism/latest/", views.OrganismLatestView.as_view(), name="organism-latest"),
     path("organism/history/", views.OrganismHistoryView.as_view(), name="organism-history"),
     path("organism/settings/", views.OrganismSettingsView.as_view(), name="organism-settings"),
+    # "Can it trade on its own yet?" -- one answer, from the ghost ledger.
+    path("readiness/", readiness_views.TradingReadinessView.as_view(),
+         name="trading-readiness"),
+    path("readiness", readiness_views.TradingReadinessView.as_view()),
 ]

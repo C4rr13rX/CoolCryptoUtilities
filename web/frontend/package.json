@@ -11,7 +11,12 @@
     "glob": "^10.5.0"
   },
   "dependencies": {
+    "@noble/hashes": "^2.3.0",
+    "@noble/post-quantum": "^0.7.0",
+    "allez-orm": "^1.2.0",
     "axios": "^1.7.9",
+    "hyparquet": "^1.29.1",
+    "hyparquet-compressors": "^1.1.1",
     "pinia": "^2.1.7",
     "quasar": "^2.16.6",
     "three": "^0.170.0",

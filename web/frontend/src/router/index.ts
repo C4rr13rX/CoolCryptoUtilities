@@ -14,6 +14,7 @@ import CodeGraphView from '@/views/CodeGraphView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 import BrandDozerView from '@/views/BrandDozerView.vue';
+import VideoStudioView from '@/views/VideoStudioView.vue';
 // Statically imported like every other view: Vite has no `base` configured,
 // so a lazy chunk requests /assets/... while Django serves /static/assets/...,
 // and the route fails to load its stylesheet.
@@ -124,6 +125,13 @@ const routes: RouteRecordRaw[] = [
     name: 'branddozer_solo',
     component: BrandDozerView,
     meta: { layout: 'solo', title: 'BrandDozer' },
+  },
+  {
+    // Landing page for the video compiler. Without this the renderer was only
+    // reachable by deep-linking a paper id into the player.
+    path: '/video-studio',
+    name: 'video_studio',
+    component: VideoStudioView,
   },
   {
     path: '/paper/:paperId/present',

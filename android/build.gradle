@@ -1,0 +1,11 @@
+// Root build file. Plugin versions live here so the app module stays readable.
+plugins {
+    id "com.android.application" version "8.7.2" apply false
+    // Chaquopy runs CPython inside the APK. It is what lets the existing
+    // Django project run unmodified rather than being rewritten for Android.
+    id "com.chaquo.python" version "16.0.0" apply false
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.layout.buildDirectory
+}

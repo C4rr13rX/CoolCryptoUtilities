@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import views
+from . import presentation_video_views, views
 from . import delivery_views
 from . import research_views
 
@@ -16,6 +16,16 @@ urlpatterns = [
     path("research/papers/<str:paper_id>/presentation/media/", research_views.ResearchPresentationMediaView.as_view(), name="research-presentation-media"),
     path("research/papers/<str:paper_id>/presentation/audio/<int:index>/", research_views.ResearchPresentationAudioView.as_view(), name="research-presentation-audio"),
     path("research/papers/<str:paper_id>/presentation/score/", research_views.ResearchPresentationScoreView.as_view(), name="research-presentation-score"),
+    # ── Video Studio ──────────────────────────────────────────────────────
+    # presentation_video.py could always render a deck to MP4; nothing called
+    # it. These make it reachable, and the list view is what the menu entry
+    # needs so the player is not deep-link-only.
+    path("video/", presentation_video_views.VideoStudioListView.as_view(), name="video-studio"),
+    path("video", presentation_video_views.VideoStudioListView.as_view()),
+    path("video/<str:paper_id>/render/", presentation_video_views.VideoRenderView.as_view(), name="video-render"),
+    path("video/<str:paper_id>/render", presentation_video_views.VideoRenderView.as_view()),
+    path("video/<str:paper_id>/file/", presentation_video_views.VideoDownloadView.as_view(), name="video-file"),
+    path("video/<str:paper_id>/file", presentation_video_views.VideoDownloadView.as_view()),
     path("projects/", views.ProjectListView.as_view(), name="projects"),
     path("projects/roots/", views.ProjectRootListView.as_view(), name="project-roots"),
     path("projects/github/account/", views.ProjectGitHubAccountView.as_view(), name="project-github-account"),

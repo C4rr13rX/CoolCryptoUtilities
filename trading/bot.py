@@ -1234,6 +1234,32 @@ class TradingBot:
             threshold_scale *= min(1.25, 1.0 + min(0.2, abs(memory_bias) / 5.0))
         swarm_diagnostics = self.swarm.diagnostics()
         best_strategy, best_score = self.swarm_selector.best()
+
+        # Wizard-node regime read. Non-blocking by construction: cached_regime
+        # returns whatever is cached and refreshes on a background thread, so a
+        # slow or offline node costs the trade loop nothing. Anything the
+        # confidence gate rejected was never cached, so a signal arriving here
+        # has already cleared it.
+        regime_payload = None
+        try:
+            from trading.wizard_trainer import (
+                REGIME_CONFIDENCE_FLOOR,
+                get_trainer,
+            )
+
+            regime = get_trainer().cached_regime(
+                str(sample.get("symbol", "")), float(sample.get("price", 0.0))
+            )
+            if regime is not None and regime.confidence >= REGIME_CONFIDENCE_FLOOR:
+                regime_payload = {
+                    "direction_prob": float(regime.direction_prob),
+                    "confidence": float(regime.confidence),
+                    "age_s": max(0.0, time.time() - float(regime.ts)),
+                }
+        except Exception:
+            # The regime read is an enhancement, never a dependency: a broken
+            # node must not stop trading on the model's own prediction.
+            regime_payload = None
         brain_summary = {
             "graph_confidence": graph_conf,
             "swarm_bias": swarm_bias,
@@ -1260,6 +1286,7 @@ class TradingBot:
                 {"label": s.label, "expected": s.expected_return, "confidence": s.confidence} for s in scenarios
             ],
             "arb_signal": arb_signal_payload,
+            "regime_signal": regime_payload,
             "volatility": volatility,
             "volatility_avg": self._volatility_avg,
             "reflex_triggered": reflex_triggered,
@@ -2925,6 +2952,24 @@ class TradingBot:
                 elif action == "sell_eth":
                     direction_prob = float(np.clip(direction_prob - confidence * 0.05, 0.0, 1.0))
                     margin -= confidence * 0.01
+
+        regime_signal = brain.get("regime_signal")
+        if isinstance(regime_signal, dict):
+            try:
+                # Scale by confidence so a marginal read moves the number
+                # marginally. 0.06 is the same order as the arb (0.05) and
+                # opportunity (<=0.15) nudges -- the model's own prediction
+                # stays the dominant term, which is the point: this is a
+                # second opinion, not a second forecaster.
+                regime_dir = float(regime_signal.get("direction_prob", 0.5))
+                regime_conf = float(regime_signal.get("confidence", 0.0))
+                # (direction - 0.5) is the lean; x2 puts it in [-1, 1].
+                lean = (regime_dir - 0.5) * 2.0
+                direction_prob = float(
+                    np.clip(direction_prob + lean * regime_conf * 0.06, 0.0, 1.0)
+                )
+            except Exception:
+                pass
 
         symbol = sample.get("symbol", "asset")
         price = float(sample.get("price", 0.0))

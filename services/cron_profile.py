@@ -160,11 +160,17 @@ def load_profile(force: bool = False) -> Dict[str, Any]:
     global _PROFILE_CACHE, _PROFILE_MTIME
     path = _profile_path()
     if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(DEFAULT_PROFILE, indent=2, sort_keys=True)
-        path.write_text(payload, encoding="utf-8")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(payload, encoding="utf-8")
+            _PROFILE_MTIME = path.stat().st_mtime
+        except OSError:
+            # Read-only filesystem (Lambda's bundle is not writable). The
+            # defaults are a complete, valid profile, so serve them from memory
+            # rather than failing the whole invocation over a cache write.
+            _PROFILE_MTIME = 0.0
         _PROFILE_CACHE = json.loads(payload)
-        _PROFILE_MTIME = path.stat().st_mtime
         return dict(_PROFILE_CACHE)
     try:
         mtime = path.stat().st_mtime

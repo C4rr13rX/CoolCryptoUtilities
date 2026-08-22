@@ -419,39 +419,67 @@ class ApiDiagView(View):
 
 class SpaRouteView(BaseSecureView):
     """
-    Catch-all view so refreshing /<route> stays inside the SPA shell.
-    Only accepts known slug characters and still requires authentication.
+    Catch-all so refreshing /<route> stays inside the SPA shell.
+
+    The allowlist is derived from the frontend router at first use rather than
+    hardcoded here. Hardcoding it meant every new page had to be added in two
+    places, and forgetting the second one produced a confusing symptom: the
+    page worked when navigated to, then silently bounced to the dashboard on
+    refresh or deep link. That trap caught /video-studio, and would have caught
+    the next one too.
+
+    Authentication still applies, and an unknown route still redirects rather
+    than rendering the shell for anything -- the allowlist is now simply
+    computed from the routes that actually exist.
     """
+
+    #: Routes the SPA owns but which are not declared in router/index.ts,
+    #: or whose server-side name differs from the URL segment.
+    _EXTRA_ROUTES = frozenset({"dashboard", "branddozer_solo"})
+
+    _cached_routes: frozenset[str] | None = None
+
+    @classmethod
+    def known_routes(cls) -> frozenset[str]:
+        """
+        Parse the Vue router for its top-level single-segment routes.
+
+        Cached after the first read: the file cannot change without a restart
+        in production, and re-reading it per request would put file IO on
+        every page load.
+        """
+        if cls._cached_routes is not None:
+            return cls._cached_routes
+
+        routes = set(cls._EXTRA_ROUTES)
+        router = (
+            Path(settings.BASE_DIR) / "frontend" / "src" / "router" / "index.ts"
+        )
+        try:
+            source = router.read_text(encoding="utf-8")
+            # Single-segment paths only: multi-segment routes such as
+            # /paper/<id>/present need their own view and have one.
+            for match in re.findall(r"path:\s*'/([A-Za-z0-9_-]+)'", source):
+                routes.add(match.lower())
+        except OSError:
+            # The frontend source is absent in some deployments (the built
+            # bundle ships without it). Fall back to the previously hardcoded
+            # set so a missing file cannot lock the user out of every page.
+            routes.update({
+                "organism", "streams", "telemetry", "wallet", "pipeline",
+                "bus", "datalab", "lab", "guardian", "settings", "advisories",
+                "integrations", "codegraph", "branddozer", "addressbook",
+                "c0d3r", "u53rxr080t", "audiolab", "cron", "investigations",
+                "logs", "model-control", "wizard-chat", "video-studio",
+            })
+
+        cls._cached_routes = frozenset(routes)
+        return cls._cached_routes
 
     def dispatch(self, request, *args, **kwargs):
         raw_slug = kwargs.get("route") or "dashboard"
         slug = str(raw_slug).lower()
-        allowed = {
-            "dashboard",
-            "organism",
-            "streams",
-            "telemetry",
-            "wallet",
-            "pipeline",
-            "bus",
-            "datalab",
-            "lab",
-            "guardian",
-            "settings",
-            "advisories",
-            "integrations",
-            "codegraph",
-            "branddozer",
-            "addressbook",
-            "c0d3r",
-            "u53rxr080t",
-            "branddozer_solo",
-            "audiolab",
-            "cron",
-            "investigations",
-            "logs",
-        }
-        if slug not in allowed:
+        if slug not in self.known_routes():
             return redirect("core:dashboard")
         self.initial_route = slug
         if slug != raw_slug:

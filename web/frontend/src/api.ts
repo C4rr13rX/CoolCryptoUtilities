@@ -1456,3 +1456,32 @@ export async function fetchTaskResourceProfiles() {
   const { data } = await api.get('/delegation/profiles/');
   return data;
 }
+
+// ── Video Studio ──────────────────────────────────────────────────────────
+// Compiles a research deck to MP4. Rendering is a background job on the
+// server, so startVideoRender returns immediately and the view polls
+// fetchVideoJob until it reports ready or error.
+
+export async function fetchVideoStudio() {
+  const { data } = await api.get('/branddozer/video/');
+  return data;
+}
+
+export async function fetchVideoJob(paperId: string) {
+  const { data } = await api.get(`/branddozer/video/${paperId}/render/`);
+  return data;
+}
+
+export async function startVideoRender(
+  paperId: string,
+  body: Record<string, unknown>,
+) {
+  const { data } = await api.post(`/branddozer/video/${paperId}/render/`, body);
+  return data;
+}
+
+export function videoFileUrl(paperId: string): string {
+  const base = String(api.defaults.baseURL || '').replace(/\/$/, '');
+  return `${base}/branddozer/video/${paperId}/file/`;
+}
+

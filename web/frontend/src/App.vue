@@ -839,6 +839,7 @@ const navItems = computed(() => {
     { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar' },
     { route: 'u53rxr080t', path: '/u53rxr080t', label: t('nav.u53rxr080t'), icon: 'radar' },
     { route: 'branddozer', path: '/branddozer', label: t('nav.branddozer'), icon: 'lab' },
+    { route: 'video-studio', path: '/video-studio', label: t('nav.video_studio'), icon: 'radar' },
   ];
   return items.map((item) => ({
     ...item,

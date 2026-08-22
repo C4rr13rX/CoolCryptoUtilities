@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -31,7 +32,18 @@ class HeartbeatFile:
             payload["meta"] = metadata
         data = json.dumps(payload, indent=2)
         with self._lock:
-            self.path.write_text(data, encoding="utf-8")
+            temporary = self.path.with_suffix(self.path.suffix + f".{os.getpid()}.tmp")
+            try:
+                temporary.write_text(data, encoding="utf-8")
+                os.replace(temporary, self.path)
+            except OSError:
+                # Heartbeats are observability only. A transient Windows
+                # sharing violation, antivirus reader, or unusual filesystem
+                # state must never terminate the production/ghost loop.
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def clear(self) -> None:
         with self._lock:

@@ -29,12 +29,12 @@ import requests
 from services.adaptive_control import APIRateLimiter
 from services.logging_utils import log_message
 from services.offline_market import OfflinePriceStore
+from services.writable_paths import ensure_dir
 
 
 DEFAULT_TIMEOUT = 15
 USER_AGENT = "CoolCryptoUtilities/market-ingestor"
-_CACHE_ROOT = Path(os.getenv("PUBLIC_API_CACHE_DIR", "data/public_api_cache")).expanduser()
-_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+_CACHE_ROOT = ensure_dir(Path(os.getenv("PUBLIC_API_CACHE_DIR", "data/public_api_cache")).expanduser())
 _LOCAL_SNAPSHOT = Path(os.getenv("LOCAL_MARKET_CACHE", "data/market_snapshots.json")).expanduser()
 _SNAPSHOT_HISTORY_DIR = Path(os.getenv("MARKET_SNAPSHOT_HISTORY_DIR", "data/market_snapshots_history")).expanduser()
 _SNAPSHOT_HISTORY_LIMIT = max(12, int(os.getenv("MARKET_SNAPSHOT_HISTORY_LIMIT", "96")))

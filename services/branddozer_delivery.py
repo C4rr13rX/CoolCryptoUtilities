@@ -43,6 +43,7 @@ from services.homeostasis import (
 )
 from services.agent_workspace import build_context, init_notes, append_notes
 from services.codex_usage import get_codex_usage
+from services.writable_paths import ensure_dir
 from branddozer.models import (
     AcceptanceRecord,
     BacklogItem,
@@ -98,10 +99,8 @@ PHASES = [
 ]
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SESSION_LOG_ROOT = _PROJECT_ROOT / "runtime/branddozer/sessions"
-SESSION_LOG_ROOT.mkdir(parents=True, exist_ok=True)
-SOLO_PLAN_ROOT = _PROJECT_ROOT / "runtime/branddozer/solo_plans"
-SOLO_PLAN_ROOT.mkdir(parents=True, exist_ok=True)
+SESSION_LOG_ROOT = ensure_dir(_PROJECT_ROOT / "runtime/branddozer/sessions", anchor=_PROJECT_ROOT)
+SOLO_PLAN_ROOT = ensure_dir(_PROJECT_ROOT / "runtime/branddozer/solo_plans", anchor=_PROJECT_ROOT)
 WORKTREE_LOCK = threading.Lock()
 PLACEHOLDER_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==")
 _SCHEMA_READY = False

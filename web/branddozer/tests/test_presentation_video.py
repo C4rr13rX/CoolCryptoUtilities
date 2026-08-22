@@ -73,8 +73,30 @@ class AudioSyncTests(TestCase):
 
     def test_audio_covers_transition_gaps(self):
         result, slides = self._build(TRANSITION_MS)
-        expected = sum(s["duration_ms"] for s in slides) + 4 * TRANSITION_MS
+        # Quantised to whole frames, matching what the video actually writes:
+        # int(30 * 420/1000) = 12 frames = 400ms, not the nominal 420ms.
+        # Expecting 420 here is what let a 20ms-per-slide drift ship.
+        frames = int(30 * TRANSITION_MS / 1000)
+        silence_ms = frames * 1000 / 30
+        expected = sum(s["duration_ms"] for s in slides) + 4 * silence_ms
         self.assertAlmostEqual(result["duration_ms"], expected, delta=60)
+
+    def test_transition_silence_matches_video_frames(self):
+        """The audio gap must equal a whole number of video frames.
+
+        A fractional gap is the drift bug: the picture advances in frame
+        increments, so any audio padding that is not a frame multiple puts
+        narration progressively out of step with the words.
+        """
+        result, slides = self._build(TRANSITION_MS)
+        base = sum(s["duration_ms"] for s in slides)
+        gap_ms = (result["duration_ms"] - base) / 4
+        frame_ms = 1000 / 30
+        # Compare the frame count, not a modulo: 400 % 33.33 lands near the
+        # divisor rather than near zero and would fail a correct result.
+        frames = gap_ms / frame_ms
+        self.assertAlmostEqual(frames, round(frames), delta=0.05,
+                               msg=f"gap {gap_ms}ms is not a whole frame count")
 
     def test_without_transitions_audio_matches_slide_durations(self):
         result, slides = self._build(0)

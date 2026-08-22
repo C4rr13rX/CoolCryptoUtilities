@@ -133,3 +133,19 @@ scratch_rebuild.out
 .aws/
 credentials*.json
 service-account*.json
+
+# Lambda deployment bundle (serverless/local/build_package.py output)
+dist/
+serverless/local/volume/
+serverless/local/.http_api_id
+serverless/local/.ws_api_id
+
+# Android build outputs
+android/build/
+android/app/build/
+android/local.properties
+android/.gradle/
+android/app/src/main/jniLibs/**/*.so
+
+# Generated GA model cache (joblib, regenerated on demand)
+data/genome-models/

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CoolCrypto</string>
+    <string name="starting">Starting local services…</string>
+    <string name="startup_failed">Could not start the local services. Check the notification for details.</string>
+</resources>

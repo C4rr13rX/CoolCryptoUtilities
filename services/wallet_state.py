@@ -21,11 +21,14 @@ from services.wallet_watch import (
     select_cached_watch_tokens,
 )
 from services.usd_valuation import UsdValuation
+from services.writable_paths import ensure_dir
 from router_wallet import CHAINS, CHAIN_NATIVE_SYMBOL, UltraSwapBridge
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-STATE_DIR = _PROJECT_ROOT / "storage" / "wallet_state"
-STATE_DIR.mkdir(parents=True, exist_ok=True)
+# ensure_dir keeps this path as-is when the checkout is writable and falls back
+# to /tmp on Lambda, where /var/task is read-only and this import-time mkdir
+# would otherwise fail the whole URLconf.
+STATE_DIR = ensure_dir(_PROJECT_ROOT / "storage" / "wallet_state", anchor=_PROJECT_ROOT)
 NATIVE_TOKEN = "0x0000000000000000000000000000000000000000"
 OVERRIDES_PATH = Path(os.getenv("WALLET_BALANCE_OVERRIDES_PATH", str(_PROJECT_ROOT / "config" / "wallet_balance_overrides.json")))
 DEFAULT_STATE = {

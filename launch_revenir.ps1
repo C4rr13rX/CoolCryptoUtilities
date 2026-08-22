@@ -6,6 +6,7 @@
 #   3. Production manager (main.py --action start_production)
 #   4. Brain feeder       (scripts/run_brain_feeder.py)  -- skipped if a
 #                          history supervisor is currently training
+#   5. Market evolution   (included W1z4rDV1510n protected-fold GA)
 #
 # Each check is by listening-port (brain, waitress) or by command-line
 # substring (prod_manager, brain_feeder). Already-running services are
@@ -18,11 +19,15 @@ $projectRoot   = "D:\Projects\CoolCryptoUtilities"
 $python        = "$projectRoot\.venv\Scripts\python.exe"
 $brainBin      = "D:\Projects\W1z4rDV1510n\bin\w1z4rd_node.exe"
 $brainProject  = "D:\Projects\W1z4rDV1510n"
+$evolutionPython = "C:\Python313\python.exe"
+$evolutionScript = "$brainProject\scripts\market_evolution_service.py"
+$evolutionWatchdog = "$brainProject\scripts\market_evolution_watchdog.py"
+$evolutionState  = "$brainProject\runtime\market-evolution"
 $brainDataDir  = "D:\w1z4rdv1510n-data"
 $webRoot       = "$projectRoot\web"
 $logsDir       = "$projectRoot\logs"
 $panelHost     = "127.0.0.1"
-$panelPort     = 8000
+$panelPort     = 8001
 $brainPort     = 8090
 $threads       = 8
 
@@ -34,12 +39,15 @@ $primaryWallet = "0x291c854811e92906a658fb94aa511bf919f968ad"
 # -- helpers ---------------------------------------------------------------
 
 function Test-Port($port) {
+    $conn = $null
     try {
         $conn = New-Object System.Net.Sockets.TcpClient
-        $conn.Connect($panelHost, $port) | Out-Null
-        $conn.Close()
-        return $true
+        $pending = $conn.BeginConnect($panelHost, $port, $null, $null)
+        if (-not $pending.AsyncWaitHandle.WaitOne(750)) { return $false }
+        $conn.EndConnect($pending)
+        return $conn.Connected
     } catch { return $false }
+    finally { if ($conn) { $conn.Dispose() } }
 }
 
 function Find-PythonProcess($needle) {
@@ -75,7 +83,7 @@ function Wait-Port($port, $name, $maxSeconds = 60) {
 # way started a process that never bound :8090, so the previous 300 s
 # Wait-Port always timed out -- that was the "gets stuck" hang.
 
-Write-Host "[1/4] Brain substrate"
+Write-Host "[1/5] Brain substrate"
 $brainStarter = "$brainProject\start_node.ps1"
 $brainProc = Find-Process "w1z4rd_node"
 if ($brainProc) {
@@ -98,26 +106,28 @@ if ($brainProc) {
     Write-Host "  WARN: start_node.ps1 not found at $brainStarter (skipping brain)"
 }
 
-# -- 2. R3V3N!R web panel (ASGI) -------------------------------------------
+# -- 2. R3V3N!R web panel --------------------------------------------------
 
-Write-Host "[2/4] R3V3N!R web panel"
+Write-Host "[2/5] R3V3N!R web panel"
 if (Test-Port $panelPort) {
     Write-Host "  already running on :$panelPort"
 } else {
-    Write-Host "  starting Daphne ASGI server..."
+    Write-Host "  starting Waitress Django server..."
     $env:WAITRESS_HOST    = $panelHost
     $env:WAITRESS_PORT    = "$panelPort"
     $env:WAITRESS_THREADS = "$threads"
     Start-Process -FilePath $python `
-        -ArgumentList "run_asgi.py" `
+        -ArgumentList "run_waitress.py" `
         -WorkingDirectory $webRoot `
-        -WindowStyle Minimized
+        -WindowStyle Hidden `
+        -RedirectStandardOutput "$logsDir\web_waitress_8001.log" `
+        -RedirectStandardError  "$logsDir\web_waitress_8001.err"
     Wait-Port $panelPort "panel" 30 | Out-Null
 }
 
 # -- 3. Production manager (trading bot) -----------------------------------
 
-Write-Host "[3/4] Production manager"
+Write-Host "[3/5] Production manager"
 $prodProc = Find-PythonProcess "start_production"
 if ($prodProc) {
     Write-Host "  already running -- count=$($prodProc.Count)"
@@ -149,7 +159,7 @@ if ($prodProc) {
 
 # -- 4. Brain feeder (skipped while a supervisor is training) --------------
 
-Write-Host "[4/4] Brain feeder"
+Write-Host "[4/5] Brain feeder"
 $supervisorRunning = Find-PythonProcess "brain_history_supervisor"
 if ($supervisorRunning) {
     Write-Host "  history supervisor is training -- skipping feeder to avoid lock contention"
@@ -166,6 +176,38 @@ if ($supervisorRunning) {
             -RedirectStandardOutput "$logsDir\feeder_direct.log" `
             -RedirectStandardError  "$logsDir\feeder_direct.err"
     }
+}
+
+# -- 5. Protected market-brain evolution ---------------------------------
+
+Write-Host "[5/5] Protected market-brain evolution"
+$evolutionProc = Find-PythonProcess "market_evolution_watchdog.py"
+if ($evolutionProc) {
+    Write-Host "  supervisor already running -- count=$($evolutionProc.Count)"
+} elseif ((Test-Path $evolutionScript) -and (Test-Path $evolutionWatchdog)) {
+    $stopMarker = Join-Path $evolutionState "STOP"
+    if (Test-Path -LiteralPath $stopMarker) {
+        Remove-Item -LiteralPath $stopMarker -Force
+        Write-Host "  cleared cooperative STOP marker"
+    }
+    New-Item -ItemType Directory -Force $evolutionState | Out-Null
+    Write-Host "  starting persistent RAM-aware supervisor..."
+    Start-Process -FilePath $evolutionPython `
+        -ArgumentList "-u",$evolutionWatchdog,"--python",$evolutionPython,"--service",$evolutionScript,"--state-dir",$evolutionState,"--min-free-memory-gb","3.5","--memory-poll-seconds","15","--restart-delay-seconds","30","--","--population","8","--workers","1","--brain-gate-every","1","--test-days","28" `
+        -WorkingDirectory $brainProject `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput "$evolutionState\supervisor.stdout.log" `
+        -RedirectStandardError  "$evolutionState\supervisor.stderr.log"
+    Start-Sleep -Seconds 2
+    $evolutionProc = Find-PythonProcess "market_evolution_watchdog.py"
+    if ($evolutionProc) {
+        Write-Host "  supervisor spawned -- pid=$($evolutionProc.ProcessId)"
+        Write-Host "  accuracy improvements: $evolutionState\accuracy_improvements.jsonl"
+    } else {
+        Write-Host "  WARN: market evolution supervisor did not appear in process list"
+    }
+} else {
+    Write-Host "  WARN: evolution service or supervisor script is missing"
 }
 
 # -- open the panel --------------------------------------------------------

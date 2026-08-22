@@ -16,7 +16,10 @@ from services.guardian_lock import GuardianLease
 from services.logging_utils import log_message
 from services.secure_settings import build_process_env, default_env_user
 
-STATE_PATH = Path("runtime/cron/state.json")
+# Relative by default so local runs keep writing under the repo. On Lambda the
+# bundle is read-only apart from /tmp, so the deployment sets CRON_STATE_PATH
+# to a writable location (see serverless/handlers/cron.py).
+STATE_PATH = Path(os.getenv("CRON_STATE_PATH", "runtime/cron/state.json"))
 LOG_SOURCE = "internal-cron"
 
 

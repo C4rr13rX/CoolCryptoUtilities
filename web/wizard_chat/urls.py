@@ -1,5 +1,5 @@
 from django.urls import path
-from . import views
+from . import node_update_views, views
 from . import agent_views
 
 app_name = "wizard_chat"
@@ -39,4 +39,13 @@ urlpatterns = [
     path("agent/info/", agent_views.WizardChatAgentInfoView.as_view(),
          name="agent_info"),
     path("agent/info", agent_views.WizardChatAgentInfoView.as_view()),
+    # ── Wizard node updates from the C4rr13rX repo ────────────────────────
+    # GET reports the installed build; POST checks for and installs a newer
+    # one. Same updater the Android WorkManager job runs on a schedule.
+    path("node/update/", node_update_views.WizardNodeUpdateView.as_view(),
+         name="node_update"),
+    path("node/update", node_update_views.WizardNodeUpdateView.as_view()),
+    path("node/status/", node_update_views.WizardNodeUpdateStatusView.as_view(),
+         name="node_update_status"),
+    path("node/status", node_update_views.WizardNodeUpdateStatusView.as_view()),
 ]

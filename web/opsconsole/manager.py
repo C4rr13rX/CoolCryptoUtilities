@@ -12,14 +12,14 @@ from typing import Dict, Optional
 
 from services.secure_settings import build_process_env
 from services.env_loader import resolve_python_bin
+from services.writable_paths import ensure_dir
 
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PYTHON = resolve_python_bin()
 DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py", "--action", "start_production", "--stay-alive"]
-LOG_DIR = REPO_ROOT / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR = ensure_dir(REPO_ROOT / "logs", anchor=REPO_ROOT)
 LOG_PATH = LOG_DIR / "console.log"
 LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(50 * 1024 * 1024)))
 PID_PATH = REPO_ROOT / "runtime" / "production.pid"

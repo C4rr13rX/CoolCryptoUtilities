@@ -1,0 +1,67 @@
+# Local, fully open-source stand-in for the AWS services this project targets.
+#
+#   AWS                          -> local equivalent
+#   ---------------------------- -> --------------------------------------
+#   Lambda                       -> LocalStack (runs the real Python runtime
+#                                   image in Docker, same handler contract)
+#   API Gateway (HTTP + WS)      -> LocalStack
+#   EventBridge Scheduler        -> LocalStack (cron/rate expressions)
+#   S3 (data + media)            -> MinIO
+#
+# There is no database container: the hybrid model keeps durable data in S3
+# and searches it with AllezORM in the browser, so nothing here needs RDS.
+#
+# Nothing here talks to a real AWS account, so the FountainServer profile is
+# never touched. Credentials below are the LocalStack dummy values.
+
+name: coolcrypto-serverless-local
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: ccu-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3.8
+    container_name: ccu-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: lambda,apigateway,apigatewayv2,scheduler,events,s3,iam,sts,logs,cloudwatch
+      DEBUG: "1"
+      # Lambda functions run as sibling containers on the host's Docker daemon.
+      LAMBDA_RUNTIME_EXECUTOR: docker
+      # Keep containers warm between invokes so repeated tests do not pay a
+      # fresh cold start every time.
+      LAMBDA_KEEPALIVE_MS: "300000"
+      # Django + 30 apps takes ~4s to import on Lambda's local disk, but
+      # LocalStack copies the bundle through a Docker volume that is far
+      # slower on Docker Desktop for Windows/macOS. The default 20s init
+      # budget expires there and surfaces as "Internal error while executing
+      # lambda" -- a local artifact, not a real cold-start problem.
+      LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT: "300"
+      DOCKER_HOST: unix:///var/run/docker.sock
+      # Lambda containers reach Postgres/MinIO through the host gateway rather
+      # than compose DNS, because they are not members of this compose network.
+      LAMBDA_DOCKER_FLAGS: "--add-host=host.docker.internal:host-gateway"
+      PERSISTENCE: "0"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./volume:/var/lib/localstack"
+
+volumes:
+  miniodata:

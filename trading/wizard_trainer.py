@@ -40,6 +40,7 @@ import base64
 import json
 import math
 import os
+import logging
 import re
 import threading
 import time
@@ -1130,28 +1131,158 @@ _BEAR_TOKENS = {"bear", "bearish", "downtrend", "future_direction=down", "sell",
                 "falling", "weak", "distribut", "resistance", "reject"}
 
 
-def _parse_regime_text(text: str) -> Tuple[float, float]:
-    """Cheap regex tally of bull vs bear keywords.
+# Minimum keyword evidence before a reply is allowed any conviction at all.
+#
+# Measured, not guessed: the reply "bull" -- one word, no context -- used to
+# return direction 1.000 at confidence 1.000, i.e. maximum conviction from a
+# single token. Two independent keywords is the floor at which a reply is
+# saying something rather than mentioning something.
+_MIN_REGIME_TOKENS = 2
 
-    Returns (direction_prob, confidence) in [0,1].  Direction is 0.5
-    when no keywords match (neutral); confidence is the share of
-    matched tokens (a proxy for how on-topic the brain's reply was).
+# Below this, the signal is reported but must not move a decision.
+#
+# Calibrated from the measured distribution over the whole case set
+# (tests/test_regime_scoring.py), not from a couple of hand-picked examples:
+#
+#   valid readings   0.320 .. 0.953
+#   noise / hedged   0.000 .. 0.000   (single tokens, refusals, dead heats)
+#
+# The separation is total, because one-sidedness x evidence sends anything
+# without corroborating agreement to exactly zero. 0.15 sits inside that gap
+# with headroom on both sides -- far enough above 0 that a stray pair of
+# keywords cannot pass, far enough below 0.320 that a genuine but modest
+# reading is not thrown away. An earlier 0.45, set by intuition rather than
+# measurement, rejected a valid bearish reading.
+REGIME_CONFIDENCE_FLOOR = 0.15
+
+
+def _count_distinct(blob: str, tokens: set) -> int:
+    """
+    Count matched keywords, ignoring ones subsumed by a longer match.
+
+    ``bull`` and ``bullish`` are both in the vocabulary, so the word
+    "bullish" matched twice and counted as two independent signals. Longest
+    match wins, which keeps one word worth one vote.
+    """
+    matched = [tok for tok in tokens if tok in blob]
+    distinct = [
+        tok for tok in matched
+        if not any(other != tok and tok in other for other in matched)
+    ]
+    return len(distinct)
+
+
+def _parse_regime_text(text: str) -> Tuple[float, float]:
+    """
+    Score a regime reply into (direction_prob, confidence), both in [0, 1].
+
+    Direction is 0.5 (neutral) when nothing matches. Confidence is how
+    *one-sided and well-evidenced* the reply is -- deliberately NOT how dense
+    the keywords are.
+
+    Why not density
+    ---------------
+    The previous implementation used keyword density as the confidence proxy
+    and it measured the wrong thing. Density is a function of verbosity:
+
+        "bull"                                    -> confidence 1.000
+        a hedged 25-word analysis naming both
+        support and resistance                    -> confidence 0.615
+        a thorough 200-word answer                -> confidence 0.120
+
+    So the terser and less reasoned the reply, the more the system believed
+    it. That is backwards, and it is the same class of error the senior
+    engineer brain corrected when it found `margin` was an alias of `score`
+    rather than an independent signal ("margin does not measure what it looks
+    like"). The lesson transfers: a gate has to measure the thing it claims
+    to measure, and two gates computed from one quantity are one gate.
+
+    What confidence means here
+    --------------------------
+    Two factors, multiplied, because both must hold:
+
+    * **one-sidedness** -- |bull - bear| / total. A reply naming three bull
+      signals and three bear signals is genuinely uncertain no matter how
+      many words it spends; it scores 0.
+    * **evidence** -- saturating in the number of distinct matched keywords.
+      One keyword is a mention; several agreeing keywords is a reading. This
+      rises with corroboration and cannot be inflated by brevity.
+
+    A reply with fewer than ``_MIN_REGIME_TOKENS`` keywords returns neutral,
+    so "bull" no longer produces a maximum-conviction trade signal.
     """
     if not text:
         return 0.5, 0.0
     blob = text.lower()
-    bull = sum(1 for tok in _BULL_TOKENS if tok in blob)
-    bear = sum(1 for tok in _BEAR_TOKENS if tok in blob)
+    # Count each keyword only when it is not already covered by a longer
+    # match. "bullish" contains "bull", so the naive tally scored one word as
+    # two pieces of evidence -- the same double-counting the senior brain
+    # found between score and margin, in a different guise.
+    bull = _count_distinct(blob, _BULL_TOKENS)
+    bear = _count_distinct(blob, _BEAR_TOKENS)
     total = bull + bear
     if total == 0:
         return 0.5, 0.0
+
     direction = bull / total
-    # Total keyword density (capped at 1.0) is the confidence proxy.
-    # A two-word reply with one bull token => conf 0.5; longer/denser
-    # replies trend higher.
-    word_count = max(1, len(re.findall(r"\w+", blob)))
-    density = min(1.0, total / max(1.0, word_count / 4.0))
-    return direction, density
+
+    # A single keyword is a mention, not a reading. Report the lean but
+    # give it no conviction, so a downstream gate on confidence rejects it.
+    if total < _MIN_REGIME_TOKENS:
+        return direction, 0.0
+
+    # How one-sided is it? 1.0 when every keyword agrees, 0.0 at a dead heat.
+    # This is what actually distinguishes a call from a hedge.
+    one_sided = abs(bull - bear) / total
+
+    # How much agreeing evidence is there? Saturating rather than linear so
+    # the sixth corroborating keyword adds less than the second, and no
+    # amount of repetition can manufacture certainty on its own.
+    agreeing = max(bull, bear)
+    evidence = 1.0 - (0.6 ** max(0, agreeing - 1))
+
+    confidence = max(0.0, min(1.0, one_sided * evidence))
+    return direction, confidence
+
+
+def regime_derived_state(text: str) -> dict:
+    """
+    Explain a regime score, so a rejected signal is never a silent shrug.
+
+    The senior engineer brain added `recall_derived_state` for the same
+    reason: when a gate declines, the operator needs to know *which* check
+    declined it. For a trading system that matters more, not less -- "the
+    brain had no opinion" and "the brain contradicted itself" call for
+    different responses.
+    """
+    blob = (text or "").lower()
+    bull = _count_distinct(blob, _BULL_TOKENS) if blob else 0
+    bear = _count_distinct(blob, _BEAR_TOKENS) if blob else 0
+    total = bull + bear
+    direction, confidence = _parse_regime_text(text)
+
+    if not blob:
+        reason = "empty_reply"
+    elif total == 0:
+        reason = "no_keywords"          # off-topic or a refusal
+    elif total < _MIN_REGIME_TOKENS:
+        reason = "single_keyword"       # a mention, not a reading
+    elif bull == bear:
+        reason = "contradictory"        # names both sides equally
+    elif confidence < REGIME_CONFIDENCE_FLOOR:
+        reason = "below_floor"
+    else:
+        reason = "admitted"
+
+    return {
+        "reason": reason,
+        "admitted": reason == "admitted",
+        "direction": direction,
+        "confidence": confidence,
+        "bull_tokens": bull,
+        "bear_tokens": bear,
+        "floor": REGIME_CONFIDENCE_FLOOR,
+    }
 
 
 def _trainer_cached_regime(self, symbol: str, current_price: float
@@ -1186,7 +1317,18 @@ def _trainer_refresh_regime(self, symbol: str, current_price: float) -> None:
         text = self.query_regime(symbol, current_price, timeout=self._regime_timeout)
         if not text:
             return
-        direction, confidence = _parse_regime_text(text)
+        state = regime_derived_state(text)
+        if not state["admitted"]:
+            # Cache nothing rather than cache a signal a consumer might trust.
+            # The reason is logged so a persistently silent brain is
+            # diagnosable instead of just absent.
+            logging.getLogger("trading.wizard_trainer").debug(
+                "regime rejected symbol=%s reason=%s bull=%d bear=%d conf=%.3f",
+                symbol, state["reason"], state["bull_tokens"],
+                state["bear_tokens"], state["confidence"],
+            )
+            return
+        direction, confidence = state["direction"], state["confidence"]
         signal = BrainSignal(symbol, direction, confidence, text, time.time())
         with self._regime_lock:
             self._regime_cache[symbol] = signal

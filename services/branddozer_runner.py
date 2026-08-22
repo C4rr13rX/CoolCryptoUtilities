@@ -12,9 +12,9 @@ import shutil
 from tools.ai_session import get_session_class, default_settings, session_provider_from_context
 from services.branddozer_state import get_project, list_projects, update_project_fields
 from services.logging_utils import log_message
+from services.writable_paths import ensure_dir
 
-LOG_ROOT = Path("runtime/branddozer")
-LOG_ROOT.mkdir(parents=True, exist_ok=True)
+LOG_ROOT = ensure_dir(Path("runtime/branddozer"))
 
 BASE_INSTRUCTIONS = (
     "Act as a full-access Codex agent working on the specified project root. "
