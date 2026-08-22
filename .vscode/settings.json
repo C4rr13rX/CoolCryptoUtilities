@@ -1,0 +1,49 @@
+{
+  // Keep VSCode out of generated trees.
+  //
+  // dist/ alone holds ~10,000 files (the Lambda bundle's vendored botocore
+  // data), and android/app/build is ~718 MB. Git ignores them, but VSCode's
+  // file watcher, search indexer and Source Control provider each walk them
+  // anyway -- which is what filled the Source Control panel and makes search
+  // slow. These settings stop the walk at the source.
+
+  "files.watcherExclude": {
+    "**/dist/**": true,
+    "**/android/app/build/**": true,
+    "**/android/.gradle/**": true,
+    "**/node_modules/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/runtime/**": true,
+    "**/storage/**": true,
+    "**/data/genome-models/**": true,
+    "**/collected_static/**": true
+  },
+
+  "search.exclude": {
+    "**/dist": true,
+    "**/android/app/build": true,
+    "**/android/.gradle": true,
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/collected_static": true,
+    "**/data/genome-models": true,
+    "**/*.joblib": true
+  },
+
+  // Hide them from the explorer too; they are build output, not source.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/dist/build": true
+  },
+
+  // The Source Control panel becomes unusable past a few hundred entries.
+  // Anything above this is a sign something generated is not ignored.
+  "git.untrackedChanges": "separate",
+
+  "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}
