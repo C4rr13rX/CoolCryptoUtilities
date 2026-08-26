@@ -149,3 +149,6 @@ android/app/src/main/jniLibs/**/*.so
 
 # Generated GA model cache (joblib, regenerated on demand)
 data/genome-models/
+
+# Runtime cache: pairs confirmed tradeable, rebuilt from probes on demand.
+data/live_pairs.json
