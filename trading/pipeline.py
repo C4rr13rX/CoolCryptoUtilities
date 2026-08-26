@@ -3829,6 +3829,24 @@ class TrainingPipeline:
             sparse_reasons.append("focus_empty")
         if not balance_fresh:
             sparse_reasons.append("wallet_snapshot_stale")
+            # Ask for a refresh rather than only complaining about the age.
+            #
+            # The snapshot is considered stale after WALLET_SNAPSHOT_MAX_AGE_SEC
+            # (180s), but nothing on a timer refreshes it -- the refresh is
+            # driven by websocket/ops-console activity. With no UI open the
+            # snapshot therefore goes stale and STAYS stale, so this reason was
+            # reported on every single readiness pass forever while the wallet
+            # sat unread. Deposited funds stayed invisible for days.
+            #
+            # request_wallet_refresh() is non-blocking and self-throttling
+            # (one attempt per 45s), so calling it from the readiness path is
+            # cheap and cannot stampede.
+            try:
+                from services.wallet_reconciliation import request_wallet_refresh
+
+                request_wallet_refresh()
+            except Exception:
+                pass
         if capital_deficit > 0:
             sparse_reasons.append("stable_below_min")
         if native_starved:

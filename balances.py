@@ -170,6 +170,39 @@ CHAIN_CONFIG = {
 }
 ZERO = "0x" + "0"*40
 
+#: Symbols that are USD stablecoins by design, so a missing market price can
+#: safely fall back to 1:1 rather than to zero. Kept narrow on purpose: this
+#: is only for coins whose whole premise is holding the peg.
+_STABLE_USD_SYMBOLS = {
+    "USDC", "USDBC", "USDC.E", "USDT", "DAI", "BUSD",
+    "TUSD", "USDP", "USDD", "USDS", "GUSD", "FDUSD", "PYUSD",
+}
+
+
+def _stable_usd_addresses() -> Set[str]:
+    """Contract addresses of the stablecoins in the shared token catalog.
+
+    Derived rather than hardcoded so a coin added to the catalog is covered
+    here automatically, and so the two lists cannot drift apart.
+    """
+    found: Set[str] = set()
+    try:
+        from services.token_catalog import core_tokens_for_chain
+    except Exception:
+        return found
+    for chain in ("base", "ethereum", "arbitrum", "optimism", "polygon", "bsc"):
+        try:
+            catalog = core_tokens_for_chain(chain) or {}
+        except Exception:
+            continue
+        for symbol, address in catalog.items():
+            if str(symbol).upper() in _STABLE_USD_SYMBOLS and address:
+                found.add(str(address).strip().lower())
+    return found
+
+
+_STABLE_USD_ADDRESSES: Set[str] = _stable_usd_addresses()
+
 class MultiChainTokenPortfolio:
     """
     Build a snapshot FAST, preferring cache:
@@ -887,9 +920,14 @@ class MultiChainTokenPortfolio:
         return prices
 
     def _lookup_cached_price(self, chain: str, token: str, meta_info: Optional[Mapping[str, Any]] = None) -> Optional[Decimal]:
+        token_norm = (token or "").strip().lower()
+        # Checked BEFORE the cache guard: a stablecoin is worth ~$1 whether or
+        # not a price cache is configured, and returning None here is read
+        # downstream as "$0", not as "unknown".
+        if token_norm in _STABLE_USD_ADDRESSES:
+            return Decimal("1")
         if not self.cp:
             return None
-        token_norm = (token or "").strip().lower()
         attempts: List[Tuple[str, str]] = []
         if token_norm:
             attempts.append((chain, token_norm))
@@ -923,6 +961,25 @@ class MultiChainTokenPortfolio:
                 return Decimal(str(px))
             except Exception:
                 continue
+
+        # A stablecoin with no cached price is worth ~$1, not $0.
+        #
+        # Falling through to None makes the caller record usd_amount 0, which
+        # is not "unknown" downstream -- it is read as "no money". Observed
+        # 2026-08-26: a real 8.378 USDC balance on base was scanned correctly
+        # but valued at 0 because the prices table held no base rows at all,
+        # so the pipeline reported stable_usd 0.1071 and refused to trade for
+        # want of capital the wallet actually had.
+        #
+        # Only applied to recognised USD stablecoins, where 1:1 is definitional
+        # rather than a guess. A depegged stable would be mispriced here, but
+        # by at most a few percent -- against a 100% error the other way.
+        # Matched by ADDRESS first: token metadata is frequently absent (the
+        # cached row for base USDC carried a NULL symbol, which is how this
+        # went unnoticed), whereas the contract address is always known
+        # because it is what we just queried.
+        if token_norm in _STABLE_USD_ADDRESSES or symbol.upper() in _STABLE_USD_SYMBOLS:
+            return Decimal("1")
         return None
 
     # ---------------- Normalization, Transfers, Utils ----------------
