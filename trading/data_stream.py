@@ -5,6 +5,7 @@ import json
 import math
 import os
 import socket
+import threading
 import time
 from dataclasses import dataclass
 import statistics
@@ -2069,7 +2070,11 @@ class MarketDataStream:
                 )
             )
         okx_quote = quote.upper()
-        if okx_quote in {"USDT", "USDC", "USD", "ETH", "BTC"} and _endpoint_allowed("okx"):
+        if (
+            okx_quote in {"USDT", "USDC", "USD", "ETH", "BTC"}
+            and _endpoint_allowed("okx")
+            and _venue_lists("okx", base, okx_quote)
+        ):
             okx_pair = f"{base.upper()}-{okx_quote}"
             endpoints.append(
                 Endpoint(
@@ -2086,7 +2091,11 @@ class MarketDataStream:
                 )
             )
         kucoin_quote = quote.upper()
-        if kucoin_quote in {"USDT", "USDC", "BTC", "ETH"} and _endpoint_allowed("kucoin"):
+        if (
+            kucoin_quote in {"USDT", "USDC", "BTC", "ETH"}
+            and _endpoint_allowed("kucoin")
+            and _venue_lists("kucoin", base, kucoin_quote)
+        ):
             endpoints.append(
                 Endpoint(
                     name="kucoin",
@@ -2101,7 +2110,11 @@ class MarketDataStream:
             )
         # --- MEXC: WS + REST, US-accessible, generous rate limits ---
         mexc_quote = quote.upper()
-        if mexc_quote in {"USDT", "USDC", "BTC", "ETH"} and _endpoint_allowed("mexc"):
+        if (
+            mexc_quote in {"USDT", "USDC", "BTC", "ETH"}
+            and _endpoint_allowed("mexc")
+            and _venue_lists("mexc", base, mexc_quote)
+        ):
             mexc_symbol = f"{base.upper()}{mexc_quote}"
             endpoints.append(
                 Endpoint(
@@ -2154,7 +2167,11 @@ class MarketDataStream:
                 )
             )
         # --- Bybit: WS v5 + REST (globally accessible, no geo-blocking for market data) ---
-        if quote.upper() in {"USDT", "USDC", "ETH", "BTC"} and _endpoint_allowed("bybit"):
+        if (
+            quote.upper() in {"USDT", "USDC", "ETH", "BTC"}
+            and _endpoint_allowed("bybit")
+            and _venue_lists("bybit", base, quote.upper())
+        ):
             bybit_symbol = f"{base.upper()}{quote.upper()}"
             endpoints.append(
                 Endpoint(
@@ -3527,6 +3544,112 @@ def _split_symbol(symbol: str) -> Tuple[str, str]:
     base = TOKEN_NORMALIZATION.get(base.upper(), base.upper())
     quote = TOKEN_NORMALIZATION.get(quote.upper(), quote.upper())
     return base, quote
+
+
+#: Per-venue spot symbol universes, fetched once per process. A venue maps to
+#: ``None`` until a successful fetch; an empty result is never cached, so a
+#: failed probe retries rather than permanently disabling the venue.
+_VENUE_SYMBOLS: Dict[str, Optional[Set[str]]] = {}
+_VENUE_SYMBOLS_LOCK = threading.Lock()
+
+
+def _fetch_venue_symbols(venue: str) -> Optional[Set[str]]:
+    """Fetch a venue's spot symbol list, or None if it cannot be determined."""
+    import urllib.request
+
+    sources = {
+        # (url, how to pull the symbol strings out of the payload)
+        "mexc": (
+            "https://api.mexc.com/api/v3/exchangeInfo",
+            lambda d: [i.get("symbol") for i in (d.get("symbols") or [])],
+        ),
+        "okx": (
+            "https://www.okx.com/api/v5/public/instruments?instType=SPOT",
+            lambda d: [
+                str(i.get("instId", "")).replace("-", "")
+                for i in (d.get("data") or [])
+            ],
+        ),
+        "kucoin": (
+            "https://api.kucoin.com/api/v2/symbols",
+            lambda d: [
+                str(i.get("symbol", "")).replace("-", "")
+                for i in (d.get("data") or [])
+            ],
+        ),
+        "bybit": (
+            "https://api.bybit.com/v5/market/instruments-info?category=spot",
+            lambda d: [
+                i.get("symbol") for i in ((d.get("result") or {}).get("list") or [])
+            ],
+        ),
+    }
+    if venue not in sources:
+        return None
+    url, extract = sources[venue]
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (compatible; R3V3N1R/1.0)"}
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    symbols = {str(s).upper() for s in extract(payload) if s}
+    symbols.discard("")
+    return symbols or None
+
+
+def _venue_lists(venue: str, base: str, quote: str) -> bool:
+    """Does `venue` actually list this pair?
+
+    Without this check every Base-chain token was handed a centralised-exchange
+    websocket. The socket connects, the subscription is accepted, and no data
+    ever arrives because the venue has never heard of the symbol -- so the
+    stream looks perfectly healthy while holding a frozen seed price forever,
+    and never rotates to the REST fallbacks where the on-chain sources live.
+    82 of 94 streamed symbols were in this state.
+
+    It matters that this is checked per venue rather than for MEXC alone:
+    okx, kucoin and bybit were all gated only on the *quote* asset, so each
+    would happily render a socket for a token it does not carry.
+
+    Fails OPEN on any network or parse error -- a probe failure must never cost
+    us a feed that would otherwise work. It returns False only when the venue
+    has told us its symbol list and this pair is genuinely absent from it.
+    """
+    if os.getenv("VENUE_LISTING_CHECK", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return True
+
+    symbols = _VENUE_SYMBOLS.get(venue)
+    if symbols is None:
+        with _VENUE_SYMBOLS_LOCK:
+            symbols = _VENUE_SYMBOLS.get(venue)
+            if symbols is None:
+                try:
+                    fetched = _fetch_venue_symbols(venue)
+                except Exception as exc:
+                    log_message(
+                        "market-stream",
+                        f"could not fetch {venue} symbol list ({exc}); "
+                        f"allowing {venue} endpoints unchecked",
+                        severity="warning",
+                    )
+                    return True
+                if not fetched:
+                    return True
+                _VENUE_SYMBOLS[venue] = fetched
+                symbols = fetched
+                log_message(
+                    "market-stream",
+                    f"{venue} lists {len(fetched)} spot symbols; pairs absent "
+                    "from it will use REST/on-chain sources instead",
+                )
+    if not symbols:
+        return True
+    return f"{base.upper()}{quote.upper()}" in symbols
+
+
+def _mexc_lists(base: str, quote: str) -> bool:
+    """Backwards-compatible shim for the MEXC-specific check."""
+    return _venue_lists("mexc", base, quote)
 
 
 def _binance_symbol(base: str, quote: str) -> Optional[str]:
