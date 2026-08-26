@@ -492,7 +492,19 @@ class MarketDataStream:
         self._network_outage_reason = "init"
         self._network_outage_source: Optional[str] = None
         self._network_outage_endpoint: Optional[str] = None
-        self._block_rest_on_dns = os.getenv("NETWORK_OUTAGE_BLOCK_REST_ON_DNS", "1").lower() in {
+        # Default OFF: a websocket DNS failure must not silence a working REST
+        # feed. The original reasoning -- if DNS is broken, REST will fail too
+        # -- does not hold when the two use different hosts. This deployment's
+        # Base-chain symbols are REST-only on dexscreener while the websocket
+        # pool still tries venues like binance and coinbase, so one transient
+        # resolution failure on a host we do not even use blocked REST polling
+        # with backoff growing to 600s. Observed 2026-08-26: 24 healthy streams
+        # each wrote exactly one tick and then went quiet for 15+ minutes,
+        # which starved every short-horizon strategy of the samples it needs.
+        #
+        # `_dns_outage_blocks_rest` still applies when the REST endpoints share
+        # the failing websocket's host, which is the case this was meant for.
+        self._block_rest_on_dns = os.getenv("NETWORK_OUTAGE_BLOCK_REST_ON_DNS", "0").lower() in {
             "1",
             "true",
             "yes",
