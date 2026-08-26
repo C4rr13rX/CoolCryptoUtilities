@@ -53,6 +53,46 @@ _LIVE_PAIR_CACHE: Dict[str, bool] = {}
 #: pairs are announced once instead of on every selection pass.
 _SUPPRESSION_LOGGED: set[str] = set()
 _SUPPRESSION_TTL = float(os.getenv("PAIR_SUPPRESSION_TTL", str(6 * 3600)))
+
+#: Disk-backed memory of pairs confirmed tradeable, so a restart does not
+#: re-probe every one of them before any stream can start.
+_LIVE_CACHE_PATH = Path(os.getenv("LIVE_PAIR_CACHE_PATH", "data/live_pairs.json"))
+_LIVE_CACHE_TTL = float(os.getenv("LIVE_PAIR_CACHE_TTL", str(3600)))
+_LIVE_CACHE_MEM: Optional[Dict[str, float]] = None
+
+
+def _live_cache_load() -> Dict[str, float]:
+    global _LIVE_CACHE_MEM
+    if _LIVE_CACHE_MEM is None:
+        try:
+            _LIVE_CACHE_MEM = json.loads(_LIVE_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            _LIVE_CACHE_MEM = {}
+    return _LIVE_CACHE_MEM
+
+
+def _live_cache_get(key: str) -> bool:
+    """Was this pair confirmed live recently enough to trust without probing?"""
+    try:
+        seen = float(_live_cache_load().get(key, 0.0))
+    except Exception:
+        return False
+    return bool(seen) and (time.time() - seen) < _LIVE_CACHE_TTL
+
+
+def _live_cache_put(key: str) -> None:
+    """Remember a confirmed-live pair. Best effort: never break selection."""
+    try:
+        cache = _live_cache_load()
+        cache[key] = time.time()
+        cutoff = time.time() - _LIVE_CACHE_TTL * 4
+        for stale in [k for k, v in cache.items() if float(v or 0) < cutoff]:
+            cache.pop(stale, None)
+        _LIVE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _LIVE_CACHE_PATH.write_text(json.dumps(cache), encoding="utf-8")
+    except Exception:
+        pass
+
 _ALWAYS_LIVE_SYMBOLS = {
     "WETH-USDC",
     "USDC-WETH",
@@ -225,9 +265,25 @@ def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
     cached = _LIVE_PAIR_CACHE.get(key)
     if cached is not None:
         return cached
+
+    # Confirmed-live pairs are remembered ACROSS restarts, not just in memory.
+    #
+    # Suppressions were already persisted, but positive results were not, so
+    # every restart re-probed every tradeable pair from scratch: one live HTTP
+    # call each, serially, on the main thread, before a single market stream
+    # could start. Measured at 0.53s per probe across ~320 candidates -- about
+    # 2.8 minutes of dead time per restart, paid again on the next one.
+    #
+    # A short TTL keeps this honest: a pair that stops trading is re-checked
+    # within the hour rather than trusted forever.
+    if _live_cache_get(key):
+        _LIVE_PAIR_CACHE[key] = True
+        return True
+
     probe_result = _probe_dexscreener(symbol_u)
     if probe_result:
         _LIVE_PAIR_CACHE[key] = True
+        _live_cache_put(key)
         _db.clear_pair_suppression(key)
         return True
     if probe_result is None:
