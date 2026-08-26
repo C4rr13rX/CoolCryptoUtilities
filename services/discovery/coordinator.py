@@ -43,7 +43,66 @@ class DiscoveryCoordinator:
                 processed.append(record)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("[discovery] failed to process %s: %s", trending.symbol, exc)
+        self._promote_to_stream_watchlist(tokens)
         return processed
+
+    def _promote_to_stream_watchlist(self, tokens) -> None:
+        """Put the movers where pair selection will actually see them.
+
+        Discovery wrote only to its own ``DiscoveredToken``/``DiscoveryEvent``
+        tables, and nothing under ``trading/`` reads those -- so a token could
+        be discovered, recorded, and still never be streamed. Pair selection
+        promotes symbols from the ``stream`` watchlist, which is the one place
+        an outside process can inject a pair, so that is where these belong.
+
+        Filtered rather than dumped in wholesale: a trending list includes
+        things that are trending *downward*, and illiquid pools whose quoted
+        move is noise. Only pairs that are rising and deep enough to trade get
+        promoted, and the list is capped so a burst of discoveries cannot
+        crowd out the existing universe.
+        """
+        try:
+            from services.watchlists import load_watchlists, save_watchlists
+        except Exception:
+            return
+
+        min_liquidity = float(os.getenv("DISCOVERY_MIN_LIQUIDITY_USD", "50000"))
+        min_change = float(os.getenv("DISCOVERY_MIN_CHANGE_PCT", "1.0"))
+        max_promoted = int(os.getenv("DISCOVERY_MAX_PROMOTED", "12"))
+
+        promoted = []
+        for token in tokens:
+            try:
+                change = float(token.price_change_1h or 0.0)
+                liquidity = float(token.liquidity_usd or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if change < min_change or liquidity < min_liquidity:
+                continue
+            symbol = str(token.symbol or "").upper()
+            # Only USD-quoted pairs: a token/token pair prices as a ratio, not
+            # a dollar value, which poisons every strategy's arithmetic.
+            if not symbol or not symbol.endswith(("-USDC", "-USDT", "-DAI")):
+                continue
+            promoted.append(symbol)
+
+        if not promoted:
+            return
+
+        try:
+            watchlists = load_watchlists()
+            existing = list(watchlists.get("stream") or [])
+            merged = list(dict.fromkeys(existing + promoted))[-max_promoted * 4:]
+            if merged == existing:
+                return
+            watchlists["stream"] = merged
+            save_watchlists(watchlists)
+            logger.info(
+                "[discovery] promoted %d trending pairs to the stream watchlist: %s",
+                len(promoted), ", ".join(promoted[:8]),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("[discovery] could not update stream watchlist: %s", exc)
 
     @transaction.atomic
     def _process_token(self, trending: TrendingToken) -> DiscoveredToken:
