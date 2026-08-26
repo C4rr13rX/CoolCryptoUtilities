@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from services.logging_utils import log_message
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -35,6 +37,48 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return default
+
+
+#: Absolute ceiling on a single ghost outcome, in quote units. The account
+#: this runs against holds single-digit dollars, so any individual trade
+#: clearing this is a bookkeeping artifact rather than a fill.
+_ABSOLUTE_MAX_OUTCOME = _env_float("STRATEGY_MAX_TRADE_PROFIT", 2.0)
+
+#: ...and a relative one: an outcome this many times the strategy's own recent
+#: average magnitude is treated as an artifact even when it is small in
+#: absolute terms. Scaled per strategy so a large-size strategy is not
+#: penalised for trading larger.
+_RELATIVE_MAX_MULTIPLE = _env_float("STRATEGY_MAX_TRADE_PROFIT_MULTIPLE", 25.0)
+
+
+def _is_implausible(profit: float, *, relative_to: Optional[float]) -> bool:
+    """Is this outcome too good to have actually happened?
+
+    **Only outsized GAINS are filtered.** A large loss is entirely plausible --
+    a stop-loss, a rug, a crash -- and discarding one is actively dangerous:
+    it removes the evidence that a strategy is losing money. An earlier version
+    of this guard rejected a -10.0 loss, leaving only wins behind, and
+    graduated a strategy that should have been blocked. A filter meant to stop
+    fiction reaching the promotion gate had become a way to launder a losing
+    record, which is worse than the problem it was written for.
+
+    Deliberately conservative in the direction it does filter: a gain must
+    clear BOTH an absolute floor and the strategy's own recent scale before
+    being rejected. A strategy with no history is judged on the absolute bound.
+    """
+    try:
+        value = float(profit)
+    except (TypeError, ValueError):
+        return True                      # unparseable is not recordable
+    if value != value or value in (float("inf"), float("-inf")):   # NaN / inf
+        return True
+    if value <= 0.0:
+        return False                     # losses are always believable
+    if value < _ABSOLUTE_MAX_OUTCOME:
+        return False
+    if relative_to is None or relative_to <= 0.0:
+        return True                      # no history: absolute bound governs
+    return value > relative_to * _RELATIVE_MAX_MULTIPLE
 
 
 def _blank_mode() -> Dict[str, float]:
@@ -96,6 +140,22 @@ class StrategyLedger:
     # Recording + graduation
     # ------------------------------------------------------------------
 
+    def _recent_scale(self, sid: str, mode_key: str) -> Optional[float]:
+        """Average magnitude of this strategy's outcomes so far, or None.
+
+        Uses total_profit/trades rather than a rolling window because the
+        ledger does not retain individual outcomes; it is only ever used as an
+        order-of-magnitude reference, so the approximation is adequate.
+        """
+        try:
+            stats = (self._data.get(sid) or {}).get(mode_key) or {}
+            trades = int(stats.get("trades", 0) or 0)
+            if trades <= 0:
+                return None
+            return abs(float(stats.get("total_profit", 0.0) or 0.0)) / trades
+        except Exception:
+            return None
+
     def record(
         self,
         strategy_id: str,
@@ -107,6 +167,29 @@ class StrategyLedger:
         """Record a closed trade outcome and re-evaluate graduation/demotion."""
         sid = (strategy_id or "unclassified").strip() or "unclassified"
         mode_key = "live" if str(mode).lower() == "live" else "ghost"
+
+        # Reject outcomes too large to be real.
+        #
+        # A ghost position entered while its feed was frozen and closed after
+        # the feed was repaired books the entire repricing as profit. Observed
+        # 2026-08-26: AERO-USDC entered at a stale 0.436805, exited at the
+        # corrected 1.14, and recorded +3.21 on a 4.58-unit position -- a
+        # +161% "gain" that never happened in the market. The same record
+        # carried net_pnl 0.0, so the trade both did and did not make money.
+        #
+        # Left unchecked this is how a strategy graduates on fiction: it is
+        # the same failure that put 969 trades at a 0% win rate into the
+        # ledger and forced a reset. A discarded outcome costs one data point;
+        # an accepted fantasy costs the integrity of the promotion gate.
+        if _is_implausible(profit, relative_to=self._recent_scale(sid, mode_key)):
+            log_message(
+                "strategy-ledger",
+                f"rejected implausible {mode_key} outcome for {sid}: "
+                f"{profit:+.6f} (likely a stale-entry repricing artifact, "
+                "not a real fill)",
+                severity="warning",
+            )
+            return
         with self._lock:
             ent = self._entry(sid)
             stats = ent[mode_key]
