@@ -69,11 +69,59 @@ class ImplausibilityCheck(unittest.TestCase):
         graduates). A filter against fiction must never become a way to
         launder a losing record.
         """
+        # relative_to=None models a strategy with no history, where every
+        # loss must be believed.
         for loss in (-10.0, -50.0, -3.2066, -1000.0):
             self.assertFalse(
-                _is_implausible(loss, relative_to=0.004),
+                _is_implausible(loss, relative_to=None),
                 f"loss {loss} must be recorded, not filtered away",
             )
+
+
+    def test_an_enormous_loss_is_also_filtered(self):
+        """
+        A repricing artifact can be a LOSS as well as a gain.
+
+        The original rule was "never filter a loss", which is right for
+        ordinary losses and wrong for this one case. Observed 2026-08-26:
+        AERO-USDC entered at 0.5122 -- a frozen pre-repair price -- and marked
+        against the corrected 1.14, booking -1.1115 while the same record
+        carried net_pnl 0.0. That is not a strategy losing money, it is a
+        position measured against a price that did not exist when it opened.
+        """
+        # Only filtered when the strategy has history showing this is out of
+        # character. With no history every loss is kept -- see
+        # test_a_first_big_loss_is_never_filtered for why that matters.
+        self.assertTrue(_is_implausible(-3.47, relative_to=0.05))
+        self.assertTrue(_is_implausible(-10.0, relative_to=0.05))
+
+    def test_a_first_big_loss_is_never_filtered(self):
+        """
+        The trap this guards, hit twice.
+
+        Filtering a loss from a strategy with no history discards the FIRST
+        big loss it takes, leaving only wins, and graduates it. Both attempts
+        at an absolute loss bound tripped `test_unprofitable_never_graduates`
+        immediately. A strategy with no track record keeps every loss.
+        """
+        for loss in (-3.47, -10.0, -1000.0):
+            with self.subTest(loss=loss):
+                self.assertFalse(_is_implausible(loss, relative_to=None))
+
+    def test_realistic_losses_are_still_recorded(self):
+        """
+        The filter must stay far away from losses a strategy could really take.
+
+        Discarding a genuine loss is how a losing record gets laundered into a
+        graduation, which is strictly worse than keeping a few artifacts.
+        """
+        for loss in (-0.01, -0.40, -1.11, -1.99):
+            with self.subTest(loss=loss):
+                self.assertFalse(_is_implausible(loss, relative_to=0.05))
+
+    def test_a_large_loss_is_kept_when_the_strategy_trades_at_that_scale(self):
+        """Scale is per strategy for losses exactly as it is for gains."""
+        self.assertFalse(_is_implausible(-10.0, relative_to=1.0))
 
     def test_non_finite_values_are_rejected(self):
         for bad in (float("nan"), float("inf"), float("-inf")):

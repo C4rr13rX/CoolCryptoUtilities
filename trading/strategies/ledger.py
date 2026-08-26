@@ -73,7 +73,38 @@ def _is_implausible(profit: float, *, relative_to: Optional[float]) -> bool:
     if value != value or value in (float("inf"), float("-inf")):   # NaN / inf
         return True
     if value <= 0.0:
-        return False                     # losses are always believable
+        # Losses are believable -- with one exception.
+        #
+        # The original rule was "never filter a loss", on the reasoning that
+        # discarding one hides the fact that a strategy is losing money. That
+        # is right for ordinary losses and wrong for one specific case: a
+        # repricing artifact can be a LOSS as well as a gain.
+        #
+        # Observed 2026-08-26: AERO-USDC entered at 0.5122 -- a frozen
+        # pre-repair price -- and marked against the corrected 1.14, booking
+        # profit -1.1115 while the same record carried net_pnl 0.0. That is
+        # not a strategy losing money, it is a position measured against a
+        # price that did not exist when it was opened, and counting it
+        # punishes a strategy for a data bug.
+        #
+        # BUT: filtering a loss is only ever safe against a strategy that has
+        # already shown its own scale. With no history, `relative_to` is None
+        # and an absolute-bound rule would discard the FIRST big loss a
+        # strategy takes -- leaving only its wins and graduating it. That is
+        # not hypothetical: this exact change was attempted and immediately
+        # tripped `test_unprofitable_never_graduates`, which is the same test
+        # that caught it the first time.
+        #
+        # So a loss is filtered only when the strategy has enough history to
+        # say the loss is out of character. A strategy with no track record
+        # keeps every loss it takes, which is the conservative direction.
+        magnitude = -value
+        if relative_to is None or relative_to <= 0.0:
+            return False
+        return (
+            magnitude >= _ABSOLUTE_MAX_OUTCOME
+            and magnitude > relative_to * _RELATIVE_MAX_MULTIPLE
+        )
     if value < _ABSOLUTE_MAX_OUTCOME:
         return False
     if relative_to is None or relative_to <= 0.0:
