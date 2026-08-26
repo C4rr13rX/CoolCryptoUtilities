@@ -58,15 +58,22 @@ class MoneyButtonStrategy(Strategy):
     #: unreachable, and `evaluate_all` would have skipped this strategy
     #: forever while looking perfectly healthy.
     #:
-    #: 12 samples over 90 minutes leaves real headroom at the measured rate,
-    #: and still spans far more than the 12 minutes the 5m/10m/30m return
-    #: comparisons need to mean anything. Both are env-tunable so a faster
-    #: feed can tighten them back up without a code change.
-    min_samples = max(6, int(env_float("MONEY_BUTTON_MIN_SAMPLES", 12, lo=6, hi=60)))
+    #: 10 samples over 120 minutes. The first attempt at 12/90 computed to
+    #: EXACTLY 12.0 samples in steady state against the observed 7.5-minute
+    #: median gap -- zero headroom, so any slowdown would drop the window
+    #: below the minimum and silently stop the strategy being evaluated at
+    #: all. 10/120 holds ~16, which survives a feed slowdown of nearly 40%
+    #: before that happens. A requirement the feed can only just meet is a
+    #: requirement it will fail.
+    #:
+    #: The 12-minute minimum span is still satisfied with room to spare: 10
+    #: samples at 7.5-minute gaps span about 68 minutes. Both bounds are
+    #: env-tunable so a faster feed can tighten them without a code change.
+    min_samples = max(6, int(env_float("MONEY_BUTTON_MIN_SAMPLES", 10, lo=6, hi=60)))
 
     #: Window actually inspected. Wider than the horizon on purpose: the
     #: entry is short, but the evidence for it should not be.
-    LOOKBACK_SEC = env_float("MONEY_BUTTON_LOOKBACK_MIN", 90.0, lo=15.0, hi=360.0) * 60.0
+    LOOKBACK_SEC = env_float("MONEY_BUTTON_LOOKBACK_MIN", 120.0, lo=15.0, hi=360.0) * 60.0
 
     @staticmethod
     def _return_over(ts: np.ndarray, prices: np.ndarray, seconds: float) -> float:

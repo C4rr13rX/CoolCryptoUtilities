@@ -235,16 +235,24 @@ class MoneyButtonOnASparseFeed(unittest.TestCase):
         """
         A requirement the feed cannot satisfy is a permanent silent refusal.
 
-        At 0.15 ticks/min the lookback window must be wide enough to hold
-        min_samples, or the strategy never runs at all.
+        The window must hold min_samples with MARGIN at the observed gap, or
+        the strategy stops being evaluated the moment the feed dips.
         """
         strategy = MoneyButtonStrategy()
         window_minutes = strategy.LOOKBACK_SEC / 60.0
-        holds = 0.15 * window_minutes
+        # Observed median gap between prints on a live symbol, not the
+        # smoothed average: 7.5 minutes. Sizing from the average hid the fact
+        # that a 12/90 configuration computed to EXACTLY 12.0 samples in
+        # steady state -- satisfiable only if the feed never slows at all.
+        holds = window_minutes / 7.5
+        headroom = holds - strategy.min_samples
         self.assertGreaterEqual(
-            holds, strategy.min_samples,
-            f"window holds ~{holds:.1f} samples at the measured rate but "
-            f"min_samples is {strategy.min_samples}: unreachable",
+            headroom, 3.0,
+            f"window holds ~{holds:.1f} samples at the observed 7.5-min gap "
+            f"but min_samples is {strategy.min_samples} (headroom "
+            f"{headroom:+.1f}). A requirement the feed can only just meet is "
+            f"one it will fail, and the failure is silent: evaluate_all simply "
+            f"stops considering this strategy.",
         )
 
     def test_refusals_still_hold_on_a_sparse_feed(self):
