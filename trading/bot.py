@@ -657,6 +657,35 @@ class TradingBot:
         except Exception:
             pass
 
+    def _ghost_halt_is_per_strategy(self) -> bool:
+        """Should a global ghost halt be ignored in favour of per-strategy gates?
+
+        ``halt_ghost`` is raised from ONE aggregate accuracy number, and it
+        zeroes the risk budget, which stops the scheduler for every strategy at
+        once. That defeats the point of per-strategy graduation: each strategy
+        keeps its own ledger and is promoted on its own record, but a single
+        weak strategy dragging the average down froze collection for all of
+        them -- including strategies with good records, and including any new
+        strategy that had not yet placed its first trade.
+
+        It is also circular. Ghost trading is how a strategy *earns* the
+        evidence the accuracy gate is measuring, so halting collection because
+        accuracy is low guarantees accuracy stays low. Observed 2026-08-26:
+        precision 0.416 against a 0.6 target, with ghost collection halted, so
+        nothing could ever move it.
+
+        The live gate is untouched. ``halt_live`` still applies globally, and
+        ``_strategy_live_approved`` still requires a strategy to have graduated
+        on its own ledger before it can trade real money. This only keeps GHOST
+        simulation running, which risks nothing and is the only way out of the
+        deadlock.
+
+        Set ``GHOST_HALT_GLOBAL=1`` to restore the old all-or-nothing behaviour.
+        """
+        if os.getenv("GHOST_HALT_GLOBAL", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            return False
+        return not bool(self.live_trading_enabled)
+
     def _strategy_live_approved(self, directive: Optional["TradeDirective"]) -> bool:
         """Dual-track gate: only ghost-graduated strategies may enter live.
 
@@ -2747,7 +2776,7 @@ class TradingBot:
             risk_budget *= ghost_multiplier
             if plan_flags.get("bus_actions_pending"):
                 risk_budget = min(risk_budget, 0.25)
-            if plan_flags.get("halt_ghost"):
+            if plan_flags.get("halt_ghost") and not self._ghost_halt_is_per_strategy():
                 risk_budget = 0.0
             try:
                 allocation_map = self._compute_base_allocation(sample)
