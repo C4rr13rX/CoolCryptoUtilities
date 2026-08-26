@@ -578,6 +578,8 @@ class MarketDataStream:
         self._low_liquidity_pause_until = 0.0
         vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
         self._window_prices: deque = deque(maxlen=vol_window)
+        #: In-flight async consumer tasks, held so they are not GC'd mid-run.
+        self._callback_tasks: Set["asyncio.Task[Any]"] = set()
         self._ws_warning_logged = False
         if not self.url and not self._ws_disabled:
             self._select_next_endpoint()
@@ -886,6 +888,11 @@ class MarketDataStream:
 
     async def stop(self) -> None:
         self._stop_event.set()
+        # Drop consumer work still in flight; a stopped stream's samples are
+        # no longer wanted and the tasks would otherwise outlive it.
+        for task in list(self._callback_tasks):
+            task.cancel()
+        self._callback_tasks.clear()
         if self._session:
             await self._session.close()
             self._session = None
@@ -1293,14 +1300,52 @@ class MarketDataStream:
             drift=drift,
             fallback=(sample.get("rest") == "fallback"),
         )
+        # Consumers must not throttle acquisition.
+        #
+        # Awaiting async callbacks inline made the price feed run at the speed
+        # of the slowest consumer. TradingBot._handle_sample runs the whole
+        # TF/strategy pipeline per sample, so in production each stream
+        # recorded roughly ONE tick instead of one per second, and no symbol
+        # ever accumulated the ~20 samples over 12+ minutes that the
+        # short-horizon strategies need to evaluate at all.
+        #
+        # Measured on AERO-USDC over a 30s poll window:
+        #     no callback        29 writes
+        #     2s async callback  10 writes
+        #     10s async callback  3 writes
+        #
+        # Async callbacks are therefore scheduled rather than awaited. The bot
+        # already has its own queue and a `_processing_sample` guard that
+        # coalesces bursts, so it is built for exactly this. Sync callbacks
+        # still run inline: they are cheap by construction, and moving them
+        # would reorder side effects consumers may rely on.
         for callback in list(self._callbacks):
             try:
                 if asyncio.iscoroutinefunction(callback):  # type: ignore[arg-type]
-                    await callback(sample)  # type: ignore[misc]
+                    task = asyncio.create_task(callback(sample))  # type: ignore[misc]
+                    # Hold a reference so the task is not garbage-collected
+                    # mid-flight, and surface failures that would otherwise be
+                    # swallowed by a dropped task.
+                    self._callback_tasks.add(task)
+                    task.add_done_callback(self._on_callback_done)
                 else:
                     callback(sample)  # type: ignore[misc]
             except Exception as exc:
                 log_message("market-stream", f"callback error: {exc}", severity="error")
+
+    def _on_callback_done(self, task: "asyncio.Task[Any]") -> None:
+        """Reap a finished consumer task and report anything it raised."""
+        self._callback_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log_message(
+                "market-stream",
+                f"callback error: {exc}",
+                severity="error",
+                details={"symbol": self.symbol, "exc_type": type(exc).__name__},
+            )
 
     def _debug(self, label: str, extra: Optional[Dict[str, Any]] = None) -> None:
         try:
