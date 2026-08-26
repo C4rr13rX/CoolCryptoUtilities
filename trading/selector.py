@@ -49,6 +49,9 @@ class PairCandidate:
 
 
 _LIVE_PAIR_CACHE: Dict[str, bool] = {}
+#: Suppressed pairs already reported this process, so the ~320 known-dead
+#: pairs are announced once instead of on every selection pass.
+_SUPPRESSION_LOGGED: set[str] = set()
 _SUPPRESSION_TTL = float(os.getenv("PAIR_SUPPRESSION_TTL", str(6 * 3600)))
 _ALWAYS_LIVE_SYMBOLS = {
     "WETH-USDC",
@@ -186,8 +189,16 @@ def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
     if symbol_u in _ALWAYS_LIVE_SYMBOLS:
         _LIVE_PAIR_CACHE[key] = True
         return True
-    if _db.is_pair_suppressed(key):
-        record = _db.get_pair_suppression(key) or {}
+    # One lookup, not two. `is_pair_suppressed` already fetches the record and
+    # `_has_live_price` then fetched it again, so every one of the ~320
+    # suppressed pairs cost two DB round trips on every selection pass. That is
+    # most of the ~10 minutes production spends in pair enumeration before a
+    # single market stream starts.
+    record = _db.get_pair_suppression(key) or {}
+    _suppressed = bool(record) and float(record.get("release_ts") or 0.0) > time.time()
+    if record and not _suppressed:
+        _db.clear_pair_suppression(key)
+    if _suppressed:
         remaining = float(record.get("release_ts", 0.0)) - time.time()
         wait_minutes = max(0.0, remaining / 60.0)
         reason = record.get("reason") or "suppressed"
@@ -197,10 +208,17 @@ def _has_live_price(symbol: str, chain: str = PRIMARY_CHAIN) -> bool:
         # the whole production manager, which then crash-looped every ~3
         # minutes under the supervisor. A diagnostic print must never be able
         # to stop trading, so degrade the characters rather than the process.
-        _safe_print(
-            f"[pair-select] suppressed {symbol_u}: {reason}; "
-            f"retry in ~{wait_minutes:.1f} min."
-        )
+        # Log each suppressed pair once per process, not on every selection
+        # pass. There are ~320 suppressed pairs and selection runs repeatedly,
+        # so this printed 320 lines per pass forever -- it buried real startup
+        # diagnostics and made a cheap cache lookup look like expensive work
+        # while streams were still waiting to start.
+        if key not in _SUPPRESSION_LOGGED:
+            _SUPPRESSION_LOGGED.add(key)
+            _safe_print(
+                f"[pair-select] suppressed {symbol_u}: {reason}; "
+                f"retry in ~{wait_minutes:.1f} min."
+            )
         _LIVE_PAIR_CACHE[key] = False
         return False
 
