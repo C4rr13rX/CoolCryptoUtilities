@@ -80,9 +80,23 @@ class DiscoveryCoordinator:
             if change < min_change or liquidity < min_liquidity:
                 continue
             symbol = str(token.symbol or "").upper()
-            # Only USD-quoted pairs: a token/token pair prices as a ratio, not
-            # a dollar value, which poisons every strategy's arithmetic.
-            if not symbol or not symbol.endswith(("-USDC", "-USDT", "-DAI")):
+            # Only USD-quoted pairs, and only well-formed ones.
+            #
+            # `endswith("-USDC")` alone is not enough: a symbol like
+            # BASECAT-ETH-USDC passes it while being nonsense. Those appear
+            # because GeckoTerminal lists the same token against several
+            # quotes ("BASECAT / ETH 0.3%"), the pair symbol becomes
+            # BASECAT-ETH, and a downstream consumer then appends its own
+            # quote. Streaming one means requesting a pair that does not
+            # exist, so require exactly BASE-QUOTE.
+            parts = [p for p in symbol.split("-") if p]
+            if len(parts) != 2:
+                continue
+            base_sym, quote_sym = parts
+            if quote_sym not in {"USDC", "USDT", "DAI"}:
+                continue
+            # A stable-stable pair never moves enough to clear fees.
+            if base_sym in {"USDC", "USDT", "DAI", "USDBC", "BUSD"}:
                 continue
             promoted.append(symbol)
 

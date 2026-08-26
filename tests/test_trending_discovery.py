@@ -156,6 +156,33 @@ class PromotionToStreamWatchlist(unittest.TestCase):
             with self.subTest(symbol):
                 self.assertEqual(self._promote([self._token(symbol, 5.0, 900000.0)]), [])
 
+
+    def test_malformed_multi_hyphen_symbols_are_refused(self):
+        """
+        `endswith("-USDC")` alone lets nonsense through.
+
+        BASECAT-ETH-USDC passed the original check while describing a pair
+        that does not exist. These arise because GeckoTerminal lists a token
+        against several quotes ("BASECAT / ETH 0.3%"), the pair symbol becomes
+        BASECAT-ETH, and a downstream consumer appends its own quote. Eight of
+        these reached the live watchlist before the check was tightened.
+        """
+        for symbol in ("BASECAT-ETH-USDC", "STONKEX-WETH-USDC",
+                       "NVDAC-USDC-USDC", "DRB-WETH-USDC"):
+            with self.subTest(symbol):
+                self.assertEqual(self._promote([self._token(symbol, 5.0, 900000.0)]), [])
+
+    def test_stable_stable_pairs_are_refused(self):
+        """Two stablecoins never move enough to clear a round trip."""
+        for symbol in ("USDT-USDC", "DAI-USDC"):
+            with self.subTest(symbol):
+                self.assertEqual(self._promote([self._token(symbol, 2.0, 900000.0)]), [])
+
+    def test_a_well_formed_pair_still_passes(self):
+        """The tightening must not reject the good case."""
+        self.assertIn("BASECAT-USDC",
+                      self._promote([self._token("BASECAT-USDC", 6.72, 787688.0)]))
+
     def test_promotion_is_capped(self):
         """A burst of discoveries must not crowd out the existing universe."""
         many = [self._token(f"TOK{i}-USDC", 5.0, 900000.0) for i in range(80)]
