@@ -398,7 +398,17 @@ class ProductionManager:
                 self._backlog_strikes += 1
                 log_message(
                     "production",
-                    f"skipping cycle {cycle_id}: backlog {backlog} >= {self._max_pending}",
+                    # Report the limit actually applied. Printing the
+                    # unthrottled _max_pending produced lines like
+                    # "backlog 9 >= 24", which reads as a broken comparison and
+                    # hides the fact that the governor had cut the ceiling to 8.
+                    f"skipping cycle {cycle_id}: backlog {backlog} >= "
+                    f"{effective_max_pending}"
+                    + (
+                        f" (governor-reduced from {self._max_pending})"
+                        if effective_max_pending != self._max_pending
+                        else ""
+                    ),
                     severity="warning",
                 )
                 if self._backlog_strikes >= 3 and hasattr(self.task_manager, "reset_queues"):

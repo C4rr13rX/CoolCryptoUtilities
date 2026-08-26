@@ -140,15 +140,25 @@ class MoneyButtonEntries(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertGreater(result["directive"].expected_return, 2.0 * fee)
 
-    def test_it_stays_inside_its_five_to_ten_minute_lane(self):
-        """The lane is the strategy's identity; drifting out of it is a bug."""
+    def test_it_stays_inside_its_short_horizon_lane(self):
+        """
+        The lane is the strategy's identity; drifting out of it is a bug.
+
+        Widened from 5-10 to 5-15 minutes deliberately. At the live 0.65%
+        one-way fee a round trip costs ~1.4%, and an 8-minute hold projected
+        from a 25%-over-73-minute trend yields only 1.17% after decay -- a
+        decline. The same trend clears comfortably at 15 minutes (2.27%).
+        Holding the 10-minute ceiling would have produced a strategy that is
+        honest and never trades. The fee floor, not the clock, is what makes
+        this lane safe.
+        """
         result = evaluate(list(np.linspace(1.0, 1.25, 40)))
         self.assertIsNotNone(result)
         horizon = result["directive"].horizon
         self.assertRegex(horizon, r"^\d+m$")
         self.assertTrue(
-            5 <= int(horizon.rstrip("m")) <= 10,
-            f"horizon {horizon} escaped the 5-10 minute lane",
+            5 <= int(horizon.rstrip("m")) <= 15,
+            f"horizon {horizon} escaped the 5-15 minute lane",
         )
 
     def test_it_reports_its_cost_arithmetic(self):
@@ -182,6 +192,75 @@ class MoneyButtonRegistration(unittest.TestCase):
         ids = list(build_default_registry().ids())
         money = [i for i in ids if i.startswith("money_button")]
         self.assertEqual(money, ["money_button"], f"unexpected variants: {money}")
+
+
+class MoneyButtonOnASparseFeed(unittest.TestCase):
+    """
+    The strategy must work on the feed that exists, not an ideal one.
+
+    Production sustains **0.13-0.17 ticks per minute per symbol** (measured
+    over 1h, 3h and 24h windows: ~24 streams sharing one event loop on a
+    6-core box). Two settings assumed a roughly 1/sec feed and made the
+    strategy permanently unevaluable at that rate:
+
+      * `min_samples = 20` inside a 45-minute window. At 0.15/min that window
+        settles at ~7 samples, so `evaluate_all` skipped this strategy forever
+        while everything looked healthy.
+      * fixed 5/10/30-minute return windows. With prints ~6.7 minutes apart
+        the trailing 5-minute window often contains NO sample, so
+        `_return_over` compared the last price to itself, returned exactly
+        0.0, and `r5 <= 0.0` rejected every candidate -- reported as "no
+        momentum" rather than "the window was empty".
+    """
+
+    @staticmethod
+    def _sparse(prices, gap_sec=400.0):
+        """12 samples ~6.7 minutes apart: the real production shape."""
+        return make_state(list(prices), volume=5000.0, dt=gap_sec)
+
+    def _evaluate(self, prices, gap_sec=400.0, fee_rate=0.0065):
+        state = self._sparse(prices, gap_sec)
+        return MoneyButtonStrategy().evaluate(
+            state, make_ctx(float(prices[-1]), fee_rate)
+        )
+
+    def test_a_strong_trend_fires_on_widely_spaced_samples(self):
+        """The case that was permanently impossible before."""
+        result = self._evaluate(np.linspace(1.0, 1.25, 12))
+        self.assertIsNotNone(
+            result, "a 25% trend must fire even when prints are 6.7 min apart"
+        )
+
+    def test_min_samples_is_reachable_at_the_measured_tick_rate(self):
+        """
+        A requirement the feed cannot satisfy is a permanent silent refusal.
+
+        At 0.15 ticks/min the lookback window must be wide enough to hold
+        min_samples, or the strategy never runs at all.
+        """
+        strategy = MoneyButtonStrategy()
+        window_minutes = strategy.LOOKBACK_SEC / 60.0
+        holds = 0.15 * window_minutes
+        self.assertGreaterEqual(
+            holds, strategy.min_samples,
+            f"window holds ~{holds:.1f} samples at the measured rate but "
+            f"min_samples is {strategy.min_samples}: unreachable",
+        )
+
+    def test_refusals_still_hold_on_a_sparse_feed(self):
+        """Adapting to sparse data must not weaken any refusal."""
+        for label, prices in (
+            ("frozen", np.full(12, 1.0)),
+            ("downtrend", np.linspace(1.25, 1.0, 12)),
+            ("weak drift", np.linspace(1.0, 1.01, 12)),
+        ):
+            with self.subTest(label):
+                self.assertIsNone(self._evaluate(prices))
+
+    def test_a_spike_that_stalls_is_still_refused(self):
+        """Momentum must be live, not merely present earlier in the window."""
+        prices = np.concatenate([np.linspace(1.0, 1.25, 9), np.full(3, 1.25)])
+        self.assertIsNone(self._evaluate(prices))
 
 
 if __name__ == "__main__":

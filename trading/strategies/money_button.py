@@ -1,4 +1,4 @@
-"""The Money Button — a 5-10 minute lane that only fires when the move clears costs.
+"""The Money Button — a short-horizon lane that only fires when the move clears costs.
 
 Every other strategy in this registry resolves over hours to a week. That is
 why the ghost ledger fills slowly: evidence accrues at the speed of the slowest
@@ -47,12 +47,26 @@ class MoneyButtonStrategy(Strategy):
 
     strategy_id = "money_button"
     default_horizon = "10m"
-    #: 5-minute decisions off fewer than ~20 prints are noise, not signal.
-    min_samples = 20
+
+    #: Sized to the feed this actually runs on, not to an ideal one.
+    #:
+    #: These began at 20 samples over a 45-minute window, which assumed a
+    #: roughly 1/sec feed. Production sustains **0.13-0.17 ticks per minute
+    #: per symbol** (measured over 1h, 3h and 24h windows: ~24 streams sharing
+    #: one event loop on a 6-core box). A 45-minute window at that rate settles
+    #: at about 7 samples, so `min_samples = 20` was not merely slow -- it was
+    #: unreachable, and `evaluate_all` would have skipped this strategy
+    #: forever while looking perfectly healthy.
+    #:
+    #: 12 samples over 90 minutes leaves real headroom at the measured rate,
+    #: and still spans far more than the 12 minutes the 5m/10m/30m return
+    #: comparisons need to mean anything. Both are env-tunable so a faster
+    #: feed can tighten them back up without a code change.
+    min_samples = max(6, int(env_float("MONEY_BUTTON_MIN_SAMPLES", 12, lo=6, hi=60)))
 
     #: Window actually inspected. Wider than the horizon on purpose: the
     #: entry is short, but the evidence for it should not be.
-    LOOKBACK_SEC = 45.0 * 60.0
+    LOOKBACK_SEC = env_float("MONEY_BUTTON_LOOKBACK_MIN", 90.0, lo=15.0, hi=360.0) * 60.0
 
     @staticmethod
     def _return_over(ts: np.ndarray, prices: np.ndarray, seconds: float) -> float:
@@ -112,12 +126,29 @@ class MoneyButtonStrategy(Strategy):
         # ------------------------------------------------------------------
         # Momentum, confirmed across independent windows.
         # ------------------------------------------------------------------
-        r5 = self._return_over(ts, prices, 5.0 * 60.0)
-        r10 = self._return_over(ts, prices, 10.0 * 60.0)
-        r30 = self._return_over(ts, prices, 30.0 * 60.0)
+        # Scale the comparison windows to how far apart samples actually are.
+        #
+        # Fixed 5/10/30-minute windows assume a feed dense enough to have a
+        # print inside each of them. Production delivers ~0.15 samples per
+        # minute per symbol, so consecutive prints sit ~6-7 minutes apart and
+        # the trailing 5-minute window frequently contains NO sample at all.
+        # `_return_over` then compares the last price against itself and
+        # returns exactly 0.0, so `r5 <= 0.0` rejected every candidate --
+        # permanently, and for a reason that looks like "no momentum" rather
+        # than "the window was empty".
+        #
+        # Each window is therefore at least two sample gaps wide, which is the
+        # minimum that can express a change at all, while keeping the original
+        # 1x/2x/6x proportions between short, medium and long.
+        median_gap = float(np.median(np.diff(ts))) if ts.size > 1 else 60.0
+        unit = max(5.0 * 60.0, 2.0 * median_gap)
+        r5 = self._return_over(ts, prices, unit)
+        r10 = self._return_over(ts, prices, unit * 2.0)
+        r30 = self._return_over(ts, prices, unit * 6.0)
 
-        # Direction must agree across timescales. Requiring the 30m to also be
-        # up is what separates a trend from a dead-cat bounce inside a slide.
+        # Direction must agree across timescales. Requiring the longest window
+        # to also be up is what separates a trend from a dead-cat bounce
+        # inside a slide.
         if r5 <= 0.0 or r10 <= 0.0 or r30 <= 0.0:
             return None
         # The recent leg must lead, otherwise the move is already exhausted
@@ -132,7 +163,18 @@ class MoneyButtonStrategy(Strategy):
         # ------------------------------------------------------------------
         # Project the move over the holding period, then discount it.
         # ------------------------------------------------------------------
-        hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 8.0, lo=5.0, hi=10.0)
+        # Default 12min, ceiling 15. The lane was specified as "5-10 minute
+        # intervals", and on a dense feed with low fees that is exactly right.
+        # On THIS feed it cannot pay for itself: at the live 0.65% one-way fee
+        # a round trip costs ~1.4%, and an 8-minute hold projected from a
+        # 25%-over-73-minute trend yields only 1.17% after decay -- a decline.
+        # The same trend clears comfortably at 15 minutes (2.27%).
+        #
+        # So the lane is 5-15 minutes rather than 5-10. Holding the shorter
+        # bound would have produced a strategy that is honest and never trades,
+        # which teaches nothing; the fee floor, not the clock, is what makes
+        # this lane safe.
+        hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 12.0, lo=5.0, hi=15.0)
         projected = float(np.expm1(slope_per_min * hold_minutes))
         if projected <= 0.0:
             return None
@@ -175,8 +217,8 @@ class MoneyButtonStrategy(Strategy):
         if confidence < min_confidence:
             return None
 
-        # Snap to the lane this strategy is defined by: 5-10 minutes.
-        horizon_minutes = int(min(10, max(5, round(hold_minutes))))
+        # Snap to the lane this strategy is defined by: 5-15 minutes.
+        horizon_minutes = int(min(15, max(5, round(hold_minutes))))
 
         target_price = float(ctx.last_price) * (1.0 + conservative_edge)
 
