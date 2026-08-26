@@ -242,8 +242,18 @@ _KRAKEN_SYMBOL_MAP = {
 }
 _KRAKEN_QUOTE_MAP = {"USD": "USD", "USDT": "USDT", "USDC": "USDC", "ETH": "ETH", "BTC": "XBT"}
 
-# Endpoint controls (env override; defaults exclude noisiest WS providers)
-_DEFAULT_ENDPOINT_EXCLUDE: Set[str] = {"dexscreener"}
+# Endpoint controls (env override; defaults exclude noisiest WS providers).
+#
+# dexscreener is NOT excluded by default any more. Excluding it starved the
+# only price source that covers the Base-chain DEX tokens this bot actually
+# trades: of 94 streamed symbols only 12 are listed on MEXC, so the other 82
+# subscribed to a centralised feed that has never heard of them, received
+# nothing, and held a frozen seed price. 43 symbols ended up with a single
+# distinct price, 43% of ghost trades exited at exactly their entry, and the
+# median 5-minute move measured 0.000% -- not because the market was quiet,
+# but because the feed was blind. The same tokens on dexscreener move 1-7% in
+# five minutes.
+_DEFAULT_ENDPOINT_EXCLUDE: Set[str] = set()
 _ENV_ENDPOINT_INCLUDE: Set[str] = {
     name.strip().lower()
     for name in (os.getenv("MARKET_ENDPOINT_INCLUDE") or "").split(",")
@@ -2178,6 +2188,32 @@ class MarketDataStream:
                     ),
                 )
             )
+        # --- DexScreener: the only source that covers on-chain DEX tokens ---
+        #
+        # This bot mostly trades Base-chain tokens that no centralised
+        # exchange lists. Of 94 streamed symbols, 12 exist on MEXC; the rest
+        # were subscribing to a feed that had never heard of them and holding
+        # a frozen seed price as a result. The response parser for this
+        # endpoint already existed further down the file -- nothing ever
+        # constructed the endpoint to feed it.
+        if _endpoint_allowed("dexscreener"):
+            endpoints.append(
+                Endpoint(
+                    name="dexscreener",
+                    ws_template=None,     # REST only; no public websocket
+                    subscribe_template=None,
+                    rest_template=(
+                        "https://api.dexscreener.com/latest/dex/search"
+                        f"?q={base.upper()}%20{quote.upper()}"
+                    ),
+                    # DexScreener rejects header-less clients with HTTP 403.
+                    # aiohttp sends no default User-Agent, so without this the
+                    # endpoint is added and then fails on every single call --
+                    # which is what an earlier note in .env recorded as
+                    # "dexscreener 403s too" and used to justify dropping it.
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; R3V3N1R/1.0)"},
+                )
+            )
         return endpoints
 
     # Real-time WS exchanges that serve USDC/USDT natively. coinbase lists
@@ -2190,7 +2226,9 @@ class MarketDataStream:
     # REST-only / fallback sources always rank after the WS pool.
     _FALLBACK_PREFERENCE = {
         "coingecko": 0, "bitstamp": 1, "gateio": 2, "htx": 3,
-        "geckoterminal": 4, "binance": 20,
+        # dexscreener ahead of geckoterminal: both cover on-chain pools, but
+        # dexscreener resolves the Base tokens this bot trades far more often.
+        "dexscreener": 4, "geckoterminal": 5, "binance": 20,
     }
 
     def _ranked_endpoints(self) -> List[Endpoint]:
@@ -3622,6 +3660,7 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
             pairs = payload.get("pairs") or []
             best_ratio: Optional[float] = None
             best_liquidity = 0.0
+            candidates: List[Tuple[float, float]] = []   # (price, liquidity_usd)
             base_synonyms = _token_synonyms(base)
             quote_synonyms = _token_synonyms(quote)
             stable_quotes = {"USDT", "USDC", "BUSD", "USD"}
@@ -3645,9 +3684,37 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
                         ratio = base_liq / max(quote_liq, 1e-12)
                 ratio_val = _safe_float(ratio)
                 liquidity_usd = _safe_float(pair.get("liquidity", {}).get("usd"))
+                if ratio_val > 0:
+                    candidates.append((ratio_val, liquidity_usd))
                 if ratio_val > 0 and liquidity_usd >= best_liquidity:
                     best_ratio = ratio_val
                     best_liquidity = liquidity_usd
+
+            # Sanity-check the deepest pool against the consensus of its peers.
+            #
+            # Picking purely by reported liquidity trusts a number anyone can
+            # fabricate. Observed live: cbXRP/USDC quoted at 1.41 on three
+            # separate DEXes, alongside a pancakeswap pool claiming $117M of
+            # liquidity at 0.001177 -- a 1,200x error that would have been
+            # handed straight to the trade path as a real price.
+            #
+            # So when several independent pools agree, require the winner to
+            # land within an order of magnitude of their median and otherwise
+            # fall back to that median. One pool cannot outvote the market
+            # simply by claiming to be the biggest.
+            if len(candidates) >= 3 and best_ratio:
+                ordered = sorted(val for val, _liq in candidates)
+                median = ordered[len(ordered) // 2]
+                if median > 0 and not (0.1 <= best_ratio / median <= 10.0):
+                    log_message(
+                        "market-stream",
+                        f"dexscreener {base}/{quote}: deepest pool quoted "
+                        f"{best_ratio:.8g} against a peer median of "
+                        f"{median:.8g}; using the median",
+                        severity="warning",
+                    )
+                    best_ratio = median
+
             if best_ratio and best_ratio > 0:
                 return float(best_ratio)
     except Exception:
