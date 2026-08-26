@@ -590,6 +590,9 @@ class MarketDataStream:
         self._low_liquidity_pause_until = 0.0
         vol_window = max(1, int(os.getenv("STREAM_VOL_WINDOW", "360")))
         self._window_prices: deque = deque(maxlen=vol_window)
+        #: Synthetic ticks refused, and when we last said so out loud.
+        self._synthetic_drops = 0
+        self._last_synthetic_log = 0.0
         #: In-flight async consumer tasks, held so they are not GC'd mid-run.
         self._callback_tasks: Set["asyncio.Task[Any]"] = set()
         self._ws_warning_logged = False
@@ -1256,7 +1259,51 @@ class MarketDataStream:
             except Exception as exc:
                 log_message("market-stream", f"on-chain dispatch error: {exc}", severity="error")
 
+    #: Sample sources that are not observed market prices.
+    #:
+    #: "fallback" is a median of stale per-source prices (or the reference
+    #: price) invented when consensus fails; "offline" replays a cached
+    #: snapshot, sometimes one belonging to a DIFFERENT symbol via alias
+    #: matching. Neither is a price anything actually traded at.
+    _SYNTHETIC_SOURCES = frozenset({"fallback", "offline", "bootstrap", "reference", "snapshot"})
+
     async def _dispatch(self, sample: Dict[str, Any]) -> None:
+        # Never record an invented price.
+        #
+        # When the feed could not get a real quote, these paths published a
+        # made-up one so downstream consumers "keep moving". The result is
+        # worse than stalling: strategies cannot distinguish a fabricated tick
+        # from an observed one, so they trade on it with full confidence.
+        #
+        # Measured 2026-08-26 over two hours: 211 ticks, of which 173 (82%)
+        # were "fallback" and 36 (17%) "offline" -- **two** came from a live
+        # venue. BASEJUICE-USDC alternated between 0.00111 and 1.00004, a 900x
+        # swing, because the offline store served USDC's dollar price under an
+        # alias. Five other symbols showed exactly +0.00% movement, which is a
+        # cached value repeating, not a stable market.
+        #
+        # A feed that cannot price a symbol must say so and let the operator
+        # fix it. Silence is recoverable; fiction is not.
+        source_label = str(sample.get("rest") or sample.get("source") or "").lower()
+        if source_label in self._SYNTHETIC_SOURCES:
+            if os.getenv("ALLOW_SYNTHETIC_TICKS", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+                self._synthetic_drops += 1
+                now_drop = time.time()
+                if now_drop - self._last_synthetic_log >= 60.0:
+                    self._last_synthetic_log = now_drop
+                    log_message(
+                        "market-stream",
+                        f"{self.symbol}: no live price available "
+                        f"({source_label}); dropping synthetic tick",
+                        severity="warning",
+                        details={
+                            "symbol": self.symbol,
+                            "source": source_label,
+                            "dropped_total": self._synthetic_drops,
+                        },
+                    )
+                return
+
         try:
             self._last_volume = float(sample.get("volume") or self._last_volume or 0.0)
         except Exception:
