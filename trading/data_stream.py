@@ -3552,6 +3552,13 @@ def _split_symbol(symbol: str) -> Tuple[str, str]:
 _VENUE_SYMBOLS: Dict[str, Optional[Set[str]]] = {}
 _VENUE_SYMBOLS_LOCK = threading.Lock()
 
+#: When a venue's symbol-list probe fails, do not retry before this time.
+#: Without it a venue that consistently refuses us (bybit 403s from this host)
+#: is re-probed on every single call, which turns an in-process check into a
+#: network round trip and defeats the point of the check being cheap.
+_VENUE_PROBE_RETRY_AT: Dict[str, float] = {}
+_VENUE_PROBE_BACKOFF = max(60.0, float(os.getenv("VENUE_PROBE_BACKOFF_SEC", "900")))
+
 
 def _fetch_venue_symbols(venue: str) -> Optional[Set[str]]:
     """Fetch a venue's spot symbol list, or None if it cannot be determined."""
@@ -3623,17 +3630,26 @@ def _venue_lists(venue: str, base: str, quote: str) -> bool:
         with _VENUE_SYMBOLS_LOCK:
             symbols = _VENUE_SYMBOLS.get(venue)
             if symbols is None:
+                # A venue that is refusing us (bybit answers 403 from this
+                # host) would otherwise be re-probed on *every* call, turning
+                # a cheap local check into a network round trip. Back off
+                # instead: still fail open, but stop asking for a while.
+                if time.time() < _VENUE_PROBE_RETRY_AT.get(venue, 0.0):
+                    return True
                 try:
                     fetched = _fetch_venue_symbols(venue)
                 except Exception as exc:
+                    _VENUE_PROBE_RETRY_AT[venue] = time.time() + _VENUE_PROBE_BACKOFF
                     log_message(
                         "market-stream",
-                        f"could not fetch {venue} symbol list ({exc}); "
-                        f"allowing {venue} endpoints unchecked",
+                        f"could not fetch {venue} symbol list ({exc}); allowing "
+                        f"{venue} endpoints unchecked for "
+                        f"{_VENUE_PROBE_BACKOFF / 60:.0f} min",
                         severity="warning",
                     )
                     return True
                 if not fetched:
+                    _VENUE_PROBE_RETRY_AT[venue] = time.time() + _VENUE_PROBE_BACKOFF
                     return True
                 _VENUE_SYMBOLS[venue] = fetched
                 symbols = fetched
@@ -3650,6 +3666,44 @@ def _venue_lists(venue: str, base: str, quote: str) -> bool:
 def _mexc_lists(base: str, quote: str) -> bool:
     """Backwards-compatible shim for the MEXC-specific check."""
     return _venue_lists("mexc", base, quote)
+
+
+def has_price_endpoints(symbol: str) -> bool:
+    """Can this pair be priced at all, without constructing a stream?
+
+    ``trading/selector.py`` asks this for every candidate pair on every
+    selection pass. It used to answer by building a full ``MarketDataStream``
+    and throwing it away -- which allocates a MetricsCollector, a 360-slot
+    price deque, endpoint health tables, runs endpoint selection and writes a
+    debug log line, all to read one boolean. At the observed rate of roughly
+    25 constructions a minute the production process climbed to 77 threads and
+    871MB while starting almost no streams, which is what actually starved the
+    real streams of samples once the feed itself was fixed.
+
+    ``_build_endpoints`` only reads ``_rest_base``/``_rest_quote``, so this
+    supplies exactly those and reuses the identical logic -- no drift between
+    what the check believes and what a real stream would build.
+    """
+    try:
+        rest_base, rest_quote = _split_symbol(symbol)
+        base, quote, _inverted = _preferred_market_pair(rest_base, rest_quote)
+
+        shim = _EndpointProbe(base, quote)
+        return bool(MarketDataStream._build_endpoints(shim))
+    except Exception:
+        # Unknown means "do not exclude": the caller falls back to its own
+        # historical-data check rather than dropping the pair outright.
+        return True
+
+
+class _EndpointProbe:
+    """Minimal stand-in exposing only what ``_build_endpoints`` reads."""
+
+    __slots__ = ("_rest_base", "_rest_quote")
+
+    def __init__(self, base: str, quote: str) -> None:
+        self._rest_base = base
+        self._rest_quote = quote
 
 
 def _binance_symbol(base: str, quote: str) -> Optional[str]:

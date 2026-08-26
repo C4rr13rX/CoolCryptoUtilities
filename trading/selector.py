@@ -17,7 +17,12 @@ import requests
 from router_wallet import CHAINS
 from db import TradingDatabase, get_db
 from trading.bot import TradingBot
-from trading.data_stream import MarketDataStream, _split_symbol, TOKEN_NORMALIZATION
+from trading.data_stream import (
+    MarketDataStream,
+    _split_symbol,
+    has_price_endpoints,
+    TOKEN_NORMALIZATION,
+)
 from trading.pipeline import TrainingPipeline
 from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs, pair_index_entries
@@ -230,17 +235,24 @@ def _has_streaming_feed(symbol: str, chain: str) -> bool:
     Lightweight readiness check: ensure we have at least one endpoint or
     offline fallback to stream live price updates for the pair.
     """
+    # Deliberately does NOT construct a MarketDataStream. This runs for every
+    # candidate pair on every selection pass -- roughly 25 times a minute --
+    # and a full construction is ~218x more expensive than the endpoint check
+    # it is standing in for. Building and discarding streams here is what took
+    # the production process to 77 threads and 871MB while starting almost no
+    # real streams, starving the ones that mattered of samples.
     try:
-        stream = MarketDataStream(symbol=symbol, chain=chain)
-        if stream.url:
-            return True
-        if getattr(stream, "endpoints", None):
-            return True
-        if getattr(stream, "_offline_store", None) and stream._offline_store is not None:
+        if has_price_endpoints(symbol):
             return True
     except Exception:
         return False
-    return False
+    # Parity with the previous implementation: an enabled offline store made
+    # this return True regardless of symbol, since OfflinePriceStore is
+    # symbol-independent. Kept so this change is a pure performance fix and
+    # does not quietly tighten which pairs are eligible.
+    return os.getenv("MARKET_OFFLINE_FALLBACK", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 
 def _ohlcv_exists(symbol: str, chain: str, data_root: Optional[Path] = None) -> bool:

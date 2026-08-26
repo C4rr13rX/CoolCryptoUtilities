@@ -32,6 +32,7 @@ class VenueListingCheck(unittest.TestCase):
     def tearDown(self):
         ds._VENUE_SYMBOLS.clear()
         ds._VENUE_SYMBOLS.update(self._saved)
+        ds._VENUE_PROBE_RETRY_AT.clear()
 
     def test_a_listed_pair_is_allowed(self):
         ds._VENUE_SYMBOLS["mexc"] = {"ETHUSDC", "BTCUSDT"}
@@ -56,6 +57,29 @@ class VenueListingCheck(unittest.TestCase):
         self.assertIsNone(
             ds._VENUE_SYMBOLS.get("mexc"), "a failed probe must not be cached"
         )
+
+
+    def test_a_failing_probe_is_not_retried_on_every_call(self):
+        """
+        Fail open, but stop asking.
+
+        bybit answers 403 from this host. Without a backoff the probe reran on
+        every call, so a check meant to be in-process made a network round
+        trip each time -- it turned a 0.06ms lookup into a 13ms one and showed
+        up as a 26s test suite.
+        """
+        ds._VENUE_PROBE_RETRY_AT.pop("bybit", None)
+        calls = []
+
+        def boom(venue):
+            calls.append(venue)
+            raise OSError("403")
+
+        with mock.patch.object(ds, "_fetch_venue_symbols", side_effect=boom):
+            for _ in range(5):
+                self.assertTrue(ds._venue_lists("bybit", "ETH", "USDC"))
+        self.assertEqual(len(calls), 1, f"probed {len(calls)} times, expected 1")
+        ds._VENUE_PROBE_RETRY_AT.pop("bybit", None)
 
     def test_the_check_can_be_disabled(self):
         ds._VENUE_SYMBOLS["mexc"] = {"ETHUSDC"}
