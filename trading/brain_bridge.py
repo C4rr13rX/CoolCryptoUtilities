@@ -27,8 +27,29 @@ import os
 import threading
 import time
 from http.client import HTTPConnection, BadStatusLine, RemoteDisconnected
+
 from typing import Optional, Tuple
 from urllib.parse import urlparse
+
+
+def _event_loop_is_running() -> bool:
+    """True when called from inside a running asyncio event loop."""
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+        return True
+    except Exception:
+        return False
+
+
+def _brain_blocking_allowed() -> bool:
+    """Escape hatch: allow blocking brain calls on the loop anyway."""
+    import os
+
+    return os.getenv("BRAIN_BRIDGE_ALLOW_BLOCKING", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
 # Pool ids — must match the brain the node is running and
 # wizard_trainer's env-driven pools (same env names used here).
@@ -67,6 +88,8 @@ class BrainBridge:
         self._timeout = timeout
         self._lock = threading.Lock()
         self._conn: Optional[HTTPConnection] = None
+        #: Queries skipped because an event loop was running.
+        self._skipped_in_loop = 0
         self._failed_at: float = 0.0
         # Retry one failed-call backoff fast — the brain is usually
         # transient-slow, not permanently down.
@@ -99,6 +122,28 @@ class BrainBridge:
         return True
 
     def _post(self, path: str, payload: bytes) -> Optional[bytes]:
+        # Never block a running event loop.
+        #
+        # This is a synchronous http.client call with a 30s timeout, and it is
+        # reached from `bot.py::_handle_sample`, which the market streams await.
+        # A py-spy dump of production caught the loop parked here:
+        #
+        #     readinto (socket.py:719)          <- blocking socket read
+        #     _post (brain_bridge.py)
+        #     query_confidence -> _brain_record_entry -> _handle_sample
+        #     run_forever (asyncio/base_events.py:683)
+        #
+        # Every market stream shares that loop, so one slow brain query froze
+        # price collection for ALL symbols. Measured effect: writes arriving in
+        # bursts ~12 minutes apart -- 7 symbols at an identical timestamp, then
+        # nothing -- against an isolated stream's 1/second.
+        #
+        # The brain is an advisory signal; the price feed is the product. When
+        # a loop is running, skip the query rather than stall ingestion. The
+        # caller already treats a None answer as "no opinion".
+        if _event_loop_is_running() and not _brain_blocking_allowed():
+            self._skipped_in_loop += 1
+            return None
         if not self._ensure():
             return None
         try:

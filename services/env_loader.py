@@ -138,6 +138,17 @@ _OPERATIONAL_PREFIXES = (
     "MAX_HOLD", "SCHEDULER_", "STRATEGY_", "MONEY_BUTTON_", "EXIT_",
     "ENABLE_", "AUTONOMOUS_", "REQUIRE_READY_", "GHOST_EXPLORE_",
     "DISCOVERY_", "ROTATION_", "TIER_", "W1Z4RD_",
+    # Feed-health and wallet-freshness toggles. These were absent, so an
+    # operator setting them in .env saw no effect at all once the vault was
+    # hydrated -- the setting was simply dropped, silently. Both are plain
+    # operational switches with nothing credential-shaped about them:
+    #   NETWORK_OUTAGE_*  how a stream reacts to DNS/websocket failures
+    #   REST_*            REST polling cadence and backoff
+    #   WALLET_SNAPSHOT_  how old a wallet snapshot may be before it is stale
+    #   ALLOW_SYNTHETIC_  whether invented prices may be recorded at all
+    #   VENUE_            venue listing probe behaviour
+    "NETWORK_OUTAGE_", "REST_", "WALLET_SNAPSHOT_", "ALLOW_SYNTHETIC_",
+    "VENUE_",
 )
 
 
