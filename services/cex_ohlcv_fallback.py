@@ -430,6 +430,32 @@ def _adaptive_granularity(days_back: int) -> Tuple[int, str]:
     return 3600, "1h"
 
 
+def _venue_enabled(venue: str) -> bool:
+    """Is this OHLCV venue usable from this host?
+
+    Deliberately consults only the EXCLUDE list, never the include list.
+
+    The two lists mean different things here. `MARKET_ENDPOINT_INCLUDE` is the
+    allowlist for live price STREAMING, and Coinbase is absent from it because
+    its websocket/ticker endpoints 403 from this host -- but its candle API
+    answers 200 and is the first and best OHLCV source. Gating downloads on the
+    streaming allowlist would therefore disable the path that actually works.
+
+    Binance is different: it answers HTTP 451 ("Service unavailable from a
+    restricted location") for everything, so a download attempt is guaranteed
+    waste. That is expressed by naming it in MARKET_ENDPOINT_EXCLUDE, and this
+    honours that. OHLCV_VENUE_EXCLUDE overrides for download-specific cases.
+    """
+    excluded = set()
+    for var in ("OHLCV_VENUE_EXCLUDE", "MARKET_ENDPOINT_EXCLUDE"):
+        excluded |= {
+            name.strip().lower()
+            for name in (os.getenv(var) or "").split(",")
+            if name.strip()
+        }
+    return venue.lower() not in excluded
+
+
 def download_pair(
     symbol: str,
     *,
@@ -452,11 +478,20 @@ def download_pair(
         log_message("cex-fallback", f"Coinbase: {len(rows)} candles for {symbol} ({days_back}d × {gran_sec}s)")
         return ("coinbase", rows)
 
-    # Try Binance (best granularity, may be geo-restricted)
-    rows = download_pair_binance(base, quote, days_back=days_back, interval=bin_label)
-    if rows:
-        log_message("cex-fallback", f"Binance: {len(rows)} candles for {symbol} ({days_back}d × {bin_label})")
-        return ("binance", rows)
+    # Try Binance (best granularity, may be geo-restricted).
+    #
+    # Skipped entirely when the host is geo-blocked. Binance answers HTTP 451
+    # ("Service unavailable from a restricted location") here, and this runs
+    # once per candidate pair during pair selection -- on the MAIN THREAD,
+    # before any market stream starts. A py-spy dump of production caught
+    # startup parked in exactly this call. The same host is already excluded
+    # from MARKET_ENDPOINT_INCLUDE for the same reason; this path just never
+    # consulted that.
+    if _venue_enabled("binance"):
+        rows = download_pair_binance(base, quote, days_back=days_back, interval=bin_label)
+        if rows:
+            log_message("cex-fallback", f"Binance: {len(rows)} candles for {symbol} ({days_back}d × {bin_label})")
+            return ("binance", rows)
 
     # Fallback to CoinGecko (always available, lower granularity)
     rows = download_pair_coingecko(base, quote, days=days_back)
