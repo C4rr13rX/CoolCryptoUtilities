@@ -1443,6 +1443,39 @@ class TradingDatabase:
                 "metrics insert failed",
                 {"error": str(exc), "stage": stage, "category": category, "rows": len(rows)},
             )
+        self._maybe_prune_metrics(ts)
+
+    #: Metrics older than this are dropped. They are diagnostics, not trading
+    #: state -- nothing reads them beyond recent-window dashboards.
+    _METRICS_RETENTION_SEC = max(
+        3600.0, float(os.getenv("METRICS_RETENTION_SEC", str(48 * 3600)))
+    )
+    _metrics_last_prune: float = 0.0
+
+    def _maybe_prune_metrics(self, now: float) -> None:
+        """Drop metrics past the retention window, at most once an hour.
+
+        The table grew at **100 rows per minute with no pruning at all** --
+        144k a day, unbounded. Measured 2026-08-26: 191,548 rows spanning 5.1
+        days inside a 3 GB database, alongside a production process climbing
+        ~40 MB/minute. That matters here beyond tidiness: a strategy needs
+        hours of uninterrupted uptime to accumulate the ghost trades that let
+        it graduate, and an unbounded table eventually starves that run.
+
+        Deliberately cheap: a timestamp check on the hot path, and a single
+        DELETE at most hourly. Failures are swallowed -- losing a prune is
+        recoverable, breaking a metrics write is not.
+        """
+        if now - self._metrics_last_prune < 3600.0:
+            return
+        self._metrics_last_prune = now
+        cutoff = now - self._METRICS_RETENTION_SEC
+        try:
+            with self._lock:
+                with self._conn:
+                    self._conn.execute("DELETE FROM metrics WHERE ts < ?", (cutoff,))
+        except Exception:
+            pass
 
     def fetch_metrics(
         self,
