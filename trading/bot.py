@@ -4684,8 +4684,20 @@ class TradingBot:
                 # Wait if system is under pressure before starting heavy training
                 try:
                     from services.resource_governor import governor, Priority
-                    waited = governor.wait_if_pressured(
-                        label="bg_refinement", max_wait=120.0, priority=Priority.NORMAL,
+                    # governor.wait_if_pressured() is synchronous and sleeps
+                    # with time.sleep(), so calling it directly here blocked
+                    # the whole event loop -- not just this task. Every market
+                    # stream shares that loop, so one bot waiting out CPU
+                    # pressure froze price acquisition for all ~30 of them for
+                    # up to 120s at a time. It showed up as writes arriving in
+                    # synchronised bursts 250-780s apart across unrelated
+                    # symbols, which is what made it clear the cause was
+                    # global rather than per stream.
+                    waited = await asyncio.to_thread(
+                        governor.wait_if_pressured,
+                        label="bg_refinement",
+                        max_wait=120.0,
+                        priority=Priority.NORMAL,
                     )
                     if governor.should_pause(Priority.NORMAL):
                         continue  # skip this cycle entirely
