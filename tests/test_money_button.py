@@ -271,5 +271,61 @@ class MoneyButtonOnASparseFeed(unittest.TestCase):
         self.assertIsNone(self._evaluate(prices))
 
 
+class FrozenFeedGuardScalesWithTheWindow(unittest.TestCase):
+    """
+    The frozen-feed guard must scale, not sit at a fixed count.
+
+    It was written as `max(6, n // 4)` for a 40-sample window, where n//4 = 10
+    and the 6 was the *lenient* branch. At the 10-sample window this strategy
+    actually runs on, that same 6 demands 60% distinct prices and became the
+    binding constraint. Measured on live data every single symbol was blocked
+    by it -- AERO 2 distinct of 7, CBBTC 5 of 6, DRIFT 1 of 4 -- so the
+    strategy could not have fired regardless of what the market did.
+
+    An on-chain quote legitimately repeats between trades, so the requirement
+    is now proportional: about a third of the window must differ.
+    """
+
+    @staticmethod
+    def _evaluate(prices, gap_sec=450.0):
+        state = make_state(list(prices), volume=5000.0, dt=gap_sec)
+        return MoneyButtonStrategy().evaluate(
+            state, make_ctx(float(prices[-1]), 0.0065)
+        )
+
+    def test_a_frozen_feed_is_still_rejected(self):
+        self.assertIsNone(self._evaluate([1.0] * 10))
+
+    def test_two_plateaus_are_still_rejected(self):
+        """
+        A single step is not a trend.
+
+        Real BASECAT data looked like this -- 0.02457 twice, then 0.02608
+        twice -- and reported as "+6.15%". That jump cannot be projected
+        forward over a 12-minute hold.
+        """
+        self.assertIsNone(self._evaluate([1.0] * 5 + [1.06] * 5))
+
+    def test_a_genuine_trend_is_not_blocked_by_the_guard(self):
+        """The regression: the guard must not veto real movement."""
+        self.assertIsNotNone(self._evaluate(np.linspace(1.0, 1.25, 10)))
+
+    def test_the_requirement_scales_with_the_sample_count(self):
+        """
+        Pinned as a property so a fixed floor cannot creep back in.
+
+        A hard number is what made this unreachable at small windows.
+        """
+        for n in (10, 20, 40):
+            with self.subTest(samples=n):
+                required = max(3, int(np.ceil(n / 3.0)))
+                self.assertLessEqual(
+                    required, n,
+                    "the guard must never demand more distinct prices than "
+                    "there are samples",
+                )
+                self.assertGreaterEqual(required, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

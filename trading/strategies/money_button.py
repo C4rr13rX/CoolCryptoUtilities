@@ -111,8 +111,21 @@ class MoneyButtonStrategy(Strategy):
         # such trade exits at exactly its entry and drags the win rate toward
         # zero, which is precisely how 89 of 205 ghost exits landed flat.
         # ------------------------------------------------------------------
+        # Scaled to the window, not a fixed count. The original
+        # `max(6, n // 4)` was written for a 40-sample window, where n//4 = 10
+        # and the 6 was the *lenient* branch. At the 10-sample window this
+        # strategy actually runs on, that same 6 demands 60% distinct prices
+        # and became the binding constraint: measured on live data, every
+        # symbol was blocked by it (AERO 2 distinct of 7, CBBTC 5 of 6).
+        #
+        # An on-chain quote legitimately repeats between trades, so requiring
+        # a third of the window to differ still rejects a feed that is frozen
+        # or replaying one seed value, without demanding that a real quote
+        # change on every single poll. Two distinct prices is the floor below
+        # which "trend" has no meaning at all.
         distinct = int(np.unique(prices).size)
-        if distinct < max(6, prices.size // 4):
+        min_distinct = max(3, int(np.ceil(prices.size / 3.0)))
+        if distinct < min_distinct:
             return None
 
         # ------------------------------------------------------------------
