@@ -24,6 +24,31 @@ GHOST_POSITIONS_KEY = "atf_static_strategy:ghost_positions"
 SOURCE = "c0d3rv2_atf_static"
 
 
+def _record_ghost_outcome(strategy_id: str, profit: float) -> None:
+    """
+    Report a closed ghost trade to the strategy ledger.
+
+    This loop runs its own ghost cycle rather than going through
+    ``bot.py``'s exit path, which is the only other place that calls
+    ``StrategyLedger.record()``. Without this the outcomes were written to
+    ``trading_ops`` and nowhere else: 196 closed trades over four days that
+    the graduation gate never saw, so the ledger sat unchanged and no
+    strategy could ever accumulate the 20 trades promotion requires.
+
+    Deliberately best-effort. A ledger write must never abort a trading
+    cycle -- losing one outcome is recoverable, stalling the loop is not.
+    """
+    try:
+        from trading.strategies.ledger import StrategyLedger
+
+        StrategyLedger().record(
+            strategy_id, profit=float(profit), mode="ghost"
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[atf-static] ledger record failed: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+
+
 def _float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -272,6 +297,7 @@ def _run_ghost_quote_scout(
             "signal": sig,
         }
         db.log_trade(wallet="ghost", chain=chain, symbol=symbol, action="exit", status="ghost-exit", details=details)
+        _record_ghost_outcome("atf_static", profit)
         events.append({"symbol": symbol, "action": "exit", "profit": profit, "reason": reason})
         positions.pop(symbol, None)
 
