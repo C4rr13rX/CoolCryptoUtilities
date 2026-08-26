@@ -38,7 +38,9 @@ BLOCKING_CALLS = {
 }
 
 #: Bare attribute names that block regardless of what they are called on.
-BLOCKING_ATTRS = {"wait_if_pressured"}
+#: `join` is deliberately NOT listed: `str.join` is overwhelmingly more common
+#: than `Thread.join` and flagging it buries the real findings in noise.
+BLOCKING_ATTRS = {"wait_if_pressured", "acquire"}
 
 SEARCH_DIRS = ("trading", "services")
 

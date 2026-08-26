@@ -3310,7 +3310,16 @@ class MarketDataStream:
             host = endpoint.name
         try:
             try:
-                self.rate_limiter.acquire(host, tokens=1.0, timeout=5.0)
+                # APIRateLimiter.acquire() waits with time.sleep(), so calling
+                # it inline blocked the event loop that every market stream
+                # shares -- and it runs on EVERY rest fetch. With ~30 streams
+                # now pointed at the same on-chain host, they serialised on a
+                # blocking sleep behind a 1-request-per-second budget. The
+                # symptom was writes landing in clusters that shared a
+                # timestamp to a tenth of a second, then nothing for minutes.
+                await asyncio.to_thread(
+                    self.rate_limiter.acquire, host, tokens=1.0, timeout=5.0
+                )
             except TimeoutError:
                 log_message(
                     "market-stream",
