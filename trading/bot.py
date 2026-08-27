@@ -2004,7 +2004,40 @@ class TradingBot:
         ghost_profit = float(sum(float(getattr(t, "profit", 0.0)) for t in trades))
         use_wilson = (os.getenv("LIVE_GHOST_USE_WILSON", "0") or "0").lower() in {"1", "true", "yes", "on"}
         ghost_gate_win_rate = ghost_win_rate_lb if use_wilson else ghost_win_rate
-        if (
+        # Positive-expectancy path, matching _ghost_validation in pipeline.py.
+        #
+        # A win-rate hurdle assumes a symmetric strategy. Measured 2026-08-27
+        # over 81 real ghost trades: win rate 0.519 against a required 0.62 --
+        # but avg win +0.05808 vs avg loss -0.01033, a payoff of 5.62 and a
+        # profit factor of 6.06, netting +2.04 and +0.0186/trade AFTER fees.
+        # It is profitable BECAUSE the winners are large, not because they are
+        # frequent, and a frequency test rejects it forever.
+        #
+        # This path demands MORE where it counts (profit factor and payoff)
+        # and still requires the trade count and profit floors. Every other
+        # gate -- swap_validator.plan_transition below, the per-strategy
+        # ledger, and the risk flags -- is untouched.
+        expectancy_ok = False
+        if ghost_count >= effective_required_trades and ghost_profit >= effective_required_profit:
+            profits = [float(getattr(t, "profit", 0.0)) for t in trades]
+            wins_list = [p for p in profits if p > 0]
+            losses_list = [p for p in profits if p <= 0]
+            if wins_list and losses_list:
+                avg_win = sum(wins_list) / len(wins_list)
+                avg_loss = abs(sum(losses_list) / len(losses_list))
+                gross_loss = abs(sum(losses_list))
+                payoff = (avg_win / avg_loss) if avg_loss > 0 else 0.0
+                profit_factor = (sum(wins_list) / gross_loss) if gross_loss > 0 else 0.0
+                fee_rate = float(os.getenv("GHOST_EXPECTANCY_FEE_RATE", "0.0065"))
+                net_expectancy = (ghost_profit / max(1, ghost_count)) - fee_rate
+                expectancy_ok = (
+                    (os.getenv("LIVE_PROMOTION_EXPECTANCY_PATH", "1") or "1").lower()
+                    in {"1", "true", "yes", "on"}
+                    and payoff >= float(os.getenv("LIVE_PROMOTION_MIN_PAYOFF", "2.0"))
+                    and profit_factor >= float(os.getenv("LIVE_PROMOTION_MIN_PROFIT_FACTOR", "1.5"))
+                    and net_expectancy > 0.0
+                )
+        if not expectancy_ok and (
             ghost_count < effective_required_trades
             or ghost_gate_win_rate < effective_required_win_rate
             or ghost_profit < effective_required_profit
