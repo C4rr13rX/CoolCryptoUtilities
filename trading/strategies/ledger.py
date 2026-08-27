@@ -270,6 +270,44 @@ class StrategyLedger:
         max_losses = _env_int("STRATEGY_DEMOTE_MAX_LIVE_LOSSES", 4)
         if int(live.get("consecutive_losses", 0)) >= max_losses:
             self._demote_locked(sid, f"{live['consecutive_losses']} consecutive live losses")
+            return
+
+        # Live profitability is the metric that decides, above all others.
+        #
+        # Consecutive losses alone are not enough. A strategy that alternates
+        # win/loss/win/loss while paying a ~1.0% round trip each time never
+        # reaches four in a row, so it could drain real funds indefinitely and
+        # never be demoted -- and that alternating pattern is exactly what was
+        # measured on this feed, where a rising price continues rising only
+        # 44-50% of the time.
+        #
+        # So: once a strategy has a fair sample of LIVE trades, it must be net
+        # positive on real money. Win rate, ghost record and consecutive-loss
+        # counts are all secondary to whether the account grew.
+        live_trades = int(live.get("trades", 0))
+        min_sample = _env_int("STRATEGY_DEMOTE_MIN_LIVE_TRADES", 8)
+        if live_trades >= min_sample:
+            live_profit = float(live.get("total_profit", 0.0))
+            floor = _env_float("STRATEGY_DEMOTE_MIN_LIVE_PROFIT", 0.0)
+            if live_profit <= floor:
+                self._demote_locked(
+                    sid,
+                    f"live P/L {live_profit:+.4f} over {live_trades} trades "
+                    f"is not profitable",
+                )
+                return
+
+        # Drawdown brake: give back too much of the peak and stop, even while
+        # still net positive. A strategy that made money and is now handing it
+        # back is not one to keep funding.
+        peak = float(live.get("peak_profit", 0.0))
+        current = float(live.get("total_profit", 0.0))
+        max_dd = _env_float("STRATEGY_DEMOTE_MAX_LIVE_DRAWDOWN", 0.5)
+        if peak > 0 and current < peak * (1.0 - max_dd):
+            self._demote_locked(
+                sid,
+                f"live drawdown: {current:+.4f} from peak {peak:+.4f}",
+            )
 
     def _demote_locked(self, sid: str, reason: str) -> None:
         ent = self._entry(sid)
