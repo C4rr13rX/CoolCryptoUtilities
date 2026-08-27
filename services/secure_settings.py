@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import os
 import re
 import sys
 import threading
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 # CRITICAL ordering: point Django at the real settings module and put repo
 # root + web/ on sys.path BEFORE importing anything from django.* . Any later
@@ -143,9 +145,50 @@ def encrypt_secret(value: str) -> Dict[str, bytes]:
     }
 
 
-def decrypt_secret(encapsulated_key: bytes, ciphertext: bytes, nonce: bytes) -> str:
+def _as_bytes(value: Any) -> bytes:
+    """Coerce a stored crypto field back to the bytes decryption expects.
+
+    `encrypt_secret` returns raw bytes, but the storage layer round-trips them
+    through JSON as ``{"__b64__": "<base64>"}`` strings. Nothing unwrapped
+    them on the way back, so `decrypt_secret` received a `str` and died on
+    ``str.startswith(b"fallback-v1")`` with a TypeError -- which
+    `get_settings_for_user` swallowed via a bare `continue`.
+
+    The effect was total and silent: MNEMONIC and MNEMONIC_0 sit encrypted in
+    the admin vault, the wallet could never be unlocked, and every attempt to
+    build UltraSwapBridge failed with "Provide MNEMONIC or PRIVATE_KEY" --
+    3,277 times in the production log. Live trading was impossible no matter
+    what a strategy earned.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("{"):
+            try:
+                payload = json.loads(text)
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict) and "__b64__" in payload:
+                return base64.b64decode(payload["__b64__"])
+        # A bare base64 string is also accepted; fall back to raw utf-8 bytes
+        # so a legacy plain value still reaches the AES layer rather than
+        # raising here.
+        try:
+            return base64.b64decode(text, validate=True)
+        except Exception:
+            return text.encode("utf-8")
+    raise ValueError(f"unsupported secret field type: {type(value).__name__}")
+
+
+def decrypt_secret(encapsulated_key: Any, ciphertext: Any, nonce: Any) -> str:
     if not (encapsulated_key and ciphertext and nonce):
         raise ValueError("encrypted payload incomplete")
+    encapsulated_key = _as_bytes(encapsulated_key)
+    ciphertext = _as_bytes(ciphertext)
+    nonce = _as_bytes(nonce)
     if encapsulated_key.startswith(_FALLBACK_MARKER):
         master = _load_fallback_key()
         aes_key = hashlib.sha256(master).digest()
