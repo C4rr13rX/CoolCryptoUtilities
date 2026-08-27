@@ -149,6 +149,16 @@ _OPERATIONAL_PREFIXES = (
     #   VENUE_            venue listing probe behaviour
     "NETWORK_OUTAGE_", "REST_", "WALLET_SNAPSHOT_", "ALLOW_SYNTHETIC_",
     "VENUE_",
+    # ATF_ was missing, so every ATF_STATIC_* line in .env was silently
+    # dropped once the vault hydrated -- including the autorun/strategy
+    # enable flags and, critically, ATF_STATIC_MAX_POSITIONS. The strategy
+    # therefore ran on its hardcoded default of 3 concurrent positions with
+    # holds up to 3600s, which caps it at ~3 closed trades/hour no matter
+    # what the market offers. Observed decay: 4 -> 3 -> 2 -> 3 -> 2 -> 1
+    # exits/hour, stalling graduation at 13/20.
+    "ATF_",
+    # Metrics retention is likewise an operational knob, not a secret.
+    "METRICS_",
 )
 
 
