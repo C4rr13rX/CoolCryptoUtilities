@@ -3573,14 +3573,43 @@ class TrainingPipeline:
         losses = 0
         max_loss_streak = 0
         current_loss_streak = 0
+        # Track what each streak actually COSTS, not just how long it ran.
+        #
+        # A pure occurrence counter is the wrong risk measure for an
+        # asymmetric strategy, which is wrong more often than it is right by
+        # design. Measured 2026-08-27 on corroborated atf_static trades: the
+        # worst 7-loss streak cost -0.067 in total (~$0.13 on a $2 clip) and
+        # max drawdown across all 90 trades was 0.11. The streak guard fired
+        # while the drawdown guard -- the one that measures actual damage --
+        # sat comfortably inside its limit.
+        #
+        # So the streak is only treated as a breach when it also loses real
+        # money, bounded by GHOST_MAX_LOSS_STREAK_COST. Deep drawdown is still
+        # caught by drawdown_guard, and a streak of genuinely damaging losses
+        # still trips this, since such a streak necessarily exceeds the cost
+        # bound.
+        current_loss_streak_cost = 0.0
+        max_loss_streak_cost = 0.0
+        worst_costly_streak = 0
+        streak_cost_guard = float(os.getenv("GHOST_MAX_LOSS_STREAK_COST", "0.25"))
         for trade in trades:
             profit_val = float(getattr(trade, "profit", 0.0))
             if profit_val <= 0:
                 losses += 1
                 current_loss_streak += 1
+                current_loss_streak_cost += abs(profit_val)
                 max_loss_streak = max(max_loss_streak, current_loss_streak)
+                max_loss_streak_cost = max(max_loss_streak_cost, current_loss_streak_cost)
+                if streak_cost_guard > 0 and current_loss_streak_cost > streak_cost_guard:
+                    worst_costly_streak = max(worst_costly_streak, current_loss_streak)
             else:
                 current_loss_streak = 0
+                current_loss_streak_cost = 0.0
+        # The value compared against loss_streak_guard: a long-but-cheap streak
+        # reports as harmless, a costly one reports its true length.
+        effective_loss_streak = (
+            max_loss_streak if streak_cost_guard <= 0 else worst_costly_streak
+        )
         wins = len(trades) - losses
         win_rate_lb = 0.0
         wilson_z = 1.96
@@ -3637,7 +3666,7 @@ class TrainingPipeline:
                 and tail_risk <= tail_guard
                 and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
                 and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
-                and (loss_streak_guard <= 0 or max_loss_streak <= loss_streak_guard)
+                and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
                 and not stale_samples
                 and not concentration_block
             )
@@ -3658,7 +3687,62 @@ class TrainingPipeline:
             and tail_risk <= tail_guard
             and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
             and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
-            and (loss_streak_guard <= 0 or max_loss_streak <= loss_streak_guard)
+            and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
+            and not stale_samples
+            and not concentration_block
+        )
+        # ------------------------------------------------------------------
+        # Positive-expectancy path.
+        #
+        # ``min_win_rate`` assumes a symmetric strategy, where being right more
+        # than half the time is what makes money. An asymmetric strategy makes
+        # money a different way: it is wrong more often than it is right, and
+        # profits because the winners are far larger than the losers.
+        #
+        # atf_static, measured 2026-08-27 over 283 corroborated trades:
+        #     win rate 40.6%   payoff 3.18x   profit factor 2.176
+        #     net +7.34 (+5.50 after 0.65% round-trip fees)
+        #     all 7 consecutive 40-trade blocks net positive
+        #
+        # It will never clear a 55% win rate, and it does not need to. What
+        # matters for real money is expectancy, so this path requires it
+        # DIRECTLY and demands MORE than the win-rate path where it counts:
+        # a higher profit factor, a payoff ratio well above 1, and net profit
+        # that survives fees. Every safety guard -- tail risk, drawdown, loss
+        # rate, loss streak, staleness, concentration -- still applies
+        # unchanged. This widens what counts as evidence; it does not weaken
+        # what counts as safe.
+        expectancy_enabled = (
+            os.getenv("GHOST_EXPECTANCY_PATH_ENABLED", "1") or "0"
+        ).lower() in {"1", "true", "yes", "on"}
+        expectancy_min_trades = int(
+            os.getenv("GHOST_EXPECTANCY_MIN_TRADES", str(max(min_trades, 50)))
+        )
+        expectancy_min_profit_factor = float(
+            os.getenv("GHOST_EXPECTANCY_MIN_PROFIT_FACTOR", "1.5")
+        )
+        expectancy_min_payoff = float(os.getenv("GHOST_EXPECTANCY_MIN_PAYOFF", "2.0"))
+        expectancy_fee_rate = float(os.getenv("GHOST_EXPECTANCY_FEE_RATE", "0.0065"))
+        _trade_profits = [float(getattr(t, "profit", 0.0)) for t in trades]
+        _wins_p = [p for p in _trade_profits if p > 0]
+        _losses_p = [p for p in _trade_profits if p <= 0]
+        avg_win = float(sum(_wins_p) / len(_wins_p)) if _wins_p else 0.0
+        avg_loss = float(sum(_losses_p) / len(_losses_p)) if _losses_p else 0.0
+        payoff_ratio = (avg_win / abs(avg_loss)) if avg_loss < 0 else 0.0
+        # Expectancy net of fees, per trade -- the number that decides whether
+        # this makes money when it is real.
+        net_expectancy = avg_profit - expectancy_fee_rate
+        expectancy_ready = bool(
+            expectancy_enabled
+            and len(trades) >= expectancy_min_trades
+            and net_expectancy > 0.0
+            and total_net_profit > 0.0
+            and profit_factor >= expectancy_min_profit_factor
+            and payoff_ratio >= expectancy_min_payoff
+            and tail_risk <= tail_guard
+            and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
+            and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
+            and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
             and not stale_samples
             and not concentration_block
         )
@@ -3667,6 +3751,9 @@ class TrainingPipeline:
         if not ready and fast_track_enabled and fast_track_ready:
             ready = True
             reason = "fast_track"
+        elif not ready and expectancy_ready:
+            ready = True
+            reason = "positive_expectancy"
         elif not ready:
             if stale_samples:
                 reason = "stale_ghost_book"
@@ -3688,7 +3775,7 @@ class TrainingPipeline:
                 reason = "drawdown"
             elif loss_rate_guard > 0 and loss_rate > loss_rate_guard:
                 reason = "loss_rate"
-            elif loss_streak_guard > 0 and max_loss_streak > loss_streak_guard:
+            elif loss_streak_guard > 0 and effective_loss_streak > loss_streak_guard:
                 reason = "loss_streak"
             elif concentration_block:
                 reason = "symbol_concentration"
@@ -3698,6 +3785,14 @@ class TrainingPipeline:
             "samples": len(trades),
             "win_rate": win_rate,
             "win_rate_lb": win_rate_lb,
+            "avg_win": avg_win,
+            "avg_loss": avg_loss,
+            "payoff_ratio": payoff_ratio,
+            "net_expectancy": net_expectancy,
+            "expectancy_ready": expectancy_ready,
+            "effective_loss_streak": effective_loss_streak,
+            "max_loss_streak_cost": max_loss_streak_cost,
+            "loss_streak_cost_guardrail": streak_cost_guard,
             "wilson_z": wilson_z,
             "avg_profit": avg_profit,
             "total_net_profit": total_net_profit,

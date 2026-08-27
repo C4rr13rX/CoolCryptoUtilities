@@ -333,6 +333,28 @@ class MetricsCollector:
         else:
             delta_diff = 0.0
         avg_duration = statistics.mean(durations) if durations else 0.0
+        # Profit factor: gross wins / gross losses.
+        #
+        # This was never returned, so every caller doing
+        # ``summary.get("profit_factor", 1.0)`` silently read the constant 1.0
+        # regardless of the trades. The ghost gate compares it against
+        # MIN_GHOST_PROFIT_FACTOR to decide whether a strategy may trade real
+        # money, so a genuinely profitable strategy (measured 2026-08-27:
+        # true PF 2.077) was being judged on a placeholder -- and any
+        # profit-factor threshold above 1.0 could never be satisfied by
+        # anything.
+        gross_win = float(sum(positives)) if positives else 0.0
+        gross_loss = float(sum(negatives)) if negatives else 0.0
+        if gross_loss > 0.0:
+            profit_factor = gross_win / gross_loss
+        elif gross_win > 0.0:
+            # No losses yet. Report a large finite value rather than inf:
+            # this number is JSON-serialised into snapshots and compared
+            # against guardrails, and inf survives neither cleanly.
+            profit_factor = 999.0
+        else:
+            profit_factor = 0.0
+
         return {
             "win_rate": float(win_rate),
             "avg_profit": float(mean_profit),
@@ -340,4 +362,8 @@ class MetricsCollector:
             "kelly_fraction": float(kelly),
             "avg_duration_sec": float(avg_duration),
             "avg_expected_vs_realized_delta": float(delta_diff),
+            "profit_factor": float(profit_factor),
+            "payoff_ratio": float(payoff_ratio),
+            "gross_win": gross_win,
+            "gross_loss": gross_loss,
         }

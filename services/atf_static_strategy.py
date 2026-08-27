@@ -71,6 +71,62 @@ def _bool_env(name: str, default: str = "0") -> bool:
     return (os.getenv(name, default) or default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _feed_price(db: Any, symbol: str, chain: str, max_age_sec: float) -> Optional[float]:
+    """Most recent streamed price for ``symbol``, or None if the feed is silent.
+
+    ``market_stream`` is the only price source that passed the synthetic-tick
+    guard, so it is the one record that can corroborate a signal price.
+    """
+    try:
+        row = db.get_market_price(symbol, chain, ts=_now() - max_age_sec, after=True)
+    except Exception:
+        return None
+    if not row:
+        return None
+    price = _float(row[0], 0.0)
+    return price if price > 0.0 else None
+
+
+def _corroborated_price(
+    db: Any,
+    symbol: str,
+    chain: str,
+    quoted: float,
+) -> Optional[float]:
+    """Validate a DexScreener quote against the streamed feed.
+
+    Positions were being opened and marked purely from ``signal["price_usd"]``,
+    which no guard had ever checked. Observed 2026-08-27: BASELIFE-USDC entered
+    at 2.05e-07 and "exited" at 4.39e-06 for +2038% -- on a symbol with ZERO
+    rows in ``market_stream``. That single fabricated fill was 81% of the
+    strategy's entire net profit and carried its ghost record to graduation.
+
+    A quote is only usable when the feed both (a) has a recent tick for the
+    symbol at all, and (b) agrees with the quote to within
+    ``ATF_STATIC_MAX_FEED_DEV``. Anything else is priced from nothing and must
+    not become a trade -- the same rule the synthetic-tick guard already
+    applies to the stream itself.
+
+    Returns the price to use, or None to skip the symbol entirely.
+    """
+    if quoted <= 0.0:
+        return None
+    if not _bool_env("ATF_STATIC_REQUIRE_FEED_PRICE", "1"):
+        return quoted
+    max_age = _float_env("ATF_STATIC_FEED_MAX_AGE_SEC", 900.0)
+    feed = _feed_price(db, symbol, chain, max_age)
+    if feed is None:
+        return None
+    max_dev = _float_env("ATF_STATIC_MAX_FEED_DEV", 0.35)
+    if max_dev > 0.0:
+        deviation = abs(quoted - feed) / feed
+        if deviation > max_dev:
+            return None
+    # Prefer the feed: it is the corroborated number, and marking against it
+    # keeps entry and exit on the same price basis.
+    return feed
+
+
 def refresh_feedback_scores(*, max_age_sec: float = 6 * 3600.0) -> Dict[str, Any]:
     """
     Feed ghost/live outcomes back into ATF's next candidate scoring pass.
@@ -266,14 +322,27 @@ def _run_ghost_quote_scout(
         if isinstance(sig, dict) and str(sig.get("symbol") or "").strip()
     }
     events: List[Dict[str, Any]] = []
+    skipped_unpriced: List[str] = []
 
     for symbol, pos in list(positions.items()):
         if not isinstance(pos, dict):
             positions.pop(symbol, None)
             continue
         sig = by_symbol.get(str(symbol).upper())
-        mark = _float((sig or {}).get("price_usd"), _float(pos.get("last_price"), _float(pos.get("entry_price"), 0.0)))
         entry = _float(pos.get("entry_price"), 0.0)
+        quoted_mark = _float(
+            (sig or {}).get("price_usd"),
+            _float(pos.get("last_price"), _float(pos.get("entry_price"), 0.0)),
+        )
+        # An exit mark decides realised P/L, so it needs the same corroboration
+        # the entry did. Marking against an unchecked quote is what booked a
+        # +2038% "target_hit" on a symbol the feed had never carried.
+        mark = _corroborated_price(db, symbol, chain, quoted_mark)
+        if mark is None:
+            # Hold the position and keep the last good mark. A silent feed is
+            # not a reason to realise a price nothing can confirm.
+            pos["last_seen_ts"] = now
+            continue
         if entry <= 0 or mark <= 0:
             continue
         age = now - _float(pos.get("entry_ts"), now)
@@ -347,8 +416,13 @@ def _run_ghost_quote_scout(
         quote_probe = sig.get("quote_probe") if isinstance(sig.get("quote_probe"), dict) else {}
         if not quote_probe.get("ok"):
             continue
-        entry_price = _float(sig.get("price_usd"), 0.0)
-        if entry_price <= 0:
+        entry_price = _corroborated_price(
+            db, symbol, chain, _float(sig.get("price_usd"), 0.0)
+        )
+        if not entry_price or entry_price <= 0:
+            # No streamed tick to confirm the quote: refuse the entry rather
+            # than open a position priced from a source nothing can check.
+            skipped_unpriced.append(symbol)
             continue
         target_return = max(min_profit, _float(sig.get("expected_return"), 0.0))
         position = {
@@ -388,7 +462,27 @@ def _run_ghost_quote_scout(
         db.set_json(GHOST_POSITIONS_KEY, positions)
     except Exception:
         pass
-    return {"enabled": True, "open": len(positions), "events": events}
+    if skipped_unpriced:
+        # Surface the refusal instead of silently trading less. A signal the
+        # feed cannot corroborate is a data problem to fix, not a candidate to
+        # quietly drop.
+        try:
+            from services.logging_utils import log_message
+
+            log_message(
+                "atf-static",
+                "refused %d uncorroborated candidate(s): %s"
+                % (len(skipped_unpriced), ", ".join(sorted(set(skipped_unpriced))[:8])),
+                severity="warning",
+            )
+        except Exception:
+            pass
+    return {
+        "enabled": True,
+        "open": len(positions),
+        "events": events,
+        "skipped_unpriced": sorted(set(skipped_unpriced)),
+    }
 
 
 def build_static_strategy_signals(

@@ -159,6 +159,12 @@ _OPERATIONAL_PREFIXES = (
     "ATF_",
     # Metrics retention is likewise an operational knob, not a secret.
     "METRICS_",
+    # LIVE_ was missing, so the live-sizing knobs were silently dropped once
+    # the vault hydrated. That matters most for LIVE_MIN_CLIP_USD, which
+    # defaults to $10: against an $8.38 deployable balance every live
+    # recommendation is zeroed as "min_clip", so the bot can never place a
+    # first trade no matter how convincingly a strategy graduates.
+    "LIVE_",
 )
 
 
