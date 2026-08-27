@@ -16,6 +16,11 @@ PROFILES_KEY = "WIZARD_BRAIN_PROFILES"
 SELECTION_KEYS = {
     "operations": "C0D3R_WIZARD_BRAIN_ID",
     "chat": "WIZARD_CHAT_BRAIN_ID",
+    # Which brain the trading pipeline consults for its prediction metric.
+    # Separate from "operations" on purpose: a brain good enough to answer
+    # questions is not automatically good enough to spend money, and the
+    # trading selection is gated on out-of-sample edge.
+    "trading": "WIZARD_TRADING_BRAIN_ID",
 }
 DEFAULT_PROFILE_ID = "environment-default"
 VALID_CHAT_PATHS = {"/brain/chat", "/chat"}

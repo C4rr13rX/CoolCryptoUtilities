@@ -165,6 +165,11 @@ _OPERATIONAL_PREFIXES = (
     # recommendation is zeroed as "min_clip", so the bot can never place a
     # first trade no matter how convincingly a strategy graduates.
     "LIVE_",
+    # GAS_* controls how much stable balance a refill may convert to native.
+    # Observed 2026-08-27: the refill turned ALL $8.38 USDC into ETH chasing a
+    # $5 native buffer, leaving $0 deployable and blocking live on
+    # capital_deficit while the wallet still held $14.27 of value.
+    "GAS_",
     # SAVINGS_* set the live allocation ratio. On a micro wallet the default
     # 15% slice of $8.38 collapses to $0.39 after risk headroom -- under any
     # viable clip -- so these must reach the process to size live at all.

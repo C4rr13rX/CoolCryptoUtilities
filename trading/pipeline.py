@@ -4391,7 +4391,19 @@ class TrainingPipeline:
             ramp_factor = max(0.0, min(1.0, (ghost_samples - ghost_min_trades) / max(1, ghost_min_trades * 2)))
             blended_ratio = bootstrap_ratio + ramp_factor * (ready_ratio - bootstrap_ratio)
             recommended_ratio = blended_ratio * ghost_sample_buffer * tail_headroom
-        elif ghost_ready and not wallet_sparse and not tail_block and capital_deficit <= 0:
+        elif (
+            ghost_ready
+            and ghost_net_profit > 0.0
+            and not wallet_sparse
+            and not tail_block
+            and capital_deficit <= 0
+        ):
+            # ghost_net_profit is checked HERE as well as in safe_to_live.
+            # This bootstrap branch runs precisely when safe_to_live is False,
+            # so without its own profit check it hands real capital to a
+            # strategy that lost money in simulation -- caught by
+            # test_transition_plan_never_graduates_with_non_positive_net_profit
+            # with total_net_profit=-0.01 still drawing a $6.00 allocation.
             recommended_ratio = bootstrap_ratio * ghost_sample_buffer * tail_headroom
         if recommended_ratio > 0:
             win_rate_headroom = 1.0

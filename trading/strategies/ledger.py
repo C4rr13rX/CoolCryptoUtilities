@@ -221,6 +221,19 @@ class StrategyLedger:
                 severity="warning",
             )
             return
+        # Lifetime record, kept outside this ledger on purpose.
+        #
+        # This ledger is a rolling PROMOTION window and is reset. Observed
+        # 2026-08-26: a reset left 18 trades on record against 245 actual
+        # exits, which made the strategy's real history unreadable. The
+        # lifetime registry is append-only and survives every reset, so
+        # "how has this strategy ever actually done" always has an answer.
+        try:
+            from services.strategy_registry import record_outcome
+
+            record_outcome(sid, profit=float(profit), mode=mode_key)
+        except Exception:  # noqa: BLE001
+            pass
         with self._lock:
             ent = self._entry(sid)
             stats = ent[mode_key]
