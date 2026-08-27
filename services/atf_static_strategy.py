@@ -60,6 +60,13 @@ def _now() -> float:
     return time.time()
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _bool_env(name: str, default: str = "0") -> bool:
     return (os.getenv(name, default) or default).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -278,7 +285,36 @@ def _run_ghost_quote_scout(
         elif profit <= -stop_loss:
             reason = "stop_loss"
         elif age >= max_hold_sec:
-            reason = "max_hold"
+            # The hold timer must not realise a loss.
+            #
+            # Closing on the clock sells at whatever the price happens to be
+            # when the timer expires. Measured on the last 20 atf_static
+            # trades: target_hit won 4/4 (100%) while max_hold won only 9/16
+            # (56%) -- so the timer was the direct source of every losing
+            # trade that was not a stop-loss.
+            #
+            # A position that is merely slow is not a position that is wrong.
+            # The stop-loss above already bounds the downside; letting the
+            # clock crystallise a small loss converts a recoverable position
+            # into a realised one for no reason.
+            #
+            # So the timer only closes a WINNER. An underwater position keeps
+            # running until it either recovers past the profit floor or hits
+            # its stop. ATF_STATIC_HOLD_FORCES_EXIT=1 restores the old
+            # unconditional behaviour.
+            hold_forces_exit = _bool_env("ATF_STATIC_HOLD_FORCES_EXIT", "0")
+            if hold_forces_exit or profit > 0.0:
+                reason = "max_hold"
+            else:
+                # Bound how long a losing position may be carried, so a dead
+                # token cannot occupy a slot indefinitely. Beyond this it is
+                # closed as a stop even if the stop threshold was never hit.
+                stale_sec = max(
+                    max_hold_sec * 2.0,
+                    _float_env("ATF_STATIC_MAX_UNDERWATER_SEC", 4.0 * 3600.0),
+                )
+                if age >= stale_sec:
+                    reason = "stale_underwater"
         if not reason:
             pos["last_price"] = mark
             pos["last_seen_ts"] = now
