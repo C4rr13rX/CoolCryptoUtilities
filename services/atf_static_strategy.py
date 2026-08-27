@@ -119,6 +119,41 @@ def _feed_price(db: Any, symbol: str, chain: str, max_age_sec: float) -> Optiona
     return (prices[mid - 1] + prices[mid]) / 2.0
 
 
+def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
+    """Can a stop-loss actually be enforced on this symbol?
+
+    The stop is evaluated when a tick arrives. If ticks are minutes or hours
+    apart, price gaps past the stop and the realised loss is unbounded --
+    measured 2026-08-27, 4 of 6 stop_loss exits breached an 8% stop (worst
+    -22.2% on SOL-USDC, which had a 663-minute hole between ticks).
+
+    Requires BOTH a minimum sample count and a recent median gap below the
+    ceiling. Median rather than max: one long outage should not disqualify a
+    symbol that is otherwise well covered, but a consistently thin feed should.
+    """
+    if not _bool_env("ATF_STATIC_REQUIRE_DENSE_FEED", "1"):
+        return True
+    window = _float_env("ATF_STATIC_FEED_DENSITY_WINDOW_SEC", 3600.0)
+    max_gap = _float_env("ATF_STATIC_MAX_MEDIAN_TICK_GAP_SEC", 300.0)
+    min_ticks = int(_float_env("ATF_STATIC_MIN_TICKS_FOR_ENTRY", 6))
+    try:
+        rows = db.recent_market_prices(
+            symbol, chain, since_ts=_now() - window, limit=200
+        )
+    except Exception:
+        return False
+    stamps = sorted(float(r[1]) for r in (rows or []) if len(r) > 1)
+    if len(stamps) < max(2, min_ticks):
+        return False
+    gaps = [stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1)]
+    if not gaps:
+        return False
+    gaps.sort()
+    mid = len(gaps) // 2
+    median_gap = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2.0
+    return median_gap <= max_gap
+
+
 def _corroborated_price(
     db: Any,
     symbol: str,
@@ -355,6 +390,7 @@ def _run_ghost_quote_scout(
     }
     events: List[Dict[str, Any]] = []
     skipped_unpriced: List[str] = []
+    skipped_sparse_feed: List[str] = []
 
     for symbol, pos in list(positions.items()):
         if not isinstance(pos, dict):
@@ -482,6 +518,20 @@ def _run_ghost_quote_scout(
             # than open a position priced from a source nothing can check.
             skipped_unpriced.append(symbol)
             continue
+        # A stop-loss is only as good as the feed that triggers it.
+        #
+        # The stop is checked when a tick ARRIVES, so on a sparse feed the
+        # price gaps straight past it. Measured 2026-08-27: 4 of 6 stop_loss
+        # exits breached the 8% stop, losing 11.2%, 11.3% and 22.2%, and
+        # SOL-USDC had a 663-minute hole between ticks (14 ticks total). That
+        # single -22% exit pushed tail risk to 0.095 against a 0.08 guardrail
+        # and blocked live trading entirely.
+        #
+        # Entering a position we cannot bound the downside on is not a risk we
+        # are choosing -- it is one we cannot see. Refuse it.
+        if not _feed_is_dense_enough(db, symbol, chain):
+            skipped_sparse_feed.append(symbol)
+            continue
         target_return = max(min_profit, _float(sig.get("expected_return"), 0.0))
         position = {
             "source": SOURCE,
@@ -535,11 +585,27 @@ def _run_ghost_quote_scout(
             )
         except Exception:
             pass
+    if skipped_sparse_feed:
+        # Surface it: a symbol we cannot stop out of is a coverage problem to
+        # fix, not a candidate to silently drop.
+        try:
+            from services.logging_utils import log_message
+
+            log_message(
+                "atf-static",
+                "refused %d candidate(s) with a feed too sparse to enforce a stop: %s"
+                % (len(skipped_sparse_feed),
+                   ", ".join(sorted(set(skipped_sparse_feed))[:8])),
+                severity="warning",
+            )
+        except Exception:
+            pass
     return {
         "enabled": True,
         "open": len(positions),
         "events": events,
         "skipped_unpriced": sorted(set(skipped_unpriced)),
+        "skipped_sparse_feed": sorted(set(skipped_sparse_feed)),
     }
 
 
