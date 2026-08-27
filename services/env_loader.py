@@ -165,6 +165,10 @@ _OPERATIONAL_PREFIXES = (
     # recommendation is zeroed as "min_clip", so the bot can never place a
     # first trade no matter how convincingly a strategy graduates.
     "LIVE_",
+    # SAVINGS_* set the live allocation ratio. On a micro wallet the default
+    # 15% slice of $8.38 collapses to $0.39 after risk headroom -- under any
+    # viable clip -- so these must reach the process to size live at all.
+    "SAVINGS_",
 )
 
 
