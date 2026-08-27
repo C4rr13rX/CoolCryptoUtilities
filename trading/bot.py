@@ -3252,6 +3252,25 @@ class TradingBot:
         trade_size = min(trade_size, 100.0)
         if directive and directive.size > 0:
             trade_size = float(directive.size)
+            # A directive's own size can be far below the risk-approved clip.
+            # Observed 2026-08-27: atf_static emitted 0.3946 units of
+            # BASECAT-USDC at $0.02776 = $0.011 notional, 32x under the $0.35
+            # the transition plan approved. At a 5% target that nets $0.00048
+            # against the $0.02 SMALL_PROFIT_FLOOR, so micro_profit correctly
+            # refused it -- and every live entry was blocked as
+            # "micro-profit-blocked:net_profit_below_dollar_floor".
+            #
+            # A trade too small to clear its own costs is not worth placing, so
+            # raise it to the minimum viable notional rather than skip the
+            # signal. Still bounded by the wallet: never more than half the
+            # available quote.
+            if self.live_trading_enabled and pos is None and price > 0.0:
+                min_notional = float(os.getenv("MIN_DIRECTIVE_NOTIONAL_USD", "0.0"))
+                if min_notional > 0.0 and trade_size * price < min_notional:
+                    affordable = max(0.0, available_quote * 0.5)
+                    target_notional = min(min_notional, affordable)
+                    if target_notional > 0.0:
+                        trade_size = target_notional / price
         # Ghost-mode floor: most stream ticks report volume=0 (price
         # update from book change, not a trade), which zeros trade_size
         # and bails 'insufficient_quote' before the entry-decision logic

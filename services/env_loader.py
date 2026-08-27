@@ -184,6 +184,11 @@ _OPERATIONAL_PREFIXES = (
     "NEWS_",
     # The sequential production loop and its pressure thresholds.
     "PRODUCTION_", "SEQ_SCHED_",
+    # MIN_DIRECTIVE_NOTIONAL_USD and SMALL_PROFIT_FLOOR decide whether a trade
+    # is large enough to clear its own costs. A $0.35 clip nets $0.0152 at a
+    # 5% target, below the $0.02 floor, so every live entry was refused as
+    # "micro-profit-blocked" -- these must reach the process to be tunable.
+    "MIN_", "SMALL_PROFIT_",
     # SAVINGS_* set the live allocation ratio. On a micro wallet the default
     # 15% slice of $8.38 collapses to $0.39 after risk headroom -- under any
     # viable clip -- so these must reach the process to size live at all.
