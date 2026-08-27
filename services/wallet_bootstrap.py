@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -68,6 +69,10 @@ _COINGECKO_ID = {
     "BNB": "binancecoin", "WBNB": "binancecoin",
     "AVAX": "avalanche-2", "WAVAX": "avalanche-2",
 }
+
+
+def _bool_env(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _binance_price(sym: str, timeout: float) -> Optional[float]:
@@ -731,10 +736,44 @@ def auto_bootstrap(
     )
     pairs = pairs_union
 
-    # Step 4: Download OHLCV for the union
-    # Bot trains + predicts on whatever has OHLCV history; this is the
-    # gate that turns "watched pair" into "tradeable pair" in the brain.
-    ohlcv_results = download_ohlcv_for_pairs(pairs, chain=chain, days_back=days_back)
+    # Step 4: Download OHLCV for the union.
+    #
+    # Bot trains + predicts on whatever has OHLCV history; this is the gate
+    # that turns "watched pair" into "tradeable pair" in the brain. But it is
+    # 90 days of candles per NEW pair, fetched synchronously, and bootstrap
+    # runs across every focus chain before `production.start()` returns.
+    #
+    # A py-spy dump caught production parked here mid-session with the market
+    # feed collapsed to 2 ticks per 10 minutes: MainThread blocked in
+    # `download_pair_coinbase` -> ssl_wrap_socket, inside
+    # `_try_wallet_bootstrap`, inside `start()`. Discovery adding new pairs
+    # makes this worse over time, not better.
+    #
+    # Backfill is preparation, not trading. Run it on a worker thread so the
+    # streams keep collecting while history fills in behind them. Set
+    # OHLCV_BOOTSTRAP_BLOCKING=1 to restore the old inline behaviour.
+    if _bool_env("OHLCV_BOOTSTRAP_BLOCKING", "0"):
+        ohlcv_results = download_ohlcv_for_pairs(pairs, chain=chain, days_back=days_back)
+    else:
+        ohlcv_results = {"status": "backfilling in background"}
+
+        def _backfill() -> None:
+            try:
+                done = download_ohlcv_for_pairs(pairs, chain=chain, days_back=days_back)
+                log_message(
+                    "wallet-bootstrap",
+                    f"background OHLCV backfill complete for {len(done)} pairs",
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                log_message(
+                    "wallet-bootstrap",
+                    f"background OHLCV backfill failed: {exc}",
+                    severity="warning",
+                )
+
+        threading.Thread(
+            target=_backfill, daemon=True, name="ohlcv-backfill"
+        ).start()
 
     # Step 5: Update watchlists (dust pairs stream-only)
     watchlists = update_watchlists_from_pairs(pairs, stream_extra=dust_stream_pairs)
