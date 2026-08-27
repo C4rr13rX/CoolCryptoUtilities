@@ -1865,8 +1865,24 @@ class TradingBot:
             return
         try:
             self.apply_transition_plan(self.pipeline.ghost_live_transition_plan())
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Swallowed silently for a long time, which left plan_flags empty
+            # and made every downstream check read None. If the plan cannot be
+            # built, say so -- an unexplained veto is what kept live trading
+            # invisible for hours.
+            self._live_transition_state = {
+                "enabled": self.live_trading_enabled,
+                "reason": "transition_plan_error:%s" % type(exc).__name__,
+                "error": str(exc)[:300],
+            }
+            try:
+                log_message(
+                    "live-transition",
+                    "transition plan failed: %s: %s" % (type(exc).__name__, exc),
+                    severity="warning",
+                )
+            except Exception:
+                pass
         plan_snapshot = getattr(self, "_transition_plan", {}) or {}
         plan_flags = plan_snapshot.get("risk_flags", {}) if isinstance(plan_snapshot, dict) else {}
         capital_plan = plan_snapshot.get("capital_plan", {}) if isinstance(plan_snapshot, dict) else {}
@@ -2906,7 +2922,21 @@ class TradingBot:
                 decision=decision,
                 latency_s=snapshot_latency,
             )
-            self._maybe_transition_to_live(latest_decision=decision)
+            try:
+                self._maybe_transition_to_live(latest_decision=decision)
+            except Exception as exc:  # noqa: BLE001
+                # An exception here silently skipped the ONLY code path that
+                # turns live trading on. Zero live_transition events had ever
+                # been recorded while every gate reported PASS; a swallowed
+                # error is indistinguishable from a veto unless it is logged.
+                try:
+                    log_message(
+                        "live-transition",
+                        "transition raised: %s: %s" % (type(exc).__name__, exc),
+                        severity="error",
+                    )
+                except Exception:
+                    pass
         finally:
             latency = time.perf_counter() - cycle_start
             self._latency_window.append(latency)
