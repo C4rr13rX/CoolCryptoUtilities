@@ -1,0 +1,313 @@
+{
+  "strategies": {
+    "atf_static": {
+      "strategy_id": "atf_static",
+      "name": "atf_static",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787343115.5971718,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 202,
+          "wins": 84,
+          "losses": 118,
+          "gross_win": 3.6945948395845454,
+          "gross_loss": 1.2528657273291668,
+          "total_profit": 2.441729112255377,
+          "best": 0.4109173616376043,
+          "worst": -0.22187261632341726,
+          "peak_profit": 2.441729112255377,
+          "max_drawdown": 0.22187261632341726,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 9,
+          "first_ts": 1787344327.012597,
+          "last_ts": 1787838531.3942862,
+          "symbols": {
+            "BASECAT-USDC": 63,
+            "CBXRP-USDC": 60,
+            "CBBTC-USDC": 35,
+            "BPAD-USDC": 17,
+            "BASEJUICE-USDC": 3,
+            "GOOGLC-USDC": 1,
+            "SOL-USDC": 13,
+            "BA3PUMP-USDC": 1,
+            "BASENOUN-USDC": 1,
+            "BSTONK-USDC": 1,
+            "CBETH-USDC": 1
+          }
+        }
+      }
+    },
+    "money_button": {
+      "strategy_id": "money_button",
+      "name": "money_button",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832156.069634,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 75,
+          "wins": 15,
+          "losses": 60,
+          "gross_win": 0.18,
+          "gross_loss": 0.5850000000000003,
+          "total_profit": -0.40500000000000025,
+          "best": 0.02,
+          "worst": -0.01,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.4600000000000003,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 19,
+          "first_ts": 1787836693.0215933,
+          "last_ts": 1787837025.342088,
+          "symbols": {}
+        }
+      }
+    },
+    "mean_reversion": {
+      "strategy_id": "mean_reversion",
+      "name": "mean_reversion",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.2641852,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 15,
+          "wins": 15,
+          "losses": 0,
+          "gross_win": 15.0,
+          "gross_loss": 0.0,
+          "total_profit": 15.0,
+          "best": 1.0,
+          "worst": 0.0,
+          "peak_profit": 15.0,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1787836714.407694,
+          "last_ts": 1787837045.5423553,
+          "symbols": {}
+        }
+      }
+    },
+    "ema_cross": {
+      "strategy_id": "ema_cross",
+      "name": "ema_cross",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.298721,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 24,
+          "wins": 12,
+          "losses": 12,
+          "gross_win": 12.0,
+          "gross_loss": 12.0,
+          "total_profit": 0.0,
+          "best": 1.0,
+          "worst": -1.0,
+          "peak_profit": 0.0,
+          "max_drawdown": 1.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 1,
+          "first_ts": 1787836714.4504197,
+          "last_ts": 1787837045.64827,
+          "symbols": {}
+        }
+      }
+    },
+    "volume_spike": {
+      "strategy_id": "volume_spike",
+      "name": "volume_spike",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.3467968,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 21,
+          "wins": 18,
+          "losses": 3,
+          "gross_win": 0.18000000000000002,
+          "gross_loss": 30.0,
+          "total_profit": -29.819999999999983,
+          "best": 0.01,
+          "worst": -10.0,
+          "peak_profit": 0.0,
+          "max_drawdown": 29.879999999999992,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 1,
+          "first_ts": 1787836714.5393054,
+          "last_ts": 1787837045.7103455,
+          "symbols": {}
+        }
+      }
+    },
+    "rsi_reversal": {
+      "strategy_id": "rsi_reversal",
+      "name": "rsi_reversal",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.3896415,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 15,
+          "wins": 15,
+          "losses": 0,
+          "gross_win": 15.0,
+          "gross_loss": 0.0,
+          "total_profit": 15.0,
+          "best": 1.0,
+          "worst": 0.0,
+          "peak_profit": 15.0,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1787836714.5802808,
+          "last_ts": 1787837045.758692,
+          "symbols": {}
+        }
+      }
+    },
+    "vwap_reversion": {
+      "strategy_id": "vwap_reversion",
+      "name": "vwap_reversion",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.4402483,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 15,
+          "wins": 15,
+          "losses": 0,
+          "gross_win": 15.0,
+          "gross_loss": 0.0,
+          "total_profit": 15.0,
+          "best": 1.0,
+          "worst": 0.0,
+          "peak_profit": 15.0,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1787836714.628942,
+          "last_ts": 1787837045.834008,
+          "symbols": {}
+        }
+      }
+    },
+    "momentum_breakout": {
+      "strategy_id": "momentum_breakout",
+      "name": "momentum_breakout",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.4705937,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 6,
+          "wins": 6,
+          "losses": 0,
+          "gross_win": 6.0,
+          "gross_loss": 0.0,
+          "total_profit": 6.0,
+          "best": 1.0,
+          "worst": 0.0,
+          "peak_profit": 6.0,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1787836714.6649957,
+          "last_ts": 1787837045.8698883,
+          "symbols": {}
+        }
+      }
+    },
+    "unclassified": {
+      "strategy_id": "unclassified",
+      "name": "unclassified",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787832173.486682,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 3,
+          "wins": 3,
+          "losses": 0,
+          "gross_win": 3.0,
+          "gross_loss": 0.0,
+          "total_profit": 3.0,
+          "best": 1.0,
+          "worst": 0.0,
+          "peak_profit": 3.0,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1787836714.687126,
+          "last_ts": 1787837045.8889747,
+          "symbols": {}
+        }
+      }
+    }
+  }
+}

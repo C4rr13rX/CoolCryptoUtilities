@@ -754,6 +754,42 @@ class GhostTradingSupervisor:
         self._tasks: List[asyncio.Task] = []
         self._require_ready_before_stream = os.getenv("REQUIRE_READY_BEFORE_STREAM", "1").lower() in {"1", "true", "yes", "on"}
 
+    @staticmethod
+    def _readiness_permits_live(readiness: Dict[str, Any]) -> bool:
+        """May a bot be BUILT with live trading enabled?
+
+        ``readiness["ready"]`` is the model-accuracy gate, which is degenerate
+        on this deployment: precision 0.0 AND recall 0.0 across 639 samples,
+        and 1.0 on a 71-sample run hours earlier. It is also starved by
+        construction, since it is fed by the TradingBot path while atf_static
+        runs its own ghost cycle.
+
+        Forcing ``live_trading_enabled = False`` on that number meant every bot
+        was built unable to trade live no matter what any strategy earned --
+        _refresh_auto_execute returns early without the flag, so graduation
+        could never reach execution. Observed 2026-08-27: all six live gates
+        PASS with block_reason empty, and still zero live rows.
+
+        A strategy that passed _ghost_validation on its own trade record is
+        real evidence. The per-strategy gate in bot.py
+        (``_strategy_live_approved``) still decides which directives may
+        actually spend money; this only stops the aggregate metric from
+        disabling the machinery wholesale. LIVE_REQUIRE_MODEL_READY=1 restores
+        the strict coupling.
+        """
+        if bool(readiness.get("ready")):
+            return True
+        if (os.getenv("LIVE_REQUIRE_MODEL_READY", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            return False
+        if not bool(readiness.get("ghost_ready")):
+            return False
+        reason = str(readiness.get("ghost_reason") or "")
+        # Cold-start and bootstrap allowances exist to let collection BEGIN;
+        # they are not evidence of anything.
+        return reason not in {"", "cold_start", "bootstrap", "no_metrics"}
+
     def build(self) -> None:
         if self.bots:
             return
@@ -866,7 +902,7 @@ class GhostTradingSupervisor:
             bot.configure_route(pair.symbol, pair.tokens)
             bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
             bot.max_trade_share = 0.12
-            if readiness and not readiness.get("ready"):
+            if readiness and not self._readiness_permits_live(readiness):
                 bot.live_trading_enabled = False
             if hasattr(bot, "apply_transition_plan"):
                 bot.apply_transition_plan(transition_plan)
@@ -1025,7 +1061,9 @@ class GhostTradingSupervisor:
                 bot.configure_route(symbol, pair.tokens)
                 bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
                 bot.max_trade_share = 0.12
-                if readiness and not readiness.get("ready"):
+                # Same rule as build(): bots added by reconciliation must not
+                # be disabled by the degenerate aggregate metric either.
+                if readiness and not self._readiness_permits_live(readiness):
                     bot.live_trading_enabled = False
                 if hasattr(bot, "apply_transition_plan"):
                     bot.apply_transition_plan(transition_plan)

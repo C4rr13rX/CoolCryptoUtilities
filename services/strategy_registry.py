@@ -35,7 +35,8 @@ from typing import Any, Callable, Dict, List, Optional
 # process runs from the repo root, so a relative default silently split
 # these files in two and the dashboard read an empty one.
 _ROOT = Path(__file__).resolve().parents[1]
-REGISTRY_PATH = Path(os.getenv("STRATEGY_REGISTRY_PATH", str(_ROOT / "data" / "strategy_registry.json")))
+_DEFAULT_REGISTRY_PATH = _ROOT / "data" / "strategy_registry.json"
+REGISTRY_PATH = Path(os.getenv("STRATEGY_REGISTRY_PATH", str(_DEFAULT_REGISTRY_PATH)))
 
 _lock = threading.RLock()
 
@@ -107,7 +108,31 @@ def _load() -> Dict[str, Any]:
     return {"strategies": {}}
 
 
+def _under_test() -> bool:
+    """Is this a test run writing to the PRODUCTION registry?
+
+    Tests that forget to patch REGISTRY_PATH silently write fabricated
+    strategies into the real lifetime record. Observed 2026-08-27: a strategy
+    literally named "s" with 360 ghost and 108 live trades, and an
+    rsi_reversal live record of 9 losses of exactly -0.5, both from test
+    fixtures -- while the database held ZERO live rows. The live-path check
+    then reported "live P/L -3.84 over 117 trades" for trades that never
+    happened.
+
+    Fabricated performance data is the one thing this file must never hold, so
+    a write from a test run to the default path is refused rather than trusted.
+    """
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        return False
+    return REGISTRY_PATH == _DEFAULT_REGISTRY_PATH
+
+
 def _save(state: Dict[str, Any]) -> None:
+    if _under_test():
+        raise RuntimeError(
+            "refusing to write the production strategy registry from a test; "
+            "patch services.strategy_registry.REGISTRY_PATH to a temp file"
+        )
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = REGISTRY_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
