@@ -3152,6 +3152,25 @@ class TradingBot:
             floor_size = min_trade_usd / price
             if trade_size < floor_size:
                 trade_size = floor_size
+        elif pos is None and price > 0.0 and trade_size <= 0.0:
+            # LIVE mode needs a floor too, for the same reason ghost does.
+            #
+            # Measured 2026-08-27: 100% of ticks in the last hour reported
+            # volume=0 -- these are price updates from book changes, not
+            # trades, so volume is legitimately absent. trade_size is derived
+            # from volume, so it was ALWAYS zero, and every live directive
+            # bailed at 'insufficient_quote' before the entry logic ran. Zero
+            # live trades were possible regardless of any gate.
+            #
+            # The floor is deliberately the risk-approved clip rather than the
+            # ghost floor: this is real money, so the transition plan's own
+            # sizing decision is the only number that may set it, bounded by
+            # what the wallet actually holds. A zero-volume tick is missing
+            # depth information, not evidence that the market is empty.
+            live_min_usd = float(os.getenv("LIVE_MIN_TRADE_USD", os.getenv("LIVE_MIN_CLIP_USD", "0.35")))
+            live_min_usd = min(live_min_usd, max(0.0, available_quote * 0.5))
+            if live_min_usd > 0.0:
+                trade_size = live_min_usd / price
         if pos is None:
             trade_size *= max(0.0, scenario_mod)
         if scenario_defer and pos is None:
