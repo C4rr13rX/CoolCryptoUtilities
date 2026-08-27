@@ -5529,9 +5529,42 @@ class TradingBot:
             self._last_gas_advisory_signature = signature
 
     def _rebalance_for_gas(self, chain: str, strategy: Dict[str, Any]) -> bool:
+        # A gas refill must never consume the capital it exists to enable.
+        #
+        # Observed 2026-08-27 twice on a $14 wallet: the refill converted the
+        # ENTIRE $8.38 (then $6.99) USDC balance into ETH chasing a native
+        # buffer, leaving $0 deployable stable. Live trading then blocked on
+        # capital_deficit while the wallet held $14 of value, and a manual
+        # rebalance back into USDC was undone by the next refill.
+        #
+        # GAS_REFILL_MAX_STABLE_SHARE bounds how much of the stable balance one
+        # refill may spend. Below the floor the refill is skipped entirely: a
+        # wallet that cannot spare stables for gas needs funding, not a swap
+        # that destroys its own trading capital.
+        if os.getenv("ENABLE_GAS_REFILL", "1").strip().lower() not in {"1", "true", "yes", "on"}:
+            return False
         swap_plan = strategy.get("stable_swap_plan") or strategy.get("swap_plan") if strategy else None
         if not swap_plan:
             return False
+        try:
+            max_share = float(os.getenv("GAS_REFILL_MAX_STABLE_SHARE", "0.25"))
+            stable_usd = float(strategy.get("stable_usd") or 0.0)
+            planned_usd = float(
+                swap_plan.get("amount_usd")
+                or swap_plan.get("usd")
+                or swap_plan.get("amount_in_usd")
+                or 0.0
+            )
+            if stable_usd > 0 and planned_usd > stable_usd * max_share:
+                log_message(
+                    "trading",
+                    "gas refill skipped: would spend %.2f of %.2f stable (cap %.0f%%)"
+                    % (planned_usd, stable_usd, max_share * 100),
+                    severity="warning",
+                )
+                return False
+        except Exception:  # noqa: BLE001
+            pass
         if self._bridge is None:
             self._bridge = self._init_bridge()
         if self._bridge is None:

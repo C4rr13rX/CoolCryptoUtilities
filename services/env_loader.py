@@ -147,8 +147,15 @@ _OPERATIONAL_PREFIXES = (
     #   WALLET_SNAPSHOT_  how old a wallet snapshot may be before it is stale
     #   ALLOW_SYNTHETIC_  whether invented prices may be recorded at all
     #   VENUE_            venue listing probe behaviour
-    "NETWORK_OUTAGE_", "REST_", "WALLET_SNAPSHOT_", "ALLOW_SYNTHETIC_",
+    "NETWORK_OUTAGE_", "REST_", "ALLOW_SYNTHETIC_",
     "VENUE_",
+    # Widened from WALLET_SNAPSHOT_ to all WALLET_*: WALLET_DUST_USD defaults
+    # to $5, which classified BOTH holdings of a $14 wallet as dust, so it read
+    # as sparse ('stable_below_min','native_gas_low','fragmented') and blocked
+    # live trading while holding real money.
+    "WALLET_",
+    # MIN_LIVE_CAPITAL_USD / MIN_ thresholds gate the same sparse check.
+    "MIN_LIVE_",
     # ATF_ was missing, so every ATF_STATIC_* line in .env was silently
     # dropped once the vault hydrated -- including the autorun/strategy
     # enable flags and, critically, ATF_STATIC_MAX_POSITIONS. The strategy
