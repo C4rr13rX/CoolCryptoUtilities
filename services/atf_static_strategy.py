@@ -72,19 +72,51 @@ def _bool_env(name: str, default: str = "0") -> bool:
 
 
 def _feed_price(db: Any, symbol: str, chain: str, max_age_sec: float) -> Optional[float]:
-    """Most recent streamed price for ``symbol``, or None if the feed is silent.
+    """Representative streamed price for ``symbol``, or None if the feed is silent.
 
-    ``market_stream`` is the only price source that passed the synthetic-tick
-    guard, so it is the one record that can corroborate a signal price.
+    Uses the MEDIAN of recent ticks rather than the single latest one.
+    ``market_stream`` carries interleaved sources, and when one of them
+    publishes a different denomination the series alternates between correct
+    and wrong values on a scale of minutes. Observed 2026-08-27 against
+    DexScreener ($29M liquidity) as ground truth:
+
+        AERO-USDC  truth 0.5153  feed alternating 0.5138 and 1.14   (2.2x)
+        MAMO-USDC  truth 0.01055 feed alternating 0.0105 and 0.1723 (16x)
+
+    Comparing a good quote against whichever tick happened to land last made
+    corroboration a coin flip -- it refused 100% of live signals, so no
+    position could open at all. The median ignores a minority of bad ticks
+    while still going silent when the whole series is wrong.
     """
+    window = max(max_age_sec, 0.0)
     try:
-        row = db.get_market_price(symbol, chain, ts=_now() - max_age_sec, after=True)
+        rows = db.recent_market_prices(symbol, chain, since_ts=_now() - window, limit=25)
     except Exception:
-        return None
-    if not row:
-        return None
-    price = _float(row[0], 0.0)
-    return price if price > 0.0 else None
+        rows = None
+    prices: List[float] = []
+    if rows:
+        for row in rows:
+            try:
+                value = _float(row[0] if isinstance(row, (list, tuple)) else row, 0.0)
+            except Exception:
+                continue
+            if value > 0.0:
+                prices.append(value)
+    if not prices:
+        # Fall back to the single-tick lookup when the batch helper is absent.
+        try:
+            row = db.get_market_price(symbol, chain, ts=_now() - window, after=True)
+        except Exception:
+            return None
+        if not row:
+            return None
+        price = _float(row[0], 0.0)
+        return price if price > 0.0 else None
+    prices.sort()
+    mid = len(prices) // 2
+    if len(prices) % 2:
+        return prices[mid]
+    return (prices[mid - 1] + prices[mid]) / 2.0
 
 
 def _corroborated_price(

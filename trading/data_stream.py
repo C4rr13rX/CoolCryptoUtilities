@@ -3397,7 +3397,7 @@ class MarketDataStream:
             return RestFetchResult(None, "dns" if _is_dns_error(exc) else "network")
         except Exception:
             return RestFetchResult(None, "exception")
-        price = _extract_rest_price(endpoint.name, data, base, quote)
+        price = _extract_rest_price(endpoint.name, data, base, quote, self.chain)
         if not price or price <= 0:
             return RestFetchResult(None, "invalid")
         normalized = self._normalize_live_price(price)
@@ -3889,7 +3889,13 @@ def _render_ws(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
     return endpoint.ws_template
 
 
-def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: str) -> Optional[float]:
+def _extract_rest_price(
+    name: str,
+    payload: Dict[str, Any],
+    base: str,
+    quote: str,
+    chain: str = "",
+) -> Optional[float]:
     try:
         if name == "binance":
             price = float(payload.get("lastPrice") or payload.get("weightedAvgPrice") or 0)
@@ -3954,7 +3960,24 @@ def _extract_rest_price(name: str, payload: Dict[str, Any], base: str, quote: st
             base_synonyms = _token_synonyms(base)
             quote_synonyms = _token_synonyms(quote)
             stable_quotes = {"USDT", "USDC", "BUSD", "USD"}
+            # The SAME ticker trades on many chains at completely different
+            # prices, and the search endpoint returns all of them. Selecting by
+            # liquidity alone therefore imports another chain's price:
+            #
+            #   MAMO/USDC on solana = 0.1723 with $171M liquidity
+            #   MAMO/USDC on base   = 0.0103 with $363K liquidity
+            #
+            # Base is what this bot trades, but Solana always won on depth. The
+            # feed then alternated between 0.0103 and 0.1723 (a 16x error) and
+            # AERO between 0.5138 and 1.14, which is what made every ATF signal
+            # fail corroboration -- 100% of live candidates refused, so no
+            # position could open at all.
+            wanted_chain = str(chain or "").strip().lower()
             for pair in pairs:
+                if wanted_chain:
+                    pair_chain = str(pair.get("chainId") or "").strip().lower()
+                    if pair_chain and pair_chain != wanted_chain:
+                        continue
                 base_info = pair.get("baseToken") or {}
                 quote_info = pair.get("quoteToken") or {}
                 base_symbol = str(base_info.get("symbol") or "").upper()

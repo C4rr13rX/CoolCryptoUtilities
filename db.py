@@ -701,6 +701,34 @@ class TradingDatabase:
             return None
         return float(row["price"]), float(row["ts"]), row["volume"]
 
+    def recent_market_prices(
+        self,
+        symbol: str,
+        chain: str,
+        *,
+        since_ts: Optional[float] = None,
+        limit: int = 25,
+    ) -> List[Tuple[float, float]]:
+        """Recent (price, ts) pairs, newest first.
+
+        Callers corroborating an external quote need a DISTRIBUTION, not one
+        sample: market_stream interleaves sources, and a source publishing a
+        different denomination makes consecutive ticks alternate between right
+        and wrong (AERO 0.5138 vs 1.14; MAMO 0.0105 vs 0.1723). A single
+        lookup turns that into a coin flip.
+        """
+        query = "SELECT price, ts FROM market_stream WHERE symbol=? AND chain=? AND price > 0"
+        params: List[Any] = [symbol, chain]
+        if since_ts is not None:
+            query += " AND ts >= ?"
+            params.append(float(since_ts))
+        query += " ORDER BY ts DESC LIMIT ?"
+        params.append(int(max(1, limit)))
+        with self._cursor() as cur:
+            cur.execute(query, tuple(params))
+            rows = cur.fetchall()
+        return [(float(r["price"]), float(r["ts"])) for r in rows]
+
     def average_volume(self, symbol: str, chain: str, start_ts: float) -> Optional[float]:
         with self._cursor() as cur:
             cur.execute(
