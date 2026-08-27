@@ -75,6 +75,56 @@ def _bool_env(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _sane_native_usd(holding: Dict[str, Any], chain: str, db: Any) -> float:
+    """Persisted USD value, cross-checked against the price table.
+
+    A native holding was written at $0.1428 for 0.00285556 ETH -- an implied
+    $50.00/ETH against a real $2,499.61, exactly 1/50th. The wallet then read
+    as gas-starved and the live gate blocked on ``native_gas_starved`` while
+    the wallet actually held $7.14 of ETH.
+
+    A wrong VALUATION is worse than a missing one: it silently gates real
+    trading on a number nobody checked. So for native tokens the stored price
+    table (updated from live feeds) is the reference, and a reported value that
+    disagrees by more than 50% is replaced by quantity x reference price.
+    """
+    reported = 0.0
+    try:
+        reported = float(holding.get("usd", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        reported = 0.0
+    symbol = str(holding.get("symbol") or "").upper()
+    if symbol not in NATIVE_SYMBOLS:
+        return reported
+    try:
+        quantity = float(holding.get("quantity", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return reported
+    if quantity <= 0:
+        return reported
+    reference = 0.0
+    try:
+        row = db.fetch_price("global", symbol.lower())
+        if row:
+            reference = float(row["usd"] if "usd" in row.keys() else 0.0)
+    except Exception:
+        reference = 0.0
+    if reference <= 0:
+        return reported
+    expected = quantity * reference
+    if expected <= 0:
+        return reported
+    if reported <= 0 or abs(reported - expected) / expected > 0.5:
+        log_message(
+            "wallet-bootstrap",
+            "corrected %s valuation: reported $%.4f vs %.8f x $%.2f = $%.4f"
+            % (symbol, reported, quantity, reference, expected),
+            severity="warning",
+        )
+        return expected
+    return reported
+
+
 def _binance_price(sym: str, timeout: float) -> Optional[float]:
     import urllib.request as _ur, json as _j
     ticker = _BINANCE_SYM.get(sym)
@@ -256,6 +306,7 @@ def _persist_balances(wallet_info: Dict[str, Any], chain: str = "base") -> None:
         for h in wallet_info.get("holdings", []):
             token_addr = (h.get("address") or "native").lower()
             decimals = known_token_decimals(chain, token_addr, h.get("symbol")) or 18
+            usd_value = _sane_native_usd(h, chain, db)
             entries.append({
                 "wallet": "guardian",
                 "chain": chain.lower(),
@@ -265,7 +316,7 @@ def _persist_balances(wallet_info: Dict[str, Any], chain: str = "base") -> None:
                 "ts": now,
                 "decimals": decimals,
                 "quantity": str(h.get("quantity", 0)),
-                "usd_amount": h.get("usd", 0.0),
+                "usd_amount": usd_value,
                 "symbol": h.get("symbol", ""),
                 "name": h.get("symbol", ""),
                 "updated_at": now,
