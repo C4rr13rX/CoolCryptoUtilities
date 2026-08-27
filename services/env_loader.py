@@ -170,6 +170,11 @@ _OPERATIONAL_PREFIXES = (
     # $5 native buffer, leaving $0 deployable and blocking live on
     # capital_deficit while the wallet still held $14.27 of value.
     "GAS_",
+    # NEWS_* bounds the enrichment task. At its 120s default it timed out every
+    # cycle, pushing the backlog past the governor cap so nearly every cycle
+    # was skipped -- no ghost entry landed for 64 minutes. News is enrichment,
+    # not the trading path, and must not be able to starve it.
+    "NEWS_",
     # SAVINGS_* set the live allocation ratio. On a micro wallet the default
     # 15% slice of $8.38 collapses to $0.39 after risk headroom -- under any
     # viable clip -- so these must reach the process to size live at all.
