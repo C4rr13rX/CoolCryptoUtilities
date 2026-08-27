@@ -1918,9 +1918,44 @@ class TradingBot:
         allow_micro = os.getenv("LIVE_MICRO_AUTO_PROMOTE", _micro_default).lower() in {"1", "true", "yes", "on"}
         if not ready_flag and micro_allowed and allow_micro:
             ready_flag = True
+        # Ghost-earned path: the FOURTH place the degenerate model-accuracy
+        # metric blocks live trading.
+        #
+        # ready_flag needs ready OR mini_ready OR micro_allowed, and all three
+        # derive from a confusion report measuring precision 0.0 AND recall 0.0
+        # across 639 samples. Observed 2026-08-27: bot cycles completed every
+        # ~35s and this returned silently every single time -- zero
+        # live_transition events had EVER been recorded, so _refresh_auto_execute
+        # never ran and LIVE_TRADES_DRY_RUN stayed at its "1" default. Every
+        # "live" trade would have been a dry run even if one had been placed.
+        #
+        # A strategy that passed _ghost_validation on its own trade record is
+        # evidence the model gate is not measuring. The ghost performance gate
+        # below, swap_validator.plan_transition, and the per-strategy check in
+        # _strategy_live_approved all still apply -- this only stops a broken
+        # measurement from vetoing them.
+        if not ready_flag and isinstance(readiness, dict):
+            ghost_earned = bool(readiness.get("ghost_ready")) and str(
+                readiness.get("ghost_reason") or ""
+            ) not in {"", "cold_start", "bootstrap", "no_metrics"}
+            if ghost_earned and os.getenv("LIVE_REQUIRE_MODEL_READY", "0").strip().lower() not in {
+                "1", "true", "yes", "on",
+            }:
+                ready_flag = True
         if self.live_trading_enabled:
             return
         if not readiness or not ready_flag:
+            # Record WHY. This returned silently on every cycle, which is why
+            # the block was invisible for hours despite every gate passing.
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "reason": "model_accuracy_gate",
+                "ready": bool(readiness.get("ready")) if isinstance(readiness, dict) else False,
+                "mini_ready": mini_ready,
+                "micro_allowed": micro_allowed,
+                "ghost_ready": readiness.get("ghost_ready") if isinstance(readiness, dict) else None,
+            }
             return
         if micro_mode:
             try:
