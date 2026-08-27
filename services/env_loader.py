@@ -182,6 +182,8 @@ _OPERATIONAL_PREFIXES = (
     # was skipped -- no ghost entry landed for 64 minutes. News is enrichment,
     # not the trading path, and must not be able to starve it.
     "NEWS_",
+    # The sequential production loop and its pressure thresholds.
+    "PRODUCTION_", "SEQ_SCHED_",
     # SAVINGS_* set the live allocation ratio. On a micro wallet the default
     # 15% slice of $8.38 collapses to $0.39 after risk headroom -- under any
     # viable clip -- so these must reach the process to size live at all.

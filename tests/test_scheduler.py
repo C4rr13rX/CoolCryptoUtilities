@@ -116,7 +116,12 @@ def test_horizon_weight_prioritises_sparse_buckets() -> None:
     assert sparse_weight > saturated_weight
 
 
-def test_dust_context_uses_real_nonstable_holdings_and_never_live() -> None:
+def test_dust_context_uses_real_nonstable_holdings_and_never_live(monkeypatch) -> None:
+    # Pin the threshold instead of inheriting it. WALLET_DUST_USD is deployment
+    # config -- a $14 wallet runs it at $0.50, where these 0.65/0.80 holdings
+    # are real positions rather than dust -- and this test is about WHICH
+    # holdings qualify, not about what the operator chose the cutoff to be.
+    monkeypatch.setenv("WALLET_DUST_USD", "5.0")
     scheduler = BusScheduler(prefill=False)
     portfolio = SimpleNamespace(holdings={
         ("base", "OLD"): SimpleNamespace(usd=0.65),

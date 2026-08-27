@@ -422,6 +422,27 @@ class ProductionManager:
                     break
                 continue
             throttled_this_cycle = False
+            # Sequential mode: run one task at a time, round-robin across
+            # areas, paced by live CPU/RAM. Replaces firing the whole list per
+            # cycle, where one slow task pushed the backlog past the cap and
+            # the orchestrator skipped everything -- trading included.
+            if self._sequential_enabled():
+                sched = getattr(self, "_seq_scheduler", None)
+                if sched is None:
+                    sched = self._build_sequential_scheduler(focus_assets)
+                    self._seq_scheduler = sched
+                summary = sched.run_once()
+                if summary.get("deferred"):
+                    log_message(
+                        "production",
+                        "sequential cycle %s: ran %s, deferred %s (cpu %.0f%%, free %.0fMB)"
+                        % (summary["cycle"], summary["ran"], summary["deferred"],
+                           summary.get("cpu") or 0.0, summary.get("free_mb") or 0.0),
+                        severity="info",
+                    )
+                if self._stop.wait(self._cycle_interval):
+                    break
+                continue
             if heavy_backlog:
                 # When backlog is heavy, focus on lightweight maintenance only.
                 self._task_directives.update({
@@ -511,6 +532,79 @@ class ProductionManager:
         if directives.get("background", False):
             tasks.append(ScheduledTask("background_refresh", self._task_background_refresh))
         return tasks
+
+    # ------------------------------------------------------------------
+    # Sequential, pressure-paced execution
+    # ------------------------------------------------------------------
+
+    def _build_sequential_scheduler(self, focus_assets: Optional[Sequence[str]] = None):
+        """One task at a time, round-robin across areas, ordered by trade value.
+
+        The parallel cycle fired every task at once; one slow task
+        (news_enrichment at its 120s timeout) pushed the backlog past the
+        governor cap and the orchestrator skipped the WHOLE cycle -- trading
+        included. Observed 2026-08-27: no ghost entry for 64 minutes while
+        ticks kept flowing.
+
+        Here the trade path is critical (never deferred for pressure), feeds
+        come next, and training/telemetry yield first when the machine is busy.
+        Heavy tasks declare a RAM floor so they stand down instead of pushing
+        the box into swap.
+        """
+        from services.sequential_scheduler import SequentialScheduler, Task
+
+        def _on_event(event: str, payload: Dict[str, Any]) -> None:
+            log_message("production", "sequential %s: %s" % (event, payload), severity="warning")
+
+        sched = SequentialScheduler(on_event=_on_event)
+        sched.add_many([
+            # -- trade: the money path, never deferred ---------------------
+            Task("atf_static_strategy", self._task_atf_static_strategy,
+                 category="trade", critical=True, timeout_sec=90.0,
+                 # Matches the task's own throttle (line ~621); a shorter scheduler
+                 # interval would just call a no-op.
+                 interval_sec=float(os.getenv("ATF_STATIC_REFRESH_SEC", "600"))),
+            Task("scheduler_refresh", self._task_scheduler_refresh,
+                 category="trade", critical=True, timeout_sec=45.0),
+            Task("ghost_metrics", self._task_ghost_metrics,
+                 category="trade", timeout_sec=45.0, interval_sec=60.0),
+            # -- feed: prices the trade path reads -------------------------
+            Task("data_ingest", self._task_data_ingest,
+                 category="feed", timeout_sec=90.0, interval_sec=30.0),
+            Task("news_enrichment", self._task_news_enrichment,
+                 category="feed", kwargs={"focus_assets": focus_assets},
+                 timeout_sec=float(os.getenv("NEWS_ENRICH_TIMEOUT", "25")),
+                 interval_sec=float(os.getenv("NEWS_ENRICH_INTERVAL_SEC", "900")),
+                 min_free_mb=1200.0),
+            # -- model: valuable, but never at the cost of trading ---------
+            Task("dataset_warmup", self._task_dataset_warmup,
+                 category="model", kwargs={"focus_assets": focus_assets},
+                 timeout_sec=120.0, interval_sec=600.0, min_free_mb=2000.0),
+            Task("candidate_training", self._task_candidate_training,
+                 category="model", timeout_sec=180.0, interval_sec=900.0,
+                 min_free_mb=3000.0),
+            # -- housekeeping ---------------------------------------------
+            Task("telemetry_flush", self._task_telemetry_flush,
+                 category="housekeeping", timeout_sec=30.0, interval_sec=120.0),
+            Task("background_refresh", self._task_background_refresh,
+                 category="housekeeping", timeout_sec=60.0, interval_sec=300.0,
+                 min_free_mb=2000.0),
+        ])
+        return sched
+
+    def _sequential_enabled(self) -> bool:
+        return (os.getenv("PRODUCTION_SEQUENTIAL_TASKS", "1") or "1").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+
+    def sequential_status(self) -> Dict[str, Any]:
+        """Scheduler state for the dashboard; empty when not running."""
+        sched = getattr(self, "_seq_scheduler", None)
+        if sched is None:
+            return {"enabled": False, "reason": "not_started"}
+        status = sched.status()
+        status["enabled"] = True
+        return status
 
     # ------------------------------------------------------------------
     # Parallel task implementations
