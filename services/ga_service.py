@@ -28,8 +28,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 from trading.genome.ga import GENE_SPACE, Genome, evolve
 
-STATE_PATH = Path(os.getenv("GA_SERVICE_STATE", "data/ga_runs.json"))
-MODELS_PATH = Path(os.getenv("GA_MODELS_PATH", "data/genome-models/registry.json"))
+# Anchored to the repo root: web workers run from web/ while the trading
+# process runs from the repo root, so a relative default silently split
+# these files in two and the dashboard read an empty one.
+_ROOT = Path(__file__).resolve().parents[1]
+STATE_PATH = Path(os.getenv("GA_SERVICE_STATE", str(_ROOT / "data" / "ga_runs.json")))
+MODELS_PATH = Path(os.getenv("GA_MODELS_PATH", str(_ROOT / "data" / "genome-models" / "registry.json")))
 
 _lock = threading.RLock()
 _threads: Dict[str, threading.Thread] = {}
@@ -108,7 +112,7 @@ def load_bars(
     max_bars: int = 12000,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Historical bars from data/historical_ohlcv (555 files, ~3 years)."""
-    root = Path(os.getenv("HISTORICAL_OHLCV_DIR", "data/historical_ohlcv"))
+    root = Path(os.getenv("HISTORICAL_OHLCV_DIR", str(_ROOT / "data" / "historical_ohlcv")))
     out: Dict[str, List[Dict[str, Any]]] = {}
     if not root.exists():
         return out

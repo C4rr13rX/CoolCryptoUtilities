@@ -362,6 +362,32 @@ def _run_ghost_quote_scout(
             continue
         sig = by_symbol.get(str(symbol).upper())
         entry = _float(pos.get("entry_price"), 0.0)
+        # An exit is only meaningful if the ENTRY was real too.
+        #
+        # Corroborating just the exit still books fiction when the position was
+        # opened before the feed was trustworthy. Observed 2026-08-27 after the
+        # cross-chain fix landed: BASENOUN-USDC held an entry of 3.08e-05 while
+        # the feed's entire history spans 1.5e-04..3.5e-04, and exiting it
+        # against the now-correct price booked +402% -- and SOL-USDC booked a
+        # -22% "stop_loss" it never took. Ten of twelve open positions carried
+        # entries no tick could support.
+        #
+        # Such a position is not a trade, it is a stale record. Drop it without
+        # recording an outcome rather than let it reach the ledger.
+        if _corroborated_price(db, symbol, chain, entry) is None:
+            try:
+                from services.logging_utils import log_message
+
+                log_message(
+                    "atf-static",
+                    "dropped stale position %s: entry %.10g has no corroborating tick"
+                    % (symbol, entry),
+                    severity="warning",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            positions.pop(symbol, None)
+            continue
         quoted_mark = _float(
             (sig or {}).get("price_usd"),
             _float(pos.get("last_price"), _float(pos.get("entry_price"), 0.0)),

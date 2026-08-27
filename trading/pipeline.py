@@ -4109,10 +4109,16 @@ class TrainingPipeline:
                 sparse_reasons = wallet_state.get("sparse_reasons") or []
                 detail = f":{','.join(sparse_reasons)}" if sparse_reasons else ""
                 report_fb["reason"] = f"sparse_wallet{detail}"
+            # Same rule as the primary path: an earned ghost record counts as
+            # collection readiness even when the model gate is degenerate.
+            collection_ready_fb = bool(mini_ready_fb) or bool(ghost_ready)
             report_fb.update(
                 {
-                    "ghost_collection_ready": bool(mini_ready_fb),
-                    "ghost_collection_reason": "" if mini_ready_fb else report_fb.get("mini_reason", "model_not_ready"),
+                    "ghost_collection_ready": collection_ready_fb,
+                    "ghost_collection_reason": (
+                        "" if collection_ready_fb
+                        else report_fb.get("mini_reason", "model_not_ready")
+                    ),
                     "ghost_ready": ghost_ready,
                     "ghost_reason": ghost_check.get("reason", ""),
                     "ghost_samples": ghost_check.get("samples", 0),
@@ -4182,10 +4188,20 @@ class TrainingPipeline:
             sparse_reasons = wallet_state.get("sparse_reasons") or []
             detail = f":{','.join(sparse_reasons)}" if sparse_reasons else ""
             report_ready["reason"] = f"sparse_wallet{detail}"
+        # Ghost collection is ready when EITHER the model gate passes or the
+        # strategy already earned its way through _ghost_validation.
+        #
+        # Reported independently of _build_transition_plan, these two answers
+        # disagreed: the plan said halt_ghost=0 / ghost_collection=1 while this
+        # report -- the file the dashboard actually reads -- said
+        # ghost_collection_ready=False from the degenerate mini gate. The Bus
+        # Scheduler therefore showed "Ghost Lane HALTED: insufficient_accuracy"
+        # while ghost trading was running normally. One source of truth.
+        collection_ready = bool(mini_ready) or bool(ghost_ready)
         report_ready.update(
             {
-                "ghost_collection_ready": bool(mini_ready),
-                "ghost_collection_reason": "" if mini_ready else mini_reason,
+                "ghost_collection_ready": collection_ready,
+                "ghost_collection_reason": "" if collection_ready else mini_reason,
                 "ghost_ready": ghost_ready,
                 "ghost_reason": ghost_check.get("reason", ""),
                 "ghost_samples": ghost_check.get("samples", 0),

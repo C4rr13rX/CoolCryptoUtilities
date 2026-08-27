@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import sys
 import json
@@ -33,13 +34,110 @@ from services.wallet_reconciliation import (  # noqa: E402
 from services.trading_accounting import trading_accounting_snapshot  # noqa: E402
 
 
+#: A report older than this is not a reading, it is a memory. The dashboard
+#: must say so rather than present it as current state.
+REPORT_STALE_AFTER_SEC = float(os.getenv("TELEMETRY_REPORT_STALE_SEC", "600"))
+
+
 def _load_report(path: Path) -> Dict[str, Any]:
+    """Load a report file, stamped with its own freshness.
+
+    Returning a bare dict made an absent or hours-old file indistinguishable
+    from a live reading: every consumer did ``.get(key, False)``, so a missing
+    file silently became "not ready" and the Bus Scheduler displayed
+    "Ghost Lane HALTED" while ghost trading was running normally.
+
+    ``_stale`` / ``_age_sec`` let a caller tell "we know this is false" apart
+    from "we do not have a value", which is the difference between a status and
+    a guess.
+    """
     if not path.exists():
-        return {}
+        return {"_missing": True, "_stale": True, "_age_sec": None}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {}
+        return {"_unreadable": True, "_stale": True, "_age_sec": None}
+    if not isinstance(payload, dict):
+        return {"_unreadable": True, "_stale": True, "_age_sec": None}
+    try:
+        age = max(0.0, time.time() - path.stat().st_mtime)
+    except Exception:
+        age = None
+    payload["_age_sec"] = age
+    payload["_stale"] = bool(age is None or age > REPORT_STALE_AFTER_SEC)
+    return payload
+
+
+def strategy_readiness() -> Dict[str, Any]:
+    """Per-strategy ghost/live readiness for the dashboard.
+
+    Readiness is a PER-STRATEGY fact, but the UI was rendering one aggregate
+    model-accuracy number. So the Pipeline page showed
+    "Ghost Ready: insufficient_accuracy" and "Live Ready: insufficient_accuracy"
+    while atf_static was ghost-ready on positive expectancy and approved for
+    live -- the screen contradicted the system it was reporting on.
+
+    If ANY strategy is ghost-ready the ghost stage is ready; if ANY strategy is
+    live-approved the live stage is ready, and this names which ones rather
+    than collapsing them into a single misleading verdict.
+    """
+    ghost_ready: list[str] = []
+    live_ready: list[str] = []
+    rows: list[Dict[str, Any]] = []
+    try:
+        from trading.strategies.ledger import StrategyLedger
+
+        ledger = StrategyLedger()
+        data = dict(ledger._data or {})
+    except Exception:
+        data = {}
+    try:
+        from services import strategy_registry
+    except Exception:
+        strategy_registry = None  # type: ignore[assignment]
+
+    for sid, entry in sorted(data.items()):
+        ghost = entry.get("ghost") or {}
+        live = entry.get("live") or {}
+        trades = int(ghost.get("trades", 0) or 0)
+        wins = int(ghost.get("wins", 0) or 0)
+        approved = bool(entry.get("live_approved"))
+        # "Collecting" is a real state and must not read as an error.
+        is_ghost_ready = trades > 0
+        if is_ghost_ready:
+            ghost_ready.append(sid)
+        if approved:
+            live_ready.append(sid)
+        lifetime = {}
+        if strategy_registry is not None:
+            try:
+                lifetime = strategy_registry.lifetime_metrics(sid)
+            except Exception:
+                lifetime = {}
+        rows.append({
+            "strategy_id": sid,
+            "ghost_trades": trades,
+            "ghost_wins": wins,
+            "ghost_win_rate": (wins / trades) if trades else None,
+            "ghost_profit": ghost.get("total_profit"),
+            "live_approved": approved,
+            "live_trades": int(live.get("trades", 0) or 0),
+            "live_profit": live.get("total_profit"),
+            "lifetime": lifetime,
+        })
+    return {
+        "strategies": rows,
+        "ghost_ready_ids": ghost_ready,
+        "live_ready_ids": live_ready,
+        "ghost_ready": bool(ghost_ready),
+        "live_ready": bool(live_ready),
+        "is_live_trading": any(r["live_trades"] > 0 for r in rows),
+        "counts": {
+            "total": len(rows),
+            "ghost_ready": len(ghost_ready),
+            "live_ready": len(live_ready),
+        },
+    }
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -265,8 +363,23 @@ class PipelineReadinessView(APIView):
             pipeline_snapshot = snapshot.get("pipeline") or {}
             if isinstance(pipeline_snapshot, dict):
                 transition = pipeline_snapshot.get("transition_plan") or {}
+        # Per-strategy readiness, so the UI can say WHICH strategies are ready
+        # instead of collapsing them into one aggregate verdict that
+        # contradicts the system (Pipeline showed "Ghost Ready:
+        # insufficient_accuracy" while atf_static was ghost-ready on positive
+        # expectancy and approved for live).
+        strategies = strategy_readiness()
+        merged = dict(readiness or {})
+        if not merged:
+            merged = {"ready": False, "_missing": True, "_stale": True}
+        merged["ghost_ready_strategies"] = strategies["ghost_ready_ids"]
+        merged["live_ready_strategies"] = strategies["live_ready_ids"]
+        merged["ghost_ready_any"] = strategies["ghost_ready"]
+        merged["live_ready_any"] = strategies["live_ready"]
+        merged["is_live_trading"] = strategies["is_live_trading"]
         payload = {
-            "live_readiness": readiness or {"ready": False},
+            "live_readiness": merged,
+            "strategy_readiness": strategies,
             "confusion": confusion_meta.get("confusion") if confusion_meta else {},
             "decision_threshold": confusion_meta.get("decision_threshold") if confusion_meta else None,
             "horizon_profile": horizon.get("profile") if horizon else {},
@@ -296,9 +409,20 @@ class BusScheduleView(APIView):
 
         risk_flags = transition.get("risk_flags") if isinstance(transition, dict) else {}
         readiness = _load_report(ROOT / "data/reports/live_readiness.json")
-        ghost_collection_ready = bool(
-            readiness.get("ghost_collection_ready", readiness.get("mini_ready", False))
-        ) if isinstance(readiness, dict) else False
+        # Prefer the transition plan the trading process actually acts on, then
+        # the report file, then per-strategy truth. The report alone said
+        # ghost_collection_ready=False from the degenerate mini gate, so the
+        # Bus Scheduler displayed "Ghost Lane HALTED: insufficient_accuracy"
+        # while ghost trading was running and halt_ghost was 0 in the plan.
+        bus_strategies = strategy_readiness()
+        if isinstance(risk_flags, dict) and "halt_ghost" in risk_flags:
+            ghost_collection_ready = not bool(risk_flags.get("halt_ghost"))
+        elif isinstance(readiness, dict) and readiness.get("ghost_collection_ready") is not None:
+            ghost_collection_ready = bool(readiness.get("ghost_collection_ready"))
+        else:
+            ghost_collection_ready = bool(bus_strategies["ghost_ready"])
+        if not ghost_collection_ready and bus_strategies["ghost_ready"]:
+            ghost_collection_ready = True
         capital_plan = transition.get("capital_plan") if isinstance(transition, dict) else {}
         bus_actions = transition.get("bus_swap_actions") if isinstance(transition, dict) else None
         if not isinstance(bus_actions, list):
@@ -564,17 +688,28 @@ class BusScheduleView(APIView):
             "ghost": {
                 "halted": not ghost_collection_ready,
                 "reason": (
-                    readiness.get("ghost_collection_reason") or readiness.get("mini_reason") or "model_not_ready"
+                    readiness.get("ghost_collection_reason")
+                    or readiness.get("mini_reason")
+                    or "model_not_ready"
                 ) if not ghost_collection_ready else None,
+                "active_strategies": bus_strategies["ghost_ready_ids"],
                 "risk_multiplier": max(
                     0.25 if ghost_collection_ready else 0.0,
                     _safe_float(risk_flags.get("ghost_risk_multiplier")) if isinstance(risk_flags, dict) else 0.0,
                 ),
                 "schedule": ghost_schedule,
             },
+            "strategies": bus_strategies,
             "live": {
-                "halted": bool(risk_flags.get("halt_live")) if isinstance(risk_flags, dict) else False,
-                "reason": risk_flags.get("halt_reason") if isinstance(risk_flags, dict) else None,
+                # Halted only when the plan says so AND no strategy is
+                # approved: a lane with an approved strategy is not halted.
+                "halted": (
+                    bool(risk_flags.get("halt_live")) and not bus_strategies["live_ready"]
+                ) if isinstance(risk_flags, dict) else False,
+                "reason": (
+                    risk_flags.get("halt_reason") or None
+                ) if isinstance(risk_flags, dict) else None,
+                "approved_strategies": bus_strategies["live_ready_ids"],
                 "recommended_live_usd": _safe_float(risk_flags.get("recommended_live_usd")) if isinstance(risk_flags, dict) else 0.0,
                 "min_clip_usd": _safe_float(risk_flags.get("min_clip_usd")) if isinstance(risk_flags, dict) else 0.0,
                 "schedule": live_schedule,

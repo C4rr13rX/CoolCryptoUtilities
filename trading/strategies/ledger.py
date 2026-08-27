@@ -128,7 +128,15 @@ def _blank_mode() -> Dict[str, float]:
 class StrategyLedger:
     """JSON-persisted per-strategy × per-mode (ghost/live) trade stats."""
 
-    DEFAULT_PATH = Path("data") / "strategy_ledger.json"
+    # Anchored to the repo root, NOT the working directory.
+    #
+    # A relative "data/strategy_ledger.json" resolves against wherever the
+    # process happens to have started. The trading process runs from the repo
+    # root, but the web workers run from web/ -- so the dashboard silently read
+    # a non-existent web/data/strategy_ledger.json, found no strategies, and
+    # reported "no strategies ready" while atf_static was ghost-ready and
+    # live-approved in the real ledger. Same file for every process.
+    DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "strategy_ledger.json"
 
     def __init__(self, path: Optional[Path | str] = None) -> None:
         self.path = Path(path) if path else self.DEFAULT_PATH

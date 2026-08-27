@@ -358,20 +358,47 @@ const liveTrades = computed(() => (store.recentTrades || []).filter((entry: any)
 const readinessReport = computed(() => readinessPayload.value?.live_readiness || store.dashboard?.live_readiness || {});
 const stageProgress = computed(() => {
   const readiness = readinessReport.value || {};
+  // Readiness is PER STRATEGY. The aggregate model-accuracy number said
+  // "insufficient_accuracy" while atf_static was ghost-ready on positive
+  // expectancy and approved for live, so the page contradicted the system it
+  // reports on. A stage is done when ANY strategy has reached it, and the
+  // detail line names which ones.
+  const ghostIds: string[] = readiness.ghost_ready_strategies || [];
+  const liveIds: string[] = readiness.live_ready_strategies || [];
+  const ghostReady = Boolean(readiness.ghost_ready_any ?? readiness.ghost_collection_ready);
+  const liveReady = Boolean(readiness.live_ready_any ?? readiness.ready);
+  const stale = Boolean(readiness._stale || readiness._missing);
+
   const stages = [
     { key: 'ingest', label: t('pipeline.stage_ingest'), done: Boolean(stageSummary.value.length || metrics.value.length) },
     { key: 'training', label: t('pipeline.stage_training'), done: Boolean(readiness.samples || readiness.precision) },
-    { key: 'ghost', label: t('pipeline.stage_ghost'), done: Boolean(readiness.ghost_collection_ready) },
-    { key: 'live', label: t('pipeline.stage_live'), done: Boolean(readiness.ready) },
-    { key: 'trading', label: t('pipeline.stage_trading'), done: Boolean(liveTrades.value.length) },
+    { key: 'ghost', label: t('pipeline.stage_ghost'), done: ghostReady },
+    { key: 'live', label: t('pipeline.stage_live'), done: liveReady },
+    { key: 'trading', label: t('pipeline.stage_trading'), done: Boolean(readiness.is_live_trading || liveTrades.value.length) },
   ];
   let current = stages.findIndex((s) => !s.done);
   if (current === -1) current = stages.length - 1;
+
+  const names = (ids: string[]) => (ids.length > 3 ? `${ids.slice(0, 3).join(', ')} +${ids.length - 3}` : ids.join(', '));
+
   const withState = stages.map((s, idx) => {
     const state = s.done && idx < current ? 'done' : idx === current ? 'active' : 'pending';
     let detail = '';
-    if (idx === 2) detail = readiness.ghost_collection_reason || (s.done ? 'collecting validation samples' : readiness.mini_reason);
-    if (idx === 3 && readiness.reason) detail = readiness.reason;
+    // Never show a stale or absent reading as a fact. '--' means "no value
+    // yet", which is different from a value we know to be false.
+    if (stale && idx >= 2) {
+      detail = '—  (no current reading)';
+    } else if (idx === 2) {
+      detail = ghostReady
+        ? (ghostIds.length ? `ready: ${names(ghostIds)}` : 'collecting validation samples')
+        : (readiness.ghost_collection_reason || readiness.mini_reason || '—');
+    } else if (idx === 3) {
+      detail = liveReady
+        ? (liveIds.length ? `approved: ${names(liveIds)}` : 'approved')
+        : (readiness.reason || '—');
+    } else if (idx === 4) {
+      detail = readiness.is_live_trading ? `live: ${names(liveIds)}` : (liveReady ? 'awaiting first fill' : '—');
+    }
     return { ...s, state, detail, fill: state === 'done' ? 100 : state === 'active' ? 45 : 0 };
   });
   return withState;

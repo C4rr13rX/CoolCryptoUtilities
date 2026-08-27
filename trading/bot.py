@@ -5546,25 +5546,31 @@ class TradingBot:
         swap_plan = strategy.get("stable_swap_plan") or strategy.get("swap_plan") if strategy else None
         if not swap_plan:
             return False
-        try:
-            max_share = float(os.getenv("GAS_REFILL_MAX_STABLE_SHARE", "0.25"))
-            stable_usd = float(strategy.get("stable_usd") or 0.0)
-            planned_usd = float(
-                swap_plan.get("amount_usd")
-                or swap_plan.get("usd")
-                or swap_plan.get("amount_in_usd")
-                or 0.0
-            )
-            if stable_usd > 0 and planned_usd > stable_usd * max_share:
+        # swap_plan is a LIST of {spend_usd, usd_value, is_stable, ...} entries.
+        # An earlier version of this guard called .get() on it, which raised and
+        # was swallowed -- so the cap silently did nothing and the refill drained
+        # the wallet a third time. Sum the stable legs explicitly.
+        max_share = float(os.getenv("GAS_REFILL_MAX_STABLE_SHARE", "0.25"))
+        if max_share > 0:
+            entries = swap_plan if isinstance(swap_plan, list) else [swap_plan]
+            stable_spend = 0.0
+            stable_held = 0.0
+            for item in entries:
+                if not isinstance(item, dict) or not item.get("is_stable"):
+                    continue
+                try:
+                    stable_spend += float(item.get("spend_usd") or 0.0)
+                    stable_held += float(item.get("usd_value") or 0.0)
+                except (TypeError, ValueError):
+                    continue
+            if stable_held > 0 and stable_spend > stable_held * max_share:
                 log_message(
                     "trading",
-                    "gas refill skipped: would spend %.2f of %.2f stable (cap %.0f%%)"
-                    % (planned_usd, stable_usd, max_share * 100),
+                    "gas refill skipped: would spend $%.2f of $%.2f stable (cap %.0f%%)"
+                    % (stable_spend, stable_held, max_share * 100),
                     severity="warning",
                 )
                 return False
-        except Exception:  # noqa: BLE001
-            pass
         if self._bridge is None:
             self._bridge = self._init_bridge()
         if self._bridge is None:

@@ -31,7 +31,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-REGISTRY_PATH = Path(os.getenv("STRATEGY_REGISTRY_PATH", "data/strategy_registry.json"))
+# Anchored to the repo root: web workers run from web/ while the trading
+# process runs from the repo root, so a relative default silently split
+# these files in two and the dashboard read an empty one.
+_ROOT = Path(__file__).resolve().parents[1]
+REGISTRY_PATH = Path(os.getenv("STRATEGY_REGISTRY_PATH", str(_ROOT / "data" / "strategy_registry.json")))
 
 _lock = threading.RLock()
 
