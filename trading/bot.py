@@ -1959,6 +1959,21 @@ class TradingBot:
             }:
                 ready_flag = True
         if self.live_trading_enabled:
+            # DEADLOCK, fixed: _refresh_auto_execute is what turns real
+            # execution on (it clears the LIVE_TRADES_DRY_RUN="1" default), and
+            # it needs live_trading_enabled to be True -- but it was only ever
+            # CALLED further down this function, which returns right here when
+            # that flag is already set.
+            #
+            # ENABLE_LIVE_TRADING=1 sets the flag at construction, so the
+            # transition returned on every cycle before reaching the call. The
+            # very setting that satisfies the requirement prevented the call
+            # that uses it: zero live_transition events across the whole
+            # database while every gate reported PASS.
+            #
+            # The bot is already live; nothing below this point needs to run,
+            # but auto-execute still does.
+            self._refresh_auto_execute()
             return
         if not readiness or not ready_flag:
             # Record WHY. This returned silently on every cycle, which is why
