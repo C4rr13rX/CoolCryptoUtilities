@@ -52,6 +52,21 @@ param(
     # it can check the UI without stopping to ask. Override here if the local
     # site ever uses anything else -- and if this site is ever exposed beyond
     # localhost, change the password and stop passing it in a prompt.
+    # ---- what counts as done ----
+    #
+    # "live_trades >= 1 AND live_pl > 0" used to end the run, so a SINGLE fill
+    # closing a fraction of a cent up printed "GOAL REACHED". That proves the
+    # plumbing works; it is not evidence of an edge.
+    [int]    $MinLiveTrades  = 5,
+    [double] $MinProfitFactor = 1.5,
+
+    # ---- when to give up ----
+    #
+    # Nothing used to stop this on losses: a losing run just kept nudging
+    # while the wallet ground down. These halt it and shout.
+    [double] $MaxLossUsd     = 1.00,
+    [double] $MinWalletUsd   = 5.50,
+
     [string] $DashboardPort = "8001",
     [string] $DashboardUser = "admin",
     [string] $DashboardPass = "admin"
@@ -124,6 +139,108 @@ try {
 } catch { }
 if ($swept -gt 0) {
     Write-Host "swept $swept orphaned claude process(es) from a previous run" -ForegroundColor Yellow
+}
+
+# --------------------------------------------------------------- render --
+
+function Write-ClaudeEvent {
+    <#  Turn one stream-json event into a readable line.
+
+        Shows what Claude is DOING -- the command it ran, the file it edited,
+        the text it wrote -- rather than a spinner. Anything unrecognised is
+        ignored rather than dumped as raw JSON, which would bury the signal.  #>
+    param([string] $Line)
+
+    $ev = $null
+    try { $ev = $Line | ConvertFrom-Json -ErrorAction Stop } catch { return }
+    if (-not $ev) { return }
+
+    switch ($ev.type) {
+        "system" {
+            if ($ev.subtype -eq "init") {
+                Write-Host "  [start] session $($ev.session_id)" -ForegroundColor DarkGray
+            }
+        }
+        "rate_limit_event" {
+            $ri = $ev.rate_limit_info
+            if ($ri) {
+                $pct = [int](([double]$ri.utilization) * 100)
+                $col = if ($pct -ge 95) { "Red" } elseif ($pct -ge 80) { "Yellow" } else { "DarkGray" }
+                Write-Host ("  [quota] {0} at {1}% used" -f $ri.rateLimitType, $pct) -ForegroundColor $col
+                $script:LastRateLimit = $ri
+            }
+        }
+        "assistant" {
+            foreach ($c in $ev.message.content) {
+                switch ($c.type) {
+                    "text" {
+                        foreach ($t in ($c.text -split "`n")) {
+                            if ($t.Trim()) { Write-Host "  $($t.TrimEnd())" -ForegroundColor White }
+                        }
+                    }
+                    "tool_use" {
+                        $d = ""
+                        if ($c.input.command)       { $d = $c.input.command }
+                        elseif ($c.input.file_path) { $d = $c.input.file_path }
+                        elseif ($c.input.pattern)   { $d = $c.input.pattern }
+                        elseif ($c.input.prompt)    { $d = $c.input.prompt }
+                        if ($d.Length -gt 150) { $d = $d.Substring(0,150) + " ..." }
+                        $d = $d -replace "`r?`n", " "
+                        Write-Host ("  > {0}: {1}" -f $c.name, $d) -ForegroundColor Cyan
+                    }
+                }
+            }
+        }
+        "user" {
+            foreach ($c in $ev.message.content) {
+                if ($c.type -ne "tool_result") { continue }
+                $txt = ""
+                if ($c.content -is [string]) { $txt = $c.content }
+                elseif ($c.content) { $txt = ($c.content | ForEach-Object { $_.text }) -join " " }
+                $txt = ($txt -replace "`r?`n", " ").Trim()
+                if (-not $txt) { continue }
+                if ($txt.Length -gt 200) { $txt = $txt.Substring(0,200) + " ..." }
+                $col = if ($c.is_error) { "Red" } else { "DarkGray" }
+                Write-Host "    $txt" -ForegroundColor $col
+            }
+        }
+        "result" {
+            if ($ev.result) { $script:FinalResult = [string]$ev.result }
+            if ($null -ne $ev.total_cost_usd) {
+                Write-Host ("  [done] {0:N4} USD, {1} turns, {2}s" -f `
+                    $ev.total_cost_usd, $ev.num_turns, [int]($ev.duration_ms / 1000)) -ForegroundColor DarkGreen
+            }
+        }
+    }
+}
+
+# ------------------------------------------------------------------- sms --
+
+function Send-Milestone {
+    <#  Text a milestone. Never let a notification failure stop trading:
+        every path is swallowed, because a dropped text is worth far less
+        than an interrupted run.  #>
+    param([string] $Text)
+    try {
+        Write-Line "  texting: $Text" "Magenta"
+        & $Python (Join-Path $Repo "scripts
+otify_sms.py") $Text 2>&1 | ForEach-Object {
+            Write-Host "    $_" -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Line "  (text failed: $_)" "DarkYellow"
+    }
+}
+
+# Milestones fire ONCE each. Without this the loop would text the same
+# "first live trade" every pass for as long as the condition held true.
+$script:Milestones = @{}
+
+function Send-MilestoneOnce {
+    param([string] $Key, [string] $Text)
+    if ($script:Milestones.ContainsKey($Key)) { return }
+    $script:Milestones[$Key] = $true
+    Send-Milestone -Text $Text
 }
 
 # Keep the newest line in view. Without this the console keeps the viewport
@@ -208,12 +325,29 @@ try:
     sys.path.insert(0, ".")
     from services import strategy_registry
     total, trades = 0.0, 0
+    wins, losses, gross_win, gross_loss = 0, 0, 0.0, 0.0
     for row in strategy_registry.list_strategies():
         live = ((row.get("lifetime") or {}).get("live")) or {}
         total  += float(live.get("total_profit") or 0.0)
         trades += int(live.get("trades") or 0)
+        wins   += int(live.get("wins") or 0)
+        losses += int(live.get("losses") or 0)
+        gross_win  += abs(float(live.get("gross_win") or 0.0))
+        gross_loss += abs(float(live.get("gross_loss") or 0.0))
     out["live_pl"] = round(total, 6)
     out["live_trades"] = trades
+    out["live_wins"] = wins
+    out["live_losses"] = losses
+    out["gross_win"] = round(gross_win, 6)
+    out["gross_loss"] = round(gross_loss, 6)
+    # Profit factor: gross wins over gross losses. No losses yet with a
+    # positive book is treated as passing rather than dividing by zero.
+    if gross_loss > 0:
+        out["profit_factor"] = round(gross_win / gross_loss, 4)
+    elif gross_win > 0:
+        out["profit_factor"] = 999.0
+    else:
+        out["profit_factor"] = 0.0
 except Exception:
     pass
 print(json.dumps(out))
@@ -281,6 +415,8 @@ function Invoke-Claude {
         Write-Line "invoking Claude on session $SessionId ..." "Magenta"
     }
     $started  = Get-Date
+    $script:FinalResult = ""
+    $script:LastRateLimit = $null
     $outFile  = Join-Path $env:TEMP "claude_out_$([guid]::NewGuid().ToString('N')).txt"
     $errFile  = "$outFile.err"
     $promptFile = Join-Path $env:TEMP "claude_prompt_$([guid]::NewGuid().ToString('N')).txt"
@@ -289,10 +425,14 @@ function Invoke-Claude {
     try {
         # Fresh session unless one was explicitly requested. Resuming is the
         # expensive path: it re-reads the whole prior conversation every pass.
+        # stream-json emits an event per step -- every tool call, command and
+        # result -- instead of one text blob at the end. That is what makes
+        # the window show actual work rather than "...working 400s".
+        $fmt = @("--output-format", "stream-json", "--verbose")
         $claudeArgs = if ([string]::IsNullOrWhiteSpace($SessionId)) {
-            @("-p", "--permission-mode", "bypassPermissions")
+            @("-p") + $fmt + @("--permission-mode", "bypassPermissions")
         } else {
-            @("--resume", $SessionId, "-p", "--permission-mode", "bypassPermissions")
+            @("--resume", $SessionId, "-p") + $fmt + @("--permission-mode", "bypassPermissions")
         }
         # Remember the child so a shutdown can take it with us. Killing the
         # loop window used to leave the claude process running with nothing
@@ -337,9 +477,8 @@ function Invoke-Claude {
                         $chunk = $now.Substring($lastLen)
                         $lastLen = $now.Length
                         foreach ($ln in ($chunk -split "`r?`n")) {
-                            if ($ln.Trim()) {
-                                Write-Host "  | $($ln.TrimEnd())" -ForegroundColor Gray
-                            }
+                            if (-not $ln.Trim()) { continue }
+                            Write-ClaudeEvent -Line $ln
                         }
                         Scroll-ToBottom
                         $lastBeat = Get-Date
@@ -389,8 +528,20 @@ function Invoke-Claude {
 
     $script:ActiveClaude = $null
     $elapsed = [int]((Get-Date) - $started).TotalSeconds
-    $reply   = ""
-    if (Test-Path $outFile) { $reply = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue) }
+    # With stream-json the file holds events, not prose. The final answer was
+    # captured from the "result" event as it streamed past; fall back to a
+    # last-pass parse if the stream ended before we rendered it.
+    $reply = $script:FinalResult
+    if ([string]::IsNullOrWhiteSpace($reply) -and (Test-Path $outFile)) {
+        try {
+            foreach ($ln in (Get-Content $outFile -ErrorAction SilentlyContinue)) {
+                if (-not $ln.Trim()) { continue }
+                $ev = $null
+                try { $ev = $ln | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+                if ($ev.type -eq "result" -and $ev.result) { $reply = [string]$ev.result }
+            }
+        } catch { }
+    }
 
     # VERIFICATION: a response must exist and carry real content. An empty
     # reply, or one that is only a quota/limit notice, is NOT a response.
@@ -514,15 +665,70 @@ while ($true) {
                     $state.ticks_10m, $state.ghost_1h, $state.cycles_10m, $state.transitions, $state.usdc)
     }
 
-    # ---- the only exit condition ----
-    if ($state -and $state.live_rows -ge 1 -and $state.live_trades -ge 1 -and
-        $null -ne $state.live_pl -and $state.live_pl -gt 0) {
-        Write-Banner "GOAL REACHED: LIVE TRADING AND PROFITABLE" "Green"
-        Write-Line ("live trades = {0}   live P/L = {1}" -f $state.live_trades, $state.live_pl) "Green"
+    # ---- milestones worth a text ----
+    if ($state) {
+        if ($state.live_rows -ge 1) {
+            Send-MilestoneOnce -Key "first_live" -Text (
+                "R3V3N!R: FIRST LIVE TRADE placed. trades={0} P/L={1:+0.0000;-0.0000;0.0000} wallet=`${2}" -f `
+                $state.live_trades, $state.live_pl, $state.usdc)
+        }
+        if ($state.live_trades -ge 1 -and $state.live_pl -gt 0) {
+            Send-MilestoneOnce -Key "first_profit" -Text (
+                "R3V3N!R: FIRST PROFITABLE live P/L {0:+0.0000} over {1} trade(s). PF {2}. Need {3} trades at PF {4} to finish." -f `
+                $state.live_pl, $state.live_trades, $state.profit_factor, $MinLiveTrades, $MinProfitFactor)
+        }
+        # Halfway to the trade count, so a long run still reports in.
+        $half = [Math]::Max(1, [int]($MinLiveTrades / 2))
+        if ($state.live_trades -ge $half) {
+            Send-MilestoneOnce -Key "half_trades" -Text (
+                "R3V3N!R: {0}/{1} live trades. P/L {2:+0.0000;-0.0000;0.0000} PF {3} W/L {4}/{5}" -f `
+                $state.live_trades, $MinLiveTrades, $state.live_pl, $state.profit_factor, `
+                $state.live_wins, $state.live_losses)
+        }
+    }
+
+    # ---- stop on SUSTAINED profit, not a single lucky fill ----
+    if ($state -and $state.live_rows -ge 1 -and
+        $state.live_trades -ge $MinLiveTrades -and
+        $null -ne $state.live_pl -and $state.live_pl -gt 0 -and
+        $null -ne $state.profit_factor -and $state.profit_factor -ge $MinProfitFactor) {
+        Write-Banner "GOAL REACHED: CONSISTENTLY PROFITABLE LIVE TRADING" "Green"
+        Write-Line ("live trades   = {0}  (>= {1} required)" -f $state.live_trades, $MinLiveTrades) "Green"
+        Write-Line ("live P/L      = {0:+0.0000;-0.0000;0.0000}" -f $state.live_pl) "Green"
+        Write-Line ("profit factor = {0}  (>= {1} required)" -f $state.profit_factor, $MinProfitFactor) "Green"
+        Write-Line ("wins/losses   = {0}/{1}" -f $state.live_wins, $state.live_losses) "Green"
+        Send-Milestone -Text (
+            "R3V3N!R GOAL REACHED: {0} live trades, P/L {1:+0.0000}, PF {2}, W/L {3}/{4}. Loop stopped." -f `
+            $state.live_trades, $state.live_pl, $state.profit_factor, $state.live_wins, $state.live_losses)
         break
     }
+
+    # ---- STOP LOSING. Nothing used to halt a losing run. ----
+    if ($state -and $null -ne $state.live_pl -and $state.live_pl -le (-1 * $MaxLossUsd)) {
+        Write-Banner "HALTED: LOSS LIMIT REACHED" "Red"
+        Write-Line ("live P/L {0:+0.0000;-0.0000;0.0000} is at or past the -{1} limit" -f $state.live_pl, $MaxLossUsd) "Red"
+        Write-Line ("wins/losses = {0}/{1}   profit factor = {2}" -f $state.live_wins, $state.live_losses, $state.profit_factor) "Red"
+        Write-Line "Not continuing to trade a losing book. Investigate before restarting." "Red"
+        Send-Milestone -Text (
+            "R3V3N!R HALTED: loss limit. P/L {0:+0.0000;-0.0000;0.0000} over {1} trades, W/L {2}/{3}, wallet `${4}. Needs you." -f `
+            $state.live_pl, $state.live_trades, $state.live_wins, $state.live_losses, $state.usdc)
+        break
+    }
+    if ($state -and $null -ne $state.usdc -and $state.usdc -lt $MinWalletUsd) {
+        Write-Banner "HALTED: WALLET BELOW FLOOR" "Red"
+        Write-Line ("deployable stable {0} is under the {1} floor" -f $state.usdc, $MinWalletUsd) "Red"
+        Write-Line "Not continuing to spend down the wallet. Investigate before restarting." "Red"
+        Send-Milestone -Text (
+            "R3V3N!R HALTED: wallet `${0} under `${1} floor. {2} live trades, P/L {3:+0.0000;-0.0000;0.0000}. Needs you." -f `
+            $state.usdc, $MinWalletUsd, $state.live_trades, $state.live_pl)
+        break
+    }
+
+    # ---- progress toward the bar ----
     if ($state -and $state.live_rows -ge 1) {
-        Write-Line "LIVE TRADES EXIST but P/L is not positive yet -- continuing" "Yellow"
+        Write-Line ("LIVE: {0}/{1} trades  P/L {2:+0.0000;-0.0000;0.0000}  PF {3} (need {4})  W/L {5}/{6} -- continuing" -f `
+                    $state.live_trades, $MinLiveTrades, $state.live_pl, `
+                    $state.profit_factor, $MinProfitFactor, $state.live_wins, $state.live_losses) "Yellow"
     }
 
     # ---- keep production alive ----
@@ -599,6 +805,30 @@ The project reads the same pair from ADMIN_EMAIL / ADMIN_PASSWORD
     # Invoke-Claude now returns "ok" / "limit" / "failed", and every test puts
     # the literal first so no boolean coercion can happen again.
     $answered = Invoke-Claude -Prompt $prompt
+    # A real rate_limit_event beats guessing from prose: it carries the exact
+    # resetsAt epoch. Treat "blocked" (or exhausted utilization) as a limit
+    # even when Claude still produced a reply.
+    if ($script:LastRateLimit) {
+        $ri = $script:LastRateLimit
+        $util = [double]$ri.utilization
+        $blocked = ($ri.status -eq "blocked") -or ($util -ge 1.0)
+        if ($blocked -and $ri.resetsAt) {
+            $resetAt = [DateTimeOffset]::FromUnixTimeSeconds([long]$ri.resetsAt).LocalDateTime
+            $wait = [int](($resetAt - (Get-Date)).TotalSeconds) + 60
+            if ($wait -gt 0) {
+                Write-Banner "OUT OF QUOTA -- $($ri.rateLimitType) EXHAUSTED" "Red"
+                Write-Line ("resets {0} ({1:N1} hours from now)" -f `
+                            $resetAt.ToString("ddd HH:mm"), ($wait / 3600)) "Yellow"
+                Send-MilestoneOnce -Key "quota_blocked" -Text (
+                    "R3V3N!R: out of {0} quota, paused until {1}. Loop resumes on its own." -f `
+                    $ri.rateLimitType, $resetAt.ToString("ddd HH:mm"))
+                Wait-ForQuota -Seconds $wait
+                $pass--
+                continue
+            }
+        }
+    }
+
     if ("limit" -eq $answered) {
         # Out of session time. Wait for the window to reopen and try the same
         # pass again -- do not count it as progress, and do not give up.
