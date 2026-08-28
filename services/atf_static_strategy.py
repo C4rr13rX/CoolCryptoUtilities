@@ -151,7 +151,38 @@ def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
     gaps.sort()
     mid = len(gaps) // 2
     median_gap = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2.0
-    return median_gap <= max_gap
+    if median_gap > max_gap:
+        return False
+    # A healthy median is not enough: the stop is breached by the WORST gap,
+    # not the typical one.
+    #
+    # Measured 2026-08-28 on every stop_loss exit in the ledger -- each breach
+    # coincided with a single long hole in the feed while the position was
+    # open, even though entry-time density looked fine:
+    #
+    #   BSTONK-USDC    -8.39%  20 ticks @ 42s median at entry, then a 10.9min
+    #                          hole during the hold (2 ticks total)
+    #   BASEJUICE-USDC -8.10%  29.8min hole
+    #   BASECAT-USDC   -8.52%   9.6min hole
+    #
+    # Those three breaches are the whole of the tail: they held ES95 at 0.0834
+    # against a 0.08 guardrail and blocked live trading entirely. The median
+    # test passed all three, because one long hole barely moves a median.
+    #
+    # So bound the tail directly. A feed that has recently gone quiet for
+    # longer than the stop can survive is a feed that cannot enforce the stop,
+    # regardless of how good it looks on average.
+    max_hole = _float_env("ATF_STATIC_MAX_TICK_HOLE_SEC", 600.0)
+    if max_hole > 0.0 and gaps[-1] > max_hole:
+        return False
+    # The feed must also be live NOW, not merely dense in aggregate: a window
+    # that ended twenty minutes ago describes a feed that has already stopped.
+    # Budgeted separately so disabling the hole check does not also disable
+    # the staleness check -- they answer different questions.
+    max_stale = _float_env("ATF_STATIC_MAX_FEED_STALENESS_SEC", 600.0)
+    if max_stale > 0.0 and stamps and (_now() - stamps[-1]) > max_stale:
+        return False
+    return True
 
 
 def _corroborated_price(

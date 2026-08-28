@@ -69,10 +69,49 @@ class FeedDensityGateTest(unittest.TestCase):
         """A handful of ticks is not a feed, whatever the spacing."""
         self.assertFalse(_feed_is_dense_enough(_DB(count=3), "THIN-USDC", "base"))
 
-    def test_one_outage_does_not_disqualify_a_good_feed(self):
-        """Median, not max: a single gap should not veto solid coverage."""
+    def test_one_long_hole_disqualifies_an_otherwise_good_feed(self):
+        """A single hole is exactly what breaches the stop.
+
+        This assertion was originally the opposite -- a lone outage was
+        allowed on the reasoning that it should not veto solid coverage.
+        Measured 2026-08-28, that reasoning was wrong: every stop_loss breach
+        in the ledger had healthy entry-time density and one long hole during
+        the hold (BSTONK 10.9min, BASEJUICE 29.8min, BASECAT 9.6min). The
+        median test passed all three. Those three trades were the entire tail
+        that blocked live trading.
+        """
         gaps = [30] * 20 + [40000] + [30] * 20
+        self.assertFalse(_feed_is_dense_enough(_DB(gaps_sec=gaps), "OK-USDC", "base"))
+
+    def test_short_hole_within_budget_is_tolerated(self):
+        """The bound is the stop's survivable hole, not zero variance."""
+        gaps = [30] * 20 + [420] + [30] * 20
         self.assertTrue(_feed_is_dense_enough(_DB(gaps_sec=gaps), "OK-USDC", "base"))
+
+    def test_bstonk_hold_gap_is_refused(self):
+        """The exact shape that booked -8.39% and blocked live trading."""
+        gaps = [42] * 19 + [654]
+        self.assertFalse(
+            _feed_is_dense_enough(_DB(gaps_sec=gaps), "BSTONK-USDC", "base")
+        )
+
+    def test_stale_feed_is_refused_even_when_history_is_dense(self):
+        """Dense an hour ago is not dense now."""
+
+        class _Stale:
+            def recent_market_prices(self, symbol, chain, *, since_ts=None, limit=200):
+                now = time.time()
+                # 30 tight ticks that all stopped 20 minutes ago.
+                return [(1.0, now - 1200.0 - i * 30.0) for i in range(30)]
+
+        self.assertFalse(_feed_is_dense_enough(_Stale(), "STALE-USDC", "base"))
+
+    def test_hole_budget_is_configurable(self):
+        gaps = [30] * 20 + [40000] + [30] * 20
+        with mock.patch.dict(os.environ, {"ATF_STATIC_MAX_TICK_HOLE_SEC": "0"}):
+            self.assertTrue(
+                _feed_is_dense_enough(_DB(gaps_sec=gaps), "OK-USDC", "base")
+            )
 
     def test_consistently_thin_feed_is_refused(self):
         gaps = [900] * 12
