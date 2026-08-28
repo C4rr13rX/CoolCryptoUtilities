@@ -322,11 +322,11 @@ function Invoke-Claude {
         if ($timedOut) {
             Write-Line "Claude exceeded ${ClaudeTimeoutSec}s; abandoning this pass" "Red"
             try { $proc.Kill() } catch { }
-            return $false
+            return "failed"
         }
     } catch {
         Write-Line "could not start Claude: $_" "Red"
-        return $false
+        return "failed"
     }
 
     $elapsed = [int]((Get-Date) - $started).TotalSeconds
@@ -340,7 +340,7 @@ function Invoke-Claude {
         if (Test-Path $errFile) { $err = (Get-Content $errFile -Raw -ErrorAction SilentlyContinue) }
         Write-Line "Claude produced NO output after ${elapsed}s -- will retry" "Red"
         if ($err) { Write-Line "  stderr: $($err.Substring(0, [Math]::Min(300, $err.Length)))" "DarkRed" }
-        return $false
+        return "failed"
     }
     if ($reply -match "(?i)(usage limit|rate limit|resets at|resets? [0-9]|quota exceeded)" -and $reply.Length -lt 400) {
         Write-Line "SESSION LIMIT REACHED -- Claude returned a limit notice, not work" "Red"
@@ -358,7 +358,7 @@ function Invoke-Claude {
     try { Add-Content -Path $LogFile -Value $reply -Encoding UTF8 } catch { }
 
     Remove-Item $outFile, $errFile, $promptFile -ErrorAction SilentlyContinue
-    return $true
+    return "ok"
 }
 
 # --------------------------------------------------------------- quota --
@@ -528,15 +528,26 @@ The project reads the same pair from ADMIN_EMAIL / ADMIN_PASSWORD
 (see serverless/hybrid/migrate_to_s3.py).
 "@
 
+    # Compare with the STRING on the left.
+    #
+    # PowerShell's -eq coerces the right operand to the LEFT operand's type,
+    # so `$true -eq "limit"` is TRUE -- any non-empty string casts to $true.
+    # Invoke-Claude used to return $true on success, so every SUCCESSFUL pass
+    # was read as a quota limit and slept 30 minutes for nothing. Observed
+    # 2026-08-28 10:13: a completed 3580-char report with commits landed was
+    # followed by "OUT OF SESSION TIME".
+    #
+    # Invoke-Claude now returns "ok" / "limit" / "failed", and every test puts
+    # the literal first so no boolean coercion can happen again.
     $answered = Invoke-Claude -Prompt $prompt
-    if ($answered -eq "limit") {
+    if ("limit" -eq $answered) {
         # Out of session time. Wait for the window to reopen and try the same
         # pass again -- do not count it as progress, and do not give up.
         Wait-ForQuota -Seconds (Get-ResetWait -Notice $script:LimitNotice)
         $pass--
         continue
     }
-    if (-not $answered) {
+    if ("ok" -ne $answered) {
         Write-Line "no verified response; retrying in 120s" "Red"
         Start-Sleep -Seconds 120
         continue
