@@ -247,7 +247,79 @@ function Invoke-Claude {
             -RedirectStandardInput $promptFile `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
 
-        if (-not $proc.WaitForExit($ClaudeTimeoutSec * 1000)) {
+        # Show the work AS IT HAPPENS.
+        #
+        # WaitForExit blocked here silently for up to $ClaudeTimeoutSec (25
+        # minutes by default). Claude's output goes to a temp file that
+        # nothing read until the process exited, so a pass that was landing
+        # commits looked identical to a hung one -- observed 2026-08-28,
+        # where a 17-minute pass produced three commits while the window sat
+        # apparently frozen on "invoking Claude".
+        #
+        # So poll instead: stream new output as it is written, and print a
+        # heartbeat carrying elapsed time, commits landed this pass, and live
+        # pipeline counters. A watched window should never have to guess
+        # whether anything is happening.
+        $headSha    = (& git -C $Repo rev-parse --short HEAD 2>$null)
+        $lastLen    = 0
+        $lastBeat   = Get-Date
+        $beatEvery  = 20      # seconds between heartbeats
+        $deadline   = (Get-Date).AddSeconds($ClaudeTimeoutSec)
+        $timedOut   = $false
+
+        while (-not $proc.HasExited) {
+            if ((Get-Date) -gt $deadline) { $timedOut = $true; break }
+            Start-Sleep -Milliseconds 700
+
+            # --- stream whatever Claude has written since last look ---
+            try {
+                if (Test-Path $outFile) {
+                    $now = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
+                    if ($null -ne $now -and $now.Length -gt $lastLen) {
+                        $chunk = $now.Substring($lastLen)
+                        $lastLen = $now.Length
+                        foreach ($ln in ($chunk -split "`r?`n")) {
+                            if ($ln.Trim()) {
+                                Write-Host "  | $($ln.TrimEnd())" -ForegroundColor Gray
+                            }
+                        }
+                        Scroll-ToBottom
+                        $lastBeat = Get-Date
+                    }
+                }
+            } catch { }
+
+            # --- heartbeat when it has been quiet ---
+            if (((Get-Date) - $lastBeat).TotalSeconds -ge $beatEvery) {
+                $lastBeat = Get-Date
+                $secs = [int]((Get-Date) - $started).TotalSeconds
+                $left = [int]($deadline - (Get-Date)).TotalSeconds
+
+                $newCommits = ""
+                try {
+                    $head = (& git -C $Repo rev-parse --short HEAD 2>$null)
+                    if ($head -and $headSha -and $head -ne $headSha) {
+                        $n = (& git -C $Repo rev-list --count "$headSha..HEAD" 2>$null)
+                        $subject = (& git -C $Repo log -1 --format=%s 2>$null)
+                        $newCommits = "  committed $n -> $subject"
+                    }
+                } catch { }
+
+                $live = ""
+                try {
+                    $st = Get-TradingState
+                    if ($st) {
+                        $live = ("  ticks10m={0} ghost1h={1} live={2}" -f `
+                                 $st.ticks_10m, $st.ghost_1h, $st.live_rows)
+                    }
+                } catch { }
+
+                Write-Line ("  ...working {0}s (timeout in {1}s){2}{3}" -f `
+                            $secs, $left, $live, $newCommits) "DarkCyan"
+            }
+        }
+
+        if ($timedOut) {
             Write-Line "Claude exceeded ${ClaudeTimeoutSec}s; abandoning this pass" "Red"
             try { $proc.Kill() } catch { }
             return $false
