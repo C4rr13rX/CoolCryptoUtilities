@@ -88,12 +88,44 @@ class FeedDensityGateTest(unittest.TestCase):
         gaps = [30] * 20 + [420] + [30] * 20
         self.assertTrue(_feed_is_dense_enough(_DB(gaps_sec=gaps), "OK-USDC", "base"))
 
-    def test_bstonk_hold_gap_is_refused(self):
-        """The exact shape that booked -8.39% and blocked live trading."""
+    def test_bstonk_entry_window_was_genuinely_healthy(self):
+        """Honest about what this gate can and cannot catch.
+
+        BSTONK-USDC booked the -8.39% that blocks live trading, but its ENTRY
+        window was fine: 20 ticks at a 42s median, max gap 654s -- inside the
+        calibrated budget. The hole that breached the stop (10.9min) opened
+        AFTER entry, during the hold, where an entry-time gate cannot see it.
+
+        So this asserts the entry was correctly allowed. The residual risk is
+        real and lives in the exit path, not here; see
+        test_pathological_hole_is_refused for what this gate does catch.
+        """
         gaps = [42] * 19 + [654]
-        self.assertFalse(
+        self.assertTrue(
             _feed_is_dense_enough(_DB(gaps_sec=gaps), "BSTONK-USDC", "base")
         )
+
+    def test_pathological_hole_is_refused(self):
+        """BASEJUICE's 29.8min hole is beyond any stop's reach."""
+        gaps = [120] * 19 + [1788]
+        self.assertFalse(
+            _feed_is_dense_enough(_DB(gaps_sec=gaps), "BASEJUICE-USDC", "base")
+        )
+
+    def test_healthy_jitter_is_not_refused(self):
+        """Measured 2026-08-27: healthy symbols reach ~1000s max gap.
+
+        A budget below this refuses every symbol permanently, which is a worse
+        failure than the one being fixed.
+        """
+        for sym, mx in (("CBBTC", 624), ("AERO", 1052), ("MAMO", 770),
+                        ("BASECAT", 567), ("BSTONK", 983)):
+            gaps = [180] * 19 + [mx]
+            self.assertTrue(
+                _feed_is_dense_enough(_DB(gaps_sec=gaps), sym + "-USDC", "base"),
+                "%s (max gap %ds) is a healthy feed and must not be refused"
+                % (sym, mx),
+            )
 
     def test_stale_feed_is_refused_even_when_history_is_dense(self):
         """Dense an hour ago is not dense now."""

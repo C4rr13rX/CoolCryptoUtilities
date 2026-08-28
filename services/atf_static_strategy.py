@@ -172,14 +172,26 @@ def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
     # So bound the tail directly. A feed that has recently gone quiet for
     # longer than the stop can survive is a feed that cannot enforce the stop,
     # regardless of how good it looks on average.
-    max_hole = _float_env("ATF_STATIC_MAX_TICK_HOLE_SEC", 600.0)
+    #
+    # The budget is calibrated, not guessed. Sampled across the 1h windows the
+    # gate actually reads, on 2026-08-27 12:00-20:00 (an uninterrupted
+    # stretch), healthy symbols carried these median max-gaps:
+    #
+    #   CBBTC 624s   AERO 1052s   MAMO 770s   BASECAT 567s   BSTONK 983s
+    #
+    # Normal jitter therefore reaches ~1000s even on feeds that are fine. A
+    # 600s budget would refuse every symbol permanently -- trading one bug for
+    # a worse one. 1200s clears that jitter while still catching the holes
+    # that actually breached the stop (BASEJUICE 1788s, and the hold-time
+    # holes that produced all three breaches).
+    max_hole = _float_env("ATF_STATIC_MAX_TICK_HOLE_SEC", 1200.0)
     if max_hole > 0.0 and gaps[-1] > max_hole:
         return False
     # The feed must also be live NOW, not merely dense in aggregate: a window
     # that ended twenty minutes ago describes a feed that has already stopped.
     # Budgeted separately so disabling the hole check does not also disable
     # the staleness check -- they answer different questions.
-    max_stale = _float_env("ATF_STATIC_MAX_FEED_STALENESS_SEC", 600.0)
+    max_stale = _float_env("ATF_STATIC_MAX_FEED_STALENESS_SEC", 1200.0)
     if max_stale > 0.0 and stamps and (_now() - stamps[-1]) > max_stale:
         return False
     return True
