@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
 from cache import CacheBalances, CacheTransfers
 from db import TradingDatabase, get_db
 from trading.data_stream import MarketDataStream
-from trading.pipeline import TrainingPipeline
+from trading.pipeline import TrainingPipeline, ghost_reason_is_earned
 from trading.portfolio import PortfolioState, NATIVE_SYMBOL
 from trading.scheduler import BusScheduler, TradeDirective
 from trading.equilibrium import EquilibriumTracker
@@ -1950,10 +1950,16 @@ class TradingBot:
         # below, swap_validator.plan_transition, and the per-strategy check in
         # _strategy_live_approved all still apply -- this only stops a broken
         # measurement from vetoing them.
+        # The block-list this used to carry -- {"", "cold_start", "bootstrap",
+        # "no_metrics"} -- was inverted in both directions. It rejected "",
+        # which is not a missing reason but what the STRICT path returns, and
+        # it never named "cold_start_bootstrap", the one ready=True verdict
+        # that is evidence of nothing, so a zero-trade wallet could promote
+        # itself here. See pipeline.GHOST_EARNED_READY_REASONS.
         if not ready_flag and isinstance(readiness, dict):
-            ghost_earned = bool(readiness.get("ghost_ready")) and str(
-                readiness.get("ghost_reason") or ""
-            ) not in {"", "cold_start", "bootstrap", "no_metrics"}
+            ghost_earned = bool(readiness.get("ghost_ready")) and ghost_reason_is_earned(
+                readiness.get("ghost_reason")
+            )
             if ghost_earned and os.getenv("LIVE_REQUIRE_MODEL_READY", "0").strip().lower() not in {
                 "1", "true", "yes", "on",
             }:

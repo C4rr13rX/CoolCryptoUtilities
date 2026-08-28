@@ -29,10 +29,12 @@ These tests pin the allow-list against what _ghost_validation actually emits.
 
 from __future__ import annotations
 
+import pathlib
 import types
 import unittest
 from unittest import mock
 
+from trading.bot import TradingBot
 from trading.pipeline import (
     GHOST_EARNED_READY_REASONS,
     TrainingPipeline,
@@ -150,6 +152,126 @@ class LiveReadyFlagSharesTheRuleTest(unittest.TestCase):
         self.assertFalse(
             self._flag({"ready": True, "reason": "", "total_net_profit": 0.0})
         )
+
+
+class BotGhostEarnedPathSharesTheRuleTest(unittest.TestCase):
+    """bot._maybe_transition_to_live carried a THIRD copy of the block-list.
+
+    Its copy was inverted both ways too. It rejected "" -- so even a
+    live-capable bot fell through to reason="model_accuracy_gate" and never
+    reached ``_refresh_auto_execute``, which is what clears the
+    LIVE_TRADES_DRY_RUN="1" default. And it never named
+    "cold_start_bootstrap", so a wallet with ZERO ghost trades could promote
+    itself to live through this path on no evidence at all.
+    """
+
+    def _transition_reason(self, ghost_reason, *, ghost_ready=True):
+        """Drive the real method; report the veto it records (None = passed)."""
+        pipeline = types.SimpleNamespace(
+            ghost_live_transition_plan=lambda: {},
+            live_readiness_report=lambda: readiness(
+                ghost_ready=ghost_ready, ghost_reason=ghost_reason
+            ),
+        )
+        bot = types.SimpleNamespace(
+            auto_promote_live=True,
+            apply_transition_plan=lambda _plan: None,
+            _transition_plan={},
+            _live_transition_state={},
+            live_trading_enabled=False,
+            global_risk_budget=1.0,
+            max_trade_share=0.12,
+            decision_threshold=0.5,
+            required_live_win_rate=0.55,
+            required_live_trades=40,
+            required_live_profit=0.0,
+            pipeline=pipeline,
+        )
+        TradingBot._maybe_transition_to_live(bot, latest_decision=None)
+        return (bot._live_transition_state or {}).get("reason")
+
+    def test_earned_ghost_record_clears_the_model_accuracy_gate(self):
+        """The production verdict: ghost_ready=True, strict-path reason ''."""
+        self.assertNotEqual(
+            self._transition_reason(""),
+            "model_accuracy_gate",
+            "the strict-path ghost pass must not be vetoed by the degenerate "
+            "model metric -- this veto is what left LIVE_TRADES_DRY_RUN at '1'",
+        )
+
+    def test_every_earned_ghost_path_clears_it(self):
+        for reason in sorted(GHOST_EARNED_READY_REASONS):
+            with self.subTest(ghost_reason=reason):
+                self.assertNotEqual(
+                    self._transition_reason(reason), "model_accuracy_gate"
+                )
+
+    def test_cold_start_bypass_is_vetoed_here(self):
+        """The hole the block-list left open: promotion on zero ghost trades."""
+        self.assertEqual(
+            self._transition_reason("cold_start_bootstrap"),
+            "model_accuracy_gate",
+            "a zero-trade bootstrap allowance must never promote a bot to live",
+        )
+
+    def test_unready_ghost_book_is_vetoed_here(self):
+        self.assertEqual(
+            self._transition_reason("", ghost_ready=False), "model_accuracy_gate"
+        )
+
+
+class NoModuleRestatesTheRuleTest(unittest.TestCase):
+    """The bug was one rule copied into three modules, then drifting apart.
+
+    Two of the three copies had already been corrected once while the third
+    kept the inverted set, so the executor stayed broken. Pin the shape: every
+    module that gates live money on a ghost reason consults the shared
+    allow-list, and none of them spells the reason strings out in code again.
+    """
+
+    MODULES = ("trading/pipeline.py", "trading/selector.py", "trading/bot.py")
+
+    def _code_lines(self, rel):
+        path = pathlib.Path(__file__).resolve().parents[1] / rel
+        return [
+            line
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if not line.lstrip().startswith("#")
+        ]
+
+    def test_each_module_consults_the_shared_allow_list(self):
+        for rel in self.MODULES:
+            with self.subTest(module=rel):
+                self.assertTrue(
+                    any("ghost_reason_is_earned" in l for l in self._code_lines(rel)),
+                    "%s gates live money on a ghost reason but does not use the "
+                    "shared allow-list" % rel,
+                )
+
+    # Every reason _ghost_validation can attach to a ready=True verdict. The
+    # bug was a hand-written membership test over these; "bootstrap" alone is
+    # excluded because pipeline uses it legitimately as a live_mode value.
+    REASON_LITERALS = (
+        '"cold_start"',
+        '"cold_start_bootstrap"',
+        '"no_metrics"',
+        '"fast_track"',
+        '"positive_expectancy"',
+    )
+
+    def test_no_module_restates_the_reason_strings(self):
+        for rel in self.MODULES:
+            for line in self._code_lines(rel):
+                if " in {" not in line and " in (" not in line:
+                    continue
+                hit = next((s for s in self.REASON_LITERALS if s in line), None)
+                if hit is not None:
+                    self.fail(
+                        "%s membership-tests a ghost reason in code (%s) -- "
+                        "that hand-written set is exactly what drifted out of "
+                        "sync with _ghost_validation; use ghost_reason_is_earned"
+                        % (rel, line.strip())
+                    )
 
 
 if __name__ == "__main__":
