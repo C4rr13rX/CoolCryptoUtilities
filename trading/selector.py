@@ -23,7 +23,7 @@ from trading.data_stream import (
     has_price_endpoints,
     TOKEN_NORMALIZATION,
 )
-from trading.pipeline import TrainingPipeline
+from trading.pipeline import TrainingPipeline, ghost_reason_is_earned
 from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs, pair_index_entries
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL
@@ -785,10 +785,11 @@ class GhostTradingSupervisor:
             return False
         if not bool(readiness.get("ghost_ready")):
             return False
-        reason = str(readiness.get("ghost_reason") or "")
-        # Cold-start and bootstrap allowances exist to let collection BEGIN;
-        # they are not evidence of anything.
-        return reason not in {"", "cold_start", "bootstrap", "no_metrics"}
+        # The cold-start allowance exists to let collection BEGIN; it is not
+        # evidence of anything. Everything else _ghost_validation reports next
+        # to ready=True was earned -- including the empty reason, which is what
+        # the STRICT path returns. See GHOST_EARNED_READY_REASONS.
+        return ghost_reason_is_earned(readiness.get("ghost_reason"))
 
     def build(self) -> None:
         if self.bots:

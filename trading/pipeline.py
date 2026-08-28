@@ -296,6 +296,30 @@ class _EmbeddingTooSmall(RuntimeError):
         self.needed = needed
 
 
+# The reasons ``_ghost_validation`` attaches to a ready=True verdict. There are
+# exactly four, and only these three were earned:
+#
+#     ""                     strict path: min_trades, win rate and every guard
+#     "fast_track"           Wilson lower-bound path
+#     "positive_expectancy"  asymmetric path, net of fees
+#     "cold_start_bootstrap" ZERO trades -- the bypass that lets collection
+#                            begin, and evidence of nothing
+#
+# Callers gating live money must consult this rather than restate the set, and
+# must express it as an allow-list. The block-list version of this rule named
+# "cold_start", "bootstrap" and "no_metrics" -- three strings _ghost_validation
+# never emits next to ready=True -- so it let the real bypass through while
+# rejecting "", the STRONGEST pass, which is what every earned strict-path
+# verdict carries. That inversion held live_trading_enabled=False on every bot
+# built between 2026-08-27 and 2026-08-28 with all six risk gates passing.
+GHOST_EARNED_READY_REASONS = frozenset({"", "fast_track", "positive_expectancy"})
+
+
+def ghost_reason_is_earned(reason: Any) -> bool:
+    """Does this ``_ghost_validation`` reason represent an EARNED ghost record?"""
+    return str(reason or "") in GHOST_EARNED_READY_REASONS
+
+
 def ghost_stop_loss_pct() -> float:
     """The widest stop any ghost simulator in the pool can take.
 
@@ -3633,11 +3657,10 @@ class TrainingPipeline:
             return False
         if not isinstance(ghost_check, dict) or not ghost_check.get("ready"):
             return False
-        # Only a genuinely earned ghost record qualifies -- never a cold-start
-        # or bootstrap allowance, which exist to let collection begin and
-        # represent no evidence at all.
-        reason = str(ghost_check.get("reason") or "")
-        if reason in {"cold_start", "bootstrap", "no_metrics"}:
+        # Only a genuinely earned ghost record qualifies -- never the cold-start
+        # allowance, which exists to let collection begin and represents no
+        # evidence at all. See GHOST_EARNED_READY_REASONS.
+        if not ghost_reason_is_earned(ghost_check.get("reason")):
             return False
         if float(ghost_check.get("total_net_profit", 0.0) or 0.0) <= 0.0:
             return False
