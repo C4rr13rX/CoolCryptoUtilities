@@ -73,6 +73,59 @@ if (-not $script:Mutex.WaitOne(0)) {
     exit 1
 }
 
+# NEVER LEAVE AN ORPHANED CLAUDE BEHIND.
+#
+# Start-Process children survive their parent on Windows. Killing this loop
+# window therefore left a claude process running with nothing reading its
+# output: it kept working, and kept spending tokens, until it finished or
+# timed out. Observed 2026-08-28 during a restart, and the user had to shut
+# it down by hand.
+#
+# So tear the child down on any exit path -- Ctrl-C, Stop-Process, or a
+# normal break out of the loop.
+$script:ActiveClaude = $null
+
+function Stop-ActiveClaude {
+    if ($script:ActiveClaude -and -not $script:ActiveClaude.HasExited) {
+        try {
+            Write-Host "  stopping in-flight Claude (PID $($script:ActiveClaude.Id))..." -ForegroundColor Yellow
+            Stop-Process -Id $script:ActiveClaude.Id -Force -ErrorAction SilentlyContinue
+        } catch { }
+    }
+    $script:ActiveClaude = $null
+}
+
+# Fires on normal exit and on Ctrl-C. Note this does NOT fire on
+# `Stop-Process -Force`, which is why the startup sweep below also exists --
+# belt and braces, because the failure mode is invisible token spend.
+try {
+    Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action { Stop-ActiveClaude } | Out-Null
+} catch { }
+
+# SWEEP ORPHANS FROM A PREVIOUS RUN.
+#
+# If a previous loop was force-killed, its claude child is still out there
+# working against a prompt nobody will read. We hold the single-instance
+# mutex by this point, so any claude process older than this one belongs to
+# a dead loop and is safe to reap.
+$swept = 0
+try {
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*claude*' -and $_.CommandLine -notlike '*GetToLiveTrading*' } |
+        ForEach-Object {
+            $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.ParentProcessId)" -ErrorAction SilentlyContinue
+            # Reap only claude processes whose parent is gone -- a live parent
+            # means someone else (an interactive session) owns it.
+            if (-not $owner) {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                $swept++
+            }
+        }
+} catch { }
+if ($swept -gt 0) {
+    Write-Host "swept $swept orphaned claude process(es) from a previous run" -ForegroundColor Yellow
+}
+
 # Keep the newest line in view. Without this the console keeps the viewport
 # where the user last left it, so a long-running loop appears frozen while it
 # is actually scrolling far below.
@@ -241,11 +294,16 @@ function Invoke-Claude {
         } else {
             @("--resume", $SessionId, "-p", "--permission-mode", "bypassPermissions")
         }
+        # Remember the child so a shutdown can take it with us. Killing the
+        # loop window used to leave the claude process running with nothing
+        # reading its output -- it kept working, and kept spending tokens,
+        # invisibly. Observed 2026-08-28 during a restart.
         $proc = Start-Process -FilePath $ClaudeExe `
             -ArgumentList $claudeArgs `
             -WorkingDirectory $Repo -NoNewWindow -PassThru `
             -RedirectStandardInput $promptFile `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        $script:ActiveClaude = $proc
 
         # Show the work AS IT HAPPENS.
         #
@@ -329,6 +387,7 @@ function Invoke-Claude {
         return "failed"
     }
 
+    $script:ActiveClaude = $null
     $elapsed = [int]((Get-Date) - $started).TotalSeconds
     $reply   = ""
     if (Test-Path $outFile) { $reply = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue) }
