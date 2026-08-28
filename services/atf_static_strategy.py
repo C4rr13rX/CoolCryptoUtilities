@@ -525,6 +525,7 @@ def _run_ghost_quote_scout(
             pos["last_price"] = mark
             pos["last_seen_ts"] = now
             continue
+        entry_ts = _float(pos.get("entry_ts"), now - age)
         details = {
             "source": SOURCE,
             "strategy_id": "atf_static",
@@ -535,6 +536,16 @@ def _run_ghost_quote_scout(
             "profit": profit,
             "age_sec": age,
             "reason": reason,
+            # The risk layer reads exits through MetricsCollector, which keys on
+            # entry_ts/exit_ts and reads the exit label from "exit_reason".
+            # Publishing only "reason" and burying the timestamp inside
+            # "position" meant 58 of 60 exits reported as "unspecified" and none
+            # of them could be paired to their own entry. Emit the field names
+            # the reader actually uses; "reason" stays for existing consumers.
+            "exit_reason": reason,
+            "entry_ts": entry_ts,
+            "exit_ts": now,
+            "timestamp": now,
             "position": pos,
             "signal": sig,
         }

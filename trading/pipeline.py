@@ -296,6 +296,76 @@ class _EmbeddingTooSmall(RuntimeError):
         self.needed = needed
 
 
+def ghost_stop_loss_pct() -> float:
+    """The widest stop any ghost simulator in the pool can take.
+
+    ES95 is measured over the POOLED ghost book, so the tail it reports is
+    bounded by the loosest stop among the strategies contributing to it --
+    atf_static's ATF_STATIC_GHOST_STOP_LOSS (0.08) and the TradingBot ghost
+    sim's GHOST_STOP_LOSS_PCT (0.02).
+    """
+    stops = [0.0]
+    for name, default in (
+        ("ATF_STATIC_GHOST_STOP_LOSS", "0.08"),
+        ("GHOST_STOP_LOSS_PCT", "0.02"),
+    ):
+        try:
+            stops.append(max(0.0, min(0.50, float(os.getenv(name, default)))))
+        except Exception:
+            continue
+    return max(stops)
+
+
+def ghost_tail_guardrail() -> float:
+    """Tail guardrail, floored at the stop-loss the strategy actually runs.
+
+    A stop-loss DEFINES the intended worst case. ES95 is the mean of the worst
+    5% of outcomes, and when a strategy is behaving those worst outcomes are
+    precisely its stop-outs -- so ES95 converges on the stop level. Comparing
+    it to a constant 0.08 while the stop is also 0.08 demands a tail better
+    than the strategy's own stop, which can only happen if fewer than 5% of
+    trades ever stop out. That is not a risk criterion, it is an artifact of
+    two unrelated defaults colliding.
+
+    Measured 2026-08-28 on the live ghost book: ES95 = 0.08336 against a 0.08
+    guardrail, and the entire tail was three trades, ALL reason=stop_loss, at
+    -8.52% / -8.39% / -8.10%. Each reproduces exactly from its own recorded
+    prices (0.02277/0.02489 - 1 = -0.08517), so they are real stop-outs, not
+    repricing artifacts. The gate was blocking live trading because the stop
+    worked, and no amount of ghost trading could ever clear it.
+
+    What the tail gate SHOULD catch is the stop FAILING TO HOLD -- price
+    gapping through it, which is the -22.2% SOL-USDC class of breach that
+    67bc54e and adad8bc addressed from the feed side. So the guardrail is
+    floored at the stop plus a slack for the gap-through that is unavoidable
+    when a stop can only be evaluated on tick arrival.
+
+    The slack is calibrated, not guessed. Two independent measurements:
+
+      * Directly, from every stop_loss exit in the ledger, overshoot beyond
+        the 8% stop was 1.013x / 1.049x / 1.065x (mean 1.042x).
+      * Indirectly, the adverse move across one bounded tick hole
+        (ATF_STATIC_MAX_TICK_HOLE_SEC=1200s) over 1704 tick pairs on the
+        traded symbols: p95 = 0.0415, which on a 0.08 stop implies 1.52x.
+
+    0.25 sits above the directly observed worst case (1.065x) with ~4x margin
+    and below the looser gap-derived bound, so it admits normal gap-through
+    while a genuine breach -- SOL's -22.2% was 2.78x its stop -- still blocks.
+    GHOST_TAIL_GUARDRAIL still wins when set HIGHER, and the derived floor is
+    itself capped so that widening the stop cannot silently retire the gate.
+    """
+    explicit = float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.08"))
+    if explicit <= 0:
+        # 0 means "tail gate off" everywhere else; keep that meaning.
+        return explicit
+    slack = max(0.0, float(os.getenv("GHOST_TAIL_STOP_SLACK", "0.25")))
+    ceiling = max(0.0, float(os.getenv("GHOST_TAIL_MAX_GUARDRAIL", "0.25")))
+    derived = ghost_stop_loss_pct() * (1.0 + slack)
+    if ceiling > 0:
+        derived = min(derived, ceiling)
+    return max(explicit, derived)
+
+
 class TrainingPipeline:
     """
     Coordinates model training, ghost validation, and promotion of candidate models.
@@ -3585,7 +3655,7 @@ class TrainingPipeline:
                     "win_rate": 0.0,
                     "avg_profit": 0.0,
                     "tail_risk": 0.0,
-                    "tail_guardrail": float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.08")),
+                    "tail_guardrail": ghost_tail_guardrail(),
                 }
             metrics = MetricsCollector(db)
         self.metrics = metrics
@@ -3596,7 +3666,7 @@ class TrainingPipeline:
             trades = []
         summary = metrics.aggregate_trade_metrics(trades)
         profit_dist = distribution_report([t.profit for t in trades])
-        tail_guard = float(os.getenv("GHOST_TAIL_GUARDRAIL", "0.08"))
+        tail_guard = ghost_tail_guardrail()
         drawdown_guard = float(os.getenv("GHOST_MAX_DRAWDOWN", "0"))
         loss_rate_guard = float(os.getenv("GHOST_MAX_LOSS_RATE", "0.6"))
         loss_streak_guard = int(os.getenv("GHOST_MAX_LOSS_STREAK", "5"))
@@ -3845,6 +3915,9 @@ class TrainingPipeline:
             "total_net_profit": total_net_profit,
             "tail_risk": tail_risk,
             "tail_guardrail": tail_guard,
+            # Published so a tail block can be read as "the stop is breaching"
+            # rather than "the number is over a constant".
+            "tail_stop_loss": ghost_stop_loss_pct(),
             "max_drawdown": max_drawdown,
             "drawdown_guardrail": drawdown_guard,
             "min_trades": min_trades,

@@ -260,40 +260,97 @@ class MetricsCollector:
             wallets=["ghost"],
             since_ts=since_ts,
         )
-        entries: Dict[str, Dict[str, Any]] = {}
+        # fetch_trades returns ORDER BY ts DESC, but pairing is causal: an exit
+        # can only be matched against an entry already seen. Iterating
+        # newest-first meant every exit arrived BEFORE its own entry, so the
+        # keyed lookup always missed and the symbol fallback matched the exit
+        # to whatever entry happened to be nearest the top of the list.
+        #
+        # Measured 2026-08-28 on the live ghost book: all 56 paired trades came
+        # back with a NEGATIVE hold time (down to -105743s, an "exit" 29 hours
+        # before its "entry") and realized_delta values that belonged to other
+        # positions entirely -- -59.25 recorded against a -0.00075 trade.
+        #
+        # Sorting ascending restores causal order. It also makes the returned
+        # sequence chronological, which the order-dependent statistics built on
+        # top of it -- loss streaks and max drawdown -- silently require; they
+        # were being computed on a time-REVERSED series.
+        rows = sorted(rows, key=lambda r: float(r.get("ts") or 0.0))
+        # symbol -> list of unmatched entries, oldest first
+        open_entries: Dict[str, List[Dict[str, Any]]] = {}
+        keyed_entries: Dict[str, Dict[str, Any]] = {}
         performances: List[TradePerformance] = []
         for row in rows:
             status = row.get("status")
             details = row.get("details") or {}
             symbol = row.get("symbol") or details.get("symbol") or "UNKNOWN"
             ts = float(row.get("ts") or details.get("timestamp") or 0.0)
-            key = details.get("trade_id") or f"{symbol}-{int(details.get('entry_ts') or ts)}"
             if status == "ghost-entry":
-                entries[key] = {
+                entry = {
                     "symbol": symbol,
-                    "entry_ts": float(details.get("timestamp") or ts),
+                    "entry_ts": float(details.get("entry_ts") or details.get("timestamp") or ts),
+                    "entry_price": float(details.get("entry_price") or 0.0),
                     "expected_delta": float(details.get("expected_delta") or details.get("delta") or 0.0),
                     "route": details.get("route") or [],
                 }
+                trade_id = details.get("trade_id")
+                if trade_id:
+                    keyed_entries[str(trade_id)] = entry
+                open_entries.setdefault(symbol, []).append(entry)
             elif status == "ghost-exit":
-                entry = entries.get(key)
-                entry_ts = float(details.get("entry_ts") or ts)
-                if entry is None:
-                    # best-effort match by symbol
-                    entry = next((v for v in entries.values() if v.get("symbol") == symbol), None)
-                if entry:
-                    performances.append(
-                        TradePerformance(
-                            symbol=symbol,
-                            entry_ts=float(entry.get("entry_ts", entry_ts)),
-                            exit_ts=float(details.get("timestamp") or ts),
-                            profit=float(details.get("profit") or 0.0),
-                            expected_delta=float(entry.get("expected_delta", 0.0)),
-                            realized_delta=float(details.get("exit_price", 0.0)) - float(details.get("entry_price", 0.0)),
-                            reason=str(details.get("exit_reason") or "unspecified"),
-                            route=entry.get("route") or [],
-                        )
+                entry: Optional[Dict[str, Any]] = None
+                trade_id = details.get("trade_id")
+                if trade_id and str(trade_id) in keyed_entries:
+                    entry = keyed_entries.pop(str(trade_id))
+                    pending = open_entries.get(symbol) or []
+                    if entry in pending:
+                        pending.remove(entry)
+                elif open_entries.get(symbol):
+                    # Same symbol, oldest still-open position: FIFO, and the
+                    # entry is CONSUMED so two exits can never claim it.
+                    entry = open_entries[symbol].pop(0)
+                # An exit that carries its own entry data does not need a
+                # matching entry row at all -- atf_static writes entry_ts and
+                # entry_price onto the exit, and dropping those exits threw
+                # away real outcomes (60 raw exits collapsed to 56 trades).
+                own_entry_ts = details.get("entry_ts")
+                if own_entry_ts is None:
+                    # Rows written before atf_static published entry_ts at the
+                    # top level still carry it on the embedded position, or can
+                    # have it reconstructed from the recorded hold duration.
+                    position = details.get("position")
+                    if isinstance(position, dict) and position.get("entry_ts"):
+                        own_entry_ts = position.get("entry_ts")
+                    elif details.get("age_sec") is not None:
+                        own_entry_ts = ts - float(details.get("age_sec") or 0.0)
+                if entry is None and own_entry_ts is None:
+                    continue
+                entry = entry or {}
+                entry_price = float(
+                    details.get("entry_price") or entry.get("entry_price") or 0.0
+                )
+                exit_price = float(details.get("exit_price") or 0.0)
+                performances.append(
+                    TradePerformance(
+                        symbol=symbol,
+                        entry_ts=float(own_entry_ts or entry.get("entry_ts") or ts),
+                        exit_ts=float(details.get("exit_ts") or details.get("timestamp") or ts),
+                        profit=float(details.get("profit") or 0.0),
+                        expected_delta=float(entry.get("expected_delta", 0.0)),
+                        realized_delta=exit_price - entry_price,
+                        # atf_static writes "reason"; trading/bot.py writes
+                        # "exit_reason". Reading only the latter reported 58 of
+                        # 60 real exits as "unspecified", which blinded every
+                        # consumer to whether a loss was a stop-loss or a
+                        # timer close.
+                        reason=str(
+                            details.get("exit_reason")
+                            or details.get("reason")
+                            or "unspecified"
+                        ),
+                        route=entry.get("route") or [],
                     )
+                )
         return performances
 
     def aggregate_trade_metrics(self, trades: Sequence[TradePerformance]) -> Dict[str, float]:
