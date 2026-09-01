@@ -39,6 +39,22 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyCon
         }
     }
 
+# 3. Console windows left behind by the processes we just killed.
+#
+# A conhost whose parent is gone keeps painting its last frame, so a dead
+# loop still LOOKS like a running one. That is worse than no window: it
+# reads as "you left the other one running" when nothing is running at all.
+Start-Sleep -Seconds 1
+Get-CimInstance Win32_Process -Filter "Name='conhost.exe'" -ErrorAction SilentlyContinue |
+    ForEach-Object {
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.ParentProcessId)" -ErrorAction SilentlyContinue
+        if (-not $parent) {
+            Write-Host "closing orphaned console window PID $($_.ProcessId)" -ForegroundColor Yellow
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            $stopped++
+        }
+    }
+
 if ($stopped -eq 0) {
     Write-Host "nothing running." -ForegroundColor Green
 } else {
