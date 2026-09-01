@@ -173,6 +173,21 @@ class TradingDatabase:
                 );
                 """
             )
+            # 61,488 rows and no index at all: every "recent ghost trades" and
+            # "did a live trade happen" question scanned the whole table
+            # (161ms measured 2026-09-01), and the ghost path asks per tick.
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_trading_ops_wallet_ts
+                ON trading_ops(wallet, ts);
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_trading_ops_status_ts
+                ON trading_ops(status, ts);
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS experiments (
@@ -209,6 +224,22 @@ class TradingDatabase:
                     volume REAL,
                     raw TEXT
                 );
+                """
+            )
+            # Corroborating a quote reads this table per tick
+            # (recent_prices / get_market_price, both symbol+chain+ts). It is
+            # only cheap today because the feed outage kept the table at 10k
+            # rows; a working feed writes ~300/hour per symbol.
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_market_stream_symbol_chain_ts
+                ON market_stream(symbol, chain, ts);
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_market_stream_ts
+                ON market_stream(ts);
                 """
             )
             self._conn.execute(
@@ -276,6 +307,20 @@ class TradingDatabase:
                 ON metrics(stage, ts);
                 """
             )
+            # The dashboards and the organism snapshot ask these tables the
+            # same question -- "the newest N rows" -- with no stage/source
+            # filter, and the composite indexes above cannot answer that: a
+            # leading-column-free ORDER BY ts is a full scan plus a temp
+            # b-tree sort. Measured 2026-09-01 on the live db: 24 rows cost
+            # 229ms out of metrics (167,848 rows) and 129ms out of
+            # feedback_events (162,731). That is charged to the event loop
+            # every stream shares, once per bot per ORGANISM_SNAPSHOT_INTERVAL.
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_metrics_ts
+                ON metrics(ts);
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS feedback_events (
@@ -292,6 +337,12 @@ class TradingDatabase:
                 """
                 CREATE INDEX IF NOT EXISTS idx_feedback_source_ts
                 ON feedback_events(source, ts);
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_feedback_ts
+                ON feedback_events(ts);
                 """
             )
             self._conn.execute(
@@ -446,6 +497,10 @@ class TradingDatabase:
                 status TEXT,
                 details JSONB
             );
+            CREATE INDEX IF NOT EXISTS idx_trading_ops_wallet_ts
+            ON trading_ops(wallet, ts);
+            CREATE INDEX IF NOT EXISTS idx_trading_ops_status_ts
+            ON trading_ops(status, ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS experiments (
@@ -478,6 +533,9 @@ class TradingDatabase:
                 volume DOUBLE PRECISION,
                 raw JSONB
             );
+            CREATE INDEX IF NOT EXISTS idx_market_stream_symbol_chain_ts
+            ON market_stream(symbol, chain, ts);
+            CREATE INDEX IF NOT EXISTS idx_market_stream_ts ON market_stream(ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS trade_fills (
@@ -528,6 +586,7 @@ class TradingDatabase:
                 meta JSONB
             );
             CREATE INDEX IF NOT EXISTS idx_metrics_stage_ts ON metrics(stage, ts);
+            CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS feedback_events (
@@ -539,6 +598,7 @@ class TradingDatabase:
                 details JSONB
             );
             CREATE INDEX IF NOT EXISTS idx_feedback_source_ts ON feedback_events(source, ts);
+            CREATE INDEX IF NOT EXISTS idx_feedback_ts ON feedback_events(ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS advisories (
