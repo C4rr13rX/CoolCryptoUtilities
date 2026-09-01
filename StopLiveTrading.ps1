@@ -27,17 +27,27 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe' OR Name='pwsh.exe'"
 
 Start-Sleep -Seconds 2
 
-# 2. Any claude it spawned, now parentless.
-Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like '*claude*' } |
-    ForEach-Object {
-        $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.ParentProcessId)" -ErrorAction SilentlyContinue
-        if (-not $owner) {
-            Write-Host "stopping orphaned claude PID $($_.ProcessId)" -ForegroundColor Yellow
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-            $stopped++
+# 2. Any Claude it spawned, now parentless.
+#
+# Claude runs as claude.exe here, not node.exe -- checking only node.exe left
+# 14 claude.exe processes alive after the loop was killed, which is exactly
+# the orphan case this script exists to prevent.
+#
+# The parent check is what keeps this safe: an interactive Claude (yours, or
+# a VS Code extension) has a live parent -- Code.exe, a terminal -- so it is
+# never touched. Only a Claude whose parent is gone gets reaped.
+foreach ($procName in @("claude.exe", "node.exe")) {
+    Get-CimInstance Win32_Process -Filter "Name='$procName'" -ErrorAction SilentlyContinue |
+        Where-Object { $procName -eq 'claude.exe' -or $_.CommandLine -like '*claude*' } |
+        ForEach-Object {
+            $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.ParentProcessId)" -ErrorAction SilentlyContinue
+            if (-not $owner) {
+                Write-Host "stopping orphaned $procName PID $($_.ProcessId)" -ForegroundColor Yellow
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                $stopped++
+            }
         }
-    }
+}
 
 # 3. Console windows left behind by the processes we just killed.
 #
