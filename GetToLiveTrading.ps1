@@ -472,6 +472,7 @@ function Invoke-Claude {
         $lastLen    = 0
         $lastBeat   = Get-Date
         $beatEvery  = 20      # seconds between heartbeats
+        $eventsSeen = 0       # stream events since the last heartbeat
         $deadline   = (Get-Date).AddSeconds($ClaudeTimeoutSec)
         $timedOut   = $false
 
@@ -491,7 +492,17 @@ function Invoke-Claude {
                             Write-ClaudeEvent -Line $ln
                         }
                         Scroll-ToBottom
-                        $lastBeat = Get-Date
+                        # Deliberately does NOT reset $lastBeat.
+                        #
+                        # It used to. Streamed output arrives continuously
+                        # during a working pass, so every chunk pushed the
+                        # heartbeat deadline forward and it never fired --
+                        # and streamed lines go to the CONSOLE, not the log
+                        # file. Result: an 8-minute hole in the log while the
+                        # window showed steady work, which reads as hung.
+                        # The heartbeat is the thing that reaches the log, so
+                        # it has to fire on wall-clock time regardless.
+                        $eventsSeen += 1
                     }
                 }
             } catch { }
@@ -521,8 +532,10 @@ function Invoke-Claude {
                     }
                 } catch { }
 
-                Write-Line ("  ...working {0}s (timeout in {1}s){2}{3}" -f `
-                            $secs, $left, $live, $newCommits) "DarkCyan"
+                $act = if ($eventsSeen -gt 0) { "  +{0} events" -f $eventsSeen } else { "  (quiet)" }
+                $eventsSeen = 0
+                Write-Line ("  ...working {0}s (timeout in {1}s){2}{3}{4}" -f `
+                            $secs, $left, $act, $live, $newCommits) "DarkCyan"
             }
         }
 
