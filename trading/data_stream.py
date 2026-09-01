@@ -719,7 +719,19 @@ class MarketDataStream:
         self._stop_event.clear()
         self._last_gc = time.time()
         if self._http_session is None:
-            self._http_session = aiohttp.ClientSession()
+            # aiohttp's default DNS cache lives 10s, and every stream owns its
+            # own session, so ~30 streams x ~6 hosts re-resolved roughly 19
+            # names a second -- all of them through loop.getaddrinfo() on the
+            # shared default executor (aiodns is not installed here). Any other
+            # thread-pool work (candidate training runs there too) therefore
+            # shows up as REST timeouts on healthy endpoints. Holding the
+            # resolved address for 5 minutes cuts that traffic ~30x; these are
+            # stable public API hosts, not a rotating fleet.
+            self._http_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    ttl_dns_cache=float(os.getenv("REST_DNS_CACHE_TTL", "300")),
+                )
+            )
         self._debug("start", extra={"url_set": bool(self.url), "template": bool(self._template), "subscribe": bool(self.subscribe_template)})
         try:
             await self._refresh_reference_price()
@@ -3376,9 +3388,27 @@ class MarketDataStream:
                 # blocking sleep behind a 1-request-per-second budget. The
                 # symptom was writes landing in clusters that shared a
                 # timestamp to a tenth of a second, then nothing for minutes.
-                await asyncio.to_thread(
-                    self.rate_limiter.acquire, host, tokens=1.0, timeout=5.0
-                )
+                #
+                # Moving that sleep to asyncio.to_thread() unblocked the loop
+                # but moved the jam one layer down: to_thread runs on the
+                # loop's DEFAULT executor, and aiohttp (no aiodns installed
+                # here) resolves every hostname through loop.getaddrinfo() on
+                # that same pool -- 10 threads on this 6-CPU box. Every REST
+                # fetch parked a thread for up to 5s before it issued a
+                # request, so DNS for the other streams queued behind those
+                # sleeps and the 10s request timeout expired before the
+                # request was ever sent.
+                #
+                # It reads as a dead upstream and is not one. Measured
+                # 2026-09-01, 6h of production: 1736 dexscreener + 1732
+                # geckoterminal "timeouts" while both hosts answered a direct
+                # probe in 20-100ms, 12 requests at a time. Reproduced against
+                # a LOCAL server answering in microseconds: 32 streams, 10s
+                # timeout -> 10 timed out with the threaded wait, 0 with the
+                # awaited one (worst request 0.31s).
+                #
+                # So the wait is awaited: same budget, same timeout, no thread.
+                await self.rate_limiter.acquire_async(host, tokens=1.0, timeout=5.0)
             except TimeoutError:
                 log_message(
                     "market-stream",

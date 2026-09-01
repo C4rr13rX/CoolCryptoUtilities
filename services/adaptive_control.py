@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections import defaultdict
@@ -130,25 +131,55 @@ class APIRateLimiter:
             bucket["base_rate"] = refill_rate
             bucket["tokens"] = min(bucket["tokens"], capacity)
 
+    def try_acquire(self, key: str, tokens: float = 1.0) -> float:
+        """Take ``tokens`` if the bucket has them, without ever sleeping.
+
+        Returns 0.0 when the tokens were taken, otherwise the number of
+        seconds to wait before there is any point asking again. Callers on an
+        event loop must use this (or :meth:`acquire_async`) rather than
+        :meth:`acquire`: sleeping in a worker thread costs a thread from the
+        loop's default executor, which is the same pool aiohttp resolves
+        hostnames in.
+        """
+        with self._lock:
+            bucket = self._buckets[key]
+            now = time.time()
+            self._refill(bucket, now)
+            penalty_until = bucket.get("penalty_until", 0.0)
+            if penalty_until and now < penalty_until:
+                return max(0.05, penalty_until - now)
+            if bucket["tokens"] >= tokens:
+                bucket["tokens"] -= tokens
+                return 0.0
+            rate = max(bucket["rate"], 1e-6)
+            return max(0.05, (tokens - bucket["tokens"]) / rate)
+
     def acquire(self, key: str, tokens: float = 1.0, timeout: float = 5.0) -> None:
         deadline = time.time() + timeout
         while True:
-            with self._lock:
-                bucket = self._buckets[key]
-                now = time.time()
-                self._refill(bucket, now)
-                penalty_until = bucket.get("penalty_until", 0.0)
-                if penalty_until and now < penalty_until:
-                    wait_time = penalty_until - now
-                elif bucket["tokens"] >= tokens:
-                    bucket["tokens"] -= tokens
-                    return
-                else:
-                    rate = max(bucket["rate"], 1e-6)
-                    wait_time = max(0.05, (tokens - bucket["tokens"]) / rate)
+            wait_time = self.try_acquire(key, tokens)
+            if wait_time <= 0.0:
+                return
             if time.time() + wait_time > deadline:
                 raise TimeoutError(f"Rate limit exceeded for {key}")
             time.sleep(wait_time)
+
+    async def acquire_async(self, key: str, tokens: float = 1.0, timeout: float = 5.0) -> None:
+        """Await the same budget ``acquire`` waits for, on the event loop.
+
+        Same contract as :meth:`acquire` -- returns when the tokens are taken,
+        raises TimeoutError when they cannot be taken inside ``timeout``. The
+        difference is that the wait yields to the loop instead of parking a
+        thread, so it cannot delay unrelated work.
+        """
+        deadline = time.time() + timeout
+        while True:
+            wait_time = self.try_acquire(key, tokens)
+            if wait_time <= 0.0:
+                return
+            if time.time() + wait_time > deadline:
+                raise TimeoutError(f"Rate limit exceeded for {key}")
+            await asyncio.sleep(wait_time)
 
     def penalize(self, key: str, *, cooldown: float = 5.0, drain: float = 0.5) -> None:
         """
