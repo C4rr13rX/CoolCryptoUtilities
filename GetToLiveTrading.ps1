@@ -308,7 +308,17 @@ try:
     c = sqlite3.connect("file:storage/trading_cache.db?mode=ro", uri=True)
     now = time.time()
     q = lambda s, *a: list(c.execute(s, a))[0][0]
-    out["live_rows"]   = q("SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%'")
+    # Count SETTLED live trades, not attempts.
+    #
+    # "status LIKE 'live%'" also matches live-entry-blocked and
+    # live-dry-run-entry. On 2026-09-01 that read live_rows=6 when all six
+    # were blocked or dry-run and no real money had ever been spent -- the
+    # loop's own display was overstating progress toward its goal.
+    out["live_rows"] = q(
+        "SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%' "
+        "AND status NOT LIKE '%blocked%' AND status NOT LIKE '%dry-run%'"
+    )
+    out["live_attempts"] = q("SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%'")
     out["ticks_10m"]   = q("SELECT COUNT(*) FROM market_stream WHERE ts > ?", now - 600)
     out["ghost_1h"]    = q("SELECT COUNT(*) FROM trading_ops WHERE status='ghost-entry' AND ts > ?", now - 3600)
     out["cycles_10m"]  = q("SELECT COUNT(*) FROM organism_snapshots WHERE ts > ?", now - 600)
@@ -663,6 +673,10 @@ while ($true) {
                     $state.live_rows, $state.live_trades, $plText) "White"
         Write-Line ("ticks10m={0}  ghost1h={1}  cycles10m={2}  transitions={3}  usdc={4}" -f `
                     $state.ticks_10m, $state.ghost_1h, $state.cycles_10m, $state.transitions, $state.usdc)
+        if ($state.live_attempts -gt $state.live_rows) {
+            Write-Line ("live attempts={0} of which SETTLED={1} (rest blocked/dry-run)" -f `
+                        $state.live_attempts, $state.live_rows) "DarkYellow"
+        }
     }
 
     # ---- milestones worth a text ----
@@ -780,8 +794,57 @@ Report concisely: which link failed, the evidence, the fix, and the next link.
 If a live trade LOSES, verify the demotion guards fired and report the P/L
 honestly -- never hide a loss.
 
+## PRIORITY: money_button is the most important strategy
+
+Split your effort roughly 50/50 between the failing link above and the
+money_button lane. It buys low and sells higher inside 5-30 minutes, which
+is the shortest horizon this feed supports and the fastest way to accrue
+real evidence. It may become several parallel short-horizon strategies
+scheduled through the bus -- that is wanted, not a deviation.
+
+Known money_button problems, measured 2026-09-01 (verify before trusting):
+
+  * It is NOT IN THE LEDGER AT ALL. data/strategy_ledger.json has only
+    atf_static, obv_accumulation@1w, rsi_reversal@5h, obv_accumulation@3d.
+    The registry claims 76 money_button ghost trades, but the ledger is what
+    gates graduation, so money_button can NEVER graduate no matter how well
+    it trades. Find why its outcomes do not reach StrategyLedger.record()
+    and fix that first -- everything else about this lane is downstream.
+  * Its record is 16 wins / 60 losses, -0.3997. Fired often and lost. Read
+    the cost gate in trading/strategies/money_button.py before loosening
+    anything: firing more is how the previous ledger was destroyed. If the
+    edge is not there, say so plainly rather than tuning until it looks good.
+  * Its registry entry records no symbols, so per-symbol behaviour cannot be
+    analysed. Fix the recording so symbols are captured.
+
+Do not delete or disable money_button to make a gate pass.
+
+## Trust the numbers before you act on them
+
+Four strategies carried fabricated records -- exactly +1.0000 profit per
+trade, 100% win rate, no symbols, all written in one six-minute window by a
+test. They were purged on 2026-09-01 (scripts/purge_test_artifacts.py).
+
+Before treating ANY strategy record as evidence, check it is a measurement:
+real records name symbols, have both wins and losses, and show varied
+amounts. If you find another fabricated record, purge it and say so. A
+strategy that "passes" on invented numbers is worse than one that fails
+honestly, because it spends real money.
+
+atf_static's record was checked and is genuine (244 trades, 120/124 W/L,
+real symbol spread) -- do not purge it, but do not treat it as the only
+viable lane either.
+
+## Ground rules
+
 Wallet 0x291c854811e92906a658Fb94Aa511bF919f968ad on base.
 Keep ENABLE_GAS_REFILL=0 -- the refill drained the wallet three times.
+
+NOTE on live_rows: it counts ATTEMPTS, including live-entry-blocked and
+live-dry-run-entry. As of 2026-09-01 all 6 "live" rows are blocked or dry
+run -- NO REAL MONEY HAS BEEN SPENT YET. The most recent blocks say
+reason=token_unresolved. Do not report live trading as working until a row
+exists that actually settled on-chain.
 
 Dashboard, if you need to check it or log in:
   URL      http://localhost:$DashboardPort

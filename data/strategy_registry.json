@@ -15,20 +15,20 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 202,
-          "wins": 84,
-          "losses": 118,
-          "gross_win": 3.6945948395845454,
-          "gross_loss": 1.2528657273291668,
-          "total_profit": 2.441729112255377,
+          "trades": 244,
+          "wins": 120,
+          "losses": 124,
+          "gross_win": 4.2023889644907495,
+          "gross_loss": 1.679981992723655,
+          "total_profit": 2.5224069717670914,
           "best": 0.4109173616376043,
           "worst": -0.22187261632341726,
-          "peak_profit": 2.441729112255377,
-          "max_drawdown": 0.22187261632341726,
+          "peak_profit": 2.5224069717670914,
+          "max_drawdown": 0.29711857394259944,
           "consecutive_losses": 0,
           "max_consecutive_losses": 9,
           "first_ts": 1787344327.012597,
-          "last_ts": 1787838531.3942862,
+          "last_ts": 1788250369.6302485,
           "symbols": {
             "BASECAT-USDC": 63,
             "CBXRP-USDC": 60,
@@ -60,12 +60,12 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 75,
-          "wins": 15,
+          "trades": 76,
+          "wins": 16,
           "losses": 60,
-          "gross_win": 0.18,
+          "gross_win": 0.1852775191341086,
           "gross_loss": 0.5850000000000003,
-          "total_profit": -0.40500000000000025,
+          "total_profit": -0.3997224808658916,
           "best": 0.02,
           "worst": -0.01,
           "peak_profit": 0.0,
@@ -73,7 +73,7 @@
           "consecutive_losses": 0,
           "max_consecutive_losses": 19,
           "first_ts": 1787836693.0215933,
-          "last_ts": 1787837025.342088,
+          "last_ts": 1788207983.8711982,
           "symbols": {}
         }
       }
@@ -93,21 +93,19 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 15,
-          "wins": 15,
+          "trades": 0,
+          "wins": 0,
           "losses": 0,
-          "gross_win": 15.0,
+          "total_profit": 0.0,
+          "gross_win": 0.0,
           "gross_loss": 0.0,
-          "total_profit": 15.0,
-          "best": 1.0,
+          "best": 0.0,
           "worst": 0.0,
-          "peak_profit": 15.0,
-          "max_drawdown": 0.0,
+          "symbols": {},
           "consecutive_losses": 0,
           "max_consecutive_losses": 0,
-          "first_ts": 1787836714.407694,
-          "last_ts": 1787837045.5423553,
-          "symbols": {}
+          "max_drawdown": 0.0,
+          "peak_profit": 0.0
         }
       }
     },
@@ -192,21 +190,19 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 15,
-          "wins": 15,
+          "trades": 0,
+          "wins": 0,
           "losses": 0,
-          "gross_win": 15.0,
+          "total_profit": 0.0,
+          "gross_win": 0.0,
           "gross_loss": 0.0,
-          "total_profit": 15.0,
-          "best": 1.0,
+          "best": 0.0,
           "worst": 0.0,
-          "peak_profit": 15.0,
-          "max_drawdown": 0.0,
+          "symbols": {},
           "consecutive_losses": 0,
           "max_consecutive_losses": 0,
-          "first_ts": 1787836714.5802808,
-          "last_ts": 1787837045.758692,
-          "symbols": {}
+          "max_drawdown": 0.0,
+          "peak_profit": 0.0
         }
       }
     },
@@ -225,21 +221,19 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 15,
-          "wins": 15,
+          "trades": 0,
+          "wins": 0,
           "losses": 0,
-          "gross_win": 15.0,
+          "total_profit": 0.0,
+          "gross_win": 0.0,
           "gross_loss": 0.0,
-          "total_profit": 15.0,
-          "best": 1.0,
+          "best": 0.0,
           "worst": 0.0,
-          "peak_profit": 15.0,
-          "max_drawdown": 0.0,
+          "symbols": {},
           "consecutive_losses": 0,
           "max_consecutive_losses": 0,
-          "first_ts": 1787836714.628942,
-          "last_ts": 1787837045.834008,
-          "symbols": {}
+          "max_drawdown": 0.0,
+          "peak_profit": 0.0
         }
       }
     },
@@ -258,21 +252,19 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 6,
-          "wins": 6,
+          "trades": 0,
+          "wins": 0,
           "losses": 0,
-          "gross_win": 6.0,
+          "total_profit": 0.0,
+          "gross_win": 0.0,
           "gross_loss": 0.0,
-          "total_profit": 6.0,
-          "best": 1.0,
+          "best": 0.0,
           "worst": 0.0,
-          "peak_profit": 6.0,
-          "max_drawdown": 0.0,
+          "symbols": {},
           "consecutive_losses": 0,
           "max_consecutive_losses": 0,
-          "first_ts": 1787836714.6649957,
-          "last_ts": 1787837045.8698883,
-          "symbols": {}
+          "max_drawdown": 0.0,
+          "peak_profit": 0.0
         }
       }
     },
@@ -291,20 +283,152 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 3,
+          "trades": 4,
           "wins": 3,
-          "losses": 0,
+          "losses": 1,
           "gross_win": 3.0,
-          "gross_loss": 0.0,
-          "total_profit": 3.0,
+          "gross_loss": 0.07036002104023031,
+          "total_profit": 2.9296399789597696,
           "best": 1.0,
-          "worst": 0.0,
+          "worst": -0.07036002104023031,
           "peak_profit": 3.0,
+          "max_drawdown": 0.07036002104023042,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1787836714.687126,
+          "last_ts": 1788188271.8673408,
+          "symbols": {}
+        }
+      }
+    },
+    "obv_accumulation@1w": {
+      "strategy_id": "obv_accumulation@1w",
+      "name": "obv_accumulation@1w",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787921998.0723553,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 2,
+          "wins": 1,
+          "losses": 1,
+          "gross_win": 0.0003141711590477441,
+          "gross_loss": 0.01308093443340711,
+          "total_profit": -0.012766763274359366,
+          "best": 0.0003141711590477441,
+          "worst": -0.01308093443340711,
+          "peak_profit": 0.0003141711590477441,
+          "max_drawdown": 0.01308093443340711,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1787921998.0723553,
+          "last_ts": 1788191071.8173451,
+          "symbols": {}
+        }
+      }
+    },
+    "obv_accumulation@5d": {
+      "strategy_id": "obv_accumulation@5d",
+      "name": "obv_accumulation@5d",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788191593.8078494,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 1,
+          "losses": 0,
+          "gross_win": 3.400053887979594e-05,
+          "gross_loss": 0.0,
+          "total_profit": 3.400053887979594e-05,
+          "best": 3.400053887979594e-05,
+          "worst": 0.0,
+          "peak_profit": 3.400053887979594e-05,
           "max_drawdown": 0.0,
           "consecutive_losses": 0,
           "max_consecutive_losses": 0,
-          "first_ts": 1787836714.687126,
-          "last_ts": 1787837045.8889747,
+          "first_ts": 1788191593.8078494,
+          "last_ts": 1788191593.8078494,
+          "symbols": {}
+        }
+      }
+    },
+    "rsi_reversal@5h": {
+      "strategy_id": "rsi_reversal@5h",
+      "name": "rsi_reversal@5h",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788208915.3641994,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 13,
+          "wins": 0,
+          "losses": 13,
+          "gross_win": 0.0,
+          "gross_loss": 1.911803777131418,
+          "total_profit": -1.911803777131418,
+          "best": 0.0,
+          "worst": -0.2424015630459644,
+          "peak_profit": 0.0,
+          "max_drawdown": 1.911803777131418,
+          "consecutive_losses": 13,
+          "max_consecutive_losses": 13,
+          "first_ts": 1788208915.3641994,
+          "last_ts": 1788210299.1907916,
+          "symbols": {}
+        }
+      }
+    },
+    "obv_accumulation@3d": {
+      "strategy_id": "obv_accumulation@3d",
+      "name": "obv_accumulation@3d",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788220676.6001902,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 0,
+          "losses": 1,
+          "gross_win": 0.0,
+          "gross_loss": 0.0014125047119441028,
+          "total_profit": -0.0014125047119441028,
+          "best": 0.0,
+          "worst": -0.0014125047119441028,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.0014125047119441028,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788220676.6001902,
+          "last_ts": 1788220676.6001902,
           "symbols": {}
         }
       }
