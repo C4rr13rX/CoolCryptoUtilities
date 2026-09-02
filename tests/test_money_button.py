@@ -23,9 +23,15 @@ most of the time, and that is the intended behaviour rather than a fault.
 
 from __future__ import annotations
 
+import json
+import os
+import pathlib
+import tempfile
+import threading
 import time
 import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -116,6 +122,79 @@ class MoneyButtonRefusals(unittest.TestCase):
         self.assertIsNone(
             MoneyButtonStrategy().evaluate(packed, make_ctx(1.10))
         )
+
+
+class MixedDenominationFeeds(unittest.TestCase):
+    """A window holding two price scales is not one asset's price history.
+
+    Measured 2026-09-02 over 168h of stored ticks: 15 of 163 symbols publish
+    prices differing from their own median by more than 50x -- 220 ticks, 1.8%
+    of the feed. ARB-USDC prints both 5.3e-7 and 0.6491; WETH-USDT prints 2450
+    and 0.9996; SPACEX-USDC holds 233 ticks near 1.5e-9 and one at 524.37.
+
+    Read as a move, that SPACEX pair is a return of +1.29e11. Slope,
+    projection and volatility are all computed off the same array, so a single
+    such tick decides all three -- and the entry it produces would be sized at
+    the wrong scale with real money.
+
+    Worth stating plainly what this gate did and did not do: replayed over the
+    same 12,239 evaluations, it fired 3 times and changed no fire and no
+    outcome, because the affected symbols were already stopped by the feed
+    gates. It is a bound on a failure that has not yet reached an entry, not a
+    fix for one that has.
+    """
+
+    def _mixed(self):
+        # A clean trend, with one tick quoted in the other denomination --
+        # the SPACEX shape, at a scale a momentum lane would otherwise love.
+        prices = [1.0 + 0.01 * i for i in range(20)]
+        prices[10] = prices[10] * 1e9
+        return prices
+
+    def test_a_second_price_scale_is_refused(self):
+        strategy = MoneyButtonStrategy()
+        prices = self._mixed()
+        self.assertIsNone(strategy.evaluate(make_state(prices), make_ctx(prices[-1])))
+        self.assertEqual(strategy.last_decline, "mixed_denomination")
+
+    def test_it_refuses_rather_than_quietly_dropping_the_tick(self):
+        """Filtering would let the lane keep trading a pair it cannot price.
+
+        The refusal has to be visible in the census, or a broken feed looks
+        identical to a market with no opportunity in it.
+        """
+        strategy = MoneyButtonStrategy()
+        prices = self._mixed()
+        strategy.evaluate(make_state(prices), make_ctx(prices[-1]))
+        self.assertNotIn(strategy.last_decline, (None, "momentum_not_aligned"))
+
+    def test_an_ordinary_large_move_still_trades(self):
+        """A 25% trend is a move; it must not be mistaken for an artifact."""
+        strategy = MoneyButtonStrategy()
+        prices = [1.0 * (1.0125 ** i) for i in range(20)]
+        strategy.evaluate(make_state(prices), make_ctx(prices[-1]))
+        self.assertNotEqual(strategy.last_decline, "mixed_denomination")
+
+    def test_the_scale_limit_is_read_from_the_environment(self):
+        """Raising the bound past the outlier must actually stop the refusal.
+
+        Pinned with a 100x outlier rather than the 1e9 one so the two settings
+        give different verdicts -- a test where both branches refuse would pass
+        just as happily if the environment were never consulted.
+        """
+        prices = [1.0 + 0.01 * i for i in range(20)]
+        prices[10] = prices[10] * 100.0
+
+        strategy = MoneyButtonStrategy()
+        strategy.evaluate(make_state(prices), make_ctx(prices[-1]))
+        self.assertEqual(strategy.last_decline, "mixed_denomination")
+
+        with mock.patch.dict(
+            os.environ, {"MONEY_BUTTON_MAX_PRICE_SCALE": "1000"}, clear=False
+        ):
+            relaxed = MoneyButtonStrategy()
+            relaxed.evaluate(make_state(prices), make_ctx(prices[-1]))
+            self.assertNotEqual(relaxed.last_decline, "mixed_denomination")
 
 
 class MoneyButtonEntries(unittest.TestCase):
@@ -423,3 +502,105 @@ class FeedMustResolveTheTradeItIsAsked(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MoneyButtonOutcomesReachTheLedger(unittest.TestCase):
+    """The ledger is the file that gates graduation, and money_button was not in it.
+
+    Measured 2026-09-02: data/strategy_registry.json held money_button with one
+    ghost trade (+0.0053 on TOAD-USDC, corroborated by the matching row in
+    trade_outcomes) while data/strategy_ledger.json had no money_button entry at
+    all. So it could never graduate no matter how well it traded.
+
+    That asymmetry names the cause exactly. StrategyLedger.record() writes the
+    registry FIRST and the ledger second, so a lost ledger write leaves the
+    registry holding an outcome the ledger never got -- which is what was on
+    disk. The strategy_id and symbol were being passed correctly all along by
+    trading/bot.py; the write was being dropped by the concurrent-writer race
+    fixed in services/atomic_json.py.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = pathlib.Path(self.dir) / "strategy_ledger.json"
+
+    def test_an_outcome_lands_under_its_own_strategy_id(self):
+        from trading.strategies.ledger import StrategyLedger
+
+        StrategyLedger(self.path).record(
+            "money_button", profit=0.005277519134108606, mode="ghost", symbol="TOAD-USDC"
+        )
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertIn("money_button", data)
+        self.assertEqual(data["money_button"]["ghost"]["trades"], 1)
+
+    def test_its_symbol_is_recorded(self):
+        """Without symbols, thirteen correlated bets on ONE token look like
+        thirteen independent trades.
+
+        Only the PRODUCTION ledger feeds the lifetime registry -- a ledger on
+        any other path is a test or a replay and its outcomes are not
+        measurements of this account. So DEFAULT_PATH is redirected here rather
+        than merely passing a temp path, which would skip the registry write
+        entirely and prove nothing.
+        """
+        import services.strategy_registry as registry
+        from trading.strategies.ledger import StrategyLedger
+
+        with mock.patch.object(StrategyLedger, "DEFAULT_PATH", self.path), \
+             mock.patch.object(registry, "REGISTRY_PATH", pathlib.Path(self.dir) / "reg.json"):
+            StrategyLedger(self.path).record(
+                "money_button", profit=0.0053, mode="ghost", symbol="TOAD-USDC"
+            )
+            entry = registry.get_strategy("money_button")
+        self.assertIsNotNone(entry, "the production path did not reach the registry")
+        self.assertEqual(entry["lifetime"]["ghost"]["symbols"], {"TOAD-USDC": 1})
+
+    def test_a_non_production_ledger_never_writes_the_lifetime_registry(self):
+        """How money_button got a fabricated 76-trade record: test fixtures
+        isolated the ledger path but record_outcome takes no path, so every run
+        wrote straight into the production registry."""
+        import services.strategy_registry as registry
+        from trading.strategies.ledger import StrategyLedger
+
+        reg_path = pathlib.Path(self.dir) / "reg.json"
+        with mock.patch.object(registry, "REGISTRY_PATH", reg_path):
+            StrategyLedger(self.path).record(
+                "money_button", profit=1.0, mode="ghost", symbol="FAKE-USDC"
+            )
+        self.assertFalse(reg_path.exists(), "a test ledger wrote the lifetime registry")
+
+    def test_concurrent_money_button_exits_are_all_kept(self):
+        """The lane fires often by design, so its writes contend the most."""
+        from trading.strategies.ledger import StrategyLedger
+
+        threads = [
+            threading.Thread(
+                target=lambda: StrategyLedger(self.path).record(
+                    "money_button", profit=-0.004, mode="ghost", symbol="TOAD-USDC"
+                )
+            )
+            for _ in range(24)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(data["money_button"]["ghost"]["trades"], 24)
+        self.assertEqual(data["money_button"]["ghost"]["losses"], 24)
+
+    def test_it_still_needs_the_full_sample_to_graduate(self):
+        """Being in the ledger is not the same as being allowed to trade."""
+        from trading.strategies.ledger import StrategyLedger
+
+        with mock.patch.dict(
+            os.environ,
+            {"STRATEGY_GRADUATION_MIN_TRADES": "20", "STRATEGY_GRADUATION_MIN_WINRATE": "0.55"},
+            clear=False,
+        ):
+            for _ in range(19):
+                StrategyLedger(self.path).record(
+                    "money_button", profit=0.01, mode="ghost", symbol="TOAD-USDC"
+                )
+            self.assertFalse(StrategyLedger(self.path).is_live_approved("money_button"))

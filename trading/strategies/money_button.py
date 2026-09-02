@@ -142,6 +142,33 @@ class MoneyButtonStrategy(Strategy):
             return self._decline("feed_frozen")
 
         # ------------------------------------------------------------------
+        # Reject a window carrying more than one price denomination.
+        #
+        # Measured 2026-09-02 over 168h: 15 of 163 symbols publish ticks whose
+        # price differs from that symbol's own median by more than 50x -- 220
+        # ticks, 1.8% of the feed. These are not moves. ARB-USDC prints both
+        # 5.3e-7 and 0.6491 (only the second is a USD price; the first is a
+        # token ratio). WETH-USDT prints 2450 and 0.9996. SPACEX-USDC holds 233
+        # ticks near 1.5e-9 and one at 524.37.
+        #
+        # A momentum lane reading across such a boundary does not see a large
+        # move, it sees an infinite one: the SPACEX pair alone yields a return
+        # of 1.29e11. Slope, projection and volatility are all computed off
+        # `prices`, so one contaminated tick decides every one of them, and the
+        # resulting entry would be SIZED at the wrong scale with real money.
+        #
+        # This refuses rather than filtering. Dropping the odd tick quietly
+        # would let the lane keep trading a symbol whose feed is broken, and
+        # the breakage would never appear in the census. A pair that cannot be
+        # priced consistently is one this lane has no business trading.
+        median_price = float(np.median(prices))
+        scale_limit = env_float("MONEY_BUTTON_MAX_PRICE_SCALE", 50.0, lo=2.0, hi=1e6)
+        if median_price > 0:
+            spread = np.maximum(prices / median_price, median_price / prices)
+            if float(np.max(spread)) > scale_limit:
+                return self._decline("mixed_denomination")
+
+        # ------------------------------------------------------------------
         # Reject a feed too coarse to measure the trade this lane makes.
         #
         # The momentum windows below scale to the sample gap, which keeps them
