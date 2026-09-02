@@ -54,6 +54,12 @@ class PortfolioState:
     ) -> None:
         self.db = db or get_db()
         self.chains = tuple(chains)
+        # The chain summary() reports on: the first chain this portfolio was
+        # built for, falling back to the configured primary. A portfolio
+        # constructed for Base must not answer questions about Ethereum.
+        self.primary_chain = (
+            str(self.chains[0]).lower() if self.chains else PRIMARY_CHAIN
+        )
         self.refresh_interval = refresh_interval
         self._next_refresh: float = 0.0
         self._last_refresh: float = 0.0
@@ -206,10 +212,33 @@ class PortfolioState:
         return total
 
     def summary(self) -> Dict[str, float]:
+        """Report the chain this portfolio is actually tracking.
+
+        Both figures were hardcoded to "ethereum" while the bot trades Base
+        (PRIMARY_CHAIN=base, LIVE_FOCUS_CHAIN=base), so a Base-only portfolio
+        was asked for its Ethereum balances and truthfully answered 0. Measured
+        2026-09-02, this printed
+
+            [portfolio] wallet=0x291c...968ad stable~0.00 native~0.0000 holdings=2
+
+        for a wallet holding $6.98 USDC and $6.86 ETH on Base -- the holdings
+        count came from the real holdings and the money came from a chain the
+        wallet was never funded on, which is why the line disagreed with itself.
+
+        Nothing gates on these two numbers (every gating caller passes an
+        explicit chain), but they are what an operator and the organism-state
+        dashboard read to answer "is there money to trade with", and they said
+        no while the answer was yes.
+
+        `native_eth` keeps its name for the consumers that already read it; on a
+        non-ETH chain it is that chain's native balance.
+        """
+        chain = self.primary_chain
         return {
             "wallet": self.wallet,
-            "native_eth": self.get_native_balance("ethereum"),
-            "stable_usd": self.stable_liquidity("ethereum"),
+            "chain": chain,
+            "native_eth": self.get_native_balance(chain),
+            "stable_usd": self.stable_liquidity(chain),
             "holdings": len(self.holdings),
             "last_refresh": self._last_refresh,
         }

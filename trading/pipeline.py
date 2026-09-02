@@ -5159,6 +5159,34 @@ class TrainingPipeline:
                 "ghost_drawdown_breach": drawdown_breach,
                 "ghost_sample_buffer": ghost_sample_buffer,
                 "ghost_validation_margin": validation_margin,
+                # A pending bus action is ADVICE, not a brake.
+                #
+                # This disjunction used to carry a bare `or bus_actions_pending`,
+                # which contradicted the deliberate rule ~110 lines above: there,
+                # pending actions zero the live ratio only when paired with a real
+                # fault (wallet_sparse / capital_deficit / native_starved) or with
+                # an explicit "freeze_live"/"pause_live" action. That enumeration
+                # exists precisely because most bus actions are suggestions --
+                # "preload_gas_buffer", "scan_micro_opportunities",
+                # "refresh_wallet_balances", "notify_add_funds". None of them mean
+                # stop trading.
+                #
+                # The bare clause made every one of them mean exactly that, and
+                # the damage did not stop at live. trading/bot.py maps halt_live
+                # to `risk_budget = 0.0`, and the risk budget gates the WHOLE
+                # scheduler, so a suggestion to top up the gas buffer halted ghost
+                # evaluation too -- starving the evidence graduation is waiting on.
+                # Worse, it is self-defeating: publishing ATF candidates is itself
+                # what puts actions on the bus, so the lane switched itself off at
+                # the moment it found something to trade. Measured 2026-09-02
+                # 10:09:16, the only scheduler halt in the log reports
+                # ghost_multiplier 0.35 -- the exact clamp applied when
+                # `bus_actions` is non-empty -- with every risk gate passing and
+                # $6.98 deployable.
+                #
+                # Dropping the clause loses no genuine block: when pending actions
+                # SHOULD stop live, the rule above already sets recommended_ratio
+                # to 0, and `recommended_ratio <= 0` is still in this disjunction.
                 "halt_live": tail_block
                 or drawdown_breach
                 or not ghost_ready
@@ -5167,14 +5195,15 @@ class TrainingPipeline:
                 or wallet_sparse
                 or capital_deficit > 0
                 or native_starved
-                or bus_actions_pending
                 or recommended_ratio <= 0,
+                # Same reasoning: the real case arrives as block_reason
+                # ("bus_actions_pending", set by that rule). Keeping a bare
+                # fallback here labelled a plan that is not halted at all.
                 "halt_reason": block_reason
                 or (ghost_check.get("reason", "") if not ghost_ready else "")
                 or ("wallet_sparse" if wallet_sparse else "")
                 or ("capital_deficit" if capital_deficit > 0 else "")
-                or ("native_starved" if native_starved else "")
-                or ("bus_actions_pending" if bus_actions_pending else ""),
+                or ("native_starved" if native_starved else ""),
                 "bus_actions_pending": bus_actions_pending,
                 "risk_budget_cap": recommended_ratio,
                 "ghost_risk_multiplier": ghost_risk_multiplier,
