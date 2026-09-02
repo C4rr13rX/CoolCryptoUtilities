@@ -104,7 +104,20 @@ class SwapValidator:
         price: float,
         volume: float,
         prediction: Optional[Dict[str, float]] = None,
+        strategy_id: str = "",
     ) -> Tuple[bool, Dict[str, float], List[str]]:
+        """Score a proposed live swap.
+
+        ``strategy_id`` names the strategy whose directive is asking, and is
+        recorded on the metric purely so the question "which strategy reaches
+        the live gate" has an answer in the database. It answered nothing for
+        a long time: on 2026-09-02 this guard recorded 264 verdicts in 24h and
+        ALLOWED 94 of them while zero live trades existed, and there was no way
+        to tell from any stored row which strategy those 94 belonged to -- the
+        answer (none of them had graduated) took a day of code reading to
+        establish. A guard that logs its own verdict but not who it was
+        judging can only ever explain half of a refusal.
+        """
         symbol_u = symbol.upper()
         samples = self.db.fetch_market_samples_for(symbol_u, limit=360)
         trade_usd = abs(trade_size * price)
@@ -210,6 +223,7 @@ class SwapValidator:
                 "route": list(route),
                 "volume_basis": volume_basis,
                 "reasons": reasons,
+                "strategy_id": str(strategy_id or ""),
             },
         )
         if not allowed:

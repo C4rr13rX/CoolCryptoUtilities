@@ -23,6 +23,37 @@ FEEDBACK_KEY = "atf_static_strategy:feedback"
 GHOST_POSITIONS_KEY = "atf_static_strategy:ghost_positions"
 SOURCE = "c0d3rv2_atf_static"
 
+#: Ledger identity for trades this module opens and closes ITSELF.
+#:
+#: Deliberately NOT "atf_static". Two different executors trade the ATF
+#: signals: this scout, and ``trading/strategies/atf_static.py`` running
+#: inside the bot. They share a signal source and nothing else -- the scout
+#: enters on its own corroborated quote and exits on an 8% stop, a 1h hold
+#: or its target, while the bot enters through the CDCL solver and exits on
+#: triggers, a 2% stop, confidence drops and timed exits. Same entry idea,
+#: entirely different realised P/L.
+#:
+#: They were reporting into ONE ledger id, and that is the root cause of
+#: link 9. Measured 2026-09-02 over the whole database: of 376 closed
+#: ``atf_static`` trades, **368 (97.9%) were taken by this scout** and 8 by
+#: the bot. The scout hardcodes ``wallet="ghost"`` and ``mode="ghost"`` and
+#: publishes ``live_execution_enabled: False`` -- it has no live branch and
+#: cannot spend money at all. So ``atf_static`` was granted ``live_approved``
+#: on the record of an executor that can never place a live trade, while the
+#: executor that CAN place one had 8 trades against the 20 promotion needs.
+#:
+#: The bot then reached its live entry gate 264 times in 24h and the swap
+#: guard PASSED 94 of them -- every one downgraded to ghost, because the only
+#: graduated strategy never produces the directives that arrive there. The
+#: one strategy allowed to spend could not, and the ones that could were not
+#: allowed to. Splitting the id is what makes the ledger mean what the live
+#: gate reads it to mean.
+SCOUT_STRATEGY_ID = "atf_static_scout"
+
+#: The signal identity. The bot-side plugin publishes under this and it is
+#: what the live gate consults, so nothing this module executes may claim it.
+SIGNAL_STRATEGY_ID = "atf_static"
+
 
 def _record_ghost_outcome(strategy_id: str, profit: float, symbol: str = "") -> None:
     """
@@ -34,6 +65,10 @@ def _record_ghost_outcome(strategy_id: str, profit: float, symbol: str = "") -> 
     ``trading_ops`` and nowhere else: 196 closed trades over four days that
     the graduation gate never saw, so the ledger sat unchanged and no
     strategy could ever accumulate the 20 trades promotion requires.
+
+    Callers must pass ``SCOUT_STRATEGY_ID``. See its docstring for why an
+    outcome this module produced must never be filed under the id the live
+    gate reads.
 
     Deliberately best-effort. A ledger write must never abort a trading
     cycle -- losing one outcome is recoverable, stalling the loop is not.
@@ -256,7 +291,17 @@ def refresh_feedback_scores(*, max_age_sec: float = 6 * 3600.0) -> Dict[str, Any
         action = str(row.get("action") or details.get("action") or "").lower()
         reason = str(details.get("reason") or "")
         sid = str(details.get("strategy_id") or details.get("strategy") or "")
-        if sid != "atf_static" and "ATF researched candidate" not in reason:
+        # Both executors of the ATF signals feed this pair-level scoring: the
+        # scout's own round trips and the bot's. Splitting the ledger ids kept
+        # the two apart where it decides who may spend money; here the
+        # question is "how has this PAIR behaved", and both are evidence of
+        # that. Matching only the bot's id would have silently emptied the
+        # feedback loop the moment the scout was renamed -- 368 of the 376
+        # closed trades are the scout's.
+        if (
+            sid not in {SIGNAL_STRATEGY_ID, SCOUT_STRATEGY_ID}
+            and "ATF researched candidate" not in reason
+        ):
             continue
         if action != "exit" and not status.endswith("-exit"):
             continue
@@ -528,7 +573,7 @@ def _run_ghost_quote_scout(
         entry_ts = _float(pos.get("entry_ts"), now - age)
         details = {
             "source": SOURCE,
-            "strategy_id": "atf_static",
+            "strategy_id": SCOUT_STRATEGY_ID,
             "symbol": symbol,
             "chain": chain,
             "entry_price": entry,
@@ -550,7 +595,7 @@ def _run_ghost_quote_scout(
             "signal": sig,
         }
         db.log_trade(wallet="ghost", chain=chain, symbol=symbol, action="exit", status="ghost-exit", details=details)
-        _record_ghost_outcome("atf_static", profit, symbol=symbol)
+        _record_ghost_outcome(SCOUT_STRATEGY_ID, profit, symbol=symbol)
         events.append({"symbol": symbol, "action": "exit", "profit": profit, "reason": reason})
         positions.pop(symbol, None)
 
@@ -589,7 +634,7 @@ def _run_ghost_quote_scout(
         target_return = max(min_profit, _float(sig.get("expected_return"), 0.0))
         position = {
             "source": SOURCE,
-            "strategy_id": "atf_static",
+            "strategy_id": SCOUT_STRATEGY_ID,
             "symbol": symbol,
             "chain": chain,
             "quote_token": quote_token.upper(),

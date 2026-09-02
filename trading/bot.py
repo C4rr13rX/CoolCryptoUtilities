@@ -3742,6 +3742,7 @@ class TradingBot:
                     price=price,
                     volume=volume,
                     prediction=summary,
+                    strategy_id=str(getattr(directive, "strategy_id", "") or ""),
                 )
             else:
                 allowed, guard_metrics, guard_reasons = True, {}, []
@@ -3791,6 +3792,33 @@ class TradingBot:
             live_approved = bool(
                 self.live_trading_enabled and self._strategy_live_approved(directive)
             )
+
+            # Say so when a trade the guard CLEARED is turned back at this line.
+            #
+            # This is where link 9 actually failed, and it failed silently. On
+            # 2026-09-02 the swap guard allowed 94 live entries in 24h and none
+            # of them spent a cent: every directive reaching here came from a
+            # strategy the ledger had not graduated, so all 94 became ghost
+            # entries indistinguishable from ones the live path never wanted.
+            # The database recorded a guard PASS and then a ghost trade, with
+            # nothing in between to say a live entry had been declined or by
+            # what rule.
+            #
+            # A guard-blocked live entry has been logged since the day that gap
+            # was found; this is the same argument applied one branch later.
+            # "The strategy is not graduated" is a decision about real money
+            # and must be as visible as a refusal by the guard.
+            if self.live_trading_enabled and not live_approved:
+                self.metrics.feedback(
+                    "live_trading",
+                    severity=FeedbackSeverity.INFO,
+                    label="entry_downgraded_to_ghost",
+                    details={
+                        "symbol": symbol,
+                        "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                        "reason": "strategy_not_graduated",
+                    },
+                )
 
             # A token address we do not have is a reason this trade cannot
             # SETTLE, not a reason to stop measuring the symbol. This used to
