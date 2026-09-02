@@ -337,10 +337,12 @@ class StrategyLedger:
                 # in _blank_mode(), so it read 0 forever while consecutive_losses
                 # climbed. Graduation survived that (it scores wins/trades) but
                 # every reader of the ledger was told these strategies had never
-                # lost. A strictly-negative test keeps a flat outcome out of
-                # both counters, matching how the registry books it.
-                if profit < 0:
-                    stats["losses"] = int(stats.get("losses", 0)) + 1
+                # lost. A flat outcome books as a loss because the registry
+                # books it that way (its else branch covers p <= 0), and the
+                # two files have to stay reconcilable -- they are each other's
+                # only independent check. A zero-profit exit still paid the
+                # round trip, so that is also the honest read.
+                stats["losses"] = int(stats.get("losses", 0)) + 1
                 stats["consecutive_losses"] = int(stats.get("consecutive_losses", 0)) + 1
             stats["total_profit"] = float(stats.get("total_profit", 0.0)) + float(profit)
             stats["peak_profit"] = max(float(stats.get("peak_profit", 0.0)), stats["total_profit"])
