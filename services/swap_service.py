@@ -9,6 +9,42 @@ from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, Cam
 from services.token_catalog import core_tokens_for_chain
 
 
+# 0x ended free support and we are not paying for it, so it does not belong on
+# the path of every swap.
+#
+# It was not merely inert there. ZEROX_API_KEY is absent from .env and from a
+# bare shell, but importing router_wallet hydrates it from the encrypted
+# secure-settings store, so _headers() never raised in production and the
+# default path opened every swap with a real HTTPS GET to api.0x.org under a
+# 25s timeout. logs/system.log records 26 "[0x] status=success" broadcasts in
+# June 2026 against real transaction hashes -- this route worked, it is simply
+# one we no longer pay for.
+#
+# So the keyless on-chain routes are the default, and 0x is opt-in: it needs
+# SWAP_ENABLE_0X and a key of its own. A key alone is deliberately not enough,
+# because a key is exactly what the process already has.
+_TRUE = {"1", "true", "yes", "on"}
+
+
+def zerox_available() -> bool:
+    """True only when 0x is explicitly enabled AND carries a key."""
+    if (os.getenv("SWAP_ENABLE_0X", "0") or "").strip().lower() not in _TRUE:
+        return False
+    return bool((os.getenv("ZEROX_API_KEY") or "").strip().strip("'\""))
+
+
+def default_route_order() -> list[str]:
+    """Routes the default (no ROUTE_ONLY) swap path tries, in order.
+
+    Never contains "0x" unless zerox_available(); the on-chain routes alone
+    are always sufficient to attempt a swap.
+    """
+    order = ["uniswap", "camelot", "sushi"]
+    if zerox_available():
+        order.insert(0, "0x")
+    return order
+
+
 class SwapService:
 
     def _preflight_estimate(
@@ -372,6 +408,10 @@ class SwapService:
         # =========================
         if _ro in {"0x", "ox", "zerox", "zero-x", "allowance", "allowance-holder", "0x-v2", "v2"}:
             print("[router] ROUTE_ONLY=0x — trying 0x v2 Allowance-Holder only")
+            if not zerox_available():
+                print("[router] 0x is not configured (needs SWAP_ENABLE_0X=1 and "
+                      "ZEROX_API_KEY). Unset ROUTE_ONLY to use the keyless "
+                      "on-chain routes."); return
 
             try:
                 sell_norm = normalize_for_0x(sell)  # 'native' -> 0xeeee...
@@ -525,43 +565,45 @@ class SwapService:
             return
 
         # =========================
-        # Normal order: 0x → Uni → Camelot → Sushi
+        # Normal order: on-chain routes first; 0x only if explicitly enabled
         # =========================
-        print(f"[info] chainId={cid} taker={taker}")
+        _routes = default_route_order()
+        print(f"[info] chainId={cid} taker={taker} routes={'→'.join(_routes)}")
 
-        # 1) 0x v2 (no auto-wrap pre-0x)
-        try:
-            sell_norm = normalize_for_0x(sell)
-            buy_norm  = normalize_for_0x(buy)
-            q0 = self.zx.quote(
-                chain_id=cid, sell_token=sell_norm, buy_token=buy_norm,
-                sell_amount=int(sell_raw), taker=taker, slippage_bps=slippage_bps
-            )
-            tx = q0.get("tx") or {}
-            spender = q0.get("allowanceTarget")
-            if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
-                print("[ERR] approval failed"); raise RuntimeError("approval failed")
-
-            val_raw = tx.get("value") or 0
-            val_int = int(val_raw, 16) if isinstance(val_raw, str) and str(val_raw).startswith("0x") else int(val_raw)
-            gas_hint = tx.get("gas")
-            if isinstance(gas_hint, str) and str(gas_hint).startswith("0x"):
-                gas_hint = int(gas_hint, 16)
-            if not self._preflight_estimate(ch, to=tx.get("to"), data=tx.get("data"), value=val_int, gas=gas_hint):
-                raise RuntimeError("0x preflight failed (estimate_gas)")
-
-            print(f"[0x] to={tx.get('to')} value={val_int} gas~{gas_hint or 'est.'}")
-            txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
-            print(f"[0x] broadcast tx={txh}")
+        # 1) 0x v2 (no auto-wrap pre-0x) — skipped unless opted in with a key
+        if "0x" in _routes:
             try:
-                rc = w3.eth.wait_for_transaction_receipt(txh)
-                ok = int(rc.get("status", 0)) == 1
-                print(f"[0x] status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
+                sell_norm = normalize_for_0x(sell)
+                buy_norm  = normalize_for_0x(buy)
+                q0 = self.zx.quote(
+                    chain_id=cid, sell_token=sell_norm, buy_token=buy_norm,
+                    sell_amount=int(sell_raw), taker=taker, slippage_bps=slippage_bps
+                )
+                tx = q0.get("tx") or {}
+                spender = q0.get("allowanceTarget")
+                if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
+                    print("[ERR] approval failed"); raise RuntimeError("approval failed")
+
+                val_raw = tx.get("value") or 0
+                val_int = int(val_raw, 16) if isinstance(val_raw, str) and str(val_raw).startswith("0x") else int(val_raw)
+                gas_hint = tx.get("gas")
+                if isinstance(gas_hint, str) and str(gas_hint).startswith("0x"):
+                    gas_hint = int(gas_hint, 16)
+                if not self._preflight_estimate(ch, to=tx.get("to"), data=tx.get("data"), value=val_int, gas=gas_hint):
+                    raise RuntimeError("0x preflight failed (estimate_gas)")
+
+                print(f"[0x] to={tx.get('to')} value={val_int} gas~{gas_hint or 'est.'}")
+                txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
+                print(f"[0x] broadcast tx={txh}")
+                try:
+                    rc = w3.eth.wait_for_transaction_receipt(txh)
+                    ok = int(rc.get("status", 0)) == 1
+                    print(f"[0x] status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
+                except Exception as e:
+                    print(f"[0x] wait/pending: {e!r} (not attempting fallbacks)")
+                return
             except Exception as e:
-                print(f"[0x] wait/pending: {e!r} (not attempting fallbacks)")
-            return
-        except Exception as e:
-            print(f"[0x] error before broadcast: {e!r}")
+                print(f"[0x] error before broadcast: {e!r}")
 
         # Local DEX fallbacks expect ERC-20 addresses; auto-wrap native now if needed
         if is_native(buy):
