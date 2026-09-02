@@ -109,6 +109,104 @@ def model_defs_available() -> bool:
     return _get_model_defs() is not None
 
 
+def _save_model_atomically(model, path: Path, **kwargs) -> None:
+    """Write a ``.keras`` artifact so no reader can ever see it half-written.
+
+    ``model.save(path)`` writes the zip in place over several seconds. Any
+    reader that opens it during that window gets a file with a ``PK`` header
+    and no central directory -- and ``load_active_model`` responded to that by
+    DELETING the artifact as corrupt. The result was a loop that sustained
+    itself:
+
+        save active_model.keras in place
+          -> another cycle reads it mid-write, sees a truncated zip
+          -> deletes it as corrupt
+          -> next call finds no model, rebuilds a fresh baseline
+          -> save active_model.keras in place ...
+
+    Observed 2026-09-02 in production.log: "failed to load active model
+    (Expected a model.weights.h5 or model.weights.npz file.); removing
+    corrupted artifact" followed by "no active model found; building a fresh
+    baseline", repeating every few seconds indefinitely. A captured copy of
+    the file confirmed it: 48,725 bytes opening with ``PK\\x03\\x04`` and
+    ending mid-JSON, with no central directory.
+
+    The cost was not just a missing model. Rebuilding a TensorFlow baseline
+    every cycle burns the CPU and memory that the trading cycle needs, on a
+    box whose ResourceGovernor was already pausing ``production_cycle`` at 97%
+    memory -- so the corrupted artifact was starving the loop that has to
+    place the live trade.
+
+    The promotion path further down already wrote through a temp file and
+    ``os.replace``; these were the sites that did not.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Same directory, so os.replace stays an atomic rename rather than a copy
+    # across filesystems. The suffix is preserved because Keras selects the
+    # serialisation format from it.
+    tmp = path.with_name(f"{path.stem}.tmp-{os.getpid()}-{int(time.time() * 1000)}{path.suffix}")
+    try:
+        try:
+            model.save(tmp, **kwargs)
+        except BaseException as exc:
+            # Serialisation failing halfway is the shape this bug actually
+            # takes: the temp file reaches 48,725 bytes -- byte-for-byte the
+            # size of the truncated artifact recovered from models/ -- and
+            # then the write dies, leaving a zip with a PK header and no
+            # central directory. Upstream callers treat a missing model as
+            # normal and rebuild, so an unlogged failure here is indis-
+            # tinguishable from "first run" and repeats forever.
+            log_message(
+                "training",
+                f"model serialisation failed: {type(exc).__name__}: {exc}",
+                severity="error",
+                details={
+                    "path": str(path),
+                    "temp": str(tmp),
+                    "bytes_written": tmp.stat().st_size if tmp.exists() else 0,
+                },
+            )
+            raise
+        # os.replace is atomic but not always immediate on Windows: a scanner
+        # or indexer that opened the file we just wrote holds a handle, and the
+        # rename fails with a sharing violation until it lets go. Observed here
+        # -- the temp file appeared at full size (48,725 bytes) and vanished
+        # again on every cycle without ever becoming active_model.keras, so the
+        # model was never persisted and every pass logged "no active model
+        # found; building a fresh baseline". A silent failure that looks
+        # exactly like having no model is the worst shape this can take, so a
+        # give-up is logged rather than swallowed.
+        attempts = max(1, int(os.getenv("MODEL_SAVE_REPLACE_ATTEMPTS", "6")))
+        delay = 0.2
+        last_exc: Optional[BaseException] = None
+        for attempt in range(attempts):
+            try:
+                os.replace(tmp, path)
+                last_exc = None
+                break
+            except OSError as exc:
+                last_exc = exc
+                if attempt == attempts - 1:
+                    break
+                time.sleep(delay)
+                delay = min(delay * 2.0, 2.0)
+        if last_exc is not None:
+            log_message(
+                "training",
+                f"could not publish model artifact after {attempts} attempts: {last_exc}",
+                severity="error",
+                details={"path": str(path), "temp": str(tmp)},
+            )
+            raise last_exc
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
 def _custom_objects():
     global _CUSTOM_OBJECTS
     if _CUSTOM_OBJECTS is None:
@@ -548,6 +646,30 @@ class TrainingPipeline:
             self._active_model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
             return self._active_model
         except Exception as exc:
+            # Deleting on ANY load failure is what turned a transient read into
+            # a permanent rebuild loop: a reader that caught the artifact
+            # mid-write destroyed a model that was merely unfinished, and the
+            # rebuild it triggered produced the next half-written file.
+            #
+            # Saves are atomic now (see _save_model_atomically), so a reader
+            # should never see a partial file again. This keeps the second
+            # lock on the door: only discard an artifact that has been sitting
+            # still long enough that nobody can still be writing it. A file
+            # younger than that is presumed in flight and left alone -- the
+            # caller falls back to building a baseline for this pass, which is
+            # what it would do anyway, and the next pass can load the finished
+            # artifact instead of a fresh rebuild.
+            settle_sec = float(os.getenv("MODEL_ARTIFACT_SETTLE_SEC", "60"))
+            try:
+                age = time.time() - path.stat().st_mtime
+            except OSError:
+                age = settle_sec + 1.0
+            if age < settle_sec:
+                print(
+                    f"[training] active model unreadable ({exc}) but only "
+                    f"{age:.0f}s old; leaving it in place."
+                )
+                return None
             print(f"[training] failed to load active model ({exc}); removing corrupted artifact.")
             path.unlink(missing_ok=True)
             return None
@@ -584,7 +706,7 @@ class TrainingPipeline:
         )
         self._adapt_vectorizers(headline_vec, full_vec)
         path = self.model_dir / "active_model.keras"
-        model.save(path, include_optimizer=False)
+        _save_model_atomically(model, path, include_optimizer=False)
         self._active_model = self._ensure_vectorizers_ready(model)
         return self._active_model
 
@@ -670,7 +792,7 @@ class TrainingPipeline:
         print(f"[training] expanding asset vocabulary from {current} to {required}.")
         upgraded = self._rebuild_model_with_asset_vocab(required, model)
         path = self.model_dir / "active_model.keras"
-        upgraded.save(path, include_optimizer=False)
+        _save_model_atomically(upgraded, path, include_optimizer=False)
         self._active_model = upgraded
         reloaded = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
         return reloaded
@@ -1710,7 +1832,7 @@ class TrainingPipeline:
             # New challenger entering shadow period — save but don't promote yet
             try:
                 model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
-                model.save(challenger_path, include_optimizer=False)
+                _save_model_atomically(model, challenger_path, include_optimizer=False)
                 challenger_meta = {
                     "version": f"challenger-{int(time.time())}",
                     "shadow_wins": 0,
