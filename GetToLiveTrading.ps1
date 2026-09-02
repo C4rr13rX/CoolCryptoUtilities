@@ -876,6 +876,58 @@ Report concisely: which link failed, the evidence, the fix, and the next link.
 If a live trade LOSES, verify the demotion guards fired and report the P/L
 honestly -- never hide a loss.
 
+## BEFORE YOU CHANGE ANYTHING: what else does this touch?
+
+A fix that repairs one link and breaks another is not progress, it is churn.
+This repo's own history is mostly that failure:
+
+  6e44f33  money_button was built on a signal with the WRONG SIGN
+  9084f03  an entry price quoted in the WRONG UNITS reached the gate
+  ef41710  volatility scored over the wrong WINDOW (six days, not the trade)
+  86ae43f  95% of the outcomes that decide graduation were silently LOST
+  ab74328  a strategy was convicted on trades it did not make
+  aa60c9a  a missing address blocked the swap AND corrupted the observation
+
+Every one passed the check in front of it while being wrong underneath.
+
+So for each change, before you write it:
+
+1. FIND THE CALLERS. grep for every caller of what you are about to change,
+   and every reader of any file, table or key you are about to write. Name
+   them in your report. If a function is called from five places, your change
+   is a five-place change -- make it correctly in all five AT ONCE, across as
+   many classes or modules as that takes. A partial change that leaves four
+   callers on the old contract is worse than no change, because it looks done.
+
+2. CHECK THE CONTRACT AT EVERY BOUNDARY YOU CROSS. For each input you consume
+   and each output you produce, verify by MEASUREMENT, not by reading the code
+   and assuming:
+
+     * TYPE   - is it the float/int/str/Decimal/None the other side expects?
+                A str "0.05" and a float 0.05 both "work" until they do not.
+     * SHAPE  - dict vs list vs scalar; one row vs many; nested vs flat.
+                Is an empty result [] or {} or None, and does the caller
+                handle the one you actually return?
+     * UNITS  - raw base units vs human decimals, fraction vs percent, bps vs
+                ratio, seconds vs ms, USD vs token. This repo has already
+                shipped a wrong-units price and a wrong-sign signal.
+     * RANGE  - can it be negative, zero, NaN, inf, or absent? What does the
+                consumer do with each? Say what you checked.
+     * TIME   - epoch seconds vs ms, UTC vs local, window start vs end,
+                inclusive vs exclusive bounds.
+
+   Print the actual value and its type at the boundary and read it. Do not
+   infer it from the signature.
+
+3. PROVE YOU DID NOT BREAK ANYTHING. Run the tests that cover every caller you
+   found, not only the one you edited. If no test covers a caller you changed,
+   write one. Report what you ran and what passed -- "tests pass" without
+   naming them is not evidence.
+
+4. IF IT CANNOT BE DONE WITHOUT BREAKING SOMETHING, SAY SO. Do not ship a
+   change that trades one broken link for another and report it as a fix.
+   Explain what conflicts, and what the correct cross-cutting change would be.
+
 ## PRIORITY: money_button is the most important strategy
 
 Split your effort roughly 50/50 between the failing link above and the
