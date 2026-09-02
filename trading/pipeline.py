@@ -3666,7 +3666,108 @@ class TrainingPipeline:
             return False
         return True
 
-    def _ghost_validation(self) -> Dict[str, Any]:
+    def _live_gate_candidates(self) -> List[str]:
+        """Strategies the per-strategy graduation gate would let trade live.
+
+        Empty when graduation is not enforced, in which case there is no
+        per-strategy notion of "who is about to trade" and the pooled book is
+        the only meaningful subject.
+        """
+        enforced = (os.getenv("STRATEGY_GRADUATION_ENFORCED", "1") or "0").strip().lower()
+        if enforced not in {"1", "true", "yes", "on"}:
+            return []
+        try:
+            from trading.strategies.ledger import StrategyLedger
+
+            return [str(s) for s in StrategyLedger().approved_ids() if str(s).strip()]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _ghost_validation_for_live(self) -> Dict[str, Any]:
+        """The ghost verdict for the strategy that would actually spend money.
+
+        The pooled book is the wrong subject for a live-money decision. Live
+        execution is already per-strategy -- ``STRATEGY_GRADUATION_ENFORCED``
+        means only a graduated strategy trades -- but this gate pooled every
+        strategy's trades into one record, so one strategy's losses vetoed
+        another strategy's earned evidence.
+
+        Measured 2026-09-02 over the 48h ghost book (56 paired round trips):
+
+            atf_static          38 trades   35W/3L   net +0.5192
+            rsi_reversal@5h     13 trades    0W/13L  net -1.9118
+            money_button         1 trade     1W/0L   net +0.0053
+            (four others)         4 trades              net -0.0092
+
+        rsi_reversal@5h's 13 losses are 13 near-simultaneous BASECAT-USDC
+        positions opened between 0.0316 and 0.0319 and closed between 0.0303
+        and 0.0304 -- one 4.7% move in one token, counted thirteen times, at a
+        clip roughly 8x atf_static's. Pooled, they drag the whole book to
+        -1.4722 and every aggregate with it: profit factor 0.304, payoff 0.156,
+        net expectancy -0.0328. So the gate reported ``negative_margin`` and
+        blocked live trading -- including for atf_static, which is graduated,
+        live-approved, and net POSITIVE over more trades in the same window.
+
+        Scoping the gate to one strategy does not weaken it. Every guardrail --
+        tail risk, drawdown, loss rate, streak cost, staleness, concentration,
+        profit factor, expectancy -- is applied unchanged, just to the record
+        of the strategy being judged. rsi_reversal@5h still fails on its own
+        book (0 wins). money_button still fails (1 trade, below min_trades).
+        What changes is that a strategy is no longer convicted on another
+        strategy's trades.
+
+        A candidate must have EARNED its verdict: the cold-start allowance is
+        rejected here. Pooled, cold start means the system has no trades at
+        all; per-strategy it would mean every untried strategy reads "ready",
+        which is the opposite of evidence.
+        """
+        candidates = self._live_gate_candidates()
+        if not candidates:
+            return self._ghost_validation()
+        verdicts = []
+        for sid in candidates:
+            try:
+                verdict = self._ghost_validation(sid)
+            except Exception:  # noqa: BLE001
+                continue
+            verdicts.append(verdict)
+        if not verdicts:
+            return self._ghost_validation()
+        earned = [
+            v
+            for v in verdicts
+            if v.get("ready")
+            and ghost_reason_is_earned(v.get("reason"))
+            and float(v.get("total_net_profit", 0.0) or 0.0) > 0.0
+        ]
+        if earned:
+            return max(earned, key=lambda v: float(v.get("total_net_profit", 0.0) or 0.0))
+        # Nobody qualifies. Report the candidate with the most evidence behind
+        # its refusal rather than the pooled book, so the block names a
+        # strategy and a reason someone can act on.
+        #
+        # The verdict is forced not-ready before it is returned. An approved
+        # strategy that has never traded comes back from _ghost_validation with
+        # ready=True and reason="cold_start_bootstrap" -- the allowance that
+        # lets a system with an empty book start collecting. Pooled that is
+        # harmless, because an empty pooled book means nothing has traded at
+        # all. Per-strategy it is the opposite: it would hand a live-money
+        # verdict of "ready" to every strategy that has never been tried, on
+        # the strength of having no record. Returning it unmodified regressed
+        # exactly that way and the test below caught it.
+        refusal = dict(max(verdicts, key=lambda v: int(v.get("samples", 0) or 0)))
+        if refusal.get("ready") and not ghost_reason_is_earned(refusal.get("reason")):
+            refusal["ready"] = False
+            refusal["reason"] = "no_qualified_strategy:%s" % (refusal.get("reason") or "unearned")
+        return refusal
+
+    def _ghost_validation(self, strategy_id: Optional[str] = None) -> Dict[str, Any]:
+        """Evaluate the ghost guardrails, over one strategy's book or all of them.
+
+        With ``strategy_id`` the verdict describes ONLY that strategy's own
+        trades. Every guardrail is applied unchanged; the only thing that
+        narrows is whose evidence is being judged.
+        """
         metrics = getattr(self, "metrics", None)
         if metrics is None:
             db = getattr(self, "db", None)
@@ -3679,12 +3780,15 @@ class TrainingPipeline:
                     "avg_profit": 0.0,
                     "tail_risk": 0.0,
                     "tail_guardrail": ghost_tail_guardrail(),
+                    "strategy_id": strategy_id or "",
                 }
             metrics = MetricsCollector(db)
         self.metrics = metrics
         lookback = int(os.getenv("GHOST_VALIDATION_LOOKBACK_SEC", str(getattr(self, "focus_lookback_sec", 172800))))
         try:
-            trades = metrics.ghost_trade_snapshot(limit=500, lookback_sec=lookback)
+            trades = metrics.ghost_trade_snapshot(
+                limit=500, lookback_sec=lookback, strategy_id=strategy_id
+            )
         except Exception:
             trades = []
         summary = metrics.aggregate_trade_metrics(trades)
@@ -3775,6 +3879,51 @@ class TrainingPipeline:
             trough = min(trough, cumulative)
         max_drawdown = abs(trough)
         concentration_block = len(trades) >= max(5, min_trades) and dominant_share > dominance_guard
+        # Leave-one-symbol-out: does the edge survive without its best token?
+        #
+        # `dominant_share` counts TRADES, so a strategy that spreads its
+        # activity across many symbols passes it even when a single symbol
+        # produced all of the money. Measured 2026-09-02, atf_static's 48h
+        # book: 38 trades across 5 symbols, trade dominance 0.42 -- comfortably
+        # inside the 0.82 guard -- while BASECAT-USDC alone accounted for
+        # +0.5071 of the +0.5192 net, or 97.7%. On the other 22 trades the
+        # strategy made +0.0121. Trade-count concentration reported a
+        # diversified book; the P&L was one token.
+        #
+        # That distinction decides whether a record is an edge or a regime. So
+        # the book must stay net positive with its largest single profit
+        # contributor removed. This is a jackknife, not a tuned threshold:
+        # there is no constant to pick, and it asks the question that matters
+        # -- "did this strategy make money more than once?"
+        #
+        # It applies only to a multi-symbol book of adequate size. A one-symbol
+        # book cannot be jackknifed at all, and is already refused by
+        # `concentration_block`, whose trade dominance is 1.0 there.
+        symbol_profit: Dict[str, float] = {}
+        for trade in trades:
+            key = str(trade.symbol or "UNKNOWN").upper()
+            symbol_profit[key] = symbol_profit.get(key, 0.0) + float(trade.profit or 0.0)
+        top_profit_symbol = ""
+        top_symbol_profit = 0.0
+        if symbol_profit:
+            top_profit_symbol, top_symbol_profit = max(
+                symbol_profit.items(), key=lambda kv: kv[1]
+            )
+        net_profit_ex_top_symbol = total_net_profit - top_symbol_profit
+        symbol_profit_dominance = (
+            top_symbol_profit / total_net_profit
+            if total_net_profit > 0 and top_symbol_profit > 0
+            else 0.0
+        )
+        jackknife_enabled = (
+            os.getenv("GHOST_REQUIRE_MULTI_SYMBOL_EDGE", "1") or "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        single_symbol_dependence = bool(
+            jackknife_enabled
+            and len(symbol_counts) >= 2
+            and len(trades) >= max(5, min_trades)
+            and net_profit_ex_top_symbol <= 0.0
+        )
         win_headroom = 1.0 if min_win_rate <= 0 else max(0.0, min(1.0, win_rate / max(min_win_rate, 1e-9)))
         profit_headroom = 1.0 if min_profit_factor <= 0 else max(0.0, min(1.0, profit_factor / max(min_profit_factor, 1e-9)))
         tail_headroom = 1.0 if tail_guard <= 0 else max(0.0, 1.0 - min(1.0, tail_risk / max(tail_guard, 1e-9)))
@@ -3809,6 +3958,7 @@ class TrainingPipeline:
                 and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
                 and not stale_samples
                 and not concentration_block
+                and not single_symbol_dependence
             )
         fast_track_enabled = (os.getenv("GHOST_FAST_TRACK_ENABLED", "1") or "0").lower() in {"1", "true", "yes", "on"}
         fast_track_min_trades = int(os.getenv("GHOST_FAST_TRACK_MIN_TRADES", str(max(10, min_trades // 2))))
@@ -3830,6 +3980,7 @@ class TrainingPipeline:
             and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
             and not stale_samples
             and not concentration_block
+            and not single_symbol_dependence
         )
         # ------------------------------------------------------------------
         # Positive-expectancy path.
@@ -3885,6 +4036,7 @@ class TrainingPipeline:
             and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
             and not stale_samples
             and not concentration_block
+            and not single_symbol_dependence
         )
         if not (cold_start and cold_start_allowed):
             reason = ""
@@ -3919,9 +4071,12 @@ class TrainingPipeline:
                 reason = "loss_streak"
             elif concentration_block:
                 reason = "symbol_concentration"
+            elif single_symbol_dependence:
+                reason = "single_symbol_dependence"
         return {
             "ready": ready,
             "reason": reason,
+            "strategy_id": strategy_id or "",
             "samples": len(trades),
             "win_rate": win_rate,
             "win_rate_lb": win_rate_lb,
@@ -3959,6 +4114,10 @@ class TrainingPipeline:
             "symbol_dominance": dominant_share,
             "max_symbol_dominance": dominance_guard,
             "unique_symbols": len(symbol_counts),
+            "symbol_profit_dominance": symbol_profit_dominance,
+            "top_profit_symbol": top_profit_symbol,
+            "net_profit_ex_top_symbol": net_profit_ex_top_symbol,
+            "single_symbol_dependence": single_symbol_dependence,
             "health_score": health_score,
             "wins": wins,
             "losses": losses,
@@ -4141,7 +4300,10 @@ class TrainingPipeline:
         mini_recall_target = float(os.getenv("LIVE_MINI_RECALL", "0.45"))
         mini_samples_target = int(os.getenv("LIVE_MINI_SAMPLES", "20"))
         allow_mini_as_ready = (os.getenv("LIVE_ALLOW_MINI_READY", "1") or "0").lower() in {"1", "true", "yes", "on"}
-        ghost_check = self._ghost_validation()
+        # Same subject as the transition plan: the readiness report drives
+        # _live_ready_flag, and judging readiness on the pooled book while
+        # sizing on a per-strategy one would let the two disagree.
+        ghost_check = self._ghost_validation_for_live()
         wallet_state = self._wallet_state()
 
         report = self._last_confusion_report or {}
@@ -4357,7 +4519,7 @@ class TrainingPipeline:
         summary = self._last_confusion_summary or self._summarize_confusion_report(self._last_confusion_report or {})
         ready_ratio = float(os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15")))
         bootstrap_ratio = float(os.getenv("SAVINGS_BOOTSTRAP_RATIO", os.getenv("PRE_EQUILIBRIUM_CHECKPOINT_RATIO", "0.05")))
-        ghost_check = self._ghost_validation()
+        ghost_check = self._ghost_validation_for_live()
         wallet_state = self._wallet_state()
         min_live_capital = float(os.getenv("LIVE_MIN_CAPITAL_USD", "50"))
         min_clip_usd = float(os.getenv("LIVE_MIN_CLIP_USD", "10"))

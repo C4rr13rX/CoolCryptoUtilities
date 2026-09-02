@@ -158,7 +158,12 @@ def print_live():
     from db import get_db
 
     p = TrainingPipeline(db=get_db())
-    g = p._ghost_validation()
+    # The subject the LIVE path actually judges. Printing the pooled book here
+    # while the plan was built from a per-strategy one made the two disagree on
+    # screen: profit_factor 0.304 and reason=negative_margin were shown beside
+    # block_reason=(none), because they were describing different books.
+    g = p._ghost_validation_for_live()
+    pooled = p._ghost_validation()
     plan = p._build_transition_plan()
     rf = plan.get("risk_flags") or {}
 
@@ -167,7 +172,8 @@ def print_live():
         print("  [%-5s] %-30s %-18s (limit %s)" % (flag, name, value, guard))
 
     print("\n" + "=" * 100)
-    print("LIVE GATE STATE")
+    subject = g.get("strategy_id") or "(pooled book)"
+    print("LIVE GATE STATE  --  judging: %s   [%d trades]" % (subject, int(g.get("samples", 0))))
     print("=" * 100)
 
     tg = float(g.get("tail_guardrail", 0.08))
@@ -191,7 +197,27 @@ def print_live():
     lrg = float(g.get("loss_rate_guardrail", 0.6))
     row("loss_rate", "%.3f" % lr, lrg, lr <= lrg)
 
-    print("  %-8s %-30s %s" % ("", "ghost_validation", "%s (%s)" % (g.get("ready"), g.get("reason"))))
+    # Profit concentration, which trade-count dominance does not see: a book can
+    # be spread across symbols and still owe all of its P&L to one of them.
+    jk = float(g.get("net_profit_ex_top_symbol", 0.0))
+    row(
+        "net profit ex-%s" % (g.get("top_profit_symbol") or "top")[:14],
+        "%+.4f" % jk,
+        "> 0",
+        not g.get("single_symbol_dependence"),
+    )
+    print("  %-8s %-30s %.1f%% of net from %s" % (
+        "", "profit concentration",
+        float(g.get("symbol_profit_dominance", 0.0)) * 100.0,
+        g.get("top_profit_symbol") or "-",
+    ))
+
+    print("  %-8s %-30s %s" % ("", "ghost_validation", "%s (%s)" % (g.get("ready"), g.get("reason") or "ok")))
+    print("  %-8s %-30s %s (%s) net %+0.4f over %d" % (
+        "", "pooled book (all strategies)", pooled.get("ready"),
+        pooled.get("reason") or "ok",
+        float(pooled.get("total_net_profit", 0.0)), int(pooled.get("samples", 0)),
+    ))
     print("  %-8s %-30s %s" % ("", "live_ready (model gate)", plan.get("live_ready")))
     print("  %-8s %-30s %s" % ("", "live_mode", plan.get("live_mode")))
     print("  %-8s %-30s %s" % ("", "block_reason", rf.get("live_blocked_reason") or "(none)"))

@@ -49,6 +49,10 @@ class TradePerformance:
     realized_delta: float
     reason: str
     route: Sequence[str]
+    #: Which strategy produced this round trip. Empty when the trade log did
+    #: not attribute one -- an unattributed trade belongs to no strategy's
+    #: record and must never be counted toward one.
+    strategy_id: str = ""
 
     @property
     def duration(self) -> float:
@@ -247,12 +251,44 @@ class MetricsCollector:
     # Derived analytics
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _row_strategy_id(details: Dict[str, Any]) -> str:
+        """Which strategy a ghost row belongs to, or "" if it does not say.
+
+        Two writers produce ghost rows in different shapes. atf_static writes
+        a self-contained exit carrying ``strategy_id`` at the top level;
+        trading/bot.py writes an entry whose strategy lives on the embedded
+        ``bus_plan``, and an exit that names no strategy at all. Reading only
+        the top-level key attributed 18 of 56 trades and left the rest
+        anonymous, so an exit's strategy is recovered from its own entry.
+        """
+        if not isinstance(details, dict):
+            return ""
+        sid = details.get("strategy_id")
+        if not sid:
+            plan = details.get("bus_plan")
+            if isinstance(plan, dict):
+                sid = plan.get("strategy_id")
+        if not sid:
+            position = details.get("position")
+            if isinstance(position, dict):
+                sid = position.get("strategy_id")
+        return str(sid or "").strip()
+
     def ghost_trade_snapshot(
         self,
         *,
         limit: int = 500,
         lookback_sec: Optional[float] = None,
+        strategy_id: Optional[str] = None,
     ) -> List[TradePerformance]:
+        """Paired ghost round trips, optionally narrowed to one strategy.
+
+        ``strategy_id`` filters the returned book to trades that strategy
+        actually produced. Pairing still runs over ALL rows first: an exit
+        recovers its strategy from its own entry, so filtering the rows before
+        pairing would orphan every bot-written exit and silently drop it.
+        """
         since_ts = time.time() - lookback_sec if lookback_sec else None
         rows = self.db.fetch_trades(
             limit=limit,
@@ -292,6 +328,7 @@ class MetricsCollector:
                     "entry_price": float(details.get("entry_price") or 0.0),
                     "expected_delta": float(details.get("expected_delta") or details.get("delta") or 0.0),
                     "route": details.get("route") or [],
+                    "strategy_id": self._row_strategy_id(details),
                 }
                 trade_id = details.get("trade_id")
                 if trade_id:
@@ -349,8 +386,15 @@ class MetricsCollector:
                             or "unspecified"
                         ),
                         route=entry.get("route") or [],
+                        strategy_id=(
+                            self._row_strategy_id(details)
+                            or str(entry.get("strategy_id") or "")
+                        ),
                     )
                 )
+        if strategy_id is not None:
+            wanted = str(strategy_id).strip()
+            performances = [t for t in performances if t.strategy_id == wanted]
         return performances
 
     def aggregate_trade_metrics(self, trades: Sequence[TradePerformance]) -> Dict[str, float]:
