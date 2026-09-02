@@ -26,7 +26,7 @@ from __future__ import annotations
 import pytest
 
 from services import swap_service
-from services.swap_service import SwapService, default_route_order, zerox_available
+from services.swap_service import SwapOutcome, SwapService, default_route_order, zerox_available
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +132,8 @@ def test_swap_tries_uniswap_first_and_never_calls_0x(monkeypatch):
 
     def _fake_try_local(*, name, q, chain, sell_token, sell_raw):
         sent.append(name)
-        return True  # the first on-chain route settles
+        # the first on-chain route settles
+        return SwapOutcome(ok=True, broadcast=True, tx_hash="0x" + "ab" * 32, route=name)
 
     monkeypatch.setattr(svc, "_try_local_provider", _fake_try_local)
 
@@ -162,7 +163,8 @@ def test_swap_falls_through_on_chain_routes_without_0x(monkeypatch):
 
     monkeypatch.setattr(
         svc, "_try_local_provider",
-        lambda **kw: False,  # nothing settles; exercise the whole chain
+        # nothing reaches the mempool; exercise the whole chain
+        lambda **kw: SwapOutcome(ok=False, broadcast=False, route=kw["name"], reason="no_pool"),
     )
 
     svc.swap(chain="base", sell=_USDC, buy=_WETH, amount_human="1")

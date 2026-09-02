@@ -830,9 +830,26 @@ while ($true) {
     }
     $failure = Get-FirstFailure -Report $report
     if ($failure) { Write-Line "first failing link: $failure" "Yellow" }
+    Write-Line "sprint goal: $sprintGoal" "Cyan"
     else          { Write-Line "every link passes; waiting on the executor" "Green" }
 
     # ---- nudge Claude, and verify it answered ----
+    # Choose this pass's sprint objective from the live state.
+    #
+    # A pass with an open-ended goal ("get to live trading") has no natural
+    # stopping point, so it spends the whole pass understanding. A concrete
+    # objective with a deadline gives it one, and makes a missed goal
+    # visible instead of blurred into "still working on it".
+    $sprintGoal = if ($state -and $state.live_trades -ge $MinLiveTrades -and $state.profit_factor -lt $MinProfitFactor) {
+        "Raise money_button's live profit factor above $MinProfitFactor within this pass. It has $($state.live_trades) live trades at PF $($state.profit_factor). Find the losing pattern in the closed trades and fix the entry or exit rule that causes it."
+    } elseif ($state -and $state.live_rows -ge 1) {
+        "Get money_button to $MinLiveTrades profitable live trades. $($state.live_trades) settled so far, P/L $($state.live_pl). Keep them coming and keep them small."
+    } elseif ($state -and $state.live_attempts -gt 0) {
+        "Turn a blocked live entry into a SETTLED one within this pass. $($state.live_attempts) live attempts exist and NONE settled. Take one blocked attempt, find the exact gate that stopped it, and get a real transaction hash on Base -- dust-sized is fine."
+    } else {
+        "Get ONE real money_button trade onto the chain within this pass, and paste its transaction hash. Smallest amount that can settle."
+    }
+
     $userNote = Read-Inbox
     $noteBlock = ""
     if ($userNote) {
@@ -875,6 +892,41 @@ relevant tests, commit, and restart production if needed.
 Report concisely: which link failed, the evidence, the fix, and the next link.
 If a live trade LOSES, verify the demotion guards fired and report the P/L
 honestly -- never hide a loss.
+
+## THIS PASS IS A TIMEBOXED SPRINT
+
+Your objective for this pass, in one line:
+
+    $sprintGoal
+
+Treat that as a hard constraint, not an aspiration. It exists to stop a pass
+disappearing into analysis: this loop has run thousands of passes and settled
+one on-chain trade, because "understand the problem" has no stopping point
+while "make a trade happen" does.
+
+How to run a sprint:
+
+  * Spend the FIRST few minutes deciding the shortest path to the objective,
+    then commit to it. If two routes both reach it, take the one you can
+    finish, not the one you would prefer to have built.
+  * Prefer the change that produces EVIDENCE over the change that produces
+    architecture. A dust-sized real trade beats a refactor that would make
+    trading nicer later.
+  * If you reach the objective early, say so plainly and spend the rest of
+    the pass hardening it -- a test that pins it, the callers you did not
+    check yet -- rather than starting something new you cannot finish.
+  * If you will NOT reach it, say so BEFORE the pass ends. Name the single
+    blocker, what you tried, and the smallest next step. A pass that ends
+    with "blocked on X, here is the evidence, here is the next move" is
+    worth more than one that ends mid-thought.
+  * Never fake the objective to close it. Marking a goal met on a dry run, a
+    mocked trade, or a check script passing is worse than missing it, and
+    this repo has already shipped four strategies whose entire records were
+    fabricated. If the honest answer is "not met", that is the answer.
+
+The sprint objective NEVER overrides the correctness rules below. Shipping a
+change that breaks another link, or that skips the contract checks, does not
+count as reaching it.
 
 ## BEFORE YOU CHANGE ANYTHING: what else does this touch?
 
