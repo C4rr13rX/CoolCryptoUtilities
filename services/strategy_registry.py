@@ -31,6 +31,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from services.atomic_json import file_lock, read_json, write_json
+
 # Anchored to the repo root: web workers run from web/ while the trading
 # process runs from the repo root, so a relative default silently split
 # these files in two and the dashboard read an empty one.
@@ -100,12 +102,22 @@ def score(genome: Any, objective: str = "balanced") -> float:
 # --------------------------------------------------------------------------
 
 def _load() -> Dict[str, Any]:
-    try:
-        if REGISTRY_PATH.exists():
-            return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return {"strategies": {}}
+    """Read the registry, or raise if it exists but cannot be read.
+
+    Returning ``{"strategies": {}}`` for an unreadable file was silent data
+    loss of the worst kind here: callers write back what they read, so a single
+    failed open() persisted an EMPTY registry over the lifetime record of every
+    strategy. This file is append-only precisely because it must survive the
+    ledger resets, and it cannot do that if a lost race can blank it.
+    """
+    raw, ok = read_json(REGISTRY_PATH, default=None)
+    if not ok:
+        raise OSError(f"could not read {REGISTRY_PATH}")
+    if raw is None:
+        return {"strategies": {}}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{REGISTRY_PATH} is not a registry")
+    return raw
 
 
 def _under_test() -> bool:
@@ -133,10 +145,14 @@ def _save(state: Dict[str, Any]) -> None:
             "refusing to write the production strategy registry from a test; "
             "patch services.strategy_registry.REGISTRY_PATH to a temp file"
         )
-    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = REGISTRY_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2, default=str), encoding="utf-8")
-    os.replace(tmp, REGISTRY_PATH)
+    # Unique temp name + retried rename. Every writer used to build the same
+    # "strategy_registry.tmp" and call os.replace once, so concurrent saves
+    # overwrote each other's half-written file, and on Windows the rename fails
+    # outright while any other handle holds the destination open. The identical
+    # defect in the ledger lost 95% of recorded outcomes; see
+    # services/atomic_json.py for the measurement.
+    if not write_json(REGISTRY_PATH, state):
+        raise OSError(f"could not persist {REGISTRY_PATH}")
 
 
 # --------------------------------------------------------------------------
@@ -177,7 +193,7 @@ def register_strategy(
         "created_at": time.time(),
         "experiments": [],
     }
-    with _lock:
+    with _lock, file_lock(REGISTRY_PATH):
         state = _load()
         state.setdefault("strategies", {})[strategy_id] = entry
         _save(state)
@@ -199,7 +215,7 @@ def get_strategy(strategy_id: str) -> Optional[Dict[str, Any]]:
 def set_commissioned(strategy_id: str, commissioned: bool) -> Optional[Dict[str, Any]]:
     """Commission or decommission. Decommissioning is always allowed;
     commissioning requires a real out-of-sample edge."""
-    with _lock:
+    with _lock, file_lock(REGISTRY_PATH):
         state = _load()
         entry = state.get("strategies", {}).get(strategy_id)
         if not entry:
@@ -235,7 +251,7 @@ def add_experiment(
     Appends rather than replaces, so the same strategy evaluated on two brains
     keeps both results side by side for comparison.
     """
-    with _lock:
+    with _lock, file_lock(REGISTRY_PATH):
         state = _load()
         entry = state.get("strategies", {}).get(strategy_id)
         if not entry:
@@ -301,7 +317,7 @@ def record_outcome(
     """
     now = float(ts if ts is not None else time.time())
     key = "live" if str(mode).lower().startswith("live") else "ghost"
-    with _lock:
+    with _lock, file_lock(REGISTRY_PATH):
         state = _load()
         entry = state.get("strategies", {}).get(strategy_id)
         if not entry:
@@ -406,7 +422,7 @@ def lifetime_metrics(strategy_id: str) -> Dict[str, Any]:
 
 
 def delete_strategy(strategy_id: str) -> bool:
-    with _lock:
+    with _lock, file_lock(REGISTRY_PATH):
         state = _load()
         if strategy_id not in state.get("strategies", {}):
             return False

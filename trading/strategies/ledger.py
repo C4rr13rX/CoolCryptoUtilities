@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from services.atomic_json import file_lock, read_json, write_json
 from services.logging_utils import log_message
 
 
@@ -116,6 +117,14 @@ def _blank_mode() -> Dict[str, float]:
     return {
         "trades": 0,
         "wins": 0,
+        # Counted explicitly rather than derived as trades-minus-wins: a break
+        # even outcome is neither, and the registry has always distinguished
+        # them. Without this key the ledger reported zero losses forever, so
+        # every record read straight from it looked flawless -- and a perfect
+        # record with no losses is the project's own signature for a
+        # FABRICATED one (scripts/purge_test_artifacts.py). Honest losing
+        # strategies were wearing the costume of a fake winning one.
+        "losses": 0,
         "total_profit": 0.0,
         "conf_ema": 0.0,
         "peak_profit": 0.0,
@@ -148,23 +157,38 @@ class StrategyLedger:
     # Persistence
     # ------------------------------------------------------------------
 
-    def _load(self) -> None:
-        try:
-            if self.path.exists():
-                raw = json.loads(self.path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    self._data = raw
-        except Exception:
-            self._data = {}
+    def _file_lock(self):
+        """Cross-process lock for the read-modify-write. See services.atomic_json."""
+        return file_lock(self.path)
+
+    def _load(self) -> bool:
+        """Refresh from disk. False means the file could not be read.
+
+        A failed read must NOT blank ``self._data``. It used to: the handler
+        set it to ``{}``, so a transient read error immediately before a save
+        would write an empty ledger over every strategy's record -- erasing the
+        entire promotion history because one open() lost a race. Losing one
+        outcome is a data point; losing the file is the whole account's
+        evidence. On failure the in-memory copy is left exactly as it was and
+        the caller decides whether it is safe to write.
+        """
+        raw, ok = read_json(self.path, default=None)
+        if not ok:
+            return False
+        if raw is None:
+            return True                          # nothing written yet
+        if not isinstance(raw, dict):
+            return False
+        self._data = raw
+        return True
 
     def _save(self) -> None:
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
-            tmp.replace(self.path)
-        except Exception:
-            pass
+        if not write_json(self.path, self._data):
+            log_message(
+                "strategy-ledger",
+                f"FAILED to persist {self.path.name}; an outcome was lost",
+                severity="warning",
+            )
 
     def _entry(self, strategy_id: str) -> Dict[str, Any]:
         ent = self._data.setdefault(strategy_id, {})
@@ -273,7 +297,17 @@ class StrategyLedger:
                 )
             except Exception:  # noqa: BLE001
                 pass
-        with self._lock:
+        with self._lock, self._file_lock():
+            # A write on top of an unreadable file would persist this process's
+            # stale copy over everyone else's. Refuse rather than corrupt.
+            if not self._load():
+                log_message(
+                    "strategy-ledger",
+                    f"could not read {self.path.name} to record {sid}; "
+                    "skipping rather than overwriting it with a stale copy",
+                    severity="warning",
+                )
+                return
             # Re-read before mutating: this process is not the only writer.
             #
             # `self._data` is cached for the lifetime of the instance and
@@ -288,8 +322,10 @@ class StrategyLedger:
             # registry entry while being absent from the ledger entirely.
             #
             # Re-read again here: the registry write above is I/O, and another
-            # process can land an outcome inside that window.
-            self._load()
+            # process can land an outcome inside that window. That reload is
+            # the guarded one above, which now also holds the cross-process
+            # file lock -- the thread lock alone never ordered anything between
+            # processes, which is what made this "narrowed" race routine.
             ent = self._entry(sid)
             stats = ent[mode_key]
             stats["trades"] = int(stats.get("trades", 0)) + 1
@@ -297,6 +333,14 @@ class StrategyLedger:
                 stats["wins"] = int(stats.get("wins", 0)) + 1
                 stats["consecutive_losses"] = 0
             else:
+                # `losses` was never incremented here, and was not even a field
+                # in _blank_mode(), so it read 0 forever while consecutive_losses
+                # climbed. Graduation survived that (it scores wins/trades) but
+                # every reader of the ledger was told these strategies had never
+                # lost. A strictly-negative test keeps a flat outcome out of
+                # both counters, matching how the registry books it.
+                if profit < 0:
+                    stats["losses"] = int(stats.get("losses", 0)) + 1
                 stats["consecutive_losses"] = int(stats.get("consecutive_losses", 0)) + 1
             stats["total_profit"] = float(stats.get("total_profit", 0.0)) + float(profit)
             stats["peak_profit"] = max(float(stats.get("peak_profit", 0.0)), stats["total_profit"])
@@ -393,7 +437,14 @@ class StrategyLedger:
     # ------------------------------------------------------------------
 
     def demote(self, strategy_id: str, reason: str) -> None:
-        with self._lock:
+        # Same read-modify-write as record(), and it needs the same protection.
+        # It also has to re-read first: demoting from a stale in-memory copy
+        # would write back that copy, silently reverting every outcome another
+        # process recorded since this instance last loaded -- taking the whole
+        # ledger backwards at the exact moment a strategy is being pulled off
+        # real money.
+        with self._lock, self._file_lock():
+            self._load()
             self._demote_locked((strategy_id or "unclassified").strip() or "unclassified", reason)
             self._save()
 
