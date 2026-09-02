@@ -3919,6 +3919,65 @@ def _render_ws(endpoint: Endpoint, base: str, quote: str) -> Optional[str]:
     return endpoint.ws_template
 
 
+def _deepest_pool_with_consensus(
+    candidates: Sequence[Tuple[float, float]],
+    *,
+    label: str,
+    source: str,
+) -> Optional[float]:
+    """Pick the deepest pool, then make its peers vote on whether to believe it.
+
+    Both on-chain sources return many pools for one pair, and neither orders
+    them by anything trustworthy. Two independent things go wrong if you just
+    take one:
+
+    * **Position is not depth.** GeckoTerminal's search for ARB/USDC on base
+      returns ``ARBME / USDC`` first -- a pool holding **$0.75** -- ahead of
+      pools with $55 and $3,411. Taking ``data[0]`` published that $0.75 pool
+      as the price of ARB.
+    * **Depth is self-reported.** A pancakeswap pool claimed $117M of
+      liquidity on cbXRP/USDC at 0.001177 while three other DEXes quoted 1.41,
+      a 1,200x error handed straight to the trade path.
+
+    So: rank by liquidity, then require the winner to land within an order of
+    magnitude of its peers' median, and fall back to that median when it does
+    not. One pool cannot outvote the market by claiming to be the biggest, and
+    it cannot win by being listed first.
+    """
+    ranked = [(price, liq) for price, liq in candidates if price > 0]
+    if not ranked:
+        return None
+    best_ratio = max(ranked, key=lambda row: row[1])[0]
+    if len(ranked) >= 3:
+        ordered = sorted(price for price, _liq in ranked)
+        median = ordered[len(ordered) // 2]
+        if median > 0 and not (0.1 <= best_ratio / median <= 10.0):
+            log_message(
+                "market-stream",
+                f"{source} {label}: deepest pool quoted {best_ratio:.8g} "
+                f"against a peer median of {median:.8g}; using the median",
+                severity="warning",
+            )
+            best_ratio = median
+    return float(best_ratio) if best_ratio > 0 else None
+
+
+def _gecko_pool_symbols(name: str) -> Tuple[str, str]:
+    """Base and quote ticker out of a GeckoTerminal pool name.
+
+    Pool names look like ``"ARBME / USDC 1%"`` or ``"SpaceX / USDC 50.1%"`` --
+    the fee tier trails the quote and has to come off, or nothing ever matches.
+    Returns ``("", "")`` when the name is not in that shape, which the caller
+    treats as unverifiable and therefore unusable.
+    """
+    parts = [part.strip() for part in str(name or "").split("/")]
+    if len(parts) < 2:
+        return "", ""
+    base_sym = parts[0].split()[0].upper() if parts[0].split() else ""
+    quote_sym = parts[1].split()[0].upper() if parts[1].split() else ""
+    return base_sym, quote_sym
+
+
 def _extract_rest_price(
     name: str,
     payload: Dict[str, Any],
@@ -3970,22 +4029,52 @@ def _extract_rest_price(
                     return price if price > 0 else None
             return None
         if name == "geckoterminal":
+            # This branch used to be ``data[0]`` and nothing else: no check
+            # that the pool was even the right token, no liquidity ranking,
+            # no peer consensus -- all three of which the dexscreener branch
+            # below already did. Measured 2026-09-02 against the live API:
+            #
+            #   ARB/USDC on base   -> data[0] is "ARBME / USDC 1%",  $0.75
+            #                         reserve, quoted 5.33391272621165e-07
+            #   SPACEX/USDC        -> data[0] is one of 20 pools spanning
+            #                         4.0e-9 to 4.1e-7 (a 100x range)
+            #
+            # That first number is exactly what market_stream held for
+            # ARB-USDC, unchanged, for seven days: a token called ARBME,
+            # published as ARB, out of a pool holding seventy-five cents,
+            # stamped consensus_confidence 1.0. ARB has no base pool worth
+            # trading -- dexscreener returns 30 ARB pairs and zero on base --
+            # so the honest answer here is no price at all.
+            #
+            # Seven of the twenty symbols with enough ticks to score were
+            # frozen this way, which is 18.75% of money_button's declines and
+            # every symbol the swap guard now refuses as feed_frozen.
             data = payload.get("data") or []
-            if isinstance(data, list) and data:
-                attrs = data[0].get("attributes") or {}
+            if not isinstance(data, list) or not data:
+                return None
+            base_synonyms = _token_synonyms(base)
+            quote_synonyms = _token_synonyms(quote)
+            candidates: List[Tuple[float, float]] = []
+            for pool in data:
+                attrs = (pool or {}).get("attributes") or {}
+                pool_base, pool_quote = _gecko_pool_symbols(attrs.get("name"))
+                # An unverifiable pool is not a cheap price, it is a different
+                # asset. ARBME is not ARB.
+                if pool_base not in base_synonyms or pool_quote not in quote_synonyms:
+                    continue
                 price = _safe_float(attrs.get("base_token_price_usd"))
+                if price <= 0:
+                    price = _safe_float(attrs.get("base_token_price_native_currency"))
                 if price > 0:
-                    return price
-                price = _safe_float(attrs.get("base_token_price_native_currency"))
-                return price if price > 0 else None
-            return None
+                    candidates.append((price, _safe_float(attrs.get("reserve_in_usd"))))
+            return _deepest_pool_with_consensus(
+                candidates, label=f"{base}/{quote}", source="geckoterminal"
+            )
         if name == "mexc":
             price = float(payload.get("price") or 0)
             return price if price > 0 else None
         if name == "dexscreener":
             pairs = payload.get("pairs") or []
-            best_ratio: Optional[float] = None
-            best_liquidity = 0.0
             candidates: List[Tuple[float, float]] = []   # (price, liquidity_usd)
             base_synonyms = _token_synonyms(base)
             quote_synonyms = _token_synonyms(quote)
@@ -4029,37 +4118,14 @@ def _extract_rest_price(
                 liquidity_usd = _safe_float(pair.get("liquidity", {}).get("usd"))
                 if ratio_val > 0:
                     candidates.append((ratio_val, liquidity_usd))
-                if ratio_val > 0 and liquidity_usd >= best_liquidity:
-                    best_ratio = ratio_val
-                    best_liquidity = liquidity_usd
 
-            # Sanity-check the deepest pool against the consensus of its peers.
-            #
-            # Picking purely by reported liquidity trusts a number anyone can
-            # fabricate. Observed live: cbXRP/USDC quoted at 1.41 on three
-            # separate DEXes, alongside a pancakeswap pool claiming $117M of
-            # liquidity at 0.001177 -- a 1,200x error that would have been
-            # handed straight to the trade path as a real price.
-            #
-            # So when several independent pools agree, require the winner to
-            # land within an order of magnitude of their median and otherwise
-            # fall back to that median. One pool cannot outvote the market
-            # simply by claiming to be the biggest.
-            if len(candidates) >= 3 and best_ratio:
-                ordered = sorted(val for val, _liq in candidates)
-                median = ordered[len(ordered) // 2]
-                if median > 0 and not (0.1 <= best_ratio / median <= 10.0):
-                    log_message(
-                        "market-stream",
-                        f"dexscreener {base}/{quote}: deepest pool quoted "
-                        f"{best_ratio:.8g} against a peer median of "
-                        f"{median:.8g}; using the median",
-                        severity="warning",
-                    )
-                    best_ratio = median
-
-            if best_ratio and best_ratio > 0:
-                return float(best_ratio)
+            # Rank by depth, then let the peers vote. Shared with the
+            # geckoterminal branch above: the two sources had drifted into
+            # different rules for the same question, and the one without the
+            # rules is the one that froze the feed.
+            return _deepest_pool_with_consensus(
+                candidates, label=f"{base}/{quote}", source="dexscreener"
+            )
     except Exception:
         return None
     return None
