@@ -47,6 +47,28 @@ class SwapValidator:
         self.min_execution_ratio = min_execution_ratio or float(os.getenv("SWAP_GUARD_MIN_EXEC_RATIO", "0.82"))
         self.max_slippage = max_slippage or float(os.getenv("SWAP_GUARD_MAX_SLIPPAGE", "0.045"))
         self.max_volatility = max_volatility or float(os.getenv("SWAP_GUARD_MAX_VOLATILITY", "0.18"))
+        # Horizon the volatility number is expressed over. See
+        # ``_estimate_volatility``: the threshold above only means something
+        # once the measurement is pinned to a span of time.
+        self.volatility_horizon_sec = float(
+            os.getenv("SWAP_GUARD_VOL_HORIZON_SEC", "3600")
+        )
+        # A tick this far from the window median is a denomination artifact,
+        # not a price move. 50x in one tick is not something a tradeable pair
+        # does; it is the feed reporting a different asset under the same name.
+        self.volatility_outlier_factor = float(
+            os.getenv("SWAP_GUARD_VOL_OUTLIER_FACTOR", "50")
+        )
+        # Returns spanning a hole this many times the median cadence are not
+        # adjacent ticks and must not be differenced as though they were.
+        self.volatility_max_gap_factor = float(
+            os.getenv("SWAP_GUARD_VOL_MAX_GAP_FACTOR", "4")
+        )
+        # Above this share of discarded ticks the window is not a price series
+        # for one asset and no volatility can be read off it.
+        self.volatility_max_contamination = float(
+            os.getenv("SWAP_GUARD_VOL_MAX_CONTAMINATION", "0.25")
+        )
         # Ceiling on a single trade when no volume basis exists at all. Small
         # enough that no realistically tradeable pair could be moved by it, so
         # the guard still refuses to size blind into an unknown book.
@@ -82,7 +104,7 @@ class SwapValidator:
         fills = self.db.fetch_trade_fills(limit=100)
         exec_ratio, avg_slippage = self._execution_stats(fills)
 
-        volatility = self._estimate_volatility(samples)
+        volatility, volatility_measurable, volatility_diag = self._estimate_volatility(samples)
 
         metrics = {
             "trade_value_usd": trade_usd,
@@ -92,7 +114,9 @@ class SwapValidator:
             "execution_ratio": exec_ratio,
             "avg_slippage": avg_slippage,
             "volatility": volatility,
+            "volatility_measurable": 1.0 if volatility_measurable else 0.0,
         }
+        metrics.update(volatility_diag)
         if prediction:
             metrics.update(
                 {
@@ -119,7 +143,12 @@ class SwapValidator:
         if avg_slippage > self.max_slippage:
             allowed = False
             reasons.append("slippage")
-        if volatility > self.max_volatility:
+        if not volatility_measurable:
+            # Refuse, but say the true thing: the window held more than one
+            # price scale, so there is no volatility to compare to the limit.
+            allowed = False
+            reasons.append("volatility_unmeasurable")
+        elif volatility > self.max_volatility:
             allowed = False
             reasons.append("volatility")
 
@@ -236,15 +265,110 @@ class SwapValidator:
         avg_slippage = float(np.mean(slippages)) if slippages else 0.0
         return exec_ratio, avg_slippage
 
-    def _estimate_volatility(self, samples: Sequence[Dict[str, float]]) -> float:
-        prices = [float(sample.get("price") or 0.0) for sample in samples]
-        if len(prices) < 3:
-            return 0.0
-        returns = np.diff(prices) / np.array(prices[:-1], dtype=float)
-        returns = returns[np.isfinite(returns)]
-        if returns.size == 0:
-            return 0.0
-        return float(np.std(returns) * np.sqrt(min(len(returns), 60)))
+    def _estimate_volatility(
+        self, samples: Sequence[Dict[str, float]]
+    ) -> Tuple[float, bool, Dict[str, float]]:
+        """Volatility of the pair we are about to trade, over ``lookback_sec``.
+
+        Returns ``(volatility, measurable, diagnostics)``.
+
+        Every live entry for six days was refused with ``swap_guard:volatility``
+        and the reason was that this clause was not measuring the trade being
+        made. Four independent defects, all found by reading the series the
+        guard was actually scoring:
+
+        * **No time window.** The liquidity clause honours ``lookback_sec``;
+          this one took whatever 360 rows the table held. Measured 2026-09-02
+          those 360 rows spanned **147 hours** for SPACEX-USDC and 144 for
+          BSTONK-USDC. The guard was refusing a ten-minute trade because of
+          what the pair did six days ago.
+        * **Reverse chronological order.** ``fetch_market_samples_for`` is
+          ``ORDER BY ts DESC``, so ``np.diff`` walked backwards through time.
+          A backwards difference is not a return.
+        * **Denomination contamination.** SPACEX-USDC's window held 233 ticks
+          near 1.5e-9 and one at 524.37 -- two price scales eleven orders of
+          magnitude apart, which is a different asset wearing the same symbol.
+          That single pair of rows produced a return of 1.29e11 and set the
+          whole reading: the guard reported ``volatility=6.6e10`` against a
+          limit of 0.18. A number that large is never a market; it is always
+          an artifact, and scoring it as risk hides the real defect.
+        * **Scaling by sample count.** ``std * sqrt(min(n, 60))`` expressed the
+          answer over "sixty samples", so the same market read calmer whenever
+          the feed happened to deliver fewer rows. The horizon is now a span of
+          time, which is what the 0.18 threshold can actually be judged against
+          and is close to what the old scaling meant in steady state (60
+          samples at the observed ~95s cadence is ~1.6h).
+
+        With the series fixed and nothing else changed, BSTONK-USDC reads
+        **0.155 against the same 0.18 limit** -- it was inside the operator's
+        stated risk appetite all along -- and SPACEX-USDC reads 0.0, because it
+        did not move at all in the two hours before it was refused.
+
+        Discarding ticks is not the same as smoothing them away: when too much
+        of the window has to be thrown out the series is not one asset's price
+        history and the honest answer is that volatility is *unmeasurable*, so
+        the guard still refuses -- under its own reason, not as "too volatile".
+        """
+        now = time.time()
+        rows = sorted(
+            (
+                (float(s.get("ts") or 0.0), float(s.get("price") or 0.0))
+                for s in samples
+            ),
+            key=lambda row: row[0],
+        )
+        window = [
+            (ts, price)
+            for ts, price in rows
+            if price > 0 and ts > 0 and now - ts <= self.lookback_sec
+        ]
+        diag: Dict[str, float] = {
+            "vol_window_samples": float(len(window)),
+            "vol_dropped_outliers": 0.0,
+            "vol_dropped_gaps": 0.0,
+            "vol_horizon_sec": self.volatility_horizon_sec,
+        }
+        if len(window) < 3:
+            # Nothing measured is not a violation, the same way an unmeasured
+            # volume is not zero liquidity.
+            return 0.0, True, diag
+
+        prices = np.array([price for _, price in window], dtype=float)
+        median_price = float(np.median(prices))
+        keep = np.ones(prices.size, dtype=bool)
+        if median_price > 0 and self.volatility_outlier_factor > 1:
+            ratio = np.maximum(prices / median_price, median_price / prices)
+            keep = ratio <= self.volatility_outlier_factor
+        dropped = int(prices.size - int(keep.sum()))
+        diag["vol_dropped_outliers"] = float(dropped)
+        if dropped and dropped / float(prices.size) > self.volatility_max_contamination:
+            diag["vol_contamination"] = dropped / float(prices.size)
+            return 0.0, False, diag
+
+        stamps = np.array([ts for ts, _ in window], dtype=float)[keep]
+        prices = prices[keep]
+        if prices.size < 3:
+            return 0.0, True, diag
+
+        gaps = np.diff(stamps)
+        median_gap = float(np.median(gaps)) if gaps.size else 0.0
+        returns = np.diff(prices) / prices[:-1]
+        adjacent = np.isfinite(returns)
+        if median_gap > 0 and self.volatility_max_gap_factor > 0:
+            # A fourteen-hour hole between two prints is not one tick's move.
+            adjacent &= gaps <= median_gap * self.volatility_max_gap_factor
+        diag["vol_dropped_gaps"] = float(int(returns.size - int(adjacent.sum())))
+        returns = returns[adjacent]
+        if returns.size == 0 or median_gap <= 0:
+            return 0.0, True, diag
+
+        # Express the per-tick dispersion over a fixed horizon. Never scale up
+        # by more than the window actually contains -- extrapolating an hour of
+        # risk from four ticks would be inventing the number, not reading it.
+        steps = min(self.volatility_horizon_sec / median_gap, float(returns.size))
+        diag["vol_median_gap_sec"] = median_gap
+        diag["vol_returns"] = float(returns.size)
+        return float(np.std(returns) * np.sqrt(max(steps, 1.0))), True, diag
 
     def plan_transition(
         self,
