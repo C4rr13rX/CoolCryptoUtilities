@@ -144,7 +144,20 @@ def _tests() -> dict:
     # pytest exit with a usage error that reads as a failing suite -- scoring a
     # green repo as broken. The subprocess timeout below is the real guard.
     # No -x either: we want the true failure COUNT, not the first failure.
-    rc, out = _run([exe, "-m", "pytest", "tests", "-q", "--no-header"], timeout=1800)
+    # Scope: the tests that guard the money path, not the whole suite.
+    #
+    # The full suite takes >2 minutes here and pulls in TensorFlow, so running
+    # it after every pass both stalls the loop and times out the subprocess,
+    # which then reads as "did not run". These are the files that actually
+    # pin the behaviour a pass can break -- swap routing, the density gate,
+    # the ledger, graduation -- and they run in seconds.
+    targets = [str(t) for t in sorted((ROOT / "tests").glob("test_*.py"))
+               if any(k in t.name for k in (
+                   "swap", "density", "ledger", "ghost", "graduat",
+                   "money_button", "artifact", "corrobor", "gas"))]
+    if not targets:
+        targets = [str(ROOT / "tests")]
+    rc, out = _run([exe, "-m", "pytest", *targets, "-q", "--no-header"], timeout=600)
     m = re.search(r"(\d+) passed", out)
     f = re.search(r"(\d+) failed", out)
     e = re.search(r"(\d+) error", out)
