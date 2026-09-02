@@ -51,27 +51,57 @@ from scripts.money_button_gate_census import FEED_GATES, _State, load_ticks  # n
 
 
 def _drop_mixed_denominations(
-    ticks: List[Tuple[float, float, float]], factor: float = 50.0
+    ticks: List[Tuple[float, float, float]], gap_log: float = 0.5
 ) -> List[Tuple[float, float, float]]:
-    """Remove ticks quoted at a different scale from the rest of the symbol.
+    """Keep only the dominant price scale for a symbol.
 
     The control group needs this more than the strategy does. Scored raw, the
-    base rate came back as **+1.26e10%** mean forward return -- a number that
-    is obviously not a market, produced by a handful of ticks that cross a
-    denomination boundary (SPACEX-USDC 1.5e-9 -> 524.37). Left in, they swamp
-    every statistic computed here and would have made the signal look
-    catastrophically worse than the feed rather than merely no better.
+    base rate came back as **+1.26e10%** mean forward return -- obviously not a
+    market, produced by ticks crossing a denomination boundary (SPACEX-USDC
+    1.5e-9 -> 524.37).
+
+    A fixed "more than 50x from the median" rule was the first attempt and it
+    was not enough. It left COMP-USDC's artifacts in, which sit at only 2.24x
+    (COMP prints both 42.82 and ~19.13), and those alone manufactured an
+    apparent mean-reversion edge of **+17.28% per trade** on the deep-dip
+    signal -- 46.6% of it from three observations, with COMP contributing 32
+    samples at a mean of +102.86%. COMP is a $19 token; it does not move +100%
+    in twelve minutes. The "dip" was the 42.82 -> 19 step and the "+1447%
+    recovery" was the step back.
+
+    So the test is structural instead of a magnitude: sort the log prices and
+    look for a GAP between consecutive sorted values. A price that trends,
+    however far and however fast, leaves prices at every level it passed
+    through, so its sorted log gaps stay small. Two denominations leave two
+    clusters with nothing in between. Only the largest cluster is kept.
+
+    The default gap of 0.5 in log space is a ratio of 1.65x with no
+    intermediate print anywhere in the window. Known cost: a genuinely sparse
+    feed on a fast token can jump that far between consecutive prints and lose
+    the smaller side. That is the right trade for a control group, where a
+    contaminated sample invents an edge and a dropped one only costs power.
     """
     if len(ticks) < 3:
         return list(ticks)
-    prices = sorted(p for _ts, p, _v in ticks)
-    median = prices[len(prices) // 2]
-    if median <= 0:
+    ordered = sorted(
+        ((math.log(price), idx) for idx, (_ts, price, _v) in enumerate(ticks)
+         if price > 0),
+        key=lambda pair: pair[0],
+    )
+    if len(ordered) < 3:
         return list(ticks)
-    return [
-        t for t in ticks
-        if t[1] > 0 and max(t[1] / median, median / t[1]) <= factor
-    ]
+    clusters: List[Tuple[int, int]] = []
+    start = 0
+    for k in range(1, len(ordered)):
+        if ordered[k][0] - ordered[k - 1][0] > gap_log:
+            clusters.append((start, k))
+            start = k
+    clusters.append((start, len(ordered)))
+    if len(clusters) == 1:
+        return list(ticks)
+    lo, hi = max(clusters, key=lambda c: c[1] - c[0])
+    keep = {ordered[k][1] for k in range(lo, hi)}
+    return [t for idx, t in enumerate(ticks) if idx in keep]
 
 
 def _forward_return(
