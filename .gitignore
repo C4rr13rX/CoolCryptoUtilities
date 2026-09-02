@@ -156,3 +156,5 @@ data/live_pairs.json
 # Live message channel to the trading loop: transient by design.
 data/agent_inbox.md
 data/agent_inbox_archive.md
+data/pass_scores.json
+data/behavior_prompt.md

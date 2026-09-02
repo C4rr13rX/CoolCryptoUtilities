@@ -227,6 +227,39 @@ function Write-ClaudeEvent {
     }
 }
 
+# ------------------------------------------------------------ scorecard --
+
+function Get-BehaviorPrompt {
+    <#  The behavioural instruction the loop is currently testing.
+
+        This is the part that refines itself: each pass is scored on what it
+        actually achieved, and the prompt that produced the best measured
+        results is kept. See scripts/pass_scorecard.py.  #>
+    try {
+        $out = & $Python (Join-Path $Repo "scripts\pass_scorecard.py") --prompt 2>$null
+        if ($out) { return ($out | Out-String).Trim() }
+    } catch { }
+    return ""
+}
+
+function Invoke-Scorecard {
+    <#  Score the pass that just ended, then let the refiner pick the next
+        behavioural prompt.
+
+        Scored from the repo and the chain -- commits, tests, wallet nonce --
+        never from the agent's own account of how it did. An agent asked to
+        grade itself grades itself well, and this repo has already shipped
+        four strategies whose records were fabricated.  #>
+    try {
+        Write-Line "scoring the pass..." "DarkGray"
+        & $Python (Join-Path $Repo "scripts\pass_scorecard.py") --score 2>&1 | ForEach-Object {
+            Write-Host "  $_" -ForegroundColor DarkGreen
+        }
+    } catch {
+        Write-Line "  (scoring failed: $_)" "DarkYellow"
+    }
+}
+
 # ----------------------------------------------------------------- inbox --
 
 function Read-Inbox {
@@ -850,6 +883,18 @@ while ($true) {
         "Get ONE real money_button trade onto the chain within this pass, and paste its transaction hash. Smallest amount that can settle."
     }
 
+    $behavior = Get-BehaviorPrompt
+    $behaviorBlock = ""
+    if ($behavior) {
+        $behaviorBlock = @"
+
+## HOW TO WORK THIS PASS (self-tuned; scored after every pass)
+
+$behavior
+
+"@
+    }
+
     $userNote = Read-Inbox
     $noteBlock = ""
     if ($userNote) {
@@ -893,6 +938,7 @@ Report concisely: which link failed, the evidence, the fix, and the next link.
 If a live trade LOSES, verify the demotion guards fired and report the P/L
 honestly -- never hide a loss.
 
+$behaviorBlock
 ## THIS PASS IS A TIMEBOXED SPRINT
 
 Your objective for this pass, in one line:
@@ -1090,6 +1136,8 @@ The project reads the same pair from ADMIN_EMAIL / ADMIN_PASSWORD
         Start-Sleep -Seconds 120
         continue
     }
+
+    Invoke-Scorecard
 
     if ($Once) { Write-Line "single pass requested; exiting" "Cyan"; break }
 
