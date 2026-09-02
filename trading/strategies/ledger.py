@@ -227,8 +227,24 @@ class StrategyLedger:
         mode: str,
         confidence: Optional[float] = None,
         symbol: str = "",
+        mirror_registry: bool = True,
     ) -> None:
-        """Record a closed trade outcome and re-evaluate graduation/demotion."""
+        """Record a closed trade outcome and re-evaluate graduation/demotion.
+
+        ``mirror_registry=False`` records into this ledger WITHOUT touching the
+        lifetime registry. It exists for one caller: replaying outcomes the
+        registry already holds.
+
+        The two files come apart in exactly one direction. A registry write
+        that lands while the ledger write is lost is the signature of the
+        concurrency bug fixed on 2026-09-02 -- measured afterwards, six ghost
+        exits sat in the registry with no ledger row, including money_button's
+        only real round trip. Backfilling those through the normal path repairs
+        the ledger and inflates the registry by the same six, which is worse
+        than the gap it closes: the registry is append-only and is the ledger's
+        only independent check, so a strategy's lifetime record must never gain
+        a trade that did not happen.
+        """
         sid = (strategy_id or "unclassified").strip() or "unclassified"
         mode_key = "live" if str(mode).lower() == "live" else "ghost"
         with self._lock:
@@ -288,7 +304,7 @@ class StrategyLedger:
         # A registry write refused costs nothing -- the outcome was never
         # real. A registry write accepted from a test is fictional evidence
         # about a strategy that is meant to spend money.
-        if self.path == self.DEFAULT_PATH:
+        if mirror_registry and self.path == self.DEFAULT_PATH:
             try:
                 from services.strategy_registry import record_outcome
 

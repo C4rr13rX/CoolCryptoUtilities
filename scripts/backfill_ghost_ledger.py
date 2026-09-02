@@ -32,13 +32,41 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-def load_exits(db_path: Path) -> list[tuple[float, str, float]]:
-    """(ts, strategy_id, profit) for every logged ghost exit, oldest first."""
+def _attributed_id(detail: dict) -> str:
+    """Which ledger identity this exit belongs to.
+
+    Rows written before 2026-09-02 stamp ``strategy_id: "atf_static"`` for
+    BOTH executors of the ATF signals -- the ghost scout in
+    ``services/atf_static_strategy.py`` and the bot. They are separate
+    strategies with separate ledger ids now, because the scout has no live
+    branch and 368 of the 376 closed trades were its (see
+    scripts/split_scout_from_bot_ledger.py).
+
+    Replaying those rows on their stored id would re-credit the scout's whole
+    record to the id the LIVE gate reads, re-graduating a strategy on trades
+    it did not take -- silently undoing the split. ``details.source`` is the
+    only per-row evidence of which executor closed the trade, so attribution
+    is derived from it rather than from the id the row happens to carry.
+    """
+    from services.atf_static_strategy import (
+        SCOUT_STRATEGY_ID,
+        SIGNAL_STRATEGY_ID,
+        SOURCE,
+    )
+
+    sid = str(detail.get("strategy_id") or "").strip() or "unclassified"
+    if sid in {SIGNAL_STRATEGY_ID, SCOUT_STRATEGY_ID}:
+        return SCOUT_STRATEGY_ID if str(detail.get("source") or "") == SOURCE else SIGNAL_STRATEGY_ID
+    return sid
+
+
+def load_exits(db_path: Path) -> list[tuple[float, str, float, str]]:
+    """(ts, strategy_id, profit, symbol) for every logged ghost exit, oldest first."""
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
-    out: list[tuple[float, str, float]] = []
+    out: list[tuple[float, str, float, str]] = []
     for row in conn.execute(
-        "SELECT ts, details FROM trading_ops "
+        "SELECT ts, symbol, details FROM trading_ops "
         "WHERE status = 'ghost-exit' ORDER BY ts"
     ):
         try:
@@ -47,12 +75,17 @@ def load_exits(db_path: Path) -> list[tuple[float, str, float]]:
             continue
         if "profit" not in detail:
             continue
-        sid = str(detail.get("strategy_id") or "").strip() or "unclassified"
+        sid = _attributed_id(detail)
         try:
             profit = float(detail["profit"])
         except (TypeError, ValueError):
             continue
-        out.append((float(row["ts"]), sid, profit))
+        # Carried so the lifetime registry gets a symbol map. Without it every
+        # backfilled strategy reads "no symbols", and per-symbol behaviour --
+        # the thing that tells 13 correlated positions in one token apart from
+        # 13 independent trades -- cannot be analysed at all.
+        symbol = str(row["symbol"] or detail.get("symbol") or "")
+        out.append((float(row["ts"]), sid, profit, symbol))
     return out
 
 
@@ -87,8 +120,8 @@ def main() -> int:
         watermark[sid] = float((entry.get("ghost") or {}).get("last_ts", 0.0))
 
     pending = [
-        (ts, sid, profit)
-        for ts, sid, profit in exits
+        (ts, sid, profit, symbol)
+        for ts, sid, profit, symbol in exits
         if ts > watermark.get(sid, 0.0)
     ]
     print(f"  newer than the ledger's high-water mark: {len(pending)}")
@@ -99,7 +132,7 @@ def main() -> int:
         return 0
 
     by_strategy: dict[str, list[float]] = {}
-    for _ts, sid, profit in pending:
+    for _ts, sid, profit, _symbol in pending:
         by_strategy.setdefault(sid, []).append(profit)
 
     print()
@@ -116,8 +149,13 @@ def main() -> int:
 
     # Oldest first: consecutive-loss counts and the confidence EMA are
     # order-dependent, so replaying out of order would corrupt them.
-    for _ts, sid, profit in pending:
-        ledger.record(sid, profit=profit, mode="ghost")
+    for _ts, sid, profit, symbol in pending:
+        # The registry already holds these. What went missing was the LEDGER
+        # write -- that asymmetry is the concurrency bug's signature, and
+        # mirroring them again would add trades to the append-only lifetime
+        # record that never happened. See StrategyLedger.record.
+        ledger.record(sid, profit=profit, mode="ghost", symbol=symbol,
+                      mirror_registry=False)
 
     print(f"\n  recorded {len(pending)} outcomes")
     approved = [
