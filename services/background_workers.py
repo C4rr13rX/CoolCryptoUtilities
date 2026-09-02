@@ -213,7 +213,31 @@ def _trigger_news_for_symbols(symbols: List[str], lookback_hours: Optional[int] 
         log_message("download-worker", f"post-download news error: {exc}", severity="warning")
 
 
-def _run_download(chain: str, assignment_path: Path) -> None:
+def _run_download(chain: str, assignment_path: Path, *, collect_news: bool = True) -> None:
+    """Bring ``chain``'s OHLCV up to date.
+
+    ``collect_news`` exists because this function has two callers with very
+    different latency budgets. The background download worker owns a thread
+    and can afford the post-download news pass. Pair selection cannot: it
+    calls this once per candidate that lacks OHLCV, from the same thread the
+    market streams run on.
+
+    The news pass is not a small tail. ``collect_news_for_terms`` harvests
+    142 sources serially with no deadline, crawls up to 200 pages, and asks
+    for a 720h lookback -- and none of that has anything to do with whether
+    one pair has candles. Measured 2026-09-02 with py-spy against production
+    pid 10420: 13 minutes after start, before ANY market stream existed, the
+    main thread was parked in
+
+        select_pairs -> try_add_candidate -> _ensure_ohlcv -> _run_download
+          -> _trigger_news_for_symbols -> harvest -> _fetch_reddit
+          -> requests.get(reddit.com/r/.../new/.rss)
+
+    3727 of those harvests are in download-worker.log, re-fetching the same
+    24 symbols. `reconcile_pairs` runs the same selection on the event loop
+    every few minutes, which is what the 20-45 minute holes in market_stream
+    are: not a dead upstream, our own news crawl holding the loop.
+    """
     assignment = _load_assignment(assignment_path)
     if assignment is None:
         assignment = _ensure_assignment_template(chain, assignment_path)
@@ -237,7 +261,8 @@ def _run_download(chain: str, assignment_path: Path) -> None:
         _try_cex_fallback(chain)
         if not incomplete:
             # Even if all pairs are done, trigger news for completed symbols
-            _trigger_news_for_symbols(_collect_completed_symbols(assignment_path))
+            if collect_news:
+                _trigger_news_for_symbols(_collect_completed_symbols(assignment_path))
             return
 
     max_parallel = max(1, int(os.getenv("DOWNLOAD_MAX_PARALLEL", "1")))
@@ -264,7 +289,7 @@ def _run_download(chain: str, assignment_path: Path) -> None:
         log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")
 
     # After downloads complete, trigger news collection for downloaded symbols
-    news_enabled = os.getenv("NEWS_AFTER_DOWNLOAD", "1").lower() not in {"0", "false", "no"}
+    news_enabled = collect_news and os.getenv("NEWS_AFTER_DOWNLOAD", "1").lower() not in {"0", "false", "no"}
     if news_enabled:
         _trigger_news_for_symbols(_collect_completed_symbols(assignment_path))
 

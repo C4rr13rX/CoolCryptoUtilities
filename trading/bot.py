@@ -3731,6 +3731,26 @@ class TradingBot:
                 )
                 if guard_reasons and any("insufficient" in reason for reason in guard_reasons):
                     self._tune_allocation(symbol, positive=False, negative=True)
+                # A guard block on a live-approved strategy is the difference
+                # between "no trade was wanted" and "a real trade was refused",
+                # and only the second is a fault. The caller logs decisions to
+                # trading_ops only when action != "hold", so this refusal left
+                # no row at all -- the swap guard rejected every live entry for
+                # days while the ops table showed nothing but ghost activity.
+                # Record it under a non-"live" status so it stays out of the
+                # executed-trade count it would otherwise fake.
+                if self._strategy_live_approved(directive):
+                    try:
+                        self.db.log_trade(
+                            wallet="live",
+                            chain=chain_name,
+                            symbol=symbol,
+                            action="hold",
+                            status="guard-blocked-live",
+                            details=decision,
+                        )
+                    except Exception:
+                        pass
                 return decision
             if price > 0.0 and available_quote > 0.0:
                 trade_size = min(trade_size, max(0.0, available_quote / price))
@@ -4471,6 +4491,13 @@ class TradingBot:
                     profit=economic_profit,
                     mode=pos_mode,
                     confidence=float(pos.get("entry_confidence") or 0.0) or None,
+                    # Without this the lifetime registry recorded an empty
+                    # symbols map for every strategy the bot exits, so
+                    # per-symbol behaviour could not be analysed at all --
+                    # which is how a strategy can take 13 correlated
+                    # positions in ONE symbol and have it look like 13
+                    # independent trades.
+                    symbol=symbol,
                 )
                 self._refresh_auto_execute()
             except Exception:
@@ -4912,6 +4939,33 @@ class TradingBot:
 
     def configure_route(self, symbol: str, tokens: List[str]) -> None:
         self.bus_routes[symbol] = tokens
+        # This bot's identity, not just its route.
+        #
+        # `primary_symbol` was left at the module default PRIMARY_SYMBOL for
+        # every bot the selector builds, because only `bus_routes` was set
+        # here. GhostSupervisor.reconcile_pairs dedupes the pool with
+        #
+        #     existing_bots = {bot.primary_symbol for bot in self.bots}
+        #
+        # so that set collapsed to ONE element no matter how many bots were
+        # running, and reconcile could not tell which symbols already had a
+        # bot. Every pass was free to add another bot for a symbol already
+        # covered -- and each duplicate carries its OWN `self.positions`, so
+        # the per-symbol position guard cannot see the others.
+        #
+        # Measured 2026-08-31: BASECAT-USDC accumulated 13 duplicate bots and
+        # a single tick opened 13 rsi_reversal@5h positions in the same
+        # symbol within 11ms of each other (session 2, entry_ts
+        # 1788204271.185-.196). BASECAT then drifted -6% over 75 minutes and
+        # all 13 stopped out together for -1.86.
+        #
+        # That is one bet at 13x size, but the ghost book records it as 13
+        # independent trades, and every risk statistic that assumes
+        # independence is destroyed by it: effective_loss_streak 14 (guard
+        # 5), tail risk ES95 0.1945 (guard 0.10), profit factor 0.235 (guard
+        # 0.95). Those three are the whole of the ghost_validation_block that
+        # has been holding live trading shut.
+        self.primary_symbol = str(symbol or "").upper() or self.primary_symbol
         # Pre-warm the sample buffer from the most recent historical
         # OHLCV bars so the bot starts evaluating signals on tick #1
         # instead of waiting for the live stream to deliver window_size

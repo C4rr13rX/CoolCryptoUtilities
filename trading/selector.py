@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import os
 import sys
@@ -33,6 +35,21 @@ from services.watchlists import load_watchlists
 from services.background_workers import _ensure_assignment_template, _update_assignment, _run_download
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
+
+# Pair selection is blocking by nature -- live-price probes, CEX backfills,
+# `proc.wait()` on download2000 -- and `reconcile_pairs` used to run it inline
+# on the event loop that every market stream shares. That is the other half of
+# the frozen feed: market_stream shows 20-45 minute holes all through
+# 2026-09-01 while production was up the whole time.
+#
+# It gets its OWN single worker rather than asyncio's default executor.
+# aiohttp resolves every hostname through loop.getaddrinfo() on that default
+# pool (aiodns is not installed here), so parking a minutes-long selection
+# there would starve DNS for the streams -- the exact failure documented in
+# _fetch_rest_price, arriving by a different road. One worker also serialises
+# concurrent reconciles, which is what we want: they duplicate each other's
+# work.
+_SELECTION_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pair-select")
 
 DEFAULT_LIVE_PAIRS: List[str] = top_pairs(limit=6) or [PRIMARY_SYMBOL]
 if PRIMARY_SYMBOL not in DEFAULT_LIVE_PAIRS:
@@ -387,7 +404,11 @@ def _ensure_ohlcv(chain: str, symbol: str, data_root: Optional[Path] = None) -> 
                 log_message("pair-select", f"unable to update assignment for {symbol_u}: {exc}", severity="warning")
     if added:
         _update_assignment(assignment_path, assignment)
-        _run_download(chain, assignment_path)
+        # No news harvest on this path: this runs once per candidate that
+        # lacks candles, on the thread the market streams share, and the
+        # harvest it used to pull is a 142-source serial crawl. See the
+        # docstring on _run_download for the measurement.
+        _run_download(chain, assignment_path, collect_news=False)
         ready = _ohlcv_exists(symbol, chain, data_root=data_root)
         if ready:
             try:
@@ -966,6 +987,21 @@ class GhostTradingSupervisor:
     async def reconcile_pairs(self) -> Dict[str, Any]:
         """Add newly prioritized watchlist pairs without restarting production."""
         existing_bots = {str(getattr(bot, "primary_symbol", "") or "").upper() for bot in self.bots}
+        # Belt and braces: a bot's routes name the symbols it actually trades,
+        # so read those too rather than trusting one attribute to be set.
+        #
+        # When `primary_symbol` was left at the module default this set held a
+        # single element for the whole pool, reconcile could not see which
+        # symbols were already covered, and it kept adding duplicate bots for
+        # the same symbol -- 13 of them on BASECAT-USDC on 2026-08-31. Each
+        # duplicate has its own `self.positions`, so nothing downstream could
+        # notice, and one tick became 13 correlated positions in one symbol.
+        # configure_route now sets the identity; this makes the dedupe hold
+        # even if some future construction path forgets to.
+        for bot in self.bots:
+            for routed in (getattr(bot, "bus_routes", None) or {}):
+                existing_bots.add(str(routed or "").upper())
+        existing_bots.discard("")
         existing = set(existing_bots)
         existing.update(str(getattr(stream, "symbol", "") or "").upper() for stream in self.data_streams)
         atf_priority: List[str] = []
@@ -996,7 +1032,17 @@ class GhostTradingSupervisor:
         if full_slots <= 0 and data_slots <= 0 and not (allow_replace and atf_priority):
             return {"added_bots": [], "added_streams": [], "reason": "no_slots"}
 
-        candidates = select_pairs(limit=max(int(pair_limit), int(self.stream_total), len(existing) + full_slots + data_slots + len(atf_priority)))
+        candidates = await asyncio.get_running_loop().run_in_executor(
+            _SELECTION_EXECUTOR,
+            functools.partial(
+                select_pairs,
+                limit=max(
+                    int(pair_limit),
+                    int(self.stream_total),
+                    len(existing) + full_slots + data_slots + len(atf_priority),
+                ),
+            ),
+        )
         if atf_priority:
             by_symbol = {pair.symbol.upper(): pair for pair in candidates}
             promoted: List[PairCandidate] = []

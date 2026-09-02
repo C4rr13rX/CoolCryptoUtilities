@@ -202,10 +202,16 @@ class StrategyLedger:
         profit: float,
         mode: str,
         confidence: Optional[float] = None,
+        symbol: str = "",
     ) -> None:
         """Record a closed trade outcome and re-evaluate graduation/demotion."""
         sid = (strategy_id or "unclassified").strip() or "unclassified"
         mode_key = "live" if str(mode).lower() == "live" else "ghost"
+        with self._lock:
+            # Refresh before judging plausibility: the scale this outcome is
+            # measured against must be the strategy's CURRENT history, not
+            # whatever it was when this instance was constructed.
+            self._load()
 
         # Reject outcomes too large to be real.
         #
@@ -236,13 +242,54 @@ class StrategyLedger:
         # exits, which made the strategy's real history unreadable. The
         # lifetime registry is append-only and survives every reset, so
         # "how has this strategy ever actually done" always has an answer.
-        try:
-            from services.strategy_registry import record_outcome
+        #
+        # Only the PRODUCTION ledger feeds the lifetime registry. A ledger
+        # constructed on any other path is an isolated one -- a test, a
+        # replay, a scratch analysis -- and its outcomes are not measurements
+        # of this account.
+        #
+        # This is not hypothetical. `record_outcome` takes no path argument,
+        # so it always wrote data/strategy_registry.json no matter where the
+        # ledger itself pointed. tests/test_ledger_rejects_artifacts.py
+        # carefully isolates the ledger path (its setUp says so, after this
+        # exact bug once wrote 25 fabricated money_button trades) -- and then
+        # every run still wrote its fixtures straight into the production
+        # registry through this call. Measured 2026-09-01, money_button's
+        # "record" of 76 trades / 16W-60L / -0.3997 reconciles to the
+        # arithmetic of three runs of that module (3x19 + 3x1 = 60 losses
+        # summing to 0.585; 3x5 = 15 wins summing to 0.18) plus its ONE real
+        # trade (+0.005278 on TOAD-USDC, the only money_button round trip in
+        # the database).
+        #
+        # A registry write refused costs nothing -- the outcome was never
+        # real. A registry write accepted from a test is fictional evidence
+        # about a strategy that is meant to spend money.
+        if self.path == self.DEFAULT_PATH:
+            try:
+                from services.strategy_registry import record_outcome
 
-            record_outcome(sid, profit=float(profit), mode=mode_key)
-        except Exception:  # noqa: BLE001
-            pass
+                record_outcome(
+                    sid, profit=float(profit), mode=mode_key, symbol=symbol
+                )
+            except Exception:  # noqa: BLE001
+                pass
         with self._lock:
+            # Re-read before mutating: this process is not the only writer.
+            #
+            # `self._data` is cached for the lifetime of the instance and
+            # `_save()` writes the whole dict, so a long-lived holder (the
+            # bot keeps one from startup) silently reverts every strategy
+            # another writer added in the meantime. services/atf_static_
+            # strategy.py constructs a fresh ledger per outcome and so always
+            # wins; whatever the bot recorded between the two is erased.
+            #
+            # That is last-write-wins across processes on the file that gates
+            # promotion, and it is the reason a strategy can hold a lifetime
+            # registry entry while being absent from the ledger entirely.
+            #
+            # Re-read again here: the registry write above is I/O, and another
+            # process can land an outcome inside that window.
+            self._load()
             ent = self._entry(sid)
             stats = ent[mode_key]
             stats["trades"] = int(stats.get("trades", 0)) + 1

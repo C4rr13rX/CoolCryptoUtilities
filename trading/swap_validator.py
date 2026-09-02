@@ -14,6 +14,20 @@ class SwapValidator:
     """
     Lightweight guard that scores a proposed swap against recent liquidity,
     execution quality, and volatility before allowing it to proceed.
+
+    The liquidity clause compares the trade against observed per-sample volume.
+    That comparison is only meaningful when the feed reports volume at all.
+    Every tick this stack records carries ``volume=0`` -- the DexScreener REST
+    consensus path publishes price only -- so dividing by the observed mean
+    turned "we never measured volume" into "this pair has no liquidity", the
+    most extreme violation the clause can express. A $0.35 trade on AERO
+    (1.26M pooled, 386k/h traded, in USD) scored a liquidity ratio of 348,862
+    against a limit of 0.35 and was refused, as was every other live entry on
+    every pair, forever. Absent volume is now carried as *unmeasured* and
+    answered from an independent per-symbol reading (DexScreener pair volume,
+    via the ATF signal feed or a discovery swap probe); when even that is
+    missing the ratio stays undefined and an absolute notional cap stands in
+    for it, because a number you never measured cannot be a violation.
     """
 
     def __init__(
@@ -33,6 +47,12 @@ class SwapValidator:
         self.min_execution_ratio = min_execution_ratio or float(os.getenv("SWAP_GUARD_MIN_EXEC_RATIO", "0.82"))
         self.max_slippage = max_slippage or float(os.getenv("SWAP_GUARD_MAX_SLIPPAGE", "0.045"))
         self.max_volatility = max_volatility or float(os.getenv("SWAP_GUARD_MAX_VOLATILITY", "0.18"))
+        # Ceiling on a single trade when no volume basis exists at all. Small
+        # enough that no realistically tradeable pair could be moved by it, so
+        # the guard still refuses to size blind into an unknown book.
+        self.unknown_liquidity_max_usd = float(
+            os.getenv("SWAP_GUARD_UNKNOWN_LIQUIDITY_MAX_USD", "25")
+        )
 
     def validate(
         self,
@@ -47,8 +67,17 @@ class SwapValidator:
         symbol_u = symbol.upper()
         samples = self.db.fetch_market_samples_for(symbol_u, limit=360)
         trade_usd = abs(trade_size * price)
-        avg_volume_usd = self._average_volume_usd(samples)
-        liquidity_ratio = trade_usd / max(avg_volume_usd, 1e-6)
+
+        observed_volume_usd = self._average_volume_usd(samples)
+        volume_basis = "observed"
+        avg_volume_usd = observed_volume_usd
+        if avg_volume_usd is None:
+            interval = self._sample_interval_sec(samples)
+            avg_volume_usd = self._reference_volume_usd(symbol_u, interval)
+            volume_basis = "reference" if avg_volume_usd is not None else "unmeasured"
+        liquidity_ratio: Optional[float] = None
+        if avg_volume_usd is not None and avg_volume_usd > 0:
+            liquidity_ratio = trade_usd / avg_volume_usd
 
         fills = self.db.fetch_trade_fills(limit=100)
         exec_ratio, avg_slippage = self._execution_stats(fills)
@@ -57,8 +86,9 @@ class SwapValidator:
 
         metrics = {
             "trade_value_usd": trade_usd,
-            "avg_volume_usd": avg_volume_usd,
-            "liquidity_ratio": liquidity_ratio,
+            "avg_volume_usd": float(avg_volume_usd) if avg_volume_usd is not None else -1.0,
+            "liquidity_ratio": float(liquidity_ratio) if liquidity_ratio is not None else -1.0,
+            "liquidity_measured": 1.0 if liquidity_ratio is not None else 0.0,
             "execution_ratio": exec_ratio,
             "avg_slippage": avg_slippage,
             "volatility": volatility,
@@ -73,9 +103,16 @@ class SwapValidator:
 
         allowed = True
         reasons: List[str] = []
-        if liquidity_ratio > self.max_liquidity_ratio:
+        if liquidity_ratio is not None:
+            if liquidity_ratio > self.max_liquidity_ratio:
+                allowed = False
+                reasons.append("liquidity")
+        elif trade_usd > self.unknown_liquidity_max_usd:
+            # No volume basis anywhere: the ratio is undefined, so fall back to
+            # the only bound that survives without a measurement -- an absolute
+            # notional the book cannot plausibly notice.
             allowed = False
-            reasons.append("liquidity")
+            reasons.append("liquidity_unmeasured")
         if exec_ratio < self.min_execution_ratio:
             allowed = False
             reasons.append("execution")
@@ -94,6 +131,7 @@ class SwapValidator:
             meta={
                 "symbol": symbol_u,
                 "route": list(route),
+                "volume_basis": volume_basis,
                 "reasons": reasons,
             },
         )
@@ -105,13 +143,19 @@ class SwapValidator:
                 details={
                     "symbol": symbol_u,
                     "route": list(route),
+                    "volume_basis": volume_basis,
                     "reasons": reasons,
                     "metrics": metrics,
                 },
             )
         return allowed, metrics, reasons
 
-    def _average_volume_usd(self, samples: Sequence[Dict[str, float]]) -> float:
+    def _average_volume_usd(self, samples: Sequence[Dict[str, float]]) -> Optional[float]:
+        """Mean per-sample USD volume, or None when the feed reported none.
+
+        None means *unmeasured*, not zero. Returning 0.0 here is what made the
+        liquidity ratio unbounded on a feed that never carries volume.
+        """
         now = time.time()
         window = []
         for sample in samples:
@@ -123,8 +167,54 @@ class SwapValidator:
             if price > 0 and volume > 0:
                 window.append(price * volume)
         if not window:
-            return 0.0
+            return None
         return float(np.mean(window))
+
+    def _sample_interval_sec(self, samples: Sequence[Dict[str, float]]) -> float:
+        """Median spacing between samples, so an hourly volume can be scaled
+        onto the same per-sample basis the ratio is defined against."""
+        stamps = sorted(
+            float(s.get("ts") or 0.0)
+            for s in samples
+            if float(s.get("ts") or 0.0) > 0
+        )
+        gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b > a]
+        if not gaps:
+            return 300.0
+        return float(min(3600.0, max(30.0, float(np.median(gaps)))))
+
+    def _reference_volume_usd(self, symbol: str, interval_sec: float) -> Optional[float]:
+        """Per-sample USD volume from an independent per-symbol reading.
+
+        The tick feed publishes price only, but DexScreener pair volume reaches
+        this stack two other ways: the ATF signal rows (``volume_h1``) and the
+        discovery swap probes (``volume_24h_usd``). Either is scaled down to the
+        sample cadence so it means the same thing as the observed mean.
+        """
+        scale = max(30.0, float(interval_sec)) / 3600.0
+        try:
+            from services.atf_static_strategy import latest_signals
+
+            best: Optional[float] = None
+            for row in latest_signals(float(os.getenv("SWAP_GUARD_REFERENCE_MAX_AGE_SEC", "3600"))):
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("symbol") or "").upper() != symbol:
+                    continue
+                hourly = float(row.get("volume_h1") or 0.0)
+                if hourly > 0 and (best is None or hourly < best):
+                    best = hourly
+            if best is not None:
+                return best * scale
+        except Exception:
+            pass
+        try:
+            hourly = self.db.reference_hourly_volume_usd(symbol)
+        except Exception:
+            hourly = None
+        if hourly and hourly > 0:
+            return float(hourly) * scale
+        return None
 
     def _execution_stats(self, fills: Sequence[Dict[str, float]]) -> Tuple[float, float]:
         ratios: List[float] = []

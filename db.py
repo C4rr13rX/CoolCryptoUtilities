@@ -853,6 +853,42 @@ class TradingDatabase:
             results.append(entry)
         return results
 
+    def reference_hourly_volume_usd(self, symbol: str) -> Optional[float]:
+        """Independent hourly traded volume for a pair, in USD.
+
+        The market_stream tick feed publishes price only, so the swap guard has
+        no volume of its own to compare a trade against. Discovery swap probes
+        carry the DexScreener pair reading (``volume_24h_usd``) that the tick
+        path drops; converted to an hourly rate it gives the guard a real
+        denominator instead of a fabricated one. Returns None when the pair has
+        never been probed.
+        """
+        try:
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT metadata FROM discovery_swapprobe WHERE UPPER(symbol) = ? "
+                    "ORDER BY id DESC LIMIT 20",
+                    (str(symbol or "").upper(),),
+                )
+                rows = cur.fetchall()
+        except Exception:
+            return None
+        for row in rows:
+            raw = row["metadata"] if "metadata" in row.keys() else None
+            try:
+                meta = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                continue
+            if not isinstance(meta, dict):
+                continue
+            try:
+                daily = float(meta.get("volume_24h_usd") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if daily > 0:
+                return daily / 24.0
+        return None
+
     def record_trade_outcome(
         self,
         *,

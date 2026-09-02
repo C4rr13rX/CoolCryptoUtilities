@@ -15,20 +15,20 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 244,
-          "wins": 120,
+          "trades": 250,
+          "wins": 126,
           "losses": 124,
-          "gross_win": 4.2023889644907495,
+          "gross_win": 4.348392139387377,
           "gross_loss": 1.679981992723655,
-          "total_profit": 2.5224069717670914,
+          "total_profit": 2.6684101466637205,
           "best": 0.4109173616376043,
           "worst": -0.22187261632341726,
-          "peak_profit": 2.5224069717670914,
+          "peak_profit": 2.6684101466637205,
           "max_drawdown": 0.29711857394259944,
           "consecutive_losses": 0,
           "max_consecutive_losses": 9,
           "first_ts": 1787344327.012597,
-          "last_ts": 1788250369.6302485,
+          "last_ts": 1788314498.6819851,
           "symbols": {
             "BASECAT-USDC": 63,
             "CBXRP-USDC": 60,
@@ -60,21 +60,23 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 76,
-          "wins": 16,
-          "losses": 60,
-          "gross_win": 0.1852775191341086,
-          "gross_loss": 0.5850000000000003,
-          "total_profit": -0.3997224808658916,
-          "best": 0.02,
-          "worst": -0.01,
-          "peak_profit": 0.0,
-          "max_drawdown": 0.4600000000000003,
+          "trades": 1,
+          "wins": 1,
+          "losses": 0,
+          "gross_win": 0.005277519134108606,
+          "gross_loss": 0.0,
+          "total_profit": 0.005277519134108606,
+          "best": 0.005277519134108606,
+          "worst": 0.0,
+          "peak_profit": 0.005277519134108606,
+          "max_drawdown": 0.0,
           "consecutive_losses": 0,
-          "max_consecutive_losses": 19,
-          "first_ts": 1787836693.0215933,
-          "last_ts": 1788207983.8711982,
-          "symbols": {}
+          "max_consecutive_losses": 0,
+          "first_ts": 1788207983.8807838,
+          "last_ts": 1788207983.8807838,
+          "symbols": {
+            "TOAD-USDC": 1
+          }
         }
       }
     },
@@ -122,25 +124,7 @@
       "created_at": 1787832173.298721,
       "experiments": [],
       "auto_registered": true,
-      "lifetime": {
-        "ghost": {
-          "trades": 24,
-          "wins": 12,
-          "losses": 12,
-          "gross_win": 12.0,
-          "gross_loss": 12.0,
-          "total_profit": 0.0,
-          "best": 1.0,
-          "worst": -1.0,
-          "peak_profit": 0.0,
-          "max_drawdown": 1.0,
-          "consecutive_losses": 0,
-          "max_consecutive_losses": 1,
-          "first_ts": 1787836714.4504197,
-          "last_ts": 1787837045.64827,
-          "symbols": {}
-        }
-      }
+      "lifetime": {}
     },
     "volume_spike": {
       "strategy_id": "volume_spike",
@@ -155,25 +139,7 @@
       "created_at": 1787832173.3467968,
       "experiments": [],
       "auto_registered": true,
-      "lifetime": {
-        "ghost": {
-          "trades": 21,
-          "wins": 18,
-          "losses": 3,
-          "gross_win": 0.18000000000000002,
-          "gross_loss": 30.0,
-          "total_profit": -29.819999999999983,
-          "best": 0.01,
-          "worst": -10.0,
-          "peak_profit": 0.0,
-          "max_drawdown": 29.879999999999992,
-          "consecutive_losses": 0,
-          "max_consecutive_losses": 1,
-          "first_ts": 1787836714.5393054,
-          "last_ts": 1787837045.7103455,
-          "symbols": {}
-        }
-      }
+      "lifetime": {}
     },
     "rsi_reversal": {
       "strategy_id": "rsi_reversal",

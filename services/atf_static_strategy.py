@@ -24,7 +24,7 @@ GHOST_POSITIONS_KEY = "atf_static_strategy:ghost_positions"
 SOURCE = "c0d3rv2_atf_static"
 
 
-def _record_ghost_outcome(strategy_id: str, profit: float) -> None:
+def _record_ghost_outcome(strategy_id: str, profit: float, symbol: str = "") -> None:
     """
     Report a closed ghost trade to the strategy ledger.
 
@@ -42,7 +42,7 @@ def _record_ghost_outcome(strategy_id: str, profit: float) -> None:
         from trading.strategies.ledger import StrategyLedger
 
         StrategyLedger().record(
-            strategy_id, profit=float(profit), mode="ghost"
+            strategy_id, profit=float(profit), mode="ghost", symbol=symbol
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[atf-static] ledger record failed: {type(exc).__name__}: {exc}",
@@ -550,7 +550,7 @@ def _run_ghost_quote_scout(
             "signal": sig,
         }
         db.log_trade(wallet="ghost", chain=chain, symbol=symbol, action="exit", status="ghost-exit", details=details)
-        _record_ghost_outcome("atf_static", profit)
+        _record_ghost_outcome("atf_static", profit, symbol=symbol)
         events.append({"symbol": symbol, "action": "exit", "profit": profit, "reason": reason})
         positions.pop(symbol, None)
 

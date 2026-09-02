@@ -220,16 +220,33 @@ def check_executor() -> Link:
     return link.passed("bots may trade live (ghost_reason=%s)" % readiness.get("ghost_reason"))
 
 
+#: Statuses that mean money actually moved. ``LIKE 'live%'`` also matches
+#: live-entry-blocked / live-entry-failed / live-dry-run-entry -- refusals and
+#: simulations, which would have declared this link passed on the evidence that
+#: it was failing.
+EXECUTED_LIVE_STATUSES = ("live-entry", "live-exit")
+
+
 def check_live(now: float) -> Link:
     link = Link(9, "LIVE")
     try:
         c = _db()
-        total = list(c.execute("SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%'"))[0][0]
+        placeholders = ",".join("?" * len(EXECUTED_LIVE_STATUSES))
+        total = list(c.execute(
+            "SELECT COUNT(*) FROM trading_ops WHERE status IN (%s)" % placeholders,
+            EXECUTED_LIVE_STATUSES))[0][0]
+        refused = list(c.execute(
+            "SELECT COUNT(*) FROM trading_ops WHERE status IN "
+            "('guard-blocked-live','live-entry-blocked','live-entry-failed') AND ts > ?",
+            (now - 3600,)))[0][0]
     except Exception as exc:
         return link.unknown("db unreadable: %s" % exc)
     if total <= 0:
-        return link.failed("no live trades yet", "fix the first FAIL above")
-    return link.passed("%d live rows" % total)
+        detail = "no live trades yet"
+        if refused:
+            detail += " (%d live entries REFUSED in 1h)" % refused
+        return link.failed(detail, "fix the first FAIL above")
+    return link.passed("%d executed live rows" % total)
 
 
 def check_profit() -> Link:
