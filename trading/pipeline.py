@@ -4,6 +4,7 @@ import os
 import time
 import json
 import shutil
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone, timedelta
@@ -157,6 +158,14 @@ def _save_model_atomically(model, path: Path, **kwargs) -> None:
             # central directory. Upstream callers treat a missing model as
             # normal and rebuild, so an unlogged failure here is indis-
             # tinguishable from "first run" and repeats forever.
+            # The traceback, not just the message. A UnicodeEncodeError from
+            # inside Keras names neither the file being written nor the writer
+            # that chose the encoding, and this failure does not reproduce
+            # outside production -- a model whose layer name carries the same
+            # U+2192 saves cleanly on the same interpreter and Keras build. So
+            # the message alone cannot identify the offending write, and this
+            # loop repeats every few seconds on a box whose CPU the trading
+            # cycle is already competing for.
             log_message(
                 "training",
                 f"model serialisation failed: {type(exc).__name__}: {exc}",
@@ -165,6 +174,7 @@ def _save_model_atomically(model, path: Path, **kwargs) -> None:
                     "path": str(path),
                     "temp": str(tmp),
                     "bytes_written": tmp.stat().st_size if tmp.exists() else 0,
+                    "traceback": traceback.format_exc(limit=25),
                 },
             )
             raise
