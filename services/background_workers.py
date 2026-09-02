@@ -284,7 +284,7 @@ def _run_download(chain: str, assignment_path: Path, *, collect_news: bool = Tru
             except Exception:
                 pass
             proc = subprocess.Popen([resolve_python_bin(), str(script)], env=env)
-            proc.wait()
+            _wait_or_kill(proc, chain)
     except Exception as exc:
         log_message("download-worker", f"error running download2000 for {chain}: {exc}", severity="error")
 
@@ -292,6 +292,69 @@ def _run_download(chain: str, assignment_path: Path, *, collect_news: bool = Tru
     news_enabled = collect_news and os.getenv("NEWS_AFTER_DOWNLOAD", "1").lower() not in {"0", "false", "no"}
     if news_enabled:
         _trigger_news_for_symbols(_collect_completed_symbols(assignment_path))
+
+
+def _wait_or_kill(proc: "subprocess.Popen[Any]", chain: str) -> None:
+    """Wait for a download subprocess, but never forever.
+
+    `_ensure_ohlcv` reaches this from `selector.build` on the MAIN thread
+    during startup, so an unbounded `proc.wait()` is not a slow download -- it
+    is production never starting. Observed 2026-09-02: a download2000 child sat
+    for 9+ minutes while the trading loop had not begun and no tick was
+    recorded at all.
+
+    On timeout the whole tree goes, not just the direct child. download2000
+    spawns its own workers, and killing only the parent is what leaves the
+    orphans that later saturate the per-IP connection budget.
+    """
+    timeout = float(os.getenv("DOWNLOAD_SUBPROCESS_TIMEOUT_SEC", "300"))
+    if timeout <= 0:  # explicit opt-out for offline backfills
+        proc.wait()
+        return
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    log_message(
+        "download-worker",
+        f"download2000 for {chain} exceeded {timeout:.0f}s; killing it so startup can continue",
+        severity="warning",
+    )
+    _kill_tree(proc.pid)
+    try:
+        proc.wait(timeout=30)
+    except Exception:
+        pass
+
+
+def _kill_tree(pid: int) -> None:
+    """Kill a process and its descendants, best effort."""
+    try:
+        import psutil
+
+        parent = psutil.Process(pid)
+        procs = parent.children(recursive=True) + [parent]
+        for p in procs:
+            try:
+                p.kill()
+            except Exception:
+                continue
+        psutil.wait_procs(procs, timeout=15)
+        return
+    except Exception:
+        pass
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=30,
+            )
+        else:
+            os.kill(pid, 9)
+    except Exception:
+        pass
 
 
 def _try_cex_fallback(chain: str) -> None:
