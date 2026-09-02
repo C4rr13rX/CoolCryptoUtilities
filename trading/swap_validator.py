@@ -69,6 +69,14 @@ class SwapValidator:
         self.volatility_max_contamination = float(
             os.getenv("SWAP_GUARD_VOL_MAX_CONTAMINATION", "0.25")
         )
+        # How far the price we are about to trade at may sit from the pair's
+        # own trailing median. Chosen from the measured distribution, not from
+        # taste: over 11,249 ticks scored against their trailing 2h median,
+        # p99 is 1.61x and p99.5 is 2.89x, and the distribution is EMPTY
+        # between 3x and 5x -- 0.489% of ticks exceed 3x and the same 0.489%
+        # exceed 5x. Real moves stop near 2.9x; artifacts resume at 5x and run
+        # to 7e13x. 3.0 sits in that gap.
+        self.max_price_scale = float(os.getenv("SWAP_GUARD_MAX_PRICE_SCALE", "3.0"))
         # Ceiling on a single trade when no volume basis exists at all. Small
         # enough that no realistically tradeable pair could be moved by it, so
         # the guard still refuses to size blind into an unknown book.
@@ -125,8 +133,32 @@ class SwapValidator:
                 }
             )
 
+        price_offset = self._price_scale_offset(samples, price)
+        if price_offset is not None:
+            metrics["price_scale_offset"] = price_offset
+
         allowed = True
         reasons: List[str] = []
+        if price_offset is not None and price_offset > self.max_price_scale:
+            # The price we are about to trade AT is quoted at a different scale
+            # from the rest of this pair's recent history. Entering here books
+            # an entry the exit cannot be compared against: four ghost outcomes
+            # on 2026-08-26 did exactly this (AERO exiting at 1.14 when AERO is
+            # $0.478; COMP entering at 42.82 when COMP is $19), producing
+            # +174% and +161% "wins" that were denomination changes.
+            #
+            # This clause exists because the volatility fix opened the gate.
+            # Every live entry used to be refused, so a bad entry price could
+            # never reach a swap; now one can.
+            #
+            # Known blind spot, stated rather than papered over: COMP-USDC's
+            # artifacts sit at 2.2-2.9x, below this bound. That band is where a
+            # genuine two-hour move on a microcap also lives, and price alone
+            # cannot separate the two. Catching it needs a second source for
+            # the quote, not a lower number here -- lowering it would refuse
+            # real moves and still not be a measurement.
+            allowed = False
+            reasons.append("price_off_scale")
         if liquidity_ratio is not None:
             if liquidity_ratio > self.max_liquidity_ratio:
                 allowed = False
@@ -264,6 +296,38 @@ class SwapValidator:
         exec_ratio = float(np.mean(ratios)) if ratios else 1.0
         avg_slippage = float(np.mean(slippages)) if slippages else 0.0
         return exec_ratio, avg_slippage
+
+    def _price_scale_offset(
+        self, samples: Sequence[Dict[str, float]], price: float
+    ) -> Optional[float]:
+        """How far the trade price sits from this pair's own recent median.
+
+        Returned as a symmetric factor (2.0 means twice or half), or None when
+        there is not enough history to say -- unmeasured is not a violation.
+
+        Measured 2026-09-02: 15 of 163 streamed symbols publish prices more
+        than 50x from their own median. For some the contaminated scale is the
+        MAJORITY reading -- ARB-USDC's median is 5.3e-7 while ARB trades near
+        $0.65 -- so this is deliberately a check on the trade price against the
+        recent window, not an attempt to decide which scale is the true one.
+        Either way the two cannot be compared, and a position whose entry and
+        exit are quoted in different units has no P&L.
+        """
+        if price <= 0:
+            return None
+        now = time.time()
+        recent = [
+            float(s.get("price") or 0.0)
+            for s in samples
+            if float(s.get("price") or 0.0) > 0
+            and now - float(s.get("ts") or 0.0) <= self.lookback_sec
+        ]
+        if len(recent) < 3:
+            return None
+        median = float(np.median(recent))
+        if median <= 0:
+            return None
+        return float(max(price / median, median / price))
 
     def _estimate_volatility(
         self, samples: Sequence[Dict[str, float]]

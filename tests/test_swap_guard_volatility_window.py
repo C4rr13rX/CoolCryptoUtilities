@@ -180,3 +180,78 @@ def test_too_little_history_is_not_a_violation() -> None:
     vol, measurable, _ = validator._estimate_volatility(_series(_walk([1.0, 1.01])))
     assert measurable is True
     assert vol == 0.0
+
+
+def test_a_trade_price_at_the_wrong_scale_is_refused() -> None:
+    """The entry price itself must belong to the same series as the history.
+
+    Four ghost outcomes on 2026-08-26 crossed a denomination boundary between
+    entry and exit -- AERO exiting at 1.14 when AERO is $0.478, COMP entering
+    at 42.82 when COMP is $19 -- and booked +174% and +161% as wins. Those
+    stayed harmless only because the swap guard refused every live entry for
+    unrelated reasons. Fixing the volatility clause opened that gate, so the
+    check has to be explicit now.
+
+    The bound is 3.0x, chosen from the measured distribution: over 11,249
+    ticks scored against their trailing 2h median, p99 is 1.61x and the
+    distribution is empty between 3x and 5x.
+    """
+    history = _walk([1.5e-9, 1.6e-9, 1.55e-9, 1.7e-9, 1.6e-9, 1.65e-9, 1.58e-9])
+    db = _StubDB(_series(history))
+    validator = _validator(db)
+
+    allowed, metrics, reasons = validator.validate(
+        symbol="SPACEX-USDC", route=["SPACEX", "USDC"],
+        trade_size=1.0, price=524.37, volume=0.0,   # the contaminated quote
+    )
+
+    assert allowed is False
+    assert "price_off_scale" in reasons
+    assert metrics["price_scale_offset"] > 1e10
+
+
+def test_the_two_to_three_x_blind_spot_is_pinned_not_pretended_away() -> None:
+    """COMP-USDC's artifacts sit at 2.2-2.9x and this clause does NOT catch them.
+
+    COMP prints both 42.82 and ~19.13; the offset is 2.24x. A genuine
+    two-hour move on a microcap lives in that same band, so no threshold on
+    price alone separates them, and lowering the bound to catch COMP would
+    refuse real moves without becoming a measurement.
+
+    Pinned deliberately: if someone later tightens the bound, this test should
+    make them state what new evidence justified it rather than discovering the
+    tradeoff in production.
+    """
+    history = _walk([19.1, 19.2, 19.0, 19.3, 19.1, 19.4, 19.2])
+    db = _StubDB(_series(history))
+    validator = _validator(db)
+
+    _allowed, metrics, reasons = validator.validate(
+        symbol="COMP-USDC", route=["COMP", "USDC"],
+        trade_size=0.02, price=42.82, volume=0.0,
+    )
+
+    assert 2.0 < metrics["price_scale_offset"] < 3.0
+    assert "price_off_scale" not in reasons
+
+
+def test_an_ordinary_price_moves_through() -> None:
+    """A price that simply moved is not an artifact."""
+    history = _walk([0.478, 0.479, 0.477, 0.480, 0.478, 0.481, 0.479, 0.478])
+    db = _StubDB(_series(history))
+    validator = _validator(db)
+
+    allowed, metrics, reasons = validator.validate(
+        symbol="AERO-USDC", route=["AERO", "USDC"],
+        trade_size=0.7, price=0.502, volume=0.0,   # +5%, a real move
+    )
+
+    assert "price_off_scale" not in reasons
+    assert allowed is True
+    assert metrics["price_scale_offset"] < 1.1
+
+
+def test_too_little_history_does_not_refuse_the_price() -> None:
+    """Unmeasured is not a violation -- the rule the whole guard keeps."""
+    validator = _validator(_StubDB([]))
+    assert validator._price_scale_offset(_series(_walk([1.0, 1.01])), 1.0) is None
