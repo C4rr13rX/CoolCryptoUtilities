@@ -22,6 +22,19 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Hydrate the environment the way main.py and production.py do. Without this
+# the map judged the gates against a bare shell and disagreed with the running
+# bot about which flags were set: it printed ENABLE_LIVE_TRADING=0 while the
+# production process was running with 1. Reading .env directly is not enough --
+# EnvLoader is the path that resolves the vault first and .env only as
+# fallback, so it is the only way to see what the bot actually sees.
+try:
+    from services.env_loader import EnvLoader
+
+    EnvLoader.load()
+except Exception:  # noqa: BLE001 - the map must still print without a vault
+    pass
+
 # Layer -> conditions. Each row:
 #   (condition, what it gates, env var, default, where)
 GATE_MAP = [
@@ -140,6 +153,22 @@ GATE_MAP = [
 ]
 
 
+def _effective(env: str, default: str) -> str:
+    """``NAME=value`` for what is ACTUALLY in force, not the table's default.
+
+    This column printed the hardcoded default unconditionally, so it rendered
+    ``ENABLE_LIVE_TRADING=0`` while the production process was running with
+    ``1``. The one row that says whether real money can move was reporting the
+    opposite of the truth on the tool built to diagnose exactly that.
+    """
+    if not env or env.startswith("("):
+        return "%s=%s" % (env, default)
+    actual = os.getenv(env)
+    if actual is None:
+        return "%s=%s (default)" % (env, default)
+    return "%s=%s" % (env, actual)
+
+
 def print_static():
     for layer, rows in GATE_MAP:
         print("\n" + "=" * 100)
@@ -148,7 +177,7 @@ def print_static():
         print("  %-34s %-42s %s" % ("CONDITION", "GATES", "ENV VAR"))
         print("  " + "-" * 96)
         for cond, gates, env, default, _where in rows:
-            print("  %-34s %-42s %s=%s" % (cond[:34], gates[:42], env, default))
+            print("  %-34s %-42s %s" % (cond[:34], gates[:42], _effective(env, default)))
 
 
 def print_live():
