@@ -35,6 +35,7 @@ from services.logging_utils import log_message
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
+from services.token_address_book import is_token_address
 from services.token_catalog import core_tokens_for_chain
 from trading.constants import (
     PRIMARY_CHAIN,
@@ -580,10 +581,30 @@ class TradingBot:
             return holding.token
         try:
             token_map = core_tokens_for_chain(chain_l)
-            return token_map.get(symbol_u)
+            # Case-folded: the catalog keys some symbols in mixed case ("cbETH",
+            # "USDbC") while this lookup upper-cases, so an exact .get() could
+            # never match them and two tokens we genuinely hold addresses for
+            # resolved to None anyway.
+            for sym, addr in (token_map or {}).items():
+                if str(sym).upper() == symbol_u and addr:
+                    return addr
         except Exception as exc:
             log_message("trading", f"token address lookup failed for {symbol_u} on {chain_l}: {exc}", severity="debug")
-            return None
+
+        # Learned from discovery. The catalog holds eight symbols on base while
+        # the bot trades whatever the feed surfaces, so without this every live
+        # entry on a discovered token was refused as token_unresolved -- nine of
+        # the ten symbols with a recorded outcome. Only addresses an upstream
+        # actually reported are ever stored; nothing here guesses.
+        try:
+            from services.token_address_book import lookup as _token_book_lookup
+
+            learned = _token_book_lookup(chain_l, symbol_u)
+            if learned:
+                return learned
+        except Exception as exc:
+            log_message("trading", f"token address book lookup failed for {symbol_u} on {chain_l}: {exc}", severity="debug")
+        return None
 
     def _live_trades_dry_run(self) -> bool:
         if os.getenv("EXECUTE_LIVE_TRADES", "0").lower() in {"1", "true", "yes", "on"}:
@@ -731,7 +752,11 @@ class TradingBot:
         if token:
             return symbol_u, token
         raw = str(symbol or "").strip()
-        if raw.lower().startswith("0x") and len(raw) >= 42:
+        # Exactly 20 bytes. This used to accept `len(raw) >= 42`, which a
+        # 32-byte Uniswap v4 pool id (66 chars) satisfies -- and discovery
+        # stores pool ids for v4 pairs, so a pool id could be handed to a swap
+        # as though it were the token being bought.
+        if is_token_address(raw):
             return symbol_u, raw
         return symbol_u, None
 

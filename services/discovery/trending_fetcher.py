@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 
 import requests
 
+from services.token_address_book import is_token_address, record_many
+
 
 DEXSCREENER_URL = "https://api.dexscreener.com/latest/dex/tokens"
 
@@ -23,6 +25,13 @@ class TrendingToken:
     price_change_6h: Optional[float]
     price_change_24h: Optional[float]
     metadata: Dict[str, float]
+    #: ERC-20 contract addresses -- what a swap actually needs. ``pair_address``
+    #: identifies the POOL and is not interchangeable with these: on Uniswap v4
+    #: it is a 32-byte pool id rather than an address at all. Defaulted and
+    #: last so that every existing construction site stays valid; a caller that
+    #: cannot supply them gets "" and the token simply stays unresolved.
+    base_token_address: str = ""
+    quote_token_address: str = ""
 
 
 #: GeckoTerminal exposes a real trending-pools list per network. DexScreener's
@@ -41,6 +50,14 @@ _GECKO_NETWORKS = {
     "polygon": "polygon_pos",
     "bsc": "bsc",
 }
+
+
+def _gecko_address(token_id: str) -> str:
+    """``"base_0xabc..."`` -> ``"0xabc..."``; "" when it is not an address."""
+    raw = str(token_id or "").strip()
+    if "_" in raw:
+        raw = raw.rsplit("_", 1)[1]
+    return raw if is_token_address(raw) else ""
 
 
 def _gecko_trending(chain: str, timeout: float) -> List[Dict]:
@@ -66,9 +83,17 @@ def _gecko_trending(chain: str, timeout: float) -> List[Dict]:
         quote_sym = parts[1].split()[0] if len(parts) > 1 and parts[1] else ""
         change = attrs.get("price_change_percentage") or {}
         volume = attrs.get("volume_usd") or {}
+        # The token CONTRACT addresses ride along in relationships as
+        # "base_0x<address>". They used to be dropped here, leaving the pool
+        # address as the only identifier downstream -- and a pool is not
+        # something you can swap. That is what made every live entry on a
+        # discovered token fail with reason=token_unresolved.
+        rel = item.get("relationships") or {}
+        base_id = str(((rel.get("base_token") or {}).get("data") or {}).get("id") or "")
+        quote_id = str(((rel.get("quote_token") or {}).get("data") or {}).get("id") or "")
         out.append({
-            "baseToken": {"symbol": base_sym},
-            "quoteToken": {"symbol": quote_sym},
+            "baseToken": {"symbol": base_sym, "address": _gecko_address(base_id)},
+            "quoteToken": {"symbol": quote_sym, "address": _gecko_address(quote_id)},
             "chainId": chain.lower(),
             "pairAddress": str(attrs.get("address") or ""),
             "dexId": str(((item.get("relationships") or {}).get("dex") or {})
@@ -100,6 +125,8 @@ def fetch_trending_tokens(limit: int = 50, chains: Optional[List[str]] = None) -
                     symbol=str(entry.get("baseToken", {}).get("symbol") or "") + "-" + str(entry.get("quoteToken", {}).get("symbol") or ""),
                     chain=str(entry.get("chainId") or entry.get("chain", "unknown")),
                     pair_address=str(entry.get("pairAddress") or ""),
+                    base_token_address=str(entry.get("baseToken", {}).get("address") or ""),
+                    quote_token_address=str(entry.get("quoteToken", {}).get("address") or ""),
                     dex_id=str(entry.get("dexId") or entry.get("exchange", "unknown")),
                     price_usd=float(entry["priceUsd"]) if entry.get("priceUsd") else None,
                     volume_24h_usd=float(entry["volumeUsd24h"]) if entry.get("volumeUsd24h") else None,
@@ -115,4 +142,21 @@ def fetch_trending_tokens(limit: int = 50, chains: Optional[List[str]] = None) -
             )
         except (TypeError, ValueError):
             continue
+
+    # Write the addresses down as they arrive. The resolver that decides
+    # whether a live trade can be built runs in a different process and long
+    # after this fetch, so holding them only in memory is the same as dropping
+    # them -- which is what used to happen.
+    learned: Dict[str, Dict[str, str]] = {}
+    for tok in results:
+        base_sym, _, quote_sym = tok.symbol.partition("-")
+        for sym, addr in ((base_sym, tok.base_token_address),
+                          (quote_sym, tok.quote_token_address)):
+            if sym and is_token_address(addr):
+                learned.setdefault(tok.chain, {})[sym] = addr
+    for chain, mapping in learned.items():
+        try:
+            record_many(chain, mapping, source="geckoterminal")
+        except Exception as exc:  # never let bookkeeping break discovery
+            print(f"[discovery] could not record token addresses for {chain}: {exc}")
     return results
