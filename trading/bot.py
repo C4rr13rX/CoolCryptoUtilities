@@ -3788,7 +3788,69 @@ class TradingBot:
 
             # Dual-track: even on a live bot, a strategy that has not yet
             # graduated from ghost keeps entering as simulation only.
-            if self.live_trading_enabled and self._strategy_live_approved(directive):
+            live_approved = bool(
+                self.live_trading_enabled and self._strategy_live_approved(directive)
+            )
+
+            # A token address we do not have is a reason this trade cannot
+            # SETTLE, not a reason to stop measuring the symbol. This used to
+            # return outright, which abandoned the opportunity in both books:
+            # no live entry (correct -- there is nothing to swap against) and
+            # no ghost entry either (wrong -- the observation was still there
+            # to be made). Measured 2026-09-02, the only live attempt since the
+            # 05:43 restart was 1KTO100M-USDC at 06:06:18, refused as
+            # token_unresolved, and trading_ops holds no position row of any
+            # kind for it. The evidence that decides graduation was discarded
+            # to record a refusal.
+            #
+            # Of the symbols the lane is currently working, five resolve and
+            # pass the swap guard (CBBTC, BASECAT, VIRTUAL, CBETH, BSTONK)
+            # while 1KTO100M, CBXRP, MTGA, SPCX and TOAD do not resolve at all.
+            # Falling through to ghost keeps the unresolvable ones earning
+            # ledger evidence instead of silently dropping out of the book.
+            if live_approved and not self._live_trades_dry_run() and (
+                base_swap_token is None or quote_swap_token is None
+            ):
+                blocked = dict(decision)
+                blocked.update(
+                    {
+                        "action": "enter",
+                        "status": "live-entry-blocked",
+                        "reason": "token_unresolved",
+                        "trade_id": trade_id,
+                        "wallet": "live",
+                        "session_id": self.ghost_session_id,
+                        "executed": False,
+                    }
+                )
+                # Logged under action="hold" for the same reason the swap-guard
+                # refusal is: it must stay visible without counting as an
+                # executed live trade.
+                try:
+                    self.db.log_trade(
+                        wallet="live",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="live-entry-blocked",
+                        details=blocked,
+                    )
+                except Exception:
+                    pass
+                self.metrics.feedback(
+                    "live_trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="entry_blocked",
+                    details={
+                        "symbol": symbol,
+                        "trade_id": trade_id,
+                        "base_symbol": base_balance_symbol,
+                        "quote_symbol": quote_balance_symbol,
+                    },
+                )
+                live_approved = False
+
+            if live_approved:
                 if self._live_trades_dry_run():
                     decision.update(
                         {
@@ -3813,31 +3875,6 @@ class TradingBot:
                         severity=FeedbackSeverity.WARNING,
                         label="entry_dry_run",
                         details={"symbol": symbol, "trade_id": trade_id, "reason": entry_reason},
-                    )
-                    return decision
-
-                if base_swap_token is None or quote_swap_token is None:
-                    decision.update(
-                        {
-                            "action": "enter",
-                            "status": "live-entry-blocked",
-                            "reason": "token_unresolved",
-                            "trade_id": trade_id,
-                            "wallet": "live",
-                            "session_id": self.ghost_session_id,
-                            "executed": False,
-                        }
-                    )
-                    self.metrics.feedback(
-                        "live_trading",
-                        severity=FeedbackSeverity.WARNING,
-                        label="entry_blocked",
-                        details={
-                            "symbol": symbol,
-                            "trade_id": trade_id,
-                            "base_symbol": base_balance_symbol,
-                            "quote_symbol": quote_balance_symbol,
-                        },
                     )
                     return decision
 
