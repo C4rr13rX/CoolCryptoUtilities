@@ -83,6 +83,53 @@ def _parse_watch_tokens(blob: str) -> Dict[str, List[str]]:
     return result
 
 
+# A priority-fee floor is not a matter of taste, it is a property of the chain
+# being paid. The floors below were a single mainnet-shaped number (1.0 gwei
+# floor, 0.5 gwei minimum) applied to every chain, which meant the oracle
+# measured the right tip and then threw the measurement away.
+#
+# Measured 2026-09-02, baseFee / p70 tip from fee_history vs what the oracle
+# actually put on the wire:
+#
+#   base       0.005000 / 0.001400 gwei  -> oracle 1.000000 gwei   158x
+#   optimism   0.000041 / 0.001459 gwei  -> oracle 1.000000 gwei   667x
+#   arbitrum   0.020150 / 0.000000 gwei  -> oracle 1.000000 gwei    52x
+#   ethereum   0.208119 / 0.264427 gwei  -> oracle 1.000000 gwei     3x
+#
+# Confirmed on the wire: tx 0x770e052d… on base paid effectiveGasPrice
+# 1.005 gwei against a 0.005 gwei base fee. At ~150k gas that is $0.36 of gas
+# per swap where $0.0025 was due, so a two-leg round trip cost ~$0.72 -- on a
+# 6.98 USDC wallet trading $1-2 clips, a cost floor no short-horizon strategy
+# can clear. Only chains whose fee market was actually measured are lowered
+# here; every other chain keeps the previous 1.0/0.5 gwei behaviour.
+_TIP_FLOOR_GWEI_BY_CHAIN: Dict[str, float] = {
+    "base": 0.001,
+    "optimism": 0.001,
+    "arbitrum": 0.001,
+    "zksync": 0.001,
+}
+_TIP_FLOOR_GWEI_DEFAULT = 1.0
+_MIN_TIP_GWEI_DEFAULT = 0.5
+
+# Chains whose base fee is small enough that generous headroom is nearly free.
+# 35% headroom over a 0.005 gwei base fee is a stuck transaction waiting for a
+# spike; 200% headroom over the same base fee still costs a quarter of a cent.
+_L2_BASE_MULT_CHAINS = frozenset(_TIP_FLOOR_GWEI_BY_CHAIN)
+
+
+def _opt_float(value: Optional[str]) -> Optional[float]:
+    """Parse an env override, treating blank/garbage as 'not set'."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
 class AdaptiveGasOracle:
     """Adaptive EIP-1559 helper that keeps tips low without stalling txs."""
 
@@ -110,7 +157,13 @@ class AdaptiveGasOracle:
         self.default_strategy = default_strategy.lower()
         self._cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self.max_jump_bps = max(0, int(os.getenv("GAS_MAX_JUMP_BPS", "2500") or "2500"))
-        self.min_tip_gwei = float(os.getenv("GAS_MIN_TIP_GWEI", "0.5") or "0.5")
+        # An explicit env override still wins everywhere; absent one, the floor
+        # is resolved per chain rather than from a single mainnet constant.
+        self._min_tip_gwei_env = _opt_float(os.getenv("GAS_MIN_TIP_GWEI"))
+        self._tip_floor_gwei_env = _opt_float(os.getenv("GAS_TIP_FLOOR_GWEI"))
+        self.min_tip_gwei = (
+            self._min_tip_gwei_env if self._min_tip_gwei_env is not None else _MIN_TIP_GWEI_DEFAULT
+        )
         self.max_tip_gwei = float(os.getenv("GAS_MAX_TIP_GWEI", "150") or "150")
         self._last_fee: Dict[str, Dict[str, int]] = {}
         self._chain_bias = self._load_chain_bias()
@@ -147,6 +200,36 @@ class AdaptiveGasOracle:
     def _pick_percentiles(self) -> List[float]:
         vals = sorted({max(1.0, min(99.0, v)) for v in self.percentile_map.values()})
         return vals or [70.0]
+
+    def _tip_floor_gwei_for(self, chain: str) -> float:
+        """Priority-fee floor in gwei for `chain` (env override wins)."""
+        if self._tip_floor_gwei_env is not None:
+            return self._tip_floor_gwei_env
+        return _TIP_FLOOR_GWEI_BY_CHAIN.get(
+            (chain or "").lower(), _TIP_FLOOR_GWEI_DEFAULT
+        )
+
+    def _min_tip_gwei_for(self, chain: str) -> float:
+        """Hard minimum tip in gwei for `chain` (env override wins).
+
+        Never above the chain's floor: a 0.5 gwei mainnet minimum would
+        otherwise re-impose the very overpayment the floor map removes.
+        """
+        if self._min_tip_gwei_env is not None:
+            return self._min_tip_gwei_env
+        key = (chain or "").lower()
+        if key in _TIP_FLOOR_GWEI_BY_CHAIN:
+            return _TIP_FLOOR_GWEI_BY_CHAIN[key]
+        return _MIN_TIP_GWEI_DEFAULT
+
+    def _base_mult_for(self, chain: str) -> float:
+        """Base-fee headroom multiplier, larger where headroom is cheap."""
+        env = _opt_float(os.getenv("GAS_BASE_MULT"))
+        if env is not None:
+            return env
+        if (chain or "").lower() in _L2_BASE_MULT_CHAINS:
+            return _opt_float(os.getenv("GAS_BASE_MULT_L2")) or 3.0
+        return 1.35
 
     def _strategy_for(self, urgency: Optional[str]) -> str:
         if urgency:
@@ -188,14 +271,14 @@ class AdaptiveGasOracle:
         median_tip = int(statistics.median(tips))
         avg_tip = int(sum(tips) / len(tips))
         blended_tip = int(max(median_tip, avg_tip * 0.85))
-        floor_tip_gwei = float(os.getenv("GAS_TIP_FLOOR_GWEI", "1") or "1")
+        floor_tip_gwei = self._tip_floor_gwei_for(chain)
         tip = max(blended_tip, self._as_wei_from_gwei(str(floor_tip_gwei), w3))
-        tip_min = self._as_wei_from_gwei(str(self.min_tip_gwei), w3)
+        tip_min = self._as_wei_from_gwei(str(self._min_tip_gwei_for(chain)), w3)
         tip_max = self._as_wei_from_gwei(str(self.max_tip_gwei), w3)
         if tip_max and tip_min and tip_max < tip_min:
             tip_max = tip_min
         tip = max(tip_min, min(tip, tip_max))
-        mult = float(os.getenv("GAS_BASE_MULT", "1.35") or "1.35")
+        mult = self._base_mult_for(chain)
         cap_env = os.getenv("GAS_BASE_MAX_MULT")
         base_cap = float(cap_env) if cap_env else None
         if urgency == "eco":

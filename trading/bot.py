@@ -3921,7 +3921,7 @@ class TradingBot:
 
                 swapper = SwapService(self._bridge)
                 try:
-                    await asyncio.to_thread(
+                    swap_outcome = await asyncio.to_thread(
                         swapper.swap,
                         chain=chain_name,
                         sell=quote_swap_token,
@@ -3942,6 +3942,14 @@ class TradingBot:
                     log_message("live-swap", f"entry swap failed: {swap_exc}", severity="error")
                     return decision
                 await self._run_wallet_sync(reason="post-live-entry", discover=True)
+
+                # The transaction hash is the only record of this trade that can
+                # be checked against something outside this process. Before it
+                # was captured, trading_cache.db held 62,599 trading_ops rows and
+                # zero hashes, so "did we actually trade?" was unanswerable from
+                # our own data -- the swap layer reported through stdout only.
+                entry_tx_hash = str(getattr(swap_outcome, "tx_hash", "") or "")
+                entry_tx_route = str(getattr(swap_outcome, "route", "") or "")
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
                 post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
@@ -3964,6 +3972,8 @@ class TradingBot:
                             "quote_spent": quote_spent,
                             "base_received": base_received,
                             "gas_spent_native": gas_spent_native,
+                            "tx_hash": entry_tx_hash,
+                            "route_used": entry_tx_route,
                         }
                     )
                     self.metrics.feedback(
@@ -3998,6 +4008,7 @@ class TradingBot:
                     "direction_prob": direction_prob,
                     "quote_spent": quote_spent,
                     "gas_spent_native": gas_spent_native,
+                    "entry_tx_hash": entry_tx_hash,
                     "base_symbol": base_balance_symbol,
                     "quote_symbol": quote_balance_symbol,
                     "trigger_state": {"high_watermark": executed_entry_price},
@@ -4037,6 +4048,8 @@ class TradingBot:
                         "executed": True,
                         "quote_spent": quote_spent,
                         "gas_spent_native": gas_spent_native,
+                        "tx_hash": entry_tx_hash,
+                        "route_used": entry_tx_route,
                     }
                 )
                 if isinstance(decision.get("brain"), dict):
@@ -4260,6 +4273,9 @@ class TradingBot:
             gas_spent_native_exit = 0.0
             native_price_usd = 0.0
             fee_cost = 0.0
+            # Stays empty for ghost exits, which have no chain to point at.
+            exit_tx_hash = ""
+            exit_tx_route = ""
 
             if pos_is_live:
                 entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
@@ -4356,7 +4372,7 @@ class TradingBot:
 
                 swapper = SwapService(self._bridge)
                 try:
-                    await asyncio.to_thread(
+                    swap_outcome = await asyncio.to_thread(
                         swapper.swap,
                         chain=chain_name,
                         sell=base_swap_token,
@@ -4377,6 +4393,9 @@ class TradingBot:
                     log_message("live-swap", f"exit swap failed: {swap_exc}", severity="error")
                     return decision
                 await self._run_wallet_sync(reason="post-live-exit", discover=True)
+
+                exit_tx_hash = str(getattr(swap_outcome, "tx_hash", "") or "")
+                exit_tx_route = str(getattr(swap_outcome, "route", "") or "")
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
                 post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
@@ -4399,6 +4418,8 @@ class TradingBot:
                             "quote_received": quote_received,
                             "base_sold": base_sold,
                             "gas_spent_native": gas_spent_native_exit,
+                            "tx_hash": exit_tx_hash,
+                            "route_used": exit_tx_route,
                         }
                     )
                     self.metrics.feedback(
@@ -4761,6 +4782,9 @@ class TradingBot:
                     "equilibrium_score": equilibrium_score,
                     "nash_equilibrium": equilibrium_ready,
                     "remaining_size": remaining_size,
+                    "tx_hash": exit_tx_hash,
+                    "entry_tx_hash": str(pos.get("entry_tx_hash") or ""),
+                    "route_used": exit_tx_route,
                 }
             )
             if isinstance(decision.get("brain"), dict):

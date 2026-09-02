@@ -1,9 +1,11 @@
 from __future__ import annotations
 import os
-from typing import Optional
+import time
+from dataclasses import dataclass, field
+from typing import Any, Optional
 from web3.exceptions import ContractLogicError
 from web3 import Web3
-from router_wallet import UltraSwapBridge
+from router_wallet import UltraSwapBridge, CHAINS, REQ_KW
 from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 from services.token_catalog import core_tokens_for_chain
@@ -45,7 +47,83 @@ def default_route_order() -> list[str]:
     return order
 
 
+@dataclass
+class SwapOutcome:
+    """What a swap attempt actually did, as opposed to what it printed.
+
+    ``swap()`` used to return None and report success or failure only through
+    stdout, so no caller could record the one piece of evidence that proves a
+    swap happened: its transaction hash. Measured 2026-09-02, trading_cache.db
+    held 62,599 trading_ops rows and not a single 66-character hash, while
+    tx 0x5a19c505… was sitting on Base having really moved 0.05 USDC.
+
+    ``broadcast`` is the field that matters for safety: once it is True the
+    money has left, whatever the receipt says, and no other route may be tried.
+    """
+
+    ok: bool = False
+    broadcast: bool = False
+    tx_hash: str = ""
+    route: str = ""
+    reason: str = ""
+    confirmed: Optional[bool] = None  # None => broadcast but receipt unknown
+    quote: dict = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return bool(self.ok)
+
+
 class SwapService:
+
+    def _rpc_urls(self, chain: str) -> list[str]:
+        try:
+            return [u for u in CHAINS[(chain or "").lower()]["rpcs"] if u]
+        except Exception:
+            return []
+
+    def _confirm_receipt(
+        self, chain: str, txh: str, *, timeout_s: Optional[int] = None
+    ) -> Optional[bool]:
+        """Poll every configured RPC for a receipt.
+
+        Returns True/False from the receipt status, or None when no endpoint
+        would answer. None means "unknown", never "failed" -- the transaction
+        is already broadcast either way, and treating a rate-limited RPC as a
+        failed swap is what let a successful trade be retried on another route.
+        """
+        import requests
+
+        deadline = time.time() + int(
+            timeout_s if timeout_s is not None else int(os.getenv("TX_TIMEOUT_SEC", "120"))
+        )
+        urls = self._rpc_urls(chain)
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_getTransactionReceipt", "params": [txh]}
+        answered = False
+        while time.time() < deadline:
+            for url in urls:
+                try:
+                    resp = requests.post(url, json=payload, timeout=15, verify=REQ_KW.get("verify", True))
+                    if resp.status_code != 200:
+                        continue
+                    body = resp.json()
+                except Exception:
+                    continue
+                if "result" not in body:
+                    continue
+                answered = True
+                result = body.get("result")
+                if not result:
+                    continue  # not mined yet; this endpoint is healthy though
+                try:
+                    return int(str(result.get("status")), 16) == 1
+                except Exception:
+                    return None
+            time.sleep(3)
+        print(
+            f"[swap] receipt for {txh} still unknown after timeout "
+            f"({'endpoints answered, tx not mined' if answered else 'no endpoint answered'})"
+        )
+        return None
 
     def _preflight_estimate(
         self,
@@ -124,13 +202,24 @@ class SwapService:
                 fee_scope="swap",
             )
             print(f"[wrap] {chain}: native -> {wn_addr} amount={amount_raw} tx={txh}")
-            rc = self.bridge._w3(chain).eth.wait_for_transaction_receipt(txh)
-            ok = int(rc.get('status', 0)) == 1
-            print(f"[wrap] status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
-            return ok
         except Exception as e:
-            print(f"[wrap] failed: {e!r}")
+            print(f"[wrap] broadcast failed: {e!r}")
             return False
+
+        # An unreadable receipt is not a failed wrap. Ask the wrapped-native
+        # balance, which is what the caller is really about to spend.
+        confirmed = self._confirm_receipt(chain, txh)
+        if confirmed is not None:
+            print(f"[wrap] status={'success' if confirmed else 'failed'}")
+            return bool(confirmed)
+        try:
+            bal = int(self.bridge.erc20_balance_of(chain, wn_addr, self.bridge.acct.address))
+        except Exception as e:
+            print(f"[wrap] receipt unknown and balance unreadable: {e!r}")
+            return False
+        ok = bal >= int(amount_raw)
+        print(f"[wrap] receipt unknown; wrapped balance now {bal} ({'sufficient' if ok else 'insufficient'})")
+        return ok
 
     def _wnative_for_chain(self, chain: str) -> str | None:
         ch = chain.lower().strip()
@@ -231,15 +320,44 @@ class SwapService:
             print(f"[approve] spender={spender} need={need_raw} have={have} mode={'exact' if mode=='e' else 'unlimited'}")
             txh = self.bridge.approve_erc20(chain, token, spender, value)
             print(f"[approve] tx: {txh}")
-            rc = self.bridge._w3(chain).eth.wait_for_transaction_receipt(txh)
-            ok = int(rc.get("status",0)) == 1
-            print(f"[approve] receipt status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
-            return ok
         except Exception as e:
-            print(f"[approve] failed: {e!r}")
+            print(f"[approve] broadcast failed: {e!r}")
             return False
 
-    def _send(self, chain: str, to: str, data: str, value: int, gas_hint: Optional[int]) -> tuple[str,bool]:
+        # Same trap as _send had: a 403 from a rate-limited RPC while reading
+        # the receipt used to be reported as "approval failed", which abandoned
+        # a swap whose approval had in fact landed -- and burned the gas again
+        # on the next attempt. Observed on Base 2026-09-02 with approval
+        # 0xcf76e2ec…. The allowance itself is the authority here, so when the
+        # receipt cannot be read, ask the chain what the allowance actually is.
+        confirmed = self._confirm_receipt(chain, txh)
+        if confirmed is True:
+            print("[approve] receipt status=success")
+            return True
+        if confirmed is False:
+            print("[approve] receipt status=failed (reverted)")
+            return False
+
+        try:
+            now = int(self.bridge.erc20_allowance(chain, token, self.bridge.acct.address, spender))
+        except Exception as e:
+            print(f"[approve] receipt unknown and allowance unreadable: {e!r}")
+            return False
+        ok = now >= need_raw
+        print(f"[approve] receipt unknown; allowance now {now} ({'sufficient' if ok else 'insufficient'})")
+        return ok
+
+    def _send(self, chain: str, to: str, data: str, value: int, gas_hint: Optional[int]) -> SwapOutcome:
+        """Broadcast a prebuilt swap tx and report what happened to it.
+
+        The broadcast and the receipt are two separate failures and were being
+        collapsed into one. A 403 from a rate-limited public RPC *after* the
+        transaction was already in the mempool returned ("0x", False), which
+        threw away a real hash and told the caller to try the next route --
+        i.e. to spend the money a second time. Observed on Base 2026-09-02:
+        tx 0x5a19c505… swapped 0.05 USDC successfully and the caller printed
+        "[ERR] All routes failed" and fell through to Camelot and Sushi.
+        """
         try:
             txh = self.bridge.send_prebuilt_tx(
                 chain,
@@ -249,35 +367,53 @@ class SwapService:
                 gas=(int(gas_hint) if gas_hint else None),
                 fee_scope="swap",
             )
-            print("[swap] tx:", txh)
-            url = explorer_for(chain)
-            if url: print("Explorer:", url + txh)
-            rc = self.bridge._w3(chain).eth.wait_for_transaction_receipt(txh)
-            ok = int(rc.get("status",0)) == 1
-            print(f"[swap] receipt status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
-            return txh, ok
         except Exception as e:
-            print(f"[swap] send failed: {e!r}")
-            return "0x", False
+            # Nothing reached the mempool, so another route is safe to try.
+            print(f"[swap] broadcast failed: {e!r}")
+            return SwapOutcome(ok=False, broadcast=False, reason=f"broadcast_failed:{e!r}")
 
-    def _try_local_provider(self, *, name: str, q: dict, chain: str, sell_token: str, sell_raw: int) -> bool:
+        if not txh:
+            return SwapOutcome(ok=False, broadcast=False, reason="broadcast_returned_no_hash")
+
+        print("[swap] tx:", txh)
+        url = explorer_for(chain)
+        if url:
+            print("Explorer:", url + txh)
+
+        confirmed = self._confirm_receipt(chain, txh)
+        if confirmed is None:
+            print(f"[swap] receipt status=unknown tx={txh} (broadcast stands)")
+        else:
+            print(f"[swap] receipt status={'success' if confirmed else 'failed'}")
+        return SwapOutcome(
+            ok=bool(confirmed),
+            broadcast=True,
+            tx_hash=txh,
+            confirmed=confirmed,
+            reason="" if confirmed else ("receipt_unknown" if confirmed is None else "reverted"),
+        )
+
+    def _try_local_provider(self, *, name: str, q: dict, chain: str, sell_token: str, sell_raw: int) -> SwapOutcome:
         """Common path for Uni/Camelot/Sushi: approve spender then send."""
         if "__error__" in (q or {}):
             print(f"[{name}] {q['__error__']}")
-            return False
+            return SwapOutcome(ok=False, broadcast=False, route=name, reason=str(q["__error__"]))
         spender = q.get("allowanceTarget")
         if spender and not self._ensure_allowance(chain, sell_token, spender, sell_raw):
-            print("[ERR] approval failed"); return False
+            print("[ERR] approval failed")
+            return SwapOutcome(ok=False, broadcast=False, route=name, reason="approval_failed")
         tx = q.get("tx") or {}
         print(f"[{name}] to={tx.get('to')} value={tx.get('value',0)} gas~{tx.get('gas',0)}")
-        h, ok = self._send(
+        outcome = self._send(
             chain,
             to=tx["to"],
             data=tx["data"],
             value=int(tx.get("value") or 0),
             gas_hint=int(tx.get("gas") or 0),
         )
-        return ok
+        outcome.route = name
+        outcome.quote = {"buyAmount": q.get("buyAmount"), "fee": q.get("fee"), "aggregator": q.get("aggregator")}
+        return outcome
 
     # --- inside SwapService ---
 
@@ -376,7 +512,13 @@ class SwapService:
         return final_wrap, reserve
 
 
-    def swap(self, *, chain: str, sell: str, buy: str, amount_human: str, slippage_bps: int = 100) -> None:
+    def swap(self, *, chain: str, sell: str, buy: str, amount_human: str, slippage_bps: int = 100) -> SwapOutcome:
+        """Swap `amount_human` of `sell` into `buy`, returning what happened.
+
+        Returns a SwapOutcome rather than None so callers can record the
+        transaction hash. Once ``outcome.broadcast`` is True this method stops:
+        no second route is attempted after money has left the wallet.
+        """
         ch = chain.lower().strip()
         w3 = self.bridge._w3(ch)  # unified accessor
         w3.eth.default_account = self.bridge.acct.address
@@ -399,7 +541,8 @@ class SwapService:
         dec = self._decimals(ch, sell)
         sell_raw = to_base_units(amount_human, dec)
         if sell_raw <= 0:
-            print("[ERR] sellAmount must be > 0"); return
+            print("[ERR] sellAmount must be > 0")
+            return SwapOutcome(ok=False, reason="sell_amount_not_positive")
 
         _ro = (os.getenv("ROUTE_ONLY", "").strip().lower())
 
@@ -411,7 +554,8 @@ class SwapService:
             if not zerox_available():
                 print("[router] 0x is not configured (needs SWAP_ENABLE_0X=1 and "
                       "ZEROX_API_KEY). Unset ROUTE_ONLY to use the keyless "
-                      "on-chain routes."); return
+                      "on-chain routes.")
+                return SwapOutcome(ok=False, route="0x", reason="zerox_not_configured")
 
             try:
                 sell_norm = normalize_for_0x(sell)  # 'native' -> 0xeeee...
@@ -423,7 +567,8 @@ class SwapService:
                 tx = q0.get("tx") or {}
                 spender = q0.get("allowanceTarget")
                 if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
-                    print("[ERR] approval failed"); return
+                    print("[ERR] approval failed")
+                    return SwapOutcome(ok=False, route="0x", reason="approval_failed")
 
                 # Preflight (estimate_gas)
                 val_raw = tx.get("value") or 0
@@ -433,23 +578,24 @@ class SwapService:
                     gas_hint = int(gas_hint, 16)
 
                 if not self._preflight_estimate(ch, to=tx.get("to"), data=tx.get("data"), value=val_int, gas=gas_hint):
-                    print("[0x] preflight (estimate_gas) failed"); return
+                    print("[0x] preflight (estimate_gas) failed")
+                    return SwapOutcome(ok=False, route="0x", reason="preflight_failed")
 
                 print(f"[0x] to={tx.get('to')} value={val_int} gas~{gas_hint or 'est.'}")
                 txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
                 print(f"[0x] broadcast tx={txh}")
 
                 # Wait (do not fall back after broadcast)
-                try:
-                    rc = w3.eth.wait_for_transaction_receipt(txh)
-                    ok = int(rc.get("status", 0)) == 1
-                    print(f"[0x] status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
-                except Exception as e:
-                    print(f"[0x] wait/pending: {e!r}")
-                return
+                confirmed = self._confirm_receipt(ch, txh)
+                print(f"[0x] status={'success' if confirmed else ('unknown' if confirmed is None else 'failed')}")
+                return SwapOutcome(
+                    ok=bool(confirmed), broadcast=True, tx_hash=txh, route="0x",
+                    confirmed=confirmed,
+                    reason="" if confirmed else ("receipt_unknown" if confirmed is None else "reverted"),
+                )
             except Exception as e:
                 print(f"[0x] error: {e!r}")
-                return  # hard-stop for ROUTE_ONLY
+                return SwapOutcome(ok=False, route="0x", reason=f"error:{e!r}")  # hard-stop for ROUTE_ONLY
 
         # =========================
         # ROUTE_ONLY = Uniswap V3
@@ -461,7 +607,8 @@ class SwapService:
             if is_native(sell) and os.getenv("AUTO_WRAP_NATIVE", "1").strip().lower() not in {"0", "false", "no"}:
                 wn = self._wnative_for_chain(ch)
                 if not wn:
-                    print("[wrap] no wrapped-native known for this chain; aborting native sell"); return
+                    print("[wrap] no wrapped-native known for this chain; aborting native sell")
+                    return SwapOutcome(ok=False, route="uniswap", reason="no_wrapped_native")
 
                 # reserve gas, then reduce wrap amount if needed
                 sell_raw_adj, _reserve = self._apply_wrap_gas_buffer(
@@ -469,10 +616,12 @@ class SwapService:
                     assume_needs_approval=True  # WETH approval to router is normally needed
                 )
                 if sell_raw_adj <= 0:
-                    print("[ERR] Not enough native to cover gas after reserve; aborting"); return
+                    print("[ERR] Not enough native to cover gas after reserve; aborting")
+                    return SwapOutcome(ok=False, route="uniswap", reason="insufficient_native_for_gas")
 
                 if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                    print("[ERR] auto-wrap failed"); return
+                    print("[ERR] auto-wrap failed")
+                    return SwapOutcome(ok=False, route="uniswap", reason="auto_wrap_failed")
 
                 sell = wn
                 sell_raw = int(sell_raw_adj)  # downstream uses adjusted amount
@@ -484,13 +633,15 @@ class SwapService:
                     slippage_bps=slippage_bps,
                     recipient=self.bridge.acct.address,
                 )
-                if self._try_local_provider(name="UniswapV3", q=uq, chain=ch, sell_token=sell, sell_raw=sell_raw):
-                    return
+                outcome = self._try_local_provider(name="UniswapV3", q=uq, chain=ch, sell_token=sell, sell_raw=sell_raw)
+                if outcome.ok or outcome.broadcast:
+                    return outcome
                 print("[UniswapV3] failed.")
             except Exception as e:
                 print(f"[UniswapV3] error: {e!r}")
+                outcome = SwapOutcome(ok=False, route="uniswap", reason=f"error:{e!r}")
             print("[ERR] All routes failed.")
-            return
+            return outcome
 
         # =========================
         # ROUTE_ONLY = Camelot V2  (now multi-chain via configured router)
@@ -498,20 +649,24 @@ class SwapService:
         if _ro in {"camelot", "camelotv2", "camelot-v2"}:
             print("[router] ROUTE_ONLY=camelot — trying Camelot V2 only")
             if is_native(buy):
-                print("Camelot expects ERC-20 addresses; 'buy' cannot be native."); return
+                print("Camelot expects ERC-20 addresses; 'buy' cannot be native.")
+                return SwapOutcome(ok=False, route="camelot", reason="native_buy_unsupported")
             if is_native(sell):
                 wn = self._wnative_for_chain(ch)
                 if not wn:
-                    print("[wrap] no wrapped-native known for this chain; aborting native sell"); return
+                    print("[wrap] no wrapped-native known for this chain; aborting native sell")
+                    return SwapOutcome(ok=False, route="camelot", reason="no_wrapped_native")
                 if os.getenv("AUTO_WRAP_NATIVE", "1").strip().lower() not in {"0", "false", "no"}:
                     sell_raw_adj, _reserve = self._apply_wrap_gas_buffer(
                         chain=ch, route_hint="camelot", requested_wrap_wei=int(sell_raw),
                         assume_needs_approval=True
                     )
                     if sell_raw_adj <= 0:
-                        print("[ERR] Not enough native to cover gas after reserve; aborting"); return
+                        print("[ERR] Not enough native to cover gas after reserve; aborting")
+                        return SwapOutcome(ok=False, route="camelot", reason="insufficient_native_for_gas")
                     if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                        print("[ERR] auto-wrap failed"); return
+                        print("[ERR] auto-wrap failed")
+                        return SwapOutcome(ok=False, route="camelot", reason="auto_wrap_failed")
                     sell_raw = int(sell_raw_adj)
                 sell = wn
 
@@ -520,13 +675,15 @@ class SwapService:
                     ch, sell, buy, int(sell_raw),
                     slippage_bps=slippage_bps,
                 )
-                if self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw):
-                    return
+                outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw)
+                if outcome.ok or outcome.broadcast:
+                    return outcome
                 print("[CamelotV2] failed.")
             except Exception as e:
                 print(f"[CamelotV2] error: {e!r}")
+                outcome = SwapOutcome(ok=False, route="camelot", reason=f"error:{e!r}")
             print("[ERR] All routes failed.")
-            return
+            return outcome
 
         # =========================
         # ROUTE_ONLY = Sushi V2  (treat as multi-chain if your SushiV2Local supports it)
@@ -534,20 +691,24 @@ class SwapService:
         if _ro in {"sushi", "sushiv2", "sushi-v2", "sushiswap"}:
             print("[router] ROUTE_ONLY=sushi — trying Sushi V2 only")
             if is_native(buy):
-                print("Sushi expects ERC-20 addresses; 'buy' cannot be native."); return
+                print("Sushi expects ERC-20 addresses; 'buy' cannot be native.")
+                return SwapOutcome(ok=False, route="sushi", reason="native_buy_unsupported")
             if is_native(sell):
                 wn = self._wnative_for_chain(ch)
                 if not wn:
-                    print("[wrap] no wrapped-native known for this chain; aborting native sell"); return
+                    print("[wrap] no wrapped-native known for this chain; aborting native sell")
+                    return SwapOutcome(ok=False, route="sushi", reason="no_wrapped_native")
                 if os.getenv("AUTO_WRAP_NATIVE", "1").strip().lower() not in {"0", "false", "no"}:
                     sell_raw_adj, _reserve = self._apply_wrap_gas_buffer(
                         chain=ch, route_hint="sushi", requested_wrap_wei=int(sell_raw),
                         assume_needs_approval=True
                     )
                     if sell_raw_adj <= 0:
-                        print("[ERR] Not enough native to cover gas after reserve; aborting"); return
+                        print("[ERR] Not enough native to cover gas after reserve; aborting")
+                        return SwapOutcome(ok=False, route="sushi", reason="insufficient_native_for_gas")
                     if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                        print("[ERR] auto-wrap failed"); return
+                        print("[ERR] auto-wrap failed")
+                        return SwapOutcome(ok=False, route="sushi", reason="auto_wrap_failed")
                     sell_raw = int(sell_raw_adj)
                 sell = wn
 
@@ -556,13 +717,15 @@ class SwapService:
                     ch, sell, buy, int(sell_raw),
                     slippage_bps=slippage_bps,
                 )
-                if self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw):
-                    return
+                outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw)
+                if outcome.ok or outcome.broadcast:
+                    return outcome
                 print("[SushiV2] failed.")
             except Exception as e:
                 print(f"[SushiV2] error: {e!r}")
+                outcome = SwapOutcome(ok=False, route="sushi", reason=f"error:{e!r}")
             print("[ERR] All routes failed.")
-            return
+            return outcome
 
         # =========================
         # Normal order: on-chain routes first; 0x only if explicitly enabled
@@ -595,23 +758,26 @@ class SwapService:
                 print(f"[0x] to={tx.get('to')} value={val_int} gas~{gas_hint or 'est.'}")
                 txh = self.bridge.send_prebuilt_tx_from_0x(ch, tx, fee_scope="swap")
                 print(f"[0x] broadcast tx={txh}")
-                try:
-                    rc = w3.eth.wait_for_transaction_receipt(txh)
-                    ok = int(rc.get("status", 0)) == 1
-                    print(f"[0x] status={'success' if ok else 'failed'} gasUsed={rc.get('gasUsed')}")
-                except Exception as e:
-                    print(f"[0x] wait/pending: {e!r} (not attempting fallbacks)")
-                return
+                confirmed = self._confirm_receipt(ch, txh)
+                print(f"[0x] status={'success' if confirmed else ('unknown' if confirmed is None else 'failed')} "
+                      "(not attempting fallbacks)")
+                return SwapOutcome(
+                    ok=bool(confirmed), broadcast=True, tx_hash=txh, route="0x",
+                    confirmed=confirmed,
+                    reason="" if confirmed else ("receipt_unknown" if confirmed is None else "reverted"),
+                )
             except Exception as e:
                 print(f"[0x] error before broadcast: {e!r}")
 
         # Local DEX fallbacks expect ERC-20 addresses; auto-wrap native now if needed
         if is_native(buy):
-            print("Local DEX fallbacks expect ERC-20 addresses; 'buy' cannot be native."); return
+            print("Local DEX fallbacks expect ERC-20 addresses; 'buy' cannot be native.")
+            return SwapOutcome(ok=False, reason="native_buy_unsupported")
         if is_native(sell):
             wn = self._wnative_for_chain(ch)
             if not wn:
-                print("[wrap] no wrapped-native known for this chain; aborting native sell"); return
+                print("[wrap] no wrapped-native known for this chain; aborting native sell")
+                return SwapOutcome(ok=False, reason="no_wrapped_native")
             if os.getenv("AUTO_WRAP_NATIVE","1").strip().lower() not in {"0","false","no"}:
                 # we will try Uniswap first in fallbacks — reserve for that route
                 sell_raw_adj, _reserve = self._apply_wrap_gas_buffer(
@@ -619,12 +785,22 @@ class SwapService:
                     assume_needs_approval=True
                 )
                 if sell_raw_adj <= 0:
-                    print("[ERR] Not enough native to cover gas after reserve; aborting"); return
+                    print("[ERR] Not enough native to cover gas after reserve; aborting")
+                    return SwapOutcome(ok=False, reason="insufficient_native_for_gas")
                 if not self._wrap_native(ch, wn, int(sell_raw_adj)):
-                    print("[ERR] auto-wrap failed"); return
+                    print("[ERR] auto-wrap failed")
+                    return SwapOutcome(ok=False, reason="auto_wrap_failed")
                 sell_raw = int(sell_raw_adj)
             sell = wn
 
+        # Each fallback below may only run because the one before it never got
+        # a transaction into the mempool. `outcome.broadcast` is the guard: a
+        # swap that broadcast and then lost its receipt to a flaky RPC has
+        # already spent the money, so retrying it on Camelot would spend it
+        # twice. On Base this was invisible (Camelot and Sushi are both
+        # unconfigured there); on Arbitrum, where all three routes resolve, it
+        # would have sent three swaps for one decision.
+        attempts: list[SwapOutcome] = []
 
         # 2) Uniswap V3
         try:
@@ -633,12 +809,14 @@ class SwapService:
                 slippage_bps=slippage_bps,
                 recipient=self.bridge.acct.address,
             )
-            if self._try_local_provider(name="UniswapV3", q=q1, chain=ch, sell_token=sell, sell_raw=sell_raw):
-                return
-            else:
-                print("[UniswapV3] failed, trying Camelot…")
+            outcome = self._try_local_provider(name="UniswapV3", q=q1, chain=ch, sell_token=sell, sell_raw=sell_raw)
+            attempts.append(outcome)
+            if outcome.ok or outcome.broadcast:
+                return outcome
+            print("[UniswapV3] failed, trying Camelot…")
         except Exception as e:
             print(f"[UniswapV3] fallback: {e}")
+            attempts.append(SwapOutcome(ok=False, route="uniswap", reason=f"error:{e!r}"))
 
         # 3) Camelot V2 (multi-chain via configured router)
         try:
@@ -646,12 +824,14 @@ class SwapService:
                 ch, sell, buy, int(sell_raw),
                 slippage_bps=slippage_bps,
             )
-            if self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw):
-                return
-            else:
-                print("[CamelotV2] failed, trying SushiV2…")
+            outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw)
+            attempts.append(outcome)
+            if outcome.ok or outcome.broadcast:
+                return outcome
+            print("[CamelotV2] failed, trying SushiV2…")
         except Exception as e:
             print(f"[CamelotV2] fallback: {e}")
+            attempts.append(SwapOutcome(ok=False, route="camelot", reason=f"error:{e!r}"))
 
         # 4) Sushi V2
         try:
@@ -659,9 +839,17 @@ class SwapService:
                 ch, sell, buy, int(sell_raw),
                 slippage_bps=slippage_bps,
             )
-            if self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw):
-                return
+            outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw)
+            attempts.append(outcome)
+            if outcome.ok or outcome.broadcast:
+                return outcome
         except Exception as e:
             print(f"[SushiV2] failed: {e!r}")
+            attempts.append(SwapOutcome(ok=False, route="sushi", reason=f"error:{e!r}"))
 
         print("[ERR] All routes failed.")
+        return SwapOutcome(
+            ok=False,
+            broadcast=False,
+            reason="all_routes_failed:" + "; ".join(f"{a.route or '?'}={a.reason}" for a in attempts),
+        )

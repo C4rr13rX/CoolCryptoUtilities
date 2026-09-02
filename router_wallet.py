@@ -1425,7 +1425,12 @@ class UltraSwapBridge:
         stx = self.acct.sign_transaction(tx)
         raw = getattr(stx, "rawTransaction", None) or getattr(stx, "raw_transaction", None) or getattr(stx, "raw", None) or stx
         txh = w3.eth.send_raw_transaction(raw)
-        tx_hash = txh.hex() if hasattr(txh, "hex") else w3.to_hex(txh)
+        # HexBytes.hex() dropped its "0x" prefix in hexbytes>=1.0, so this
+        # branch returned a 64-character string. Measured 2026-09-02: the real
+        # bridge tx d8e3702845… came back unprefixed, which is not a tx hash
+        # any explorer, any LI.FI /status call, or any 66-char audit will match.
+        # w3.to_hex normalises both shapes.
+        tx_hash = w3.to_hex(txh)
 
         out: Dict[str, Any] = {"preview": pv.__dict__, "txHash": tx_hash}
 
