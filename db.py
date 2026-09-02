@@ -8,7 +8,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 try:
     import psycopg
@@ -699,6 +699,40 @@ class TradingDatabase:
             return json.loads(row["value"])
         except Exception:
             return None
+
+    def get_json_many(self, keys: Sequence[str]) -> Dict[str, Any]:
+        """Read many KV keys under a SINGLE acquisition of the database lock.
+
+        Callers that walk a date range per symbol otherwise pay one lock
+        round trip per cell. Every other thread in the process queues behind
+        those, so a wide read turns into a system-wide stall.
+        """
+        out: Dict[str, Any] = {}
+        wanted = [str(k) for k in keys]
+        if not wanted:
+            return out
+        with self._cursor() as cur:
+            for key in wanted:
+                cur.execute("SELECT value FROM kv_store WHERE key=?", (key,))
+                row = cur.fetchone()
+                if not row or row["value"] is None:
+                    continue
+                try:
+                    out[key] = json.loads(row["value"])
+                except Exception:
+                    continue
+        return out
+
+    def set_json_many(self, payloads: Mapping[str, Any]) -> None:
+        """Write many KV keys in one transaction, one lock acquisition."""
+        if not payloads:
+            return
+        rows = [(str(k), json.dumps(v or {})) for k, v in payloads.items()]
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO kv_store(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                rows,
+            )
 
     def set_control_flag(self, key: str, value: Any) -> None:
         with self._conn:

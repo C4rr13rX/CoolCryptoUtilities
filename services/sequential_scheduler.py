@@ -74,10 +74,24 @@ class Task:
     runs: int = 0
     failures: int = 0
     deferrals: int = 0
+    overruns: int = 0
     total_sec: float = 0.0
+
+    #: The worker from the most recent execution. A timed-out task is ABANDONED,
+    #: not killed, so this thread can outlive the join that gave up on it.
+    thread: Optional[threading.Thread] = field(default=None, repr=False)
 
     def due(self, now: float) -> bool:
         return self.interval_sec <= 0 or (now - self.last_run) >= self.interval_sec
+
+    def is_running(self) -> bool:
+        """Is the previous execution of this task still alive?
+
+        Timing out only releases the SCHEDULER; the abandoned worker keeps
+        running. Starting a second one on top of it is how a slow task turns
+        into an unbounded pile of threads.
+        """
+        return self.thread is not None and self.thread.is_alive()
 
 
 @dataclass
@@ -139,6 +153,7 @@ class SequentialScheduler:
         self._on_event = on_event
         self.cycles = 0
         self.deferred_total = 0
+        self.overrun_total = 0
 
     # -- registration -------------------------------------------------------
 
@@ -228,6 +243,20 @@ class SequentialScheduler:
             if not self._runnable(task, pressure, now):
                 deferred.append(task.name)
                 continue
+            if task.is_running():
+                # The previous run timed out and was abandoned but is still
+                # working. Stacking another copy on top of it multiplies
+                # contention for whatever it is stuck on, which makes the next
+                # run slower still -- the feedback loop that ends in hundreds
+                # of live threads fighting over one lock.
+                task.overruns += 1
+                self.overrun_total += 1
+                deferred.append(task.name)
+                self._emit(
+                    "task_overrun",
+                    {"task": task.name, "running_for": round(now - task.last_run, 1)},
+                )
+                continue
             self._execute(task)
             ran.append(task.name)
         self.cycles += 1
@@ -254,13 +283,16 @@ class SequentialScheduler:
                     error[0] = exc
 
             thread = threading.Thread(target=_target, name="seq-%s" % task.name, daemon=True)
+            task.thread = thread
             thread.start()
             thread.join(timeout=max(1.0, task.timeout_sec))
             if thread.is_alive():
                 # Do not kill it -- the thread is daemon and will finish or die
                 # with the process. Recording the timeout keeps the SCHEDULER
                 # moving, which is the whole point: one stuck task must not
-                # stop the rest of the system.
+                # stop the rest of the system. The task keeps a handle on the
+                # abandoned worker so the next pass can decline to start a
+                # second one while this is still going.
                 task.last_ok = False
                 task.last_error = "timeout after %.0fs" % task.timeout_sec
                 task.failures += 1

@@ -288,12 +288,14 @@ def _load_seen_entries(
 ) -> Tuple[Set[str], Set[str]]:
     seen_urls: Set[str] = set()
     seen_titles: Set[str] = set()
-    for day_dt in _iter_days(start_dt, end_dt):
-        day = day_dt.date().isoformat()
-        for key in symbol_keys:
-            entry = db.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day}") or {}
-            seen_urls.update(entry.get("urls") or [])
-            seen_titles.update(entry.get("titles") or [])
+    wanted = [
+        f"{NEWS_LOG_PREFIX}:{key}:{day_dt.date().isoformat()}"
+        for day_dt in _iter_days(start_dt, end_dt)
+        for key in symbol_keys
+    ]
+    for entry in db.get_json_many(wanted).values():
+        seen_urls.update(entry.get("urls") or [])
+        seen_titles.update(entry.get("titles") or [])
     return seen_urls, seen_titles
 
 
@@ -321,11 +323,18 @@ def _record_news_attempt(
 ) -> None:
     grouped = _group_items_by_day(items)
     now_iso = datetime.now(timezone.utc).isoformat()
-    for day_dt in _iter_days(start_dt, end_dt):
-        day_str = day_dt.date().isoformat()
+    days = [day_dt.date().isoformat() for day_dt in _iter_days(start_dt, end_dt)]
+    # One read and one write for the whole window: the per-cell round trips this
+    # replaces held the global database lock long enough to stall the feed.
+    existing_all = db.get_json_many(
+        [f"{NEWS_LOG_PREFIX}:{key}:{day}" for day in days for key in symbol_keys]
+    )
+    updates: Dict[str, Any] = {}
+    for day_str in days:
         day_items = grouped.get(day_str, [])
         for key in symbol_keys:
-            existing = db.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
+            kv_key = f"{NEWS_LOG_PREFIX}:{key}:{day_str}"
+            existing = existing_all.get(kv_key) or {}
             urls = set(existing.get("urls") or [])
             titles = set(existing.get("titles") or [])
             sources = existing.get("sources") or {}
@@ -341,7 +350,7 @@ def _record_news_attempt(
                     sources[source] = sorted(source_urls)
                 if title:
                     titles.add(title)
-            payload = {
+            updates[kv_key] = {
                 "symbol": key,
                 "date": day_str,
                 "urls": sorted(urls),
@@ -350,7 +359,7 @@ def _record_news_attempt(
                 "attempts": attempts,
                 "updated": now_iso,
             }
-            db.set_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}", payload)
+    db.set_json_many(updates)
 
 
 def _summarize_sources(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -847,13 +856,21 @@ def collect_news_for_files(
         except Exception:
             pass
     sparse_days: List[datetime] = []
-    for day_dt in _iter_days(start_dt, end_dt):
+    candidate_days = [
+        day_dt for day_dt in _iter_days(start_dt, end_dt)
+        if items_by_day.get(day_dt.date().isoformat(), 0) < min_articles_per_day
+    ]
+    attempts_all = database.get_json_many(
+        [
+            f"{NEWS_LOG_PREFIX}:{key}:{day_dt.date().isoformat()}"
+            for day_dt in candidate_days
+            for key in symbol_keys
+        ]
+    )
+    for day_dt in candidate_days:
         day_str = day_dt.date().isoformat()
-        count = items_by_day.get(day_str, 0)
-        if count >= min_articles_per_day:
-            continue
         for key in symbol_keys:
-            entry = database.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
+            entry = attempts_all.get(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
             if int(entry.get("attempts", 0)) < max_gap_retries:
                 sparse_days.append(day_dt)
                 break
@@ -1080,14 +1097,22 @@ def collect_news_for_terms(
         except Exception:
             pass
     sparse_days: List[datetime] = []
-    for day_dt in _iter_days(start, end):
+    candidate_days = [
+        day_dt for day_dt in _iter_days(start, end)
+        if items_by_day.get(day_dt.date().isoformat(), 0) < min_articles_per_day
+    ]
+    attempts_all = database.get_json_many(
+        [
+            f"{NEWS_LOG_PREFIX}:{key}:{day_dt.date().isoformat()}"
+            for day_dt in candidate_days
+            for key in symbol_keys
+        ]
+    )
+    for day_dt in candidate_days:
         day_str = day_dt.date().isoformat()
-        count = items_by_day.get(day_str, 0)
-        if count >= min_articles_per_day:
-            continue
         # Check attempt count — don't keep retrying forever
         for key in symbol_keys:
-            entry = database.get_json(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
+            entry = attempts_all.get(f"{NEWS_LOG_PREFIX}:{key}:{day_str}") or {}
             if int(entry.get("attempts", 0)) < max_gap_retries:
                 sparse_days.append(day_dt)
                 break

@@ -12,6 +12,7 @@ stays usable.
 
 from __future__ import annotations
 
+import threading
 import time
 import unittest
 from unittest import mock
@@ -148,6 +149,90 @@ class IsolationTest(unittest.TestCase):
             s.run_once()
             s.run_once()
         self.assertEqual(len(log), 1)
+
+
+class OverrunTest(unittest.TestCase):
+    """A timed-out task is abandoned, not killed. It must not be re-spawned.
+
+    Observed 2026-09-02: data_ingest kept exceeding its 90s timeout, and every
+    following cycle started ANOTHER copy on top of the one still running. 77
+    live "seq-data_ingest" threads accumulated, all queued on the single
+    database lock, and the trading cycle starved behind them -- 2 ticks and 1
+    cycle in ten minutes, no ghost trade for three hours.
+    """
+
+    def _blocked_task(self, release):
+        def _fn():
+            release.wait(timeout=30)
+        # critical=True keeps the test independent of the ambient pressure on
+        # whatever machine runs it, and pins that the guard covers the trade
+        # path too -- a critical task must never be double-started either.
+        return Task("slow", _fn, category="trade", timeout_sec=1.0, critical=True)
+
+    def test_timed_out_task_is_not_started_again_while_still_running(self):
+        release = threading.Event()
+        task = self._blocked_task(release)
+        s = SequentialScheduler()
+        s.add(task)
+        try:
+            first = s.run_once()
+            self.assertEqual(first["ran"], ["slow"])
+            self.assertTrue(task.is_running(), "worker should have outlived the join")
+
+            # Several more passes while the abandoned worker is still alive.
+            for _ in range(5):
+                summary = s.run_once()
+                self.assertEqual(summary["ran"], [], "must not stack a second copy")
+                self.assertEqual(summary["deferred"], ["slow"])
+
+            self.assertEqual(task.runs, 1, "exactly one worker was ever started")
+            self.assertEqual(task.overruns, 5)
+            self.assertEqual(s.overrun_total, 5)
+        finally:
+            release.set()
+
+    def test_task_runs_again_once_the_previous_worker_finishes(self):
+        release = threading.Event()
+        task = self._blocked_task(release)
+        s = SequentialScheduler()
+        s.add(task)
+        try:
+            s.run_once()
+            self.assertEqual(s.run_once()["ran"], [], "still running -> skipped")
+        finally:
+            release.set()
+        task.thread.join(timeout=5)
+        self.assertFalse(task.is_running())
+        # The guard is a skip, not a permanent disable.
+        self.assertEqual(s.run_once()["ran"], ["slow"])
+        self.assertEqual(task.runs, 2)
+
+    def test_overrun_is_reported_so_the_stall_is_visible(self):
+        events = []
+        release = threading.Event()
+        task = self._blocked_task(release)
+        s = SequentialScheduler(on_event=lambda name, payload: events.append((name, payload)))
+        s.add(task)
+        try:
+            s.run_once()
+            s.run_once()
+        finally:
+            release.set()
+        names = [name for name, _ in events]
+        self.assertIn("task_timeout", names)
+        self.assertIn("task_overrun", names)
+        payload = dict(events[names.index("task_overrun")][1])
+        self.assertEqual(payload["task"], "slow")
+        self.assertIn("running_for", payload)
+
+    def test_a_fast_task_is_never_treated_as_an_overrun(self):
+        log = []
+        s = SequentialScheduler()
+        s.add(Task("quick", _rec(log, "quick"), category="trade", critical=True))
+        for _ in range(4):
+            self.assertEqual(s.run_once()["ran"], ["quick"])
+        self.assertEqual(len(log), 4)
+        self.assertEqual(s.overrun_total, 0)
 
 
 class StatusTest(unittest.TestCase):
