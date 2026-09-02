@@ -142,6 +142,67 @@ class MoneyButtonStrategy(Strategy):
             return self._decline("feed_frozen")
 
         # ------------------------------------------------------------------
+        # Reject a feed too coarse to measure the trade this lane makes.
+        #
+        # The momentum windows below scale to the sample gap, which keeps them
+        # non-empty -- but nothing tied that stretching back to the HOLD, which
+        # is fixed at ~12 minutes. On a sparse feed the two silently decouple:
+        # the strategy confirms a multi-hour trend and then holds for twelve
+        # minutes, and a three-hour trend says nothing about the next twelve.
+        #
+        # Both bounds are structural rather than tuned: a window must fit
+        # inside the data it is computed from, and a hold must contain at least
+        # one price.
+        #
+        # Worth recording what these do NOT catch, because the investigation
+        # that added them started from a wrong premise. BSTONK-USDC produced 21
+        # of the lane's 43 fires in 48h and has a MEAN tick gap of 895 seconds,
+        # which looked like a symbol being traded on a feed too coarse to
+        # measure it. It is not. Measured at the moment of each fire, BSTONK's
+        # in-window median gap is 42 seconds over 32-59 samples, and every one
+        # of its 21 fires reached its exit tick in a median of 12.7 minutes
+        # against an intended 12 -- none took even twice as long.
+        #
+        # The 895s mean averages over long stretches where the symbol was not
+        # being streamed at all. `too_few_samples` and `window_too_short`
+        # already exclude those stretches, so the strategy only ever evaluates
+        # BSTONK while its feed is dense. The existing guards were doing their
+        # job; the mean was the misleading number.
+        #
+        # These two still earn their place -- they fired 15 times in 6010
+        # evaluations on real data, each a case where the confirmation window
+        # would have silently truncated or the hold held no price -- but they
+        # changed no fire and no outcome. **Judge feed density inside the
+        # evaluation window, never by an average over the whole history.**
+        # ------------------------------------------------------------------
+        median_gap = float(np.median(np.diff(ts))) if ts.size > 1 else 60.0
+        hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 12.0, lo=5.0, hi=15.0)
+        # ONE tick inside the hold, not two.
+        #
+        # Two was the first attempt and it rejected the production feed
+        # wholesale: the measured rate is 0.13-0.17 ticks/min, so gaps run
+        # 360-460s against a 720s hold -- about 1.8 ticks per hold. Demanding
+        # two would have made this lane unfireable on the only feed it has,
+        # which is the same class of mistake as the `min_samples = 20` that
+        # once made it permanently unevaluable.
+        #
+        # One is the structural minimum and the one that can be argued from
+        # first principles: below it there is no price inside the holding
+        # period at all, so the position cannot be exited when intended and
+        # whatever gets recorded is the next tick whenever it arrives.
+        min_ticks_in_hold = env_float(
+            "MONEY_BUTTON_MIN_TICKS_PER_HOLD", 1.0, lo=1.0, hi=10.0
+        )
+        if median_gap * min_ticks_in_hold > hold_minutes * 60.0:
+            return self._decline("feed_too_sparse_for_hold")
+        # The confirmation windows are 1x/2x/6x of `unit`; if the longest does
+        # not fit inside the lookback it is not a 6x window, it is the whole
+        # window wearing a label.
+        unit = max(5.0 * 60.0, 2.0 * median_gap)
+        if unit * 6.0 > self.LOOKBACK_SEC:
+            return self._decline("window_exceeds_lookback")
+
+        # ------------------------------------------------------------------
         # Cost floor. This is the whole point of the strategy.
         # ------------------------------------------------------------------
         slippage = env_float("MONEY_BUTTON_SLIPPAGE", 0.001, lo=0.0, hi=0.05)
@@ -173,8 +234,8 @@ class MoneyButtonStrategy(Strategy):
         # Each window is therefore at least two sample gaps wide, which is the
         # minimum that can express a change at all, while keeping the original
         # 1x/2x/6x proportions between short, medium and long.
-        median_gap = float(np.median(np.diff(ts))) if ts.size > 1 else 60.0
-        unit = max(5.0 * 60.0, 2.0 * median_gap)
+        # `median_gap` and `unit` are computed above, where the feed-density
+        # guard needs them.
         r5 = self._return_over(ts, prices, unit)
         r10 = self._return_over(ts, prices, unit * 2.0)
         r30 = self._return_over(ts, prices, unit * 6.0)
@@ -207,7 +268,8 @@ class MoneyButtonStrategy(Strategy):
         # bound would have produced a strategy that is honest and never trades,
         # which teaches nothing; the fee floor, not the clock, is what makes
         # this lane safe.
-        hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 12.0, lo=5.0, hi=15.0)
+        # `hold_minutes` is read above, where the feed-density guard checks the
+        # feed can actually resolve it.
         projected = float(np.expm1(slope_per_min * hold_minutes))
         if projected <= 0.0:
             return self._decline("projection_not_positive")

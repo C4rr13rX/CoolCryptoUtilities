@@ -327,5 +327,99 @@ class FrozenFeedGuardScalesWithTheWindow(unittest.TestCase):
                 self.assertGreaterEqual(required, 3)
 
 
+class FeedMustResolveTheTradeItIsAsked(unittest.TestCase):
+    """A window must fit its data, and a hold must contain a price.
+
+    The momentum windows scale to the sample gap so they are never empty, but
+    nothing tied that stretching back to the HOLD, which is fixed at ~12
+    minutes. On a coarse enough feed the two decouple silently: the strategy
+    confirms a multi-hour trend and then holds for twelve minutes.
+
+    Both guards are structural. There is no threshold to pick: a 6x window
+    either fits inside LOOKBACK_SEC or it is the whole window wearing a label,
+    and a holding period either contains a price or the position cannot be
+    exited when intended.
+
+    Calibration note, because the first attempt got this wrong: requiring TWO
+    ticks inside the hold rejected the production feed wholesale. The measured
+    rate is 0.13-0.17 ticks/min, so gaps run 360-460s against a 720s hold --
+    about 1.8 ticks per hold. One tick is the structural minimum and the only
+    bound that can be argued from first principles.
+    """
+
+    @staticmethod
+    def _evaluate(prices, gap_sec):
+        state = make_state(list(prices), volume=5000.0, dt=gap_sec)
+        return MoneyButtonStrategy().evaluate(
+            state, make_ctx(float(prices[-1]), 0.0065)
+        )
+
+    def _decline_reason(self, prices, gap_sec):
+        strategy = MoneyButtonStrategy()
+        state = make_state(list(prices), volume=5000.0, dt=gap_sec)
+        strategy.evaluate(state, make_ctx(float(prices[-1]), 0.0065))
+        return strategy.last_decline
+
+    def test_the_production_feed_rate_is_not_rejected(self):
+        """The regression that matters: 0.13-0.17 ticks/min must still trade.
+
+        A guard that blocks the only feed this runs on is the same class of
+        mistake as the min_samples=20 that once made the lane unevaluable.
+        """
+        for gap in (360.0, 400.0, 460.0):
+            with self.subTest(gap_sec=gap):
+                self.assertIsNotNone(
+                    self._evaluate(np.linspace(1.0, 1.25, 12), gap),
+                    "a 25%% trend at a %.0fs gap is the production case" % gap,
+                )
+
+    def test_a_hold_that_contains_no_price_is_refused(self):
+        """Gap wider than the 12-minute hold: nothing to exit against.
+
+        740s is used rather than something far coarser because past ~900s the
+        lookback stops holding `min_samples` and `too_few_samples` refuses
+        first -- which is correct, but tests a different guard than this one.
+        """
+        self.assertEqual(
+            self._decline_reason(np.linspace(1.0, 1.30, 16), 740.0),
+            "feed_too_sparse_for_hold",
+        )
+
+    def test_a_confirmation_window_longer_than_the_lookback_is_refused(self):
+        """unit*6 > LOOKBACK_SEC means r30 silently becomes the whole window.
+
+        The binding range is a narrow one -- gaps of about 610-730s, where the
+        6x window no longer fits but the hold still contains a tick -- so the
+        fixture is checked against the arithmetic rather than assumed.
+        """
+        strategy = MoneyButtonStrategy()
+        gap = 650.0
+        unit = max(5.0 * 60.0, 2.0 * gap)
+        self.assertGreater(
+            unit * 6.0, strategy.LOOKBACK_SEC,
+            "fixture must actually exceed the lookback for this to test anything",
+        )
+        self.assertLessEqual(
+            gap, 12.0 * 60.0,
+            "fixture must still resolve the hold, or the other guard fires first",
+        )
+        self.assertEqual(
+            self._decline_reason(np.linspace(1.0, 1.30, 16), gap),
+            "window_exceeds_lookback",
+        )
+
+    def test_a_gap_that_fits_both_bounds_still_trades(self):
+        """600s fits the 6x window exactly and must not be refused by these."""
+        reason = self._decline_reason(np.linspace(1.0, 1.30, 16), 600.0)
+        self.assertNotIn(
+            reason, {"feed_too_sparse_for_hold", "window_exceeds_lookback"},
+            "the boundary case must fall through to the edge gates, got %r" % reason,
+        )
+
+    def test_the_guards_do_not_fire_on_a_dense_feed(self):
+        """BASECAT-USDC's real shape: 26s median gap, 52 samples."""
+        self.assertIsNotNone(self._evaluate(np.linspace(1.0, 1.25, 52), 26.0))
+
+
 if __name__ == "__main__":
     unittest.main()
