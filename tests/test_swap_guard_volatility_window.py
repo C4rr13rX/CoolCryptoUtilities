@@ -255,3 +255,69 @@ def test_too_little_history_does_not_refuse_the_price() -> None:
     """Unmeasured is not a violation -- the rule the whole guard keeps."""
     validator = _validator(_StubDB([]))
     assert validator._price_scale_offset(_series(_walk([1.0, 1.01])), 1.0) is None
+
+
+def test_a_frozen_feed_is_not_scored_as_the_calmest_market() -> None:
+    """A stuck price must not earn the guard's best possible grade.
+
+    This is the hole the four fixes above opened. Correcting the window turned
+    SPACEX-USDC -- 35 ticks over 100 minutes, every one of them exactly
+    1.52588956496421e-09 -- from ``volatility = 6.6e10`` into ``0.0``, i.e.
+    from the most-refused pair on the book into the least-refused one, while
+    the live path was actively proposing entries on it.
+    """
+    frozen = _walk([1.52588956496421e-09] * 35, spacing=172.0)
+    db = _StubDB(_series(frozen))
+    validator = _validator(db)
+
+    vol, measurable, diag = validator._estimate_volatility(_series(frozen))
+
+    assert vol == 0.0
+    assert measurable is False, "a price that never moved is not low volatility"
+    assert diag["vol_frozen"] == 1.0
+
+    allowed, metrics, reasons = validator.validate(
+        symbol="SPACEX-USDC", route=["SPACEX", "USDC"],
+        trade_size=1.0, price=1.52588956496421e-09, volume=0.0,
+    )
+    assert allowed is False
+    # Named for the fault that is actually there: the feed, not the market,
+    # and not the mixed-scale case which is repaired somewhere else.
+    assert "feed_frozen" in reasons
+    assert "volatility" not in reasons
+    assert "volatility_unmeasurable" not in reasons
+    assert metrics["volatility_measurable"] == 0.0
+
+
+def test_a_briefly_flat_price_is_not_called_frozen() -> None:
+    """Unmeasured is not a violation -- the rule the whole guard keeps.
+
+    A handful of identical prints over a couple of minutes is a quiet feed,
+    not a stuck one. WOJAK-USDC sat at one price for 507s on 2026-09-02 and is
+    deliberately below the bound: the verdict needs an observation behind it.
+    """
+    brief = _walk([8.26609e-07] * 6, spacing=45.0)
+    validator = _validator(_StubDB([]))
+
+    vol, measurable, diag = validator._estimate_volatility(_series(brief))
+
+    assert vol == 0.0
+    assert measurable is True
+    assert "vol_frozen" not in diag
+
+
+def test_a_pair_that_moves_at_all_is_still_measurable() -> None:
+    """One real tick of movement is enough to make the window a measurement.
+
+    The frozen clause keys on exact equality across the window, so it must not
+    swallow a genuinely calm pair that nonetheless prints different numbers.
+    """
+    nearly_flat = _walk([1.0000, 1.0000, 1.0000, 1.0001, 1.0000,
+                         1.0000, 1.0000, 1.0000], spacing=200.0)
+    validator = _validator(_StubDB([]))
+
+    vol, measurable, diag = validator._estimate_volatility(_series(nearly_flat))
+
+    assert measurable is True
+    assert "vol_frozen" not in diag
+    assert vol < validator.max_volatility

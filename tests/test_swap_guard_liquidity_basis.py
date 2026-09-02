@@ -45,10 +45,18 @@ class _StubDB:
 
 
 def _samples(*, price, volume, n=40, spacing=300.0):
+    """A price series carrying ``volume``, which is what these tests vary.
+
+    The prices alternate by a tenth of a percent around ``price`` rather than
+    repeating it exactly. A perfectly constant series is a *stuck feed*, which
+    the volatility clause refuses under ``feed_frozen``; holding it constant
+    here would make every one of these liquidity assertions pass or fail for a
+    reason that has nothing to do with liquidity.
+    """
     now = time.time()
     return [
         {"ts": now - i * spacing, "chain": "base", "symbol": "T-USDC",
-         "price": price, "volume": volume}
+         "price": price * (1.001 if i % 2 else 0.999), "volume": volume}
         for i in range(n)
     ]
 

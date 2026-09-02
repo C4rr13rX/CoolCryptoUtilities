@@ -69,6 +69,17 @@ class SwapValidator:
         self.volatility_max_contamination = float(
             os.getenv("SWAP_GUARD_VOL_MAX_CONTAMINATION", "0.25")
         )
+        # A window that never moved is a stuck feed, not a calm market. Both
+        # bounds exist so the verdict needs an actual observation behind it:
+        # enough returns to have seen movement if there were any, over enough
+        # time that a pair being traded on a 5-30 minute horizon should have
+        # printed a different number at least once.
+        self.volatility_frozen_min_returns = float(
+            os.getenv("SWAP_GUARD_VOL_FROZEN_MIN_RETURNS", "4")
+        )
+        self.volatility_frozen_min_span_sec = float(
+            os.getenv("SWAP_GUARD_VOL_FROZEN_MIN_SPAN_SEC", "900")
+        )
         # How far the price we are about to trade at may sit from the pair's
         # own trailing median. Chosen from the measured distribution, not from
         # taste: over 11,249 ticks scored against their trailing 2h median,
@@ -176,10 +187,15 @@ class SwapValidator:
             allowed = False
             reasons.append("slippage")
         if not volatility_measurable:
-            # Refuse, but say the true thing: the window held more than one
-            # price scale, so there is no volatility to compare to the limit.
+            # Refuse, but say the true thing: either the window held more than
+            # one price scale, or it held one price and never left it. Neither
+            # is a volatility that can be compared to the limit, and they are
+            # different faults, so they get different names.
             allowed = False
-            reasons.append("volatility_unmeasurable")
+            if volatility_diag.get("vol_frozen"):
+                reasons.append("feed_frozen")
+            else:
+                reasons.append("volatility_unmeasurable")
         elif volatility > self.max_volatility:
             allowed = False
             reasons.append("volatility")
@@ -372,6 +388,32 @@ class SwapValidator:
         of the window has to be thrown out the series is not one asset's price
         history and the honest answer is that volatility is *unmeasurable*, so
         the guard still refuses -- under its own reason, not as "too volatile".
+
+        **A fifth defect, opened by the four fixes above.** Correcting the
+        window turned the reading on a *stuck* feed into 0.0 -- the safest
+        score the guard can produce -- so the pairs that are most obviously
+        broken became the ones most likely to be traded. Measured 2026-09-02
+        over the trailing two hours, 7 of the 20 streamed symbols with enough
+        ticks to score printed **one single price for the whole window**:
+
+            1KTO100M-USDC  17 ticks / 4054s   2.70676e-13
+            ARB-USDC       46 ticks / 6134s   5.33391e-07
+            BASED10-USDC   45 ticks / 5924s   5.52889e-07
+            MTGA-USDC      19 ticks / 3389s   8.55727e-06
+            SPACEX-USDC    35 ticks / 6018s   1.52589e-09
+            SPCX-USDC      34 ticks / 6582s   2.75805e-11
+            WOJAK-USDC     12 ticks /  507s   8.26609e-07
+
+        None of those is a price. ARB-USDC settles it: the frozen 5.33e-7 is
+        printed 79 times while ARB's real quote, 0.6491, appears 5 times -- the
+        wrong number by six orders of magnitude is the *majority* reading. And
+        SPACEX-USDC was one of only two symbols the live path was proposing
+        entries on at the time.
+
+        So a window that never moved is not low risk; it is a feed that is not
+        reporting, and the honest answer is again *unmeasurable*. It refuses
+        under ``feed_frozen`` rather than ``volatility_unmeasurable`` because a
+        stuck feed and a contaminated one are repaired in different places.
         """
         now = time.time()
         rows = sorted(
@@ -413,6 +455,19 @@ class SwapValidator:
         prices = prices[keep]
         if prices.size < 3:
             return 0.0, True, diag
+
+        span = float(stamps[-1] - stamps[0])
+        diag["vol_window_span_sec"] = span
+        if (
+            float(prices.size - 1) >= self.volatility_frozen_min_returns
+            and span >= self.volatility_frozen_min_span_sec
+            and float(prices.max()) == float(prices.min())
+        ):
+            # Not a calm market: the same number, repeated, for long enough
+            # that any live pair would have moved. Scoring it 0.0 would hand
+            # the guard's best grade to its worst input.
+            diag["vol_frozen"] = 1.0
+            return 0.0, False, diag
 
         gaps = np.diff(stamps)
         median_gap = float(np.median(gaps)) if gaps.size else 0.0
