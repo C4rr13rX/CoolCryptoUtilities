@@ -449,9 +449,29 @@ class SwapValidator:
             "vol_horizon_sec": self.volatility_horizon_sec,
         }
         if len(window) < 3:
-            # Nothing measured is not a violation, the same way an unmeasured
-            # volume is not zero liquidity.
-            return 0.0, True, diag
+            # Too few prints to form a dispersion at all.
+            #
+            # This used to return `measurable=True` on the reasoning that
+            # "nothing measured is not a violation, the same way an unmeasured
+            # volume is not zero liquidity". The analogy is right and the code
+            # did the opposite of it: the liquidity path keeps "unmeasured"
+            # distinct from "measured and fine" and falls back to an absolute
+            # notional bound (`liquidity_unmeasured`), whereas returning
+            # (0.0, True) here reports the volatility as successfully measured
+            # AND at its lowest possible value -- the guard's best grade, handed
+            # to its least-known input.
+            #
+            # Measured 2026-09-02 across the 40 most active symbols, 30 passed
+            # the volatility gate on a number that was never computed:
+            # VIRTUAL-USDC and MTGA-USDC on ZERO samples in the 2h window,
+            # BSTONK-USDC and AAVE-USDC on one. A pair we have seen once is not
+            # a calm pair, and $0.75 of real money should not be the instrument
+            # that finds out.
+            #
+            # Ghost is unaffected: validate() only runs when live trading is
+            # enabled, so this refuses spending, never observation.
+            diag["vol_insufficient_samples"] = 1.0
+            return 0.0, False, diag
 
         prices = np.array([price for _, price in window], dtype=float)
         median_price = float(np.median(prices))
@@ -468,7 +488,10 @@ class SwapValidator:
         stamps = np.array([ts for ts, _ in window], dtype=float)[keep]
         prices = prices[keep]
         if prices.size < 3:
-            return 0.0, True, diag
+            # Same as above, reached after the outlier filter rather than
+            # before it: whatever survived is too thin to score.
+            diag["vol_insufficient_samples"] = 1.0
+            return 0.0, False, diag
 
         span = float(stamps[-1] - stamps[0])
         diag["vol_window_span_sec"] = span
@@ -493,7 +516,21 @@ class SwapValidator:
         diag["vol_dropped_gaps"] = float(int(returns.size - int(adjacent.sum())))
         returns = returns[adjacent]
         if returns.size == 0 or median_gap <= 0:
-            return 0.0, True, diag
+            # Every return was discarded as a gap, so there is no adjacent move
+            # left to measure -- not one move of size zero.
+            #
+            # This is the branch that let the worst input in the database
+            # through. SPACEX-USDC carries two different assets under one
+            # ticker (239 prints near 7.4e-09 and 7 near 5.2e+02); the outlier
+            # filter correctly drops the seven, the gap filter then discards
+            # every surviving return, and the guard reported volatility 0.0,
+            # measurable -- the same series that read 6.6e10 before the outlier
+            # filter existed. A reading that swings between "6.6e10" and
+            # "perfectly calm" depending on which filter runs is not a
+            # measurement of anything, and it must not be allowed to authorise
+            # a swap.
+            diag["vol_no_adjacent_returns"] = 1.0
+            return 0.0, False, diag
 
         if (
             float(returns.size) >= self.volatility_frozen_min_returns

@@ -174,12 +174,73 @@ def test_a_genuinely_violent_pair_is_still_refused() -> None:
     assert "volatility" in reasons
 
 
-def test_too_little_history_is_not_a_violation() -> None:
-    """Unmeasured is not a violation -- the same rule the liquidity clause keeps."""
+def test_too_little_history_reads_as_unmeasured_not_as_calm() -> None:
+    """Unmeasured is not a violation -- but it is not a clean bill of health.
+
+    This test previously asserted `measurable is True` with `vol == 0.0`, on the
+    stated rule that "unmeasured is not a violation -- the same rule the
+    liquidity clause keeps". The principle is right; the citation was not. The
+    liquidity clause keeps `unmeasured` DISTINCT from `measured and fine`:
+
+        if liquidity_ratio is not None:
+            if liquidity_ratio > self.max_liquidity_ratio: ... "liquidity"
+        elif trade_usd > self.unknown_liquidity_max_usd:  ... "liquidity_unmeasured"
+
+    -- when it has no basis it says so and falls back to an absolute bound. The
+    volatility path did the opposite: `(0.0, True)` reports the number as
+    successfully measured AND at its lowest possible value, so
+    `volatility > max_volatility` is trivially false and the gate raises no
+    objection at all. Unmeasured was not merely "not a violation", it was the
+    guard's best possible grade.
+
+    Measured 2026-09-02 across the 40 most active symbols, 30 cleared the
+    volatility gate on a number that was never computed -- VIRTUAL-USDC and
+    MTGA-USDC on ZERO prints in the 2h window, BSTONK-USDC on one.
+
+    So the reading is now `measurable=False`, which routes to the
+    `volatility_unmeasurable` refusal the guard already has for exactly this.
+    It still is not scored as a violation: `vol` stays 0.0 and the
+    `volatility > threshold` branch is never reached.
+    """
     validator = _validator(_StubDB([]))
-    vol, measurable, _ = validator._estimate_volatility(_series(_walk([1.0, 1.01])))
-    assert measurable is True
+    vol, measurable, diag = validator._estimate_volatility(_series(_walk([1.0, 1.01])))
+    assert measurable is False
     assert vol == 0.0
+    assert diag.get("vol_insufficient_samples") == 1.0
+
+
+def test_unmeasurable_volatility_refuses_the_swap() -> None:
+    """A pair we have seen twice must not authorise real money."""
+    prices = [1.0, 1.01]
+    db = _StubDB(_series(_walk(prices)))
+    validator = _validator(db)
+
+    allowed, metrics, reasons = validator.validate(
+        symbol="T-USDC", route=["T", "USDC"],
+        trade_size=1.0, price=prices[-1], volume=0.0,
+    )
+
+    assert allowed is False
+    assert "volatility_unmeasurable" in reasons
+    # Refused for being unreadable, not for being violent: the threshold
+    # comparison never ran.
+    assert metrics["volatility_measurable"] == 0.0
+    assert "volatility" not in reasons
+
+
+def test_a_measurable_series_still_passes() -> None:
+    """The refusal above must not have closed the gate on real data.
+
+    Six symbols still measured cleanly when this landed (BASECAT, CBXRP, CBBTC,
+    AERO, COMP, UMIA) -- including the three atf_static trades most -- so the
+    live lane stays open to the pairs the feed actually resolves.
+    """
+    prices = [1.0, 1.002, 1.001, 1.003, 1.0025, 1.004, 1.0035, 1.005]
+    validator = _validator(_StubDB([]))
+
+    vol, measurable, _ = validator._estimate_volatility(_series(_walk(prices)))
+    assert measurable is True
+    assert 0.0 < vol <= validator.max_volatility
 
 
 def test_a_trade_price_at_the_wrong_scale_is_refused() -> None:
