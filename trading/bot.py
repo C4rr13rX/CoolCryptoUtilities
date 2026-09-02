@@ -1611,7 +1611,28 @@ class TradingBot:
                 from services.swap_service import SwapService  # type: ignore
             except Exception as exc:
                 return {"ok": False, "reason": f"swap_service_unavailable:{exc}", "dry_run": dry_run}
-            swapper = SwapService(self._bridge)
+            swapper = self._new_swapper()
+
+        def _land(op: Dict[str, Any], outcome: Any) -> None:
+            """File a completed swap under executed or skipped, by what it did.
+
+            These branches used to append to ``executed`` unconditionally, so a
+            swap that found no pool and never broadcast was reported to the bus
+            as a completed action. The hash is carried through so the caller's
+            record and the trading_ops row can be reconciled.
+            """
+            record = {
+                **op,
+                "dry_run": False,
+                "tx_hash": str(getattr(outcome, "tx_hash", "") or ""),
+                "route": str(getattr(outcome, "route", "") or ""),
+                "broadcast": bool(getattr(outcome, "broadcast", False)),
+            }
+            if getattr(outcome, "ok", False):
+                executed.append(record)
+            else:
+                record["reason"] = str(getattr(outcome, "reason", "") or "swap_failed")
+                skipped.append(record)
 
         try:
             self.portfolio.refresh(force=True)
@@ -1642,8 +1663,8 @@ class TradingBot:
                 if dry_run:
                     executed.append({**op, "dry_run": True})
                 else:
-                    swapper.swap(chain=focus_chain, sell=stable_addr, buy="native", amount_human=f"{amount:.6f}", slippage_bps=slippage)
-                    executed.append({**op, "dry_run": False})
+                    outcome = swapper.swap(chain=focus_chain, sell=stable_addr, buy="native", amount_human=f"{amount:.6f}", slippage_bps=slippage, purpose=name)
+                    _land(op, outcome)
                 continue
 
             if name == "swap_native_to_stable":
@@ -1667,8 +1688,8 @@ class TradingBot:
                 if dry_run:
                     executed.append({**op, "dry_run": True})
                 else:
-                    swapper.swap(chain=focus_chain, sell="native", buy=stable_addr, amount_human=f"{amount_native:.6f}", slippage_bps=slippage)
-                    executed.append({**op, "dry_run": False})
+                    outcome = swapper.swap(chain=focus_chain, sell="native", buy=stable_addr, amount_human=f"{amount_native:.6f}", slippage_bps=slippage, purpose=name)
+                    _land(op, outcome)
                 continue
 
             if name == "swap_to_stable":
@@ -1713,8 +1734,8 @@ class TradingBot:
                     if dry_run:
                         executed.append({**op, "dry_run": True})
                     else:
-                        swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{sell_qty:.6f}", slippage_bps=slippage)
-                        executed.append({**op, "dry_run": False})
+                        outcome = swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{sell_qty:.6f}", slippage_bps=slippage, purpose=name, symbol=holding.symbol)
+                        _land(op, outcome)
                     remaining = max(0.0, remaining - sell_usd)
                 continue
 
@@ -1742,8 +1763,8 @@ class TradingBot:
                     if dry_run:
                         executed.append({**op, "dry_run": True})
                     else:
-                        swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{float(holding.quantity):.6f}", slippage_bps=slippage)
-                        executed.append({**op, "dry_run": False})
+                        outcome = swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{float(holding.quantity):.6f}", slippage_bps=slippage, purpose=name, symbol=holding.symbol)
+                        _land(op, outcome)
                 continue
 
             skipped.append({"action": name, "reason": "unsupported"})
@@ -2531,6 +2552,72 @@ class TradingBot:
         except Exception as exc:
             print(f"[trading-bot] unable to initialise UltraSwapBridge: {exc}")
             return None
+
+    def _record_swap_outcome(self, outcome: Any, context: Dict[str, Any]) -> None:
+        """Write a trading_ops row for any swap that reached the mempool.
+
+        This is the single place a broadcast becomes evidence. Measured
+        2026-09-02: six transactions settled on Base (nonces 147-152) while
+        trading_ops held zero 66-character hashes, because six of the eight
+        ``swapper.swap(...)`` call sites discard the return value. Rather than
+        patch each one and rely on the next author remembering, SwapService
+        calls this for every swap it attempts.
+
+        Only broadcasts are recorded. A swap that never left -- no route, no
+        pool, insufficient gas -- has no hash and is not evidence of anything.
+        """
+        try:
+            if not bool(getattr(outcome, "broadcast", False)):
+                return
+            tx_hash = str(getattr(outcome, "tx_hash", "") or "")
+            if not tx_hash:
+                return
+            confirmed = getattr(outcome, "confirmed", None)
+            # An unreadable receipt is "unknown", never "failed": the money has
+            # left either way, and calling it failed is what let a settled swap
+            # be retried on another route.
+            status = (
+                "live-swap-settled" if confirmed is True
+                else "live-swap-reverted" if confirmed is False
+                else "live-swap-unconfirmed"
+            )
+            chain = str(context.get("chain") or "")
+            details = {
+                "tx_hash": tx_hash,
+                "route": str(getattr(outcome, "route", "") or ""),
+                "confirmed": confirmed,
+                "ok": bool(getattr(outcome, "ok", False)),
+                "reason": str(getattr(outcome, "reason", "") or ""),
+                "sell": str(context.get("sell") or ""),
+                "buy": str(context.get("buy") or ""),
+                "amount_human": str(context.get("amount_human") or ""),
+                "slippage_bps": context.get("slippage_bps"),
+                "purpose": str(context.get("purpose") or "unspecified"),
+                "explorer": f"https://basescan.org/tx/{tx_hash}" if chain == "base" else "",
+            }
+            for key in ("symbol", "strategy_id", "trade_id"):
+                if context.get(key):
+                    details[key] = str(context[key])
+            self.db.log_trade(
+                wallet="live",
+                chain=chain,
+                symbol=str(context.get("symbol") or f"{context.get('sell','')}->{context.get('buy','')}"),
+                action="swap",
+                status=status,
+                details=details,
+            )
+        except Exception as exc:  # bookkeeping must never break the money path
+            log_message("live-swap", f"failed to record swap outcome: {exc}", severity="error")
+
+    def _new_swapper(self) -> Any:
+        """Build a SwapService that records every broadcast it makes.
+
+        Always construct swappers through here. A bare ``SwapService(bridge)``
+        spends real money with no record of having done so.
+        """
+        from services.swap_service import SwapService  # type: ignore
+
+        return SwapService(self._bridge, recorder=self._record_swap_outcome)
 
     async def _run_wallet_sync(self, *, reason: str, discover: bool = False) -> None:
         """Refresh portfolio from local cache. Only hits external APIs when discover=True.
@@ -3947,7 +4034,7 @@ class TradingBot:
                 pre_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
                 pre_native = float(self.portfolio.get_native_balance(chain_name))
 
-                swapper = SwapService(self._bridge)
+                swapper = self._new_swapper()
                 try:
                     swap_outcome = await asyncio.to_thread(
                         swapper.swap,
@@ -3956,6 +4043,10 @@ class TradingBot:
                         buy=base_swap_token,
                         amount_human=f"{quote_spend_target:.6f}",
                         slippage_bps=slippage,
+                        purpose="live_entry",
+                        symbol=symbol,
+                        trade_id=trade_id,
+                        strategy_id=str(getattr(directive, "strategy_id", "") or "") if directive else "",
                     )
                 except Exception as swap_exc:
                     decision.update({
@@ -4398,7 +4489,7 @@ class TradingBot:
                 pre_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
                 pre_native = float(self.portfolio.get_native_balance(chain_name))
 
-                swapper = SwapService(self._bridge)
+                swapper = self._new_swapper()
                 try:
                     swap_outcome = await asyncio.to_thread(
                         swapper.swap,
@@ -4407,6 +4498,10 @@ class TradingBot:
                         buy=quote_swap_token,
                         amount_human=f"{exit_size:.6f}",
                         slippage_bps=slippage,
+                        purpose="live_exit",
+                        symbol=symbol,
+                        trade_id=str(pos.get("trade_id") or ""),
+                        strategy_id=str(pos.get("strategy_id") or ""),
                     )
                 except Exception as swap_exc:
                     decision.update({
@@ -5331,7 +5426,7 @@ class TradingBot:
             )
             return False
 
-        swapper = SwapService(self._bridge)
+        swapper = self._new_swapper()
         buy_token = plan.get("target_buy") or plan.get("quote_token_addr") or plan.get("quote_token")
         slippage = int(os.getenv("QUOTE_TOPUP_SLIPPAGE_BPS", os.getenv("GAS_REFILL_SLIPPAGE_BPS", "75")))
         executed = False
@@ -5341,8 +5436,29 @@ class TradingBot:
             if amount <= 0.0 or not token:
                 continue
             try:
-                swapper.swap(chain=chain, sell=token, buy=buy_token, amount_human=f"{amount:.6f}", slippage_bps=slippage)
-                executed = True
+                outcome = swapper.swap(
+                    chain=chain, sell=token, buy=buy_token,
+                    amount_human=f"{amount:.6f}", slippage_bps=slippage,
+                    purpose="quote_topup",
+                )
+                # A swap that returned without raising has not necessarily
+                # traded: no pool, no allowance and a reverted receipt all come
+                # back as ok=False. Treating those as executed told the caller
+                # the quote gap was closed when nothing had moved.
+                if outcome.ok:
+                    executed = True
+                else:
+                    self.metrics.feedback(
+                        "trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="quote_swap_failed",
+                        details={
+                            "token": token, "amount": amount,
+                            "reason": outcome.reason or "swap_not_ok",
+                            "tx_hash": outcome.tx_hash,
+                            "broadcast": outcome.broadcast,
+                        },
+                    )
             except Exception as exc:
                 self.metrics.feedback(
                     "trading",
@@ -5978,7 +6094,7 @@ class TradingBot:
         except Exception:
             pass  # gate is advisory; never block on its own failure
 
-        swapper = SwapService(self._bridge)
+        swapper = self._new_swapper()
         slippage = int(os.getenv("GAS_REFILL_SLIPPAGE_BPS", "75"))
         executed = False
         for plan in swap_plan:
@@ -6005,10 +6121,26 @@ class TradingBot:
 
             t0 = time.time()
             try:
-                swapper.swap(
+                outcome = swapper.swap(
                     chain=chain_l, sell=token, buy="native",
                     amount_human=f"{spend:.4f}", slippage_bps=slippage,
+                    purpose="gas_refill",
                 )
+                if not outcome.ok:
+                    # record_fill below books executed_amount == spend, so a
+                    # failed refill used to be filed as a completed one.
+                    self.metrics.feedback(
+                        "trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="gas_swap_failed",
+                        details={
+                            "chain": chain_l, "token": token, "amount": spend,
+                            "reason": outcome.reason or "swap_not_ok",
+                            "tx_hash": outcome.tx_hash,
+                            "broadcast": outcome.broadcast,
+                        },
+                    )
+                    continue
                 executed = True
                 # ── Metric: record the gas refill swap so it shows up
                 # in the dashboard's "what did the bot do" view.
@@ -6042,6 +6174,7 @@ class TradingBot:
                             "sell": token,
                             "buy": "native",
                             "slippage_bps": slippage,
+                            "tx_hash": outcome.tx_hash,
                         },
                     )
                 except Exception:
@@ -6052,6 +6185,7 @@ class TradingBot:
                     label="gas_swap_executed",
                     details={
                         "chain": chain_l, "token": token, "amount": spend,
+                        "tx_hash": outcome.tx_hash,
                     },
                 )
             except Exception as exc:

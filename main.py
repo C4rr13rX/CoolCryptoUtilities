@@ -459,7 +459,13 @@ def swap_flow(bridge: UltraSwapBridge | None, params: Dict[str, Any] | None = No
         amt = _safe_input("Sell amount (decimals ok): ").strip()
     bps = int(os.getenv("SWAP_SLIPPAGE_BPS", "100"))
     try:
-        svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps)
+        outcome = svc.swap(chain=ch, sell=sell, buy=buy, amount_human=amt, slippage_bps=bps, purpose="cli_swap")
+        # Print the hash in full: an abbreviated hash cannot be checked against
+        # the chain, which is the whole reason the operator is running this.
+        if outcome.tx_hash:
+            print(f"[swap] tx_hash {outcome.tx_hash}")
+        print(f"[swap] ok={outcome.ok} broadcast={outcome.broadcast} "
+              f"route={outcome.route or 'none'} reason={outcome.reason or 'none'}")
     except Exception as exc:
         print(f"[swap] unable to swap in current environment: {exc}")
 

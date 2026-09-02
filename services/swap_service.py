@@ -54,8 +54,12 @@ class SwapOutcome:
     ``swap()`` used to return None and report success or failure only through
     stdout, so no caller could record the one piece of evidence that proves a
     swap happened: its transaction hash. Measured 2026-09-02, trading_cache.db
-    held 62,599 trading_ops rows and not a single 66-character hash, while
-    tx 0x5a19c505… was sitting on Base having really moved 0.05 USDC.
+    held 62,599 trading_ops rows and not a single 66-character hash, while tx
+    0x5a19c5057ba669bf5a86c110f1128c2e049462749f51e96bb8bcb1fbca2174f5 (nonce
+    149, mined 10:40:11) was sitting on Base having really moved 0.05 USDC.
+
+    Never abbreviate a hash in a log line or a comment. A truncated hash is not
+    evidence: recovering the full value above cost a manual scan of Base blocks.
 
     ``broadcast`` is the field that matters for safety: once it is True the
     money has left, whatever the receipt says, and no other route may be tried.
@@ -276,8 +280,12 @@ class SwapService:
         txh, ok = self._send(chain, to=to_addr, data=data, value=value, gas_hint=gas_opt)
         return ok
 
-    def __init__(self, bridge: UltraSwapBridge):
+    def __init__(self, bridge: UltraSwapBridge, *, recorder: Optional[Any] = None):
         self.bridge = bridge
+        # Called with (outcome, context) after every swap attempt. Recording
+        # lives here rather than in the callers because there are eight call
+        # sites and only two of them remembered; see swap() for the history.
+        self.recorder = recorder
         self.zx      = ZeroXV2AllowanceHolder()                           # HTTP (needs ZEROX_API_KEY)
         self.uni     = UniswapV3Local(lambda ch: self.bridge._w3(ch))     # keyless, on-chain
         self.camelot = CamelotV2Local(lambda ch: self.bridge._w3(ch))     # keyless, on-chain (Arbitrum)
@@ -328,7 +336,8 @@ class SwapService:
         # the receipt used to be reported as "approval failed", which abandoned
         # a swap whose approval had in fact landed -- and burned the gas again
         # on the next attempt. Observed on Base 2026-09-02 with approval
-        # 0xcf76e2ec…. The allowance itself is the authority here, so when the
+        # 0xcf76e2ece3a59a409db579cd319e85e8c00c81fb997705d9aa3e45aaf5110424
+        # (nonce 151). The allowance itself is the authority here, so when the
         # receipt cannot be read, ask the chain what the allowance actually is.
         confirmed = self._confirm_receipt(chain, txh)
         if confirmed is True:
@@ -354,8 +363,9 @@ class SwapService:
         collapsed into one. A 403 from a rate-limited public RPC *after* the
         transaction was already in the mempool returned ("0x", False), which
         threw away a real hash and told the caller to try the next route --
-        i.e. to spend the money a second time. Observed on Base 2026-09-02:
-        tx 0x5a19c505… swapped 0.05 USDC successfully and the caller printed
+        i.e. to spend the money a second time. Observed on Base 2026-09-02: tx
+        0x5a19c5057ba669bf5a86c110f1128c2e049462749f51e96bb8bcb1fbca2174f5
+        swapped 0.05 USDC successfully and the caller printed
         "[ERR] All routes failed" and fell through to Camelot and Sushi.
         """
         try:
@@ -512,13 +522,58 @@ class SwapService:
         return final_wrap, reserve
 
 
-    def swap(self, *, chain: str, sell: str, buy: str, amount_human: str, slippage_bps: int = 100) -> SwapOutcome:
-        """Swap `amount_human` of `sell` into `buy`, returning what happened.
+    def swap(self, *, chain: str, sell: str, buy: str, amount_human: str,
+             slippage_bps: int = 100, **record_meta: Any) -> SwapOutcome:
+        """Swap `amount_human` of `sell` into `buy`, recording what happened.
 
-        Returns a SwapOutcome rather than None so callers can record the
-        transaction hash. Once ``outcome.broadcast`` is True this method stops:
-        no second route is attempted after money has left the wallet.
+        Returning a SwapOutcome was necessary but not sufficient. Measured
+        2026-09-02: six transactions settled on Base (nonces 147-152, including
+        a complete round trip -- 0.05 USDC into WETH at
+        0x5a19c5057ba669bf5a86c110f1128c2e049462749f51e96bb8bcb1fbca2174f5 and
+        back out for 0.050076 USDC at
+        0x0bfc1300dc46efd1ccd7a623d5fd2e69f622565a0239a0e8ade371a2a567d072)
+        while trading_ops held zero 66-character hashes. Every downstream
+        number -- live_rows, live_trades, P/L, profit factor -- read zero.
+
+        The reason was not that the hash was unavailable; it was that six of
+        the eight call sites throw the outcome away. Four in
+        ``_execute_bus_actions``, one in the quote top-up, one in the gas
+        refill: each calls ``swap(...)`` as a bare statement. Fixing them one
+        by one leaves the ninth caller free to make the same mistake, so the
+        recording happens *here*, on the only path all of them share.
+
+        Once ``outcome.broadcast`` is True this method stops: no second route
+        is attempted after money has left the wallet.
         """
+        outcome = self._swap_routed(
+            chain=chain, sell=sell, buy=buy,
+            amount_human=amount_human, slippage_bps=slippage_bps,
+        )
+        self._record_outcome(
+            outcome,
+            chain=chain, sell=sell, buy=buy,
+            amount_human=amount_human, slippage_bps=slippage_bps,
+            **record_meta,
+        )
+        return outcome
+
+    def _record_outcome(self, outcome: SwapOutcome, **context: Any) -> None:
+        """Hand the outcome to the recorder. Never let bookkeeping break a swap.
+
+        A recorder that raises must not turn a settled trade into an exception
+        in the caller -- the money has already moved and the exception would
+        lose the hash all over again, which is the exact bug this fixes.
+        """
+        recorder = getattr(self, "recorder", None)
+        if recorder is None:
+            return
+        try:
+            recorder(outcome, context)
+        except Exception as e:  # noqa: BLE001 - deliberately swallowed
+            print(f"[swap] recorder failed (tx={outcome.tx_hash or 'none'}): {e!r}")
+
+    def _swap_routed(self, *, chain: str, sell: str, buy: str, amount_human: str, slippage_bps: int = 100) -> SwapOutcome:
+        """Route selection and broadcast. Call ``swap()``, which also records."""
         ch = chain.lower().strip()
         w3 = self.bridge._w3(ch)  # unified accessor
         w3.eth.default_account = self.bridge.acct.address

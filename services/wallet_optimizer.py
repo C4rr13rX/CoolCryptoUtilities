@@ -96,7 +96,9 @@ def _parse_watch_tokens(blob: str) -> Dict[str, List[str]]:
 #   arbitrum   0.020150 / 0.000000 gwei  -> oracle 1.000000 gwei    52x
 #   ethereum   0.208119 / 0.264427 gwei  -> oracle 1.000000 gwei     3x
 #
-# Confirmed on the wire: tx 0x770e052d… on base paid effectiveGasPrice
+# Confirmed on the wire: tx
+# 0x770e052dc45d2850e4d8778487e3544c243fc4d3f722436bcfa89d9e8e4197ee (nonce
+# 147, block 50785210) on base paid effectiveGasPrice
 # 1.005 gwei against a 0.005 gwei base fee. At ~150k gas that is $0.36 of gas
 # per swap where $0.0025 was due, so a two-leg round trip cost ~$0.72 -- on a
 # 6.98 USDC wallet trading $1-2 clips, a cost floor no short-horizon strategy

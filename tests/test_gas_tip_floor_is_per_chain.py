@@ -14,8 +14,13 @@ put on the wire):
 
 Confirmed on-chain, same wallet, same hour:
 
-    0x770e052d… (before)  effectiveGasPrice 1.005000 gwei
-    0x5a19c505… (after)   effectiveGasPrice 0.006870 gwei
+    0x770e052dc45d2850e4d8778487e3544c243fc4d3f722436bcfa89d9e8e4197ee
+        (nonce 147, before)  effectiveGasPrice 1.005000 gwei
+    0x5a19c5057ba669bf5a86c110f1128c2e049462749f51e96bb8bcb1fbca2174f5
+        (nonce 149, after)   effectiveGasPrice 0.006870 gwei
+
+Hashes are written in full deliberately: a truncated hash cannot be checked
+against the chain, and recovering these cost a manual scan of Base blocks.
 
 At ~150k gas that is $0.36 of gas per swap instead of $0.0025, so a two-leg
 round trip cost ~$0.72. On a 6.98 USDC wallet trading $1-2 clips that is a
