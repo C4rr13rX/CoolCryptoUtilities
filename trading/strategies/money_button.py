@@ -75,6 +75,18 @@ class MoneyButtonStrategy(Strategy):
     #: entry is short, but the evidence for it should not be.
     LOOKBACK_SEC = env_float("MONEY_BUTTON_LOOKBACK_MIN", 120.0, lo=15.0, hi=360.0) * 60.0
 
+    #: Why the last evaluate() declined, or None when it produced a candidate.
+    #:
+    #: Observability only -- every gate keeps its exact condition and its exact
+    #: effect. Without this the lane is unanalysable: it declines silently, and
+    #: "money_button never fires" cannot be told apart from "money_button fires
+    #: and loses". scripts/money_button_gate_census.py reads it.
+    last_decline: Optional[str] = None
+
+    def _decline(self, reason: str) -> None:
+        self.last_decline = reason
+        return None
+
     @staticmethod
     def _return_over(ts: np.ndarray, prices: np.ndarray, seconds: float) -> float:
         """Fractional price change over the trailing `seconds`."""
@@ -89,18 +101,19 @@ class MoneyButtonStrategy(Strategy):
         return float(prices[-1]) / anchor - 1.0
 
     def evaluate(self, state: Any, ctx: StrategyContext) -> Optional[Dict[str, Any]]:
+        self.last_decline = None
         if ctx.last_price <= 0:
-            return None
+            return self._decline("no_price")
 
         ts, prices, volumes = sample_arrays(state, self.LOOKBACK_SEC)
         if prices.size < self.min_samples:
-            return None
+            return self._decline("too_few_samples")
 
         # Require real elapsed time. A burst of prints inside one minute can
         # satisfy min_samples while telling us nothing about a 10m horizon.
         span_sec = float(ts[-1] - ts[0])
         if span_sec < 12.0 * 60.0:
-            return None
+            return self._decline("window_too_short")
 
         # ------------------------------------------------------------------
         # Reject frozen and near-frozen feeds outright.
@@ -126,7 +139,7 @@ class MoneyButtonStrategy(Strategy):
         distinct = int(np.unique(prices).size)
         min_distinct = max(3, int(np.ceil(prices.size / 3.0)))
         if distinct < min_distinct:
-            return None
+            return self._decline("feed_frozen")
 
         # ------------------------------------------------------------------
         # Cost floor. This is the whole point of the strategy.
@@ -170,15 +183,15 @@ class MoneyButtonStrategy(Strategy):
         # to also be up is what separates a trend from a dead-cat bounce
         # inside a slide.
         if r5 <= 0.0 or r10 <= 0.0 or r30 <= 0.0:
-            return None
+            return self._decline("momentum_not_aligned")
         # The recent leg must lead, otherwise the move is already exhausted
         # and we would be buying the top of it.
         if r5 < r10 * 0.35:
-            return None
+            return self._decline("move_exhausted")
 
         slope_per_min = log_slope_per_min(ts, prices)
         if slope_per_min <= 0.0:
-            return None
+            return self._decline("slope_not_positive")
 
         # ------------------------------------------------------------------
         # Project the move over the holding period, then discount it.
@@ -197,7 +210,7 @@ class MoneyButtonStrategy(Strategy):
         hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 12.0, lo=5.0, hi=15.0)
         projected = float(np.expm1(slope_per_min * hold_minutes))
         if projected <= 0.0:
-            return None
+            return self._decline("projection_not_positive")
 
         # Momentum decays; assuming the trailing slope simply continues is the
         # standard way a fast strategy fools itself. Halve it by default.
@@ -209,7 +222,7 @@ class MoneyButtonStrategy(Strategy):
         conservative_edge = max(0.0, projected * decay - 0.5 * volatility)
 
         if conservative_edge < required_edge:
-            return None
+            return self._decline("edge_below_cost")
 
         # ------------------------------------------------------------------
         # Liquidity: the move must be carried by volume, not by one print.
@@ -220,7 +233,7 @@ class MoneyButtonStrategy(Strategy):
             if baseline_vol > 0 and recent_vol < baseline_vol * env_float(
                 "MONEY_BUTTON_MIN_VOL_RATIO", 0.6, lo=0.0, hi=5.0
             ):
-                return None
+                return self._decline("volume_faded")
 
         # ------------------------------------------------------------------
         # Confidence, and a floor under it.
@@ -235,7 +248,7 @@ class MoneyButtonStrategy(Strategy):
 
         min_confidence = env_float("MONEY_BUTTON_MIN_CONFIDENCE", 0.62, lo=0.5, hi=0.99)
         if confidence < min_confidence:
-            return None
+            return self._decline("confidence_below_floor")
 
         # Snap to the lane this strategy is defined by: 5-15 minutes.
         horizon_minutes = int(min(15, max(5, round(hold_minutes))))
