@@ -42,8 +42,21 @@ param(
     [string] $SessionId   = "",
     # How long to let the system run between nudges.
     [int]    $IntervalSec = 600,
-    # How long a single Claude invocation may take before it is abandoned.
-    [int]    $ClaudeTimeoutSec = 1500,
+    # How long a single Claude invocation may run before it is abandoned.
+    #
+    # 0 = NO LIMIT, and that is the default.
+    #
+    # This used to kill a pass at 1500s. A pass doing real work -- reading the
+    # codebase, running tests, driving a swap on-chain -- routinely runs
+    # longer than that, and killing it discards everything it had done and
+    # every token it had spent, then starts the next pass from scratch on the
+    # same problem. Observed 2026-09-02: a pass was killed at 1365s while
+    # actively streaming events.
+    #
+    # A hung pass is handled by the streaming heartbeat instead: if it goes
+    # quiet you can see that in the window and stop it yourself. Set a
+    # positive number here only if you deliberately want a hard cap.
+    [int]    $ClaudeTimeoutSec = 0,
     [switch] $Once,
 
     # Local Django dashboard. These are dev defaults for a localhost-bound
@@ -509,11 +522,13 @@ function Invoke-Claude {
         $lastBeat   = Get-Date
         $beatEvery  = 20      # seconds between heartbeats
         $eventsSeen = 0       # stream events since the last heartbeat
-        $deadline   = (Get-Date).AddSeconds($ClaudeTimeoutSec)
+        # $ClaudeTimeoutSec = 0 means run to completion, however long it takes.
+        $noLimit    = ($ClaudeTimeoutSec -le 0)
+        $deadline   = if ($noLimit) { [DateTime]::MaxValue } else { (Get-Date).AddSeconds($ClaudeTimeoutSec) }
         $timedOut   = $false
 
         while (-not $proc.HasExited) {
-            if ((Get-Date) -gt $deadline) { $timedOut = $true; break }
+            if (-not $noLimit -and (Get-Date) -gt $deadline) { $timedOut = $true; break }
             Start-Sleep -Milliseconds 700
 
             # --- stream whatever Claude has written since last look ---
@@ -547,7 +562,8 @@ function Invoke-Claude {
             if (((Get-Date) - $lastBeat).TotalSeconds -ge $beatEvery) {
                 $lastBeat = Get-Date
                 $secs = [int]((Get-Date) - $started).TotalSeconds
-                $left = [int]($deadline - (Get-Date)).TotalSeconds
+                $leftText = if ($noLimit) { "no limit" } else {
+                    "{0}s left" -f [int]($deadline - (Get-Date)).TotalSeconds }
 
                 $newCommits = ""
                 try {
@@ -570,8 +586,8 @@ function Invoke-Claude {
 
                 $act = if ($eventsSeen -gt 0) { "  +{0} events" -f $eventsSeen } else { "  (quiet)" }
                 $eventsSeen = 0
-                Write-Line ("  ...working {0}s (timeout in {1}s){2}{3}{4}" -f `
-                            $secs, $left, $act, $live, $newCommits) "DarkCyan"
+                Write-Line ("  ...working {0}s ({1}){2}{3}{4}" -f `
+                            $secs, $leftText, $act, $live, $newCommits) "DarkCyan"
             }
         }
 
@@ -704,6 +720,7 @@ Write-Banner "R3V3N!R  ->  LIVE PROFITABLE TRADING" "Cyan"
 Write-Line "repo      : $Repo"
 Write-Line ("session   : " + $(if ([string]::IsNullOrWhiteSpace($SessionId)) { "fresh each pass (no --resume)" } else { $SessionId }))
 Write-Line "interval  : ${IntervalSec}s between passes"
+Write-Line ("pass limit: " + $(if ($ClaudeTimeoutSec -le 0) { "none - a pass runs to completion" } else { "${ClaudeTimeoutSec}s" }))
 Write-Line "log       : $LogFile"
 Write-Line "dashboard : http://localhost:$DashboardPort  (login $DashboardUser/$DashboardPass, local dev only)"
 Write-Line "Stops ONLY when live trades exist AND live P/L is positive." "White"
