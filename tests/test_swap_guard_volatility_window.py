@@ -306,6 +306,64 @@ def test_a_briefly_flat_price_is_not_called_frozen() -> None:
     assert "vol_frozen" not in diag
 
 
+def test_a_feed_whose_only_move_was_dropped_is_still_frozen() -> None:
+    """``max != min`` is not the same question as "did the scored series move".
+
+    MTGA-USDC, measured 2026-09-02: 26 ticks over 5694s at a 128s median
+    cadence, holding exactly two prices. Because the window held two prices the
+    frozen clause passed it -- but the single transition sat across a 1378s
+    hole, which the gap clause discards (correctly; a 1378s hole is not one
+    tick's move). What remained were 23 returns of exactly 0.0, so the guard
+    reported volatility 0.0 *and* measurable: its best possible grade, awarded
+    to a feed that never reported a move.
+
+    The two clauses have to agree, and the one that decides is the series the
+    threshold is actually compared against.
+    """
+    # One price for the first stretch, a hole, then a different price.
+    before = _walk([8.225e-06] * 20, spacing=128.0)
+    after = _walk([8.55727072348181e-06] * 6, spacing=128.0,
+                  start_age=20 * 128.0 + 1378.0)
+    points = before + after
+    db = _StubDB(_series(points))
+    validator = _validator(db)
+
+    vol, measurable, diag = validator._estimate_volatility(_series(points))
+
+    assert vol == 0.0
+    # The disguise: the window genuinely holds two distinct prices.
+    assert len({p for _, p in points}) == 2
+    assert diag["vol_dropped_gaps"] >= 1.0
+    assert measurable is False, "every scored return was zero"
+    assert diag["vol_frozen"] == 1.0
+
+    allowed, metrics, reasons = validator.validate(
+        symbol="MTGA-USDC", route=["MTGA", "USDC"],
+        trade_size=1.0, price=8.55727072348181e-06, volume=0.0,
+    )
+    assert allowed is False
+    assert "feed_frozen" in reasons
+    assert metrics["volatility_measurable"] == 0.0
+
+
+def test_a_sparse_flat_window_is_still_only_unmeasured() -> None:
+    """The second frozen test must keep the same bounds as the first.
+
+    Four of the five symbols that scored 0.0-and-measurable on 2026-09-02
+    (CBHYPE, CBLTC, GARFI, WOJAK) had 2 to 6 returns over 163-800s. That is not
+    enough observation to call a feed stuck, and widening the frozen verdict to
+    cover them would turn "we barely looked" into a violation.
+    """
+    brief = _walk([48.98] * 3, spacing=82.0)   # CBLTC-USDC's actual shape
+    validator = _validator(_StubDB([]))
+
+    vol, measurable, diag = validator._estimate_volatility(_series(brief))
+
+    assert vol == 0.0
+    assert measurable is True
+    assert "vol_frozen" not in diag
+
+
 def test_a_pair_that_moves_at_all_is_still_measurable() -> None:
     """One real tick of movement is enough to make the window a measurement.
 

@@ -414,6 +414,20 @@ class SwapValidator:
         reporting, and the honest answer is again *unmeasurable*. It refuses
         under ``feed_frozen`` rather than ``volatility_unmeasurable`` because a
         stuck feed and a contaminated one are repaired in different places.
+
+        **A sixth defect, and the same one wearing a disguise.** Testing
+        ``max == min`` over the window asks whether the feed held one price,
+        but the number the threshold judges is the standard deviation of the
+        *filtered* returns, and those two disagree whenever the only price
+        change is discarded by the gap clause. Measured 2026-09-02 over the
+        trailing two hours, 5 of the 17 streamed symbols with enough ticks to
+        score produced a volatility of exactly 0.0 while reading measurable.
+        Four were short or sparse enough that the frozen bounds correctly
+        withhold a verdict (2 to 6 returns, spans of 163-800s). MTGA-USDC was
+        not: 26 ticks over 5694s, two distinct prices, and 23 scored returns
+        every one of which was exactly zero. The frozen test is therefore
+        applied a second time to the returns actually used, under the same two
+        bounds, so "never moved" is judged on the series the guard scored.
         """
         now = time.time()
         rows = sorted(
@@ -480,6 +494,27 @@ class SwapValidator:
         returns = returns[adjacent]
         if returns.size == 0 or median_gap <= 0:
             return 0.0, True, diag
+
+        if (
+            float(returns.size) >= self.volatility_frozen_min_returns
+            and span >= self.volatility_frozen_min_span_sec
+            and not np.any(returns)
+        ):
+            # Frozen again, but only visible *after* filtering. The check above
+            # asks whether the window held one price; this one asks whether the
+            # series actually scored ever moved, which is the number the
+            # threshold is compared against. They come apart whenever the only
+            # price change sits across a dropped gap.
+            #
+            # MTGA-USDC, measured 2026-09-02: 26 ticks over 5694s holding two
+            # distinct prices, so ``max != min`` and the window looked alive.
+            # The single transition spanned a 1378s hole against a 128s median
+            # cadence, so the gap clause discarded it -- correctly, it is not
+            # one tick's move -- leaving 23 returns of exactly 0.0. The guard
+            # read volatility 0.0, measurable, and handed its best possible
+            # grade to a feed that never reported a move.
+            diag["vol_frozen"] = 1.0
+            return 0.0, False, diag
 
         # Express the per-tick dispersion over a fixed horizon. Never scale up
         # by more than the window actually contains -- extrapolating an hour of
