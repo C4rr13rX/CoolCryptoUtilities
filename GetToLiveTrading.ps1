@@ -214,6 +214,42 @@ function Write-ClaudeEvent {
     }
 }
 
+# ----------------------------------------------------------------- inbox --
+
+function Read-Inbox {
+    <#  Pick up anything the user wrote while a pass was running.
+
+        There was no way to steer this loop without stopping it: you could
+        watch it work but not tell it anything, so a correction meant killing
+        the run and restarting. Now `data\agent_inbox.md` is read at the top
+        of every pass, injected into that pass's prompt, and moved aside so
+        the same note is never delivered twice.
+
+        Write to it any time -- mid-pass is fine. It lands on the next pass.  #>
+
+    $inbox = Join-Path $Repo "data\agent_inbox.md"
+    if (-not (Test-Path $inbox)) { return "" }
+
+    $text = ""
+    try { $text = (Get-Content $inbox -Raw -ErrorAction Stop) } catch { return "" }
+    if ([string]::IsNullOrWhiteSpace($text)) { return "" }
+
+    # Archive rather than delete, so a note is never silently lost and there
+    # is a record of what was asked and when.
+    try {
+        $archive = Join-Path $Repo "data\agent_inbox_archive.md"
+        Add-Content -Path $archive -Encoding UTF8 -Value (
+            "`n### delivered $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') (pass $pass)`n" + $text)
+        Remove-Item $inbox -Force -ErrorAction SilentlyContinue
+    } catch { }
+
+    Write-Banner "MESSAGE FROM USER -- delivering to this pass" "Magenta"
+    foreach ($ln in ($text -split "`r?`n")) {
+        if ($ln.Trim()) { Write-Line "  $($ln.TrimEnd())" "Magenta" }
+    }
+    return $text.Trim()
+}
+
 # ------------------------------------------------------------------- sms --
 
 function Send-Milestone {
@@ -780,6 +816,21 @@ while ($true) {
     else          { Write-Line "every link passes; waiting on the executor" "Green" }
 
     # ---- nudge Claude, and verify it answered ----
+    $userNote = Read-Inbox
+    $noteBlock = ""
+    if ($userNote) {
+        $noteBlock = @"
+
+## MESSAGE FROM THE USER -- read this first
+
+The user wrote this while you were working. It takes priority over the
+failing-link rule above: address it, or say plainly why you cannot.
+
+$userNote
+
+"@
+    }
+
     $prompt = @"
 AUTONOMOUS LIVE-TRADING LOOP -- pass $pass. Do not stop until R3V3N!R has
 placed a REAL live trade and live P/L is positive.
@@ -794,6 +845,7 @@ Current ground truth from the database:
   usdc        = $($state.usdc)
 
 First failing link: $failure
+$noteBlock
 
 Work ONLY on that link. Diagnose it with real measurements -- query the DB,
 read the code, check on-chain. Never assume; verify. If a number looks too

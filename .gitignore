@@ -152,3 +152,7 @@ data/genome-models/
 
 # Runtime cache: pairs confirmed tradeable, rebuilt from probes on demand.
 data/live_pairs.json
+
+# Live message channel to the trading loop: transient by design.
+data/agent_inbox.md
+data/agent_inbox_archive.md
