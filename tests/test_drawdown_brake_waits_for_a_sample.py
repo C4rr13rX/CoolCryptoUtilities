@@ -5,9 +5,12 @@ On 2026-09-03 the only strategy that has ever spent real money on this account
 was demoted while it was winning. atf_static had three live trades, all three
 settled on-chain from wallet 0x291c854811e92906a658Fb94Aa511bF919f968ad:
 
-    0x77f0075e...  AERO-USDC    +0.0012394
-    0x927834717...  CBETH-USDC   +0.0097748
-    0x9ffdd1cf...   CBETH-USDC   -0.0058591
+    0x77f0075e0e6b79e71ba63667efe4aec9a80bb2b6e858400f63305d90ec7a6ed1
+        AERO-USDC    +0.0012394
+    0x927834717d12395c1eb3d9148609a2b8142a59403205d1caa4ffd04e68e0e005
+        CBETH-USDC   +0.0097748
+    0x9ffdd1cfe3f17fbeddb2b3091b49f8f6524b5a0538ae9a2f3aadb56610264e6c
+        CBETH-USDC   -0.0058591
                                  ----------
                                  +0.0051551   2 wins, 1 loss, net positive
 

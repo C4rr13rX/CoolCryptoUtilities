@@ -1,10 +1,5 @@
 {
   "base": {
-    "BASECAT": {
-      "address": "0xb2000000000000000000004c27f6523082f41d01",
-      "source": "geckoterminal",
-      "ts": 1788325720.4788759
-    },
     "WETH": {
       "address": "0x4200000000000000000000000000000000000006",
       "source": "geckoterminal",
@@ -50,23 +45,8 @@
       "source": "geckoterminal",
       "ts": 1788325720.4788759
     },
-    "TIBBIR": {
-      "address": "0xa4a2e2ca3fbfe21aed83471d28b6f65a233c6e00",
-      "source": "geckoterminal",
-      "ts": 1788325720.4788759
-    },
     "VIRTUAL": {
       "address": "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b",
-      "source": "geckoterminal",
-      "ts": 1788325720.4788759
-    },
-    "BLUECHIP": {
-      "address": "0xb200000000000000000000cfbdf64a8706a94a01",
-      "source": "geckoterminal",
-      "ts": 1788325720.4788759
-    },
-    "NVDAC": {
-      "address": "0xb20000000000000000000078ee7ce2fe4908108c",
       "source": "geckoterminal",
       "ts": 1788325720.4788759
     },
@@ -82,11 +62,6 @@
     },
     "BSTONK": {
       "address": "0x0f61edbfe6cd86024c0f210c0695b08df55fdfc9",
-      "source": "geckoterminal",
-      "ts": 1788325720.4788759
-    },
-    "BASEJUICE": {
-      "address": "0xb200000000000000000000046390aed221043f01",
       "source": "geckoterminal",
       "ts": 1788325720.4788759
     },
@@ -260,11 +235,6 @@
       "source": "geckoterminal-pool-backfill",
       "ts": 1788325853.9237366
     },
-    "AAPL": {
-      "address": "0xb200000000000000000000c2e324d24d7eecd1fb",
-      "source": "geckoterminal-pool-backfill",
-      "ts": 1788325853.9237366
-    },
     "FLOWER": {
       "address": "0x3e12b9d6a4d12cd9b4a6d613872d0eb32f68b380",
       "source": "geckoterminal-pool-backfill",
@@ -272,11 +242,6 @@
     },
     "WEETH.BASE": {
       "address": "0x04c0599ae5a44757c0af6f9ec3b93da8976c150a",
-      "source": "geckoterminal-pool-backfill",
-      "ts": 1788325853.9237366
-    },
-    "GOOGLC": {
-      "address": "0xb2000000000000000000002d0ba3164cc74f58b7",
       "source": "geckoterminal-pool-backfill",
       "ts": 1788325853.9237366
     },
@@ -315,15 +280,60 @@
       "source": "geckoterminal-pool-backfill",
       "ts": 1788325853.9237366
     },
-    "METAC": {
-      "address": "0xb2000000000000000000008bc8786b856e61707c",
-      "source": "geckoterminal-pool-backfill",
-      "ts": 1788325853.9237366
-    },
     "ZORA": {
       "address": "0x1111111111166b7fe7bd91427724b487980afc69",
       "source": "geckoterminal-pool-backfill",
       "ts": 1788325853.9237366
+    },
+    "MOLT": {
+      "address": "0xb695559b26bb2c9703ef1935c37aeae9526bab07",
+      "source": "geckoterminal",
+      "ts": 1788330381.3851433
+    },
+    "BNKR": {
+      "address": "0x22af33fe49fd1fa80c7149773dde5890d3c76f3b",
+      "source": "geckoterminal",
+      "ts": 1788331275.2048473
+    },
+    "MIGGLES": {
+      "address": "0xb1a03eda10342529bbf8eb700a06c60441fef25d",
+      "source": "geckoterminal",
+      "ts": 1788337788.6605296
+    },
+    "OPAL": {
+      "address": "0x119b63b1605be3a8ff4543c7f76f7f1f79eecd1f",
+      "source": "geckoterminal",
+      "ts": 1788354727.4340668
+    },
+    "UMIA": {
+      "address": "0x56ab53b77f07da3af732150e8aec4783eb5bba7d",
+      "source": "geckoterminal",
+      "ts": 1788356563.2985268
+    },
+    "CP": {
+      "address": "0x001aad84c21a5cd4d696c56d44866e9703c43f77",
+      "source": "geckoterminal",
+      "ts": 1788370298.5077853
+    },
+    "FREN PET": {
+      "address": "0xff0c532fdb8cd566ae169c1cb157ff2bdc83e105",
+      "source": "geckoterminal",
+      "ts": 1788376026.163709
+    },
+    "OWB": {
+      "address": "0xef5997c2cf2f6c138196f8a6203afc335206b3c1",
+      "source": "geckoterminal",
+      "ts": 1788423969.0912519
+    },
+    "GITLAWB": {
+      "address": "0x5f980dcfc4c0fa3911554cf5ab288ed0eb13dba3",
+      "source": "geckoterminal",
+      "ts": 1788434325.9875338
+    },
+    "AEON": {
+      "address": "0xbf8e8f0e8866a7052f948c16508644347c57aba3",
+      "source": "geckoterminal",
+      "ts": 1788440357.6301906
     }
   }
 }

@@ -37,13 +37,23 @@ GECKO_POOL = {
         "fdv_usd": "1000000",
     },
     "relationships": {
-        "base_token": {"data": {"id": "base_0xb2000000000000000000004c27f6523082f41d01"}},
+        # A real ERC-20 id, as GeckoTerminal returns it. Previously a
+        # Uniswap v4 pool id rather than a token address, which is
+        # token -- the resolver now refuses those on chain, so a fixture
+        # built from one would be testing the bug instead of the fix.
+        "base_token": {"data": {"id": "base_0x940181a94A35A4569E4529A3CDfB74e38FD98631"}},
         "quote_token": {"data": {"id": "base_0x4200000000000000000000000000000000000006"}},
         "dex": {"data": {"id": "uniswap-v3-base"}},
     },
 }
 
-BASECAT = "0xb2000000000000000000004c27f6523082f41d01"
+# A REAL base-chain ERC-20 (Aerodrome). This was previously
+# "0xb2000000000000000000004c27f6523082f41d01", which is a Uniswap v4 POOL id,
+# not a token: eth_getCode returns one byte for it. The resolver now
+# interrogates every address on chain before returning it, so asserting that a
+# pool id resolves would be asserting the bug that cost 1.50 USDC on 2026-09-03
+# -- two swaps into a contract that cannot be sold back.
+BASECAT = "0x940181a94A35A4569E4529A3CDfB74e38FD98631"
 WETH_BASE = "0x4200000000000000000000000000000000000006"
 #: 32 bytes. A real Uniswap v4 pool id from data/base_pair_provider_assignment.json.
 V4_POOL_ID = "0x8930762cccc36040f25fc29db58a8ec22e872a347260d992f39666a3cdce7e5a"

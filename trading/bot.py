@@ -590,16 +590,63 @@ class TradingBot:
     def _token_key(self, chain: str, symbol: str) -> Tuple[str, str]:
         return (chain.lower(), symbol.upper())
 
+    def _verified_address(
+        self, chain: str, symbol: str, address: str, source: str
+    ) -> Optional[str]:
+        """Return the address only if the chain says it is a tradeable token.
+
+        Measured 2026-09-03: the address book held eight entries shaped
+        one shared address shape (BASECAT, BLUECHIP, NVDAC, BASEJUICE,
+        AAPL, GOOGLC, METAC, RAWR) whose contracts hold ONE byte of code.
+        ``decimals()`` still answered 18, so nothing downstream objected, and
+        1.50 USDC was spent entering BASECAT across two swaps that settled on
+        chain and can never be sold back. The retries that followed ended the
+        only burst of rapid profitable trading this system has produced.
+
+        Returning None here means the symbol is simply unresolved, which every
+        caller already handles by refusing the trade -- so a bad address costs
+        a skipped opportunity instead of unrecoverable capital.
+        """
+        try:
+            from services.token_contract_guard import verify
+
+            ok, reason = verify(chain, address)
+        except Exception as exc:  # noqa: BLE001
+            # The guard failing is not the token's fault. Log and allow, so a
+            # broken guard cannot silently stop all trading.
+            log_message(
+                "trading",
+                f"token guard unavailable for {symbol} on {chain}: {exc}",
+                severity="warning",
+            )
+            return address
+
+        if ok:
+            return address
+
+        log_message(
+            "trading",
+            f"REFUSED {symbol} on {chain} from {source}: {address} is not a "
+            f"tradeable contract ({reason}); treating symbol as unresolved",
+            severity="error",
+        )
+        return None
+
     def _resolve_token_address(self, chain: str, symbol: str) -> Optional[str]:
         """
         Best-effort resolver for a token address on a given chain. Prefers the
         live portfolio snapshot, falling back to the core-token catalog.
+
+        Every address returned here has been interrogated on chain first --
+        see ``_verified_address`` below. This is the single chokepoint for
+        live token addresses (five call sites), which is why the guard lives
+        here rather than at each swap.
         """
         chain_l = chain.lower()
         symbol_u = symbol.upper()
         holding = self.portfolio.holdings.get((chain_l, symbol_u))
         if holding and holding.token:
-            return holding.token
+            return self._verified_address(chain_l, symbol_u, holding.token, "portfolio")
         try:
             token_map = core_tokens_for_chain(chain_l)
             # Case-folded: the catalog keys some symbols in mixed case ("cbETH",
@@ -608,7 +655,7 @@ class TradingBot:
             # resolved to None anyway.
             for sym, addr in (token_map or {}).items():
                 if str(sym).upper() == symbol_u and addr:
-                    return addr
+                    return self._verified_address(chain_l, symbol_u, addr, "catalog")
         except Exception as exc:
             log_message("trading", f"token address lookup failed for {symbol_u} on {chain_l}: {exc}", severity="debug")
 
@@ -622,7 +669,7 @@ class TradingBot:
 
             learned = _token_book_lookup(chain_l, symbol_u)
             if learned:
-                return learned
+                return self._verified_address(chain_l, symbol_u, learned, "address_book")
         except Exception as exc:
             log_message("trading", f"token address book lookup failed for {symbol_u} on {chain_l}: {exc}", severity="debug")
         return None
