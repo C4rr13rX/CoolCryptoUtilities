@@ -2077,7 +2077,25 @@ class TradingBot:
         precision = float(readiness.get("precision", 0.0))
         recall = float(readiness.get("recall", 0.0))
         samples = int(readiness.get("samples", 0))
-        threshold = float(readiness.get("threshold", self.decision_threshold))
+        # `decision_threshold` lives on the PIPELINE, never on the bot -- every
+        # other reference in this file already says so (see _apply_equilibrium
+        # and _summarise_decision). This one said `self.decision_threshold`,
+        # which does not exist, and Python evaluates a `.get()` default
+        # EAGERLY: the AttributeError was raised on every call whether or not
+        # readiness carried the key. Measured here, it always does
+        # (`threshold`=0.5), so the fallback was never even wanted.
+        #
+        # It fired the instant it could matter and not one cycle before. Every
+        # earlier return -- `live_trading_enabled`, then `not ready_flag` --
+        # sits ABOVE this line, so the statement was unreachable until a
+        # strategy graduated and flipped ready_flag True. atf_static graduated
+        # at 01:03:24 on 2026-09-03; the first AttributeError is stamped
+        # 01:03:25, and it then repeated every ~3s, aborting the only code path
+        # that turns live trading on. The value is used once, at the bottom of
+        # this function, as a telemetry field in `_live_transition_state`.
+        threshold = float(
+            readiness.get("threshold", getattr(self.pipeline, "decision_threshold", 0.58))
+        )
         promotion_precision = float(os.getenv("LIVE_PROMOTION_PRECISION", str(self.required_live_win_rate)))
         promotion_recall = float(os.getenv("LIVE_PROMOTION_RECALL", str(self.required_live_win_rate)))
         fast_track_factor = float(os.getenv("LIVE_FAST_TRACK_FACTOR", "0.65"))
