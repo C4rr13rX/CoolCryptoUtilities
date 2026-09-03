@@ -248,7 +248,11 @@ def print_live():
         float(pooled.get("total_net_profit", 0.0)), int(pooled.get("samples", 0)),
     ))
     print("  %-8s %-30s %s" % ("", "live_ready (model gate)", plan.get("live_ready")))
-    print("  %-8s %-30s %s" % ("", "live_mode", plan.get("live_mode")))
+    # `live_mode` is not a top-level plan key -- it lives in risk_flags (and in
+    # guardrails). Reading it off the plan printed a bare "None" for every run
+    # of this tool, so the one row that says whether the plan is ready or
+    # blocked never said either.
+    print("  %-8s %-30s %s" % ("", "live_mode", rf.get("live_mode")))
     print("  %-8s %-30s %s" % ("", "block_reason", rf.get("live_blocked_reason") or "(none)"))
     print("  %-8s %-30s $%.4f" % ("", "recommended_live_usd", float(rf.get("recommended_live_usd", 0.0))))
     print("  %-8s %-30s $%s" % ("", "min_clip_usd", rf.get("min_clip_usd")))

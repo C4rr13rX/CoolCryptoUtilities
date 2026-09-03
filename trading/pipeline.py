@@ -428,6 +428,50 @@ def ghost_reason_is_earned(reason: Any) -> bool:
     return str(reason or "") in GHOST_EARNED_READY_REASONS
 
 
+def below_min_clip(usd: float, clip: float) -> bool:
+    """Is ``usd`` genuinely under the minimum clip, or only under it in binary?
+
+    ``_build_transition_plan`` sizes the first live trade TWICE. The first pass
+    rescues a sub-clip recommendation by setting the dollar figure to exactly
+    the clip and back-solving a ratio for it::
+
+        recommended_live_usd  = 0.75
+        recommended_ratio     = 0.75 / deployable_stable
+
+    The second pass re-derives the dollars from that ratio::
+
+        recommended_live_usd  = recommended_ratio * deployable_stable
+
+    That usd -> ratio -> usd round trip is lossy, and whether it loses anything
+    depends on the wallet balance. Measured 2026-09-03 against the two balances
+    this account has actually held::
+
+        deployable $6.977258   (0.75/d)*d = 0.75000000000000000000   ok
+        deployable $5.477500   (0.75/d)*d = 0.74999999999999988898   BLOCKED
+
+    A sweep of 200k balances between $0.80 and $50 puts 6.2% of them on the
+    losing side. So the same code, the same strategy and the same passing risk
+    gates block or do not block according to a rounding artifact of 1.11e-16
+    dollars -- and the block is total, because falling under the clip zeroes the
+    ratio outright. That is what refused the first live trade after the wallet
+    spent down from $6.98 to $5.48: nothing about the risk changed.
+
+    The comparison is therefore made with a relative tolerance. At a $0.75 clip
+    that is 7.5e-10 dollars: seven orders of magnitude above the representation
+    error it is meant to absorb, and seven below the cent that is the smallest
+    amount of money anyone can mean by a floor. A trade that is really too small
+    is still refused -- see the companion test.
+    """
+    try:
+        usd_f = float(usd)
+        clip_f = float(clip)
+    except (TypeError, ValueError):
+        return False
+    if not (usd_f == usd_f) or not (clip_f == clip_f):  # NaN on either side
+        return False
+    return usd_f < clip_f - abs(clip_f) * 1e-9
+
+
 def ghost_stop_loss_pct() -> float:
     """The widest stop any ghost simulator in the pool can take.
 
@@ -4940,7 +4984,7 @@ class TrainingPipeline:
         recommended_ratio = min(recommended_ratio, capital_ratio_cap or recommended_ratio, live_ratio_cap or 1.0)
         recommended_live_usd = recommended_ratio * deployable_stable
         min_clip_block = False
-        if recommended_live_usd > 0 and recommended_live_usd < min_clip_usd:
+        if recommended_live_usd > 0 and below_min_clip(recommended_live_usd, min_clip_usd):
             # A recommendation below the minimum viable clip is a sizing
             # problem, not a safety problem: every risk gate has already
             # passed to get here. Zeroing it is a deadlock on a small wallet,
@@ -5185,7 +5229,7 @@ class TrainingPipeline:
             recommended_live_usd = 0.0
         else:
             recommended_live_usd = recommended_ratio * deployable_stable
-            if recommended_live_usd < min_clip_usd:
+            if below_min_clip(recommended_live_usd, min_clip_usd):
                 min_clip_block = True
                 recommended_ratio = 0.0
                 recommended_live_usd = 0.0
@@ -5321,6 +5365,22 @@ class TrainingPipeline:
                 "recommended_live_usd": recommended_live_usd,
                 "min_clip_block": min_clip_block,
                 "min_clip_usd": min_clip_usd,
+                # Both were captured ~250 lines above, BEFORE the second sizing
+                # pass could block the plan, and were never refreshed here even
+                # though the figures they describe were. So risk_flags reported
+                # live_mode="ready" with live_blocked_reason="" on a plan that
+                # had ended blocked with recommended_live_usd $0.00 --
+                # guardrails.live_mode said "blocked" in the same dict.
+                #
+                # Every diagnostic reads the stale pair: live_gate_map.py:252
+                # and live_path_check.py:163 both print live_blocked_reason, so
+                # the tool built to find this link printed "block_reason
+                # (none)" beside "$0.0000" and made the refusal unreadable.
+                # trading/bot.py:2036 was unaffected only by luck -- it checks
+                # halt_live first, which IS refreshed here and carries
+                # `recommended_ratio <= 0`.
+                "live_mode": live_mode,
+                "live_blocked_reason": block_reason,
                 "halt_ghost": not ghost_collection_ready,
                 "ghost_halt_reason": ghost_halt_reason,
                 "funding_gate": funding_gate,
