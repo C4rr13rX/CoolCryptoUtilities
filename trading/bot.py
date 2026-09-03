@@ -3771,14 +3771,16 @@ class TradingBot:
         #     exit sells the position, and its size comes from the book;
         #   * only ever raises. min() with what the wallet can afford means a
         #     $6.98 wallet can never be asked for more than it holds.
+        entry_spends_real_money = bool(
+            self.live_trading_enabled and self._strategy_live_approved(directive)
+        )
         live_clip_floor = 0.0
         if (
-            self.live_trading_enabled
+            entry_spends_real_money
             and directive is not None
             and getattr(directive, "action", "") == "enter"
             and price > 0.0
             and str(quote_token).upper() in self.stable_tokens
-            and self._strategy_live_approved(directive)
         ):
             live_clip_floor = self._live_clip_usd()
         if live_clip_floor > 0.0:
@@ -4010,12 +4012,41 @@ class TradingBot:
             gross_return = max(0.0, margin)
             if directive is not None and price > 0.0 and directive.target_price > price:
                 gross_return = (float(directive.target_price) - price) / price
+            # The DOLLAR floor is a real-money argument; the RATE test is not.
+            #
+            # SMALL_PROFIT_FLOOR_USD ($0.02) exists because a real swap costs
+            # gas and fees that do not scale with size, so a trade too small to
+            # clear them is not worth broadcasting. A simulated entry
+            # broadcasts nothing and costs nothing, and the same floor was
+            # being applied to it -- which killed the evidence pipeline that
+            # every graduation depends on.
+            #
+            # It kills it completely on a live bot, because there the ghost
+            # lane is sized against the REAL wallet: max_affordable *
+            # max_trade_share = $6.977 * 0.05 = $0.349 is the most a ghost
+            # entry can ever be, and $0.02 net at a 5% target needs $0.46. The
+            # ghost floor that would have fixed it (GHOST_MIN_TRADE_USD=2.00,
+            # above) is gated on `use_sim = not live_trading_enabled`, so on a
+            # live bot it never applies either. Measured 2026-09-03 06:32 over
+            # the previous two hours: 205 enter directives refused here, 10
+            # ghost entries actually taken -- money_button alone was refused 17
+            # times at $0.13-$0.35 and has ONE trade in a ledger that needs 20.
+            #
+            # evaluate_micro_profit already keeps the two tests apart (its
+            # docstring says so): `edge_does_not_cover_variable_costs` is the
+            # rate test and still applies to every entry, so a simulation is
+            # still refused when its edge does not beat the fee RATE -- which
+            # is the honest test, and the one money_button keeps failing. Only
+            # the absolute-dollars test is dropped, and only for entries that
+            # spend no dollars.
             micro_profit = evaluate_micro_profit(
                 notional_usd=max(0.0, trade_size * price),
                 gross_return=gross_return,
                 variable_cost_rate=fees,
                 fixed_cost_usd=float(os.getenv("MICRO_FIXED_COST_USD", "0") or 0.0),
-                minimum_net_profit_usd=SMALL_PROFIT_FLOOR,
+                minimum_net_profit_usd=(
+                    SMALL_PROFIT_FLOOR if entry_spends_real_money else 0.0
+                ),
             )
             decision["micro_profit"] = micro_profit.to_dict()
             if not micro_profit.viable:
@@ -4036,7 +4067,7 @@ class TradingBot:
                 # a rule that declines to spend real money must be as visible
                 # as one that spends it. Logged under its own non-"live-entry"
                 # status so it can never be counted as an executed trade.
-                if self.live_trading_enabled and self._strategy_live_approved(directive):
+                if entry_spends_real_money:
                     blocked = dict(decision)
                     blocked.update(
                         {

@@ -388,3 +388,78 @@ def test_the_refusal_status_is_not_an_executed_trade() -> None:
     from scripts.live_path_check import EXECUTED_LIVE_STATUSES
 
     assert "live-entry-below-profit-floor" not in EXECUTED_LIVE_STATUSES
+
+
+# ---------------------------------------------------------------------------
+# The dollar floor is a real-money argument
+# ---------------------------------------------------------------------------
+#
+# SMALL_PROFIT_FLOOR_USD exists because a real swap costs gas and fees that do
+# not scale with size. A simulated entry broadcasts nothing, and the same floor
+# was killing the evidence pipeline every graduation depends on -- completely,
+# on a live bot, where a ghost entry can never exceed wallet * max_trade_share
+# = $6.977 * 0.05 = $0.349 while $0.02 net at a 5% target needs $0.46. Measured
+# 2026-09-03 06:32 over the previous two hours: 205 enter directives refused
+# here, 10 ghost entries taken. money_button was refused 17 times at
+# $0.13-$0.35 and has ONE trade in a ledger that needs 20.
+
+
+def test_a_simulated_entry_is_not_held_to_the_dollar_floor() -> None:
+    """A trade that spends nothing is not refused for earning few cents."""
+    bot = _bot()                                   # live bot...
+    bot.positions[SYMBOL] = _ghost_position()
+    decision = _enter(bot, _directive("rsi_reversal"))   # ...non-graduated
+
+    micro = decision["micro_profit"]
+    assert micro["minimum_net_profit_usd"] == 0.0
+    assert micro["net_profit_usd"] < 0.02, micro   # would have been refused
+    assert micro["viable"] is True, micro
+    assert decision["action"] == "enter"
+    assert decision["status"] == "ghost-entry"
+
+
+def test_a_simulation_with_no_edge_is_still_refused() -> None:
+    """The RATE test survives: this is the one money_button keeps failing."""
+    bot = _bot()
+    no_edge = TradeDirective(
+        action="enter", symbol=SYMBOL, base_token="BASECAT", quote_token="USDC",
+        size=DIRECTIVE_SIZE, target_price=PRICE * 1.0005,  # 5bp, under fees
+        horizon="5m", confidence=0.9, expected_return=0.0005,
+        reason="dip", strategy_id="money_button",
+    )
+    sample_summary_margin = 0.0005
+
+    async def _no_sync(self, *args, **kwargs):
+        return None
+
+    with mock.patch.object(TradingBot, "_run_wallet_sync", _no_sync):
+        decision = asyncio.run(
+            bot._interpret_predictions(
+                None,
+                {"symbol": SYMBOL, "price": PRICE, "ts": time.time(),
+                 "chain": "base", "volume": 5000.0},
+                no_edge,
+                pred_summary={"exit_conf": 0.9, "direction_prob": 0.9,
+                              "delta": sample_summary_margin,
+                              "net_margin": sample_summary_margin,
+                              "net_pnl": 0.0},
+                brain_summary={},
+            )
+        )
+
+    micro = decision["micro_profit"]
+    assert micro["reason"] == "edge_does_not_cover_variable_costs", micro
+    assert micro["viable"] is False
+    assert decision["action"] == "hold"
+
+
+def test_a_live_entry_still_faces_the_dollar_floor() -> None:
+    """Real money keeps the floor: gas does not scale down with the clip."""
+    bot = _bot(plan=None)                          # no clip to rescue it
+    bot.positions[SYMBOL] = _ghost_position()
+    decision = _enter(bot, _directive("atf_static"), swapper=_Stub())
+
+    micro = decision["micro_profit"]
+    assert micro["minimum_net_profit_usd"] == pytest.approx(0.02)
+    assert micro["viable"] is False
+    assert micro["reason"] == "net_profit_below_dollar_floor"
