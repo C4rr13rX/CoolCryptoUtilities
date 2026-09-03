@@ -863,10 +863,6 @@ while ($true) {
     }
     $failure = Get-FirstFailure -Report $report
     if ($failure) { Write-Line "first failing link: $failure" "Yellow" }
-    Write-Line "sprint goal: $sprintGoal" "Cyan"
-    else          { Write-Line "every link passes; waiting on the executor" "Green" }
-
-    # ---- nudge Claude, and verify it answered ----
     # Choose this pass's sprint objective from the live state.
     #
     # A pass with an open-ended goal ("get to live trading") has no natural
@@ -883,6 +879,13 @@ while ($true) {
         "Get ONE real money_button trade onto the chain within this pass, and paste its transaction hash. Smallest amount that can settle."
     }
 
+    # Printed only AFTER it is chosen. It used to be printed ten lines
+    # before the assignment, so every pass logged an empty "sprint goal:"
+    # and the agent received a blank objective.
+    Write-Line "sprint goal: $sprintGoal" "Cyan"
+    else          { Write-Line "every link passes; waiting on the executor" "Green" }
+
+    # ---- nudge Claude, and verify it answered ----
     $behavior = Get-BehaviorPrompt
     $behaviorBlock = ""
     if ($behavior) {
