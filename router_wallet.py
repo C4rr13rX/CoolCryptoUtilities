@@ -855,9 +855,48 @@ class UltraSwapBridge:
         return w3.eth.contract(address=Web3.to_checksum_address(addr), abi=ERC20_ABI)
 
     def erc20_decimals(self, chain: str, token: str) -> int:
-        w3 = self._w3(chain)
+        """Decimals for ``token``, the authoritative table before any RPC.
+
+        The ``except: return 18`` below is a measured corruption source, not a
+        theoretical one. Measured 2026-09-03, base USDC
+        (0x833589fcd6edb6e08f4c7c32d4f71b54bda02913) sat in ``balances`` as::
+
+            balance_hex 0x3843e1   (= 3687393, correct on-chain)
+            decimals    18         (WRONG -- USDC is 6)
+            quantity    3.687393E-12
+
+        3687393 / 10^18 instead of / 10^6: the wallet's $3.69 of USDC read as
+        $0.0000000000037. That zeroed ``stable_usd``, so
+        ``deployable_stable = stable_usd - deficit - buffer`` came out $0.00
+        and ``_build_transition_plan`` refused every live trade with
+        ``block_reason="min_clip"`` against a wallet that could afford the
+        $0.75 clip five times over.
+
+        Consulting the table FIRST removes the RPC from the path entirely for
+        the tokens that can be corrupted this way, which makes the failure
+        impossible rather than merely rarer. base RPC flakiness is established
+        here (all five configured endpoints once refused a receipt read), so
+        the except branch is live traffic.
+
+        The contract is deliberately unchanged -- always an ``int``, never a
+        raise -- because seven callers depend on it (send_service,
+        bridge_service, wallet_optimizer, and the swap/bridge sizing in this
+        module). Replacing a guess with a known value can only help them; a
+        new exception would break them. Callers that must be able to tell
+        "unknown" from "18" use ``SwapService._token_decimals`` instead, which
+        returns None.
+        """
         if token.lower() == NATIVE:
             return 18
+        try:
+            from token_decimals import known_token_decimals
+
+            known = known_token_decimals(chain, token)
+            if known is not None:
+                return int(known)
+        except Exception:
+            pass
+        w3 = self._w3(chain)
         try:
             return int(self._erc20(w3, token).functions.decimals().call())
         except Exception:

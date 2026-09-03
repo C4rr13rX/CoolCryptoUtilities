@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 
 from services.wallet_logger import wallet_log
 from services.token_catalog import get_core_token_map
+from token_decimals import known_token_decimals
 from services.wallet_watch import build_core_watch_tokens, core_watch_limit
 
 getcontext().prec = 60
@@ -561,11 +562,63 @@ class RealtimeBalanceRefresher:
             "name": prev.get("name") or symbol,
         }
 
-    def _fetch_erc20(self, chain: str, token: str, wallet_addr: str, prev: Mapping[str, Any]) -> Dict[str, Any]:
+    def _erc20_decimals(self, chain: str, token: str, symbol: Optional[str]) -> Optional[int]:
+        """Decimals for ``token``, or None when nothing could actually say.
+
+        ``bridge.erc20_decimals`` answers 18 both when a token really has 18
+        decimals and when the RPC call failed, and this method's caller turns
+        that number into a stored quantity. Those two cases must not be the
+        same value here: writing a guessed 18 for a 6-decimal stable deflates
+        the balance by 10^12 and the bad row then sticks in the cache.
+
+        So: the authoritative table, then a RAW contract read whose failure
+        arrives as an exception, then None. Never a guess.
+        """
+        try:
+            known = known_token_decimals(chain, token, symbol)
+            if known is not None:
+                return int(known)
+        except Exception:
+            pass
+        # Read the contract directly. Going through bridge.erc20_decimals
+        # cannot work here: its own fallback has already erased the difference
+        # between "18" and "the endpoint did not answer".
+        erc20 = getattr(self.bridge, "_erc20", None)
+        w3_for = getattr(self.bridge, "_w3", None)
+        if callable(erc20) and callable(w3_for):
+            try:
+                return int(erc20(w3_for(chain), token).functions.decimals().call())
+            except Exception:
+                return None
+        # Bridges without the raw accessor (test doubles, alternate
+        # implementations) keep the old path; a raise is still unknown.
+        try:
+            return int(self.bridge.erc20_decimals(chain, token))
+        except Exception:
+            return None
+
+    def _fetch_erc20(
+        self, chain: str, token: str, wallet_addr: str, prev: Mapping[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         bal = int(self.bridge.erc20_balance_of(chain, token, wallet_addr))
-        decimals = int(self.bridge.erc20_decimals(chain, token))
-        qty = _to_decimal_string(bal, decimals)
         symbol = self.bridge.erc20_symbol(chain, token) or prev.get("symbol") or (token[:6] + "…")
+        decimals = self._erc20_decimals(chain, token, symbol)
+        if decimals is None:
+            # Refuse the row rather than write a quantity scaled by a guess.
+            # `refresh` skips a None result, so the previous — correct — row
+            # survives untouched until an endpoint can answer. A stale balance
+            # is recoverable; a balance deflated by 10^12 is what told the
+            # live-sizing plan this wallet held $0.00 of stables.
+            wallet_log(
+                "wallet.decimals_unknown",
+                wallet=wallet_addr,
+                chain=chain,
+                token=token,
+                symbol=symbol,
+                balance_hex=hex(bal),
+            )
+            return None
+        qty = _to_decimal_string(bal, decimals)
         name = self.bridge.erc20_name(chain, token) or prev.get("name") or symbol
         block_num = int(self.bridge._w3(chain).eth.block_number)
         return {
@@ -586,6 +639,10 @@ class RealtimeBalanceRefresher:
             data = self._fetch_native(chain, wallet_addr, prev)
         else:
             data = self._fetch_erc20(chain, token, wallet_addr, prev)
+        if data is None:
+            # Decimals unknown -- see _fetch_erc20. `refresh` skips a None
+            # result, leaving the last good row in place.
+            return None
         usd = prev.get("usd_amount") or prev.get("usd") or "0"
         data.update({
             "usd_amount": usd,
