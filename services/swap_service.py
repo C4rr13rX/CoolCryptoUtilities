@@ -632,11 +632,68 @@ class SwapService:
             reason="" if confirmed else ("receipt_unknown" if confirmed is None else "reverted"),
         )
 
-    def _try_local_provider(self, *, name: str, q: dict, chain: str, sell_token: str, sell_raw: int) -> SwapOutcome:
+    @staticmethod
+    def _quote_shortfall(q: dict, min_buy_raw: Optional[int]) -> Optional[str]:
+        """Reason to refuse this quote, or None to proceed.
+
+        ``slippage_bps`` bounds the fill against the ROUTE'S OWN QUOTE. It says
+        nothing about whether that quote matches the price the decision was
+        made on, and those are different numbers whenever the feed and the pool
+        disagree -- which is exactly when a token is thin.
+
+        Measured 2026-09-03, the BSTONK-USDC live entry (trade_fills ts
+        1788455198): expected 391.791 BSTONK at 0.001914286, received 360.264
+        at 0.002081805. The fill was 8.751% above the reference price and 8.05%
+        short on quantity, while LIVE_TRADE_SLIPPAGE_BPS was 75 (0.75%) --
+        because the router honoured its own quote to the basis point and its
+        own quote was the bad number. The first feed sample after entry marked
+        the position at -13.08%; it was stopped at -18.40% for -$0.1429, which
+        is 104% of all live P/L to date (-$0.1374 over six closed trades). The
+        other ten live fills all landed within 0.35% of their expected amount.
+
+        So this is the check ``slippage_bps`` cannot make: the caller states
+        how much of the buy token it expects for its money, and a route that
+        will not deliver that much does not get to broadcast. Raw base units on
+        both sides -- the quote reports raw, and converting it to human here
+        would reintroduce the decimals question the caller already answered.
+        """
+        if min_buy_raw is None:
+            return None
+        raw = (q or {}).get("buyAmount")
+        if raw in (None, ""):
+            # A route that will not say what it pays cannot be bounded, and a
+            # bound the caller asked for must not silently become no bound.
+            return "quote_missing_buy_amount"
+        try:
+            quoted = int(str(raw))
+        except (TypeError, ValueError):
+            return f"quote_buy_amount_unparseable:{raw!r}"
+        if quoted < int(min_buy_raw):
+            return f"quote_below_floor:{quoted}<{int(min_buy_raw)}"
+        return None
+
+    def _try_local_provider(
+        self,
+        *,
+        name: str,
+        q: dict,
+        chain: str,
+        sell_token: str,
+        sell_raw: int,
+        min_buy_raw: Optional[int] = None,
+    ) -> SwapOutcome:
         """Common path for Uni/Camelot/Sushi: approve spender then send."""
         if "__error__" in (q or {}):
             print(f"[{name}] {q['__error__']}")
             return SwapOutcome(ok=False, broadcast=False, route=name, reason=str(q["__error__"]))
+        shortfall = self._quote_shortfall(q, min_buy_raw)
+        if shortfall:
+            # Refused BEFORE the allowance, so a route that cannot pay enough
+            # never even costs an approval. Not broadcast, so the caller's
+            # fallback chain is free to try the next route -- one thin pool is
+            # not a reason to abandon the trade.
+            print(f"[{name}] refusing quote: {shortfall}")
+            return SwapOutcome(ok=False, broadcast=False, route=name, reason=shortfall)
         spender = q.get("allowanceTarget")
         if spender and not self._ensure_allowance(chain, sell_token, spender, sell_raw):
             print("[ERR] approval failed")
@@ -752,8 +809,15 @@ class SwapService:
 
 
     def swap(self, *, chain: str, sell: str, buy: str, amount_human: str,
-             slippage_bps: int = 100, **record_meta: Any) -> SwapOutcome:
+             slippage_bps: int = 100, min_buy_human: Optional[float] = None,
+             **record_meta: Any) -> SwapOutcome:
         """Swap `amount_human` of `sell` into `buy`, recording what happened.
+
+        ``min_buy_human`` is the least amount of the BUY token, in human units,
+        the caller is willing to receive for ``amount_human`` of the sell token.
+        It is optional and defaults to no bound, so every existing call site is
+        unchanged; see ``_quote_shortfall`` for what it catches that
+        ``slippage_bps`` cannot.
 
         Returning a SwapOutcome was necessary but not sufficient. Measured
         2026-09-02: six transactions settled on Base (nonces 147-152, including
@@ -777,11 +841,13 @@ class SwapService:
         outcome = self._swap_routed(
             chain=chain, sell=sell, buy=buy,
             amount_human=amount_human, slippage_bps=slippage_bps,
+            min_buy_human=min_buy_human,
         )
         self._record_outcome(
             outcome,
             chain=chain, sell=sell, buy=buy,
             amount_human=amount_human, slippage_bps=slippage_bps,
+            min_buy_human=min_buy_human,
             **record_meta,
         )
         return outcome
@@ -801,7 +867,9 @@ class SwapService:
         except Exception as e:  # noqa: BLE001 - deliberately swallowed
             print(f"[swap] recorder failed (tx={outcome.tx_hash or 'none'}): {e!r}")
 
-    def _swap_routed(self, *, chain: str, sell: str, buy: str, amount_human: str, slippage_bps: int = 100) -> SwapOutcome:
+    def _swap_routed(self, *, chain: str, sell: str, buy: str, amount_human: str,
+                     slippage_bps: int = 100,
+                     min_buy_human: Optional[float] = None) -> SwapOutcome:
         """Route selection and broadcast. Call ``swap()``, which also records."""
         ch = chain.lower().strip()
         w3 = self.bridge._w3(ch)  # unified accessor
@@ -837,6 +905,32 @@ class SwapService:
             print("[ERR] sellAmount must be > 0")
             return SwapOutcome(ok=False, reason="sell_amount_not_positive")
 
+        # The caller's floor, converted once, in the BUY token's own decimals.
+        #
+        # Fails closed: a caller that asked for a bound and cannot get one gets
+        # no swap. That is the conservative direction and it is cheap -- the
+        # only caller that passes a bound is the live entry, which re-evaluates
+        # on the next sample. The alternative is spending real money with the
+        # guard silently absent, which is the failure this whole method is
+        # written against.
+        min_buy_raw: Optional[int] = None
+        if min_buy_human is not None:
+            try:
+                floor_human = float(min_buy_human)
+            except (TypeError, ValueError):
+                floor_human = float("nan")
+            if floor_human != floor_human or floor_human < 0.0:
+                print(f"[ERR] min_buy_human is not a usable amount: {min_buy_human!r}")
+                return SwapOutcome(ok=False, reason="min_buy_not_a_number")
+            buy_dec = self._decimals_or_none(ch, buy)
+            if buy_dec is None:
+                print(f"[ERR] decimals unreadable for buy token {buy} on {ch}; "
+                      "cannot enforce the caller's minimum")
+                return SwapOutcome(ok=False, reason=f"decimals_unknown:{buy}")
+            # Fixed-point, not scientific notation: to_base_units parses the
+            # string, and f"{1e-7}" is "1e-07", which is not a decimal amount.
+            min_buy_raw = to_base_units(f"{floor_human:.{int(buy_dec)}f}", int(buy_dec))
+
         _ro = (os.getenv("ROUTE_ONLY", "").strip().lower())
 
         # =========================
@@ -857,6 +951,10 @@ class SwapService:
                     chain_id=cid, sell_token=sell_norm, buy_token=buy_norm,
                     sell_amount=int(sell_raw), taker=taker, slippage_bps=slippage_bps
                 )
+                shortfall = self._quote_shortfall(q0, min_buy_raw)
+                if shortfall:
+                    print(f"[0x] refusing quote: {shortfall}")
+                    return SwapOutcome(ok=False, route="0x", reason=shortfall)
                 tx = q0.get("tx") or {}
                 spender = q0.get("allowanceTarget")
                 if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
@@ -926,7 +1024,7 @@ class SwapService:
                     slippage_bps=slippage_bps,
                     recipient=self.bridge.acct.address,
                 )
-                outcome = self._try_local_provider(name="UniswapV3", q=uq, chain=ch, sell_token=sell, sell_raw=sell_raw)
+                outcome = self._try_local_provider(name="UniswapV3", q=uq, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
                 if outcome.ok or outcome.broadcast:
                     return outcome
                 print("[UniswapV3] failed.")
@@ -968,7 +1066,7 @@ class SwapService:
                     ch, sell, buy, int(sell_raw),
                     slippage_bps=slippage_bps,
                 )
-                outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw)
+                outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
                 if outcome.ok or outcome.broadcast:
                     return outcome
                 print("[CamelotV2] failed.")
@@ -1010,7 +1108,7 @@ class SwapService:
                     ch, sell, buy, int(sell_raw),
                     slippage_bps=slippage_bps,
                 )
-                outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw)
+                outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
                 if outcome.ok or outcome.broadcast:
                     return outcome
                 print("[SushiV2] failed.")
@@ -1035,6 +1133,13 @@ class SwapService:
                     chain_id=cid, sell_token=sell_norm, buy_token=buy_norm,
                     sell_amount=int(sell_raw), taker=taker, slippage_bps=slippage_bps
                 )
+                shortfall = self._quote_shortfall(q0, min_buy_raw)
+                if shortfall:
+                    # Raised, not returned: this is the fallback chain, and a
+                    # route that will not pay enough should hand off to the next
+                    # one rather than cancel the trade.
+                    print(f"[0x] refusing quote: {shortfall}")
+                    raise RuntimeError(shortfall)
                 tx = q0.get("tx") or {}
                 spender = q0.get("allowanceTarget")
                 if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
@@ -1102,7 +1207,7 @@ class SwapService:
                 slippage_bps=slippage_bps,
                 recipient=self.bridge.acct.address,
             )
-            outcome = self._try_local_provider(name="UniswapV3", q=q1, chain=ch, sell_token=sell, sell_raw=sell_raw)
+            outcome = self._try_local_provider(name="UniswapV3", q=q1, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
             attempts.append(outcome)
             if outcome.ok or outcome.broadcast:
                 return outcome
@@ -1117,7 +1222,7 @@ class SwapService:
                 ch, sell, buy, int(sell_raw),
                 slippage_bps=slippage_bps,
             )
-            outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw)
+            outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
             attempts.append(outcome)
             if outcome.ok or outcome.broadcast:
                 return outcome
@@ -1132,7 +1237,7 @@ class SwapService:
                 ch, sell, buy, int(sell_raw),
                 slippage_bps=slippage_bps,
             )
-            outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw)
+            outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
             attempts.append(outcome)
             if outcome.ok or outcome.broadcast:
                 return outcome

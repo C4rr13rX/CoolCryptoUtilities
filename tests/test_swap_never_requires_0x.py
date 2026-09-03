@@ -130,7 +130,7 @@ def test_swap_tries_uniswap_first_and_never_calls_0x(monkeypatch):
 
     sent: list[str] = []
 
-    def _fake_try_local(*, name, q, chain, sell_token, sell_raw):
+    def _fake_try_local(*, name, q, chain, sell_token, sell_raw, **_):
         sent.append(name)
         # the first on-chain route settles
         return SwapOutcome(ok=True, broadcast=True, tx_hash="0x" + "ab" * 32, route=name)

@@ -69,6 +69,23 @@ except Exception:  # pragma: no cover - optional dependency
     UltraSwapBridge = None  # type: ignore
 
 
+def _env_fraction(name: str, default: float, *, lo: float = 0.0, hi: float = 1.0) -> float:
+    """Read a 0..1 FRACTION from the environment, clamped, never a percent.
+
+    Clamping rather than trusting the value is the point: this is read on the
+    money path, and a stray "2" meaning "2 percent" would otherwise arrive as
+    200% and disable the very bound it configures. This repo has already
+    shipped a fraction/percent mix-up (9084f03) and a wrong-units price.
+    """
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    if value != value:                                   # NaN
+        return default
+    return max(lo, min(hi, value))
+
+
 WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
     "ethereum": "WETH",
     "arbitrum": "WETH",
@@ -4642,6 +4659,29 @@ class TradingBot:
                 if quote_spend_target <= 0.0:
                     return decision
 
+                # The least base token we will accept for that spend.
+                #
+                # `slippage_bps` bounds the fill against the ROUTER'S quote; it
+                # cannot bound the router's quote against the price this
+                # decision was made on, and those come apart precisely when a
+                # token is thin. BSTONK-USDC, 2026-09-03: expected 391.791
+                # tokens at 0.001914286, received 360.264 at 0.002081805 -- the
+                # fill was 8.75% above the reference and 8.05% short on
+                # quantity while LIVE_TRADE_SLIPPAGE_BPS was 75 (0.75%). It was
+                # already -13.08% on the first sample after entry and stopped
+                # for -$0.1429, which is 104% of all live P/L to date. The other
+                # ten live fills landed within 0.35% of their expected amount,
+                # so 2% is far above real execution noise and far below this.
+                #
+                # Computed from the STRING actually sent to the router, not from
+                # quote_spend_target: the amount is rounded to 6dp on the way
+                # out, and a floor derived from the unrounded number is a floor
+                # for a trade we are not making.
+                spend_human = f"{quote_spend_target:.6f}"
+                max_adverse = _env_fraction("LIVE_ENTRY_MAX_ADVERSE_FILL", 0.02)
+                expected_base = float(spend_human) / float(price) if price > 0 else 0.0
+                min_buy_human = expected_base * (1.0 - max_adverse) if expected_base > 0 else None
+
                 pre_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
                 pre_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
                 pre_native = float(self.portfolio.get_native_balance(chain_name))
@@ -4653,8 +4693,9 @@ class TradingBot:
                         chain=chain_name,
                         sell=quote_swap_token,
                         buy=base_swap_token,
-                        amount_human=f"{quote_spend_target:.6f}",
+                        amount_human=spend_human,
                         slippage_bps=slippage,
+                        min_buy_human=min_buy_human,
                         purpose="live_entry",
                         symbol=symbol,
                         trade_id=trade_id,
@@ -5548,6 +5589,22 @@ class TradingBot:
                     details={
                         "reason": reason,
                         "mode": pos_mode,
+                        # Which strategy owns this outcome.
+                        #
+                        # It went to the ledger and to the registry but never
+                        # into the database, so the one record that is an
+                        # INDEPENDENT check on those two files could not
+                        # attribute a single trade. Measured 2026-09-03: all 92
+                        # rows in trade_outcomes carry no strategy, so the six
+                        # live rows -- every one of them atf_static's -- read as
+                        # anonymous, and this loop's own brief was written
+                        # against "money_button's 6 live trades at PF 0.0759"
+                        # when money_button has never traded live at all. Its
+                        # profit factor of 0.0759 is atf_static's.
+                        #
+                        # Same value and same fallback as the StrategyLedger
+                        # call below, so the two can be reconciled row by row.
+                        "strategy_id": str(pos.get("strategy_id") or "") or "unclassified",
                         "remaining_size": max(0.0, held_size - exit_size),
                         "retained_profit": retained_profit,
                         "accounting_version": ACCOUNTING_VERSION,
