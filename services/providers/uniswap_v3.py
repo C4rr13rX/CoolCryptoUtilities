@@ -110,6 +110,48 @@ _ABI_ROUTER02 = [{
     "type":"function"
 }]
 
+# SwapRouter02:
+# exactInput((bytes path,address recipient,uint256 amountIn,uint256 amountOutMinimum))
+#   -> (uint256 amountOut)
+# SwapRouter02 dropped the `deadline` field that SwapRouter01 carried; the
+# four-field tuple below is what is deployed at the SWAP_ROUTER addresses above.
+_ABI_ROUTER02_EXACT_INPUT = [{
+    "inputs":[{"components":[
+        {"internalType":"bytes","name":"path","type":"bytes"},
+        {"internalType":"address","name":"recipient","type":"address"},
+        {"internalType":"uint256","name":"amountIn","type":"uint256"},
+        {"internalType":"uint256","name":"amountOutMinimum","type":"uint256"}
+    ],"internalType":"struct IV3SwapRouter.ExactInputParams","name":"params","type":"tuple"}],
+    "name":"exactInput",
+    "outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],
+    "stateMutability":"payable",
+    "type":"function"
+}]
+
+# Tokens a two-hop route may pass THROUGH, in the order they are tried.
+#
+# Measured 2026-09-03 against the Base QuoterV2: of 21 ATF candidates whose
+# swap-quote probe failed, every single failure was reported as "no viable
+# pool (direct)" -- this provider only ever asked for a USDC->token pool. Base
+# tokens are overwhelmingly paired against WETH, not USDC, so a direct-only
+# quoter cannot price them and the live lane could not spend a cent on any of
+# them. BSTONK quotes through WETH (187.58 tokens for $0.25, matching the
+# 0.001281 feed price) and CBADA through cbBTC; both return 0 direct.
+MID_TOKENS: Dict[str, tuple] = {
+    "ethereum": (
+        "0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2",  # WETH
+        "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT
+    ),
+    "base": (
+        "0x4200000000000000000000000000000000000006",  # WETH
+        "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",  # cbBTC
+    ),
+    "arbitrum": (
+        "0x82aF49447D8a07e3bd95BDdB56f35241523fBab1",  # WETH
+        "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",  # USDT
+    ),
+}
+
 # ---------------------------------------------------------------------
 # Provider
 # ---------------------------------------------------------------------
@@ -146,7 +188,26 @@ class UniswapV3Local:
         return Web3.to_checksum_address(x)
 
     def _router(self, w3: Web3, conf: Dict[str, str]):
-        return w3.eth.contract(self._norm_addr(conf["SWAP_ROUTER"]), abi=_ABI_ROUTER02)
+        return w3.eth.contract(
+            self._norm_addr(conf["SWAP_ROUTER"]),
+            abi=_ABI_ROUTER02 + _ABI_ROUTER02_EXACT_INPUT,
+        )
+
+    def _mid_tokens(self, chain: str, t_in: str, t_out: str) -> list:
+        """Intermediates to try for a two-hop route, ends excluded."""
+        ch = chain.lower().strip()
+        env = os.getenv(f"UNIV3_MID_TOKENS_{ch.upper()}", "").strip()
+        raw = [p for p in env.replace(";", ",").split(",") if p.strip()] if env else list(MID_TOKENS.get(ch, ()))
+        mids = []
+        for addr in raw:
+            try:
+                a = self._norm_addr(addr.strip())
+            except Exception:
+                continue
+            if a in (t_in, t_out) or a in mids:
+                continue
+            mids.append(a)
+        return mids
 
     def _qv1(self, w3: Web3, conf: Dict[str, str]):
         addr = conf.get("QUOTER_V1")
@@ -163,6 +224,21 @@ class UniswapV3Local:
     @staticmethod
     def _v3_path(token_in: str, fee: int, token_out: str) -> bytes:
         return bytes.fromhex(token_in[2:]) + int(fee).to_bytes(3, "big") + bytes.fromhex(token_out[2:])
+
+    @staticmethod
+    def _v3_path_multi(tokens: list, fees: list) -> bytes:
+        """Encode token0 (fee0) token1 (fee1) token2 ... for exactInput.
+
+        ``len(fees)`` must be ``len(tokens) - 1``; the encoding is 20-byte
+        addresses separated by 3-byte fees, which is what both QuoterV2's
+        quoteExactInput and SwapRouter02's exactInput consume.
+        """
+        if len(tokens) < 2 or len(fees) != len(tokens) - 1:
+            raise ValueError("v3 path needs len(fees) == len(tokens) - 1")
+        blob = bytes.fromhex(tokens[0][2:])
+        for fee, token in zip(fees, tokens[1:]):
+            blob += int(fee).to_bytes(3, "big") + bytes.fromhex(token[2:])
+        return blob
 
     # -------------------- main entrypoint ----------------------
     def quote_and_build(
@@ -239,8 +315,39 @@ class UniswapV3Local:
                         except Exception as e:
                             self._dbg(f"[UniV3] V2 path fee={f} error: {e!r}")
 
+        # -------------------- two-hop fallback --------------------
+        # A direct USDC->token pool is the exception on an L2, not the rule.
+        # Without this the provider reported "no viable pool" for tokens that
+        # are perfectly tradeable one hop away, and since 0x is returning
+        # 403 and Camelot/Sushi are unconfigured on base, that verdict was
+        # the whole router: the live lane had no way to buy them at all.
+        best_path: Optional[bytes] = None
+        best_route: list = [t_in, t_out]
+        multihop = os.getenv("UNIV3_MULTIHOP", "1").strip().lower() not in {"0", "false", "no", "off"}
+        if best_out <= 0 and multihop:
+            q2 = self._qv2(w3, conf)
+            if q2 is not None:
+                for mid in self._mid_tokens(chain, t_in, t_out):
+                    for f1 in fees:
+                        for f2 in fees:
+                            try:
+                                path = self._v3_path_multi([t_in, mid, t_out], [f1, f2])
+                                out, *_ = q2.functions.quoteExactInput(path, int(amount_in)).call()
+                            except Exception as e:
+                                self._dbg(f"[UniV3] hop {f1}/{f2} via {mid} error: {e!r}")
+                                continue
+                            if int(out) > best_out:
+                                best_out, best_fee = int(out), int(f1)
+                                best_path, best_route = path, [t_in, mid, t_out]
+                                self._dbg(f"[UniV3] hop {f1}/{f2} via {mid} amountOut={int(out)}")
+                    if best_out > 0:
+                        # First intermediate that prices the pair wins; trying
+                        # the rest costs 16 more eth_calls for a rounding
+                        # difference on a dust-sized clip.
+                        break
+
         if best_out <= 0:
-            return {"__error__": "UniswapV3: no viable pool (direct)"}
+            return {"__error__": "UniswapV3: no viable pool (direct or 2-hop)"}
 
         # -------------------- build router tx --------------------
         min_out = max(1, best_out * (10_000 - int(slippage_bps)) // 10_000)
@@ -254,18 +361,21 @@ class UniswapV3Local:
         recp = self._norm_addr(recp)
 
         router = self._router(w3, conf)
-        params = (
-            t_in,
-            t_out,
-            int(best_fee),
-            recp,
-            int(amount_in),
-            int(min_out),
-            0,  # sqrtPriceLimitX96
-        )
-
-        # exactInputSingle takes **one** tuple param
-        fn = router.functions.exactInputSingle(params)
+        if best_path is not None:
+            # exactInput takes (path, recipient, amountIn, amountOutMinimum)
+            fn = router.functions.exactInput((best_path, recp, int(amount_in), int(min_out)))
+        else:
+            params = (
+                t_in,
+                t_out,
+                int(best_fee),
+                recp,
+                int(amount_in),
+                int(min_out),
+                0,  # sqrtPriceLimitX96
+            )
+            # exactInputSingle takes **one** tuple param
+            fn = router.functions.exactInputSingle(params)
         data = fn._encode_transaction_data()
         to = self._norm_addr(conf["SWAP_ROUTER"])
 
@@ -283,4 +393,9 @@ class UniswapV3Local:
             "tx": {"to": to, "data": data, "value": 0, **({"gas": int(gas)} if gas else {})},
             "buyAmount": str(best_out),
             "fee": best_fee,
+            # Which pools this quote actually went through. A two-hop fill
+            # prices differently from the direct one the caller may assume,
+            # and the reconciler has no other way to tell them apart.
+            "route": list(best_route),
+            "hops": len(best_route) - 1,
         }
