@@ -3632,17 +3632,51 @@ class TradingBot:
             quote_balance_symbol, quote_swap_token = self._resolve_live_trade_asset(
                 chain_name, quote_token, quote_address_hint or None
             )
+        # Whether the HELD position is simulated is a property of the position,
+        # not of the bot. Same rule the exit itself uses at ``pos_is_live``
+        # below; computed here because the exit is sized before it gets there.
+        pos_mode = (
+            str(pos.get("mode") or ("live" if self.live_trading_enabled else "ghost"))
+            if pos is not None
+            else ""
+        )
+        pos_is_live = pos_mode == "live" and self.live_trading_enabled
         if use_sim:
             available_quote = self._get_quote_balance(chain_name, quote_token)
-            available_base = float(pos.get("size", 0.0)) if pos else 0.0
             native_balance = max(
                 self.sim_native_balances.get(chain_name, gas_required * self.gas_buffer_multiplier),
                 gas_required,
             )
         else:
             available_quote = self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name)
-            available_base = self.portfolio.get_quantity(base_balance_symbol, chain=chain_name)
             native_balance = self.portfolio.get_native_balance(chain_name)
+        # A ghost position holds no tokens, so the wallet can never fund its
+        # exit -- and the exit is sized off this number
+        # (``exit_size = min(exit_target, available_base)``), so a zero here
+        # returns `insufficient_base` and the position never closes.
+        #
+        # This was keyed on the bot-level ``use_sim`` (= not live_trading_enabled),
+        # which meant that the moment the bot went live EVERY ghost position was
+        # sized against the real wallet. Measured 2026-09-03 over the previous
+        # six hours: 1030 `insufficient_base` refusals, `available` exactly 0.0
+        # on all of them, across 14 symbols the wallet has never held
+        # (BASEPEPE 137, TYBG 115, CP 109, CBXRP 201 ...). Ghost exits are what
+        # write StrategyLedger outcomes, so this is why every strategy sits at
+        # 1-8 closed ghost trades against a graduation bar of 20, and why the
+        # ghost book stays full and refuses live entries as
+        # `entry-refused-live-held`.
+        #
+        # Worse than blocking: when the wallet happened to hold SOME of the
+        # token the exit was silently truncated to that balance instead of
+        # refused. CBETH-USDC exited 0.0001117 of a 0.0006270 ghost position at
+        # 10:49 UTC -- a partial fake, booked as a whole trade.
+        #
+        # A live position still reads the wallet: it sells real tokens and may
+        # not offer more than the wallet holds.
+        if pos_is_live:
+            available_base = self.portfolio.get_quantity(base_balance_symbol, chain=chain_name)
+        else:
+            available_base = float(pos.get("size", 0.0)) if pos else 0.0
 
         trade_size = max(min(volume * self.max_trade_share, volume), 0.0)
         trade_size = min(trade_size, 100.0)
@@ -5029,8 +5063,10 @@ class TradingBot:
             # Positions close in the mode they were opened in: a ghost-opened
             # (dual-track) position must never route through the live swap
             # path, even when the bot itself has since gone live.
-            pos_mode = str(pos.get("mode") or ("live" if self.live_trading_enabled else "ghost"))
-            pos_is_live = pos_mode == "live" and self.live_trading_enabled
+            #
+            # ``pos_mode``/``pos_is_live`` are bound once where the balances are
+            # picked, above -- the exit is SIZED by that same answer, so the two
+            # must not be able to disagree.
             trade_stage = MetricStage.LIVE_TRADING if pos_is_live else MetricStage.GHOST_TRADING
             feedback_channel = "live_trading" if pos_is_live else "ghost_trading"
             log_prefix = "[live]" if pos_is_live else "[ghost]"
