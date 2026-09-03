@@ -70,7 +70,15 @@ chose it.""",
 ]
 
 
-def _run(cmd, timeout=60):
+def _run(cmd, timeout=None):
+    """Run to completion. timeout=None means NO LIMIT, and that is the default.
+
+    Nothing here should be killed on a clock. We cannot predict that a test
+    run or a git query needs less than N seconds, and cutting one off does
+    not fail safe -- it reports "did not run", which the scorer then has to
+    treat as unknown, so the whole pass is scored on missing data. Waiting is
+    always cheaper than discarding the work.
+    """
     try:
         out = subprocess.run(cmd, cwd=str(ROOT), capture_output=True,
                              text=True, timeout=timeout, shell=False)
@@ -102,6 +110,8 @@ def _chain_state() -> dict:
                     data=json.dumps({"jsonrpc": "2.0", "id": 1,
                                      "method": method, "params": params}).encode(),
                     headers=hdrs)
+                # A third-party RPC that never answers is not our work being
+                # cut off: we fall through to the next endpoint below.
                 with urllib.request.urlopen(req, timeout=15) as r:
                     return json.loads(r.read())["result"]
 
@@ -157,7 +167,7 @@ def _tests() -> dict:
                    "money_button", "artifact", "corrobor", "gas"))]
     if not targets:
         targets = [str(ROOT / "tests")]
-    rc, out = _run([exe, "-m", "pytest", *targets, "-q", "--no-header"], timeout=600)
+    rc, out = _run([exe, "-m", "pytest", *targets, "-q", "--no-header"])
     m = re.search(r"(\d+) passed", out)
     f = re.search(r"(\d+) failed", out)
     e = re.search(r"(\d+) error", out)
