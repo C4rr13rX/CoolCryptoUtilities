@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from services.token_address_book import is_token_address
+
 
 def env_float(name: str, default: float, *, lo: float | None = None, hi: float | None = None) -> float:
     try:
@@ -209,6 +211,21 @@ class Strategy(ABC):
 
         from trading.scheduler import TradeDirective  # local: avoids import cycle
 
+        # The contract the candidate was actually priced against, if it named
+        # one. Strategies pass it in extra_meta; it used to stop there, so the
+        # bot re-resolved the ticker instead and refused anything outside its
+        # symbol book as token_unresolved -- while for the symbols that DO
+        # resolve, a ticker shared by dozens of contracts would have picked
+        # one arbitrarily. Validated here rather than trusted: is_token_address
+        # rejects the 32-byte Uniswap v4 pool ids that discovery also stores,
+        # and the native-coin sentinels, so only a 20-byte ERC-20 address
+        # travels on the directive.
+        token_address = ""
+        if extra_meta:
+            candidate_addr = extra_meta.get("token_address")
+            if is_token_address(candidate_addr):
+                token_address = str(candidate_addr).strip()
+
         directive = TradeDirective(
             action=action,
             symbol=state.symbol,
@@ -221,6 +238,7 @@ class Strategy(ABC):
             expected_return=float(expected_return),
             reason=f"{self.strategy_id}: {reason}",
             strategy_id=self.strategy_id,
+            token_address=token_address,
         )
         meta: Dict[str, Any] = {
             "strategy": self.strategy_id,

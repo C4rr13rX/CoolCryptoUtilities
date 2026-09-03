@@ -126,6 +126,21 @@ class TradeDirective:
     # Which strategy generated this directive — drives the per-strategy
     # ghost ledger and independent ghost→live graduation.
     strategy_id: str = ""
+    #: The exact ERC-20 contract this directive is about, when the candidate
+    #: that produced it named one. Empty for routes identified only by symbol.
+    #:
+    #: A ticker does not identify a token on base. Measured 2026-09-02 over 20k
+    #: ghost_candidate rows, 131 of 408 discovered symbols resolved to more than
+    #: one contract: 1KTO100M to 57, ANTHROPIC to 67, SPCX to 31, with prices
+    #: across one ticker spanning seven orders of magnitude. Resolving a live
+    #: swap by symbol therefore picks one of dozens of unrelated contracts by
+    #: whichever write landed last, which is how real funds reach a
+    #: ticker-squatting clone.
+    #:
+    #: So the contract travels with the observation that priced it, rather than
+    #: being looked up again later from a symbol->address book that cannot
+    #: represent the ambiguity. Consumers must prefer this over any lookup.
+    token_address: str = ""
 
     def to_dict(self) -> Dict[str, float]:
         payload = asdict(self)
@@ -1551,6 +1566,10 @@ class BusScheduler:
             "reason": f"retry partial fill ({executed_size:.6f}/{directive.size:.6f})",
             "tier": directive.tier,
             "strategy_id": getattr(directive, "strategy_id", ""),
+            # Carried through the retry so the remainder buys the SAME contract
+            # the first tranche did. Dropping it here would let a partial fill
+            # finish against a different token that happens to share the ticker.
+            "token_address": getattr(directive, "token_address", "") or "",
             "ts": time.time(),
             "attempts": 0,
         })
@@ -1583,6 +1602,7 @@ class BusScheduler:
                 reason=entry.get("reason", "retry"),
                 tier=entry.get("tier", "T0"),
                 strategy_id=entry.get("strategy_id", ""),
+                token_address=entry.get("token_address", "") or "",
             )
         return None
 

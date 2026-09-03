@@ -149,7 +149,9 @@ def _enter(bot, directive, symbol, *, swap_token):
 
     with mock.patch.object(
         TradingBot, "_resolve_live_trade_asset",
-        lambda self, chain, sym: (sym, swap_token),
+        # Third argument is the explicit contract the caller already knows the
+        # trade is about (directive-supplied, or recorded on an open position).
+        lambda self, chain, sym, explicit=None: (sym, explicit or swap_token),
     ), mock.patch.object(TradingBot, "_run_wallet_sync", _no_sync):
         return asyncio.run(
             bot._interpret_predictions(

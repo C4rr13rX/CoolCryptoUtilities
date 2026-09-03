@@ -730,16 +730,33 @@ class TradingBot:
         except Exception:
             return 75
 
-    def _resolve_live_trade_asset(self, chain: str, symbol: str) -> Tuple[str, Optional[str]]:
+    def _resolve_live_trade_asset(
+        self, chain: str, symbol: str, explicit_address: Optional[str] = None
+    ) -> Tuple[str, Optional[str]]:
         """
         Resolve (portfolio_symbol, swap_token) for live swaps. For native coins,
         prefer wrapped-native ERC-20 addresses (e.g. WETH) so local DEX fallbacks
         can be used when 0x is unavailable.
+
+        ``explicit_address`` is the contract the caller already knows this trade
+        is about -- the one the candidate was priced against, or the one a live
+        position was actually opened in. It WINS over every symbol lookup, and
+        deliberately so: a ticker does not identify a token here. Measured
+        2026-09-02, 131 of 408 discovered base symbols mapped to more than one
+        contract (1KTO100M to 57, ANTHROPIC to 67), with prices under a single
+        ticker spanning seven orders of magnitude, and six symbols in the
+        address book disagreed with what discovery was publishing for the same
+        ticker. Looking those up by name picks an unrelated contract.
         """
         chain_l = chain.lower()
         symbol_u = str(symbol or "").upper()
         if not symbol_u:
             return symbol_u, None
+        # Checked before the native branch too: if the caller named a contract,
+        # that contract is what the trade is about, and no wrapped-native or
+        # catalog substitution may quietly redirect it somewhere else.
+        if is_token_address(explicit_address):
+            return symbol_u, str(explicit_address).strip()
         native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
         if symbol_u == native_symbol or symbol_u == "NATIVE":
             wrapped_sym = WRAPPED_NATIVE_SYMBOL.get(chain_l)
@@ -3352,8 +3369,24 @@ class TradingBot:
         base_swap_token: Optional[str] = None
         quote_swap_token: Optional[str] = None
         if not use_sim:
-            base_balance_symbol, base_swap_token = self._resolve_live_trade_asset(chain_name, base_token)
-            quote_balance_symbol, quote_swap_token = self._resolve_live_trade_asset(chain_name, quote_token)
+            # The base side is identified by the contract the candidate was
+            # priced against when the directive names one, and only falls back
+            # to a symbol lookup when it does not. An open position outranks
+            # both: whatever contract we actually bought is the one we must be
+            # able to sell, so the exit never re-resolves the ticker and never
+            # sells a different token that happens to share it.
+            base_address_hint = ""
+            if pos:
+                base_address_hint = str(pos.get("base_token_address") or "")
+            if not base_address_hint and directive is not None:
+                base_address_hint = str(getattr(directive, "token_address", "") or "")
+            base_balance_symbol, base_swap_token = self._resolve_live_trade_asset(
+                chain_name, base_token, base_address_hint or None
+            )
+            quote_address_hint = str(pos.get("quote_token_address") or "") if pos else ""
+            quote_balance_symbol, quote_swap_token = self._resolve_live_trade_asset(
+                chain_name, quote_token, quote_address_hint or None
+            )
         if use_sim:
             available_quote = self._get_quote_balance(chain_name, quote_token)
             available_base = float(pos.get("size", 0.0)) if pos else 0.0
@@ -4130,6 +4163,13 @@ class TradingBot:
                     "entry_tx_hash": entry_tx_hash,
                     "base_symbol": base_balance_symbol,
                     "quote_symbol": quote_balance_symbol,
+                    # The contracts this position is actually held in. The exit
+                    # resolves from these, not from the ticker: the symbol that
+                    # bought token A can resolve to token B later (131 of 408
+                    # base symbols map to several contracts), which would leave
+                    # a real position unsellable or sell the wrong asset.
+                    "base_token_address": str(base_swap_token or ""),
+                    "quote_token_address": str(quote_swap_token or ""),
                     "trigger_state": {"high_watermark": executed_entry_price},
                     "exit_sequence": 0,
                 }
