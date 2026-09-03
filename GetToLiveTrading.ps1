@@ -424,17 +424,38 @@ try:
     # Non-stable rows carry usd_amount=0 on the raw wallet, so prefer the
     # 'guardian' snapshot which does carry valuations, and fall back to the
     # stable leg alone rather than inventing a number.
+    STABLES = {"USDC", "USDT", "DAI", "USDBC"}
     try:
         rows = list(c.execute(
-            "SELECT symbol, usd_amount FROM balances "
+            "SELECT symbol, quantity, usd_amount FROM balances "
             "WHERE wallet='guardian' AND chain='base'"))
         total = 0.0
-        for sym, amt in rows:
+        stable = 0.0
+        for sym, qty, amt in rows:
+            sym_u = str(sym or "").upper()
             try:
-                total += float(amt or 0.0)
+                q = float(qty or 0.0)
             except (TypeError, ValueError):
-                continue
+                q = 0.0
+            try:
+                v = float(amt or 0.0)
+            except (TypeError, ValueError):
+                v = 0.0
+            # For a stable, quantity IS the dollar value, and it is the number
+            # that tracks the chain. usd_amount is carried forward from the
+            # previous read and goes stale: measured 2026-09-03, USDC read
+            # qty=15.196303 (correct, matches the chain) against
+            # usd_amount=3.687393 (hours old). The floor was being judged on
+            # the stale one, which is what halted a funded wallet.
+            if sym_u in STABLES:
+                v = q
+                stable += q
+            total += v
         out["portfolio_usd"] = round(total, 4)
+        # Report the stable leg from the same trustworthy source, so the two
+        # numbers cannot disagree about the same wallet.
+        if stable > 0:
+            out["usdc"] = round(stable, 4)
     except Exception:
         out["portfolio_usd"] = out.get("usdc")
 except Exception as exc:
