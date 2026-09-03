@@ -2763,6 +2763,73 @@ class TradingBot:
 
         return SwapService(self._bridge, recorder=self._record_swap_outcome)
 
+    #: How far a fill's implied price may sit from the feed before we call it a
+    #: measurement failure rather than a trade. See the method below for why 10
+    #: is both far above real slippage and far below the errors this catches.
+    FILL_PRICE_SANITY_FACTOR = 10.0
+
+    @classmethod
+    def _fill_price_disagrees_with_feed(cls, implied: float, feed: float) -> bool:
+        """Is this fill price impossible for the trade we just made?
+
+        A UNITS CHECK, NOT A SLIPPAGE CHECK.
+
+        Measured 2026-09-03. The CBETH-USDC live entry at 11:36 (tx
+        0x076978740803789cd40564cb150753bc075a5f6600d8422add58a4720822b82b)
+        booked an entry price of 2.739721277650459e-09 while the feed carried
+        cbETH at $2731.12 the same minute. The receipt says the swap spent
+        750000 raw USDC and received 273750474589586 raw cbETH, and USDC's own
+        contract says 6 decimals, so the true price was $2739.72 -- the booked
+        one is that over 10^(18-6), USDC measured as an 18-decimal token.
+
+        The decimals table now makes that particular read impossible, but the
+        table is a list of tokens and the next corruption will be a token that
+        is not on it. This is the check that does not care WHY the number is
+        wrong: we already know what the asset costs, so a fill claiming
+        otherwise by orders of magnitude is not reporting a trade.
+
+        Why it matters more than it looks: the damage lands after the money has
+        moved. cost_portion for that position is 7.5e-13, so the exit computes
+        `gross_profit = quote_received - cost_portion` ~= +0.75 on a notional of
+        1e-9 -- a ~10^12 return, booked into live P/L and into the ledger that
+        decides graduation. This repo has already purged four strategies for
+        fabricated records; this one would have been written by the live lane
+        itself, from a real transaction.
+
+        The threshold is calibrated, not guessed. Across the 15 open positions
+        on 2026-09-03 the widest legitimate entry-to-feed ratio was 0.47 (UNI,
+        held since 2026-08-17 while the price genuinely moved), and every
+        position opened that day sat within 5% of the feed. At entry the ratio
+        is ~1.0 by construction. 10x clears real market movement by more than
+        an order of magnitude and still catches a 10^12 error by eleven.
+
+        Returns True when the implied price is unusable as a price at all
+        (NaN, inf, zero, negative), because those book just as badly. Returns
+        False when there is no feed to compare against: an unprovable
+        disagreement must not block a settled trade from being recorded.
+        """
+        # The two sides are converted separately and on purpose. An implied
+        # price we cannot read is unusable and must be refused; a FEED we
+        # cannot read is merely absent, and absence must never be the reason a
+        # settled trade goes unrecorded.
+        try:
+            implied = float(implied)
+        except (TypeError, ValueError):
+            return True
+        if not math.isfinite(implied) or implied <= 0.0:
+            return True
+        try:
+            feed = float(feed)
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(feed) or feed <= 0.0:
+            return False
+        ratio = implied / feed
+        return (
+            ratio > cls.FILL_PRICE_SANITY_FACTOR
+            or ratio < 1.0 / cls.FILL_PRICE_SANITY_FACTOR
+        )
+
     def _read_receipt_fill(
         self, swapper: Any, *, chain: str, tx_hash: str, sell: str, buy: str, leg: str
     ) -> Any:
@@ -4533,7 +4600,20 @@ class TradingBot:
                     buy=base_swap_token,
                     leg="entry",
                 )
+                receipt_price_insane = False
                 if receipt_fill is not None and receipt_fill.ok:
+                    # The receipt is the better measurement, but "better" is not
+                    # "unquestioned": it is only as good as the decimals it was
+                    # parsed with, and a wrong decimals is a 10^12 error that
+                    # still arrives as ok=True. Check it against what we already
+                    # know the asset costs before letting it set the cost basis.
+                    receipt_price = float(receipt_fill.sold) / max(
+                        float(receipt_fill.bought), 1e-18
+                    )
+                    receipt_price_insane = self._fill_price_disagrees_with_feed(
+                        receipt_price, price
+                    )
+                if receipt_fill is not None and receipt_fill.ok and not receipt_price_insane:
                     quote_spent = float(receipt_fill.sold)
                     base_received = float(receipt_fill.bought)
                     if receipt_fill.gas_native > 0.0:
@@ -4549,6 +4629,32 @@ class TradingBot:
                             base_received,
                             base_balance_symbol,
                         ),
+                    )
+                elif receipt_price_insane:
+                    # Keep the wallet-delta numbers already in hand. They are
+                    # the weaker measurement and this is exactly what they are
+                    # for; being approximately right beats being twelve orders
+                    # of magnitude wrong with a transaction hash attached.
+                    log_message(
+                        "live-swap",
+                        "entry fill from receipt %s REFUSED: implied %.12g vs feed %.12g "
+                        "for %s -- a units error, not slippage; falling back to wallet delta"
+                        % (entry_tx_hash, receipt_price, price, symbol),
+                        severity="error",
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.CRITICAL,
+                        label="fill_price_insane",
+                        details={
+                            "symbol": symbol,
+                            "leg": "entry",
+                            "tx_hash": entry_tx_hash,
+                            "implied_price": receipt_price,
+                            "feed_price": float(price),
+                            "sold": float(receipt_fill.sold),
+                            "bought": float(receipt_fill.bought),
+                        },
                     )
                 elif receipt_fill is not None:
                     log_message(
@@ -4591,6 +4697,43 @@ class TradingBot:
                     return decision
 
                 executed_entry_price = quote_spent / max(base_received, 1e-9)
+                # Backstop. Both measurements can be wrong the same way -- the
+                # portfolio reads its quantities through the same decimals the
+                # receipt parser does -- so the last thing before the basis is
+                # written to the book is the same question again.
+                #
+                # The token IS in the wallet: refusing to book the position
+                # would strand real money outside the book, which this repo has
+                # already done twice (1.55 AERO and 19.49 BASECAT sat unbooked
+                # on 2026-09-03 after two settled swaps recorded no fill). So
+                # the position is still opened -- at the price the feed says the
+                # asset costs, flagged as an estimate, never at a fabricated one.
+                if self._fill_price_disagrees_with_feed(executed_entry_price, price):
+                    log_message(
+                        "live-swap",
+                        "entry basis for %s unusable (%.12g vs feed %.12g); "
+                        "booking the feed price as an ESTIMATED basis"
+                        % (symbol, executed_entry_price, price),
+                        severity="error",
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.CRITICAL,
+                        label="entry_basis_estimated",
+                        details={
+                            "symbol": symbol,
+                            "tx_hash": entry_tx_hash,
+                            "rejected_price": float(executed_entry_price),
+                            "feed_price": float(price),
+                            "fill_source": fill_source,
+                        },
+                    )
+                    executed_entry_price = float(price)
+                    quote_spent = float(base_received) * float(price)
+                    fill_source = f"{fill_source}+feed_basis"
+                    basis_estimated = True
+                else:
+                    basis_estimated = False
                 self._release_position_for_entry(
                     symbol,
                     chain=chain_name,
@@ -4619,6 +4762,10 @@ class TradingBot:
                     "gas_spent_native": gas_spent_native,
                     "entry_tx_hash": entry_tx_hash,
                     "fill_source": fill_source,
+                    # True when the basis is the feed price rather than a
+                    # measured fill. The P/L this position eventually books is
+                    # only as good as this flag is visible.
+                    "basis_estimated": basis_estimated,
                     "base_symbol": base_balance_symbol,
                     "quote_symbol": quote_balance_symbol,
                     # The contracts this position is actually held in. The exit
@@ -4905,6 +5052,10 @@ class TradingBot:
             # A ghost exit has no fill to read; the live branch overwrites this
             # with "tx_receipt" or "wallet_delta" once it knows which it used.
             exit_fill_source = "simulated"
+            # Set by the live branch when neither measurement produced usable
+            # proceeds and the feed price stood in. Defined here so the ghost
+            # branch, which never reaches that check, still reports it.
+            exit_proceeds_estimated = False
 
             if pos_is_live:
                 entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
@@ -5052,7 +5203,22 @@ class TradingBot:
                     buy=quote_swap_token,
                     leg="exit",
                 )
+                exit_price_insane = False
                 if exit_receipt_fill is not None and exit_receipt_fill.ok:
+                    # Same question as the entry, on the leg where a wrong
+                    # number is not merely a bad basis but a realised profit
+                    # that was never earned.
+                    exit_receipt_price = float(exit_receipt_fill.bought) / max(
+                        float(exit_receipt_fill.sold), 1e-18
+                    )
+                    exit_price_insane = self._fill_price_disagrees_with_feed(
+                        exit_receipt_price, price
+                    )
+                if (
+                    exit_receipt_fill is not None
+                    and exit_receipt_fill.ok
+                    and not exit_price_insane
+                ):
                     base_sold = float(exit_receipt_fill.sold)
                     quote_received = float(exit_receipt_fill.bought)
                     if exit_receipt_fill.gas_native > 0.0:
@@ -5068,6 +5234,29 @@ class TradingBot:
                             quote_received,
                             quote_balance_symbol,
                         ),
+                    )
+                elif exit_price_insane:
+                    log_message(
+                        "live-swap",
+                        "exit fill from receipt %s REFUSED: implied %.12g vs feed %.12g "
+                        "for %s -- would book a profit that was never earned; "
+                        "falling back to wallet delta"
+                        % (exit_tx_hash, exit_receipt_price, price, symbol),
+                        severity="error",
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.CRITICAL,
+                        label="fill_price_insane",
+                        details={
+                            "symbol": symbol,
+                            "leg": "exit",
+                            "tx_hash": exit_tx_hash,
+                            "implied_price": exit_receipt_price,
+                            "feed_price": float(price),
+                            "sold": float(exit_receipt_fill.sold),
+                            "bought": float(exit_receipt_fill.bought),
+                        },
                     )
                 elif exit_receipt_fill is not None:
                     log_message(
@@ -5105,6 +5294,35 @@ class TradingBot:
                     return decision
 
                 exit_price_effective = quote_received / max(base_sold, 1e-9)
+                # Backstop, as on the entry. The tokens are already gone, so
+                # refusing to book leaves a phantom position holding nothing;
+                # the proceeds are booked at the feed price instead, flagged,
+                # rather than at a number that would realise a fictional profit.
+                exit_proceeds_estimated = False
+                if self._fill_price_disagrees_with_feed(exit_price_effective, price):
+                    log_message(
+                        "live-swap",
+                        "exit proceeds for %s unusable (%.12g vs feed %.12g); "
+                        "booking the feed price as ESTIMATED proceeds"
+                        % (symbol, exit_price_effective, price),
+                        severity="error",
+                    )
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.CRITICAL,
+                        label="exit_proceeds_estimated",
+                        details={
+                            "symbol": symbol,
+                            "tx_hash": exit_tx_hash,
+                            "rejected_price": float(exit_price_effective),
+                            "feed_price": float(price),
+                            "fill_source": exit_fill_source,
+                        },
+                    )
+                    exit_price_effective = float(price)
+                    quote_received = float(base_sold) * float(price)
+                    exit_fill_source = f"{exit_fill_source}+feed_proceeds"
+                    exit_proceeds_estimated = True
 
                 allocation_ratio = min(1.0, base_sold / max(held_size, 1e-9))
                 cost_portion = total_quote_spent * allocation_ratio
@@ -5465,6 +5683,9 @@ class TradingBot:
                     "entry_tx_hash": str(pos.get("entry_tx_hash") or ""),
                     "route_used": exit_tx_route,
                     "fill_source": exit_fill_source,
+                    # A realised P/L computed from a feed price rather than a
+                    # measured fill must say so in the row that records it.
+                    "proceeds_estimated": exit_proceeds_estimated,
                 }
             )
             if isinstance(decision.get("brain"), dict):
