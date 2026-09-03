@@ -150,7 +150,12 @@ def main() -> int:
     grace = int(os.environ.get("WATCHDOG_SPAWN_GRACE_SEC", "180"))
     _log(f"watchdog start pid={os.getpid()} interval={interval}s grace={grace}s")
 
-    prod_args = ["-u", "main.py", "--action", "start_production", "--stay-alive"]
+    # -X utf8 BEFORE main.py: after it, it is an argument to main.py rather
+    # than to Python. This is the launcher that actually respawned production
+    # on 2026-09-03 -- pid 5308's command line is exactly these args -- so the
+    # flag was missing on the running process while the two .ps1 launchers
+    # fixed in 6a0bd29 both carried it.
+    prod_args = ["-u", "-X", "utf8", "main.py", "--action", "start_production", "--stay-alive"]
     feeder_args = ["scripts/run_brain_feeder.py"]
     # Grace timestamps so we don't respawn the same role while the
     # last spawn is still booting (Python + Django init can take ~60s).

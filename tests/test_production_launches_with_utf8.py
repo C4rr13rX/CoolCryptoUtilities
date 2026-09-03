@@ -79,6 +79,71 @@ def test_the_flag_precedes_the_script() -> None:
             assert x_at < main_at, f"{name}: -X utf8 must precede main.py: {line}"
 
 
+#: The PYTHON launchers, which 6a0bd29 did not reach.
+#:
+#: That commit fixed the two .ps1 launchers and said "both launchers", but four
+#: things in this repo can start production. Measured 2026-09-03 16:27:35, the
+#: running production process (pid 5308) had the command line
+#:
+#:     python.exe -u main.py --action start_production --stay-alive
+#:
+#: which is ``w1z4rd_watchdog.py``'s ``prod_args`` verbatim and carries no
+#: ``-X utf8``. The two launchers that were fixed were not the one doing the
+#: relaunching. A partial change that leaves callers on the old contract is
+#: worse than none, because it looks done.
+_PY_LAUNCHERS = (
+    ("scripts/main_keeper.py", "cmd = ["),
+    ("scripts/w1z4rd_watchdog.py", "prod_args = ["),
+)
+
+
+def _py_launch_list(text: str, marker: str) -> str:
+    """The single argv literal that starts production, flattened to one line."""
+    start = text.find(marker)
+    while start != -1:
+        end = text.find("]", start)
+        block = " ".join(text[start:end].split())
+        if "start_production" in block:
+            return block
+        start = text.find(marker, start + 1)
+    return ""
+
+
+def test_every_python_launcher_passes_x_utf8() -> None:
+    missing: list[str] = []
+    checked = 0
+    for name, marker in _PY_LAUNCHERS:
+        path = _ROOT / name
+        if not path.exists():
+            continue
+        block = _py_launch_list(path.read_text(encoding="utf-8", errors="ignore"), marker)
+        assert block, f"{name}: no start_production argv literal found"
+        checked += 1
+        if not re.search(r'"-X"\s*,\s*"utf8"', block):
+            missing.append(f"{name}: {block}")
+    assert checked == len(_PY_LAUNCHERS), "a python launcher has been renamed"
+    assert not missing, (
+        "these launchers respawn production without -X utf8:\n" + "\n".join(missing)
+    )
+
+
+def test_the_python_launchers_put_the_flag_before_main_py() -> None:
+    for name, marker in _PY_LAUNCHERS:
+        path = _ROOT / name
+        if not path.exists():
+            continue
+        block = _py_launch_list(path.read_text(encoding="utf-8", errors="ignore"), marker)
+        x_at = block.find('"-X"')
+        # main.py appears as a literal or as str(MAIN_PATH); both end the
+        # python-argument section.
+        main_at = min(
+            (i for i in (block.find('"main.py"'), block.find("MAIN_PATH")) if i != -1),
+            default=-1,
+        )
+        assert x_at != -1 and main_at != -1, f"{name}: {block}"
+        assert x_at < main_at, f"{name}: -X utf8 must precede main.py: {block}"
+
+
 def test_the_character_that_breaks_it_is_really_in_the_pair_list() -> None:
     """Guard the premise, not just the flag: if no ticker is non-ASCII any
     more, this test should be the thing that says so."""

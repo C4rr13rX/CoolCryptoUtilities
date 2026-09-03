@@ -59,7 +59,15 @@ def launch_main() -> Optional[subprocess.Popen[str]]:
     if not MAIN_PATH.exists():
         _log("main.py not found; cannot start main process.")
         return None
-    cmd = [sys.executable, str(MAIN_PATH), "--action", "start_production", "--stay-alive"]
+    # -X utf8 BEFORE main.py: after it, it is an argument to main.py rather
+    # than to Python. See tests/test_production_launches_with_utf8.py -- a
+    # launcher without it starts a cp1252 interpreter, and open()'s default
+    # encoding is fixed at startup, so main.py's own harden_stdio() cannot
+    # reach a bare open(path, "w") inside library code.
+    cmd = [
+        sys.executable, "-X", "utf8",
+        str(MAIN_PATH), "--action", "start_production", "--stay-alive",
+    ]
     env = os.environ.copy()
     env.setdefault("ALLOW_SQLITE_FALLBACK", "1")
     MAIN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
