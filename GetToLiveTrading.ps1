@@ -412,6 +412,31 @@ try:
     out["transitions"] = q("SELECT COUNT(*) FROM feedback_events WHERE source='live_transition'")
     row = list(c.execute("SELECT usd_amount FROM balances WHERE wallet='guardian' AND chain='base' AND symbol='USDC'"))
     out["usdc"] = round(float(row[0][0]), 4) if row else None
+
+    # Total value, not just the stable leg.
+    #
+    # Most of what this bot does is hop between tokens, so mid-rotation the
+    # stable balance is SUPPOSED to be low -- the value is in whatever it is
+    # holding. Halting on stables alone stops a healthy run: measured
+    # 2026-09-03 the loop halted at usdc=3.69 while the same wallet also held
+    # CBETH ($1.06) and 1.55 AERO, none of which it counted.
+    #
+    # Non-stable rows carry usd_amount=0 on the raw wallet, so prefer the
+    # 'guardian' snapshot which does carry valuations, and fall back to the
+    # stable leg alone rather than inventing a number.
+    try:
+        rows = list(c.execute(
+            "SELECT symbol, usd_amount FROM balances "
+            "WHERE wallet='guardian' AND chain='base'"))
+        total = 0.0
+        for sym, amt in rows:
+            try:
+                total += float(amt or 0.0)
+            except (TypeError, ValueError):
+                continue
+        out["portfolio_usd"] = round(total, 4)
+    except Exception:
+        out["portfolio_usd"] = out.get("usdc")
 except Exception as exc:
     out["db_error"] = "%s: %s" % (type(exc).__name__, exc)
 
@@ -784,8 +809,9 @@ while ($true) {
         $plText = if ($null -eq $state.live_pl) { "--" } else { "{0:+0.0000;-0.0000;0.0000}" -f $state.live_pl }
         Write-Line ("live_rows={0}  live_trades={1}  live_PL={2}" -f `
                     $state.live_rows, $state.live_trades, $plText) "White"
-        Write-Line ("ticks10m={0}  ghost1h={1}  cycles10m={2}  transitions={3}  usdc={4}" -f `
-                    $state.ticks_10m, $state.ghost_1h, $state.cycles_10m, $state.transitions, $state.usdc)
+        Write-Line ("ticks10m={0}  ghost1h={1}  cycles10m={2}  transitions={3}  usdc={4}  portfolio={5}" -f `
+                    $state.ticks_10m, $state.ghost_1h, $state.cycles_10m, $state.transitions, `
+                    $state.usdc, $state.portfolio_usd)
         if ($state.live_attempts -gt $state.live_rows) {
             Write-Line ("live attempts={0} of which SETTLED={1} (rest blocked/dry-run)" -f `
                         $state.live_attempts, $state.live_rows) "DarkYellow"
@@ -841,13 +867,21 @@ while ($true) {
             $state.live_pl, $state.live_trades, $state.live_wins, $state.live_losses, $state.usdc)
         break
     }
-    if ($state -and $null -ne $state.usdc -and $state.usdc -lt $MinWalletUsd) {
+    # Judge the FLOOR on total portfolio value, not the stable leg.
+    #
+    # A rotation bot holding its value in tokens is working, not failing. The
+    # floor exists to stop the wallet being ground away by fees, and only
+    # total value can tell those apart.
+    $wealth = if ($null -ne $state.portfolio_usd -and $state.portfolio_usd -gt 0) {
+        $state.portfolio_usd } else { $state.usdc }
+    if ($state -and $null -ne $wealth -and $wealth -lt $MinWalletUsd) {
         Write-Banner "HALTED: WALLET BELOW FLOOR" "Red"
-        Write-Line ("deployable stable {0} is under the {1} floor" -f $state.usdc, $MinWalletUsd) "Red"
+        Write-Line ("total portfolio {0} (stable {1}) is under the {2} floor" -f `
+                    $wealth, $state.usdc, $MinWalletUsd) "Red"
         Write-Line "Not continuing to spend down the wallet. Investigate before restarting." "Red"
         Send-Milestone -Text (
-            "R3V3N!R HALTED: wallet `${0} under `${1} floor. {2} live trades, P/L {3:+0.0000;-0.0000;0.0000}. Needs you." -f `
-            $state.usdc, $MinWalletUsd, $state.live_trades, $state.live_pl)
+            "R3V3N!R HALTED: portfolio `${0} (stable `${1}) under `${2} floor. {3} live trades, P/L {4:+0.0000;-0.0000;0.0000}. Needs you." -f `
+            $wealth, $state.usdc, $MinWalletUsd, $state.live_trades, $state.live_pl)
         break
     }
 
