@@ -38,7 +38,21 @@ PROMPT = ROOT / "data" / "behavior_prompt.md"
 MAX_LINES = 4000          # keep the pane responsive on a long run
 POLL_SEC = 0.5
 
-_state = {"pos": 0, "lines": [], "stop": False}
+# Everything the UI reads is produced on a worker thread and stored here.
+#
+# The render loop must never block. It used to call _loop_running() directly,
+# which shells out to PowerShell and takes hundreds of milliseconds -- so
+# every five seconds the window froze mid-frame and stopped responding to
+# input. Same for the file reads. The UI thread now only reads these values.
+_state = {
+    "pos": 0,
+    "lines": [],
+    "stop": False,
+    "running": False,
+    "pending": 0,
+    "score": "no passes scored yet",
+    "lock": None,
+}
 
 
 # ----------------------------------------------------------------- tail --
@@ -46,25 +60,57 @@ _state = {"pos": 0, "lines": [], "stop": False}
 def _tail_worker() -> None:
     """Stream new bytes from the log without ever re-reading the whole file."""
     while not _state["stop"]:
+        _tail_once()
+        time.sleep(POLL_SEC)
+
+
+def _tail_once() -> None:
+    try:
+        if LOG.exists():
+            size = LOG.stat().st_size
+            # Truncated or rotated: start over from the top.
+            if size < _state["pos"]:
+                _state["pos"] = 0
+            if size > _state["pos"]:
+                with LOG.open("r", encoding="utf-8", errors="replace") as fh:
+                    fh.seek(_state["pos"])
+                    chunk = fh.read()
+                    _state["pos"] = fh.tell()
+                for line in chunk.splitlines():
+                    if line.strip():
+                        _state["lines"].append(line.rstrip())
+                if len(_state["lines"]) > MAX_LINES:
+                    del _state["lines"][:-MAX_LINES]
+    except Exception:
+        pass
+
+
+def _status_worker() -> None:
+    """Poll the slow things off the UI thread.
+
+    Process listing shells out to PowerShell and the score file has to be
+    parsed; neither belongs in a render frame. This runs on its own thread
+    and only ever writes plain values into _state.
+    """
+    while not _state["stop"]:
         try:
-            if LOG.exists():
-                size = LOG.stat().st_size
-                # Truncated or rotated: start over from the top.
-                if size < _state["pos"]:
-                    _state["pos"] = 0
-                if size > _state["pos"]:
-                    with LOG.open("r", encoding="utf-8", errors="replace") as fh:
-                        fh.seek(_state["pos"])
-                        chunk = fh.read()
-                        _state["pos"] = fh.tell()
-                    for line in chunk.splitlines():
-                        if line.strip():
-                            _state["lines"].append(line.rstrip())
-                    if len(_state["lines"]) > MAX_LINES:
-                        del _state["lines"][:-MAX_LINES]
+            _state["running"] = _loop_running()
         except Exception:
             pass
-        time.sleep(POLL_SEC)
+        try:
+            _state["pending"] = _pending_count()
+        except Exception:
+            pass
+        try:
+            _state["score"] = _latest_score()
+        except Exception:
+            pass
+        # Slow on purpose: none of this changes fast, and each cycle costs a
+        # process spawn.
+        for _ in range(50):
+            if _state["stop"]:
+                return
+            time.sleep(0.1)
 
 
 def _pending_count() -> int:
@@ -94,12 +140,15 @@ def _latest_score() -> str:
 def _loop_running() -> bool:
     """True when a GetToLiveTrading process is alive."""
     try:
+        # CREATE_NO_WINDOW: without it every poll flashes a console window,
+        # which is the exact behaviour we spent today removing elsewhere.
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "@(Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" "
              "-ErrorAction SilentlyContinue | Where-Object "
              "{ $_.CommandLine -like '*GetToLiveTrading.ps1*' }).Count"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, creationflags=flags)
         return int((out.stdout or "0").strip() or 0) > 0
     except Exception:
         return False
@@ -189,32 +238,32 @@ def run() -> int:
 
     build()
     threading.Thread(target=_tail_worker, daemon=True).start()
+    threading.Thread(target=_status_worker, daemon=True).start()
 
     last_ui = 0.0
-    last_state = 0.0
-    running = False
 
+    # The render loop does no I/O and spawns no processes: it only copies
+    # values the workers have already computed. That is what keeps the window
+    # responsive while a pass runs for hours.
     while dpg.is_dearpygui_running():
         now = time.time()
 
-        if now - last_ui > 0.35:
+        if now - last_ui > 0.25:
             last_ui = now
             dpg.set_value("log_text", "\n".join(_state["lines"][-MAX_LINES:])
                           or "waiting for output...")
             if dpg.get_value("follow"):
                 dpg.set_y_scroll("log_pane", -1.0)
-            n = _pending_count()
+
+            n = _state["pending"]
             dpg.set_value("queued_count",
                           ("%d message(s) waiting" % n) if n else "")
 
-        # Process listing is comparatively expensive; do it rarely.
-        if now - last_state > 5.0:
-            last_state = now
-            running = _loop_running()
+            running = _state["running"]
             dpg.set_value("run_state", "RUNNING" if running else "NOT RUNNING")
             dpg.configure_item("run_state",
                                color=(120, 220, 140) if running else (230, 120, 120))
-            dpg.set_value("score_line", _latest_score())
+            dpg.set_value("score_line", _state["score"])
 
         dpg.render_dearpygui_frame()
 
