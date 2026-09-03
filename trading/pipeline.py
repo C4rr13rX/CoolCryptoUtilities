@@ -4369,6 +4369,9 @@ class TrainingPipeline:
                 "native_usd": 0.0,
                 "sparse": True,
                 "fragmented": True,
+                # An unreadable wallet blocks on `sparse` alone, but the key
+                # must exist on every return path so no consumer has to guess.
+                "fragmentation_blocking": True,
                 "balance_fresh": False,
                 "balance_stale": False,
                 "balance_unknown": True,
@@ -4518,7 +4521,33 @@ class TrainingPipeline:
             sparse_reasons.append("native_gas_low")
         # Fragmentation is informational when we have sufficient capital.
         # A native-heavy wallet with dust tokens is normal, not a blocker.
-        if fragmented and capital_deficit > 0:
+        #
+        # THE FLAG THAT DECIDES HAS TO BE THE ONE WE PUBLISH.
+        #
+        # This function has encoded that judgement since the clause was added,
+        # but only for its own `sparse_reasons` list. Every consumer read the
+        # raw `fragmented` measurement instead and re-derived a *blocking*
+        # meaning it does not have:
+        #
+        #   trading/pipeline.py     wallet_sparse = sparse or fragmented
+        #   trading/swap_validator  allowed = ... and not fragmented_wallet
+        #
+        # Measured 2026-09-03 11:40 against the live wallet: base held $3.9774
+        # USDC + $6.7230 ETH = $10.7004 against a $3.00 minimum (3.5x), with
+        # sparse=False and sparse_reasons=[] -- no fault of any kind -- while
+        # the transition plan reported block_reason="wallet_sparse" and
+        # recommended_live_usd=$0.00. The whole cause was two of the four base
+        # holdings being priced at $0.00 (3.085 AERO and one token whose symbol
+        # did not even decode), giving fragment_ratio exactly 0.5 and tripping
+        # `focus_fragment_ratio >= 0.5`. Two worthless leftovers of a previous
+        # swap were refusing every real trade, and because the reason list was
+        # empty the refusal could not say why.
+        #
+        # So publish the decision, not just the measurement. `fragmented` stays
+        # exactly as it was for dashboards and telemetry; consumers that stop
+        # money read `fragmentation_blocking`.
+        fragmentation_blocking = bool(fragmented and capital_deficit > 0)
+        if fragmentation_blocking:
             sparse_reasons.append("fragmented")
         sparse = bool(
             capital_deficit > 0 or native_starved or focus_holdings == 0 or balance_unknown
@@ -4544,6 +4573,10 @@ class TrainingPipeline:
             "native_usd_total": native_usd_total,
             "sparse": sparse,
             "fragmented": fragmented,
+            # The measurement (`fragmented`) and the refusal
+            # (`fragmentation_blocking`) are two different questions; only the
+            # second one may stop a trade.
+            "fragmentation_blocking": fragmentation_blocking,
             "fragmented_total": fragmented_total,
             "fragment_ratio": focus_fragment_ratio,
             "fragment_ratio_total": (len(dust_tokens_total) / holdings_total) if holdings_total else 0.0,
@@ -4862,7 +4895,17 @@ class TrainingPipeline:
             ghost_collection_ready = True
         ghost_net_profit = float(ghost_check.get("total_net_profit", 0.0))
         fragmented_wallet = bool(wallet_state.get("fragmented"))
-        wallet_sparse = bool(wallet_state.get("sparse") or fragmented_wallet)
+        # Dust is a fault only when it is WHY we cannot fund a clip.
+        # `_wallet_state` decides that (see its fragmentation note) and
+        # publishes the answer; the raw measurement stays for reporting. Older
+        # dicts without the key fall back to the same rule computed here, so a
+        # hand-built wallet_state cannot silently reinstate the block.
+        fragmentation_blocking = bool(
+            wallet_state.get(
+                "fragmentation_blocking", fragmented_wallet and capital_deficit > 0
+            )
+        )
+        wallet_sparse = bool(wallet_state.get("sparse") or fragmentation_blocking)
         native_starved = bool(wallet_state.get("native_starved", native_buffer_gap > 0))
         horizons = summary.get("horizons", {})
         allowed = 0
@@ -5210,20 +5253,35 @@ class TrainingPipeline:
         bus_actions.sort(key=lambda act: (act.get("priority", 99), act.get("action") or ""))
         bus_actions_pending = bool(bus_actions)
         bus_freeze_actions = {act.get("action") for act in bus_actions}
-        if bus_actions_pending and (
+        # A pending bus action is ADVICE unless it names a real fault.
+        #
+        # tests/test_advisory_bus_actions_do_not_halt_trading.py established
+        # that rule for `halt_live` and enumerated the faults here. The SIZING
+        # half of the same leak survived one line below it: `if bus_actions:`
+        # de-rated the live ratio by 0.35 for ANY pending action, advisory ones
+        # included. Measured 2026-09-03, that is the second gate between this
+        # wallet and its first real trade -- after the fragmentation fix above,
+        # the first sizing pass rescues the clip to exactly $0.75, and the
+        # de-rate then takes it to 0.75 * 0.35 = $0.2625, which the min-clip
+        # floor immediately refuses as `block_reason="min_clip"`. The only
+        # pending action was `scan_micro_opportunities` at priority 3, raised
+        # by two leftover tokens worth $0.00.
+        bus_block = bus_actions_pending and (
             wallet_sparse
             or capital_deficit > 0
             or native_starved
             or "freeze_live" in bus_freeze_actions
             or "pause_live" in bus_freeze_actions
-        ):
+        )
+        if bus_block:
             recommended_ratio = 0.0
             if not block_reason:
                 block_reason = "bus_actions_pending"
-        if bus_actions:
+        if bus_actions_pending:
+            # The ghost lane spends no money, so the damper stays conservative
+            # there whatever raised the action. Only the live ratio needed the
+            # distinction, and when bus_block holds it is already zero.
             ghost_risk_multiplier = min(ghost_risk_multiplier, 0.35)
-            if recommended_ratio > 0:
-                recommended_ratio = min(recommended_ratio, recommended_ratio * ghost_risk_multiplier)
         if recommended_ratio <= 0:
             live_mode = "blocked"
             recommended_live_usd = 0.0

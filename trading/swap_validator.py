@@ -633,6 +633,17 @@ class SwapValidator:
         )
         sparse_wallet = bool(wallet_state.get("sparse"))
         fragmented_wallet = bool(wallet_state.get("fragmented"))
+        # Same rule as _build_transition_plan: `fragmented` is a measurement of
+        # how the wallet is shaped, not a verdict. Dust blocks only when it is
+        # why the clip cannot be funded -- otherwise a pair of $0.00 leftovers
+        # refuses trades a $10.70 balance can plainly afford. _wallet_state
+        # publishes the verdict; the local derivation is the fallback for
+        # wallet_state dicts built elsewhere.
+        fragmentation_blocking = bool(
+            wallet_state.get(
+                "fragmentation_blocking", fragmented_wallet and capital_deficit > 0
+            )
+        )
         fragment_ratio = float(wallet_state.get("fragment_ratio", 0.0))
         native_starved = bool(wallet_state.get("native_starved", False))
         native_gap = float(wallet_state.get("native_buffer_gap_usd", 0.0))
@@ -645,7 +656,7 @@ class SwapValidator:
             reasons.append("tail_risk")
         if sparse_wallet:
             reasons.append("sparse_wallet")
-        if fragmented_wallet:
+        if fragmentation_blocking:
             reasons.append("fragmented_wallet")
         if capital_deficit > 0:
             reasons.append("capital_deficit")
@@ -660,7 +671,7 @@ class SwapValidator:
         allowed = (
             ghost_ready
             and not sparse_wallet
-            and not fragmented_wallet
+            and not fragmentation_blocking
             and not native_starved
             and capital_deficit <= 0
             and gross_exposure <= adjusted_budget
@@ -679,6 +690,7 @@ class SwapValidator:
                 "capital_deficit": capital_deficit,
                 "stable_usd": float(wallet_state.get("stable_usd", 0.0)),
                 "fragmented": fragmented_wallet,
+                "fragmentation_blocking": fragmentation_blocking,
                 "fragment_ratio": fragment_ratio,
                 "native_starved": native_starved,
                 "native_buffer_gap_usd": native_gap,
@@ -702,7 +714,9 @@ class SwapValidator:
                 }
             else:
                 bus_swap_plan = {"action": "freeze_live", "reason": "native_starved", "target_usd": target_usd}
-        if fragmented_wallet and bus_swap_plan is None:
+        # Consolidating dust costs gas. Propose it when the dust is actually in
+        # the way, not merely present.
+        if fragmentation_blocking and bus_swap_plan is None:
             bus_swap_plan = {
                 "action": "consolidate_fragments",
                 "reason": "fragmented_wallet",
@@ -745,6 +759,7 @@ class SwapValidator:
             "tail_risk": tail_risk,
             "tail_guardrail": tail_guard,
             "fragmented_wallet": fragmented_wallet,
+            "fragmentation_blocking": fragmentation_blocking,
             "fragment_ratio": fragment_ratio,
             "native_starved": native_starved,
             "native_buffer_gap_usd": native_gap,
