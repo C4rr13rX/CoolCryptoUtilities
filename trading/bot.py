@@ -3909,6 +3909,71 @@ class TradingBot:
                 reason = f"micro-profit-blocked:{micro_profit.reason}"
 
         if should_enter:
+            # A simulation may not take the slot of a position holding real
+            # tokens. Both position writes below are plain assignments to
+            # ``self.positions[symbol]`` and neither ever asked whether the slot
+            # was occupied. Measured 2026-09-03 by driving this method with a
+            # book that already held the symbol:
+            #
+            #   ghost entry over a LIVE position -> mode live->ghost, size
+            #       75.0 -> 10.0, tx_hash "0xrealhash" -> None. The bought
+            #       tokens stay on-chain with nothing in the book pointing at
+            #       them, the bot then "exits" a simulation -- no swap -- and
+            #       the live P/L never settles. The entry cost and the only
+            #       hash that could be checked against the chain are gone.
+            #
+            #   live entry over a ghost position -> the ghost trade_id, entry
+            #       price and size vanish with no exit, no outcome and no
+            #       ledger row. That is the orphaned-entry class again (the 152
+            #       entries with no matching exit that _save_state documents).
+            #
+            # The first direction is the one that loses money, and it was the
+            # likely one: 12 of the 17 symbols ticking at the time carried a
+            # ghost position and the ghost lane opens ~80 entries per 6h, so
+            # the first real live position would have been overwritten within
+            # hours of being opened -- before link 9 could ever settle a trade.
+            #
+            # Refused rather than released, because the live position is the
+            # only record of tokens we actually own.
+            entry_is_live = bool(
+                self.live_trading_enabled and self._strategy_live_approved(directive)
+            )
+            if pos is not None and str(pos.get("mode") or "") == "live" and not entry_is_live:
+                held = {
+                    "symbol": symbol,
+                    "held_trade_id": str(pos.get("trade_id") or ""),
+                    "held_strategy_id": str(pos.get("strategy_id") or ""),
+                    "held_size": float(pos.get("size") or 0.0),
+                    "held_entry_price": float(pos.get("entry_price") or 0.0),
+                    "held_tx_hash": str(pos.get("tx_hash") or ""),
+                    "incoming_strategy_id": str(
+                        getattr(directive, "strategy_id", "") or ""
+                    ) if directive else "",
+                }
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-live-held",
+                        "reason": "symbol_held_by_live_position",
+                        **held,
+                    }
+                )
+                # Logged so the skipped ghost observation is visible. Without a
+                # row this is indistinguishable from the lane never having
+                # wanted the trade, which is the gap that hid every other
+                # refusal on this path.
+                try:
+                    self.db.log_trade(
+                        wallet="ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-live-held",
+                        details=decision,
+                    )
+                except Exception:
+                    pass
+                return decision
             await self._run_wallet_sync(reason="pre-enter")
             # Skip swap_validator for ghost mode. Its liquidity check
             # uses per-tick avg_volume_usd from market_samples; on a
@@ -4244,6 +4309,13 @@ class TradingBot:
                     return decision
 
                 executed_entry_price = quote_spent / max(base_received, 1e-9)
+                self._release_position_for_entry(
+                    symbol,
+                    chain=chain_name,
+                    incoming_mode="live",
+                    incoming_strategy=str(getattr(directive, "strategy_id", "") or "") if directive else "",
+                    incoming_trade_id=trade_id,
+                )
                 self._claim_position_symbol(symbol)
                 self.positions[symbol] = {
                     "mode": "live",
@@ -4381,6 +4453,13 @@ class TradingBot:
                 return decision
 
             # ghost / paper entry
+            self._release_position_for_entry(
+                symbol,
+                chain=chain_name,
+                incoming_mode="ghost",
+                incoming_strategy=str(getattr(directive, "strategy_id", "") or "") if directive else "",
+                incoming_trade_id=trade_id,
+            )
             self._claim_position_symbol(symbol)
             self.positions[symbol] = {
                 "mode": "ghost",
@@ -6609,6 +6688,79 @@ class TradingBot:
         sym = str(symbol or "").strip()
         if sym:
             self._owned_symbols.add(sym)
+
+    def _release_position_for_entry(
+        self,
+        symbol: str,
+        *,
+        chain: str,
+        incoming_mode: str,
+        incoming_strategy: str,
+        incoming_trade_id: str,
+    ) -> None:
+        """Drop the open position a new entry is about to take the slot of.
+
+        Called immediately before each write to ``self.positions[symbol]``, and
+        therefore only once the entry has actually committed -- the live branch
+        has already swapped by then -- so a refused or failed entry never
+        disturbs the book.
+
+        The position is ABANDONED, not closed. Closing it would mean inventing
+        an exit price and a hold time the strategy never chose, and a
+        policy-truncated outcome recorded as a completed trade is how a
+        strategy gets convicted on trades it did not make (ab74328). One lost
+        observation is the honest cost; a fabricated one is not.
+
+        What this exists to prevent is the *silence*. The assignment that
+        follows used to be the whole story: the old row disappeared with no
+        exit, no outcome, no ledger record and nothing in trading_ops to say it
+        had ever been open. A released position leaves a row naming what was
+        abandoned and what took its place.
+
+        A live position is never released here -- ``_interpret_predictions``
+        refuses a non-live entry before reaching this point, and a live entry
+        replacing a live position on the same symbol would strand the first
+        one's tokens. That case is asserted against in the tests rather than
+        handled, because the entry path cannot produce it.
+        """
+        pos = self.positions.get(symbol)
+        if not isinstance(pos, dict):
+            return
+        released = {
+            "symbol": symbol,
+            "released_mode": str(pos.get("mode") or ""),
+            "released_strategy_id": str(pos.get("strategy_id") or ""),
+            "released_trade_id": str(pos.get("trade_id") or ""),
+            "released_size": float(pos.get("size") or 0.0),
+            "released_entry_price": float(pos.get("entry_price") or 0.0),
+            "released_entry_ts": float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0),
+            "released_tx_hash": str(pos.get("tx_hash") or ""),
+            "incoming_mode": incoming_mode,
+            "incoming_strategy_id": incoming_strategy,
+            "incoming_trade_id": incoming_trade_id,
+            "reason": "slot_taken_by_new_entry",
+        }
+        self._claim_position_symbol(symbol)
+        self.positions.pop(symbol, None)
+        log_message(
+            "position-released",
+            f"{symbol}: abandoned {released['released_mode'] or 'unknown'} position "
+            f"{released['released_trade_id'] or '?'} "
+            f"({released['released_strategy_id'] or 'unclassified'}) for a new "
+            f"{incoming_mode} entry by {incoming_strategy or 'unclassified'}",
+            severity="warning",
+        )
+        try:
+            self.db.log_trade(
+                wallet=released["released_mode"] or "ghost",
+                chain=chain,
+                symbol=symbol,
+                action="hold",
+                status="position-released",
+                details=released,
+            )
+        except Exception:
+            pass
 
     def _save_state(self) -> None:
         try:
