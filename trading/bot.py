@@ -2116,9 +2116,48 @@ class TradingBot:
                 self.required_live_win_rate * fast_track_factor,
             )
             effective_required_profit = self.required_live_profit * fast_track_factor
+        # These two vetoes used to `return` with nothing written.
+        #
+        # Every OTHER refusal in this function records why -- risk_halt,
+        # bus_actions_pending, model_accuracy_gate, replay_gate,
+        # ghost_performance_gate -- because a silent return here has burned
+        # this project repeatedly: "an unexplained veto is what kept live
+        # trading invisible for hours" (line 1938), and again at 2052, and
+        # again at 3082. These two were the last ones still returning mute.
+        #
+        # That mattered the moment the AttributeError above was fixed. The
+        # transition stopped crashing and started refusing -- and left
+        # `_live_transition_state` holding the raw readiness report from line
+        # 1965, whose own `reason` field says "mini_ready". So the telemetry
+        # read as though the bot were ready and progressing, while the actual
+        # verdict was a rejection that nothing recorded. A veto that reports
+        # the reason it was ADMITTED is worse than one that reports nothing.
+        #
+        # Measured 2026-09-03: precision 0.5355 against effective_required
+        # 0.5500 -- short by 0.0145 -- with recall 0.6803 and 713 samples,
+        # both comfortably clear. Behaviour is unchanged; only the record is.
         if precision < effective_required_win_rate or recall < effective_required_win_rate:
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "reason": "model_precision_gate",
+                "fast_track": fast_track,
+                "precision": precision,
+                "recall": recall,
+                "samples": samples,
+                "required_precision": effective_required_win_rate,
+                "shortfall": min(precision, recall) - effective_required_win_rate,
+            }
             return
         if samples < effective_required_trades:
+            self._live_transition_state = {
+                **(readiness or {}),
+                "enabled": False,
+                "reason": "model_sample_gate",
+                "fast_track": fast_track,
+                "samples": samples,
+                "required_samples": effective_required_trades,
+            }
             return
         replay_ok, replay_reason = self._replay_gate_allows()
         if not replay_ok:

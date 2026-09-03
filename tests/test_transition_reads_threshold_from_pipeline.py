@@ -75,18 +75,25 @@ def _readiness(**over):
     return base
 
 
-def _bot(readiness_payload):
+def _bot(readiness_payload, *, min_ghost_win_rate=0.55):
     """A stand-in shaped like the REAL TradingBot.
 
     Deliberately does NOT define ``decision_threshold``. That omission is the
     whole point: the pre-existing fake defined it, which is precisely why the
     suite could not see this crash.
+
+    ``min_ghost_win_rate`` defaults to the value the production pipeline
+    actually reports (measured 0.55 on 2026-09-03), because it is what sets the
+    effective precision bar: ``max(min_ghost_win_rate, required_win_rate *
+    fast_track_factor)``. A stand-in carrying the library default of 0.5 puts
+    the bar UNDER production's measured precision of 0.5355, so the gate under
+    test never fires and the test passes without exercising anything.
     """
     pipeline = types.SimpleNamespace(
         decision_threshold=0.89,           # measured in production 2026-09-03
         ghost_live_transition_plan=lambda: {},
         live_readiness_report=lambda: readiness_payload,
-        min_ghost_win_rate=0.5,
+        min_ghost_win_rate=min_ghost_win_rate,
         focus_lookback_sec=3600,
         metrics=types.SimpleNamespace(
             ghost_trade_snapshot=lambda **_kw: [],
@@ -168,6 +175,57 @@ class TransitionSurvivesWithoutBotThresholdTest(unittest.TestCase):
         self.assertIsInstance(
             bot._live_transition_state, dict,
             "the transition must leave its verdict behind, not blow up",
+        )
+
+
+class TransitionRecordsItsVetoTest(unittest.TestCase):
+    """A refusal must say why. These two vetoes returned mute.
+
+    Measured 2026-09-03, right after the AttributeError above was fixed: the
+    transition stopped crashing and began refusing at the precision gate
+    (0.5355 against 0.5500). It recorded nothing -- so `_live_transition_state`
+    still held the raw readiness report assigned at bot.py:1965, whose own
+    `reason` field reads "mini_ready".
+
+    The telemetry therefore said "mini_ready" while the real verdict was a
+    rejection. A veto that reports the reason the bot was ADMITTED is worse
+    than one that reports nothing, because it looks like progress.
+    """
+
+    def test_precision_shortfall_is_recorded(self):
+        payload = _readiness(precision=0.5355, recall=0.6803, samples=713,
+                             reason="mini_ready")
+        bot = _bot(payload)
+        TradingBot._maybe_transition_to_live(bot, latest_decision=None)
+        state = bot._live_transition_state or {}
+        self.assertEqual(
+            state.get("reason"), "model_precision_gate",
+            "the precision veto must name itself, not leave readiness's own "
+            "'mini_ready' standing as the apparent verdict",
+        )
+        self.assertFalse(state.get("enabled"))
+        self.assertLess(state.get("shortfall"), 0.0)
+
+    def test_recorded_veto_does_not_claim_readiness(self):
+        """The specific trap: reason must not survive as 'mini_ready'."""
+        payload = _readiness(precision=0.1, recall=0.1, reason="mini_ready")
+        bot = _bot(payload)
+        TradingBot._maybe_transition_to_live(bot, latest_decision=None)
+        self.assertNotEqual(
+            (bot._live_transition_state or {}).get("reason"), "mini_ready",
+            "a rejected transition still reported the readiness verdict that "
+            "let it in -- this is what made the block invisible",
+        )
+
+    def test_passing_precision_is_not_vetoed_here(self):
+        """The gate must still only fire on a genuine shortfall."""
+        payload = _readiness(precision=0.95, recall=0.95, samples=713)
+        bot = _bot(payload)
+        TradingBot._maybe_transition_to_live(bot, latest_decision=None)
+        self.assertNotIn(
+            (bot._live_transition_state or {}).get("reason"),
+            ("model_precision_gate", "model_sample_gate"),
+            "a model clearing both bars must not be stopped by these vetoes",
         )
 
 
