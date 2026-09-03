@@ -6479,6 +6479,27 @@ class TradingBot:
         self._discovery_cache_ts = now
         return snapshot
 
+    @property
+    def _owned_symbols(self) -> set:
+        """This bot's ownership set, created on first use.
+
+        ``__init__`` seeds it, but not every construction path runs ``__init__``
+        -- the live-refusal tests build a bot through ``__new__`` -- and a
+        missing attribute here raised AttributeError out of
+        ``_claim_position_symbol``, taking down the entry path and
+        ``_save_state`` with it.
+
+        Deliberately NOT a class-level ``set()`` default: that is one set shared
+        by every bot in the pool, which is the shared-position-book clobber this
+        ownership set exists to prevent. Stored in ``__dict__`` so each bot gets
+        its own.
+        """
+        owned = self.__dict__.get("_owned_position_symbols")
+        if not isinstance(owned, set):
+            owned = set()
+            self.__dict__["_owned_position_symbols"] = owned
+        return owned
+
     def _claim_position_symbol(self, symbol: str) -> None:
         """Take responsibility for ``symbol``'s row in the shared position book.
 
@@ -6489,7 +6510,7 @@ class TradingBot:
         """
         sym = str(symbol or "").strip()
         if sym:
-            self._owned_position_symbols.add(sym)
+            self._owned_symbols.add(sym)
 
     def _save_state(self) -> None:
         try:
@@ -6500,7 +6521,7 @@ class TradingBot:
             state = {}
         positions_payload: Dict[str, Dict[str, Any]] = {}
         for sym, pos in self.positions.items():
-            if str(sym) not in self._owned_position_symbols:
+            if str(sym) not in self._owned_symbols:
                 continue                      # another bot's row; pass it through
             pos_copy = dict(pos)
             fingerprint_val = pos_copy.get("fingerprint")
@@ -6546,7 +6567,7 @@ class TradingBot:
             if isinstance(previous_positions, dict)
             else {}
         )
-        for sym in self._owned_position_symbols - set(positions_payload):
+        for sym in self._owned_symbols - set(positions_payload):
             merged_positions.pop(str(sym), None)
         merged_positions.update(positions_payload)
 

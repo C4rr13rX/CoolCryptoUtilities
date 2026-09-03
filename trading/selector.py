@@ -736,6 +736,65 @@ def _genome_universe_symbols(limit: int) -> List[str]:
     return [f"{asset.upper()}-{quote}" for asset in assets[:limit]]
 
 
+def _held_position_symbols(db: Optional["TradingDatabase"]) -> List[str]:
+    """Symbols this account currently holds an open ghost position in.
+
+    You must be able to CLOSE what you hold. Every exit decision is made in
+    ``TradingBot._interpret_predictions``, which is reached only from a market
+    sample -- it reads ``symbol`` and ``sample_ts`` off the sample and then
+    looks up ``self.positions.get(symbol)``. So the ``MAX_HOLD_SECONDS`` timeout,
+    the stop loss and the confidence-drop exit are all consulted ONLY for a
+    symbol that just ticked, on a bot that is actually running for it.
+
+    ``build()`` composed the bot pool from ATF signals, focus assets, the genome
+    seed and ``select_pairs()`` -- never from the position book. A symbol that
+    dropped out of that selection kept its row in the persisted book and lost
+    the only thing that could ever close it. Measured 2026-09-02 against the
+    live book, 4 of 12 open positions had no ticking feed behind them:
+
+        UNI-USDC      rsi_reversal@1w       held 362.9h   never ticked
+        HIGH-USDC     (none)                held 237.1h   never ticked
+        ARB-USDC      obv_accumulation@5h   held  11.5h   last tick 10.9h ago
+        VIRTUAL-USDC  obv_accumulation@5d   held   0.6h   last tick  0.6h ago
+
+    against ``MAX_HOLD_SECONDS`` of 3600. VIRTUAL-USDC is the live case rather
+    than old damage: it was opened 34 minutes earlier and had not ticked once
+    since entry.
+
+    That is a graduation blocker, not just untidiness. Promotion is scored on
+    CLOSED ghost trades, so a stranded position is a round trip that never
+    reaches the ledger -- and ``atf_static``, the only executor that can spend
+    real money, sits at 11 of the 20 trades it needs.
+
+    Returns [] on any failure so a bad or missing state blob leaves pair
+    selection exactly as it was.
+    """
+    if db is None:
+        return []
+    try:
+        state = db.load_state()
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(state, dict):
+        return []
+    ghost = state.get("ghost_trading")
+    if not isinstance(ghost, dict):
+        return []
+    positions = ghost.get("positions")
+    if not isinstance(positions, dict):
+        return []
+    held: List[str] = []
+    for symbol, position in positions.items():
+        # An entry that is not a position row cannot be closed by giving it a
+        # bot, and would only burn a slot.
+        if not isinstance(position, dict):
+            continue
+        text = str(symbol or "").strip().upper()
+        if text:
+            held.append(text)
+    return list(dict.fromkeys(held))
+
+
 class GhostTradingSupervisor:
     def __init__(
         self,
@@ -846,6 +905,24 @@ class GhostTradingSupervisor:
             horizon_deficit=horizon_deficit,
             system_profile=getattr(self.pipeline, "system_profile", None),
         )
+        # A held position must be given a bot before any new candidate, and the
+        # limit must stretch to cover them all. Ordering alone is not enough:
+        # measured 2026-09-02 the book held 12 open positions against a
+        # resolved pair_limit of 8, so `all_ordered[:pair_limit]` would have
+        # dropped four of them right back into the state they are being
+        # rescued from. Bounded by max_limit so a pathological book cannot
+        # spawn unlimited bots; anything past it keeps its place at the front
+        # of the queue and is picked up by the next reconcile.
+        held_symbols = _held_position_symbols(getattr(self, "db", None))
+        if held_symbols:
+            ceiling = int(limit_meta.get("max_limit") or pair_limit)
+            boosted = min(max(pair_limit, len(held_symbols)), max(ceiling, pair_limit))
+            if boosted != pair_limit:
+                limit_meta["held_position_boost"] = {
+                    "held": len(held_symbols), "from": pair_limit, "to": boosted,
+                }
+                limit_meta["adjusted"] = True
+                pair_limit = boosted
         self._effective_pair_limit = pair_limit
         if limit_meta.get("adjusted"):
             limit_meta["focus_assets"] = focus_assets[:8]
@@ -879,8 +956,11 @@ class GhostTradingSupervisor:
         # pipeline's own picks -- they are appended after atf_priority and
         # focus_assets, and the existing dedup keeps them from crowding.
         genome_seed = _genome_universe_symbols(int(os.getenv("GENOME_PAIR_SEED", "0")))
+        # Held positions lead. Closing an open position is worth more than
+        # opening a new one: it frees the slot, and it is the only way the
+        # round trip ever reaches the ledger that gates graduation.
         for symbol in list(dict.fromkeys(
-                atf_priority + list(focus_assets or []) + genome_seed)):
+                held_symbols + atf_priority + list(focus_assets or []) + genome_seed)):
             tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
             if not tokens:
                 tokens = [symbol.upper()]
@@ -1020,6 +1100,22 @@ class GhostTradingSupervisor:
             focus_assets=[],
             system_profile=getattr(self.pipeline, "system_profile", None),
         )
+        # Same rule as build(): a symbol we hold must have a bot that can close
+        # it. Applied here as well as at startup because a position can be
+        # stranded mid-session -- VIRTUAL-USDC was opened at 20:47 on
+        # 2026-09-02 and had not ticked once in the 34 minutes since, inside a
+        # process that had been up the whole time. A build()-only fix would
+        # have left it stranded until the next restart.
+        held_symbols = [
+            symbol for symbol in _held_position_symbols(getattr(self, "db", None))
+            if symbol not in existing
+        ]
+        if held_symbols:
+            ceiling = int(_meta.get("max_limit") or pair_limit)
+            pair_limit = min(
+                max(pair_limit, len(self.bots) + len(held_symbols)),
+                max(ceiling, pair_limit),
+            )
         full_slots = max(0, int(pair_limit) - len(self.bots))
         data_slots = max(0, int(self.stream_total) - len(self.bots) - len(self.data_streams))
         allow_replace = os.getenv("ATF_STATIC_REPLACE_BOTS", "1").lower() in {"1", "true", "yes", "on"}
@@ -1029,7 +1125,12 @@ class GhostTradingSupervisor:
                 max_replacements = max(0, min(int(os.getenv("ATF_STATIC_MAX_REPLACEMENTS", "2")), int(pair_limit)))
             except Exception:
                 max_replacements = 2
-        if full_slots <= 0 and data_slots <= 0 and not (allow_replace and atf_priority):
+        if (
+            full_slots <= 0
+            and data_slots <= 0
+            and not held_symbols
+            and not (allow_replace and atf_priority)
+        ):
             return {"added_bots": [], "added_streams": [], "reason": "no_slots"}
 
         candidates = await asyncio.get_running_loop().run_in_executor(
@@ -1043,10 +1144,13 @@ class GhostTradingSupervisor:
                 ),
             ),
         )
-        if atf_priority:
+        # Held positions lead the queue, ahead of the ATF signals, for the same
+        # reason as in build(): closing what we hold frees a slot and is the
+        # only way the round trip reaches the graduation ledger.
+        if held_symbols or atf_priority:
             by_symbol = {pair.symbol.upper(): pair for pair in candidates}
             promoted: List[PairCandidate] = []
-            for sym in atf_priority:
+            for sym in list(dict.fromkeys(held_symbols + atf_priority)):
                 if sym in by_symbol:
                     promoted.append(by_symbol[sym])
                     continue
@@ -1061,7 +1165,11 @@ class GhostTradingSupervisor:
                         datapath=Path("."),
                     )
                 )
-            remainder = [pair for pair in candidates if pair.symbol.upper() not in atf_priority_set]
+            # Held symbols are promoted too, so they must be filtered out of
+            # the remainder as well -- otherwise a held pair that select_pairs
+            # also returned appears twice and burns two slots on one symbol.
+            promoted_set = atf_priority_set | set(held_symbols)
+            remainder = [pair for pair in candidates if pair.symbol.upper() not in promoted_set]
             candidates = promoted + remainder
         readiness = self.pipeline.live_readiness_report()
         transition_plan = self.pipeline.ghost_live_transition_plan()
