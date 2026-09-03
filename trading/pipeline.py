@@ -716,7 +716,37 @@ class TrainingPipeline:
         )
         self._adapt_vectorizers(headline_vec, full_vec)
         path = self.model_dir / "active_model.keras"
-        _save_model_atomically(model, path, include_optimizer=False)
+        # A model that could not be WRITTEN is still a model.
+        #
+        # This method is called from bot._handle_sample on every market tick,
+        # and it runs on the market-stream's asyncio event loop. When the save
+        # raised, the exception propagated out before `_active_model` was set,
+        # so the very next tick found no model, built another baseline, and
+        # re-adapted the vectorizers -- seconds of GIL-holding TensorFlow work
+        # per tick, on the loop that is supposed to be polling prices.
+        #
+        # Measured 2026-09-02: `model.save()` died on a U+2192 in the adapted
+        # vocabulary (see services/utf8_mode.py) and this loop ran 443 times in
+        # one log tail. It starved the REST pollers until their timeouts fired
+        # on a network answering in 0.4s, the stream declared an outage, and
+        # the tick rate fell tenfold -- far enough that atf_static refused
+        # every entry for want of a feed dense enough to stop out of.
+        #
+        # Persistence failing is a reason to lose the artifact, not a reason to
+        # rebuild it forever. Cache the model either way: the next tick then
+        # costs nothing, and the failure is one bounded loss instead of an
+        # unbounded one. The encoding fix removes the cause; this removes the
+        # amplifier, for disk-full and antivirus locks too.
+        try:
+            _save_model_atomically(model, path, include_optimizer=False)
+        except Exception as exc:  # noqa: BLE001 - already logged with traceback
+            log_message(
+                "training",
+                "keeping the freshly built model in memory although it could "
+                f"not be persisted: {type(exc).__name__}: {exc}",
+                severity="warning",
+                details={"path": str(path)},
+            )
         self._active_model = self._ensure_vectorizers_ready(model)
         return self._active_model
 
@@ -4295,8 +4325,15 @@ class TrainingPipeline:
                 "native_usd": 0.0,
                 "sparse": True,
                 "fragmented": True,
+                "balance_fresh": False,
+                "balance_stale": False,
+                "balance_unknown": True,
                 "min_capital_usd": min_capital_usd,
                 "dust_threshold_usd": dust_threshold,
+                # Named for the same reason the age bounds below are: a wallet
+                # we could not read at all is unknown, not empty, and the
+                # refusal has to say which one it is.
+                "sparse_reasons": ["wallet_snapshot_unreadable"],
                 "error": str(exc),
             }
         for row in balances:
@@ -4353,23 +4390,78 @@ class TrainingPipeline:
         native_buffer_gap = 0.0 if has_native_capital else max(0.0, native_buffer_target - focus_native_usd)
         native_starved = native_buffer_gap > 0.0
         capital_deficit = max(0.0, effective_min_capital - focus_total_usd)
+
+        # An OLD READING IS NOT AN EMPTY WALLET.
+        #
+        # `sparse` used to include `not balance_fresh`, so the age of the
+        # measurement was scored as a wallet fault. That is the same conflation
+        # trading/swap_validator.py exists to avoid on the liquidity clause --
+        # "a number you never measured cannot be a violation" -- applied here in
+        # reverse, and it cost far more, because `sparse` raises a `freeze_live`
+        # bus action and feeds `halt_live`, which trading/bot.py maps to
+        # `risk_budget = 0.0`. That halts the WHOLE scheduler, ghost included.
+        #
+        # Measured 2026-09-03 06:12 against the running production process:
+        # 50 `bus_actions_pending` events in 90 minutes carrying
+        #     {"action": "freeze_live", "reason": "sparse_wallet",
+        #      "min_capital_usd": 3.0, "reasons": ["wallet_snapshot_stale"]}
+        # and 6 `scheduler:halted -> {"reason": "wallet_sparse"}` events in the
+        # same window -- while the wallet held $6.98 USDC + $7.01 ETH on base,
+        # i.e. 4.7x the $3.00 minimum, the entire time. The ONLY failing reason
+        # was the snapshot's age. Nothing refreshes it on a timer; the refresh
+        # is requested from this function once the snapshot has ALREADY gone
+        # stale, so every cycle sawtooths through a window in which live and
+        # ghost trading are both frozen against funds that never moved.
+        #
+        # Two bounds instead of one:
+        #   * past `max_age` the reading is STALE -- old, but still a
+        #     measurement of a wallet only we spend from. Reported, refreshed,
+        #     and not a fault on its own.
+        #   * past the hard bound (default 4x max_age, floor 1h) the balance is
+        #     genuinely UNKNOWN. That is a fault, and it keeps `sparse` true so
+        #     real money is never committed against a reading we cannot stand
+        #     behind.
+        # A snapshot with no timestamp at all has never been measured and is
+        # unknown by the same rule.
+        balance_age_raw = wallet_snapshot.get("age_seconds")
+        try:
+            balance_age = float(balance_age_raw) if balance_age_raw is not None else None
+        except (TypeError, ValueError):
+            balance_age = None
+        try:
+            balance_max_age = float(wallet_snapshot.get("max_age_seconds") or 0.0)
+        except (TypeError, ValueError):
+            balance_max_age = 0.0
+        try:
+            hard_max_age = float(os.getenv("WALLET_SNAPSHOT_HARD_MAX_AGE_SEC", "0") or 0.0)
+        except (TypeError, ValueError):
+            hard_max_age = 0.0
+        if hard_max_age <= 0.0:
+            hard_max_age = max(balance_max_age * 4.0, 3600.0)
+        balance_unknown = balance_age is None or balance_age > hard_max_age
+        balance_stale = (not balance_fresh) and not balance_unknown
+
         sparse_reasons: List[str] = []
         if focus_holdings == 0:
             sparse_reasons.append("focus_empty")
         if not balance_fresh:
-            sparse_reasons.append("wallet_snapshot_stale")
-            # Ask for a refresh rather than only complaining about the age.
-            #
-            # The snapshot is considered stale after WALLET_SNAPSHOT_MAX_AGE_SEC
-            # (180s), but nothing on a timer refreshes it -- the refresh is
-            # driven by websocket/ops-console activity. With no UI open the
-            # snapshot therefore goes stale and STAYS stale, so this reason was
-            # reported on every single readiness pass forever while the wallet
-            # sat unread. Deposited funds stayed invisible for days.
-            #
-            # request_wallet_refresh() is non-blocking and self-throttling
-            # (one attempt per 45s), so calling it from the readiness path is
-            # cheap and cannot stampede.
+            # Both names stay visible on the plan; they are repaired in
+            # different places, and only one of them stops trading.
+            sparse_reasons.append(
+                "wallet_snapshot_unknown" if balance_unknown else "wallet_snapshot_stale"
+            )
+        # Refresh BEFORE the snapshot expires, not after.
+        #
+        # Requesting the refresh only once `fresh` had already flipped false
+        # guaranteed a stale window on every cycle; the reading has to expire
+        # for anything to go and renew it. Asking at half the permitted age
+        # keeps it current instead. request_wallet_refresh() is non-blocking
+        # and self-throttling (one attempt per 45s), so calling it more often
+        # cannot stampede.
+        refresh_after = balance_max_age * float(
+            os.getenv("WALLET_SNAPSHOT_REFRESH_FRACTION", "0.5") or 0.5
+        )
+        if balance_age is None or (refresh_after > 0.0 and balance_age >= refresh_after):
             try:
                 from services.wallet_reconciliation import request_wallet_refresh
 
@@ -4384,12 +4476,19 @@ class TrainingPipeline:
         # A native-heavy wallet with dust tokens is normal, not a blocker.
         if fragmented and capital_deficit > 0:
             sparse_reasons.append("fragmented")
-        sparse = bool(capital_deficit > 0 or native_starved or focus_holdings == 0 or not balance_fresh)
+        sparse = bool(
+            capital_deficit > 0 or native_starved or focus_holdings == 0 or balance_unknown
+        )
         micro_allowed = bool(micro_mode and not sparse)
         return {
             "wallet": wallet,
             "resolved_wallet": wallet_snapshot.get("wallet"),
             "balance_fresh": balance_fresh,
+            # Stale = old but usable; unknown = no reading we can stand behind.
+            # Only the second one is a fault (see the sparse rule above).
+            "balance_stale": balance_stale,
+            "balance_unknown": balance_unknown,
+            "balance_hard_max_age_seconds": hard_max_age,
             "balance_status": wallet_snapshot.get("status"),
             "balance_updated_at": wallet_snapshot.get("updated_at"),
             "balance_age_seconds": wallet_snapshot.get("age_seconds"),
