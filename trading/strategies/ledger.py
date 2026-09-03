@@ -11,7 +11,18 @@ Thresholds (env-tunable):
   STRATEGY_GRADUATION_MIN_WINRATE  (default 0.55)
   STRATEGY_GRADUATION_MIN_PROFIT   (default 0.0) net ghost profit floor
 Demotion (mirrors the bot's live circuit breaker at strategy granularity):
-  STRATEGY_DEMOTE_MAX_LIVE_LOSSES  (default 4) consecutive live losses
+  STRATEGY_DEMOTE_MAX_LIVE_LOSSES    (default 4) consecutive live losses
+  STRATEGY_DEMOTE_MIN_LIVE_TRADES    (default 8) live trades before net P/L
+                                     is judged
+  STRATEGY_DEMOTE_MIN_LIVE_PROFIT    (default 0.0) net live P/L floor
+  STRATEGY_DEMOTE_MIN_DRAWDOWN_TRADES (default 8) live trades before the
+                                     give-back brake applies. Deliberately
+                                     larger than MIN_LIVE_TRADES: net P/L is a
+                                     sign test on a sum, while give-back is a
+                                     ratio against a running maximum, and a
+                                     running maximum over three trades is noise.
+  STRATEGY_DEMOTE_MAX_LIVE_DRAWDOWN  (default 0.5) fraction of peak profit a
+                                     strategy may hand back
 """
 from __future__ import annotations
 
@@ -38,6 +49,41 @@ def _env_float(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return default
+
+
+#: Strategy ids that exist only to trade in simulation. Their executors have no
+#: live branch at all, so their ghost record -- however good -- can never be
+#: spent and must never read as permission to spend.
+#:
+#: ``atf_static_scout`` is services/atf_static_strategy.py's ghost quote scout,
+#: which hardcodes ``wallet="ghost"`` and publishes
+#: ``live_execution_enabled: False``. It was deliberately demoted on 2026-09-02
+#: for exactly that reason and then RE-GRADUATED 83 minutes later, because
+#: ``_evaluate_graduation_locked`` re-runs on every recorded outcome and knew
+#: nothing about why the demotion happened. It only ever asked "has this
+#: strategy traded well?", never "can this strategy trade at all?".
+#:
+#: That mattered: ``approved_ids()`` picks whose ghost book the live gate
+#: judges, so the sole approved strategy was one structurally incapable of
+#: spending. It was judged on 9 paired trades against a 25-trade minimum and
+#: the whole live path reported ``ghost_validation_block`` -- a refusal aimed
+#: at a strategy that was never going to trade, while the executor that can
+#: (``atf_static``) was not even considered.
+#:
+#: Held in code rather than as ledger state so it cannot be undone by a data
+#: edit, a ledger reset, or a fresh entry.
+_GHOST_ONLY_DEFAULT = "atf_static_scout"
+
+_GHOST_ONLY_REASON = (
+    "ghost-only executor: no live branch exists, so this record can never be "
+    "spent and must not read as permission to spend"
+)
+
+
+def _ghost_only_ids() -> set:
+    """Strategy ids permanently barred from graduating to live."""
+    raw = os.getenv("GHOST_ONLY_STRATEGY_IDS", _GHOST_ONLY_DEFAULT) or ""
+    return {part.strip() for part in raw.split(",") if part.strip()}
 
 
 #: Absolute ceiling on a single ghost outcome, in quote units. The account
@@ -180,7 +226,31 @@ class StrategyLedger:
         if not isinstance(raw, dict):
             return False
         self._data = raw
+        self._revoke_ghost_only_approval()
         return True
+
+    def _revoke_ghost_only_approval(self) -> None:
+        """Strip live approval from ghost-only executors, whatever the file says.
+
+        Applied on load so the revocation does not depend on the strategy
+        happening to record an outcome, and so a hand-edited or restored ledger
+        cannot reintroduce an approval that the code says is impossible.
+        """
+        for sid in _ghost_only_ids():
+            ent = self._data.get(sid)
+            if not isinstance(ent, dict):
+                continue
+            ent["graduation_blocked"] = True
+            ent["graduation_blocked_reason"] = _GHOST_ONLY_REASON
+            if ent.get("live_approved"):
+                ent["live_approved"] = False
+                ent["demote_reason"] = _GHOST_ONLY_REASON
+                ent["demoted_ts"] = time.time()
+                log_message(
+                    "strategy-ledger",
+                    f"revoked live approval for ghost-only executor {sid}",
+                    severity="warning",
+                )
 
     def _save(self) -> None:
         if not write_json(self.path, self._data):
@@ -197,6 +267,17 @@ class StrategyLedger:
         ent.setdefault("live_approved", False)
         ent.setdefault("demotions", 0)
         ent.setdefault("demote_reason", None)
+        ent.setdefault("graduation_blocked", False)
+        ent.setdefault("graduation_blocked_reason", None)
+        # Enforced on every read, not just at demotion time, so an approval
+        # already sitting in the file is revoked the moment it is loaded. The
+        # scout was carrying live_approved=True when this was written; without
+        # this the flag would have survived until something happened to demote
+        # it again, and nothing would have.
+        if strategy_id in _ghost_only_ids():
+            ent["graduation_blocked"] = True
+            ent["graduation_blocked_reason"] = _GHOST_ONLY_REASON
+            ent["live_approved"] = False
         return ent
 
     # ------------------------------------------------------------------
@@ -381,6 +462,12 @@ class StrategyLedger:
         ent = self._entry(sid)
         if ent.get("live_approved"):
             return
+        # A structural bar outranks any record. Performance demotions are meant
+        # to be recoverable -- earn the evidence again and you trade again --
+        # but "this executor cannot spend money" never stops being true, so it
+        # must not be re-litigated against a fresh ghost book.
+        if ent.get("graduation_blocked") or sid in _ghost_only_ids():
+            return
         ghost = ent["ghost"]
         trades = int(ghost.get("trades", 0))
         wins = int(ghost.get("wins", 0))
@@ -430,17 +517,56 @@ class StrategyLedger:
         # Drawdown brake: give back too much of the peak and stop, even while
         # still net positive. A strategy that made money and is now handing it
         # back is not one to keep funding.
+        #
+        # It needs a BIGGER sample than the profitability rule above, not the
+        # same one, and having no gate at all demoted the only strategy that has
+        # ever spent real money on this account -- while it was winning.
+        #
+        # atf_static, 2026-09-03: three live trades, all verified on-chain --
+        # AERO +0.0012, CBETH +0.0098, CBETH -0.0059. Two wins, one loss, net
+        # +0.0052. The peak was simply the running total after trade two
+        # (+0.0110), so the single closing loss read as a give-back and the
+        # brake fired. It was demoted for being 2W/1L and profitable, and
+        # `_demote_locked` then wiped its 22-trade ghost book, putting
+        # re-graduation 20 fresh ghost trades away. That is precisely why the
+        # graduation link afterwards reported "no strategy approved for live".
+        #
+        # The two rules answer different questions and need different amounts of
+        # evidence. "Did the account grow?" is a sign test on the sum: three
+        # trades is a fair sample of it, which is why .env sets
+        # STRATEGY_DEMOTE_MIN_LIVE_TRADES=3, and that rule still fires early and
+        # is untouched. "Has it handed back a quarter of its peak?" is a RATIO
+        # against a running maximum, and a running maximum over three points is
+        # not a peak -- it is whichever trade happened to land last.
+        #
+        # Measured against the real record above, under the configured 25%: the
+        # largest loss tolerated at trade three is 0.00275, while a typical trade
+        # on this feed is 0.00562. The brake fires on any loss worth half a
+        # normal trade, so after two wins essentially ANY real losing trade
+        # demotes -- a strategy would have to never lose to keep its licence.
+        # That is not a risk limit, it is a bar nothing can clear, and it is why
+        # this ran with zero strategies approved.
+        #
+        # So the drawdown brake gets its own minimum, defaulted well above the
+        # profitability sample. The account is not left unguarded in the gap:
+        # consecutive losses (2) and net P/L (from trade 3) both still fire, and
+        # they are the rules that enforce "live P/L must never be negative".
+        # This one only ever spoke about strategies that are still up.
+        min_dd_sample = _env_int("STRATEGY_DEMOTE_MIN_DRAWDOWN_TRADES", 8)
         peak = float(live.get("peak_profit", 0.0))
         current = float(live.get("total_profit", 0.0))
         max_dd = _env_float("STRATEGY_DEMOTE_MAX_LIVE_DRAWDOWN", 0.5)
-        if peak > 0 and current < peak * (1.0 - max_dd):
+        if live_trades >= min_dd_sample and peak > 0 and current < peak * (1.0 - max_dd):
             self._demote_locked(
                 sid,
                 f"live drawdown: {current:+.4f} from peak {peak:+.4f}",
             )
 
-    def _demote_locked(self, sid: str, reason: str) -> None:
+    def _demote_locked(self, sid: str, reason: str, *, permanent: bool = False) -> None:
         ent = self._entry(sid)
+        if permanent:
+            ent["graduation_blocked"] = True
+            ent["graduation_blocked_reason"] = reason
         ent["live_approved"] = False
         ent["demotions"] = int(ent.get("demotions", 0)) + 1
         ent["demote_reason"] = reason
@@ -466,18 +592,46 @@ class StrategyLedger:
             self._demote_locked((strategy_id or "unclassified").strip() or "unclassified", reason)
             self._save()
 
+    @staticmethod
+    def _approved(sid: str, ent: Any) -> bool:
+        """Is this entry approved to spend real money?
+
+        The ghost-only check is repeated here rather than trusted from the
+        stored flag: these three queries are what the live path actually asks,
+        and a stale in-memory copy loaded before the revocation landed must not
+        be able to answer "yes".
+        """
+        if not isinstance(ent, dict) or not ent.get("live_approved"):
+            return False
+        if ent.get("graduation_blocked") or sid in _ghost_only_ids():
+            return False
+        return True
+
+    def block_graduation(self, strategy_id: str, reason: str) -> None:
+        """Bar a strategy from live permanently, for a structural reason.
+
+        Use when the bar is about what the strategy IS rather than how it has
+        performed -- an executor with no live branch, a signal-only publisher.
+        Unlike ``demote()``, a fresh ghost record will not undo this.
+        """
+        with self._lock, self._file_lock():
+            self._load()
+            sid = (strategy_id or "unclassified").strip() or "unclassified"
+            self._demote_locked(sid, reason, permanent=True)
+            self._save()
+
     def is_live_approved(self, strategy_id: str) -> bool:
         with self._lock:
-            ent = self._data.get((strategy_id or "").strip() or "unclassified")
-            return bool(ent and ent.get("live_approved"))
+            sid = (strategy_id or "").strip() or "unclassified"
+            return self._approved(sid, self._data.get(sid))
 
     def any_live_approved(self) -> bool:
         with self._lock:
-            return any(bool(ent.get("live_approved")) for ent in self._data.values())
+            return any(self._approved(sid, ent) for sid, ent in self._data.items())
 
     def approved_ids(self) -> list[str]:
         with self._lock:
-            return [sid for sid, ent in self._data.items() if ent.get("live_approved")]
+            return [sid for sid, ent in self._data.items() if self._approved(sid, ent)]
 
     def stats(self, strategy_id: str) -> Dict[str, Any]:
         with self._lock:
