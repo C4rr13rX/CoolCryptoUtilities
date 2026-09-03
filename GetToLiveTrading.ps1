@@ -262,6 +262,26 @@ function Invoke-Scorecard {
 
 # ----------------------------------------------------------------- inbox --
 
+function Read-StandingOrders {
+    <#  Instructions that apply to EVERY pass, not just the next one.
+
+        data\agent_inbox.md is consumed and archived, which is right for
+        "fix this one thing" and wrong for "never do X again". A rule sent
+        that way reached exactly one pass and then vanished -- so if that
+        pass did not finish the work, the instruction was simply gone.
+
+        data\agent_standing_orders.md is read every pass and never
+        consumed. Add to it with `.\Tell.ps1 -Standing <text>`.  #>
+
+    $path = Join-Path $Repo "data\agent_standing_orders.md"
+    if (-not (Test-Path $path)) { return "" }
+    try {
+        $text = (Get-Content $path -Raw -ErrorAction Stop)
+        if ([string]::IsNullOrWhiteSpace($text)) { return "" }
+        return $text.Trim()
+    } catch { return "" }
+}
+
 function Read-Inbox {
     <#  Pick up anything the user wrote while a pass was running.
 
@@ -967,6 +987,19 @@ $behavior
 "@
     }
 
+    $standing = Read-StandingOrders
+    $standingBlock = ""
+    if ($standing) {
+        $standingBlock = @"
+
+## STANDING ORDERS FROM THE USER (apply on EVERY pass, not just this one)
+
+$standing
+
+"@
+        Write-Line "standing orders: $(($standing -split "`r?`n").Count) line(s) in force" "DarkCyan"
+    }
+
     $userNote = Read-Inbox
     $noteBlock = ""
     if ($userNote) {
@@ -996,6 +1029,7 @@ Current ground truth from the database:
   usdc        = $($state.usdc)
 
 First failing link: $failure
+$standingBlock
 $noteBlock
 
 Work ONLY on that link. Diagnose it with real measurements -- query the DB,
