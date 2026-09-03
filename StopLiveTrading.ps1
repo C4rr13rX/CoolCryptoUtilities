@@ -40,10 +40,25 @@ foreach ($procName in @("claude.exe", "node.exe")) {
     Get-CimInstance Win32_Process -Filter "Name='$procName'" -ErrorAction SilentlyContinue |
         Where-Object { $procName -eq 'claude.exe' -or $_.CommandLine -like '*claude*' } |
         ForEach-Object {
+            # Walk UP two levels, not one.
+            #
+            # The loop launches Claude through a cmd.exe shim, so a killed
+            # loop leaves claude.exe with a LIVE cmd parent and a dead
+            # grandparent. Checking only the direct parent declared those
+            # orphans healthy: two sessions from stopped loops kept running
+            # and spending tokens for eight minutes.
             $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.ParentProcessId)" -ErrorAction SilentlyContinue
+            $orphaned = $false
             if (-not $owner) {
+                $orphaned = $true
+            } elseif ($owner.Name -eq 'cmd.exe') {
+                $grand = Get-CimInstance Win32_Process -Filter "ProcessId=$($owner.ParentProcessId)" -ErrorAction SilentlyContinue
+                if (-not $grand) { $orphaned = $true }
+            }
+            if ($orphaned) {
                 Write-Host "stopping orphaned $procName PID $($_.ProcessId)" -ForegroundColor Yellow
                 Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+                if ($owner) { Stop-Process -Id $owner.ProcessId -Force -ErrorAction SilentlyContinue }
                 $stopped++
             }
         }
