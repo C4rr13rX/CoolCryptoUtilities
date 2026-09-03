@@ -50,7 +50,20 @@ def evaluate_long_triggers(
     high_pnl_pct = (high - entry) / entry
 
     target_price = float(position.get("target_price") or 0.0)
-    if target_price > 0 and price >= target_price:
+    # `price >= target` alone is not a profit. The target is computed from the
+    # price the strategy SAW, and the fill is the price we actually GOT; when a
+    # fill lands above the plan's target, the position opens already past its
+    # own take-profit and this fires instantly -- booking a loss and calling it
+    # a win. Measured on the live BSTONK-USDC entry of 2026-09-03: plan
+    # reference 0.00191429, plan target 0.00201000 (+5%), actual fill
+    # 0.00208181 -- 8.75% above the reference and 3.57% ABOVE the target. Seven
+    # of the eight live entries to date filled within 0.31% of their reference;
+    # that one did not, and it is the only one that lost more than a cent.
+    #
+    # A take-profit must therefore clear the cost basis, not just the target.
+    # Fees are charged on both legs, so the round trip has to cover them before
+    # any exit here can honestly be called profit-taking.
+    if target_price > 0 and price >= target_price and price > entry * (1.0 + fee_rate):
         return TriggerDecision(True, "take_profit_limit", state)
 
     stop_loss_default = 0.02 if not live else 0.015

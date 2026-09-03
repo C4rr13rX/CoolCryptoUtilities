@@ -3984,7 +3984,79 @@ class TradingBot:
         should_exit = False
         reason = ""
 
-        if directive and directive.action == "enter":
+        # A held position's protective bracket must be evaluated on EVERY
+        # sample, not only on the ones that happen to arrive without an "enter"
+        # directive. Until 2026-09-03 the dispatch below started at
+        # `if directive and directive.action == "enter"`, so any tick carrying
+        # an entry directive for an already-held symbol was consumed by the
+        # entry path -- which, for a live-held slot, logs
+        # `entry-refused-live-held` and returns at once. The stop-loss lives in
+        # the final `else`, so those ticks never reached it.
+        #
+        # That is not a rare corner: the strategies that emit entry directives
+        # are exactly the ones that like a symbol, so they keep re-emitting for
+        # the symbol they already hold. Measured on the live BSTONK-USDC
+        # position (entered 1788455200, stopped 1788462735):
+        #
+        #   72 of the 73 samples in those 2h05m were `entry-refused-live-held`
+        #   and evaluated no trigger at all. The single sample that arrived
+        #   without an enter directive was the one at the end -- it reached the
+        #   stop on its first look and fired immediately, reason
+        #   `stop_loss:-0.1840`, against a LIVE_STOP_LOSS_PCT of 0.015.
+        #
+        # A 1.5% stop realised a 18.40% loss: -$0.1380 of gross on $0.75, which
+        # is 92% of the entire live P/L to date. The first sample after entry
+        # was already -13.08%, so a working stop would have exited there -- the
+        # 5.32pp between -13.08% and -18.40% ($0.0399) is the pure cost of the
+        # skipped evaluations. CBBTC-USDC (127 refusals) and CBETH-USDC (99)
+        # ran the same gauntlet and were simply luckier.
+        #
+        # Scope: the bracket outranks the directive only when that directive is
+        # going to be REFUSED anyway -- a non-live-approved entry landing on a
+        # live-held slot, which is the whole 298-row entry-refused-live-held
+        # population and every one of the skipped BSTONK evaluations. A
+        # live-approved entry still displaces whatever it lands on (the release
+        # path pinned by tests/test_entry_never_clobbers_a_position.py); taking
+        # the bracket first there would defer real trades to close simulated
+        # ones, which is the opposite of what this lane needs.
+        #
+        # The trigger state is computed for every held position regardless, so
+        # high_watermark and the armed flags keep advancing on refused ticks
+        # instead of standing still until the next unaccompanied sample.
+        protective = None
+        if pos is not None:
+            try:
+                from trading.triggers import evaluate_long_triggers
+
+                protective = evaluate_long_triggers(
+                    pos,
+                    price=float(price),
+                    fee_rate=float(fees),
+                    now_ts=float(sample_ts),
+                    live=bool(self.live_trading_enabled),
+                )
+                pos["trigger_state"] = protective.state
+            except Exception:
+                protective = None
+
+        entry_refused_by_live_slot = bool(
+            directive is not None
+            and directive.action == "enter"
+            and pos is not None
+            and str(pos.get("mode") or "") == "live"
+            and not (
+                self.live_trading_enabled and self._strategy_live_approved(directive)
+            )
+        )
+
+        if (
+            protective is not None
+            and protective.should_exit
+            and entry_refused_by_live_slot
+        ):
+            should_exit = True
+            reason = protective.reason
+        elif directive and directive.action == "enter":
             should_enter = True
             reason = directive.reason
         elif directive and directive.action == "exit":
@@ -4129,22 +4201,25 @@ class TradingBot:
             # model is actively bearish, not merely below the (high) entry
             # bar. 0.45 = model leaning against the position.
             bearish_floor = min(exit_threshold, float(os.getenv("EXIT_BEARISH_FLOOR", "0.45")))
-            try:
-                from trading.triggers import evaluate_long_triggers
-                trigger = evaluate_long_triggers(
-                    pos,
-                    price=float(price),
-                    fee_rate=float(fees),
-                    now_ts=float(sample_ts),
-                    live=bool(self.live_trading_enabled),
-                )
-                pos["trigger_state"] = trigger.state
-            except Exception:
-                trigger = None
+            # Already evaluated once, above the directive dispatch, against the
+            # same pos/price/fees/sample_ts -- reuse it rather than paying for a
+            # second identical call. Reaching here means it did not fire.
+            trigger = protective
             if trigger is not None and trigger.should_exit:
                 should_exit = True
                 reason = trigger.reason
-            elif target_price_held > 0 and price >= target_price_held:
+            # Same cost-basis rule as the take_profit_limit in
+            # trading/triggers.py: a target computed from the price the strategy
+            # saw is not a profit at the price we actually filled. When the fill
+            # lands above the plan target this test is true from the instant the
+            # position opens, and "target_hit" would book a loss under a
+            # winner's name -- which also feeds the ledger that gates graduation.
+            elif (
+                target_price_held > 0
+                and price >= target_price_held
+                and entry_price_held > 0
+                and price > entry_price_held * (1.0 + fees)
+            ):
                 should_exit = True
                 reason = "target_hit"
             elif pnl_pct_held <= -stop_loss_pct:
