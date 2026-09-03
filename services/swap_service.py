@@ -7,6 +7,8 @@ from web3.exceptions import ContractLogicError
 from web3 import Web3
 from router_wallet import UltraSwapBridge, CHAINS, REQ_KW
 from services.cli_utils import is_native, normalize_for_0x, to_base_units, explorer_for
+from services.fill_receipt import ReceiptFill, receipt_status
+from services.fill_receipt import read_fill as parse_fill_from_receipt
 from services.quote_providers import ZeroXV2AllowanceHolder, UniswapV3Local, CamelotV2Local, SushiV2Local
 from services.token_catalog import core_tokens_for_chain
 
@@ -85,15 +87,20 @@ class SwapService:
         except Exception:
             return []
 
-    def _confirm_receipt(
+    def fetch_receipt(
         self, chain: str, txh: str, *, timeout_s: Optional[int] = None
-    ) -> Optional[bool]:
-        """Poll every configured RPC for a receipt.
+    ) -> Optional[dict]:
+        """Poll every configured RPC until one returns the mined receipt.
 
-        Returns True/False from the receipt status, or None when no endpoint
-        would answer. None means "unknown", never "failed" -- the transaction
-        is already broadcast either way, and treating a rate-limited RPC as a
-        failed swap is what let a successful trade be retried on another route.
+        Returns the raw JSON-RPC receipt (every field a hex string, logs
+        included), or None when no endpoint would answer before the deadline.
+        None means "unknown", never "failed" -- the transaction is already
+        broadcast either way, and treating a rate-limited RPC as a failed swap
+        is what let a successful trade be retried on another route.
+
+        The whole receipt is returned rather than just its status because the
+        receipt's ``Transfer`` logs are the only trustworthy record of what the
+        swap actually filled; see services/fill_receipt.py.
         """
         import requests
 
@@ -118,16 +125,65 @@ class SwapService:
                 result = body.get("result")
                 if not result:
                     continue  # not mined yet; this endpoint is healthy though
-                try:
-                    return int(str(result.get("status")), 16) == 1
-                except Exception:
-                    return None
+                return dict(result) if isinstance(result, dict) else None
             time.sleep(3)
         print(
             f"[swap] receipt for {txh} still unknown after timeout "
             f"({'endpoints answered, tx not mined' if answered else 'no endpoint answered'})"
         )
         return None
+
+    def _confirm_receipt(
+        self, chain: str, txh: str, *, timeout_s: Optional[int] = None
+    ) -> Optional[bool]:
+        """True/False from the receipt status, or None when it is unreadable."""
+        receipt = self.fetch_receipt(chain, txh, timeout_s=timeout_s)
+        if not receipt:
+            return None
+        return receipt_status(receipt)
+
+    def read_fill(
+        self,
+        chain: str,
+        txh: str,
+        *,
+        sell: str,
+        buy: str,
+        wallet: Optional[str] = None,
+        receipt: Optional[dict] = None,
+        timeout_s: Optional[int] = None,
+    ) -> ReceiptFill:
+        """What `txh` actually swapped, read from its own receipt.
+
+        `sell`/`buy` accept the same forms as ``swap()`` (address, catalog
+        symbol or "native") and are resolved the same way, so a caller can pass
+        exactly what it passed to ``swap()``. Decimals come from the token
+        contract, not from a local table.
+
+        Never raises: a fill that cannot be read comes back ``ok=False`` with a
+        reason, because the alternative on the money path is an exception after
+        the money has already moved.
+        """
+        try:
+            ch = (chain or "").lower().strip()
+            addr_of = self._resolve_token(ch, sell), self._resolve_token(ch, buy)
+            sell_addr, buy_addr = addr_of
+            if receipt is None:
+                receipt = self.fetch_receipt(ch, txh, timeout_s=timeout_s)
+            if not receipt:
+                return ReceiptFill(ok=False, reason="no_receipt")
+            who = wallet or getattr(getattr(self.bridge, "acct", None), "address", "") or ""
+            return parse_fill_from_receipt(
+                receipt,
+                wallet=who,
+                sell_token=sell_addr,
+                buy_token=buy_addr,
+                sell_decimals=self._decimals(ch, sell_addr),
+                buy_decimals=self._decimals(ch, buy_addr),
+            )
+        except Exception as exc:  # noqa: BLE001 - a read must never break a settled trade
+            print(f"[swap] fill read failed for {txh or 'none'}: {exc!r}")
+            return ReceiptFill(ok=False, reason=f"fill_read_error:{exc!r}")
 
     def _preflight_estimate(
         self,

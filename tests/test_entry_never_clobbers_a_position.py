@@ -45,6 +45,7 @@ from unittest import mock
 
 import pytest
 
+from services.fill_receipt import ReceiptFill
 from trading.bot import TradingBot
 from trading.scheduler import TradeDirective
 
@@ -263,6 +264,17 @@ def _settling_bot() -> TradingBot:
             quantities["BASECAT"] += 75.0
             return _SwapOutcome()
 
+        def read_fill(self, chain, txh, *, sell, buy, wallet=None, **kwargs):
+            # The real SwapService reads these off the receipt's Transfer logs.
+            # The fake must offer the method at all: a fake with a smaller
+            # surface than the class under test silently sends the bot down
+            # the wallet-delta fallback, which is the path being replaced.
+            return ReceiptFill(
+                ok=True, reason="", status=True,
+                sold_raw=3_000_000, bought_raw=75 * 10**18,
+                sold=3.0, bought=75.0, gas_native=0.000001,
+            )
+
     bot.portfolio = _Portfolio()
     return bot, _Swapper()
 
@@ -394,6 +406,10 @@ def test_a_failed_live_entry_leaves_the_held_position_alone() -> None:
     class _DeadSwapper:
         def swap(self, **kwargs):          # no balance movement -> no fill
             return _SwapOutcome()
+
+        def read_fill(self, chain, txh, *, sell, buy, wallet=None, **kwargs):
+            # Broadcast, but nothing moved: the receipt has no Transfer to us.
+            return ReceiptFill(ok=False, reason="no_transfer_to_wallet", status=True)
 
     decision = _enter(bot, _directive("atf_static"), swapper=_DeadSwapper())
 

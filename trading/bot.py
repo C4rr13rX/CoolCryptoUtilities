@@ -2763,6 +2763,57 @@ class TradingBot:
 
         return SwapService(self._bridge, recorder=self._record_swap_outcome)
 
+    def _read_receipt_fill(
+        self, swapper: Any, *, chain: str, tx_hash: str, sell: str, buy: str, leg: str
+    ) -> Any:
+        """What `tx_hash` filled, from its receipt. None when unreadable.
+
+        By the time this is called the money has already left the wallet, so
+        this must never raise: an exception here loses a settled trade exactly
+        the way the wallet-delta measurement did, only louder. Every failure
+        degrades to None and the caller falls back to its own numbers.
+        """
+        if not tx_hash:
+            return None
+        reader = getattr(swapper, "read_fill", None)
+        if reader is None:
+            log_message(
+                "live-swap",
+                "%s swapper %s cannot read fills from receipts; falling back to wallet delta"
+                % (leg, type(swapper).__name__),
+                severity="warning",
+            )
+            return None
+        try:
+            return reader(
+                chain, tx_hash, sell=sell, buy=buy, wallet=self._live_wallet_address()
+            )
+        except Exception as exc:  # noqa: BLE001 - the swap already settled
+            log_message(
+                "live-swap",
+                "%s fill read raised for %s: %r" % (leg, tx_hash, exc),
+                severity="error",
+            )
+            return None
+
+    def _live_wallet_address(self) -> str:
+        """The address our live swaps are signed from, or "" if unavailable.
+
+        Used to pick our own legs out of a transaction receipt, so an empty
+        string must degrade to "fill unreadable" and never to a fill measured
+        against somebody else's transfers.
+        """
+        bridge = self._bridge
+        if bridge is None:
+            return ""
+        try:
+            return str(bridge.get_address() or "")
+        except Exception:
+            try:
+                return str(getattr(getattr(bridge, "acct", None), "address", "") or "")
+            except Exception:
+                return ""
+
     async def _run_wallet_sync(self, *, reason: str, discover: bool = False) -> None:
         """Refresh portfolio from local cache. Only hits external APIs when discover=True.
 
@@ -4462,6 +4513,50 @@ class TradingBot:
                 quote_spent = max(0.0, pre_quote - post_quote)
                 base_received = max(0.0, post_base - pre_base)
                 gas_spent_native = max(0.0, pre_native - post_native)
+                fill_source = "wallet_delta"
+
+                # The wallet delta cannot measure this trade, and on 2026-09-03
+                # it recorded both of our first two real swaps as unfilled.
+                # base_received reads 0 for any token we are buying for the
+                # first time (the portfolio only knows what the transfer
+                # indexer has discovered, and BASECAT had no row at all), and
+                # quote_spent read 1.5 for a 0.75 swap because a sibling bot's
+                # swap settled inside the same window -- one wallet, one bot
+                # per symbol, so no bot can see only its own money move.
+                # The receipt's Transfer logs are per-transaction and have
+                # neither problem, so they win whenever they can be read.
+                receipt_fill = self._read_receipt_fill(
+                    swapper,
+                    chain=chain_name,
+                    tx_hash=entry_tx_hash,
+                    sell=quote_swap_token,
+                    buy=base_swap_token,
+                    leg="entry",
+                )
+                if receipt_fill is not None and receipt_fill.ok:
+                    quote_spent = float(receipt_fill.sold)
+                    base_received = float(receipt_fill.bought)
+                    if receipt_fill.gas_native > 0.0:
+                        gas_spent_native = float(receipt_fill.gas_native)
+                    fill_source = "tx_receipt"
+                    log_message(
+                        "live-swap",
+                        "entry fill from receipt %s: spent %.6f %s, received %.8f %s"
+                        % (
+                            entry_tx_hash,
+                            quote_spent,
+                            quote_balance_symbol,
+                            base_received,
+                            base_balance_symbol,
+                        ),
+                    )
+                elif receipt_fill is not None:
+                    log_message(
+                        "live-swap",
+                        "entry fill unreadable from receipt %s (%s); falling back to wallet delta"
+                        % (entry_tx_hash, receipt_fill.reason),
+                        severity="warning",
+                    )
 
                 if quote_spent <= 0.0 or base_received <= 0.0:
                     decision.update(
@@ -4478,6 +4573,8 @@ class TradingBot:
                             "gas_spent_native": gas_spent_native,
                             "tx_hash": entry_tx_hash,
                             "route_used": entry_tx_route,
+                            "fill_source": fill_source,
+                            "fill_reason": getattr(receipt_fill, "reason", "no_tx_hash"),
                         }
                     )
                     self.metrics.feedback(
@@ -4521,6 +4618,7 @@ class TradingBot:
                     "quote_spent": quote_spent,
                     "gas_spent_native": gas_spent_native,
                     "entry_tx_hash": entry_tx_hash,
+                    "fill_source": fill_source,
                     "base_symbol": base_balance_symbol,
                     "quote_symbol": quote_balance_symbol,
                     # The contracts this position is actually held in. The exit
@@ -4569,6 +4667,7 @@ class TradingBot:
                         "gas_spent_native": gas_spent_native,
                         "tx_hash": entry_tx_hash,
                         "route_used": entry_tx_route,
+                        "fill_source": fill_source,
                     }
                 )
                 if isinstance(decision.get("brain"), dict):
@@ -4803,6 +4902,9 @@ class TradingBot:
             # Stays empty for ghost exits, which have no chain to point at.
             exit_tx_hash = ""
             exit_tx_route = ""
+            # A ghost exit has no fill to read; the live branch overwrites this
+            # with "tx_receipt" or "wallet_delta" once it knows which it used.
+            exit_fill_source = "simulated"
 
             if pos_is_live:
                 entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
@@ -4935,6 +5037,45 @@ class TradingBot:
                 base_sold = max(0.0, pre_base - post_base)
                 quote_received = max(0.0, post_quote - pre_quote)
                 gas_spent_native_exit = max(0.0, pre_native - post_native)
+                exit_fill_source = "wallet_delta"
+
+                # Same reasoning as the entry: one wallet, several bots, and a
+                # portfolio that lags discovery. The receipt is per-transaction
+                # and settles both legs exactly, and on the exit it decides the
+                # realised P/L, so a wrong number here does not merely lose a
+                # position -- it books a profit that was never earned.
+                exit_receipt_fill = self._read_receipt_fill(
+                    swapper,
+                    chain=chain_name,
+                    tx_hash=exit_tx_hash,
+                    sell=base_swap_token,
+                    buy=quote_swap_token,
+                    leg="exit",
+                )
+                if exit_receipt_fill is not None and exit_receipt_fill.ok:
+                    base_sold = float(exit_receipt_fill.sold)
+                    quote_received = float(exit_receipt_fill.bought)
+                    if exit_receipt_fill.gas_native > 0.0:
+                        gas_spent_native_exit = float(exit_receipt_fill.gas_native)
+                    exit_fill_source = "tx_receipt"
+                    log_message(
+                        "live-swap",
+                        "exit fill from receipt %s: sold %.8f %s, received %.6f %s"
+                        % (
+                            exit_tx_hash,
+                            base_sold,
+                            base_balance_symbol,
+                            quote_received,
+                            quote_balance_symbol,
+                        ),
+                    )
+                elif exit_receipt_fill is not None:
+                    log_message(
+                        "live-swap",
+                        "exit fill unreadable from receipt %s (%s); falling back to wallet delta"
+                        % (exit_tx_hash, exit_receipt_fill.reason),
+                        severity="warning",
+                    )
 
                 if base_sold <= 0.0 or quote_received <= 0.0:
                     decision.update(
@@ -4951,6 +5092,8 @@ class TradingBot:
                             "gas_spent_native": gas_spent_native_exit,
                             "tx_hash": exit_tx_hash,
                             "route_used": exit_tx_route,
+                            "fill_source": exit_fill_source,
+                            "fill_reason": getattr(exit_receipt_fill, "reason", "no_tx_hash"),
                         }
                     )
                     self.metrics.feedback(
@@ -5321,6 +5464,7 @@ class TradingBot:
                     "tx_hash": exit_tx_hash,
                     "entry_tx_hash": str(pos.get("entry_tx_hash") or ""),
                     "route_used": exit_tx_route,
+                    "fill_source": exit_fill_source,
                 }
             )
             if isinstance(decision.get("brain"), dict):
