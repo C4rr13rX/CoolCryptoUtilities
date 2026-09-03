@@ -67,7 +67,16 @@ def observe() -> Dict[str, Any]:
     out: Dict[str, Any] = {"ts": now, "iso": time.strftime("%Y-%m-%d %H:%M:%S")}
     try:
         c = _db()
+        # Whitelist, for the same reason scripts/live_path_check.py does: this
+        # count reaches `LIVE TRADE DETECTED` below, and `LIKE 'live%'` matches
+        # every refusal on the live path -- live-entry-blocked,
+        # live-entry-failed, live-entry-unfunded, live-dry-run-entry. It would
+        # have announced a live trade on the six blocked rows that existed when
+        # no real money had ever been spent.
         out["live_rows"] = list(c.execute(
+            "SELECT COUNT(*) FROM trading_ops WHERE status IN ('live-entry','live-exit')"
+        ))[0][0]
+        out["live_attempts"] = list(c.execute(
             "SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%'"))[0][0]
         out["ticks_10m"] = list(c.execute(
             "SELECT COUNT(*) FROM market_stream WHERE ts > ?", (now - 600,)))[0][0]

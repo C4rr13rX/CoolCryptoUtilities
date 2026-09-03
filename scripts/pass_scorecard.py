@@ -135,9 +135,16 @@ def _db_state() -> dict:
             "SELECT details FROM trading_ops WHERE status LIKE 'live%' LIMIT 500"))
         pat = re.compile(r"0x[0-9a-fA-F]{64}")
         out["tx_hashes"] = sum(1 for (d,) in rows if pat.search(str(d)))
+        # WHITELIST the statuses that mean money moved; do not subtract the
+        # ones that do not. The blocklist form ("live% and not %blocked% and
+        # not %dry-run%") silently counts every refusal that happens not to
+        # contain those two words -- `live-entry-failed` has always slipped
+        # through it, and `live-entry-unfunded` would have too. This is the
+        # number the loop scores itself on, so a refusal leaking into it marks
+        # the goal met on a trade that never happened.
         out["settled"] = list(c.execute(
-            "SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%' "
-            "AND status NOT LIKE '%blocked%' AND status NOT LIKE '%dry-run%'"))[0][0]
+            "SELECT COUNT(*) FROM trading_ops WHERE status IN ('live-entry','live-exit')"
+        ))[0][0]
         out["ghost_1h"] = list(c.execute(
             "SELECT COUNT(*) FROM trading_ops WHERE status='ghost-entry' AND ts>?",
             (now - 3600,)))[0][0]

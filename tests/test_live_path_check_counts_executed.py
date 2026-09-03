@@ -44,7 +44,7 @@ def _seed(db_path: Path, statuses):
 def test_refused_live_entries_do_not_count_as_live_trades(tmp_path) -> None:
     db_path = tmp_path / "ops.db"
     _seed(db_path, ["live-entry-blocked", "live-entry-failed", "live-dry-run-entry",
-                    "guard-blocked-live"])
+                    "guard-blocked-live", "live-entry-unfunded"])
     mod = _load_check(db_path)
 
     link = mod.check_live(1_000_100.0)
@@ -55,13 +55,17 @@ def test_refused_live_entries_do_not_count_as_live_trades(tmp_path) -> None:
 
 def test_refusals_in_the_last_hour_are_surfaced(tmp_path) -> None:
     db_path = tmp_path / "ops.db"
-    _seed(db_path, ["guard-blocked-live", "guard-blocked-live", "live-entry-blocked"])
+    _seed(db_path, ["guard-blocked-live", "guard-blocked-live", "live-entry-blocked",
+                    "live-entry-unfunded"])
     mod = _load_check(db_path)
 
     link = mod.check_live(1_000_100.0)
 
     assert link.ok is False
-    assert "3 live entries REFUSED" in link.detail
+    # "live-entry-unfunded" is the wallet failing to fund a clip the guard had
+    # already cleared. It is a refusal, so it must be counted here -- it was
+    # the one exit on the live path that returned in total silence.
+    assert "4 live entries REFUSED" in link.detail
 
 
 def test_an_executed_live_entry_passes(tmp_path) -> None:

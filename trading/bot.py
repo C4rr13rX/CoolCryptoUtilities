@@ -3963,6 +3963,47 @@ class TradingBot:
                 trade_size = min(trade_size, max(0.0, available_quote / price))
             if trade_size <= 0.0:
                 self._tune_allocation(symbol, positive=False, negative=True)
+                # Say so. This is the last unnamed exit on the live path.
+                #
+                # Everything else that turns a live entry back says which rule
+                # did it -- the swap guard logs `guard-blocked-live`, an
+                # unresolvable token logs `live-entry-blocked`, a non-graduated
+                # strategy emits `entry_downgraded_to_ghost`. A trade the guard
+                # CLEARED that then dies here left nothing at all: no ops row,
+                # no feedback event, no position. Reconstructing which of the
+                # two it was cost most of a pass on 2026-09-03, because "guard
+                # allowed, then silence" is indistinguishable from "the bot
+                # never looked".
+                #
+                # Sizing, not risk: this is the wallet failing to fund a clip
+                # the plan already approved, so it is logged as a refusal with
+                # the three numbers that decide it and never as an executed
+                # trade.
+                if self._strategy_live_approved(directive):
+                    sizing = dict(decision)
+                    sizing.update(
+                        {
+                            "action": "hold",
+                            "status": "live-entry-unfunded",
+                            "reason": "trade_size_zero",
+                            "wallet": "live",
+                            "available_quote": float(available_quote),
+                            "quote_token": str(quote_balance_symbol),
+                            "price": float(price),
+                            "executed": False,
+                        }
+                    )
+                    try:
+                        self.db.log_trade(
+                            wallet="live",
+                            chain=chain_name,
+                            symbol=symbol,
+                            action="hold",
+                            status="live-entry-unfunded",
+                            details=sizing,
+                        )
+                    except Exception:
+                        pass
                 return decision
             self._ghost_trade_counter += 1
             trade_id = f"{self.ghost_session_id}:{symbol}:{uuid.uuid4().hex}"

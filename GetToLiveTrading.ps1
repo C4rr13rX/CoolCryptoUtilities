@@ -396,9 +396,14 @@ try:
     # live-dry-run-entry. On 2026-09-01 that read live_rows=6 when all six
     # were blocked or dry-run and no real money had ever been spent -- the
     # loop's own display was overstating progress toward its goal.
+    #
+    # The first repair subtracted the two words it had seen, which is a
+    # blocklist and therefore wrong by construction: `live-entry-failed`
+    # contains neither "blocked" nor "dry-run" and has been counted as a
+    # settled trade ever since, and `live-entry-unfunded` (added 2026-09-03)
+    # would have been too. Whitelist the two statuses that mean money moved.
     out["live_rows"] = q(
-        "SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%' "
-        "AND status NOT LIKE '%blocked%' AND status NOT LIKE '%dry-run%'"
+        "SELECT COUNT(*) FROM trading_ops WHERE status IN ('live-entry','live-exit')"
     )
     out["live_attempts"] = q("SELECT COUNT(*) FROM trading_ops WHERE status LIKE 'live%'")
     out["ticks_10m"]   = q("SELECT COUNT(*) FROM market_stream WHERE ts > ?", now - 600)
