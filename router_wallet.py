@@ -157,9 +157,29 @@ CHAINS: Dict[str, Dict[str, Any]] = {
     },
     "base": {
         "id": 8453, "poa": True,
+        # Base is the chain we trade on, and it was the only chain in this
+        # table with no official public endpoint (arbitrum has arb1, ethereum
+        # has flashbots). That mattered once a fill started being read from the
+        # transaction receipt. Probed 2026-09-03 for the receipt of a real
+        # swap, 0xd4c2d4df7886a80f4113314d518772e80113a68dd64c3321f2e873aec7c9c196:
+        #
+        #   base-rpc.publicnode.com  403  "Archive requests require a token"
+        #   base.publicnode.com      403  same
+        #   base.llamarpc.com        521  Cloudflare, no origin
+        #   1rpc.io/base             200  "reached the usage limit"
+        #   base.drpc.org            408  "timeout on the free plan"
+        #   mainnet.base.org         200  receipt returned, 0.5s
+        #   base.meowrpc.com         200  receipt returned, 0.8s
+        #
+        # i.e. every configured endpoint failed and both omitted ones worked.
+        # A receipt that cannot be read is a fill that falls back to the wallet
+        # delta, which is the measurement that recorded our first two real
+        # trades as failures.
         "rpcs": (
             _env(os.getenv("ALCHEMY_BASE_URL"))
             + [
+                "https://mainnet.base.org",
+                "https://base.meowrpc.com",
                 "https://base-rpc.publicnode.com",
                 "https://base.publicnode.com",
                 "https://base.llamarpc.com",
