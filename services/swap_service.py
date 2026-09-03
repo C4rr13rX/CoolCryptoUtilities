@@ -29,6 +29,12 @@ from services.token_catalog import core_tokens_for_chain
 # because a key is exactly what the process already has.
 _TRUE = {"1", "true", "yes", "on"}
 
+#: (chain, token) -> decimals, for answers we MEASURED from the contract.
+#: Successes only. A failed read is never cached, because it is a statement
+#: about an RPC endpoint at a moment in time, not about the token -- caching it
+#: would turn one flaky read into a permanently unreadable asset.
+_DECIMALS_MEASURED: dict[tuple[str, str], int] = {}
+
 
 def zerox_available() -> bool:
     """True only when 0x is explicitly enabled AND carries a key."""
@@ -157,8 +163,12 @@ class SwapService:
 
         `sell`/`buy` accept the same forms as ``swap()`` (address, catalog
         symbol or "native") and are resolved the same way, so a caller can pass
-        exactly what it passed to ``swap()``. Decimals come from the token
-        contract, not from a local table.
+        exactly what it passed to ``swap()``.
+
+        Decimals come from the authoritative table first and the token contract
+        second, and a token neither can answer for makes the fill UNREADABLE
+        rather than 18 -- see ``_decimals_or_none`` for the trade that rule was
+        written against.
 
         Never raises: a fill that cannot be read comes back ``ok=False`` with a
         reason, because the alternative on the money path is an exception after
@@ -173,13 +183,26 @@ class SwapService:
             if not receipt:
                 return ReceiptFill(ok=False, reason="no_receipt")
             who = wallet or getattr(getattr(self.bridge, "acct", None), "address", "") or ""
+            # A fill measured with guessed decimals is worse than no fill: the
+            # caller falls back to the wallet delta on ok=False, but it BOOKS an
+            # ok=True, and a 10^12 error booked as a price is unrecoverable.
+            # See _decimals_or_none for the trade this actually corrupted.
+            sell_decimals = self._decimals_or_none(ch, sell_addr)
+            buy_decimals = self._decimals_or_none(ch, buy_addr)
+            if sell_decimals is None or buy_decimals is None:
+                unknown = ",".join(
+                    addr
+                    for addr, dec in ((sell_addr, sell_decimals), (buy_addr, buy_decimals))
+                    if dec is None
+                )
+                return ReceiptFill(ok=False, reason=f"decimals_unknown:{unknown}")
             return parse_fill_from_receipt(
                 receipt,
                 wallet=who,
                 sell_token=sell_addr,
                 buy_token=buy_addr,
-                sell_decimals=self._decimals(ch, sell_addr),
-                buy_decimals=self._decimals(ch, buy_addr),
+                sell_decimals=sell_decimals,
+                buy_decimals=buy_decimals,
             )
         except Exception as exc:  # noqa: BLE001 - a read must never break a settled trade
             print(f"[swap] fill read failed for {txh or 'none'}: {exc!r}")
@@ -347,12 +370,162 @@ class SwapService:
         self.camelot = CamelotV2Local(lambda ch: self.bridge._w3(ch))     # keyless, on-chain (Arbitrum)
         self.sushi   = SushiV2Local(lambda ch: self._w3_with_acct(ch))    # keyless, on-chain (Arbitrum)
 
-    def _decimals(self, chain: str, token: str) -> int:
-        if is_native(token): return 18
+    def _decimals_or_none(self, chain: str, token: str) -> Optional[int]:
+        """Decimals we can stand behind, or None when we genuinely do not know.
+
+        GUESSING 18 IS A 10^12 ERROR ON EVERY STABLE.
+
+        Measured 2026-09-03: the CBETH-USDC live entry at 11:36 (tx
+        0x076978740803789cd40564cb150753bc075a5f6600d8422add58a4720822b82b) booked an entry price of 2.739721277650459e-09 while
+        the feed carried CBETH-USDC at $2731.12 the same minute. 2739.72e-12 is
+        exactly price / 10^(18-6): USDC was read with 18 decimals instead of 6,
+        so `read_fill` reported 0.75 USDC spent as 7.5e-13. The AERO-USDC entry
+        one minute later booked 0.48728 against a feed of 0.48747 -- correct --
+        so this is a transient read failing, not a constant.
+
+        There were TWO layers each turning that failure into the number 18:
+        router_wallet.erc20_decimals swallows the RPC error and returns 18, and
+        this method swallowed it again. Base RPC flakiness is established here
+        (all five configured endpoints once refused a receipt read), so the
+        except branch is a live path, not a theoretical one.
+
+        The damage lands after the money has moved: an entry price 12 orders of
+        magnitude low turns a $0.75 position into a ~1e12x "return" when it
+        exits, and that record goes to the ledger that decides graduation. This
+        repo has already purged four strategies for fabricated records.
+
+        So: the authoritative table first (token_decimals.py exists for exactly
+        this and names this failure in its own docstring), then the contract,
+        and None if neither can answer. Callers refuse; nobody guesses.
+        """
+        if is_native(token):
+            return 18
+        # 1. The authoritative table. USDC on base is 6 here and never needs an
+        #    RPC call at all, which is what makes the corrupting case above
+        #    impossible rather than merely less likely.
+        try:
+            from token_decimals import known_token_decimals
+
+            known = known_token_decimals(chain, token)
+            if known is not None:
+                return int(known)
+        except Exception:
+            pass
+        # 2. Ask the contract DIRECTLY, so a failed read arrives as an
+        #    exception rather than as the number 18. Going through
+        #    bridge.erc20_decimals cannot work here: its own `except: return
+        #    18` has already erased the difference. This is still one RPC call,
+        #    the same as before -- no extra latency and no extra failure
+        #    surface for a legitimate 18-decimal token.
+        cache_key = ((chain or "").lower(), (token or "").lower())
+        cached = _DECIMALS_MEASURED.get(cache_key)
+        if cached is not None:
+            return cached
+        erc20 = getattr(self.bridge, "_erc20", None)
+        w3_for = getattr(self.bridge, "_w3", None)
+        raw_read_attempted = False
+        if callable(erc20) and callable(w3_for):
+            raw_read_attempted = True
+            try:
+                measured = int(erc20(w3_for(chain), token).functions.decimals().call())
+                _DECIMALS_MEASURED[cache_key] = measured
+                return measured
+            except Exception:
+                pass  # one endpoint, one attempt -- step 3 asks the rest
+        # 3. Every OTHER configured endpoint, the way fetch_receipt already
+        #    polls them.
+        #
+        #    Step 2 is a single call against whichever endpoint the bridge's
+        #    w3 happens to be bound to, and base RPC flakiness is established
+        #    here -- all five configured endpoints once refused a receipt read
+        #    (ece4f34). One flaky decimals read costs a whole position:
+        #
+        #      2026-09-03 11:36:33  live-swap: entry fill unreadable from
+        #      receipt 0x9088fe4e0c8041d721081cbb83822821bafaaba7ac9664c15b163436150aa6c7
+        #      (decimals_unknown:0xB2000000000000000000004c27f6523082f41D01)
+        #
+        #    That swap SETTLED -- 0.75 USDC out, 18.609003629119603875 BASECAT
+        #    in, confirmed from the receipt's own Transfer logs -- and was
+        #    booked `live-entry-failed / no_fill_detected`, leaving $0.75 of
+        #    BASECAT on-chain with no position pointing at it. The contract
+        #    answers 0x12 immediately: base-rpc.publicnode.com and
+        #    mainnet.base.org both returned 18 for that exact address minutes
+        #    later, and only llamarpc was down.
+        #
+        #    Still a MEASUREMENT, never a guess: a malformed or out-of-range
+        #    answer is discarded, and None is still returned when no endpoint
+        #    can answer. That is the rule this method exists for.
+        measured = self._decimals_from_rpc(chain, token)
+        if measured is not None:
+            _DECIMALS_MEASURED[cache_key] = measured
+            return measured
+        if raw_read_attempted:
+            # The raw accessor exists and failed, and no endpoint answered
+            # either. Step 4 must NOT run here: bridge.erc20_decimals swallows
+            # this same failure and returns 18, which is precisely the guess
+            # this method exists to refuse. Unknown is the honest answer.
+            return None
+        # 4. Bridges without the raw accessor (test doubles, alternate
+        #    implementations) keep the old path; a raise is still unknown.
         try:
             return int(self.bridge.erc20_decimals(chain, token))
         except Exception:
-            return 18
+            return None
+
+    def _decimals_from_rpc(self, chain: str, token: str) -> Optional[int]:
+        """``decimals()`` off the token contract, asking each RPC in turn.
+
+        Returns None when no endpoint gives a well-formed answer. Never raises:
+        this runs after a swap has settled, where an exception loses the trade.
+
+        The answer is validated, not merely parsed. ERC-20 ``decimals`` is a
+        ``uint8``, so anything outside 0-255 is a malformed reply rather than a
+        surprising token, and an empty ``0x`` result -- what an address with no
+        code returns -- must read as "unknown" and never as 0. Booking a fill
+        with 0 decimals is the same class of error as booking it with 18.
+        """
+        urls = self._rpc_urls(chain)
+        if not urls:
+            return None
+        try:
+            import requests
+        except Exception:  # noqa: BLE001 - no HTTP client, no measurement
+            return None
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            # keccak("decimals()")[:4]; no arguments.
+            "params": [{"to": token, "data": "0x313ce567"}, "latest"],
+        }
+        for url in urls:
+            try:
+                resp = requests.post(
+                    url, json=payload, timeout=8, verify=REQ_KW.get("verify", True)
+                )
+                if resp.status_code != 200:
+                    continue
+                result = resp.json().get("result")
+            except Exception:
+                continue
+            if not isinstance(result, str) or len(result) <= 2:
+                continue  # "0x", None, or an error object: this endpoint cannot answer
+            try:
+                value = int(result, 16)
+            except ValueError:
+                continue
+            if 0 <= value <= 255:
+                return value
+        return None
+
+    def _decimals(self, chain: str, token: str) -> int:
+        """Backwards-compatible shim: 18 when unknown.
+
+        Kept only for callers that cannot refuse. Everything on the money path
+        uses `_decimals_or_none` and treats None as "cannot read this fill".
+        """
+        resolved = self._decimals_or_none(chain, token)
+        return 18 if resolved is None else int(resolved)
 
     def _resolve_token(self, chain: str, token: str) -> str:
         if is_native(token):
@@ -649,7 +822,16 @@ class SwapService:
         buy = self._resolve_token(ch, buy)
 
         # compute amount (sell decimals from token / native=18)
-        dec = self._decimals(ch, sell)
+        #
+        # Sizing on a guessed 18 is the same 10^12 error as the fill read, in
+        # the direction that spends money: a 6-decimal stable sized as 18 asks
+        # the router for 10^12 times the intended amount. That happens to
+        # revert today, but "it reverts" is an accident of balance, not a
+        # guard. Refuse instead of discovering it on-chain.
+        dec = self._decimals_or_none(ch, sell)
+        if dec is None:
+            print(f"[ERR] decimals unreadable for sell token {sell} on {ch}")
+            return SwapOutcome(ok=False, reason=f"decimals_unknown:{sell}")
         sell_raw = to_base_units(amount_human, dec)
         if sell_raw <= 0:
             print("[ERR] sellAmount must be > 0")

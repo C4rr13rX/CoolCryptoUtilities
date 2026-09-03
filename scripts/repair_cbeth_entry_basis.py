@@ -22,8 +22,8 @@ mainnet.base.org, filtering the receipt's Transfer logs to our own wallet:
 
     tx      0x076978740803789cd40564cb150753bc075a5f6600d8422add58a4720822b82b
     status  0x1
-    OUT     0x833589fc...  750000            raw USDC
-    IN      0x2ae3f1ec...  273750474589586   raw cbETH
+    OUT     0x833589fcd6edb6e08f4c7c32d4f71b54bda02913  750000           raw USDC
+    IN      0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22  273750474589586  raw cbETH
 
 and the decimals from the contracts themselves (eth_call 0x313ce567), not from
 any local table:
