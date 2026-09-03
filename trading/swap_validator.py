@@ -9,6 +9,25 @@ import numpy as np
 from db import TradingDatabase, get_db
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 
+# Imported, not re-derived. The guard below refuses a trade on the grounds
+# that its stop cannot be enforced, so it has to be asking about the SAME
+# number trading/triggers.py will enforce -- same env var, same default, same
+# clamp. Reading the variable independently here would let a guard that says
+# "this stop holds" and an exit path that uses a different stop drift apart
+# silently, which is the shape of half the bugs in this file's history.
+# trading.triggers imports nothing from this package, so there is no cycle.
+from trading.triggers import _env_float as _trigger_env_float
+
+
+def _stop_loss_pct(*, live: bool) -> float:
+    """The stop distance the exit path will actually apply, read its way."""
+    return _trigger_env_float(
+        "LIVE_STOP_LOSS_PCT" if live else "GHOST_STOP_LOSS_PCT",
+        0.015 if live else 0.02,
+        lo=0.001,
+        hi=0.25,
+    )
+
 
 class SwapValidator:
     """
@@ -93,6 +112,23 @@ class SwapValidator:
         # the guard still refuses to size blind into an unknown book.
         self.unknown_liquidity_max_usd = float(
             os.getenv("SWAP_GUARD_UNKNOWN_LIQUIDITY_MAX_USD", "25")
+        )
+        # How much of the stop distance one tick may consume before the stop
+        # stops being a bound. At 1.0 the pair is refused once its p99 single
+        # tick move reaches the whole stop -- i.e. once ~1 tick in 100 steps
+        # clean over the stop before any code can look at it.
+        #
+        # 1.0 is where the measurement puts the line, not where taste does.
+        # Scored over the trailing day on 2026-09-03 against the live stop of
+        # 0.015, this splits the pairs the way the live results did: the three
+        # that produced live WINS pass with room (CBETH p99 0.402%, CBBTC
+        # 0.450%, AERO 0.637%), and the two that produced live LOSSES are
+        # refused (BSTONK 6.975%, which realised -18.40%, and BASECAT 5.190%,
+        # the unsellable stub). Nothing here was fitted to those outcomes --
+        # the statistic is "can one tick clear the stop", and the outcomes
+        # simply agree with it.
+        self.max_stop_jump_ratio = float(
+            os.getenv("SWAP_GUARD_MAX_STOP_JUMP_RATIO", "1.0")
         )
 
     def validate(
@@ -212,6 +248,26 @@ class SwapValidator:
         elif volatility > self.max_volatility:
             allowed = False
             reasons.append("volatility")
+        else:
+            # The dispersion bound passed. Ask the separate question it cannot
+            # answer: if this trade goes against us, can the stop actually stop
+            # it? Only reachable when volatility was measurable, so the tail
+            # below was read off a series that survived every filter above.
+            jump_p99 = volatility_diag.get("vol_jump_p99")
+            stop_pct = _stop_loss_pct(live=True)
+            if jump_p99 is not None and stop_pct > 0:
+                budget = stop_pct * self.max_stop_jump_ratio
+                metrics["stop_loss_pct"] = float(stop_pct)
+                metrics["stop_jump_budget"] = float(budget)
+                if float(jump_p99) >= budget:
+                    # Refused under its own name. This is not "too volatile" --
+                    # BSTONK-USDC passed the volatility clause at 0.0412/0.18
+                    # on the entry that then lost 18.40%. It is "the protective
+                    # bracket this trade depends on cannot be enforced against
+                    # this feed", which is a different fault with a different
+                    # repair: a wider stop, or a pair that ticks tighter.
+                    allowed = False
+                    reasons.append("stop_unenforceable")
 
         metrics["allowed"] = 1.0 if allowed else 0.0
         self.metrics.record(
@@ -573,6 +629,40 @@ class SwapValidator:
         steps = min(self.volatility_horizon_sec / median_gap, float(returns.size))
         diag["vol_median_gap_sec"] = median_gap
         diag["vol_returns"] = float(returns.size)
+
+        # The tail of the SINGLE-TICK move, from the same filtered series.
+        #
+        # The number above is a standard deviation scaled to an hour: it says
+        # how far this pair typically wanders over the horizon. A stop-loss is
+        # not enforced over an hour. It is enforced between two consecutive
+        # looks at the feed, so the quantity that decides whether a stop can
+        # hold is how far one tick can jump -- and for a fat-tailed series
+        # those two numbers are not close.
+        #
+        # Measured 2026-09-03 on the live BSTONK-USDC entry this guard
+        # ALLOWED: it recorded volatility 0.0412 against the 0.18 limit, and
+        # the position stopped out at -18.40% against LIVE_STOP_LOSS_PCT=0.015.
+        # Over the same feed BSTONK's median tick move is 0.032% while its p99
+        # is 6.975% and its largest is 27.478% -- a 218x spread between the
+        # typical tick and the tail. A 1.5% stop on that series is not a loose
+        # stop, it is a fiction: roughly one tick in a hundred steps clean over
+        # it before anything can look. CBBTC-USDC and CBETH-USDC, which produced
+        # the only live wins, sit at p99 0.450% and 0.402% -- comfortably inside
+        # the same stop, on the same feed, at the same moment.
+        #
+        # std cannot express this. It is symmetric and it is dominated by the
+        # 99 quiet ticks, which is exactly why the docstring above concluded
+        # BSTONK "was inside the operator's stated risk appetite all along".
+        # It was inside the dispersion bound and outside the only bound that
+        # governs the loss: the one the stop has to survive.
+        #
+        # Computed here rather than in a second pass so it can never be read
+        # off a different series than the volatility it accompanies -- same
+        # window, same outlier filter, same gap filter, same returns.
+        magnitudes = np.abs(returns)
+        diag["vol_jump_p50"] = float(np.quantile(magnitudes, 0.50))
+        diag["vol_jump_p99"] = float(np.quantile(magnitudes, 0.99))
+        diag["vol_jump_max"] = float(magnitudes.max())
         return float(np.std(returns) * np.sqrt(max(steps, 1.0))), True, diag
 
     def plan_transition(
