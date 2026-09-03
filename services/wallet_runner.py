@@ -127,6 +127,13 @@ class WalletActionRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                # This streams a live swap's own log into the dashboard. The
+                # child writes UTF-8; decode it as such rather than as the
+                # locale encoding, and never let an undecodable byte raise
+                # inside the loop below -- that loop is what waits for the
+                # swap to finish.
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=env,
             )

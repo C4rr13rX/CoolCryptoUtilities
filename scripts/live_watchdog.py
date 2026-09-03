@@ -128,8 +128,14 @@ def restart_production() -> None:
         log("  could not stop cleanly: %s" % exc)
     try:
         handle = PROD_LOG.open("a", encoding="utf-8", errors="replace")
+        # -X utf8 must be on the command line: PYTHONUTF8 is read at interpreter
+        # startup, so main.py exporting it cannot fix main.py's own stdout. That
+        # stdout is this redirect, it defaulted to cp1252, and one U+2192 in the
+        # swap router's route-order log aborted every live entry. main.py also
+        # calls harden_stdio() for supervisors that do not pass this flag.
         subprocess.Popen(
-            [PYTHON, "-u", "main.py", "--action", "start_production", "--stay-alive"],
+            [PYTHON, "-X", "utf8", "-u", "main.py",
+             "--action", "start_production", "--stay-alive"],
             cwd=str(ROOT), stdout=handle, stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
         )
@@ -143,7 +149,8 @@ def path_check() -> str:
     try:
         result = subprocess.run(
             [PYTHON, "scripts/live_path_check.py"],
-            cwd=str(ROOT), capture_output=True, text=True, timeout=300,
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300,
         )
         return result.stdout or result.stderr
     except Exception as exc:

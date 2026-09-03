@@ -410,6 +410,14 @@ def _quote_probe(
             cmd,
             cwd=str(REPO_ROOT),
             text=True,
+            # The child inherits PYTHONUTF8 (services/utf8_mode.py) so it writes
+            # UTF-8. Without these, `text=True` decodes with the locale encoding
+            # -- cp1252 here -- and a non-ASCII token symbol in the quote log
+            # came back as mojibake. `replace` keeps a partially undecodable
+            # tail from raising in the parent: a quote must fail on its merits,
+            # never on the encoding of the log that describes it.
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout_sec,

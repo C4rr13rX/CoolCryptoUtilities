@@ -261,7 +261,7 @@ class SwapService:
             print("[ERR] approval failed")
             return False
 
-        # Preflight (estimate_gas) – tolerate missing gas in tx
+        # Preflight (estimate_gas) - tolerate missing gas in tx
         tx = uq.get("tx") or {}
         to_addr = tx.get("to")
         data    = tx.get("data")
@@ -517,7 +517,7 @@ class SwapService:
         final_wrap = min(int(requested_wrap_wei), int(free_for_wrap))
 
         if final_wrap < requested_wrap_wei:
-            print(f"[wrap] reserving {reserve} wei for gas; reduce wrap from {requested_wrap_wei} → {final_wrap}")
+            print(f"[wrap] reserving {reserve} wei for gas; reduce wrap from {requested_wrap_wei} -> {final_wrap}")
 
         return final_wrap, reserve
 
@@ -605,7 +605,7 @@ class SwapService:
         # ROUTE_ONLY = 0x (v2)
         # =========================
         if _ro in {"0x", "ox", "zerox", "zero-x", "allowance", "allowance-holder", "0x-v2", "v2"}:
-            print("[router] ROUTE_ONLY=0x — trying 0x v2 Allowance-Holder only")
+            print("[router] ROUTE_ONLY=0x -- trying 0x v2 Allowance-Holder only")
             if not zerox_available():
                 print("[router] 0x is not configured (needs SWAP_ENABLE_0X=1 and "
                       "ZEROX_API_KEY). Unset ROUTE_ONLY to use the keyless "
@@ -656,7 +656,7 @@ class SwapService:
         # ROUTE_ONLY = Uniswap V3
         # =========================
         if _ro in {"uniswap", "uni", "univ3"}:
-            print("[router] ROUTE_ONLY=uniswap — trying UniswapV3 only")
+            print("[router] ROUTE_ONLY=uniswap -- trying UniswapV3 only")
 
             # Optional auto-wrap for local DEX (not for 0x)
             if is_native(sell) and os.getenv("AUTO_WRAP_NATIVE", "1").strip().lower() not in {"0", "false", "no"}:
@@ -702,7 +702,7 @@ class SwapService:
         # ROUTE_ONLY = Camelot V2  (now multi-chain via configured router)
         # =========================
         if _ro in {"camelot", "camelotv2", "camelot-v2"}:
-            print("[router] ROUTE_ONLY=camelot — trying Camelot V2 only")
+            print("[router] ROUTE_ONLY=camelot -- trying Camelot V2 only")
             if is_native(buy):
                 print("Camelot expects ERC-20 addresses; 'buy' cannot be native.")
                 return SwapOutcome(ok=False, route="camelot", reason="native_buy_unsupported")
@@ -744,7 +744,7 @@ class SwapService:
         # ROUTE_ONLY = Sushi V2  (treat as multi-chain if your SushiV2Local supports it)
         # =========================
         if _ro in {"sushi", "sushiv2", "sushi-v2", "sushiswap"}:
-            print("[router] ROUTE_ONLY=sushi — trying Sushi V2 only")
+            print("[router] ROUTE_ONLY=sushi -- trying Sushi V2 only")
             if is_native(buy):
                 print("Sushi expects ERC-20 addresses; 'buy' cannot be native.")
                 return SwapOutcome(ok=False, route="sushi", reason="native_buy_unsupported")
@@ -786,9 +786,9 @@ class SwapService:
         # Normal order: on-chain routes first; 0x only if explicitly enabled
         # =========================
         _routes = default_route_order()
-        print(f"[info] chainId={cid} taker={taker} routes={'→'.join(_routes)}")
+        print(f"[info] chainId={cid} taker={taker} routes={'->'.join(_routes)}")
 
-        # 1) 0x v2 (no auto-wrap pre-0x) — skipped unless opted in with a key
+        # 1) 0x v2 (no auto-wrap pre-0x) -- skipped unless opted in with a key
         if "0x" in _routes:
             try:
                 sell_norm = normalize_for_0x(sell)
@@ -834,7 +834,7 @@ class SwapService:
                 print("[wrap] no wrapped-native known for this chain; aborting native sell")
                 return SwapOutcome(ok=False, reason="no_wrapped_native")
             if os.getenv("AUTO_WRAP_NATIVE","1").strip().lower() not in {"0","false","no"}:
-                # we will try Uniswap first in fallbacks — reserve for that route
+                # we will try Uniswap first in fallbacks -- reserve for that route
                 sell_raw_adj, _reserve = self._apply_wrap_gas_buffer(
                     chain=ch, route_hint="uniswap", requested_wrap_wei=int(sell_raw),
                     assume_needs_approval=True
@@ -868,7 +868,7 @@ class SwapService:
             attempts.append(outcome)
             if outcome.ok or outcome.broadcast:
                 return outcome
-            print("[UniswapV3] failed, trying Camelot…")
+            print("[UniswapV3] failed, trying Camelot...")
         except Exception as e:
             print(f"[UniswapV3] fallback: {e}")
             attempts.append(SwapOutcome(ok=False, route="uniswap", reason=f"error:{e!r}"))
@@ -883,7 +883,7 @@ class SwapService:
             attempts.append(outcome)
             if outcome.ok or outcome.broadcast:
                 return outcome
-            print("[CamelotV2] failed, trying SushiV2…")
+            print("[CamelotV2] failed, trying SushiV2...")
         except Exception as e:
             print(f"[CamelotV2] fallback: {e}")
             attempts.append(SwapOutcome(ok=False, route="camelot", reason=f"error:{e!r}"))
