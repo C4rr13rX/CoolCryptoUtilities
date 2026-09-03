@@ -135,11 +135,17 @@ class ScoutGraduationDoesNotAuthoriseTheBotTest(unittest.TestCase):
         return StrategyLedger(path=self.path)
 
     def test_scout_graduation_does_not_graduate_the_bot(self):
+        """When this was written the scout could still graduate on its own id,
+        and the point being pinned was only that it did not drag the bot's id
+        with it. The structural bar in ledger._ghost_only_ids() has since made
+        the first half impossible: the scout has no live branch, so a perfect
+        ghost record must not read as permission to spend. Both halves are
+        asserted here now -- see tests/test_ghost_only_never_graduates.py."""
         ledger = self._ledger()
         for _ in range(25):
             ledger.record(SCOUT_STRATEGY_ID, profit=0.05, mode="ghost",
                           confidence=0.7, symbol="TOAD-USDC")
-        self.assertTrue(ledger.is_live_approved(SCOUT_STRATEGY_ID))
+        self.assertFalse(ledger.is_live_approved(SCOUT_STRATEGY_ID))
         # ...and the id the bot's live path consults is untouched.
         self.assertFalse(ledger.is_live_approved(SIGNAL_STRATEGY_ID))
 

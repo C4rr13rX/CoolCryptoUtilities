@@ -293,6 +293,10 @@ class TradingBot:
         self.global_risk_budget: float = float(os.getenv("GLOBAL_RISK_BUDGET", "1.0"))
         self._horizon_metrics_interval: float = max(60.0, float(os.getenv("HORIZON_METRICS_INTERVAL", "300")))
         self._next_horizon_metrics: float = 0.0
+        #: Symbols whose persisted position row this bot is entitled to remove.
+        #: See _save_state -- the position book in the state blob is shared by
+        #: every bot in the pool, so a bot may only delete what it has held.
+        self._owned_position_symbols: set = set()
         self._load_state()
         if not self.sim_quote_balances:
             self._init_sim_balances()
@@ -4142,6 +4146,7 @@ class TradingBot:
                     return decision
 
                 executed_entry_price = quote_spent / max(base_received, 1e-9)
+                self._claim_position_symbol(symbol)
                 self.positions[symbol] = {
                     "mode": "live",
                     "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
@@ -4278,6 +4283,7 @@ class TradingBot:
                 return decision
 
             # ghost / paper entry
+            self._claim_position_symbol(symbol)
             self.positions[symbol] = {
                 "mode": "ghost",
                 "strategy_id": str(getattr(directive, "strategy_id", "") or "") if directive else "",
@@ -4907,6 +4913,11 @@ class TradingBot:
                 except Exception:
                     pass
             remaining_size = max(0.0, held_size - exit_size)
+            # Closing a symbol is acting on it: claim it so _save_state is
+            # entitled to take the row out of the shared book. Without this a
+            # bot that inherited the position at startup would close it here
+            # and leave the persisted row behind for the next bot to load.
+            self._claim_position_symbol(symbol)
             if remaining_size <= 1e-6:
                 del self.positions[symbol]
             else:
@@ -6343,6 +6354,12 @@ class TradingBot:
                     payload["exit_sequence"] = int(payload.get("exit_sequence") or 0)
             positions[str(sym)] = payload
         self.positions = positions
+        # Deliberately claims NOTHING. A bot inherits the whole book here but
+        # only ever receives samples for its own stream, so every other symbol
+        # in it is a copy this bot will hold, stale, forever. Claiming them
+        # would let this bot rewrite them from that stale copy -- resurrecting
+        # a position the bot that owns the symbol had already closed. Ownership
+        # is taken by acting on a symbol, in _claim_position_symbol().
         routes = ghost.get("routes") if accounting_version >= ACCOUNTING_VERSION else None
         if isinstance(routes, dict):
             self.bus_routes = {sym: list(tokens) for sym, tokens in routes.items()}
@@ -6462,6 +6479,18 @@ class TradingBot:
         self._discovery_cache_ts = now
         return snapshot
 
+    def _claim_position_symbol(self, symbol: str) -> None:
+        """Take responsibility for ``symbol``'s row in the shared position book.
+
+        Called wherever this bot opens or closes a position. Only a claimed
+        symbol is written from this bot's copy, and only a claimed symbol may
+        be deleted; everything else in the book belongs to another bot in the
+        pool and is passed through untouched. See _save_state.
+        """
+        sym = str(symbol or "").strip()
+        if sym:
+            self._owned_position_symbols.add(sym)
+
     def _save_state(self) -> None:
         try:
             state = self.db.load_state()
@@ -6471,12 +6500,64 @@ class TradingBot:
             state = {}
         positions_payload: Dict[str, Dict[str, Any]] = {}
         for sym, pos in self.positions.items():
+            if str(sym) not in self._owned_position_symbols:
+                continue                      # another bot's row; pass it through
             pos_copy = dict(pos)
             fingerprint_val = pos_copy.get("fingerprint")
             if isinstance(fingerprint_val, np.ndarray):
                 pos_copy["fingerprint"] = fingerprint_val.tolist()
             positions_payload[str(sym)] = pos_copy
         previous_ghost = state.get("ghost_trading") if isinstance(state.get("ghost_trading"), dict) else {}
+
+        # MERGE the position book; do not replace it.
+        #
+        # GhostSupervisor runs one TradingBot per symbol against one shared
+        # state blob, and every bot called _save_state() with only its OWN
+        # self.positions. The last writer therefore erased every other bot's
+        # open position from the persisted book. Because __init__ seeds a new
+        # bot from that book, a bot built for a symbol whose row had just been
+        # clobbered started with no position, re-entered, and the position it
+        # had been holding closed for nobody -- no exit row, no outcome, no
+        # ledger entry.
+        #
+        # Measured 2026-09-02 against trading_ops: 152 ghost-entry rows had no
+        # matching exit, spread over just 16 distinct symbols -- and the book
+        # is keyed by symbol, so at most 16 of those could ever have been real.
+        # VIRTUAL-USDC alone held 66 entries and ONE exit, one entry every ~90
+        # seconds for seventeen hours, all obv_accumulation@5d, all distinct
+        # trade_ids. The persisted book meanwhile listed five positions, one of
+        # them a VIRTUAL-USDC row that had already exited at 16:41.
+        #
+        # That is the graduation blocker underneath link 5. Promotion is scored
+        # on CLOSED ghost trades: atf_static, the only executor that can spend
+        # real money and the only one with a positive record, opened 26 and
+        # closed 11 -- 15 of its round trips were thrown away here, and it sits
+        # at 11 of the 20 trades it needs. Roughly 136 outcomes in total never
+        # reached the ledger.
+        #
+        # Ownership rule: a bot may ADD or UPDATE its own symbols, and may
+        # REMOVE only a symbol it has itself held. Anything else in the book
+        # belongs to another bot and is carried through untouched. Without the
+        # removal half a closed position would be resurrected on the next
+        # restart; without the ownership half we are back to clobbering.
+        previous_positions = previous_ghost.get("positions")
+        merged_positions: Dict[str, Dict[str, Any]] = (
+            {str(k): v for k, v in previous_positions.items() if isinstance(v, dict)}
+            if isinstance(previous_positions, dict)
+            else {}
+        )
+        for sym in self._owned_position_symbols - set(positions_payload):
+            merged_positions.pop(str(sym), None)
+        merged_positions.update(positions_payload)
+
+        # Routes are per-symbol and purely additive, and they were being
+        # clobbered the same way -- _load_state feeds them back as bus_routes,
+        # so a lost route is a position whose swap path is forgotten.
+        previous_routes = previous_ghost.get("routes")
+        merged_routes: Dict[str, Any] = (
+            dict(previous_routes) if isinstance(previous_routes, dict) else {}
+        )
+        merged_routes.update(self.bus_routes)
         state["ghost_trading"] = {
             "accounting_version": ACCOUNTING_VERSION,
             "accounting_epoch": previous_ghost.get("accounting_epoch") or int(time.time()),
@@ -6486,8 +6567,8 @@ class TradingBot:
             "realized_profit": self.realized_profit,
             "total_trades": self.total_trades,
             "wins": self.wins,
-            "positions": positions_payload,
-            "routes": self.bus_routes,
+            "positions": merged_positions,
+            "routes": merged_routes,
             "sim_quote_balances": {f"{chain}:{symbol}": amount for (chain, symbol), amount in self.sim_quote_balances.items()},
             "sim_native_balances": self.sim_native_balances,
             "session_id": self.ghost_session_id,
