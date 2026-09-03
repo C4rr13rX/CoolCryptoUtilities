@@ -142,8 +142,11 @@ if ($prodProc) {
     # visible failure they can act on -- rather than being silently
     # disabled by an opinionated default.
     $env:SKIP_TF_CONFIGURE    = $null
+    # -X utf8: see Restart-Production in GetToLiveTrading.ps1. Startup UTF-8
+    # mode is what makes a bare open(path,"w") in library code UTF-8;
+    # ensure_utf8_mode() can only fix this process's own stdout.
     Start-Process -FilePath $python `
-        -ArgumentList "-u","main.py","--action","start_production","--stay-alive" `
+        -ArgumentList "-X","utf8","-u","main.py","--action","start_production","--stay-alive" `
         -WorkingDirectory $projectRoot `
         -WindowStyle Hidden `
         -RedirectStandardOutput "$logsDir\prod_direct.log" `

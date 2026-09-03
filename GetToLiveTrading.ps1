@@ -491,8 +491,17 @@ function Restart-Production {
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 6
     $log = Join-Path $Repo "data\production.log"
+    # -X utf8. main.py's ensure_utf8_mode() already hardens THIS process's
+    # stdout after startup, so the swap-path crash is covered either way; what
+    # it cannot fix is a bare open(path,"w") inside library code, which is
+    # cp1252 unless the interpreter starts in UTF-8 mode. That is the write
+    # that killed every model save (services/utf8_mode.py).
+    #
+    # Kept because it is free and because the flag has already been lost once:
+    # on 2026-09-03 the running process had it while both launchers that would
+    # relaunch it did not.
     Start-Process -FilePath $Python `
-                  -ArgumentList "-u","main.py","--action","start_production","--stay-alive" `
+                  -ArgumentList "-X","utf8","-u","main.py","--action","start_production","--stay-alive" `
                   -WorkingDirectory $Repo -WindowStyle Hidden `
                   -RedirectStandardOutput $log -RedirectStandardError (Join-Path $Repo "data\production.err.log")
     Write-Line "production relaunched" "Yellow"
