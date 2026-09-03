@@ -238,7 +238,7 @@ def check_live(now: float) -> Link:
         refused = list(c.execute(
             "SELECT COUNT(*) FROM trading_ops WHERE status IN "
             "('guard-blocked-live','live-entry-blocked','live-entry-failed',"
-            "'live-entry-unfunded') AND ts > ?",
+            "'live-entry-unfunded','live-entry-below-profit-floor') AND ts > ?",
             (now - 3600,)))[0][0]
     except Exception as exc:
         return link.unknown("db unreadable: %s" % exc)

@@ -727,6 +727,72 @@ class TradingBot:
         except Exception:
             return True
 
+    def _live_clip_usd(self) -> float:
+        """USD notional the transition plan sanctioned for ONE live entry.
+
+        The plan already decides this number and every live gate is scored
+        against it -- ``recommended_live_usd`` is what layer 5 recommends,
+        ``min_clip_usd`` is the floor below which it sets ``min_clip_block``.
+        Nothing downstream was reading either of them, so the size that
+        actually reached the swap was computed a second, unrelated way and
+        disagreed with the plan by 18x. Measured 2026-09-03 06:18 from the
+        live snapshot::
+
+            capital_plan.recommended_live_usd = 0.75
+            capital_plan.min_clip_usd         = 0.75
+            risk_budget = max(0.05, recommended_live_ratio 0.10749)
+                          * ghost_risk_multiplier 0.46571   = 0.050060
+            size = wallet 6.977334 * frac 0.12 * 0.050060   = $0.041914
+                   * pair size_multiplier 1.274296          = $0.053411
+
+        which is exactly the ``micro_profit.notional_usd`` recorded on every
+        blocked entry that hour. The composition is a units error: the plan's
+        ratio is already "this fraction of the wallet", and ``_size_enter``
+        multiplies it by a SECOND fraction of the wallet (0.12), squaring the
+        shrink. A ghost-lane damper (``ghost_risk_multiplier``) is then applied
+        to the live cap as well, at bot.py:3071.
+
+        At $0.0419 a 5% target nets $0.0018 against a $0.02
+        ``SMALL_PROFIT_FLOOR_USD``, so ``micro_profit.viable`` was False for
+        EVERY enter directive -- atf_static (the only live-approved strategy),
+        money_button, rsi_reversal and stochastic_reversal alike. That is link
+        9: not a refusal on the merits, an arithmetic deadlock between two
+        constants that cannot both hold on a $6.98 wallet.
+
+        Returns 0.0 when no plan is loaded, which leaves sizing exactly as it
+        was.
+        """
+        plan = self._transition_plan if isinstance(self._transition_plan, dict) else {}
+        capital = plan.get("capital_plan")
+        if not isinstance(capital, dict):
+            return 0.0
+
+        def _usd(source: Dict[str, Any], key: str) -> Optional[float]:
+            try:
+                value = float(source.get(key))
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(value) or value <= 0.0:
+                return None
+            return value
+
+        clip = max(_usd(capital, "recommended_live_usd") or 0.0,
+                   _usd(capital, "min_clip_usd") or 0.0)
+        if clip <= 0.0:
+            return 0.0
+        # Every cap the plan publishes still binds. The floor may only raise a
+        # clip toward what was authorised, never past it.
+        ramp = capital.get("live_ramp_schedule")
+        for source, key in (
+            (ramp if isinstance(ramp, dict) else {}, "first_tranche_cap_usd"),
+            (capital, "live_capital_cap_usd"),
+            (capital, "deployable_stable_usd"),
+        ):
+            cap = _usd(source, key)
+            if cap is not None:
+                clip = min(clip, cap)
+        return max(0.0, clip)
+
     def _live_trade_slippage_bps(self) -> int:
         raw = os.getenv("LIVE_TRADE_SLIPPAGE_BPS", os.getenv("SCHEDULER_SLIPPAGE_BPS", "75"))
         try:
@@ -3675,6 +3741,54 @@ class TradingBot:
         adjustments = self._get_pair_adjustment(symbol)
         trade_size *= float(max(0.1, min(3.0, adjustments.get("size_multiplier", 1.0))))
         trade_size = max(0.0, trade_size)
+
+        # Size a live-approved entry to the clip the transition plan approved.
+        #
+        # See _live_clip_usd(): the plan authorises $0.75 and the sizing chain
+        # produces $0.042, so the micro-profit floor refuses every entry and no
+        # live trade can ever be reached. This raises an entry the plan has
+        # already cleared UP to that clip, and never past it -- the clip is
+        # capped by first_tranche_cap_usd / live_capital_cap_usd /
+        # deployable_stable_usd inside the helper, and by the wallet here.
+        #
+        # A floor already existed and had already stopped working. The block at
+        # `MIN_DIRECTIVE_NOTIONAL_USD` above does the same job -- .env sets it
+        # to 0.75 with a comment naming this exact failure -- but it is gated on
+        # `pos is None`, so it applies only to a symbol with an empty slot. The
+        # ghost lane fills that book and holds for hours: measured 2026-09-03
+        # 06:20, ALL 85 enter directives refused by micro_profit in the previous
+        # hour were on a symbol already in the position book (17 held, several
+        # for 5-15h). The floor was therefore skipped 85 times out of 85 while
+        # reading as configured and correct. An entry that takes an occupied
+        # slot releases it and spends the same money as one that finds it empty,
+        # so the clip cannot depend on which of the two it is.
+        #
+        # Deliberately narrow:
+        #   * only when the bot is live AND the strategy graduated its own
+        #     ledger, so the ghost lane's sizing is untouched (its purse is
+        #     sim_quote_balances, not this wallet);
+        #   * only on an `enter` directive, so no exit is ever resized -- an
+        #     exit sells the position, and its size comes from the book;
+        #   * only ever raises. min() with what the wallet can afford means a
+        #     $6.98 wallet can never be asked for more than it holds.
+        live_clip_floor = 0.0
+        if (
+            self.live_trading_enabled
+            and directive is not None
+            and getattr(directive, "action", "") == "enter"
+            and price > 0.0
+            and str(quote_token).upper() in self.stable_tokens
+            and self._strategy_live_approved(directive)
+        ):
+            live_clip_floor = self._live_clip_usd()
+        if live_clip_floor > 0.0:
+            affordable_units = max(0.0, available_quote / price)
+            clip_units = min(live_clip_floor / price, affordable_units)
+            if clip_units > trade_size:
+                decision["live_clip_usd"] = float(live_clip_floor)
+                decision["live_clip_raised_from_usd"] = float(trade_size * price)
+                trade_size = clip_units
+
         min_margin_required = max(fees * 1.5, MIN_NET_MARGIN)
         min_margin_required = max(0.0, min_margin_required + float(adjustments.get("margin_offset", 0.0)))
         trade_notional_usd = max(trade_size, 0.0) * max(price, 1e-9)
@@ -3907,6 +4021,46 @@ class TradingBot:
             if not micro_profit.viable:
                 should_enter = False
                 reason = f"micro-profit-blocked:{micro_profit.reason}"
+                # Say so when this turns back a live-approved entry.
+                #
+                # The decision returned from here keeps action="hold", and the
+                # caller only writes trading_ops when action != "hold", so this
+                # gate refused EVERY entry for hours -- atf_static included --
+                # and left no row, no feedback event and no log line. Between
+                # 05:14 and 06:14 on 2026-09-03 the ops table showed nothing
+                # but ghost activity while `micro_profit.viable` was False on
+                # all four strategies that fired; the block was only findable
+                # by unpacking organism_snapshots payloads.
+                #
+                # Same argument as guard-blocked-live and live-entry-unfunded:
+                # a rule that declines to spend real money must be as visible
+                # as one that spends it. Logged under its own non-"live-entry"
+                # status so it can never be counted as an executed trade.
+                if self.live_trading_enabled and self._strategy_live_approved(directive):
+                    blocked = dict(decision)
+                    blocked.update(
+                        {
+                            "action": "hold",
+                            "status": "live-entry-below-profit-floor",
+                            "reason": reason,
+                            "wallet": "live",
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                            "trade_size": float(trade_size),
+                            "price": float(price),
+                            "executed": False,
+                        }
+                    )
+                    try:
+                        self.db.log_trade(
+                            wallet="live",
+                            chain=chain_name,
+                            symbol=symbol,
+                            action="hold",
+                            status="live-entry-below-profit-floor",
+                            details=blocked,
+                        )
+                    except Exception:
+                        pass
 
         if should_enter:
             # A simulation may not take the slot of a position holding real
