@@ -29,6 +29,7 @@ import LogsView from '@/views/LogsView.vue';
 import BusScheduleView from '@/views/BusScheduleView.vue';
 import WizardChatView from '@/views/WizardChatView.vue';
 import ModelControlView from '@/views/ModelControlView.vue';
+import TradingAgentView from '@/views/TradingAgentView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -107,6 +108,11 @@ const routes: RouteRecordRaw[] = [
     name: 'c0d3r',
     component: C0d3rView,
     meta: { title: 'c0d3r' },
+  },
+  {
+    path: '/trading-agent',
+    name: 'trading-agent',
+    component: TradingAgentView,
   },
   {
     path: '/model-control',

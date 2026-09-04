@@ -793,6 +793,8 @@ const resolveAppIntent = (routeName: string) => {
       return consoleOk ? 'ok' : 'warn';
     case 'model-control':
       return store.serverOnline ? 'ok' : 'warn';
+    case 'trading-agent':
+      return store.serverOnline ? 'ok' : 'warn';
     case 'guardian':
       return consoleOk ? 'ok' : 'warn';
     case 'datalab':
@@ -825,6 +827,7 @@ const navItems = computed(() => {
     { route: 'logs', path: '/logs', label: t('nav.logs'), icon: 'activity' },
     { route: 'wallet', path: '/wallet', label: t('nav.wallet'), icon: 'wallet' },
     { route: 'c0d3r', path: '/c0d3r', label: t('nav.c0d3r'), icon: 'terminal' },
+    { route: 'trading-agent', path: '/trading-agent', label: t('nav.trading_agent'), icon: 'rocket' },
     { route: 'model-control', path: '/model-control', label: t('nav.model_control'), icon: 'settings' },
     { route: 'investigations', path: '/investigations', label: t('nav.investigations'), icon: 'shield' },
     { route: 'addressbook', path: '/addressbook', label: t('nav.addressbook'), icon: 'link' },
