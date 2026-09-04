@@ -138,8 +138,12 @@ def main() -> int:
             "consecutive_losses": 0,
             "last_ts": float(ghost.get("last_ts") or time.time()),
         }
-        ent["live_approved"] = True
-        ent["graduated_ts"] = time.time()
+        # Via the ledger's licence-granting helper -- it re-bases `dd_ref`, and
+        # without that this repair lasts exactly one live outcome before the
+        # give-back brake re-demotes against a stale `peak_profit`.
+        from trading.strategies.ledger import StrategyLedger
+
+        StrategyLedger._grant_live_licence(ent, ts_key="graduated_ts")
         ent["demote_reason"] = None
         # Keep the count: it is a real history of demotions, and zeroing it
         # would hide that this happened.

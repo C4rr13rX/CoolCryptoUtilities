@@ -121,8 +121,12 @@ def main() -> int:
         shutil.copy2(path, backup)
         print(f"\nbacked up to  : {backup}")
 
-        ent["live_approved"] = True
-        ent["graduated_ts"] = time.time()
+        # Through the ledger's own licence-granting helper, so this script
+        # cannot hand out a licence on a contract the ledger has moved past.
+        # It re-bases `dd_ref`: without that, restoring approval only buys one
+        # live outcome before the give-back brake re-demotes against the same
+        # stale `peak_profit` (measured 2026-09-04 -- see _grant_live_licence).
+        StrategyLedger._grant_live_licence(ent, ts_key="graduated_ts")
         ent["demote_reason"] = None
         # Keep the audit trail: the demotion happened, and it was wrong.
         ent["reinstated_ts"] = time.time()
