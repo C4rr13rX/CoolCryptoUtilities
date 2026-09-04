@@ -217,3 +217,78 @@ class DataLabBridgeTest(TestCase):
             self.assertIn("volatility_1h_pct", candidate)
             self.assertGreaterEqual(candidate["ticks_1h"], 5,
                                     "a symbol with no ticks is not a candidate")
+
+
+class PromotionRequiresEvidenceTest(TestCase):
+    """Spending real money is earned, never configured.
+
+    A tier is the ceiling on what one mistake can cost, so raising it on
+    request rather than on results would make the whole ladder decorative.
+    """
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        user = get_user_model().objects.create_user("promo", password="x")
+        self.client.force_login(user)
+
+    def test_tier_cannot_be_set_through_config(self):
+        import json
+
+        response = self.client.post(
+            "/api/trading-agent/config/",
+            data=json.dumps({"tier": "normal"}),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(AgentConfig.load().tier, RiskTier.GHOST)
+
+    def test_promotion_is_refused_without_a_sample(self):
+        import json
+
+        response = self.client.post(
+            "/api/trading-agent/promote/",
+            data=json.dumps({"direction": "up"}),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(AgentConfig.load().tier, RiskTier.GHOST)
+
+    def test_promotion_is_refused_when_the_account_shrank(self):
+        import json
+
+        for _ in range(25):
+            AgentRun.objects.create(agent="t", status=AgentRun.Status.COMPLETED,
+                                    trades_closed=1, net_pl=-0.02)
+        response = self.client.post(
+            "/api/trading-agent/promote/",
+            data=json.dumps({"direction": "up"}),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("net P/L", response.json()["detail"])
+        self.assertEqual(AgentConfig.load().tier, RiskTier.GHOST)
+
+    def test_promotion_succeeds_on_measured_results(self):
+        import json
+
+        for _ in range(25):
+            AgentRun.objects.create(agent="t", status=AgentRun.Status.COMPLETED,
+                                    trades_closed=1, net_pl=0.05)
+        response = self.client.post(
+            "/api/trading-agent/promote/",
+            data=json.dumps({"direction": "up"}),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(AgentConfig.load().tier, RiskTier.MICRO)
+
+    def test_demotion_never_needs_justifying(self):
+        """Reducing risk is always allowed, whatever the record says."""
+        import json
+
+        config = AgentConfig.load()
+        config.tier = RiskTier.SMALL
+        config.save()
+        response = self.client.post(
+            "/api/trading-agent/promote/",
+            data=json.dumps({"direction": "down"}),
+            content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(AgentConfig.load().tier, RiskTier.MICRO)
