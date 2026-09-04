@@ -6642,7 +6642,41 @@ class TradingBot:
             elif (not model_neutral) and held_secs >= min_hold and margin <= -fees:
                 should_exit = True
                 reason = "negative_margin"
-            elif pnl < 0 and held_secs > float(os.getenv("GHOST_NEG_EXIT_SECONDS", str(60 * 45))):
+            # "Stale loser" is a fact about the POSITION, not a forecast.
+            #
+            # This tested `pnl`, bound far above as
+            # `float(summary.get("net_pnl", margin))` -- the model's predicted
+            # net margin for the NEXT step. The position's realised P/L is
+            # `pnl_pct_held`, computed a few lines up from the same price the
+            # stop-loss above uses. Both are unitless fractions, so nothing
+            # ever raised and nothing looked wrong; the rule simply measured a
+            # different quantity than its own comment describes ("4. timed
+            # exit -- stale losers release capital"). Same shape as the
+            # wrong-units price and the exit sized from a stored quantity: two
+            # locally sensible values that disagree across a boundary.
+            #
+            # Measured 2026-09-04 over 136 decisions in 3h of organism
+            # snapshots, the model's net_pnl was >= 0 on 88 of them (49
+            # positive, 39 exactly 0.0 -- 0.0 is what a neutral OR unavailable
+            # model returns, and TensorFlow has been unavailable for most of
+            # today). So a genuinely stale losing position was skipped by this
+            # rule on roughly two ticks in three, and on any symbol the model
+            # stayed non-negative about, indefinitely. The book at that moment
+            # held CBXRP-USDC for 9,304s -- 3.4x GHOST_NEG_EXIT_SECONDS -- at a
+            # realised -1.46%, inside a 2% stop, and this rule had never once
+            # fired on it.
+            #
+            # LIVE positions are unchanged in cost terms: "timed-exit" is not
+            # in the protective set at the live-exit margin gate below, so a
+            # forced close at a nothing-move is still refused there as
+            # `hold-negative` (see test_a_close_must_cover_its_own_gas.py).
+            # This only stops the rule from missing the positions it is for.
+            #
+            # A position with no usable entry price reads pnl_pct_held == 0.0
+            # and is NOT closed here -- deliberately, and for the same reason
+            # the stop-loss above ignores it: an unknown cost basis is not
+            # evidence of a loss. Those are released by the max-hold eviction.
+            elif pnl_pct_held < 0 and held_secs > float(os.getenv("GHOST_NEG_EXIT_SECONDS", str(60 * 45))):
                 should_exit = True
                 reason = "timed-exit"
 
