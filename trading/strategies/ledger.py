@@ -514,8 +514,7 @@ class StrategyLedger:
         min_winrate = _env_float("STRATEGY_GRADUATION_MIN_WINRATE", 0.55)
         min_profit = _env_float("STRATEGY_GRADUATION_MIN_PROFIT", 0.0)
         if trades >= min_trades and (wins / max(trades, 1)) >= min_winrate and profit > min_profit:
-            ent["live_approved"] = True
-            ent["graduated_ts"] = time.time()
+            self._grant_live_licence(ent, ts_key="graduated_ts")
 
     def _evaluate_demotion_locked(self, sid: str) -> None:
         ent = self._entry(sid)
@@ -660,6 +659,52 @@ class StrategyLedger:
             )
 
     @staticmethod
+    def _grant_live_licence(ent: Dict[str, Any], *, ts_key: str) -> None:
+        """Approve a strategy for live money and re-base the drawdown reference.
+
+        THE ONLY place ``live_approved`` is turned on. It exists because the two
+        ways in -- first graduation and post-demotion re-arm -- drifted apart,
+        and the drift made graduation structurally impossible to hold.
+
+        The drawdown brake measures the give-back against ``dd_ref``, "the peak
+        reached under the CURRENT licence to trade" (see ``_dd_ref``). When that
+        field is absent it falls back to ``peak_profit``, which means "the most
+        this strategy has EVER been up" and is never rewritten. So a strategy
+        granted a fresh licence without a re-base is judged against a peak it
+        set under a licence it no longer holds.
+
+        ``_maybe_rearm_locked`` re-based; ``_evaluate_graduation_locked`` did
+        not. Measured 2026-09-04 by replaying the shipped code against a copy of
+        data/strategy_ledger.json, atf_static -- the only strategy that has ever
+        spent real money here -- graduated and was demoted in the same
+        ``record()`` call, 27 MICROSECONDS apart on the wall clock:
+
+            graduated_ts 1788529132.2898452
+            demoted_ts   1788529132.2898726
+            demote_reason "live drawdown: +0.1423 from peak +0.2221"
+
+        with 9 live trades (>= STRATEGY_DEMOTE_MIN_DRAWDOWN_TRADES=8), dd_ref
+        absent, so peak = peak_profit = +0.2221 and the 25% bar = +0.1666
+        against a current +0.1423. It was demoted for a give-back it made under
+        the previous licence, while net POSITIVE on real money, and re-arming
+        then demanded 20 fresh ghost trades -- days of ghosting. That is link 5,
+        "no strategy approved for live", and it is not reachable by tuning any
+        threshold: any strategy carrying a historical peak above its current
+        total is demoted the instant it graduates.
+
+        Re-basing does not weaken the account's protection. The rules that
+        enforce "live P/L must never be negative" -- the consecutive-loss brake
+        and the net-profitability floor -- read ``total_profit`` directly and
+        are untouched. This one only ever spoke about strategies still up.
+        """
+        live = ent.setdefault("live", {})
+        ent["live_approved"] = True
+        ent[ts_key] = time.time()
+        # A new licence starts its drawdown clock at today's total, not at a
+        # high-water mark from a licence that has already been revoked.
+        live["dd_ref"] = float(live.get("total_profit", 0.0) or 0.0)
+
+    @staticmethod
     def _dd_ref(live: Dict[str, Any]) -> float:
         """The drawdown brake's reference peak for the current licence.
 
@@ -744,16 +789,15 @@ class StrategyLedger:
             and (fresh_wins / max(fresh_trades, 1)) >= min_winrate
             and fresh_profit > min_profit
         ):
-            ent["live_approved"] = True
-            ent["demote_reason"] = None
-            ent["rearmed_ts"] = time.time()
-            ent["rearms"] = int(ent.get("rearms", 0)) + 1
             # New licence, new drawdown reference. The peak that convicted it
             # belonged to the previous licence; carrying it forward re-demotes
             # the strategy on its first live outcome. `peak_profit` is left
             # alone -- it means "the most this has ever been up", and that is
-            # still true.
-            ent["live"]["dd_ref"] = float(ent["live"].get("total_profit", 0.0))
+            # still true. `_grant_live_licence` owns that re-base for BOTH ways
+            # in; doing it here only was the defect it now documents.
+            self._grant_live_licence(ent, ts_key="rearmed_ts")
+            ent["demote_reason"] = None
+            ent["rearms"] = int(ent.get("rearms", 0)) + 1
             ent["ghost_at_demotion"] = dict(ghost)
             try:
                 from services.logging_utils import log_message
@@ -793,6 +837,26 @@ class StrategyLedger:
         # re-earn evidence it already has.
         ent["ghost_at_demotion"] = dict(ent.get("ghost") or {})
         ent["live"]["consecutive_losses"] = 0
+
+        # RETIRE THE PEAK THAT CONVICTED IT, WITH THE LICENCE IT BELONGED TO.
+        #
+        # dd_ref is "the peak reached under the CURRENT licence to trade".
+        # _grant_live_licence re-bases it on the way IN, but nothing retired it
+        # on the way OUT, so a strategy demoted before that method ever ran for
+        # it kept dd_ref=None -- and _dd_ref then falls back to peak_profit,
+        # "the most this has EVER been up", which is never rewritten.
+        #
+        # Measured 2026-09-04 on the real ledger, atf_static: dd_ref None,
+        # peak_profit +0.2221, current +0.1423, demotions 5. Under the
+        # configured 25% the bar is +0.1666, so a strategy that is net POSITIVE
+        # is demoted, makes no further live trades, and therefore can never
+        # climb back over a bar set by a peak it can no longer move. Five
+        # demotions against one frozen number.
+        #
+        # Re-basing here means the NEXT licence is judged against what the
+        # strategy does under that licence. peak_profit is deliberately left
+        # alone: it is a lifetime fact and dashboards read it as one.
+        ent["live"]["dd_ref"] = float(ent["live"].get("total_profit", 0.0) or 0.0)
 
     # ------------------------------------------------------------------
     # Queries
