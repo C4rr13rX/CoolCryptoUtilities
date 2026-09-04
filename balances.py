@@ -562,7 +562,6 @@ class MultiChainTokenPortfolio:
             usd_map: Dict[str, str] = {}
             
             if self.price_mode == "cache_only":
-                refresh_set = set(refresh)
                 for a in token_list:
                     ent = cached_entries.get(a) or {}
                     usd_val = ent.get("usd_amount")
@@ -572,13 +571,52 @@ class MultiChainTokenPortfolio:
                             usd_dec = Decimal(str(usd_val))
                         except Exception:
                             usd_dec = None
-                    # Refreshed rows must re-derive USD: the cached usd_amount
-                    # embeds the previous quantity (possibly decimals-corrupted).
-                    if usd_dec is None or usd_dec == 0 or a in refresh_set:
-                        meta_info = meta_map.get(a) or ent
-                        px = self._lookup_cached_price(ch, a, meta_info)
-                        if px is not None and qty_map[a] > 0:
-                            usd_dec = (qty_map[a] * px).quantize(Decimal("0.00000001"))
+                    # A cached usd_amount is only valid for the quantity it was
+                    # computed from, and `qty_map` above is recomputed for EVERY
+                    # token from `balances_raw`, not just the refreshed ones. The
+                    # old condition -- reuse unless missing, zero, or refreshed --
+                    # therefore froze the USD while the quantity moved underneath
+                    # it, with no arithmetic relationship left between them.
+                    #
+                    # Measured 2026-09-04, base: 18.190627 USDC carried
+                    # usd_amount 3.68739300, an implied $0.2027. The same row had
+                    # read $3.687393 the previous day at 15.196 USDC -- same USD,
+                    # different quantity, so it was frozen rather than mis-scaled
+                    # and no unit conversion explains it. `_lookup_cached_price`
+                    # returns Decimal("1") for USDC on its first line; it was
+                    # simply never called, because the stale value was non-zero
+                    # and USDC was not in the refresh set.
+                    #
+                    # These rows are the ones the live gate reads:
+                    # `reconciled_wallet_snapshot` scopes strictly to the wallet
+                    # ADDRESS, so `pipeline._wallet_state` summed $3.69 of
+                    # stable_usd for a wallet holding $18.19 and sized the live
+                    # clip from it.
+                    #
+                    # So: price it whenever it can be priced. The cache is a
+                    # fallback for the unpriceable, not a substitute for pricing.
+                    cached_qty: Optional[Decimal] = None
+                    try:
+                        raw_qty = ent.get("quantity")
+                        if raw_qty is not None:
+                            cached_qty = Decimal(str(raw_qty))
+                    except Exception:
+                        cached_qty = None
+                    meta_info = meta_map.get(a) or ent
+                    px = self._lookup_cached_price(ch, a, meta_info)
+                    if px is not None and qty_map[a] > 0:
+                        usd_dec = (qty_map[a] * px).quantize(Decimal("0.00000001"))
+                    elif usd_dec is not None and usd_dec != 0:
+                        # No price. The only information the cached value still
+                        # carries is its IMPLIED price, so carry that across the
+                        # quantity change rather than the dollar figure, which
+                        # belongs to a balance we no longer hold.
+                        if cached_qty and cached_qty > 0 and qty_map[a] >= 0:
+                            usd_dec = (usd_dec * qty_map[a] / cached_qty).quantize(
+                                Decimal("0.00000001")
+                            )
+                        elif cached_qty is not None and cached_qty != qty_map[a]:
+                            usd_dec = None
                     usd_map[a] = str(usd_dec) if usd_dec is not None else "0"
             else:  # "hybrid"
                 # 1) Reuse cached USD for tokens we kept (no movement).
