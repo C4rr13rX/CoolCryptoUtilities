@@ -105,6 +105,47 @@ WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
 }
 
 
+#: Horizons whose own exit suppressor holds a position for hours. A position
+#: opened by one of these cannot close inside a graduation window, so the book
+#: must not fill up with them.
+_LONG_HORIZONS = ("@12h", "@1d", "@3d", "@5d", "@1w")
+
+
+def _long_horizon_cap() -> int:
+    """How many long-horizon positions may be open at once."""
+    try:
+        return max(0, int(os.getenv("LONG_HORIZON_MAX_POSITIONS", "4")))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _is_long_horizon(strategy_id: str) -> bool:
+    sid = str(strategy_id or "")
+    return any(sid.endswith(h) for h in _LONG_HORIZONS)
+
+
+def long_horizon_at_capacity(positions: dict, incoming_strategy_id: str) -> bool:
+    """Is the long-horizon share of the book already full?
+
+    Only applies to incoming LONG-horizon entries; a short-horizon strategy is
+    never refused by this, because short horizons are where closed trades --
+    and therefore all graduation evidence -- actually come from.
+    """
+    if not _is_long_horizon(incoming_strategy_id):
+        return False
+    cap = _long_horizon_cap()
+    if cap <= 0:
+        return False
+    try:
+        held = sum(
+            1 for pos in (positions or {}).values()
+            if isinstance(pos, dict) and _is_long_horizon(pos.get("strategy_id"))
+        )
+    except Exception:  # noqa: BLE001 - an unreadable book blocks nothing
+        return False
+    return held >= cap
+
+
 class _InsufficientHistory(RuntimeError):
     """Not enough buffered samples yet to fill the model's window.
 
@@ -6451,6 +6492,57 @@ class TradingBot:
                             "reason": "symbol_has_a_measured_negative_edge",
                             "detail": edge_refusal,
                             "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
+            # A POSITION THAT CANNOT CLOSE IN THE WINDOW IS NOT EVIDENCE.
+            #
+            # Horizon variants suppress their own strategy exits until
+            # _HOLD_BY_HORIZON elapses: @1d is 4h, @5d 24h, @1w 48h. So a @1w
+            # entry cannot possibly close inside a 24h graduation window --
+            # while it holds the symbol against every faster strategy that
+            # could have closed and booked one.
+            #
+            # Measured over the 24h to 2026-09-04 14:00, from trading_ops:
+            #
+            #   rsi_reversal@12h      145 entries    1 exit   ( 1% closed)
+            #   donchian_breakout@5h   73 entries    1 exit   ( 1%)
+            #   stochastic_reversal@1d 62 entries    1 exit   ( 2%)
+            #   ------------------------------------------------------------
+            #   @12h/@1d/@3d/@5d/@1w: 387 of 727 entries (53%), 7% closed
+            #   everything else:                                17% closed
+            #
+            # 53% of every entry the bot makes produces evidence that cannot
+            # arrive. COMP-USDC was held by obv_accumulation@1w from 11:58 and
+            # refused 10 entries before releasing it at 13:16.
+            #
+            # This does not shorten any hold -- churning a slow signal out in
+            # five minutes is the failure the horizon table exists to prevent.
+            # It caps how many of these may be open AT ONCE, so the long lanes
+            # keep running without owning the whole book.
+            if long_horizon_at_capacity(self.positions, str(getattr(directive, "strategy_id", "") or "")):
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-long-horizon-capacity",
+                        "reason": "long_horizon_slots_full",
+                    }
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live" if self.live_trading_enabled else "ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-long-horizon-capacity",
+                        details={
+                            "symbol": symbol,
+                            "reason": "long_horizon_variants_already_hold_their_share_of_the_book",
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                            "cap": _long_horizon_cap(),
                         },
                     )
                 except Exception:
