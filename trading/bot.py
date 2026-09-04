@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import threading
 import time
 import uuid
 from collections import deque
@@ -103,6 +104,39 @@ WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
     "bsc": "WBNB",
     "avalanche": "WAVAX",
 }
+
+
+#: When each symbol was last priced, ACROSS THE WHOLE BOT POOL.
+#:
+#: Darkness is a property of the SYMBOL, not of whoever is asking. This map is
+#: therefore module-level and shared: ``GhostSupervisor`` runs one TradingBot
+#: per symbol against ONE ``MarketDataStream(symbol=...)`` each (selector.py
+#: 1113, 1359), so a per-instance map only ever knows about that bot's own
+#: symbol -- while ``self.positions`` is the MERGED book of every bot in the
+#: pool. Every bot therefore judged every OTHER bot's symbol permanently dark.
+#:
+#: Measured 2026-09-04 23:27Z on the last 25 ``position-abandoned-dark-feed``
+#: rows, cross-referenced against ``market_stream``: 18 of 25 were abandoned
+#: while the feed was LIVE --
+#:
+#:     22:52:29  AERO-USDC  claimed 82.8 min silent, last tick  3.2 min ago
+#:     22:52:29  MOG-USDC   claimed 82.8 min silent, last tick  1.4 min ago
+#:     22:29:20  COMP-USDC  claimed 65.3 min silent, last tick  0.9 min ago
+#:
+#: The identical claimed silence across unrelated symbols is the signature:
+#: with nothing in the map, ``last_seen`` fell back to the sweeping bot's own
+#: watch-start for all of them at once. Those are ghost observations destroyed
+#: before they could close -- the evidence graduation is starved of.
+#:
+#: A symbol served only by a data-only stream (selector.py 1383, which writes
+#: ``market_stream`` but never calls ``_handle_sample``) correctly stays absent
+#: here: no bot is running exit rules on it, so nothing can ever close a
+#: position on it, which is exactly what the sweep exists to reap.
+_SYMBOL_LAST_TICK_TS: Dict[str, float] = {}
+#: The map is written from the stream callback and read from the sweep on the
+#: same loop, but bots also cross threads via ``asyncio.to_thread``; the lock
+#: keeps a snapshot read from tearing.
+_SYMBOL_LAST_TICK_LOCK = threading.Lock()
 
 
 #: Horizons whose own exit suppressor holds a position for hours. A position
@@ -10515,19 +10549,25 @@ class TradingBot:
 
     @property
     def _last_tick_ts(self) -> Dict[str, float]:
-        """Per-symbol timestamp of the most recent sample this bot has seen.
+        """When each symbol was last priced, across the WHOLE pool.
 
-        Same construction as ``_owned_symbols`` and for the same reason: stored
-        in ``__dict__`` rather than as a class attribute so the bots in the pool
-        do not share one map, and lazily created so a bot built through
-        ``__new__`` (the live-refusal tests do this) cannot raise AttributeError
-        out of the sample path.
+        Deliberately the shared ``_SYMBOL_LAST_TICK_TS``, not a per-instance
+        map -- the opposite of ``_owned_symbols``, and for the opposite reason.
+        Ownership is a fact about THIS bot; darkness is a fact about the
+        SYMBOL, and the sweep that reads this walks the merged book of every
+        bot in the pool. See the module-level definition for the 18-of-25
+        measurement that a per-instance map produced.
+
+        Returns the live map, so the existing ``seen[sym] = when`` write and
+        ``seen.get(sym, 0.0)`` read call sites are unchanged.
         """
-        seen = self.__dict__.get("_last_tick_ts_map")
-        if not isinstance(seen, dict):
-            seen = {}
-            self.__dict__["_last_tick_ts_map"] = seen
-        return seen
+        return _SYMBOL_LAST_TICK_TS
+
+    @staticmethod
+    def reset_symbol_tick_registry() -> None:
+        """Empty the shared tick map. For tests, which must not leak into each other."""
+        with _SYMBOL_LAST_TICK_LOCK:
+            _SYMBOL_LAST_TICK_TS.clear()
 
     def _note_symbol_tick(self, symbol: str, ts: float) -> None:
         """Record that ``symbol`` was priced at ``ts``. Cheap; runs every tick."""
@@ -10540,9 +10580,9 @@ class TradingBot:
             return
         if not math.isfinite(when) or when <= 0.0:
             return
-        seen = self._last_tick_ts
-        if when > seen.get(sym, 0.0):
-            seen[sym] = when
+        with _SYMBOL_LAST_TICK_LOCK:
+            if when > _SYMBOL_LAST_TICK_TS.get(sym, 0.0):
+                _SYMBOL_LAST_TICK_TS[sym] = when
 
     def _abandon_dark_feed_positions(self, now: float) -> int:
         """Drop ghost positions whose symbol has stopped being priced.
@@ -10555,6 +10595,13 @@ class TradingBot:
         booked +161% that way. One lost observation is honest; a fabricated
         outcome in the book that gates real money is not. So this frees the slot
         and records what it dropped, and adds nothing to any strategy's record.
+
+        Darkness is judged from ``_SYMBOL_LAST_TICK_TS``, which is shared by
+        every bot in the pool. It has to be: this sweep walks ``self.positions``,
+        which is the MERGED book of every bot, while each bot streams exactly
+        one symbol. Reading a per-instance map made every bot declare every
+        other bot's symbol dark -- 18 of the last 25 abandonments on
+        2026-09-04 were of positions whose feed had ticked within 3.2 minutes.
 
         A LIVE position is never abandoned here, whatever its feed does. It is
         the only record of tokens the wallet actually holds, and un-booking it
@@ -10576,6 +10623,12 @@ class TradingBot:
         # this bot has been watching the stream for a full darkness window, and
         # that same instant is the floor for "last seen" below -- so a symbol is
         # only ever convicted on silence THIS PROCESS actually observed.
+        #
+        # Per-bot on purpose, unlike the tick map: it bounds what THIS bot has
+        # had a chance to observe, and a bot added mid-session by
+        # ``reconcile_pairs`` must wait out its own window before convicting
+        # anything. Erring toward holding a position costs a slot; erring
+        # toward reaping one destroys an observation.
         started = self.__dict__.get("_dark_feed_watch_since")
         if started is None:
             started = now
@@ -10591,7 +10644,11 @@ class TradingBot:
             return 0
         self.__dict__["_dark_feed_next_sweep"] = now + 60.0
 
-        seen = self._last_tick_ts
+        # A SNAPSHOT, taken once, under the lock. The map is shared across the
+        # pool now, so reading it live would mean another bot's stream callback
+        # could mutate it mid-sweep.
+        with _SYMBOL_LAST_TICK_LOCK:
+            seen = dict(_SYMBOL_LAST_TICK_TS)
         # Positions do not record a chain (measured: `chain` is absent from
         # every row in the persisted book), and it is only used for logging
         # here. `getattr` because __init__ is what sets primary_chain and not

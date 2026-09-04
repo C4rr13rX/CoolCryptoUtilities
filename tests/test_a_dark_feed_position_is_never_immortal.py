@@ -37,10 +37,25 @@ The rules pinned here:
     the only record of tokens the wallet holds, and a missing price is not
     evidence they are gone -- that question belongs to
     ``_drop_phantom_live_position``, which asks the chain. Fail closed;
-  * a position on a symbol that IS still ticking is untouched;
+  * a position on a symbol that IS still ticking is untouched -- including when
+    the tick was seen by a DIFFERENT bot in the pool. Darkness is a fact about
+    the symbol, not about whoever is asking;
   * nothing is reaped until the bot has watched the stream for a full darkness
     window. The tick map starts empty on a fresh process, so a naive sweep would
     abandon the entire book on the first sample after every restart.
+
+The cross-bot rule was added 2026-09-04 after measuring the last 25
+``position-abandoned-dark-feed`` rows against ``market_stream``: 18 of 25 were
+abandoned while the feed was LIVE, because the tick map was per-instance while
+the position book is merged across the pool.
+
+    22:52:29  AERO-USDC  claimed 82.8 min silent, last tick  3.2 min ago
+    22:52:29  MOG-USDC   claimed 82.8 min silent, last tick  1.4 min ago
+    22:29:20  COMP-USDC  claimed 65.3 min silent, last tick  0.9 min ago
+
+The identical claimed silence across unrelated symbols is the signature: with
+nothing in the map, ``last_seen`` fell back to the sweeping bot's own
+watch-start for every one of them at once.
 """
 
 from __future__ import annotations
@@ -48,9 +63,19 @@ from __future__ import annotations
 import time
 import types
 
+import pytest
+
 from trading.bot import TradingBot
 
 DARK = 3600.0
+
+
+@pytest.fixture(autouse=True)
+def _clean_tick_registry():
+    """The tick map is process-wide now, so it must not leak between tests."""
+    TradingBot.reset_symbol_tick_registry()
+    yield
+    TradingBot.reset_symbol_tick_registry()
 
 
 class _Stub:
@@ -152,6 +177,76 @@ def test_a_ticking_symbol_is_never_abandoned():
 
     assert bot._abandon_dark_feed_positions(now) == 0
     assert "CBBTC-USDC" in bot.positions
+
+
+def test_a_tick_seen_by_ANOTHER_BOT_still_saves_the_position():
+    """The exact 2026-09-04 failure: AERO reaped 3.2 min after it last ticked.
+
+    GhostSupervisor gives each bot ONE ``MarketDataStream(symbol=...)`` but
+    seeds every bot from the MERGED position book, so the bot sweeping a
+    position is usually not the bot streaming that symbol. A per-instance tick
+    map therefore convicted every symbol but the sweeper's own.
+    """
+    now = time.time()
+    aero_streamer = _bot({})                                   # streams AERO
+    sweeper = _bot({"AERO-USDC": _position(age_sec=7200.0, now=now)})
+    sweeper.__dict__["_dark_feed_watch_since"] = now - 4 * DARK
+
+    # The tick lands on the OTHER bot, exactly as the stream delivers it.
+    aero_streamer._note_symbol_tick("AERO-USDC", now - 192.0)
+
+    assert sweeper._abandon_dark_feed_positions(now) == 0
+    assert "AERO-USDC" in sweeper.positions, (
+        "a symbol another bot in the pool is still pricing is reachable by "
+        "that bot's exit rules and must not be abandoned"
+    )
+    assert "position-abandoned-dark-feed" not in _statuses(sweeper)
+
+
+def test_a_symbol_no_bot_streams_is_still_reaped():
+    """The rule must not become 'never reap'.
+
+    A data-only stream (selector.py 1383) writes ``market_stream`` but never
+    calls ``_handle_sample``, so its symbol stays absent from the shared map --
+    correctly, because no bot is running exit rules on it and nothing can ever
+    close a position there.
+    """
+    now = time.time()
+    other = _bot({})
+    sweeper = _bot({"HIGH-USDC": _position(age_sec=11.5 * 86400, now=now)})
+    sweeper.__dict__["_dark_feed_watch_since"] = now - 4 * DARK
+    other._note_symbol_tick("AERO-USDC", now - 10.0)   # a different symbol
+
+    assert sweeper._abandon_dark_feed_positions(now) == 1
+    assert "HIGH-USDC" not in sweeper.positions
+    assert "position-abandoned-dark-feed" in _statuses(sweeper)
+
+
+def test_the_tick_map_is_one_map_for_the_whole_pool():
+    """Type, shape and units at the boundary, asserted rather than assumed."""
+    now = time.time()
+    a, b = _bot({}), _bot({})
+    a._note_symbol_tick("AERO-USDC", now - 192.0)
+
+    seen = b._last_tick_ts
+    assert seen is a._last_tick_ts, "one map, shared by every bot in the pool"
+    value = seen["AERO-USDC"]
+    assert isinstance(value, float)               # not str, not int, not None
+    # Epoch SECONDS on the same clock as ``sample["ts"]`` -- a millisecond
+    # value here would read as the year 58681 and nothing would ever be dark.
+    assert 0.0 < now - value < DARK
+
+    # Only ever moves forward: an out-of-order tick must not resurrect silence.
+    a._note_symbol_tick("AERO-USDC", now - 9999.0)
+    assert seen["AERO-USDC"] == value
+
+    # Junk at the boundary is dropped, never stored.
+    for junk in ("", "   ", None):
+        a._note_symbol_tick(junk, now)
+    a._note_symbol_tick("NAN-USDC", float("nan"))
+    a._note_symbol_tick("NEG-USDC", -1.0)
+    a._note_symbol_tick("STR-USDC", "not-a-number")
+    assert set(seen) == {"AERO-USDC"}
 
 
 def test_a_live_position_is_kept_however_dark_its_feed():
