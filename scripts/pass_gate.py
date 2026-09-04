@@ -66,6 +66,7 @@ GATE_TESTS = (
     "test_settled_swap_is_always_recorded.py",
     "test_token_resolution_unblocks_live.py",
     "test_money_path_records_tx_hash.py",
+    "test_boundary_contracts.py",
 )
 
 
@@ -112,6 +113,50 @@ def _run_tests() -> dict:
     }
 
 
+def _profit_numbers() -> dict:
+    """The numbers constraint 3 says every change must justify itself against.
+
+    Reported before and after each pass so "this raises profitability" is a
+    measurement rather than a claim. A pass that moved none of them has not
+    shown its work, whatever it built.
+    """
+    out = {"live_trades": 0, "net_pl": 0.0, "profit_factor": 0.0,
+           "stranded_positions": 0}
+    try:
+        sys.path.insert(0, str(ROOT))
+        from services import strategy_registry
+
+        gross_win = gross_loss = 0.0
+        for row in strategy_registry.list_strategies():
+            live = ((row.get("lifetime") or {}).get("live")) or {}
+            out["live_trades"] += int(live.get("trades") or 0)
+            out["net_pl"] += float(live.get("total_profit") or 0.0)
+            gross_win += abs(float(live.get("gross_win") or 0.0))
+            gross_loss += abs(float(live.get("gross_loss") or 0.0))
+        if gross_loss > 0:
+            out["profit_factor"] = round(gross_win / gross_loss, 4)
+        elif gross_win > 0:
+            out["profit_factor"] = 999.0
+        out["net_pl"] = round(out["net_pl"], 6)
+    except Exception:
+        pass
+
+    # Capital that entered a position and never came back out.
+    try:
+        import sqlite3
+
+        c = sqlite3.connect(
+            "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db"), uri=True)
+        entries = list(c.execute(
+            "SELECT COUNT(*) FROM trading_ops WHERE status='live-entry'"))[0][0]
+        exits = list(c.execute(
+            "SELECT COUNT(*) FROM trading_ops WHERE status='live-exit'"))[0][0]
+        out["stranded_positions"] = max(0, entries - exits)
+    except Exception:
+        pass
+    return out
+
+
 def _settled_swaps() -> int:
     import sqlite3
 
@@ -131,6 +176,7 @@ def snapshot() -> int:
         "ts": time.time(),
         "tests": res,
         "settled": _settled_swaps(),
+        "profit": _profit_numbers(),
     }, indent=2), encoding="utf-8")
     print("snapshot: %d passed, %d failed, %d settled swaps"
           % (res.get("passed", 0), res.get("failed", 0), _settled_swaps()))
@@ -179,6 +225,25 @@ def check() -> int:
         print("INCONCLUSIVE -- the test run produced no counts. Treat as unproven.")
     else:
         print("OK -- nothing that was passing is broken.")
+
+    # Constraint 3: did the numbers this work claims to move actually move?
+    was_p = before.get("profit") or {}
+    now_p = _profit_numbers()
+    print("profit numbers (constraint 3):")
+    for key, label in (("live_trades", "live trades"),
+                       ("net_pl", "net P/L"),
+                       ("profit_factor", "profit factor"),
+                       ("stranded_positions", "stranded positions")):
+        b = was_p.get(key, 0)
+        a = now_p.get(key, 0)
+        arrow = "->" if a != b else "=="
+        flag = ""
+        if key == "stranded_positions" and a > b:
+            flag = "   WORSE: capital entered and did not come back"
+        elif key in ("net_pl", "profit_factor") and a < b:
+            flag = "   WORSE"
+        print("    %-20s %-12s %s %-12s%s" % (label, b, arrow, a, flag))
+    print()
 
     if gained <= 0 and elapsed > SPRINT_BUDGET_SEC:
         print()
