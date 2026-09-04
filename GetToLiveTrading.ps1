@@ -70,7 +70,13 @@ param(
     # "live_trades >= 1 AND live_pl > 0" used to end the run, so a SINGLE fill
     # closing a fraction of a cent up printed "GOAL REACHED". That proves the
     # plumbing works; it is not evidence of an edge.
-    [int]    $MinLiveTrades  = 5,
+    # Raised from 5 after the loop met that bar on 2026-09-04 with 6 trades
+    # at W/L 2/4 -- net positive only because one +0.2420 winner outweighed
+    # four small losses. That proves the machinery works end to end, which was
+    # genuinely in doubt, but one trade carrying the whole result is not
+    # evidence of a repeatable edge. 20 trades still at PF 1.5 distinguishes a
+    # durable edge from a lucky winner.
+    [int]    $MinLiveTrades  = 20,
     [double] $MinProfitFactor = 1.5,
 
     # ---- when to give up ----
@@ -1137,6 +1143,34 @@ How to run a sprint:
 The sprint objective NEVER overrides the correctness rules below. Shipping a
 change that breaks another link, or that skips the contract checks, does not
 count as reaching it.
+
+## THE THREE CONSTRAINTS -- every implementation, every pass
+
+These are not advice. A change that violates any of them is not done, however
+well it works in isolation.
+
+1. NEVER INTRODUCE A PROBLEM WHILE FIXING ONE. Always move upward, never
+   sideways. The pass gate runs `scripts/pass_gate.py --check` after you and
+   REJECTS the pass by name if a test that was passing now fails -- a rejected
+   pass is repaired before any new work. A partial change that leaves callers
+   on the old contract is worse than no change, because it looks done.
+
+2. VERIFY EVERY INPUT AND OUTPUT. Type, shape, units, range and time, at every
+   boundary you cross, checked by PRINTING THE VALUE AND READING IT rather
+   than inferring it from a signature. Every expensive bug in this repo was
+   locally correct code disagreeing with something across a boundary: a
+   wrong-units price, a wrong-sign signal, an exit sized from a stored
+   quantity instead of the chain, a stale usd_amount read as current, a
+   Uniswap v4 pool id used as a token address.
+
+3. BUILD WHAT IS MISSING, JUSTIFIED BY NET PROFIT. Check it does not already
+   exist -- a duplicate implementation is a second contract to keep in sync.
+   Then name the number you expect to move and what it reads now: net P/L per
+   round trip, profit factor, settled swaps per hour, capital stranded in
+   positions that cannot be exited. Research means measurement on our data or
+   a citable result about this market structure, not a plausible story. After
+   shipping, report whether the number actually moved, and if it did not, say
+   so and consider reverting rather than layering another guess on top.
 
 ## BEFORE YOU CHANGE ANYTHING: what else does this touch?
 
