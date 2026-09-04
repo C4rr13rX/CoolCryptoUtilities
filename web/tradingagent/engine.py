@@ -267,6 +267,21 @@ def build_prompt(config: AgentConfig) -> str:
     except Exception:
         pass
 
+    # The mathematical audit. Given to the agent BEFORE it decides, so its
+    # choices are made against measured significance rather than against a
+    # feeling about recent trades.
+    try:
+        from .mathaudit import audit_summary
+
+        parts += ["", "## MATHEMATICAL AUDIT of every recorded action"]
+        parts += ["  " + line for line in audit_summary()]
+        parts.append(
+            "Treat UNPROVEN and NOT SIGNIFICANT as instructions, not commentary: "
+            "at those sample sizes you cannot tell an edge from variance, and "
+            "sizing on one is how this system lost money before.")
+    except Exception:
+        pass
+
     parts += [
         "",
         "## THIS PASS",

@@ -259,3 +259,23 @@ class LossRecoveryListView(APIView):
             "saved_per_trigger": r.saved_per_trigger,
             "updated_at": r.updated_at.isoformat(),
         } for r in rows]}, status=status.HTTP_200_OK)
+
+
+class MathAuditView(APIView):
+    """The full mathematical audit, and the same thing as plain sentences.
+
+    Exposed so the dashboard shows the numbers the agent is actually deciding
+    against, rather than a separate summary that can quietly disagree with it.
+    """
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        from .mathaudit import audit_summary, full_audit
+
+        try:
+            hours = min(float(request.query_params.get("hours", 168)), 720)
+        except (TypeError, ValueError):
+            hours = 168
+
+        audit = full_audit(since_sec=hours * 3600)
+        return Response({"audit": audit, "summary": audit_summary(audit)},
+                        status=status.HTTP_200_OK)

@@ -15,4 +15,5 @@ urlpatterns = [
     path("constraints/", views.ConstraintListView.as_view(), name="constraints"),
     path("experiments/", views.ExperimentListView.as_view(), name="experiments"),
     path("recoveries/", views.LossRecoveryListView.as_view(), name="recoveries"),
+    path("math/", views.MathAuditView.as_view(), name="math"),
 ]

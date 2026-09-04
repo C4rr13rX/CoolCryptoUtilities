@@ -292,3 +292,110 @@ class PromotionRequiresEvidenceTest(TestCase):
             content_type="application/json")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(AgentConfig.load().tier, RiskTier.MICRO)
+
+
+class MathAuditTest(TestCase):
+    """The audit must refuse to answer rather than guess.
+
+    A confident number computed from nothing is more dangerous than an
+    admitted gap: this repo shipped four strategies whose entire records were
+    invented, and every one would have failed a sample-size test.
+    """
+
+    def test_no_trades_is_reported_as_insufficient_not_as_zero_edge(self):
+        from .mathaudit import probability, statistics
+
+        self.assertFalse(probability([])["sufficient"])
+        self.assertFalse(statistics([])["sufficient"])
+
+    def test_a_small_sample_is_unproven_however_good_it_looks(self):
+        from .mathaudit import statistics
+
+        result = statistics([0.05] * 5)
+        self.assertFalse(result["significant_at_05"])
+        self.assertIn("UNPROVEN", result["verdict"])
+
+    def test_an_interval_containing_zero_is_not_an_edge(self):
+        """Alternating wins and losses average to nothing."""
+        from .mathaudit import statistics
+
+        result = statistics([0.05, -0.05] * 15)
+        self.assertFalse(result["significant_at_05"])
+        self.assertIn("NOT SIGNIFICANT", result["verdict"])
+
+    def test_a_real_edge_is_reported_as_significant(self):
+        """Real returns vary. Identical values have zero variance, so the
+        t-test cannot run on them at all -- the sample must look like trading."""
+        from .mathaudit import statistics
+
+        result = statistics([0.02, 0.021, 0.019, 0.022, 0.018] * 6)
+        self.assertTrue(result["significant_at_05"])
+        self.assertIn("POSITIVE EDGE", result["verdict"])
+
+    def test_zero_variance_is_not_mistaken_for_significance(self):
+        """Identical outcomes are a data artifact, never an edge."""
+        from .mathaudit import statistics
+
+        result = statistics([0.02] * 30)
+        self.assertFalse(result["significant_at_05"])
+
+    def test_a_losing_strategy_is_named_as_losing(self):
+        from .mathaudit import statistics
+
+        result = statistics([-0.02] * 30)
+        self.assertIn("NEGATIVE EDGE", result["verdict"])
+
+    def test_expectancy_is_reported_net_of_the_round_trip(self):
+        """A gross edge smaller than the fee is not an edge."""
+        from .mathaudit import probability
+
+        # Wins slightly more often than not, but by less than the fee costs.
+        result = probability([0.003] * 12 + [-0.002] * 8, round_trip_cost=0.0065)
+        self.assertGreater(result["expectancy_gross"], 0.0)
+        self.assertLess(result["expectancy_net"], 0.0)
+        self.assertFalse(result["edge_survives_fees"])
+
+    def test_kelly_is_halved_because_the_measured_edge_is_not_the_true_one(self):
+        from .mathaudit import probability
+
+        result = probability([0.05] * 15 + [-0.02] * 5)
+        self.assertAlmostEqual(result["kelly_half"],
+                               result["kelly_fraction"] / 2.0, places=6)
+
+    def test_calculus_sees_a_strategy_handing_back_its_peak(self):
+        """A total says where we are; its derivative says if we still are."""
+        from .mathaudit import calculus
+
+        rising_then_falling = [0.05] * 10 + [-0.04] * 10
+        result = calculus(rising_then_falling)
+        self.assertTrue(result["giving_back"])
+        self.assertGreater(result["max_drawdown"], 0.0)
+
+    def test_calculus_distinguishes_improving_from_decaying(self):
+        from .mathaudit import calculus
+
+        # A perfectly straight rising line must not read as decaying: the
+        # second derivative is ~-1e-18 from float subtraction, not a trend.
+        self.assertEqual(calculus([0.01] * 25)["direction"], "improving")
+        self.assertEqual(calculus([-0.01] * 25)["direction"], "worsening")
+        # A genuinely fading strategy still reads as decaying.
+        fading = [0.05 - 0.002 * i for i in range(25)]
+        self.assertEqual(calculus(fading)["direction"], "decaying")
+
+    def test_algebra_counts_refusals_as_loudly_as_fills(self):
+        """A pipeline refusing 26 entries and filling 2 made 28 decisions."""
+        from .mathaudit import algebra
+
+        actions = ([{"status": "live-swap-settled"}] * 2
+                   + [{"status": "entry-refused-duplicate"}] * 26)
+        result = algebra(actions)
+        self.assertEqual(result["settled_swaps"], 2)
+        self.assertEqual(result["refused_or_failed"], 26)
+        self.assertEqual(result["actions_total"], 28)
+
+    def test_unclosed_positions_are_surfaced(self):
+        """Entries without exits are capital that went out and stayed out."""
+        from .mathaudit import algebra
+
+        actions = ([{"status": "live-entry"}] * 7 + [{"status": "live-exit"}] * 2)
+        self.assertEqual(algebra(actions)["unclosed"], 5)
