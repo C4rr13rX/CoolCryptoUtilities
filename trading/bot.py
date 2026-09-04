@@ -1256,21 +1256,62 @@ class TradingBot:
         # swap rather than looked up by ticker: 131 of 408 base symbols map to
         # more than one contract, and adopting the wrong one would aim an exit
         # at an asset we do not hold.
+        #
+        # MATCHED ON tx_hash, NOT ON trade_id. A round trip shares ONE trade_id
+        # across both of its swaps, and ``fetch_trades`` returns newest first,
+        # so matching the id broke on the SELL -- whose ``buy`` field is the
+        # QUOTE token. Measured 2026-09-04 on trade
+        # 2:CBETH-USDC:44c3665bffdf4861a56112da28ead2c3:
+        #
+        #   23:15 BUY  sell=0x8335...2913 (USDC)  buy=0x2ae3...ec22 (CBETH)
+        #   00:17 SELL sell=0x2ae3...ec22 (CBETH) buy=0x8335...2913 (USDC)
+        #
+        # The scan broke on the 00:17 row and adopted CBETH at USDC's address,
+        # so ``token_balance_raw`` returned the STABLE LEG -- raw 17542490 at 6
+        # decimals -- and booked it as 17.54249 CBETH at 2861.26, a $50,193
+        # position in a token the wallet holds ZERO of (balanceOf confirmed
+        # 0x0). It was dropped by ``_position_is_real_on_chain``, which
+        # resolves by symbol and reads the right contract, then re-adopted on
+        # the next pass: 7 adoptions against 8 drops in three hours, and while
+        # it stood it refused every CBETH entry as a duplicate.
+        #
+        # Had an exit fired on it first, ``base_token_address`` (USDC) would
+        # have sized the sell from the stable leg and sold the whole book.
+        #
+        # The entry's own tx_hash is the BUY transaction and identifies exactly
+        # one settled row. The sell never carries it.
         base_address = ""
+        wanted_tx = str(newest.get("tx_hash") or "").lower()
         try:
             settled = self.db.fetch_trades(
                 limit=200, symbol=symbol, statuses=["live-swap-settled"]
             )
-            wanted = str(newest.get("trade_id") or "")
             for row in settled:
                 details = row.get("details") or {}
-                if isinstance(details, dict) and str(details.get("trade_id") or "") == wanted:
+                if not isinstance(details, dict):
+                    continue
+                if str(details.get("tx_hash") or "").lower() == wanted_tx and wanted_tx:
                     base_address = str(details.get("buy") or "")
                     break
         except Exception:
             base_address = ""
         _, swap_token = self._resolve_live_trade_asset(chain, symbol, base_address or None)
         if not swap_token:
+            return None
+        # The base side can never BE the quote side. An independent check on
+        # the same boundary: if the address we are about to read a balance from
+        # is the stable leg, we are about to book the wallet's cash as a
+        # position in something else. Refuse rather than adopt.
+        quote_symbol = str(symbol).split("-")[-1]
+        _, quote_token_addr = self._resolve_live_trade_asset(chain, quote_symbol)
+        if quote_token_addr and str(swap_token).lower() == str(quote_token_addr).lower():
+            log_message(
+                "live-swap",
+                "REFUSING to adopt %s at %s -- that is the QUOTE token (%s). "
+                "The balance behind it is the stable leg, not a position."
+                % (symbol, swap_token, quote_symbol),
+                severity="error",
+            )
             return None
         # An explicit address WINS over every symbol lookup in
         # ``_resolve_live_trade_asset``, which means it also skips the chain
