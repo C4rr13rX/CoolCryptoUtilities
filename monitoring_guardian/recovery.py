@@ -177,7 +177,12 @@ class RecoveryCoordinator:
         log_path = RUNTIME / "production-recovery.log"
         with log_path.open("a", encoding="utf-8") as handle:
             proc = subprocess.Popen(
-                [resolve_python_bin(), "-u", str(ROOT / "main.py"), "--action", "start_production", "--stay-alive"],
+                # -X utf8 BEFORE main.py -- see services/utf8_mode.py. This is
+                # the launcher that wins a race: it relaunches on a 30s
+                # cooldown, so whatever else started production, THIS is what
+                # restarts it, and it must not downgrade the interpreter.
+                [resolve_python_bin(), "-X", "utf8", "-u", str(ROOT / "main.py"),
+                 "--action", "start_production", "--stay-alive"],
                 cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )

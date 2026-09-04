@@ -18,7 +18,13 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PYTHON = resolve_python_bin()
-DEFAULT_COMMAND = [DEFAULT_PYTHON, "-u", "main.py", "--action", "start_production", "--stay-alive"]
+# -X utf8 BEFORE main.py, or it is an argument to main.py rather than to
+# Python. main.py's own harden_stdio() covers stdout/stderr however it was
+# started, but open()'s default encoding is fixed at interpreter startup, so
+# only the flag reaches a bare open(path, "w") inside library code -- which is
+# the Keras vocabulary write that once stopped every model save. See
+# services/utf8_mode.py and tests/test_production_launches_with_utf8.py.
+DEFAULT_COMMAND = [DEFAULT_PYTHON, "-X", "utf8", "-u", "main.py", "--action", "start_production", "--stay-alive"]
 LOG_DIR = ensure_dir(REPO_ROOT / "logs", anchor=REPO_ROOT)
 LOG_PATH = LOG_DIR / "console.log"
 LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(50 * 1024 * 1024)))

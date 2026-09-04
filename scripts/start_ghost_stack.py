@@ -144,7 +144,9 @@ def main() -> int:
             })
 
     if not command_running("main.py --action start_production"):
-        command = [str(python), "-u", str(ROOT / "main.py"), "--action", "start_production", "--stay-alive"]
+        # -X utf8 BEFORE main.py -- see services/utf8_mode.py.
+        command = [str(python), "-X", "utf8", "-u", str(ROOT / "main.py"),
+                   "--action", "start_production", "--stay-alive"]
         if args.dry_run:
             actions.append({"service": "production_manager", "command": command})
         else:

@@ -113,7 +113,10 @@ class WalletActionRunner:
     def _worker(self, action: str, payload: Dict[str, Any], user=None) -> None:
         env = build_process_env(user)
         python_bin = _default_python()
-        cmd = [python_bin, "-u", "main.py", "--action", action]
+        # -X utf8 BEFORE main.py -- see services/utf8_mode.py. Every action
+        # this runner spawns writes UTF-8 text (token symbols reach the logs),
+        # so the flag is unconditional rather than start_production-only.
+        cmd = [python_bin, "-X", "utf8", "-u", "main.py", "--action", action]
         # Production manager must stay alive so its daemon threads survive.
         if action == "start_production":
             cmd.append("--stay-alive")

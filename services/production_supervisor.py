@@ -236,7 +236,8 @@ class ProductionSupervisor:
             log_message("production", "main.py not found; cannot start main process.", severity="error")
             return False
         python_bin = resolve_python_bin()
-        cmd = [python_bin, str(MAIN_PATH), "--action", "start_production", "--stay-alive"]
+        # -X utf8 BEFORE main.py -- see services/utf8_mode.py.
+        cmd = [python_bin, "-X", "utf8", str(MAIN_PATH), "--action", "start_production", "--stay-alive"]
         env = os.environ.copy()
         env.setdefault("ALLOW_SQLITE_FALLBACK", "1")
         MAIN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
