@@ -169,3 +169,51 @@ class PerformanceSnapshotTest(TestCase):
         self.assertEqual(snapshot["runs"], 1)
         self.assertAlmostEqual(snapshot["net_pl"], 0.5)
         self.assertEqual(snapshot["trades_opened"], 2)
+
+
+class DataLabBridgeTest(TestCase):
+    """The agent may fetch data, but not whatever it likes whenever it likes.
+
+    An agent that can start any job will start them constantly, and this box
+    already had a download flood saturate its connection budget.
+    """
+
+    def test_only_allowlisted_jobs_can_start(self):
+        from .datalab_bridge import request_job
+
+        for job in ("shell", "rm -rf /", "flush", "", "dumpdata"):
+            result = request_job(job)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["reason"], "job_not_allowed")
+
+    def test_the_allowlist_is_the_three_real_jobs(self):
+        from .datalab_bridge import available_jobs
+
+        self.assertEqual(set(available_jobs()),
+                         {"download2000", "make2000index", "make_assignments"})
+
+    def test_junk_symbols_are_dropped_not_watched(self):
+        from .datalab_bridge import add_symbols
+
+        result = add_symbols(["", "   ", "HAS SPACE", "A" * 40])
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["added"], [])
+
+    def test_symbol_adds_are_capped(self):
+        """Watching everything thins the feed for every symbol."""
+        from .datalab_bridge import MAX_ADDS_PER_PASS, add_symbols
+
+        many = [f"TOK{i}-USDC" for i in range(MAX_ADDS_PER_PASS + 20)]
+        result = add_symbols(many)
+        if result.get("ok"):
+            self.assertLessEqual(len(result["added"]), MAX_ADDS_PER_PASS)
+
+    def test_candidates_come_from_the_stream_the_executor_prices(self):
+        """A candidate the executor cannot price cannot be exited."""
+        from .datalab_bridge import candidate_tokens
+
+        for candidate in candidate_tokens(limit=5):
+            self.assertIn("symbol", candidate)
+            self.assertIn("volatility_1h_pct", candidate)
+            self.assertGreaterEqual(candidate["ticks_1h"], 5,
+                                    "a symbol with no ticks is not a candidate")

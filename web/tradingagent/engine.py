@@ -244,6 +244,29 @@ def build_prompt(config: AgentConfig) -> str:
                   f"ghost {e.ghost_trades} trades net {e.ghost_net_pl:+.4f}"
                   for e in experiments]
 
+    # What it could be watching but is not. The agent can only reason about
+    # what it is shown, so an unwatched mover is an opportunity that does not
+    # exist as far as it is concerned.
+    try:
+        from .datalab_bridge import available_jobs, candidate_tokens, job_status
+
+        unwatched = [c for c in candidate_tokens(limit=15) if not c["watched"]]
+        if unwatched:
+            parts += ["", "## MOVERS YOU ARE NOT WATCHING"]
+            parts += [f"  {c['symbol']:<16} volatility {c['volatility_1h_pct']:.2f}%"
+                      f"  {c['ticks_1h']} ticks" for c in unwatched[:8]]
+            parts.append("Add any worth watching via watch_symbols below.")
+
+        status = job_status()
+        parts += ["", "## DATA LAB",
+                  "You may request these jobs when the data you need is missing:"]
+        parts += [f"  {name:<18} {why}" for name, why in available_jobs().items()]
+        parts.append(f"currently running: {status.get('job_type') or 'nothing'}")
+        parts.append("Rate-limited to one start per job every 15 minutes, so ask "
+                     "only when the data you need is genuinely absent.")
+    except Exception:
+        pass
+
     parts += [
         "",
         "## THIS PASS",
@@ -262,7 +285,8 @@ def build_prompt(config: AgentConfig) -> str:
             "new_recoveries": [{"trigger": "the situation",
                                 "action": "what to do"}],
             "retire_constraints": [0],
-            "data_requests": ["symbols or history you want and cannot see"],
+            "data_requests": ["download2000 | make2000index | make_assignments"],
+            "watch_symbols": ["SYM-USDC to start watching"],
         }, indent=2),
         "",
         "Rules that are not negotiable:",
@@ -409,6 +433,24 @@ def run_once(config: Optional[AgentConfig] = None) -> AgentRun:
         }
 
         _record_decision(run, decision, config)
+
+        # Act on what it asked for. Each call polices itself -- an unknown job
+        # is refused, a repeat inside the window is refused, junk symbols are
+        # dropped -- so a greedy pass costs a log line rather than the box.
+        actions = []
+        try:
+            from .datalab_bridge import add_symbols, request_job
+
+            for job in (decision.get("data_requests") or [])[:3]:
+                actions.append({"job": job, "result": request_job(str(job))})
+            wanted = decision.get("watch_symbols") or []
+            if wanted:
+                actions.append({"watch": wanted,
+                                "result": add_symbols([str(w) for w in wanted])})
+        except Exception as exc:  # noqa: BLE001
+            actions.append({"error": f"{type(exc).__name__}: {exc}"})
+        if actions:
+            run.observations = dict(run.observations or {}, datalab=actions)
 
         # Ghost tier records intent without spending. Live execution is wired
         # in a later step, deliberately: it must not be possible to trade real
