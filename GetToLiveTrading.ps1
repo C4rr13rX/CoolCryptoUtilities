@@ -227,6 +227,47 @@ function Write-ClaudeEvent {
     }
 }
 
+# ----------------------------------------------------------------- gate --
+
+function Invoke-GateSnapshot {
+    <#  Record which tests pass BEFORE the pass runs.
+
+        Without a before-picture there is no way to tell a test that this pass
+        broke from one that was already red, and "run the tests" degrades into
+        a number nobody can act on.  #>
+    try {
+        & $Python (Join-Path $Repo "scripts\pass_gate.py") --snapshot 2>&1 | ForEach-Object {
+            Write-Host "  $_" -ForegroundColor DarkGray
+        }
+    } catch { Write-Line "  (gate snapshot failed: $_)" "DarkYellow" }
+}
+
+function Invoke-GateCheck {
+    <#  Compare after against before, and say plainly if the pass broke something.
+
+        "Never let a fix break something else" was an instruction, and an
+        instruction is a request. 69 commits landed before any such rule was in
+        force, and the damage was exactly that shape: an exit sized from a
+        stored quantity instead of the chain sold 40-60% of two positions,
+        which booked losses the market never produced, which demoted the only
+        live strategy, which left nothing able to trade at all.
+
+        Returns $true when the pass regressed something.  #>
+    $broke = $false
+    try {
+        $out = & $Python (Join-Path $Repo "scripts\pass_gate.py") --check 2>&1
+        foreach ($line in $out) {
+            $col = if ("$line" -match "REJECTED|BROKE") { "Red" }
+                   elseif ("$line" -match "OVER BUDGET") { "Yellow" }
+                   elseif ("$line" -match "^OK") { "Green" }
+                   else { "DarkGray" }
+            Write-Host "  $line" -ForegroundColor $col
+            if ("$line" -match "REJECTED") { $broke = $true }
+        }
+    } catch { Write-Line "  (gate check failed: $_)" "DarkYellow" }
+    return $broke
+}
+
 # ------------------------------------------------------------ scorecard --
 
 function Get-BehaviorPrompt {
@@ -1000,6 +1041,22 @@ $standing
         Write-Line "standing orders: $(($standing -split "`r?`n").Count) line(s) in force" "DarkCyan"
     }
 
+    $repairBlock = ""
+    if ($script:LastPassBroke) {
+        $repairBlock = @"
+
+## THE PREVIOUS PASS BROKE SOMETHING -- REPAIR IT FIRST
+
+The pass gate compared the money-path tests before and after the last pass
+and found tests that were passing before it and are failing now. Run
+``python scripts/pass_gate.py --check`` to see exactly which.
+
+Fix those before any new work. A change that trades one broken link for
+another is not progress, whatever else that pass achieved.
+
+"@
+    }
+
     $userNote = Read-Inbox
     $noteBlock = ""
     if ($userNote) {
@@ -1029,6 +1086,7 @@ Current ground truth from the database:
   usdc        = $($state.usdc)
 
 First failing link: $failure
+$repairBlock
 $standingBlock
 $noteBlock
 
@@ -1205,6 +1263,7 @@ The project reads the same pair from ADMIN_EMAIL / ADMIN_PASSWORD
     #
     # Invoke-Claude now returns "ok" / "limit" / "failed", and every test puts
     # the literal first so no boolean coercion can happen again.
+    Invoke-GateSnapshot
     $answered = Invoke-Claude -Prompt $prompt
     # A real rate_limit_event beats guessing from prose: it carries the exact
     # resetsAt epoch. Treat "blocked" (or exhausted utilization) as a limit
@@ -1243,6 +1302,7 @@ The project reads the same pair from ADMIN_EMAIL / ADMIN_PASSWORD
         continue
     }
 
+    $script:LastPassBroke = Invoke-GateCheck
     Invoke-Scorecard
 
     if ($Once) { Write-Line "single pass requested; exiting" "Cyan"; break }
