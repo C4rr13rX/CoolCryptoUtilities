@@ -145,6 +145,8 @@ class TradingBot:
         self._insufficient_quote_last_ts: float = 0.0
         #: symbol -> last time _adopt_orphaned_live_holding paid for a chain read
         self._orphan_adoption_checked_at: Dict[str, float] = {}
+        #: symbol -> last time _drop_phantom_live_position paid for a chain read
+        self._phantom_position_checked_at: Dict[str, float] = {}
         self.ghost_session_id: int = 1
         self.active_exposure: Dict[str, float] = {}
         self.graph = NeuroGraph()
@@ -618,8 +620,11 @@ class TradingBot:
         balance costs one RPC call against a block that otherwise lasts
         forever.
 
-        Fails OPEN on an unreadable RPC: an outage must not release a real
-        position and let the bot double-buy a symbol it already holds.
+        Fails CLOSED -- it KEEPS the block -- on an unreadable RPC: an outage
+        must not release a real position and let the bot double-buy a symbol it
+        already holds. (An earlier revision of this docstring said "fails
+        OPEN"; the code always kept the block, and keeping it is correct. The
+        cost of being wrong here is a skipped entry, not lost capital.)
         """
         try:
             token = self._resolve_token_address(chain, str(symbol).split("-")[0])
@@ -634,7 +639,16 @@ class TradingBot:
             if not reachable or raw is None:
                 return True          # outage: keep the block, do not double-buy
 
-            balance = int(raw, 16) if isinstance(raw, str) else 0
+            # Measured 2026-09-04 against base: a good read is the 66-char
+            # string '0x000...000'. A node that answers the call but has
+            # nothing to say returns bare '0x', and int('0x', 16) raises --
+            # which the except below would turn into "keep the block" anyway,
+            # but silently and via an exception path. An empty answer is an
+            # unreadable balance, not a zero one, so name it.
+            if not isinstance(raw, str) or len(raw) < 4:
+                return True          # unreadable: keep the block
+
+            balance = int(raw, 16)
             if balance > 0:
                 return True
 
@@ -654,6 +668,162 @@ class TradingBot:
                 severity="warning",
             )
             return True
+
+    #: symbol -> how often a live position may cost a balanceOf call. The book
+    #: only changes when we swap, so this need not be per-tick; 60s bounds the
+    #: RPC spend while still clearing a stale row inside one trading minute.
+    PHANTOM_RECHECK_INTERVAL_SEC = 60.0
+
+    @property
+    def _phantom_checked_at(self) -> Dict[str, float]:
+        """Per-symbol chain-read clock, created on first use.
+
+        ``__init__`` seeds it, but not every construction path runs ``__init__``
+        -- the live-refusal and clobber tests build a bot through ``__new__``,
+        the same hole the ``_owned_symbols`` docstring documents -- and a
+        missing attribute here raised AttributeError straight out of the entry
+        path, which is the one place this must never fail.
+
+        Stored in ``__dict__`` rather than as a class-level default, so each
+        bot in the pool gets its own: a shared dict would let one bot's recent
+        read suppress another's, which is the shared-position-book clobber in
+        miniature.
+        """
+        clock = self.__dict__.get("_phantom_position_checked_at")
+        if not isinstance(clock, dict):
+            clock = {}
+            self.__dict__["_phantom_position_checked_at"] = clock
+        return clock
+
+    def _drop_phantom_live_position(
+        self, symbol: str, *, chain: str, pos: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Reconcile one live position against the chain, and DROP it if gone.
+
+        The exact mirror of ``_adopt_orphaned_live_holding``: that books a
+        holding the chain has and the book does not, this un-books a position
+        the book has and the chain does not. Both run where ``pos`` is first
+        established, so every predicate downstream reads a book that agrees
+        with the wallet.
+
+        WHY IT MOVED HERE. The first cut of this check hung off ONE branch, the
+        one that emits ``entry-refused-live-held``. Two predicates computed
+        several hundred lines EARLIER -- ``entry_refused_by_live_slot`` and
+        ``entry_duplicates_held_position`` -- read the same ``pos`` and refuse
+        first, so the check never ran for the symbol that motivated it.
+        Measured 2026-09-04 06:23, after that fix was committed: CBETH-USDC was
+        still being refused as ``entry-refused-duplicate`` with
+        ``held_mode: live``, and GRASS-USDC 41 times in two hours. A fix wired
+        into one of three readers is the partial change that looks done.
+
+        WHAT THE CHAIN ACTUALLY SAID. The CBETH-USDC record was not, as first
+        diagnosed, "written but never bought". Both legs are on chain, decoded
+        from their transaction inputs (this node serves tx bodies but returns
+        NULL receipts, so the input is the evidence):
+
+          buy  0x5de159efe0d946b683c08f00773c43fbd7e0803f45953f5e5ab670f8af7d5077
+               exactInput USDC->WETH->CBETH, amountIn 750000 = 0.75 USDC
+          sell 0x4ca1a606eb33ef24df951f15177532a2d9803554082ddb4c8677cc5d9bbc7e2d
+               exactInput CBETH->WETH->USDC, amountIn 262495452605958,
+               minOut 744363 = 0.744363 USDC
+
+        The round trip COMPLETED. ``live-swap-settled`` was written at 00:17:32
+        and no ``live-exit`` ever followed it, so the book kept a position the
+        wallet had already sold, and that stale row refused every atf_static
+        entry on the symbol for the next seven hours. This is the general
+        failure -- a settled swap whose booking step does not finish -- and the
+        chain is the only thing that can tell us it happened.
+
+        PERSISTENCE. Popping ``self.positions`` is NOT enough, whatever the
+        earlier comment here claimed. The book is persisted: it was read back
+        out of ``kv_store['state']['ghost_trading']['positions']`` while this
+        was being written, and ``_load_state`` feeds it straight back in. And
+        ``_save_state`` only removes a symbol listed in ``_owned_symbols``, so
+        an unclaimed pop is carried through the merge untouched and resurrected
+        on the next restart. Claim, pop, save -- the same three steps adoption
+        takes.
+
+        Returns the position when it is real (or unverifiable), None when it
+        was dropped. Fails CLOSED: anything we cannot check keeps its block.
+        """
+        if not isinstance(pos, dict):
+            return pos
+        if str(pos.get("mode") or "") != "live":
+            return pos                      # ghost positions cost nothing to hold
+
+        now = time.time()
+        clock = self._phantom_checked_at
+        if now - clock.get(symbol, 0.0) < self.PHANTOM_RECHECK_INTERVAL_SEC:
+            return pos
+        clock[symbol] = now
+
+        if self._position_is_real_on_chain(chain, symbol, pos):
+            return pos
+
+        dropped = {
+            "symbol": symbol,
+            "reason": "wallet_holds_none_of_this_token",
+            "dropped_mode": "live",
+            "dropped_strategy_id": str(pos.get("strategy_id") or ""),
+            "dropped_trade_id": str(pos.get("trade_id") or ""),
+            "dropped_size": float(pos.get("size") or 0.0),
+            "dropped_entry_price": float(pos.get("entry_price") or 0.0),
+            "dropped_entry_ts": float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0),
+            "dropped_held_secs": max(
+                0.0, now - float(pos.get("entry_ts", pos.get("ts", 0.0)) or now)
+            ),
+            # Full 66-char hashes, never abbreviated: these are the only thing
+            # that makes the drop checkable against the chain afterwards.
+            "dropped_entry_tx_hash": str(
+                pos.get("entry_tx_hash") or pos.get("tx_hash") or ""
+            ),
+        }
+
+        # Claim before popping, or _save_state's ownership merge keeps the row.
+        self._claim_position_symbol(symbol)
+        self.positions.pop(symbol, None)
+        try:
+            self._save_state()
+        except Exception:                   # a save failure must not crash the tick
+            pass
+
+        log_message(
+            "trading",
+            "DROPPED phantom live position %s on %s: book claimed %.18f held "
+            "since entry tx %s, wallet holds 0 -- the position was already "
+            "closed on chain and the exit was never booked. Entries on this "
+            "symbol can resume."
+            % (
+                symbol,
+                chain,
+                dropped["dropped_size"],
+                dropped["dropped_entry_tx_hash"] or "(none recorded)",
+            ),
+            severity="error",
+        )
+        try:
+            self.metrics.feedback(
+                "live_trading",
+                severity=FeedbackSeverity.CRITICAL,
+                label="phantom_live_position_dropped",
+                details=dropped,
+            )
+        except Exception:
+            pass
+        # An unlogged correction is indistinguishable from the block never
+        # having existed; this row is how the next pass measures that it fired.
+        try:
+            self.db.log_trade(
+                wallet="live",
+                chain=chain,
+                symbol=symbol,
+                action="repair",
+                status="live-position-dropped-phantom",
+                details=dropped,
+            )
+        except Exception:
+            pass
+        return None
 
     def _verified_address(
         self, chain: str, symbol: str, address: str, source: str
@@ -4144,6 +4314,14 @@ class TradingBot:
         quote_token = route[-1]
         chain_name = str(sample.get("chain", self.primary_chain)).lower() or self.primary_chain
         pos = self.positions.get(symbol)
+        # Reconcile the book against the wallet ONCE, here, before any of the
+        # predicates below read it. Three of them refuse an entry on the
+        # strength of `pos` -- entry_refused_by_live_slot,
+        # entry_duplicates_held_position, and the entry-refused-live-held
+        # branch -- and the first two run several hundred lines before the
+        # third, so a check wired into only the third never sees the symbol
+        # that the first two are refusing. See _drop_phantom_live_position.
+        pos = self._drop_phantom_live_position(symbol, chain=chain_name, pos=pos)
         if pos is None:
             # Before anything decides to open a position in this symbol, find
             # out whether the wallet is already holding one that the book lost.
@@ -5261,21 +5439,19 @@ class TradingBot:
             # ``entry_refused_by_live_slot``, computed once above the directive
             # dispatch, is the same predicate and now routes these ticks to the
             # protective bracket instead of the entry path.
-            if (pos is not None and str(pos.get("mode") or "") == "live"
-                    and not self._position_is_real_on_chain(chain, symbol, pos)):
-                # The record claims a live position the wallet does not hold.
-                #
-                # Verification must CHANGE the in-memory state, not just report
-                # on it. A check that logs "phantom" and leaves the record in
-                # place re-runs on every directive and blocks the symbol
-                # forever anyway -- which is exactly what 26 GRASS-USDC
-                # refusals in one hour looked like. So drop it from the live
-                # book here, and persist so a restart does not resurrect it.
-                # self.positions is the live book and is in-memory only, so
-                # removing it here IS the persistence: the next directive for
-                # this symbol finds nothing held and is allowed through.
-                self.positions.pop(symbol, None)
-                pos = None
+            # A phantom live position is already gone by the time we get here:
+            # _drop_phantom_live_position ran where `pos` was established, and
+            # `pos` is not re-read from self.positions in between, so this
+            # branch is reached only for a position the chain confirms.
+            #
+            # The inline check that used to sit here is deleted, and not only
+            # because two copies of a rule is two contracts to keep in sync.
+            # It could not work. It read a variable named `chain`, which is
+            # never assigned anywhere in this function -- only `chain_name` is
+            # -- so it was a latent NameError, hidden because `and` short
+            # circuits: no test held a live position, so the third operand was
+            # never evaluated. It would have raised inside the tick the first
+            # time it met the phantom it was written to clear.
 
             if pos is not None and str(pos.get("mode") or "") == "live":
                 held = {

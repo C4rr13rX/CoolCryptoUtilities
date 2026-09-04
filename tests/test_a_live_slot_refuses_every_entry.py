@@ -219,6 +219,16 @@ def _enter(bot: TradingBot, directive: TradeDirective, *, price: float = HELD_EN
         lambda self, chain, sym, explicit=None: (sym, explicit or CBBTC),
     ), mock.patch.object(TradingBot, "_run_wallet_sync", _no_sync), mock.patch.object(
         TradingBot, "_adopt_orphaned_live_holding", lambda self, *a, **k: None
+    ), mock.patch.object(
+        # The premise of every test in this file is a live slot that is REAL:
+        # HELD_SIZE of CBBTC bought by HELD_TX, on chain on 2026-09-03. The bot
+        # now reconciles the book against the wallet before any refusal reads
+        # it, and this stand-in has no chain to read, so without this the
+        # position is correctly judged sold and dropped -- and then there is no
+        # slot left to refuse anything, which is a different scenario.
+        # Asserting the premise, not disabling the check: the phantom case is
+        # covered in tests/test_phantom_position_never_blocks.py.
+        TradingBot, "_position_is_real_on_chain", lambda self, *a, **k: True
     ):
         return asyncio.run(
             bot._interpret_predictions(
