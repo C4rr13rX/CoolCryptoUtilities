@@ -49,6 +49,11 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+#: The account live swaps are signed from. balanceOf must be asked about this
+#: address -- never about the token contract. See
+#: BalanceIsAskedAboutTheWalletTest.
+WALLET = "0x291c854811e92906a658Fb94Aa511bF919f968ad"
+
 
 class _Bot:
     """The methods under test, lifted onto a stand-in.
@@ -60,11 +65,17 @@ class _Bot:
 
     PHANTOM_RECHECK_INTERVAL_SEC = 60.0
 
-    def __init__(self, token="0x" + "1" * 40):
+    def __init__(self, token="0x" + "1" * 40, wallet=WALLET):
         from trading.bot import TradingBot
 
         self.positions = {}
         self._token = token
+        # The account live swaps are signed from. balanceOf must be asked
+        # about THIS, never about the token contract.
+        self._wallet = wallet
+        self._bridge = object()
+        self._init_bridge = lambda: self._bridge
+        self._live_wallet_address = lambda: self._wallet
         self._owned_position_symbols = set()
         self.saved = 0
         self.logged = []
@@ -103,7 +114,10 @@ def _fake_rpc(raw, reachable=True):
     calls = []
 
     def _rpc(chain, method, params):
-        calls.append((chain, method))
+        # ``params`` is recorded because the verdict is only half the
+        # contract -- the other half is WHICH ADDRESS was asked about, and
+        # the bug below lived entirely in that half.
+        calls.append((chain, method, params))
         if not reachable:
             return None, False
         return raw, True
@@ -112,8 +126,126 @@ def _fake_rpc(raw, reachable=True):
     return _rpc
 
 
+def _balanceof_arg(params):
+    """The address argument out of an eth_call to balanceOf(address).
+
+    calldata is '0x' + 8 selector chars + 64 chars of a left-padded address,
+    so the address is the last 40 of those 64.
+    """
+    data = params[0]["data"]
+    assert data[:10] == "0x70a08231", data[:10]
+    arg = data[10:]
+    assert len(arg) == 64, len(arg)
+    return "0x" + arg[24:]
+
+
 _ZERO = "0x" + "0" * 64
 _HELD = "0x" + "0" * 49 + "ee5c5f2b3a33"  # a nonzero balance
+
+
+class BalanceIsAskedAboutTheWalletTest(unittest.TestCase):
+    """balanceOf takes the HOLDER, and the holder is our wallet.
+
+    The shipped call built its calldata from ``str(token)[2:]`` -- the token's
+    OWN address -- so it asked every contract how much of itself it held and
+    never once asked about the wallet. Every existing test above mocked the
+    RPC and asserted the VERDICT, so none of them noticed the question was
+    wrong; that is exactly how this shipped.
+
+    Measured 2026-09-04 07:12 on base, wallet
+    0x291c854811e92906a658Fb94Aa511bF919f968ad, through the bot's own
+    ``services.token_contract_guard._rpc``:
+
+        symbol   balanceOf(TOKEN)            balanceOf(WALLET)
+        CBETH    2055717985610008168         0
+        AERO     187805394408695762999133    3019286196837921898
+        CBBTC    0                           1078
+
+    It fails in both directions, and both directions cost money:
+
+      * CBETH's phantom was immortal. cbETH holds cbETH, so the check said
+        "real" forever. The round trip had settled on chain at 00:17:32 and
+        the stale row refused every atf_static entry for 7.9 hours;
+        ``live-position-dropped-phantom`` was never written once, ever.
+      * CBBTC's REAL position looked dead. The cbBTC contract holds no cbBTC,
+        so the check said "phantom" while the wallet held 1078 raw. Dropping
+        that un-books tokens we are still holding, and nothing ever sells
+        them -- the "11 buys against 4 sells" failure this check exists to
+        end.
+    """
+
+    def test_balanceof_is_asked_about_the_wallet_not_the_token(self):
+        token = "0x" + "ab" * 20
+        bot = _Bot(token=token)
+        pos = {"mode": "live", "size": 1.0}
+        rpc = _fake_rpc(_HELD)
+        with mock.patch("services.token_contract_guard._rpc", rpc):
+            bot._position_is_real_on_chain("base", "CBETH-USDC", pos)
+
+        self.assertEqual(len(rpc.calls), 1, "expected exactly one balanceOf")
+        chain, method, params = rpc.calls[0]
+        self.assertEqual(method, "eth_call")
+        self.assertEqual(
+            params[0]["to"].lower(), token.lower(),
+            "the call must be sent TO the token contract")
+        self.assertEqual(
+            _balanceof_arg(params), WALLET.lower(),
+            "balanceOf must be asked about the WALLET; asking about the token "
+            "made CBETH's phantom immortal for 7.9 hours")
+        self.assertNotEqual(
+            _balanceof_arg(params), token.lower(),
+            "asking the token about itself is the bug, not the check")
+
+    def test_a_token_that_holds_itself_is_still_a_phantom(self):
+        """CBETH, exactly: the contract holds 2055717985610008168 of itself
+        while the wallet holds zero. The shipped code read the former."""
+        bot = _Bot(token="0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22")
+        pos = {"mode": "live", "size": 0.000262122199594547}
+
+        def _rpc(chain, method, params):
+            # The chain, faithfully: self-balance nonzero, wallet balance zero.
+            if _balanceof_arg(params) == bot._token.lower():
+                return "0x" + format(2055717985610008168, "064x"), True
+            return _ZERO, True
+
+        with mock.patch("services.token_contract_guard._rpc", _rpc):
+            self.assertFalse(
+                bot._position_is_real_on_chain("base", "CBETH-USDC", pos),
+                "the wallet holds no CBETH, so the position is a phantom "
+                "however much cbETH the cbETH contract holds of itself")
+
+    def test_a_token_holding_none_of_itself_keeps_a_real_position(self):
+        """CBBTC, exactly: the contract holds 0 of itself while the wallet
+        holds 1078 raw. The shipped code would have dropped a REAL position
+        and orphaned the tokens behind it."""
+        bot = _Bot(token="0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf")
+        pos = {"mode": "live", "size": 1.078e-05}
+
+        def _rpc(chain, method, params):
+            if _balanceof_arg(params) == bot._token.lower():
+                return _ZERO, True
+            return "0x" + format(1078, "064x"), True
+
+        with mock.patch("services.token_contract_guard._rpc", _rpc):
+            self.assertTrue(
+                bot._position_is_real_on_chain("base", "CBBTC-USDC", pos),
+                "the wallet holds 1078 raw cbBTC -- dropping this position "
+                "would un-book tokens nothing would ever sell")
+
+    def test_an_unnameable_wallet_keeps_the_block(self):
+        """Fail CLOSED. An empty address would pad into somebody else's slot,
+        and 'we cannot name the holder' is unreadable, not zero."""
+        for bad in ("", "0x", "0xdeadbeef"):
+            bot = _Bot(wallet=bad)
+            rpc = _fake_rpc(_ZERO)
+            with mock.patch("services.token_contract_guard._rpc", rpc):
+                self.assertTrue(
+                    bot._position_is_real_on_chain(
+                        "base", "CBETH-USDC", {"mode": "live", "size": 1.0}),
+                    f"wallet {bad!r} must keep the block, not release it")
+            self.assertEqual(
+                rpc.calls, [],
+                "a wallet we cannot name must not reach the chain at all")
 
 
 class PositionIsRealOnChainTest(unittest.TestCase):

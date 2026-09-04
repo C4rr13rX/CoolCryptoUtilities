@@ -633,7 +633,41 @@ class TradingBot:
 
             from services.token_contract_guard import _rpc
 
-            data = "0x70a08231" + "0" * 24 + str(token)[2:].lower()
+            # balanceOf takes the HOLDER, and the holder is OUR WALLET.
+            #
+            # This line read ``str(token)[2:]`` -- it passed the token's own
+            # address as the argument, so every call asked "how much of itself
+            # does this contract hold?" and never once asked about the wallet.
+            # Measured 2026-09-04 07:12 against base, wallet
+            # 0x291c854811e92906a658Fb94Aa511bF919f968ad:
+            #
+            #   symbol   balanceOf(TOKEN)  <- what shipped   balanceOf(WALLET)
+            #   CBETH    2055717985610008168  -> "real"      0   <- PHANTOM
+            #   AERO     187805394408695762999133 -> "real"  3019286196837921898
+            #   CBBTC    0 -> "phantom"                      1078 <- REAL
+            #
+            # It fails in BOTH directions. A token holding some of itself makes
+            # a phantom immortal: CBETH-USDC blocked every atf_static entry for
+            # 7.9 hours (the round trip had settled on chain at 00:17:32) and
+            # ``live-position-dropped-phantom`` was never written once, ever. A
+            # token holding none of itself makes a REAL position look dead, and
+            # dropping that un-books tokens the wallet is still holding, so
+            # nothing ever sells them -- which is the "11 buys against 4 sells"
+            # failure this check was built to end.
+            #
+            # The wallet comes from the same account the swap is signed from,
+            # which is also what ``SwapService.token_balance_raw`` defaults its
+            # owner to, so this reads the balance the exit will actually size.
+            if self._bridge is None:
+                self._bridge = self._init_bridge()
+            wallet = self._live_wallet_address()
+            # 0x + 40 hex. A short or empty address would silently pad into
+            # somebody else's slot, and "we cannot name the holder" is an
+            # unreadable balance, not a zero one.
+            if not wallet.startswith("0x") or len(wallet) != 42:
+                return True          # cannot name the holder; keep the block
+
+            data = "0x70a08231" + "0" * 24 + wallet[2:].lower()
             raw, reachable = _rpc(chain, "eth_call",
                                   [{"to": token, "data": data}, "latest"])
             if not reachable or raw is None:
@@ -656,7 +690,8 @@ class TradingBot:
                 "trading",
                 f"PHANTOM POSITION: {symbol} on {chain} claims size "
                 f"{pos.get('size')} tx_hash={pos.get('tx_hash') or '(none)'} "
-                f"but the wallet holds 0 -- releasing it so entries can resume",
+                f"but wallet {wallet} holds 0 of {token} -- releasing it so "
+                f"entries can resume",
                 severity="error",
             )
             return False
