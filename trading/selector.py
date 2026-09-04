@@ -1217,9 +1217,15 @@ class GhostTradingSupervisor:
         # 2026-09-02 and had not ticked once in the 34 minutes since, inside a
         # process that had been up the whole time. A build()-only fix would
         # have left it stranded until the next restart.
+        #
+        # Read the book ONCE and keep both views. `held_symbols` is the
+        # ADD list, so it drops anything already covered; `held_all` is the
+        # PROTECT list and must not, because a symbol is only "covered" by
+        # virtue of the very bot the eviction below is about to stop.
+        held_book = _held_position_symbols(getattr(self, "db", None))
+        held_all = set(held_book)
         held_symbols = [
-            symbol for symbol in _held_position_symbols(getattr(self, "db", None))
-            if symbol not in existing
+            symbol for symbol in held_book if symbol not in existing
         ]
         if held_symbols:
             ceiling = int(_meta.get("max_limit") or pair_limit)
@@ -1294,12 +1300,40 @@ class GhostTradingSupervisor:
                 return True
             if not allow_replace or max_replacements <= 0 or symbol not in atf_priority_set:
                 return False
+            # A BOT HOLDING A POSITION IS NOT SPARE CAPACITY.
+            #
+            # The victim used to be chosen on one test -- "its symbol is not an
+            # ATF priority" -- which is blind to the only thing that makes a bot
+            # irreplaceable: it is the single place an open position in its
+            # symbol can ever be CLOSED. `_held_position_symbols` exists for
+            # exactly that rule and is consulted seventy lines above when ADDING
+            # bots; ignoring it when REMOVING them reintroduces, every reconcile,
+            # the stranding it was written to end (see its docstring: four of
+            # twelve open positions with no ticking feed, one held 362.9h).
+            #
+            # This is not theoretical capacity pressure. Measured 2026-09-04
+            # 21:30-22:46 from the ghost-supervisor log, twelve bots were
+            # evicted in 75 minutes -- CBETH-USDC among them, a symbol this
+            # wallet has repeatedly been left holding unbooked tokens in -- at a
+            # resolved pair_limit of 18 where `full_slots` is 0 and replacement
+            # is the ONLY way a new candidate gets in. Nothing in that path
+            # asked the book.
+            #
+            # Skip-and-keep-scanning rather than skip-the-replacement: a held
+            # bot is passed over and an unheld one further down the pool is
+            # taken instead. When every candidate is held we return False and
+            # the ATF signal simply waits. That is the right trade -- a skipped
+            # entry costs an opportunity, a position nothing can sell costs
+            # capital.
             replace_idx = None
             for idx in range(len(self.bots) - 1, -1, -1):
                 old_symbol = str(getattr(self.bots[idx], "primary_symbol", "") or "").upper()
-                if old_symbol not in atf_priority_set:
-                    replace_idx = idx
-                    break
+                if old_symbol in atf_priority_set:
+                    continue
+                if old_symbol in held_all:
+                    continue
+                replace_idx = idx
+                break
             if replace_idx is None:
                 return False
             old_bot = self.bots.pop(replace_idx)
