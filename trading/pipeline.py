@@ -22,6 +22,7 @@ from services.system_profile import SystemProfile, detect_system_profile
 from db import TradingDatabase, get_db
 from trading.constants import PRIMARY_CHAIN, PRIMARY_SYMBOL, top_pairs
 from trading.portfolio import NATIVE_SYMBOL
+from trading.micro_profit import roundtrip_gas_usd
 from trading.data_loader import HistoricalDataLoader
 from trading.optimizer import BayesianBruteForceOptimizer
 from trading.metrics import (
@@ -5354,7 +5355,18 @@ class TrainingPipeline:
                 "enabled": bool(wallet_state.get("micro_allowed")),
                 "minimum_net_profit_usd": float(os.getenv("SMALL_PROFIT_FLOOR_USD", "0.02")),
                 "minimum_net_margin": float(os.getenv("MIN_NET_MARGIN", "0.0001")),
-                "fixed_cost_usd": float(os.getenv("MICRO_FIXED_COST_USD", "0")),
+                # The plan must report the cost the bot actually charges, not
+                # the env default the bot stopped reading. TradingBot prices
+                # this from realized gas on the focus chain and only falls back
+                # to MICRO_FIXED_COST_USD, so reporting the env var alone
+                # printed $0.00 while every gate was charging $0.0043.
+                "fixed_cost_usd": max(
+                    roundtrip_gas_usd(
+                        getattr(self, "db", None),
+                        str(wallet_state.get("focus_chain") or PRIMARY_CHAIN),
+                    ),
+                    float(os.getenv("MICRO_FIXED_COST_USD", "0") or 0.0),
+                ),
                 "repeat_while_profitable": True,
                 "forced_fragment_liquidation": False,
             },

@@ -261,10 +261,29 @@ def _live_execution(monkeypatch):
 
 
 def _exit(bot: TradingBot, swapper, *, price: float):
+    # The exit reason is `stop_loss`, not `target_reached`, and the subject of
+    # every test below is unchanged by that.
+    #
+    # This fixture is a FLAT round trip: it closes at exactly its own entry
+    # price (0.4850347528569017) so the receipt arithmetic is exact, which
+    # makes its gross profit $0.00. It also opens 6h ago, "long past any
+    # minimum hold" -- and that used to be how it reached the accounting code,
+    # because the live-exit margin gate was wrapped in
+    # `held_sec < MAX_HOLD_SECONDS` and simply was not consulted past the
+    # clock. See tests/test_a_close_must_cover_its_own_gas.py: that bypass is
+    # what closed the real AERO position at 4749s on a -0.139% move and paid
+    # 0.516% of notional in gas to do it, so the gate now applies at any age.
+    #
+    # A $0.00-gross close is exactly what that gate exists to refuse. A flat
+    # or losing round trip is closed by the STOP, which is protective and
+    # fires unconditionally -- so this is also how the position under test
+    # would really be closed. What these tests pin is what happens AFTER the
+    # decision to sell: that the fill comes from the receipt, that a loss is
+    # booked as a loss, and that the position does not survive the sale.
     directive = TradeDirective(
         action="exit", symbol=SYMBOL, base_token="AERO", quote_token="USDC",
         size=1.546280953235675, target_price=price, horizon="atf",
-        confidence=0.9, expected_return=0.0, reason="target_reached",
+        confidence=0.9, expected_return=0.0, reason="stop_loss:-0.0200",
         strategy_id="atf_static",
     )
     sample = {"symbol": SYMBOL, "price": price, "ts": time.time(),

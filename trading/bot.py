@@ -49,7 +49,7 @@ from trading.constants import (
     GAS_PROFIT_BUFFER,
     FALLBACK_NATIVE_PRICE,
 )
-from trading.micro_profit import evaluate_micro_profit
+from trading.micro_profit import evaluate_micro_profit, roundtrip_gas_usd
 from trading.brain import (
     NeuroGraph,
     MultiResolutionSwarm,
@@ -4285,7 +4285,27 @@ class TradingBot:
         # GHOST_MIN_TRADE_USD / price so every signal actually gets a
         # chance to enter. Live mode keeps the volume-derived size to
         # respect real-market depth.
-        if use_sim and pos is None and price > 0.0:
+        #
+        # The floor applies to an entry that will be SIMULATED, not only to a
+        # bot that is globally in sim mode.
+        #
+        # It was gated on `use_sim = not self.live_trading_enabled`, so the
+        # moment the bot went live the ghost lane lost its floor and fell back
+        # to the volume-derived size -- measured at $0.053 of notional. That is
+        # not a small version of the real trade, it is a different trade: the
+        # round-trip gas this bot actually pays on base is $0.0043, which is
+        # 8.4% of $0.053 and 0.22% of $2.00. A simulation at $0.053 either
+        # ignores gas (and graduates strategies into a game that charges it --
+        # atf_static, gross +0.008680 against gas -0.028603) or charges it and
+        # refuses every entry. Neither produces evidence about the live lane.
+        #
+        # A ghost entry still spends nothing: its purse is `sim_quote_balances`,
+        # a virtual bankroll, not the wallet. What changes is only the size the
+        # simulation is run at, which is now the size the live lane would use.
+        entry_will_be_simulated = not (
+            self.live_trading_enabled and self._strategy_live_approved(directive)
+        )
+        if entry_will_be_simulated and pos is None and price > 0.0:
             min_trade_usd = float(os.getenv("GHOST_MIN_TRADE_USD", "2.0"))
             floor_size = min_trade_usd / price
             if trade_size < floor_size:
@@ -4953,11 +4973,44 @@ class TradingBot:
             # is the honest test, and the one money_button keeps failing. Only
             # the absolute-dollars test is dropped, and only for entries that
             # spend no dollars.
+            #
+            # ``fixed_cost_usd`` defaulted to $0.00 and gas is the one cost
+            # that does not scale with the clip, so the gate charged the
+            # 0.65% RATE and nothing else. It is charged to the GHOST lane
+            # too, on purpose: a simulated entry spends no gas, but the ghost
+            # book is the evidence graduation reads, and a book that prices a
+            # round trip cheaper than the chain does promotes strategies that
+            # then lose to gas. That is what happened -- see
+            # ``_roundtrip_gas_usd``.
+            #
+            # This is NOT the dollar floor that killed the evidence pipeline
+            # (385/385 ghost entries refused on the $0.02 SMALL_PROFIT_FLOOR).
+            # That floor is ``minimum_net_profit_usd`` and is still waived for
+            # entries that spend nothing. This is a real cost the round trip
+            # will really pay, and the simulation has to pay it to be a
+            # simulation of anything.
+            #
+            # Charged only when this entry OPENS the position. An add-on to a
+            # position already held is not a round trip -- its increment is
+            # sized from tick volume ($0.053 was measured) and the gas of the
+            # eventual single close belongs to the whole holding, not to the
+            # increment. The ghost exit accounting charges that close once,
+            # scaled by the fraction of the position it sells, so the round
+            # trip is paid for exactly once either way.
+            micro_fixed_cost = (
+                self._roundtrip_gas_usd(chain_name) if pos is None else 0.0
+            )
+            micro_fixed_override = os.getenv("MICRO_FIXED_COST_USD")
+            if micro_fixed_override not in (None, ""):
+                try:
+                    micro_fixed_cost = max(micro_fixed_cost, float(micro_fixed_override))
+                except (TypeError, ValueError):
+                    pass
             micro_profit = evaluate_micro_profit(
                 notional_usd=max(0.0, trade_size * price),
                 gross_return=gross_return,
                 variable_cost_rate=fees,
-                fixed_cost_usd=float(os.getenv("MICRO_FIXED_COST_USD", "0") or 0.0),
+                fixed_cost_usd=micro_fixed_cost,
                 minimum_net_profit_usd=(
                     SMALL_PROFIT_FLOOR if entry_spends_real_money else 0.0
                 ),
@@ -6133,17 +6186,64 @@ class TradingBot:
 
             if pos_is_live:
                 entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
-                if (sample_ts - entry_ts_gate) < max_hold_sec:
-                    est_notional = max(exit_size * entry_price, 1e-9)
-                    est_gross_profit = (price - entry_price) * exit_size
-                    est_fee_cost = max(est_notional * fees, 0.0)
-                    est_profit = est_gross_profit - est_fee_cost
-                    protective_exit = str(reason or "").startswith(
-                        ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
-                    )
-                    if est_profit <= 0.0 and not protective_exit:
-                        decision.update({"status": "hold-negative", "reason": reason or "hold"})
-                        return decision
+                held_sec = sample_ts - entry_ts_gate
+                est_notional = max(exit_size * entry_price, 1e-9)
+                est_gross_profit = (price - entry_price) * exit_size
+                # Gas is what this close COSTS, and it costs the same whether
+                # the position is a minute old or a day old.
+                est_gas_usd = self._roundtrip_gas_usd(chain_name)
+                est_fee_cost = max(est_notional * fees, 0.0) + max(est_gas_usd, 0.0)
+                est_profit = est_gross_profit - est_fee_cost
+                protective_exit = str(reason or "").startswith(
+                    ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
+                )
+                # A hold clock decides whether to LOOK for an exit. It must not
+                # decide whether an exit is worth what it costs.
+                #
+                # This test used to be wrapped in `held_sec < max_hold_sec`, so
+                # MAX_HOLD_SECONDS (3600) switched the cost check off entirely
+                # and the position was then closed at any price. Measured on
+                # the settled base round trips:
+                #
+                #   AERO  entry 1788489835 -> exit 1788494584 = 4749s held.
+                #         Gross -0.001045 (-0.139%), gas -0.003872, net
+                #         -0.004917. Inside the window this gate would have
+                #         refused it; at 4749s it was not consulted.
+                #   AERO  gross +0.001240 (price rose 0.165%) closed on
+                #         `confidence_drop` for a net of -0.003079 -- a
+                #         direction win turned into a loss by the close.
+                #
+                # Four of the five live exits closed on a sub-0.2% move and
+                # paid 0.43%-1.03% of notional in gas. Gross across all five
+                # is +0.008680 and gas is -0.028603: the round trips lost on
+                # cost, not on direction.
+                #
+                # Protective exits are untouched and still fire at any age --
+                # stop_loss, break_even_lock, profit_lock and trailing_stop
+                # are how a real loss is cut, and they must never be gated on
+                # whether cutting it is cheap. A position the market never
+                # moves is simply held: holding costs nothing, closing costs
+                # gas, and the stop is the thing that ends it.
+                #
+                # MAX_HOLD_FORCE_SECONDS is the operator's escape hatch. It is
+                # off by default because a forced close at a nothing-move is
+                # precisely the behaviour being removed here.
+                force_after = max(0.0, float(os.getenv("MAX_HOLD_FORCE_SECONDS", "0") or 0.0))
+                forced_by_age = force_after > 0.0 and held_sec >= force_after
+                if est_profit <= 0.0 and not protective_exit and not forced_by_age:
+                    decision.update({
+                        "status": "hold-negative",
+                        "reason": reason or "hold",
+                        "exit_cost": {
+                            "est_gross_profit_usd": float(est_gross_profit),
+                            "est_fee_cost_usd": float(est_fee_cost),
+                            "est_gas_usd": float(est_gas_usd),
+                            "est_net_profit_usd": float(est_profit),
+                            "held_sec": float(held_sec),
+                            "max_hold_sec": float(max_hold_sec),
+                        },
+                    })
+                    return decision
                 if self._live_trades_dry_run():
                     decision.update(
                         {
@@ -6470,7 +6570,26 @@ class TradingBot:
             else:
                 notional = max(exit_size * entry_price, 1e-9)
                 gross_profit = (price - entry_price) * exit_size
-                fee_cost = max(notional * fees, 0.0)
+                # A ghost round trip is charged what a live one pays.
+                #
+                # This was `notional * fees` alone -- a 0.65% RATE and no gas
+                # -- while the live branch above charges realized gas (the DEX
+                # fee and slippage are already inside the fill prices there, so
+                # they land in gross_profit). The two books therefore priced
+                # different games, and the ghost one was cheaper: on the five
+                # settled base round trips gas ran 0.43%-1.03% of notional on
+                # top of the spread. atf_static graduated on that cheaper book
+                # and delivered gross +0.008680 against gas -0.028603.
+                #
+                # Scaled by the fraction of the position being closed, the same
+                # way the live branch scales realized gas by `allocation_ratio`
+                # -- a partial exit must not be charged a whole round trip.
+                gas_share = (
+                    max(0.0, min(1.0, exit_size / held_size)) if held_size > 0 else 1.0
+                )
+                fee_cost = max(notional * fees, 0.0) + max(
+                    self._roundtrip_gas_usd(chain_name) * gas_share, 0.0
+                )
                 profit = gross_profit - fee_cost
             economic_profit = float(profit)
             valid_outcome, invalid_reason = validate_outcome_math(
@@ -7582,6 +7701,25 @@ class TradingBot:
                 details={"quote_token": quote_u, "shortfall": shortfall, "plan": plan, "chain": chain},
             )
         return result
+
+    def _roundtrip_gas_usd(self, chain: str) -> float:
+        """USD of gas one round trip broadcasts, measured from our receipts.
+
+        Thin wrapper so the entry gate, the live-exit margin gate and the
+        ghost exit accounting all charge the SAME number. They disagreed
+        before: the ghost book charged ``notional * 0.0065`` and no gas, while
+        a live round trip paid gas on top of a DEX fee already baked into its
+        fills. Graduation therefore measured a cheaper game than the one the
+        money plays -- atf_static graduated on that book and returned gross
+        +0.008680 against gas -0.028603 over five live round trips.
+
+        See ``trading.micro_profit.roundtrip_gas_usd`` for the sources and for
+        why an unmeasurable chain returns 0.0 rather than a large guess.
+        """
+        try:
+            return float(roundtrip_gas_usd(self.db, chain))
+        except Exception:  # noqa: BLE001 - a cost estimate never blocks an exit
+            return 0.0
 
     def _estimate_gas_cost(self, chain: str, route: List[str]) -> float:
         base_cost = float(os.getenv("ESTIMATED_GAS_NATIVE", "0.001"))
