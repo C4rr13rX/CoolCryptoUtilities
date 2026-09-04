@@ -304,6 +304,54 @@ def test_without_a_plan_the_env_floor_still_applies() -> None:
 # The lane that spends real money must be untouched
 # ---------------------------------------------------------------------------
 
+def _held_ghost_slot() -> dict:
+    """A ghost position the lane has been sitting on for five hours."""
+    return {
+        "mode": "ghost",
+        "strategy_id": "donchian_breakout@5d",
+        "size": 1.0e-05,
+        "entry_price": PRICE * 0.98,
+        "target_price": PRICE * 1.05,
+        "entry_ts": time.time() - 18600,
+        "ts": time.time() - 18600,
+        "trade_id": "ghost-old-trade-id",
+    }
+
+
+def test_a_held_slot_does_not_change_which_purse_bounds_the_entry() -> None:
+    """The gating mistake this repo has already made once.
+
+    ``MIN_DIRECTIVE_NOTIONAL_USD`` was keyed on ``pos is None`` and was
+    therefore skipped 85 times out of 85, because the ghost lane holds most of
+    the ticking symbols for hours -- an empty slot is the rare case, not the
+    common one. So the purse an entry is bounded by must not depend on whether
+    the slot it takes was already occupied.
+
+    The SIZE legitimately does differ: on a held slot ``trade_size`` falls back
+    to the position's own size so the exit path still gets evaluated, and
+    overriding that would stop held positions ever being closed. What must not
+    differ is whose balance caps it -- which is what this measures, by dropping
+    the stable leg to $0.50 and showing the simulated entry does not follow it
+    down.
+    """
+    rich = _bot()
+    rich.positions[SYMBOL] = _held_ghost_slot()
+    poor = _bot(wallet=0.50)
+    poor.positions[SYMBOL] = _held_ghost_slot()
+
+    rich_usd = _enter(rich, _directive("money_button", size=0.0))["micro_profit"][
+        "notional_usd"
+    ]
+    poor_usd = _enter(poor, _directive("money_button", size=0.0))["micro_profit"][
+        "notional_usd"
+    ]
+
+    assert rich_usd == pytest.approx(poor_usd, rel=1e-9), (rich_usd, poor_usd)
+    # 5% of a $0.50 stable leg is $0.025, where the fixed $0.00431933 of gas is
+    # 17% of the notional. The simulation must not be dragged there.
+    assert poor_usd > 0.5, poor_usd
+
+
 def test_a_live_entry_is_still_sized_against_the_real_wallet() -> None:
     """The sim purse may never fund, or size, a trade that spends money."""
     bot = _bot()

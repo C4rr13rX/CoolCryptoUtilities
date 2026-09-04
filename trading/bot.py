@@ -4553,12 +4553,25 @@ class TradingBot:
                     )
                     decision.update({"status": "hold-gas", "reason": "insufficient_gas"})
                     return decision
+        # Which purse bounds this cannot depend on whether the slot was already
+        # occupied. An entry that takes a held slot releases it and spends from
+        # exactly the same purse as one that finds it empty -- and gating on
+        # `pos is None` is how MIN_DIRECTIVE_NOTIONAL_USD came to be skipped 85
+        # times out of 85 (see tests/test_live_clip_matches_the_plan.py): the
+        # ghost lane holds most of the ticking symbols for hours, so the
+        # empty-slot condition is the rare one, not the common one. The predicate
+        # is therefore "is this an entry", not "is this slot free".
+        simulated_entry = bool(
+            entry_will_be_simulated
+            and directive is not None
+            and getattr(directive, "action", "") == "enter"
+        )
         if trade_size > 0.0 and price > 0.0:
             max_affordable = max(0.0, self._sizing_quote(
                 chain_name,
                 quote_token,
                 available_quote,
-                simulated=entry_will_be_simulated and pos is None,
+                simulated=simulated_entry,
             ) / price)
             trade_size = min(trade_size, max_affordable * self.max_trade_share)
         adjustments = self._get_pair_adjustment(symbol)
@@ -5278,7 +5291,7 @@ class TradingBot:
                 chain_name,
                 quote_token,
                 available_quote,
-                simulated=entry_will_be_simulated and pos is None,
+                simulated=simulated_entry,
             )
             if price > 0.0 and sizing_quote_entry > 0.0:
                 trade_size = min(trade_size, max(0.0, sizing_quote_entry / price))
