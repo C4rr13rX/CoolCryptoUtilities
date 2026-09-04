@@ -462,5 +462,145 @@ class ReconciliationIsWiredBeforeEveryRefusalTest(unittest.TestCase):
             "(_drop_phantom_live_position); found %d" % callers)
 
 
+class DropAndAdoptionMustAskAboutTheSameContractTest(unittest.TestCase):
+    """The two reconciliation rules must not answer differently.
+
+    Measured 2026-09-04 from ``trading_ops``, one symbol, ninety minutes:
+
+        11:57:37  CBETH-USDC  dropped-phantom   wallet_holds_none_of_this_token
+        11:57:41  CBETH-USDC  adopted           onchain_holding_had_no_position
+        11:59:12  CBETH-USDC  dropped-phantom
+        12:02:44  CBETH-USDC  adopted
+        12:02:54  CBETH-USDC  dropped-phantom
+        ...  13 adoptions against 11 phantom-drops in 24h
+
+    One rule says the wallet holds it, the other says it holds none of it, on
+    the same symbol four seconds apart. They are not both reading the chain
+    wrong -- they are reading DIFFERENT CONTRACTS. ``_adopt_orphaned_live_holding``
+    resolves the contract the settled BUY actually bought and stores it on the
+    position as ``base_token_address``; ``_execute_decision`` sizes the sell
+    from that same field (``base_address_hint``); and this check resolved the
+    TICKER instead.
+
+    While the position stands it refuses every entry on the symbol; when it is
+    dropped the next directive enters again. That is the churn behind
+    ``stop_loss:-0.0203`` and ``stop_loss:-0.0278`` -- positions entered and
+    stopped out inside 25 minutes.
+
+    A ticker is not a token here: 131 of 408 discovered base symbols map to
+    more than one contract, and BASECAT resolves to nothing at all now that the
+    stub is purged from the address book.
+    """
+
+    #: cbBTC, the contract a settled buy actually bought.
+    CBBTC = "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf"
+    #: What resolving the ticker happened to return instead.
+    OTHER = "0x" + "cd" * 20
+
+    def test_the_position_contract_is_asked_about_not_the_ticker(self):
+        bot = _Bot(token=self.OTHER)
+        pos = {"mode": "live", "size": 1.078e-05,
+               "base_token_address": self.CBBTC}
+        rpc = _fake_rpc(_ZERO)
+        with mock.patch("services.token_contract_guard._rpc", rpc):
+            bot._position_is_real_on_chain("base", "CBBTC-USDC", pos)
+
+        self.assertEqual(len(rpc.calls), 1)
+        _chain, _method, params = rpc.calls[0]
+        self.assertEqual(
+            params[0]["to"].lower(), self.CBBTC,
+            "the balance must be read at the contract the position was opened "
+            "in -- the one adoption booked and the one the exit will sell")
+        self.assertNotEqual(
+            params[0]["to"].lower(), self.OTHER.lower(),
+            "resolving the ticker is what made the two rules disagree")
+
+    def test_a_held_position_is_not_dropped_when_the_ticker_diverges(self):
+        """The expensive direction: dropping a position we really hold.
+
+        The ticker resolves to a contract holding nothing; the contract we
+        actually bought holds 1078 raw. Reading the ticker un-books tokens the
+        wallet is still holding, and nothing ever sells them.
+        """
+        bot = _Bot(token=self.OTHER)
+        pos = {"mode": "live", "size": 1.078e-05,
+               "base_token_address": self.CBBTC}
+
+        def _rpc(chain, method, params):
+            if params[0]["to"].lower() == self.CBBTC:
+                return "0x" + format(1078, "064x"), True
+            return _ZERO, True
+
+        with mock.patch("services.token_contract_guard._rpc", _rpc):
+            self.assertTrue(
+                bot._position_is_real_on_chain("base", "CBBTC-USDC", pos),
+                "the contract this position holds has 1078 raw in the wallet")
+
+    def test_an_unresolvable_ticker_no_longer_blocks_forever(self):
+        """BASECAT, exactly. The stub was purged, so the ticker resolves to
+        None and the check returned True -- 'cannot check, keep the block' --
+        for a position adoption could still book. An immortal block."""
+        bot = _Bot()
+        bot._resolve_token_address = lambda chain, sym: None
+        basecat = "0x" + "b2" + "0" * 38
+        pos = {"mode": "live", "size": 38.09, "base_token_address": basecat}
+        rpc = _fake_rpc(_ZERO)
+        with mock.patch("services.token_contract_guard._rpc", rpc):
+            self.assertFalse(
+                bot._position_is_real_on_chain("base", "BASECAT-USDC", pos),
+                "the position names its own contract; an unresolvable ticker "
+                "is no reason to keep a block the wallet does not back")
+        self.assertEqual(len(rpc.calls), 1, "it must reach the chain at all")
+
+    def test_a_pool_id_on_the_position_falls_back_to_the_ticker(self):
+        """A 32-byte Uniswap v4 pool id is 66 chars and is not a token.
+
+        Discovery stores pool ids for v4 pairs, and this repo has already
+        handed one to a swap as though it were the token being bought.
+        """
+        ticker_token = "0x" + "ab" * 20
+        bot = _Bot(token=ticker_token)
+        pool_id = "0x" + "9" * 64
+        pos = {"mode": "live", "size": 1.0, "base_token_address": pool_id}
+        rpc = _fake_rpc(_ZERO)
+        with mock.patch("services.token_contract_guard._rpc", rpc):
+            bot._position_is_real_on_chain("base", "X-USDC", pos)
+        self.assertEqual(
+            rpc.calls[0][2][0]["to"].lower(), ticker_token.lower(),
+            "a pool id is not a contract to read a balance from")
+
+    def test_a_position_without_the_field_still_uses_the_ticker(self):
+        """Positions booked before the field existed must keep working."""
+        ticker_token = "0x" + "ab" * 20
+        bot = _Bot(token=ticker_token)
+        rpc = _fake_rpc(_HELD)
+        with mock.patch("services.token_contract_guard._rpc", rpc):
+            self.assertTrue(
+                bot._position_is_real_on_chain(
+                    "base", "AERO-USDC", {"mode": "live", "size": 1.0}))
+        self.assertEqual(rpc.calls[0][2][0]["to"].lower(), ticker_token.lower())
+
+    def test_all_three_rules_name_the_same_field(self):
+        """The agreement is only real if the three sites share one key.
+
+        Adoption WRITES ``base_token_address``, the exit SIZES from it, and the
+        phantom check now READS it. A rename in any one of them puts the two
+        reconciliation rules back on different contracts, which is this bug.
+        """
+        from trading.bot import TradingBot
+
+        adopt = inspect.getsource(TradingBot._adopt_orphaned_live_holding)
+        check = inspect.getsource(TradingBot._position_is_real_on_chain)
+        execute = inspect.getsource(TradingBot._interpret_predictions)
+
+        self.assertIn('"base_token_address": str(swap_token or "")', adopt,
+                      "adoption must book the contract the buy bought")
+        self.assertIn('pos.get("base_token_address")', check,
+                      "the phantom check must read the position's contract")
+        self.assertIn('base_address_hint = str(pos.get("base_token_address")',
+                      execute,
+                      "the exit must size from the position's contract")
+
+
 if __name__ == "__main__":
     unittest.main()

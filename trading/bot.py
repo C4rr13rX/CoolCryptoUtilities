@@ -627,7 +627,52 @@ class TradingBot:
         cost of being wrong here is a skipped entry, not lost capital.)
         """
         try:
-            token = self._resolve_token_address(chain, str(symbol).split("-")[0])
+            # THE POSITION'S OWN CONTRACT WINS OVER THE TICKER.
+            #
+            # This resolved by ticker only, while the two routines it has to
+            # agree with resolve by contract: ``_adopt_orphaned_live_holding``
+            # books ``base_token_address`` from the settled BUY, and the exit
+            # at ``base_address_hint`` sizes the sell from that same field. So
+            # this check was the one place in the live path that asked a
+            # DIFFERENT question about the same position, and two rules asking
+            # different questions answer differently.
+            #
+            # Measured 2026-09-04 on this wallet, base, the flicker that
+            # produced: CBETH-USDC adopted 11:57:41, dropped 11:59:12, adopted
+            # 12:02:44, dropped 12:02:54, ... 13 adoptions against 11 drops in
+            # 24h. While a position stands it refuses every entry on the symbol
+            # (``entry-refused-duplicate``, 6 on CBETH in nine minutes); when it
+            # is dropped the next directive enters again. That churn is what
+            # ``stop_loss:-0.0203`` and ``stop_loss:-0.0278`` were exits FROM.
+            #
+            # The two divergence modes, both live on this wallet right now:
+            #
+            #   BASECAT  ticker -> None (the stub was purged from the address
+            #            book), so this returned True forever and a BASECAT
+            #            live position could never be released -- while
+            #            adoption, which carries the contract explicitly, can
+            #            still book one. Immortal block.
+            #   any of the 131/408 base symbols mapping to more than one
+            #            contract: the ticker resolves to a contract we hold
+            #            none of and a real position is dropped, un-booking
+            #            tokens the wallet still holds so nothing ever sells
+            #            them.
+            #
+            # Reading the position's contract makes the two rules agree by
+            # construction rather than by coincidence: the address this checks
+            # is the address adoption booked and the address the exit will
+            # sell. The ticker stays as the fallback for positions written
+            # before that field existed.
+            token = ""
+            if isinstance(pos, dict):
+                token = str(pos.get("base_token_address") or "").strip()
+                # Same 20-byte test ``_resolve_live_trade_asset`` applies: a
+                # 32-byte Uniswap v4 pool id is 66 chars and would otherwise be
+                # read as a token here.
+                if token and not is_token_address(token):
+                    token = ""
+            if not token:
+                token = self._resolve_token_address(chain, str(symbol).split("-")[0])
             if not token:
                 return True          # cannot check; keep the block
 
