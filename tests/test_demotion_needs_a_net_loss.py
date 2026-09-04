@@ -110,3 +110,70 @@ class DemotionNeedsANetLossTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
+    """A demoted strategy must be able to come back when the money recovers.
+
+    Measured 2026-09-04: atf_static was demoted at net -0.4135, its live P/L
+    then RECOVERED to +0.2221, and it stayed locked out for three hours --
+    while being the only strategy able to trade at all. Overnight production
+    settled six swaps against twenty-plus from the same machinery the previous
+    afternoon. Demotion also wiped the ghost record, so it faced a 20-trade
+    re-graduation bar from zero and could never have returned within a session.
+    """
+
+    def setUp(self):
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.path = os.path.join(self._dir.name, "ledger.json")
+
+    def _demoted(self, sid="atf_static"):
+        led = StrategyLedger(self.path)
+        ent = led._entry(sid)
+        ent["live_approved"] = True
+        ent["ghost"].update({"trades": 30, "wins": 20, "total_profit": 0.9})
+        led._demote_locked(sid, "3 consecutive live losses with net -0.4135")
+        return led, sid, led._entry(sid)
+
+    def test_demotion_keeps_the_ghost_record(self):
+        """Wiping it made demotion permanent within a session."""
+        led, sid, ent = self._demoted()
+        self.assertEqual(int(ent["ghost"].get("trades") or 0), 30,
+                         "the proving-ground record must survive a demotion")
+
+    def test_a_recovered_strategy_is_re_armed(self):
+        led, sid, ent = self._demoted()
+        ent["live"].update({"trades": 6, "consecutive_losses": 0,
+                            "total_profit": 0.2221})
+        led._evaluate_demotion_locked(sid)
+        self.assertTrue(led._entry(sid)["live_approved"],
+                        "net positive with no active streak must trade again")
+        self.assertIsNone(led._entry(sid).get("demote_reason"))
+
+    def test_a_still_losing_strategy_stays_demoted(self):
+        led, sid, ent = self._demoted()
+        ent["live"].update({"trades": 6, "consecutive_losses": 0,
+                            "total_profit": -0.30})
+        led._evaluate_demotion_locked(sid)
+        self.assertFalse(led._entry(sid)["live_approved"])
+
+    def test_an_active_losing_streak_blocks_re_arming(self):
+        """Recovering P/L while still losing in a row is not recovered."""
+        led, sid, ent = self._demoted()
+        ent["live"].update({"trades": 6, "consecutive_losses": 2,
+                            "total_profit": 0.05})
+        led._evaluate_demotion_locked(sid)
+        self.assertFalse(led._entry(sid)["live_approved"])
+
+    def test_a_permanent_block_is_never_re_armed(self):
+        led = StrategyLedger(self.path)
+        sid = "bad"
+        ent = led._entry(sid)
+        ent["live_approved"] = True
+        led._demote_locked(sid, "fabricated record", permanent=True)
+        ent["live"].update({"trades": 9, "consecutive_losses": 0,
+                            "total_profit": 5.0})
+        led._evaluate_demotion_locked(sid)
+        self.assertFalse(led._entry(sid)["live_approved"],
+                         "a permanent block is a decision, not a bad stretch")

@@ -482,6 +482,7 @@ class StrategyLedger:
     def _evaluate_demotion_locked(self, sid: str) -> None:
         ent = self._entry(sid)
         if not ent.get("live_approved"):
+            self._maybe_rearm_locked(sid)
             return
         live = ent["live"]
         # Consecutive losses only matter if we are DOWN on the money.
@@ -600,6 +601,50 @@ class StrategyLedger:
                 f"live drawdown: {current:+.4f} from peak {peak:+.4f}",
             )
 
+    def _maybe_rearm_locked(self, sid: str) -> None:
+        """Let a demoted strategy back in once the money says it recovered.
+
+        Demotion was one-way. A strategy demoted on a bad stretch stayed
+        demoted even after its live P/L turned positive again, because nothing
+        ever re-evaluated it -- measured 2026-09-04: atf_static was demoted at
+        net -0.4135, recovered to +0.2221, and sat locked out for three hours
+        while it was the only strategy able to trade at all. Overnight
+        production produced six swaps instead of the twenty-plus the same
+        machinery managed the previous afternoon.
+
+        Re-arming is deliberately stricter than staying live: the account must
+        be net POSITIVE (not merely break-even), the losing streak must be
+        broken, and a strategy blocked permanently is never reconsidered.
+        """
+        ent = self._entry(sid)
+        if ent.get("graduation_blocked"):
+            return                      # blocked permanently, by decision
+        if not ent.get("demote_reason"):
+            return                      # never demoted; nothing to undo
+
+        live = ent.get("live") or {}
+        net = float(live.get("total_profit", 0.0))
+        streak = int(live.get("consecutive_losses", 0))
+        trades = int(live.get("trades", 0))
+        min_sample = _env_int("STRATEGY_REARM_MIN_LIVE_TRADES", 3)
+
+        if net > 0.0 and streak == 0 and trades >= min_sample:
+            ent["live_approved"] = True
+            ent["demote_reason"] = None
+            ent["rearmed_ts"] = time.time()
+            ent["rearms"] = int(ent.get("rearms", 0)) + 1
+            try:
+                from services.logging_utils import log_message
+
+                log_message(
+                    "strategy-ledger",
+                    f"{sid}: re-armed for live -- net {net:+.6f} over {trades} "
+                    f"live trades with no active losing streak",
+                    severity="info",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
     def _demote_locked(self, sid: str, reason: str, *, permanent: bool = False) -> None:
         ent = self._entry(sid)
         if permanent:
@@ -609,9 +654,21 @@ class StrategyLedger:
         ent["demotions"] = int(ent.get("demotions", 0)) + 1
         ent["demote_reason"] = reason
         ent["demoted_ts"] = time.time()
-        # Demotion resets the ghost proving-ground so re-graduation requires
-        # fresh evidence, not stale pre-demotion stats.
-        ent["ghost"] = _blank_mode()
+        # Keep the ghost record. Wiping it made demotion PERMANENT.
+        #
+        # The intent was that re-graduation should need fresh evidence. The
+        # effect was that a demoted strategy started from zero against a
+        # 20-trade bar, so it could never come back within a session --
+        # measured 2026-09-04, atf_static sat at ghost=0 for three hours while
+        # its live P/L RECOVERED to +0.2221, and nothing could trade because it
+        # was the only live-capable strategy.
+        #
+        # Demotion should be a pause, not a death sentence: the strategy stops
+        # spending real money and keeps proving itself in ghost. Re-graduation
+        # still needs the full bar (trades, win rate, profit), so a genuinely
+        # bad strategy does not sneak back -- it simply is not asked to
+        # re-earn evidence it already has.
+        ent["ghost_at_demotion"] = dict(ent.get("ghost") or {})
         ent["live"]["consecutive_losses"] = 0
 
     # ------------------------------------------------------------------
