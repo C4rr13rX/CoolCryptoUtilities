@@ -1252,6 +1252,26 @@ class TradingBot:
         except Exception:
             return 75
 
+    def _ghost_min_life_sec(self) -> float:
+        """How long a ghost position holds its slot against a displacing entry.
+
+        Graduation is counted in COMPLETED ghost trades, so a position that is
+        displaced before it can exit is worse than one that never opened: it
+        consumed a slot and produced no record. This is the floor that lets a
+        bracket, a target or a timed exit actually resolve.
+
+        Defaults to 180s -- above the 20s median abandonment measured on the
+        displacement path, and below the shortest strategy horizon (5m), so a
+        real signal is never held past the window it was taken for. Set
+        GHOST_MIN_LIFE_SEC=0 to restore the old always-displace behaviour.
+        """
+        raw = os.getenv("GHOST_MIN_LIFE_SEC", "180")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 180.0
+        return value if math.isfinite(value) and value >= 0.0 else 180.0
+
     def _exit_dust_sweep_usd(self) -> float:
         """Residual value below which an exit sells the whole balance instead.
 
@@ -5280,6 +5300,102 @@ class TradingBot:
             and incoming_strategy_id == held_strategy_id
             and not (entry_is_live and str(pos.get("mode") or "") != "live")
         )
+        # ...and a strategy must not destroy ANOTHER strategy's working
+        # position either. Same mechanism, different pair of strategies, and
+        # the only reason it was not fixed alongside the same-strategy case is
+        # that the same-strategy case was 95% of the rows at the time.
+        #
+        # It is now the whole of what is left. Measured over the 24h to
+        # 2026-09-04 11:00, from trading_ops:
+        #
+        #   792 ghost entries, 83 ghost exits, 683 slot evictions
+        #   616 of the evictions were same-strategy -- refused since c6dfa38,
+        #       and ZERO have occurred in the last 8h, so that guard works
+        #    67 were CROSS-strategy, and those are still firing: 24 in the
+        #       last 8h against 22 ghost exits in the same window
+        #
+        # So the surviving leak destroys roughly as many positions as the exit
+        # path completes. That is link 5 exactly: graduation and re-arming both
+        # need 20 ghost trades from ONE strategy, `StrategyLedger.record` is
+        # only ever called from the exit path, and atf_static -- the only
+        # strategy that has ever spent real money here -- has booked no ghost
+        # outcome since 06:15 while making 5 ghost entries in the last 2h.
+        #
+        # TWO carve-outs, both measured rather than assumed:
+        #
+        #  * REAL MONEY STILL DISPLACES A SIMULATION (`entry_is_live`). Without
+        #    this, a live-approved strategy could be blocked out of a symbol by
+        #    some other lane's simulated position -- which is link 6 and was 7
+        #    of the 9 live-capable symbols on 2026-09-02. It costs almost
+        #    nothing to keep: of the 53 young cross-strategy evictions in 24h,
+        #    50 were ghost-over-ghost and only 3 were live-over-ghost.
+        #
+        #  * A POSITION PAST `max_hold_sec` IS STILL EVICTABLE. Exits here are
+        #    sample-driven, so a symbol whose feed goes quiet is never closed
+        #    and its slot would otherwise be locked for every strategy forever.
+        #    That is not hypothetical -- the book right now holds HIGH-USDC at
+        #    989,066s (11.4 days) with no feed at all, and 5 of its 13 slots are
+        #    past the 3600s max hold. Eviction is currently the ONLY thing that
+        #    clears those, so refusing it unconditionally would trade an
+        #    evidence leak for a permanently blocked symbol. Protecting only
+        #    positions that can still exit normally keeps 53 of the 67 rows and
+        #    leaves the stale-slot escape hatch exactly as it is.
+        #
+        # A held position with no strategy_id is deliberately NOT protected: its
+        # outcome books as "unclassified" and counts toward no strategy's
+        # graduation, so blocking a live-attributable entry for it trades
+        # evidence for none.
+        # Both sides are epoch SECONDS as floats and come from the same clock:
+        # `sample_ts` is `float(sample.get("ts", time.time()))` and `entry_ts`
+        # is written from that same `sample_ts` at every entry site. Verified on
+        # the live book, e.g. ARB-USDC entry_ts=1788485218.0450332 (float)
+        # against time.time()=1788534635.9175448. A position with no timestamp
+        # reads 0.0 and so ages past any max hold -- it stays evictable, which
+        # is the current behaviour and the safe direction.
+        held_position_age = 0.0
+        if pos is not None:
+            held_position_age = float(sample_ts) - float(
+                pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0
+            )
+        entry_evicts_another_strategys_position = bool(
+            directive is not None
+            and directive.action == "enter"
+            and pos is not None
+            and not entry_is_live
+            and str(pos.get("mode") or "") != "live"
+            and held_strategy_id
+            and incoming_strategy_id != held_strategy_id
+            and held_position_age < max_hold_sec
+        )
+        if entry_evicts_another_strategys_position:
+            try:
+                self.db.log_trade(
+                    wallet=str(pos.get("mode") or "ghost"),
+                    chain=chain_name,
+                    symbol=symbol,
+                    action="hold",
+                    status="entry-refused-slot-busy",
+                    details={
+                        "symbol": symbol,
+                        "reason": "symbol_held_by_another_strategy",
+                        "strategy_id": incoming_strategy_id,
+                        "held_strategy_id": held_strategy_id,
+                        "held_mode": str(pos.get("mode") or ""),
+                        "held_trade_id": str(pos.get("trade_id") or ""),
+                        "held_entry_price": float(pos.get("entry_price") or 0.0),
+                        "held_entry_ts": float(
+                            pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0
+                        ),
+                        "held_secs": max(0.0, held_position_age),
+                        "max_hold_sec": float(max_hold_sec),
+                        "incoming_trade_id": str(
+                            getattr(directive, "trade_id", "") or ""
+                        ),
+                    },
+                )
+            except Exception:
+                pass
+
         if entry_duplicates_held_position:
             # Logged for the same reason the live-held refusal is: an unlogged
             # refusal is indistinguishable from the lane never having wanted
@@ -5321,7 +5437,12 @@ class TradingBot:
         ):
             should_exit = True
             reason = protective.reason
-        elif directive and directive.action == "enter" and not entry_duplicates_held_position:
+        elif (
+            directive
+            and directive.action == "enter"
+            and not entry_duplicates_held_position
+            and not entry_evicts_another_strategys_position
+        ):
             should_enter = True
             reason = directive.reason
         elif directive and directive.action == "exit":
@@ -9278,6 +9399,56 @@ class TradingBot:
             except Exception:
                 pass
             return False
+
+        # A GHOST POSITION THAT NEVER FINISHES IS NEVER RECORDED.
+        #
+        # StrategyLedger.record is called only from the exit path, and
+        # graduation needs 20 completed ghost trades from ONE strategy. A
+        # position displaced mid-flight produces no exit, so it contributes
+        # nothing to the count no matter how good the trade would have been.
+        #
+        # Measured 2026-09-04 over six hours: 51 ghost entries against 12
+        # ghost exits, with 25 positions released as slot_taken_by_new_entry.
+        # Half of everything opened was destroyed before a target, a stop or a
+        # timed exit could resolve it, so the ghost book could not accumulate
+        # the record the live gate asks for -- the lanes kept opening trades
+        # and kept never finishing them.
+        #
+        # A ghost position younger than its minimum life now holds its slot.
+        # Past that age it yields as before, so a genuinely stuck position
+        # cannot camp on a symbol forever. Live positions are refused
+        # outright above; this is the same reasoning one tier down, and the
+        # cost of being wrong is only a simulated entry that never opens.
+        ghost_min_life = self._ghost_min_life_sec()
+        if ghost_min_life > 0.0 and str(pos.get("mode") or "") == "ghost":
+            entered_at = float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0)
+            age = time.time() - entered_at if entered_at > 0.0 else None
+            # An unknown age is not a young one: a position with no entry
+            # stamp must not become undisplaceable through missing data.
+            if age is not None and age < ghost_min_life:
+                try:
+                    self.db.log_trade(
+                        wallet="ghost",
+                        chain=chain,
+                        symbol=symbol,
+                        action="hold",
+                        status="ghost-position-release-refused",
+                        details={
+                            "symbol": symbol,
+                            "reason": "ghost_position_too_young_to_displace",
+                            "held_strategy_id": str(pos.get("strategy_id") or ""),
+                            "held_trade_id": str(pos.get("trade_id") or ""),
+                            "held_secs": round(age, 1),
+                            "ghost_min_life_sec": ghost_min_life,
+                            "incoming_mode": incoming_mode,
+                            "incoming_strategy_id": incoming_strategy,
+                            "incoming_trade_id": incoming_trade_id,
+                        },
+                    )
+                except Exception:
+                    pass
+                return False
+
         released = {
             "symbol": symbol,
             "released_mode": str(pos.get("mode") or ""),
