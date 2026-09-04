@@ -10,40 +10,106 @@
       "model_name": "(no brain)",
       "metrics": {},
       "commissioned": true,
-      "created_at": 1787343115.5971718,
+      "created_at": 1788361891.2354763,
       "experiments": [],
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 250,
-          "wins": 126,
-          "losses": 124,
-          "gross_win": 4.348392139387377,
-          "gross_loss": 1.679981992723655,
-          "total_profit": 2.6684101466637205,
-          "best": 0.4109173616376043,
-          "worst": -0.22187261632341726,
-          "peak_profit": 2.6684101466637205,
-          "max_drawdown": 0.29711857394259944,
-          "consecutive_losses": 0,
-          "max_consecutive_losses": 9,
-          "first_ts": 1787344327.012597,
-          "last_ts": 1788314498.6819851,
+          "trades": 33,
+          "wins": 22,
+          "losses": 11,
+          "gross_win": 1.117694938612749,
+          "gross_loss": 0.18869030584380359,
+          "total_profit": 0.9290046327689453,
+          "best": 0.22319852482353372,
+          "worst": -0.0535538755845645,
+          "peak_profit": 0.9924689923694343,
+          "max_drawdown": 0.08501068553523006,
+          "consecutive_losses": 3,
+          "max_consecutive_losses": 3,
+          "first_ts": 1787766833.349926,
+          "last_ts": 1788488435.0902438,
           "symbols": {
-            "BASECAT-USDC": 63,
-            "CBXRP-USDC": 60,
-            "CBBTC-USDC": 35,
-            "BPAD-USDC": 17,
-            "BASEJUICE-USDC": 3,
-            "GOOGLC-USDC": 1,
-            "SOL-USDC": 13,
-            "BA3PUMP-USDC": 1,
-            "BASENOUN-USDC": 1,
-            "BSTONK-USDC": 1,
-            "CBETH-USDC": 1
+            "CBBTC-USDC": 4,
+            "BASECAT-USDC": 6,
+            "CBXRP-USDC": 5,
+            "BASEJUICE-USDC": 1,
+            "BSTONK-USDC": 2,
+            "ARMSTRONG-USDC": 1,
+            "AERO-USDC": 9,
+            "CBHYPE-USDC": 1,
+            "CBZEC-USDC": 1,
+            "CBETH-USDC": 1,
+            "CBADA-USDC": 1,
+            "TYBG-USDC": 1
+          }
+        },
+        "live": {
+          "trades": 3,
+          "wins": 2,
+          "losses": 1,
+          "gross_win": 0.0110141631446139,
+          "gross_loss": 0.005859083287470101,
+          "total_profit": 0.0051550798571437986,
+          "best": 0.009774763168259131,
+          "worst": -0.005859083287470101,
+          "peak_profit": 0.0110141631446139,
+          "max_drawdown": 0.005859083287470101,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788439019.6987245,
+          "last_ts": 1788453495.2885306,
+          "symbols": {
+            "AERO-USDC": 1,
+            "CBETH-USDC": 2
           }
         }
-      }
+      },
+      "corrections": [
+        {
+          "ts": 1788490622.519774,
+          "mode": "live",
+          "reason": "four live exits with no settling ERC-20 Transfer on base were annulled in the ledger and in trade_outcomes.status on 2026-09-03 but not here; re-verified against balanceOf on 2026-09-04 (the wallet still holds every token these exits claim to have sold)",
+          "was": {
+            "trades": 7,
+            "wins": 3,
+            "losses": 4,
+            "total_profit": -0.14045951062203274
+          },
+          "now": {
+            "trades": 3,
+            "wins": 2,
+            "losses": 1,
+            "total_profit": 0.0051550798571437986
+          },
+          "struck": [
+            {
+              "ts": 1788457203.9228983,
+              "symbol": "CBETH-USDC",
+              "net_profit": -5.034378299787031e-06,
+              "quantity": 2.2996027680624823e-07
+            },
+            {
+              "ts": 1788462735.1423447,
+              "symbol": "BSTONK-USDC",
+              "net_profit": -0.14286547079467193,
+              "quantity": 360.264243225393
+            },
+            {
+              "ts": 1788465807.3129456,
+              "symbol": "CBBTC-USDC",
+              "net_profit": 0.0002673134541053869,
+              "quantity": 9.28e-06
+            },
+            {
+              "ts": 1788467933.3438027,
+              "symbol": "CBETH-USDC",
+              "net_profit": -0.003011398760310205,
+              "quantity": 0.00015239281814501877
+            }
+          ]
+        }
+      ]
     },
     "money_button": {
       "strategy_id": "money_button",
@@ -124,7 +190,27 @@
       "created_at": 1787832173.298721,
       "experiments": [],
       "auto_registered": true,
-      "lifetime": {}
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 1,
+          "losses": 0,
+          "gross_win": 0.04469545153579231,
+          "gross_loss": 0.0,
+          "total_profit": 0.04469545153579231,
+          "best": 0.04469545153579231,
+          "worst": 0.0,
+          "peak_profit": 0.04469545153579231,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1788452485.7201467,
+          "last_ts": 1788452485.7201467,
+          "symbols": {
+            "CBADA-USDC": 1
+          }
+        }
+      }
     },
     "volume_spike": {
       "strategy_id": "volume_spike",
@@ -156,19 +242,28 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 0,
-          "wins": 0,
-          "losses": 0,
-          "total_profit": 0.0,
-          "gross_win": 0.0,
-          "gross_loss": 0.0,
-          "best": 0.0,
-          "worst": 0.0,
-          "symbols": {},
+          "trades": 11,
+          "wins": 7,
+          "losses": 4,
+          "total_profit": 0.16701325803572156,
+          "gross_win": 0.27052006660805633,
+          "gross_loss": 0.1035068085723348,
+          "best": 0.1998549401411964,
+          "worst": -0.04399802097007461,
+          "symbols": {
+            "OMARCHY-USDC": 1,
+            "UMIA-USDC": 1,
+            "LIQUIDBGT-USDC": 1,
+            "BSTONK-USDC": 1,
+            "PRINTERINKCOIN-USDC": 2,
+            "BASECAT-USDC": 4,
+            "BASELINE-USDC": 1
+          },
           "consecutive_losses": 0,
-          "max_consecutive_losses": 0,
-          "max_drawdown": 0.0,
-          "peak_profit": 0.0
+          "max_consecutive_losses": 2,
+          "max_drawdown": 0.07126173663765957,
+          "peak_profit": 0.16701325803572156,
+          "last_ts": 1788480630.4723954
         }
       }
     },
@@ -282,21 +377,23 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 2,
-          "wins": 1,
+          "trades": 3,
+          "wins": 2,
           "losses": 1,
-          "gross_win": 0.0003141711590477441,
+          "gross_win": 0.002161492115589262,
           "gross_loss": 0.01308093443340711,
-          "total_profit": -0.012766763274359366,
-          "best": 0.0003141711590477441,
+          "total_profit": -0.010919442317817848,
+          "best": 0.0018473209565415178,
           "worst": -0.01308093443340711,
           "peak_profit": 0.0003141711590477441,
           "max_drawdown": 0.01308093443340711,
-          "consecutive_losses": 1,
+          "consecutive_losses": 0,
           "max_consecutive_losses": 1,
           "first_ts": 1787921998.0723553,
-          "last_ts": 1788191071.8173451,
-          "symbols": {}
+          "last_ts": 1788467945.9153025,
+          "symbols": {
+            "GRASS-USDC": 1
+          }
         }
       }
     },
@@ -315,21 +412,25 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 1,
-          "wins": 1,
-          "losses": 0,
-          "gross_win": 3.400053887979594e-05,
-          "gross_loss": 0.0,
-          "total_profit": 3.400053887979594e-05,
-          "best": 3.400053887979594e-05,
-          "worst": 0.0,
+          "trades": 6,
+          "wins": 2,
+          "losses": 4,
+          "gross_win": 0.0009125966482308734,
+          "gross_loss": 0.026296047225851132,
+          "total_profit": -0.02538345057762026,
+          "best": 0.0008785961093510774,
+          "worst": -0.012214763584545216,
           "peak_profit": 3.400053887979594e-05,
-          "max_drawdown": 0.0,
-          "consecutive_losses": 0,
-          "max_consecutive_losses": 0,
+          "max_drawdown": 0.025417451116500053,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 3,
           "first_ts": 1788191593.8078494,
-          "last_ts": 1788191593.8078494,
-          "symbols": {}
+          "last_ts": 1788471510.9271116,
+          "symbols": {
+            "AERO-USDC": 2,
+            "VIRTUAL-USDC": 1,
+            "COMP-USDC": 2
+          }
         }
       }
     },
@@ -348,21 +449,24 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
-          "trades": 13,
-          "wins": 0,
-          "losses": 13,
-          "gross_win": 0.0,
-          "gross_loss": 1.911803777131418,
-          "total_profit": -1.911803777131418,
-          "best": 0.0,
+          "trades": 15,
+          "wins": 1,
+          "losses": 14,
+          "gross_win": 0.018554024632260344,
+          "gross_loss": 1.9120602707825358,
+          "total_profit": -1.8935062461502754,
+          "best": 0.018554024632260344,
           "worst": -0.2424015630459644,
           "peak_profit": 0.0,
-          "max_drawdown": 1.911803777131418,
-          "consecutive_losses": 13,
-          "max_consecutive_losses": 13,
+          "max_drawdown": 1.9120602707825358,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 14,
           "first_ts": 1788208915.3641994,
-          "last_ts": 1788210299.1907916,
-          "symbols": {}
+          "last_ts": 1788478844.015884,
+          "symbols": {
+            "BASEPEPE-USDC": 1,
+            "BSTONK-USDC": 1
+          }
         }
       }
     },
@@ -381,21 +485,427 @@
       "auto_registered": true,
       "lifetime": {
         "ghost": {
+          "trades": 4,
+          "wins": 3,
+          "losses": 1,
+          "gross_win": 0.0051145050864735055,
+          "gross_loss": 0.0014125047119441028,
+          "total_profit": 0.0037020003745294023,
+          "best": 0.004911021144334305,
+          "worst": -0.0014125047119441028,
+          "peak_profit": 0.0037020003745294023,
+          "max_drawdown": 0.0014125047119441028,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788220676.6001902,
+          "last_ts": 1788479399.3413327,
+          "symbols": {
+            "AERO-USDC": 3
+          }
+        }
+      }
+    },
+    "atf_static_scout": {
+      "strategy_id": "atf_static_scout",
+      "name": "atf_static_scout",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1787343115.5971718,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 313,
+          "wins": 188,
+          "losses": 125,
+          "gross_win": 5.573243842315861,
+          "gross_loss": 1.7820344899342881,
+          "total_profit": 3.791209352381573,
+          "best": 0.4109173616376043,
+          "worst": -0.22187261632341726,
+          "peak_profit": 3.791209352381573,
+          "max_drawdown": 0.29711857394259944,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 9,
+          "first_ts": 1787344327.012597,
+          "last_ts": 1788489742.6913116,
+          "symbols": {
+            "BASECAT-USDC": 75,
+            "CBXRP-USDC": 69,
+            "CBBTC-USDC": 42,
+            "BPAD-USDC": 17,
+            "BASEJUICE-USDC": 4,
+            "GOOGLC-USDC": 1,
+            "SOL-USDC": 13,
+            "BA3PUMP-USDC": 1,
+            "BASENOUN-USDC": 1,
+            "BSTONK-USDC": 9,
+            "CBETH-USDC": 9,
+            "AERO-USDC": 15,
+            "VIRTUAL-USDC": 1,
+            "CBZEC-USDC": 1,
+            "CBADA-USDC": 1
+          }
+        }
+      }
+    },
+    "donchian_breakout@1d": {
+      "strategy_id": "donchian_breakout@1d",
+      "name": "donchian_breakout@1d",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788362412.9892495,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 5,
+          "wins": 3,
+          "losses": 2,
+          "gross_win": 0.00012947970901871575,
+          "gross_loss": 0.3377204682385627,
+          "total_profit": -0.33759098852954406,
+          "best": 0.00010223294685942535,
+          "worst": -0.2586244615116141,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.3377204682385627,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 2,
+          "first_ts": 1788362412.9892495,
+          "last_ts": 1788466773.2154815,
+          "symbols": {
+            "BASECAT-USDC": 1,
+            "BSTONK-USDC": 1,
+            "AERO-USDC": 3
+          }
+        }
+      }
+    },
+    "bollinger_squeeze": {
+      "strategy_id": "bollinger_squeeze",
+      "name": "bollinger_squeeze",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788388810.8911319,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 2,
+          "wins": 1,
+          "losses": 1,
+          "gross_win": 0.0316544034471768,
+          "gross_loss": 0.3117900288940983,
+          "total_profit": -0.2801356254469215,
+          "best": 0.0316544034471768,
+          "worst": -0.3117900288940983,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.3117900288940983,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788388810.8911319,
+          "last_ts": 1788389258.492487,
+          "symbols": {
+            "OMARCHY-USDC": 2
+          }
+        }
+      }
+    },
+    "supertrend_follow": {
+      "strategy_id": "supertrend_follow",
+      "name": "supertrend_follow",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788392113.613704,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
           "trades": 1,
           "wins": 0,
           "losses": 1,
           "gross_win": 0.0,
-          "gross_loss": 0.0014125047119441028,
-          "total_profit": -0.0014125047119441028,
+          "gross_loss": 0.23668393840007532,
+          "total_profit": -0.23668393840007532,
           "best": 0.0,
-          "worst": -0.0014125047119441028,
+          "worst": -0.23668393840007532,
           "peak_profit": 0.0,
-          "max_drawdown": 0.0014125047119441028,
+          "max_drawdown": 0.23668393840007532,
           "consecutive_losses": 1,
           "max_consecutive_losses": 1,
-          "first_ts": 1788220676.6001902,
-          "last_ts": 1788220676.6001902,
-          "symbols": {}
+          "first_ts": 1788392113.613704,
+          "last_ts": 1788392113.613704,
+          "symbols": {
+            "OMARCHY-USDC": 1
+          }
+        }
+      }
+    },
+    "donchian_breakout@5d": {
+      "strategy_id": "donchian_breakout@5d",
+      "name": "donchian_breakout@5d",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788403542.5989852,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 6,
+          "wins": 4,
+          "losses": 2,
+          "gross_win": 0.4572341813014724,
+          "gross_loss": 0.17498510272718953,
+          "total_profit": 0.28224907857428283,
+          "best": 0.34374323636410187,
+          "worst": -0.08976406254331654,
+          "peak_profit": 0.28224907857428283,
+          "max_drawdown": 0.1733737639230954,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788403542.5989852,
+          "last_ts": 1788490783.7598193,
+          "symbols": {
+            "BASECAT-USDC": 4,
+            "BSTONK-USDC": 2
+          }
+        }
+      }
+    },
+    "rsi_reversal@5d": {
+      "strategy_id": "rsi_reversal@5d",
+      "name": "rsi_reversal@5d",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788403608.5828235,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 0,
+          "losses": 1,
+          "gross_win": 0.0,
+          "gross_loss": 0.000499562115658797,
+          "total_profit": -0.000499562115658797,
+          "best": 0.0,
+          "worst": -0.000499562115658797,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.000499562115658797,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788403608.5828235,
+          "last_ts": 1788403608.5828235,
+          "symbols": {
+            "CBETH-USDC": 1
+          }
+        }
+      }
+    },
+    "donchian_breakout": {
+      "strategy_id": "donchian_breakout",
+      "name": "donchian_breakout",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788409548.3396077,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 0,
+          "losses": 1,
+          "gross_win": 0.0,
+          "gross_loss": 0.0723089107335007,
+          "total_profit": -0.0723089107335007,
+          "best": 0.0,
+          "worst": -0.0723089107335007,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.0723089107335007,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788409548.3396077,
+          "last_ts": 1788409548.3396077,
+          "symbols": {
+            "BSTONK-USDC": 1
+          }
+        }
+      }
+    },
+    "supertrend_follow@5d": {
+      "strategy_id": "supertrend_follow@5d",
+      "name": "supertrend_follow@5d",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788432554.1083162,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 2,
+          "wins": 1,
+          "losses": 1,
+          "gross_win": 0.03894579694564962,
+          "gross_loss": 0.02930467030961036,
+          "total_profit": 0.00964112663603926,
+          "best": 0.03894579694564962,
+          "worst": -0.02930467030961036,
+          "peak_profit": 0.03894579694564962,
+          "max_drawdown": 0.02930467030961036,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788432554.1083162,
+          "last_ts": 1788433993.0698266,
+          "symbols": {
+            "AERO-USDC": 1,
+            "BSTONK-USDC": 1
+          }
+        }
+      }
+    },
+    "rsi_reversal@12h": {
+      "strategy_id": "rsi_reversal@12h",
+      "name": "rsi_reversal@12h",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788454102.0012069,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 2,
+          "wins": 1,
+          "losses": 1,
+          "gross_win": 0.019050309319671645,
+          "gross_loss": 6.500023669066492e-12,
+          "total_profit": 0.019050309313171622,
+          "best": 0.019050309319671645,
+          "worst": -6.500023669066492e-12,
+          "peak_profit": 0.019050309313171622,
+          "max_drawdown": 6.500023669066492e-12,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788454102.0012069,
+          "last_ts": 1788487918.2013624,
+          "symbols": {
+            "OPENHUMAN-USDC": 1,
+            "BASEPEPE-USDC": 1
+          }
+        }
+      }
+    },
+    "supertrend_follow@12h": {
+      "strategy_id": "supertrend_follow@12h",
+      "name": "supertrend_follow@12h",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788474723.1764019,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 0,
+          "losses": 1,
+          "gross_win": 0.0,
+          "gross_loss": 0.0045724112380902855,
+          "total_profit": -0.0045724112380902855,
+          "best": 0.0,
+          "worst": -0.0045724112380902855,
+          "peak_profit": 0.0,
+          "max_drawdown": 0.0045724112380902855,
+          "consecutive_losses": 1,
+          "max_consecutive_losses": 1,
+          "first_ts": 1788474723.1764019,
+          "last_ts": 1788474723.1764019,
+          "symbols": {
+            "BASECAT-USDC": 1
+          }
+        }
+      }
+    },
+    "donchian_breakout@5h": {
+      "strategy_id": "donchian_breakout@5h",
+      "name": "donchian_breakout@5h",
+      "kind": "builtin",
+      "genes": {},
+      "objective": "",
+      "model_id": "",
+      "model_name": "(no brain)",
+      "metrics": {},
+      "commissioned": true,
+      "created_at": 1788474739.4046519,
+      "experiments": [],
+      "auto_registered": true,
+      "lifetime": {
+        "ghost": {
+          "trades": 1,
+          "wins": 1,
+          "losses": 0,
+          "gross_win": 0.006421094678763311,
+          "gross_loss": 0.0,
+          "total_profit": 0.006421094678763311,
+          "best": 0.006421094678763311,
+          "worst": 0.0,
+          "peak_profit": 0.006421094678763311,
+          "max_drawdown": 0.0,
+          "consecutive_losses": 0,
+          "max_consecutive_losses": 0,
+          "first_ts": 1788474739.4046519,
+          "last_ts": 1788474739.4046519,
+          "symbols": {
+            "TYBG-USDC": 1
+          }
         }
       }
     }

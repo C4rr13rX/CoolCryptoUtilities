@@ -295,6 +295,129 @@ def compare_experiments(strategy_id: str) -> List[Dict[str, Any]]:
     return rows
 
 
+def _new_stats(now: float) -> Dict[str, Any]:
+    """A lifetime block with nothing folded into it yet."""
+    return {
+        "trades": 0, "wins": 0, "losses": 0,
+        "gross_win": 0.0, "gross_loss": 0.0, "total_profit": 0.0,
+        "best": 0.0, "worst": 0.0,
+        "peak_profit": 0.0, "max_drawdown": 0.0,
+        "consecutive_losses": 0, "max_consecutive_losses": 0,
+        "first_ts": now, "last_ts": now, "symbols": {},
+    }
+
+
+def _fold(stats: Dict[str, Any], profit: float, symbol: str, now: float) -> None:
+    """Fold one outcome into ``stats`` in place.
+
+    Shared by ``record_outcome`` (one new trade) and ``rebuild_lifetime``
+    (replay of a corrected history) so the two can never compute a lifetime
+    block differently. ``peak_profit``, ``max_drawdown`` and the consecutive
+    loss counters are path-dependent -- they cannot be reversed by subtracting
+    a struck trade, which is exactly why a correction has to replay.
+    """
+    p = float(profit)
+    stats["trades"] += 1
+    stats["total_profit"] = float(stats["total_profit"]) + p
+    if p > 0:
+        stats["wins"] += 1
+        stats["gross_win"] = float(stats["gross_win"]) + p
+        stats["consecutive_losses"] = 0
+        stats["best"] = max(float(stats["best"]), p)
+    else:
+        stats["losses"] += 1
+        stats["gross_loss"] = float(stats["gross_loss"]) + abs(p)
+        stats["consecutive_losses"] = int(stats["consecutive_losses"]) + 1
+        stats["max_consecutive_losses"] = max(
+            int(stats["max_consecutive_losses"]), int(stats["consecutive_losses"])
+        )
+        stats["worst"] = min(float(stats["worst"]), p)
+    stats["peak_profit"] = max(float(stats["peak_profit"]), float(stats["total_profit"]))
+    stats["max_drawdown"] = max(
+        float(stats["max_drawdown"]),
+        float(stats["peak_profit"]) - float(stats["total_profit"]),
+    )
+    stats["last_ts"] = now
+    if symbol:
+        stats["symbols"][symbol] = int(stats["symbols"].get(symbol, 0)) + 1
+
+
+def _blank_entry(strategy_id: str, now: float) -> Dict[str, Any]:
+    """Auto-registration stub. Strategies that predate this registry (or are
+    hand-written rather than GA-discovered) still need a lifetime record --
+    dropping their outcomes would leave the screen blank for exactly the
+    strategies that have been trading longest."""
+    return {
+        "strategy_id": strategy_id,
+        "name": strategy_id,
+        "kind": "builtin",
+        "genes": {},
+        "objective": "",
+        "model_id": "",
+        "model_name": "(no brain)",
+        "metrics": {},
+        "commissioned": True,
+        "created_at": now,
+        "experiments": [],
+        "auto_registered": True,
+    }
+
+
+def rebuild_lifetime(
+    strategy_id: str,
+    *,
+    mode: str,
+    outcomes: List[Dict[str, Any]],
+    reason: str,
+    struck: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Replace one lifetime block with a replay of ``outcomes``.
+
+    The counterpart to ``record_outcome`` for CORRECTIONS. ``StrategyLedger.record``
+    mirrors every new outcome into this registry, so the two books stay in step
+    during normal operation -- but a correction applied to only one of them makes
+    them disagree silently. Observed 2026-09-03: four live exits with no settling
+    ERC-20 Transfer were annulled in ``data/strategy_ledger.json`` and in
+    ``trade_outcomes.status``, but not here, so ``scripts/live_path_check.py``
+    link 10 (which reads THIS file) went on reporting a live P/L of -0.1405 over
+    7 trades while the chain and the ledger both said +0.0052 over 3.
+
+    ``outcomes`` is the ordered surviving history: dicts of ``profit`` (float),
+    ``symbol`` (str) and ``ts`` (epoch seconds, float). It is replayed through
+    the same ``_fold`` ``record_outcome`` uses, so a rebuild and an equivalent
+    sequence of records produce byte-identical blocks.
+
+    Returns the updated entry, or ``None`` if the strategy is not registered --
+    a correction must never invent the strategy it is correcting.
+    """
+    key = "live" if str(mode).lower().startswith("live") else "ghost"
+    ordered = sorted(outcomes, key=lambda o: float(o.get("ts") or 0.0))
+    with _lock, file_lock(REGISTRY_PATH):
+        state = _load()
+        entry = state.get("strategies", {}).get(strategy_id)
+        if not entry:
+            return None
+        now = float(ordered[0]["ts"]) if ordered else time.time()
+        stats = _new_stats(now)
+        for o in ordered:
+            _fold(stats, float(o.get("profit") or 0.0), str(o.get("symbol") or ""),
+                  float(o.get("ts") or now))
+        lifetime = entry.setdefault("lifetime", {})
+        was = dict(lifetime.get(key) or {})
+        lifetime[key] = stats
+        entry.setdefault("corrections", []).append({
+            "ts": time.time(),
+            "mode": key,
+            "reason": reason,
+            "was": {k: was.get(k) for k in ("trades", "wins", "losses", "total_profit")},
+            "now": {k: stats.get(k) for k in ("trades", "wins", "losses", "total_profit")},
+            "struck": struck or [],
+        })
+        state["strategies"][strategy_id] = entry
+        _save(state)
+    return entry
+
+
 def record_outcome(
     strategy_id: str,
     *,
@@ -321,59 +444,11 @@ def record_outcome(
         state = _load()
         entry = state.get("strategies", {}).get(strategy_id)
         if not entry:
-            # Auto-register on first sight. Strategies that predate this
-            # registry (or are hand-written rather than GA-discovered) still
-            # need a lifetime record -- dropping their outcomes would leave
-            # the screen blank for exactly the strategies that have been
-            # trading longest.
-            entry = {
-                "strategy_id": strategy_id,
-                "name": strategy_id,
-                "kind": "builtin",
-                "genes": {},
-                "objective": "",
-                "model_id": "",
-                "model_name": "(no brain)",
-                "metrics": {},
-                "commissioned": True,
-                "created_at": now,
-                "experiments": [],
-                "auto_registered": True,
-            }
+            entry = _blank_entry(strategy_id, now)
             state.setdefault("strategies", {})[strategy_id] = entry
         lifetime = entry.setdefault("lifetime", {})
-        stats = lifetime.setdefault(key, {
-            "trades": 0, "wins": 0, "losses": 0,
-            "gross_win": 0.0, "gross_loss": 0.0, "total_profit": 0.0,
-            "best": 0.0, "worst": 0.0,
-            "peak_profit": 0.0, "max_drawdown": 0.0,
-            "consecutive_losses": 0, "max_consecutive_losses": 0,
-            "first_ts": now, "last_ts": now, "symbols": {},
-        })
-        p = float(profit)
-        stats["trades"] += 1
-        stats["total_profit"] = float(stats["total_profit"]) + p
-        if p > 0:
-            stats["wins"] += 1
-            stats["gross_win"] = float(stats["gross_win"]) + p
-            stats["consecutive_losses"] = 0
-            stats["best"] = max(float(stats["best"]), p)
-        else:
-            stats["losses"] += 1
-            stats["gross_loss"] = float(stats["gross_loss"]) + abs(p)
-            stats["consecutive_losses"] = int(stats["consecutive_losses"]) + 1
-            stats["max_consecutive_losses"] = max(
-                int(stats["max_consecutive_losses"]), int(stats["consecutive_losses"])
-            )
-            stats["worst"] = min(float(stats["worst"]), p)
-        stats["peak_profit"] = max(float(stats["peak_profit"]), float(stats["total_profit"]))
-        stats["max_drawdown"] = max(
-            float(stats["max_drawdown"]),
-            float(stats["peak_profit"]) - float(stats["total_profit"]),
-        )
-        stats["last_ts"] = now
-        if symbol:
-            stats["symbols"][symbol] = int(stats["symbols"].get(symbol, 0)) + 1
+        stats = lifetime.setdefault(key, _new_stats(now))
+        _fold(stats, profit, symbol, now)
         state["strategies"][strategy_id] = entry
         _save(state)
     return entry
