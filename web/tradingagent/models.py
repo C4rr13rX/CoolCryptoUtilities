@@ -217,8 +217,14 @@ class LossRecovery(models.Model):
 
     @property
     def saved_per_trigger(self) -> float:
-        """Dollars saved each time it fired. Negative means it costs money."""
-        return round(self.avg_loss_without - self.avg_loss_with, 6)
+        """Dollars saved each time it fired. Negative means it costs money.
+
+        Losses are stored NEGATIVE, so the naive `without - with` inverts:
+        a rule that turns -0.03 into -0.09 is making things worse, and that
+        subtraction reports +0.06 as though it helped. Comparing magnitudes
+        is what the question actually asks -- did the loss get smaller?
+        """
+        return round(abs(self.avg_loss_without) - abs(self.avg_loss_with), 6)
 
 
 class AgentRun(models.Model):
