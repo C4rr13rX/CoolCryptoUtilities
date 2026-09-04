@@ -4010,6 +4010,41 @@ class TradingBot:
             return
 
         self._model_input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
+
+        # THE MODEL DECIDES HOW LONG A WINDOW IS.
+        #
+        # BOT_WINDOW_SIZE defaulted to 20 while the pipeline builds every model
+        # at window_size=60, so _prepare_inputs reshaped its buffer to
+        # (1, 20, 2) and handed it to a graph expecting (None, 60, 2). EVERY
+        # tick failed with
+        #     Can not cast TensorSpec(shape=(1, 20, 2), ...) to
+        #     TensorSpec(shape=(None, 60, 2), ...)
+        # and fell back to a neutral pred_summary, so the TF lane has been
+        # contributing nothing to entry decisions -- silently, because a
+        # neutral summary is a valid summary and nothing downstream could tell
+        # it apart from a genuine "no opinion".
+        #
+        # Two independent settings describing one shape will drift again; the
+        # model's own input spec is the only one that cannot be wrong. The
+        # buffer, the slice and the reshape all read self.window_size, so
+        # adopting it here fixes all three together.
+        try:
+            price_vol_spec = next(
+                tensor for tensor in model.inputs
+                if tensor.name.split(":")[0] == "price_vol_input"
+            )
+            model_window = int(tf.keras.backend.int_shape(price_vol_spec)[1])
+        except Exception:  # noqa: BLE001 - an unreadable spec keeps the old value
+            model_window = 0
+        if model_window > 0 and model_window != int(getattr(self, "window_size", 0)):
+            log_message(
+                "trading",
+                f"window size {getattr(self, 'window_size', '?')} does not match "
+                f"the model's {model_window}; adopting the model's, which is "
+                f"the shape predictions are actually traced against",
+                severity="warning",
+            )
+            self.window_size = model_window
         input_signature: List[tf.TensorSpec] = []
         for tensor in model.inputs:
             keras_tensor = tensor[0] if isinstance(tensor, (list, tuple)) else tensor
