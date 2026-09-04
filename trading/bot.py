@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from collections import deque
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -31,6 +32,7 @@ from trading.brain_bridge import (
     features_text as _brain_features_text,
     outcome_text as _brain_outcome_text,
 )
+from services.cli_utils import from_base_units, to_base_units
 from services.logging_utils import log_message
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
@@ -863,6 +865,113 @@ class TradingBot:
             return max(5, int(raw or 75))
         except Exception:
             return 75
+
+    def _exit_dust_sweep_usd(self) -> float:
+        """Residual value below which an exit sells the whole balance instead.
+
+        A leftover worth less than this cannot pay for the swap that would
+        clear it, so leaving it behind does not preserve a position -- it
+        creates dust that is stuck forever. Defaults to WALLET_DUST_USD (0.50),
+        which is the threshold the rest of the bot already uses to decide a
+        holding is not worth counting.
+        """
+        raw = os.getenv("EXIT_DUST_SWEEP_USD", os.getenv("WALLET_DUST_USD", "0.50"))
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.50
+        return value if math.isfinite(value) and value >= 0.0 else 0.50
+
+    def _size_live_exit(
+        self,
+        swapper: Any,
+        *,
+        chain: str,
+        token: str,
+        symbol: str,
+        position_size: float,
+        price: float,
+    ) -> Optional[Dict[str, Any]]:
+        """Size a live exit from the chain, in raw base units. None = unreadable.
+
+        AN EXIT MUST SELL THE WHOLE POSITION, and the two ways this code failed
+        that are both fixed here.
+
+        1. It read the balance from ``portfolio.get_quantity()``, i.e. the
+           cached ``balances`` table, which has no row for most tokens the
+           wallet actually holds. Measured 2026-09-03: CBBTC 0.00003709,
+           BSTONK 360.264243225393 and BASECAT 38.09724680310889 were all held
+           on chain with no cache row at all, so ``get_quantity`` said 0.0 and
+           every exit was refused ``insufficient_base``. Seven positions,
+           5.25 USDC, permanently unexitable -- while entries, sized in USDC
+           (which IS cached), kept firing. That is the whole of "11 buys
+           against 4 sells". Worse, the snapshot was taken hundreds of lines
+           earlier, BEFORE ``_run_wallet_sync(reason="pre-exit")`` -- the
+           refresh that exists to freshen this number had its result discarded.
+
+        2. It handed the amount to ``swap()`` as ``f"{exit_size:.6f}"``, which
+           floors an 18-decimal token at six places. Exit
+           0x9ffdd1cfe3f17fbeddb2b3091b49f8f6524b5a0538ae9a2f3aadb56610264e6c
+           held 0.000111373 cbETH and sold 0.000111000; the 0.000000373 the
+           format string kept back is in the wallet today.
+
+        Raw integers end to end -- ``token_balance_raw`` returns the decimals
+        it read and ``from_base_units`` renders them exactly, so the string
+        ``swap()`` parses converts back to the same integer the chain reported.
+        No float ever bounds the sell amount.
+
+        The sweep: a residual too small to be worth its own swap is sold with
+        this exit rather than stranded. Without it, closing one of two
+        positions in the same token leaves the other as an unsellable remnant
+        the moment its value drops under the cost of trading it.
+        """
+        try:
+            reading = swapper.token_balance_raw(chain, token)
+        except Exception as exc:  # noqa: BLE001 - an unreadable balance is not a crash
+            log_message(
+                "live-swap",
+                f"exit balance read raised for {symbol} ({token}): {exc!r}",
+                severity="error",
+            )
+            return None
+        if not reading:
+            return None
+        onchain_raw = int(reading[0])
+        decimals = int(reading[1])
+        if onchain_raw <= 0:
+            # A real, measured zero: the position is already gone. Distinct
+            # from None, which means nobody could tell us.
+            return {
+                "amount": from_base_units(0, decimals),
+                "decimals": decimals,
+                "onchain_raw": 0,
+                "exit_raw": 0,
+                "onchain_human": 0.0,
+                "exit_human": 0.0,
+                "swept": False,
+            }
+        try:
+            want_raw = to_base_units(str(float(position_size)), decimals)
+        except Exception:
+            want_raw = 0
+        exit_raw = max(0, min(want_raw, onchain_raw))
+        residual_raw = onchain_raw - exit_raw
+        swept = False
+        if residual_raw > 0 and math.isfinite(price) and price > 0.0:
+            residual_usd = float(Decimal(residual_raw).scaleb(-decimals)) * float(price)
+            if residual_usd <= self._exit_dust_sweep_usd():
+                exit_raw = onchain_raw
+                residual_raw = 0
+                swept = True
+        return {
+            "amount": from_base_units(exit_raw, decimals),
+            "decimals": decimals,
+            "onchain_raw": onchain_raw,
+            "exit_raw": exit_raw,
+            "onchain_human": float(Decimal(onchain_raw).scaleb(-decimals)),
+            "exit_human": float(Decimal(exit_raw).scaleb(-decimals)),
+            "swept": swept,
+        }
 
     def _resolve_live_trade_asset(
         self, chain: str, symbol: str, explicit_address: Optional[str] = None
@@ -1914,7 +2023,33 @@ class TradingBot:
                     if dry_run:
                         executed.append({**op, "dry_run": True})
                     else:
-                        outcome = swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=f"{float(holding.quantity):.6f}", slippage_bps=slippage, purpose=name, symbol=holding.symbol)
+                        # THE DUST SWEEPER COULD NOT SELL DUST. This sold
+                        # `f"{holding.quantity:.6f}"`, and the wallet's cbETH
+                        # residue is 0.000000373253011411 -- six decimal places
+                        # of that is "0.000000", so `to_base_units` returned 0
+                        # and every sweep was refused `sell_amount_not_positive`.
+                        # The one action that exists to clear the leftovers an
+                        # exit strands was blind to the leftovers an exit
+                        # strands. Sized from the chain, in raw units, like the
+                        # exit itself.
+                        sized = self._size_live_exit(
+                            swapper,
+                            chain=focus_chain,
+                            token=holding.token,
+                            symbol=holding.symbol,
+                            position_size=float(holding.quantity),
+                            price=float(holding.usd) / max(float(holding.quantity), 1e-18),
+                        )
+                        if sized is None or sized["exit_raw"] <= 0:
+                            # Refuse rather than fall back to the format that
+                            # cannot express this amount: a truncated sweep is
+                            # how the dust got here.
+                            skipped.append({
+                                **op,
+                                "reason": "dust_balance_unreadable" if sized is None else "dust_balance_zero",
+                            })
+                            continue
+                        outcome = swapper.swap(chain=focus_chain, sell=holding.token, buy=stable_addr, amount_human=sized["amount"], slippage_bps=slippage, purpose=name, symbol=holding.symbol)
                         _land(op, outcome)
                 continue
 
@@ -5302,6 +5437,85 @@ class TradingBot:
             exit_target = held_size
             if directive and directive.action == "exit" and directive.size > 0:
                 exit_target = min(exit_target, float(directive.size))
+
+            # A LIVE exit is sized by the chain, never by the balances cache.
+            #
+            # ``available_base`` above was captured at the top of this method,
+            # from ``portfolio.get_quantity()``, which returns 0.0 for any
+            # token the cache has no row for -- CBBTC, BSTONK and BASECAT were
+            # all held on chain with no row on 2026-09-03. Sizing an exit from
+            # it refuses the sell (``insufficient_base``) while entries, sized
+            # in cached USDC, keep firing. See ``_size_live_exit``.
+            #
+            # This runs BEFORE the `exit_size <= 0` refusal below, because that
+            # refusal is exactly the symptom: the cache said zero and the chain
+            # said otherwise.
+            live_exit_swapper: Any = None
+            live_exit_amount: Optional[str] = None
+            live_exit_sizing: Optional[Dict[str, Any]] = None
+            if pos_is_live and base_swap_token and not self._live_trades_dry_run():
+                if self._bridge is None:
+                    self._bridge = self._init_bridge()
+                if self._bridge is not None:
+                    try:
+                        live_exit_swapper = self._new_swapper()
+                    except Exception as exc:  # noqa: BLE001
+                        log_message(
+                            "live-swap",
+                            f"exit swapper unavailable for {symbol}: {exc!r}",
+                            severity="error",
+                        )
+                        live_exit_swapper = None
+                if live_exit_swapper is not None:
+                    live_exit_sizing = self._size_live_exit(
+                        live_exit_swapper,
+                        chain=chain_name,
+                        token=base_swap_token,
+                        symbol=symbol,
+                        position_size=exit_target,
+                        price=float(price),
+                    )
+                    if live_exit_sizing is None:
+                        # Not "nothing to sell" -- nobody could say. Selling a
+                        # guessed amount is how the position got truncated in
+                        # the first place, so refuse and retry next sample.
+                        decision.update(
+                            {
+                                "action": "exit",
+                                "status": "live-exit-blocked",
+                                "reason": "base_balance_unreadable",
+                                "trade_id": pos.get("trade_id"),
+                                "wallet": "live",
+                                "session_id": self.ghost_session_id,
+                                "executed": False,
+                            }
+                        )
+                        self.metrics.feedback(
+                            "live_trading",
+                            severity=FeedbackSeverity.WARNING,
+                            label="exit_balance_unreadable",
+                            details={"symbol": symbol, "token": base_swap_token},
+                        )
+                        return decision
+                    available_base = float(live_exit_sizing["onchain_human"])
+                    exit_target = float(live_exit_sizing["exit_human"])
+                    live_exit_amount = str(live_exit_sizing["amount"])
+                    log_message(
+                        "live-swap",
+                        "exit sizing for %s from chain: holds %s, position %.18f, "
+                        "selling %s (raw %d/%d, decimals %d, swept=%s)"
+                        % (
+                            symbol,
+                            live_exit_sizing["onchain_human"],
+                            float(held_size),
+                            live_exit_amount,
+                            int(live_exit_sizing["exit_raw"]),
+                            int(live_exit_sizing["onchain_raw"]),
+                            int(live_exit_sizing["decimals"]),
+                            live_exit_sizing["swept"],
+                        ),
+                    )
+
             exit_size = min(exit_target, available_base)
             if exit_size <= 0.0:
                 self.metrics.feedback(
@@ -5441,14 +5655,20 @@ class TradingBot:
                 pre_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))
                 pre_native = float(self.portfolio.get_native_balance(chain_name))
 
-                swapper = self._new_swapper()
+                swapper = live_exit_swapper or self._new_swapper()
+                # The exact balance the chain reported, rendered at the token's
+                # own decimals. `f"{exit_size:.6f}"` is what left 0.000000373
+                # cbETH behind on 2026-09-03 and it must not come back.
+                exit_amount_human = (
+                    live_exit_amount if live_exit_amount is not None else f"{exit_size:.6f}"
+                )
                 try:
                     swap_outcome = await asyncio.to_thread(
                         swapper.swap,
                         chain=chain_name,
                         sell=base_swap_token,
                         buy=quote_swap_token,
-                        amount_human=f"{exit_size:.6f}",
+                        amount_human=exit_amount_human,
                         slippage_bps=slippage,
                         purpose="live_exit",
                         symbol=symbol,
@@ -5471,6 +5691,55 @@ class TradingBot:
 
                 exit_tx_hash = str(getattr(swap_outcome, "tx_hash", "") or "")
                 exit_tx_route = str(getattr(swap_outcome, "route", "") or "")
+
+                # Assert the position actually left the wallet, by asking the
+                # chain rather than by trusting the amount we asked to sell.
+                # A residual here is the CBETH failure repeating: tokens too
+                # small to be worth a swap, stuck, generating no_fill_detected
+                # retries on every later sample. Loud, never silent.
+                exit_residual_human = None
+                if live_exit_sizing is not None and exit_tx_hash:
+                    after = self._size_live_exit(
+                        swapper,
+                        chain=chain_name,
+                        token=base_swap_token,
+                        symbol=symbol,
+                        position_size=0.0,
+                        price=float(price),
+                    )
+                    if after is not None:
+                        exit_residual_human = float(after["onchain_human"])
+                        residual_usd = exit_residual_human * max(float(price), 0.0)
+                        if residual_usd > self._exit_dust_sweep_usd():
+                            log_message(
+                                "live-swap",
+                                "EXIT LEFT A POSITION BEHIND: %s still holds %.18f "
+                                "(~$%.4f) after %s -- sold %s of %s held. The next "
+                                "entry on this symbol would be buying without having "
+                                "sold."
+                                % (
+                                    symbol,
+                                    exit_residual_human,
+                                    residual_usd,
+                                    exit_tx_hash,
+                                    exit_amount_human,
+                                    live_exit_sizing["onchain_human"],
+                                ),
+                                severity="error",
+                            )
+                            self.metrics.feedback(
+                                "live_trading",
+                                severity=FeedbackSeverity.CRITICAL,
+                                label="exit_left_position_behind",
+                                details={
+                                    "symbol": symbol,
+                                    "tx_hash": exit_tx_hash,
+                                    "residual": exit_residual_human,
+                                    "residual_usd": residual_usd,
+                                    "sold": exit_amount_human,
+                                    "held_before": live_exit_sizing["onchain_human"],
+                                },
+                            )
 
                 post_quote = float(self.portfolio.get_quantity(quote_balance_symbol, chain=chain_name))
                 post_base = float(self.portfolio.get_quantity(base_balance_symbol, chain=chain_name))

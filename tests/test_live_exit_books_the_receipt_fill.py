@@ -32,6 +32,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from services.cli_utils import to_base_units
 from services.fill_receipt import ReceiptFill, read_fill
 from trading.bot import TradingBot
 from trading.scheduler import TradeDirective
@@ -135,6 +136,12 @@ class _ExitSwapper:
             "_Outcome", (), {"ok": True, "broadcast": True, "confirmed": True,
                              "tx_hash": EXIT_HASH, "route": "UniswapV3"},
         )()
+
+    def token_balance_raw(self, chain, token, owner=None):
+        """The exit is sized from this, exactly as SwapService sizes it from
+        the chain -- so the fake wallet, not the balances cache, is the
+        authority here too. AERO is an 18-decimal ERC-20 on base."""
+        return to_base_units(str(self.quantities.get("AERO", 0.0)), 18), 18
 
     def read_fill(self, chain, txh, *, sell, buy, wallet=None, **kwargs):
         assert txh == EXIT_HASH

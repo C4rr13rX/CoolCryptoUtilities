@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 from web3.exceptions import ContractLogicError
 from web3 import Web3
 from router_wallet import UltraSwapBridge, CHAINS, REQ_KW
@@ -515,6 +515,108 @@ class SwapService:
             except ValueError:
                 continue
             if 0 <= value <= 255:
+                return value
+        return None
+
+    def token_balance_raw(
+        self, chain: str, token: str, owner: Optional[str] = None
+    ) -> Optional[Tuple[int, int]]:
+        """What the owner holds of ``token`` RIGHT NOW: ``(raw, decimals)``.
+
+        None means no endpoint could answer -- never 0, because "the RPC is
+        down" and "the position is gone" are opposite facts and a caller that
+        sizes a sell from them cannot tell them apart.
+
+        THIS IS THE NUMBER AN EXIT MUST BE SIZED FROM. The alternative in this
+        repo was ``portfolio.get_quantity()``, which reads the cached
+        ``balances`` table, and the cache does not have a row for every token
+        the wallet holds. Measured 2026-09-03 against the chain, wallet
+        0x291c854811e92906a658Fb94Aa511bF919f968ad on base held
+
+            CBBTC   0.00003709          (4 live entries, 3.00 USDC spent)
+            BSTONK  360.264243225393    (1 live entry, 0.75 USDC spent)
+            BASECAT 38.09724680310889   (2 live entries, 1.50 USDC spent)
+
+        and ``balances`` had NO ROW for any of the three -- only ETH, USDC,
+        AERO, CBETH, USDBC, DAI, WETH, USDT. ``get_quantity`` answers 0.0 for a
+        missing row, so ``exit_size = min(held, 0.0)`` was 0, every exit was
+        refused ``insufficient_base``, and those seven positions could never be
+        closed. Entries are sized in USDC, which IS cached, so buys kept
+        working: 11 buys against 4 sells, 8.25 USDC out and 2.27 back.
+
+        Decimals come from ``_decimals_or_none`` -- the same answer ``swap()``
+        will use to convert the amount back -- so the raw units returned here
+        and the raw units sold are the same units. Asking two sources would
+        reintroduce the 10^12 error the decimals path already exists to refuse.
+        """
+        tok = self._resolve_token(chain, token)
+        who = str(owner or getattr(getattr(self.bridge, "acct", None), "address", "") or "")
+        if not who:
+            return None
+        if is_native(tok):
+            try:
+                return int(self.bridge._w3(chain).eth.get_balance(Web3.to_checksum_address(who))), 18
+            except Exception:
+                return None
+        dec = self._decimals_or_none(chain, tok)
+        if dec is None:
+            # Same rule as the swap itself: unknown decimals is unknown size.
+            return None
+        # 1. The bridge's bound endpoint -- one call, no extra latency.
+        try:
+            return int(self.bridge.erc20_balance_of(chain, tok, who)), int(dec)
+        except Exception:
+            pass  # one endpoint, one attempt -- step 2 asks the rest
+        # 2. Every other configured endpoint, exactly as _decimals_from_rpc
+        #    polls them. Base RPC flakiness is established here, and a single
+        #    refused read must not strand a position for a whole cycle.
+        raw = self._balance_from_rpc(chain, tok, who)
+        return None if raw is None else (raw, int(dec))
+
+    def _balance_from_rpc(self, chain: str, token: str, owner: str) -> Optional[int]:
+        """``balanceOf(owner)`` off the token contract, asking each RPC in turn.
+
+        Returns None when no endpoint gives a well-formed answer. Never raises.
+        An empty ``0x`` -- what an address with no code returns -- reads as
+        unknown and never as 0, for the same reason as the decimals read: a
+        zero balance is a fact about the wallet, and "0x" is a fact about the
+        endpoint.
+        """
+        urls = self._rpc_urls(chain)
+        if not urls:
+            return None
+        try:
+            import requests
+        except Exception:  # noqa: BLE001 - no HTTP client, no measurement
+            return None
+        try:
+            who = Web3.to_checksum_address(owner)
+        except Exception:
+            return None
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            # keccak("balanceOf(address)")[:4] + the address, left-padded to 32 bytes.
+            "method": "eth_call",
+            "params": [{"to": token, "data": "0x70a08231" + who[2:].lower().rjust(64, "0")}, "latest"],
+        }
+        for url in urls:
+            try:
+                resp = requests.post(
+                    url, json=payload, timeout=8, verify=REQ_KW.get("verify", True)
+                )
+                if resp.status_code != 200:
+                    continue
+                result = resp.json().get("result")
+            except Exception:
+                continue
+            if not isinstance(result, str) or len(result) <= 2:
+                continue  # "0x", None, or an error object: this endpoint cannot answer
+            try:
+                value = int(result, 16)
+            except ValueError:
+                continue
+            if 0 <= value < (1 << 256):
                 return value
         return None
 
