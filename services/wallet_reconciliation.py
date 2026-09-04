@@ -123,6 +123,42 @@ def _prefer_fresher_db_balances(
     return merged
 
 
+def _maybe_request_refresh() -> None:
+    """Kick an on-chain refresh when what we hold on disk has gone stale.
+
+    Deliberately fires on a fraction of the freshness window rather than on
+    expiry: refreshing only once a snapshot is ALREADY stale guarantees every
+    consumer sees stale data at least once, and a stale balance has already
+    halted this system while the wallet was funded.
+    """
+    try:
+        state = load_wallet_state() or {}
+    except Exception:  # noqa: BLE001
+        return
+
+    updated = _epoch(state.get("updated_at"))
+    age = time.time() - updated if updated else None
+
+    # An ABSOLUTE threshold, not a fraction of the freshness window.
+    #
+    # The window is WALLET_SNAPSHOT_MAX_AGE_SEC, and this deployment sets it to
+    # 1800. Triggering at half of that means the balance may be 15 minutes out
+    # of date before anything asks the chain -- which is how a snapshot reports
+    # fresh=True at 595 seconds old while the total has already moved.
+    #
+    # The balance now changes for reasons this system does not initiate: the
+    # trading agent swapping, funds added by hand, a transfer out. So refresh
+    # on the interval we actually want the number accurate to, and let
+    # request_wallet_refresh's own 45-second cooldown stop it thrashing.
+    refresh_after = max(30.0, float(
+        os.getenv("WALLET_REFRESH_AFTER_SEC", "60") or 60.0))
+
+    # No timestamp at all is the strongest reason to refresh, not a reason to
+    # skip: it means nothing has ever written a snapshot.
+    if age is None or age >= refresh_after:
+        request_wallet_refresh()
+
+
 def reconciled_wallet_snapshot(wallet_alias: str = "guardian") -> Dict[str, Any]:
     """Return current wallet facts, or explicitly mark an old cache untrusted.
 
@@ -130,6 +166,27 @@ def reconciled_wallet_snapshot(wallet_alias: str = "guardian") -> Dict[str, Any]
     completing its balance pass.  Consumers therefore see the last complete
     snapshot, never a mixture of partially updated database rows.
     """
+    # Ask for a refresh whenever someone reads a stale snapshot.
+    #
+    # request_wallet_refresh() existed with ZERO callers, so nothing ever
+    # triggered an on-chain reconciliation: balances only moved when some
+    # other job happened to write them. Measured 2026-09-04, this snapshot
+    # reported fresh=True at 716 seconds old against a 180-second freshness
+    # window, and the wallet total had changed underneath it.
+    #
+    # That matters more now than it did. The balance moves for reasons this
+    # system does not initiate -- the trading agent swapping, money added by
+    # hand, a transfer out to another wallet -- so a cache that only updates
+    # as a side effect of our own writes cannot track it.
+    #
+    # The call is non-blocking and rate-limited to once every 45 seconds, so
+    # a hot read path costs nothing: the CURRENT read still returns whatever
+    # is on disk, and the next one sees fresher data.
+    try:
+        _maybe_request_refresh()
+    except Exception:  # noqa: BLE001
+        pass
+
     snapshot = load_wallet_state() or {}
     # The balances table keys rows by wallet ADDRESS, and also holds rows
     # under the literal alias 'guardian' from older writes. Summing both
