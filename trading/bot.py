@@ -273,6 +273,14 @@ class TradingBot:
         self._predict_fn: Optional[Callable[..., Any]] = None
         #: One-shot so a filling buffer logs once, not once per tick.
         self._short_window_logged: bool = False
+        #: When the forward swap schedule may next be rebuilt.
+        self._next_swap_schedule_ts: float = 0.0
+        #: Replan triggers: what the wallet and the models looked like when
+        #: the plan currently in force was built.
+        self._last_schedule_capital: float = -1.0
+        self._last_schedule_forecasts: Optional[Tuple[int, int]] = None
+        self._last_schedule_leg_count: int = 0
+        self._last_schedule_built_ts: float = 0.0
         self._active_model_ref: Optional[tf.keras.Model] = None
         self._asset_vocab_limit: Optional[int] = None
         focus_chain_list_raw = os.getenv("LIVE_FOCUS_CHAINS", "")
@@ -1155,6 +1163,286 @@ class TradingBot:
         if os.getenv("LIVE_TRADES_DRY_RUN") is None and self._auto_execute_approved:
             return False
         return os.getenv("LIVE_TRADES_DRY_RUN", "1").lower() in {"1", "true", "yes", "on"}
+
+    def _maybe_build_swap_schedule(self, now: float, sample: Dict[str, Any]) -> None:
+        """Rebuild the forward plan periodically, and recalculate it always.
+
+        Two different cadences on purpose. BUILDING is expensive -- it reads
+        every route's pending forecasts and re-solves the capital allocation
+        -- so it runs on an interval. RECALCULATING is cheap and must happen
+        on every tick that carries a price, because a leg refuted thirty
+        seconds ago must not be executed on the strength of being in a plan
+        built five minutes ago.
+        """
+        scheduler = getattr(self, "scheduler", None)
+        if scheduler is None or not hasattr(scheduler, "build_swap_schedule"):
+            return
+
+        # Cheap half first: hold the existing plan to the newest price.
+        symbol = str(sample.get("symbol") or "")
+        price = float(sample.get("price") or 0.0)
+        existing = getattr(scheduler, "last_schedule", None)
+        if existing is not None and symbol and price > 0:
+            try:
+                from trading.swap_schedule import recalculate
+                recalculate(existing, {symbol: price}, now=now)
+            except Exception as exc:  # noqa: BLE001 - never break the tick
+                log_message("bus-scheduler",
+                            f"schedule recalculation failed: {exc!r}",
+                            severity="warning")
+
+        # WHAT MAKES A PLAN STALE IS A CHANGE IN THE FACTS, NOT THE CLOCK.
+        #
+        # A pure interval rebuilds a still-valid plan every N seconds and
+        # ignores the moment that actually matters -- money arriving, or a
+        # forecast appearing. Both can happen seconds after a rebuild, and
+        # waiting out the rest of the interval plans around a wallet and a
+        # model that no longer exist.
+        #
+        # The interval survives only as a floor (building re-solves every
+        # route, so a burst of ticks must not rebuild per tick) and as a
+        # ceiling (a quiet market still gets a refresh). Between them:
+        capital = float(self._schedulable_stable_usd())
+        reasons: List[str] = []
+
+        # 1. THE WALLET MOVED. Covers our own fills AND deposits or
+        #    withdrawals made outside this system entirely -- an external
+        #    transfer changes what can be committed just as much as a swap
+        #    does, and nothing else here would notice it.
+        last_capital = float(getattr(self, "_last_schedule_capital", -1.0))
+        if last_capital < 0:
+            reasons.append("first plan")
+        elif capital > 0:
+            drift = abs(capital - last_capital) / max(last_capital, 1e-9)
+            if drift >= self._schedule_capital_drift():
+                reasons.append(
+                    "wallet moved %.4f -> %.4f (%+.1f%%)"
+                    % (last_capital, capital, drift * 100.0))
+
+        # 2. THE MODELS SAID SOMETHING NEW. A forecast that did not exist when
+        #    the plan was built is exactly the opportunity -- or the pitfall --
+        #    the plan should be reconsidered against.
+        signature = self._forecast_signature()
+        if signature != getattr(self, "_last_schedule_forecasts", None):
+            reasons.append("new forecasts")
+
+        # 3. THE PLAN LOST LEGS. Guards firing means conditions moved against
+        #    what was planned, and the freed capital should be re-offered.
+        planned = len(getattr(existing, "legs", []) or []) if existing else 0
+        previous = int(getattr(self, "_last_schedule_leg_count", 0))
+        if existing is not None and planned < previous:
+            reasons.append("%d leg(s) dropped by their guards" % (previous - planned))
+
+        interval = self._swap_schedule_interval_sec()
+        if interval > 0 and now >= self._next_swap_schedule_ts:
+            reasons.append("periodic refresh")
+
+        min_gap = self._schedule_min_interval_sec()
+        if now - float(getattr(self, "_last_schedule_built_ts", 0.0)) < min_gap:
+            return
+        if not reasons:
+            return
+
+        self._next_swap_schedule_ts = now + (interval if interval > 0 else 300.0)
+        self._last_schedule_built_ts = now
+        self._last_schedule_capital = capital
+        self._last_schedule_forecasts = signature
+
+        try:
+            # Capital the plan may commit is the stable leg only; scheduling
+            # against tokens already held would plan to spend money twice.
+            clip = float(self._live_clip_usd() or 0.0)
+            if clip <= 0:
+                clip = float(os.getenv("GHOST_MIN_TRADE_USD", "0.75"))
+            if capital <= 0 or clip <= 0:
+                return
+            schedule = scheduler.build_swap_schedule(
+                capital_usd=capital, clip_usd=clip)
+            self._last_schedule_leg_count = len(getattr(schedule, "legs", []) or [])
+            if schedule is not None and getattr(schedule, "legs", None):
+                log_message(
+                    "bus-scheduler",
+                    "replanned (" + "; ".join(reasons) + "): "
+                    "%d leg(s) committing $%.2f of $%.2f: %s"
+                    % (len(schedule.legs), schedule.committed_usd(now), capital,
+                       ", ".join(f"{leg.symbol}@{leg.horizon}"
+                                 f"{leg.expected_return:+.1%}"
+                                 for leg in schedule.legs[:5])),
+                    severity="info",
+                )
+        except Exception as exc:  # noqa: BLE001 - planning must never stop trading
+            log_message("bus-scheduler",
+                        f"schedule build failed: {exc!r}", severity="warning")
+
+    def _swap_schedule_interval_sec(self) -> float:
+        """Ceiling: a quiet market still gets a refresh this often."""
+        try:
+            return max(0.0, float(os.getenv("SWAP_SCHEDULE_INTERVAL_SEC", "300")))
+        except (TypeError, ValueError):
+            return 300.0
+
+    def _schedule_min_interval_sec(self) -> float:
+        """Floor: never rebuild more often than this, however busy it gets.
+
+        Building re-solves every route's capital allocation. Without a floor,
+        a burst of ticks during a wallet move rebuilds once per tick.
+        """
+        try:
+            return max(0.0, float(os.getenv("SWAP_SCHEDULE_MIN_INTERVAL_SEC", "20")))
+        except (TypeError, ValueError):
+            return 20.0
+
+    def _schedule_capital_drift(self) -> float:
+        """How far the wallet must move to force a replan.
+
+        2% of an $18 wallet is $0.36, about half a clip -- enough to change
+        what the plan can afford. Smaller drift is fee dust, and rebuilding
+        on it would thrash.
+        """
+        try:
+            return max(0.0, float(os.getenv("SWAP_SCHEDULE_CAPITAL_DRIFT", "0.02")))
+        except (TypeError, ValueError):
+            return 0.02
+
+    def _forecast_signature(self) -> Tuple[int, int]:
+        """A cheap fingerprint of what the models currently predict.
+
+        Counts unresolved forecasts and sums their newest resolve times. A new
+        prediction, or one ageing out, changes it -- precisely when the plan
+        deserves reconsidering. Deliberately cheap: this runs on every tick,
+        so it must not walk the forecast payloads.
+        """
+        scheduler = getattr(self, "scheduler", None)
+        routes = getattr(scheduler, "routes", None) if scheduler else None
+        if not routes:
+            return (0, 0)
+        count = 0
+        stamp = 0
+        for state in routes.values():
+            pending = getattr(state, "pending_predictions", None)
+            if not pending:
+                continue
+            count += len(pending)
+            try:
+                stamp += int(pending[-1].get("resolve_ts") or 0)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        return (count, stamp)
+
+    def _schedulable_stable_usd(self) -> float:
+        """Stable capital a plan may commit, or 0.0 when it cannot be read.
+
+        Zero on an unreadable wallet is deliberate: planning to spend money we
+        could not confirm we have is how a schedule becomes a set of refused
+        entries.
+        """
+        try:
+            from services.wallet_reconciliation import reconciled_wallet_snapshot
+            snapshot = reconciled_wallet_snapshot()
+        except Exception:  # noqa: BLE001
+            return 0.0
+        if not isinstance(snapshot, dict) or snapshot.get("fresh") is False:
+            return 0.0
+        stable = {"USDC", "USDT", "DAI", "USDBC"}
+        total = 0.0
+        for row in snapshot.get("balances") or []:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("symbol") or "").upper() not in stable:
+                continue
+            for key in ("usd_value", "usd_amount", "value_usd", "usd"):
+                if row.get(key) is None:
+                    continue
+                try:
+                    total += float(row[key])
+                except (TypeError, ValueError):
+                    pass
+                break
+        return total
+
+    def _take_scheduled_leg(self, sample: Dict[str, Any]) -> Optional["TradeDirective"]:
+        """Consume a ripe leg from the bus scheduler's forward plan.
+
+        The plan is built from forecasts that have NOT yet resolved -- the
+        model's opinion about the future, which until now was graded for
+        accuracy and then discarded. A leg becomes actionable when its
+        execute_after_ts has arrived, its horizon has not expired, and the
+        market has not already refuted it.
+
+        Returns a directive that replaces this tick's scheduler output, or
+        None to fall through to the ordinary per-tick evaluation. Falling
+        through is the common case and is not a failure: most ticks have no
+        leg due.
+
+        Nothing here bypasses a guard. The directive goes through
+        _interpret_predictions like any other, so the swap guard, the symbol
+        edge gate, the duplicate check and the micro-profit floor all still
+        run. A schedule is an intention, not a licence.
+        """
+        scheduler = getattr(self, "scheduler", None)
+        schedule = getattr(scheduler, "last_schedule", None) if scheduler else None
+        if schedule is None:
+            return None
+
+        symbol = str(sample.get("symbol") or self.primary_symbol)
+        if self.positions.get(symbol):
+            return None                   # already holding it; nothing to enter
+
+        now = float(sample.get("ts") or time.time())
+        price = float(sample.get("price") or 0.0)
+
+        for leg in list(getattr(schedule, "legs", []) or []):
+            if getattr(leg, "symbol", "") != symbol:
+                continue
+            if not leg.is_ripe(now):
+                continue
+            # The guard, checked against THIS tick rather than the price the
+            # schedule was last recalculated on. A forecast refuted between
+            # recalculations must not be executed on the strength of being in
+            # the plan.
+            if leg.is_invalidated(price):
+                try:
+                    schedule.legs.remove(leg)
+                except ValueError:
+                    pass
+                log_message(
+                    "bus-scheduler",
+                    f"dropped scheduled leg {leg.leg_id}: price {price:.8g} "
+                    f"breached the guard {leg.invalidate_below:.8g}, so the "
+                    f"forecast of {leg.expected_return:+.2%} is refuted",
+                    severity="info",
+                )
+                continue
+
+            try:
+                schedule.legs.remove(leg)
+            except ValueError:
+                pass
+
+            base_token = symbol.split("-")[0]
+            quote_token = symbol.split("-")[-1] if "-" in symbol else "USDC"
+            log_message(
+                "bus-scheduler",
+                f"executing scheduled leg {leg.leg_id}: {leg.action} {symbol} "
+                f"on a {leg.horizon} forecast of {leg.expected_return:+.2%} "
+                f"(${leg.notional_usd:.2f}, guard {leg.invalidate_below:.8g})",
+                severity="info",
+            )
+            return TradeDirective(
+                action=str(leg.action or "enter"),
+                symbol=symbol,
+                base_token=base_token,
+                quote_token=quote_token,
+                size=float(leg.notional_usd),
+                target_price=float(leg.target_price),
+                horizon=str(leg.horizon),
+                confidence=float(leg.confidence),
+                expected_return=float(leg.expected_return),
+                reason=(f"scheduled leg on a {leg.horizon} forecast of "
+                        f"{leg.expected_return:+.2%}"),
+                strategy_id=str(leg.strategy_id or "bus_schedule"),
+            )
+        return None
 
     def _take_pending_rotation(self, sample: Dict[str, Any]) -> Optional["TradeDirective"]:
         """Consume a rotation directive queued by the PortfolioRotator.
@@ -4995,8 +5283,17 @@ class TradingBot:
                 else:
                     self._scheduler_halted = False
                     rotation_directive = self._take_pending_rotation(sample)
+                    scheduled_leg = (
+                        None if rotation_directive is not None
+                        else self._take_scheduled_leg(sample)
+                    )
                     if rotation_directive is not None:
                         directive = rotation_directive
+                    elif scheduled_leg is not None:
+                        # A leg the scheduler planned against a forecast that
+                        # has not resolved yet. Same precedence as a rotation:
+                        # a deliberate plan outranks this tick's opinion.
+                        directive = scheduled_leg
                     else:
                         directive = self.scheduler.evaluate(
                             sample,
@@ -5009,6 +5306,7 @@ class TradingBot:
             except Exception as exc:
                 print(f"[bus-scheduler] evaluation failed: {exc}")
             self._maybe_record_horizon_summary(sample_ts)
+            self._maybe_build_swap_schedule(sample_ts, sample)
             decision = await self._interpret_predictions(
                 preds,
                 sample,
