@@ -399,3 +399,66 @@ class MathAuditTest(TestCase):
 
         actions = ([{"status": "live-entry"}] * 7 + [{"status": "live-exit"}] * 2)
         self.assertEqual(algebra(actions)["unclosed"], 5)
+
+
+class BusSchedulerAwarenessTest(TestCase):
+    """The agent shares a wallet with the scheduler.
+
+    Buying a symbol the scheduler is mid-route on does not open a separate
+    position -- it moves the shared balance out from under a plan already in
+    flight. The agent may still choose to, but not unknowingly, and the plan
+    to return the capital travels with the decision.
+    """
+
+    def test_a_deadline_inside_a_round_trip_is_not_feasible(self):
+        """Settlement takes minutes, so a 2-minute window cannot be used."""
+        from .bus_bridge import return_plan
+
+        plan = return_plan({"symbol": "PEPE-USDC", "horizon": "30m",
+                            "due_in_sec": 120.0}, clip_usd=0.75)
+        self.assertFalse(plan["feasible"])
+        self.assertIn("miss its window", plan["detail"])
+
+    def test_a_comfortable_deadline_is_feasible(self):
+        from .bus_bridge import return_plan
+
+        plan = return_plan({"symbol": "ARB-USDC", "horizon": "1d",
+                            "due_in_sec": 43000.0}, clip_usd=0.75)
+        self.assertTrue(plan["feasible"])
+
+    def test_an_overdue_position_says_to_close_it_first(self):
+        """Capital the scheduler is waiting on is worth more than a new entry."""
+        from .bus_bridge import return_plan
+
+        plan = return_plan({"symbol": "CBETH-USDC", "horizon": "10m",
+                            "due_in_sec": -600.0}, clip_usd=0.75)
+        self.assertFalse(plan["feasible"])
+        self.assertIn("OVERDUE", plan["detail"])
+
+    def test_a_missing_horizon_is_admitted_not_assumed_on_schedule(self):
+        """No deadline means it cannot be checked, not that it is fine."""
+        from .bus_bridge import return_plan
+
+        plan = return_plan({"symbol": "VIRTUAL-USDC", "horizon": "",
+                            "due_in_sec": None}, clip_usd=0.75)
+        self.assertIsNone(plan["feasible"])
+        self.assertIn("no recorded horizon", plan["detail"])
+
+    def test_horizon_labels_resolve_to_seconds(self):
+        from .bus_bridge import _horizon_seconds
+
+        self.assertEqual(_horizon_seconds("30m"), 1800)
+        self.assertEqual(_horizon_seconds("1d"), 86400)
+        self.assertEqual(_horizon_seconds("1w"), 604800)
+        self.assertIsNone(_horizon_seconds("nonsense"))
+
+    def test_the_briefing_speaks_even_with_nothing_riding(self):
+        """Silence would read as 'no scheduler', not 'nothing committed'."""
+        from .bus_bridge import bus_briefing
+        from unittest import mock
+
+        with mock.patch("tradingagent.bus_bridge.scheduled_commitments",
+                        return_value=[]):
+            lines = bus_briefing(0.75)
+        self.assertTrue(lines)
+        self.assertIn("no open commitments", lines[0])

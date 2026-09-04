@@ -267,6 +267,21 @@ def build_prompt(config: AgentConfig) -> str:
     except Exception:
         pass
 
+    # What the scheduler has already promised. The agent shares this wallet,
+    # so buying a symbol mid-route moves capital out from under a plan in
+    # flight -- it may still choose to, but not unknowingly.
+    try:
+        from .bus_bridge import bus_briefing
+
+        parts += ["", "## THE BUS SCHEDULER -- capital already committed"]
+        parts += ["  " + line for line in bus_briefing(config.clip_usd)]
+        parts.append(
+            "If you trade one of these, say in your reasoning how the capital "
+            "gets back before its horizon -- the plan to get the people back "
+            "on the bus. If you cannot, trade something else.")
+    except Exception:
+        pass
+
     # The mathematical audit. Given to the agent BEFORE it decides, so its
     # choices are made against measured significance rather than against a
     # feeling about recent trades.
