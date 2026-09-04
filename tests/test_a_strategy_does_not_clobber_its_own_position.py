@@ -37,8 +37,13 @@ The rule pinned here:
     because refusing it means a graduated strategy can never take the live
     entry for any symbol its own ghost lane happens to be holding, which is
     link 6 and was 7 of the 9 live-capable symbols on 2026-09-02.
-  * a DIFFERENT strategy still releases as before; that path is unchanged and
-    stays pinned by tests/test_entry_never_clobbers_a_position.py.
+  * a DIFFERENT strategy releases as before WHEN THE ENTRY IS LIVE. The
+    ghost-over-ghost case was the whole of the remaining leak once this fix
+    landed -- 67 cross-strategy evictions in the 24h to 2026-09-04, against
+    zero same-strategy ones in the last 8h of it -- and it is now refused too;
+    see tests/test_a_strategy_does_not_clobber_another_strategys_position.py.
+    The live-over-ghost path is unchanged and stays pinned here and by
+    tests/test_entry_never_clobbers_a_position.py.
 """
 
 from __future__ import annotations
