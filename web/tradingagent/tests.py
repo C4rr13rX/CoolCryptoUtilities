@@ -462,3 +462,145 @@ class BusSchedulerAwarenessTest(TestCase):
             lines = bus_briefing(0.75)
         self.assertTrue(lines)
         self.assertIn("no open commitments", lines[0])
+
+
+class GameTheoryTest(TestCase):
+    """Trading is played against opponents who see our order before it settles."""
+
+    def test_winning_often_while_losing_big_is_adverse_selection(self):
+        """A symmetric price with uninformed entries cannot produce this."""
+        from .gametheory import adverse_selection
+
+        returns = [0.01] * 25 + [-0.05] * 15
+        result = adverse_selection(returns)
+        self.assertTrue(result["selected_against"])
+        self.assertGreater(result["loss_to_win_ratio"], 1.5)
+        self.assertIn("Cap the loss", result["implication"])
+
+    def test_symmetric_outcomes_are_not_flagged(self):
+        from .gametheory import adverse_selection
+
+        result = adverse_selection([0.02] * 20 + [-0.02] * 20)
+        self.assertFalse(result["selected_against"])
+
+    def test_slippage_larger_than_the_edge_is_named_as_the_leak(self):
+        from .gametheory import sandwich_exposure
+
+        result = sandwich_exposure(clip_usd=0.75, slippage=0.01,
+                                   edge_per_trade=0.001)
+        self.assertFalse(result["edge_survives"])
+        self.assertIn("SLIPPAGE IS THE LEAK", result["verdict"])
+
+    def test_a_healthy_edge_survives_the_sandwich(self):
+        from .gametheory import sandwich_exposure
+
+        result = sandwich_exposure(clip_usd=0.75, slippage=0.0005,
+                                   edge_per_trade=0.02)
+        self.assertTrue(result["edge_survives"])
+
+    def test_the_stopping_game_finds_a_stop_that_helps(self):
+        """Small wins with a few catastrophic losses is the case a stop fixes."""
+        from .gametheory import stopping_game
+
+        # Losses must VARY: identical losses give one candidate stop equal to
+        # the loss itself, so nothing can improve on it. Real books have a
+        # tail, and the tail is what a stop cuts.
+        returns = [0.01] * 30 + [-0.05, -0.09, -0.14, -0.20, -0.28]
+        result = stopping_game(returns, round_trip_cost=0.0)
+        self.assertTrue(result["sufficient"])
+        self.assertIsNotNone(result["best_stop"])
+        self.assertGreater(result["improvement"], 0.0)
+
+    def test_a_thin_sample_refuses_to_fit_a_stop(self):
+        from .gametheory import stopping_game
+
+        self.assertFalse(stopping_game([0.01, -0.02, 0.03])["sufficient"])
+
+    def test_constant_size_on_one_symbol_is_predictable(self):
+        from .gametheory import repeated_game
+
+        actions = [{"status": "live-entry", "size": 0.75, "symbol": "A-USDC",
+                    "ts": 1000.0 + i * 600} for i in range(25)]
+        result = repeated_game(actions)
+        self.assertTrue(result["predictable"])
+        self.assertIn("Vary clip size", result["implication"])
+
+
+class TheoremDiscoveryTest(TestCase):
+    """A claim that works on its own window is a memory, not a discovery."""
+
+    def _trades(self, n=60, effect=0.0):
+        """Half match the condition, and the effect is whatever we inject.
+
+        Returns carry a little jitter on purpose. Identical values have zero
+        variance, so Welch's t cannot run on them and a genuine effect would
+        be reported as refuted -- the sample has to look like trading.
+        """
+        # Jitter must be UNCORRELATED with the split. A 6-cycle pattern on a
+        # 2-cycle condition gives the two groups systematically different
+        # values -- that is a real effect, and the tester correctly reported
+        # my "no effect" case as SUPPORTED until this was fixed.
+        import random
+
+        rng = random.Random(20260904)
+        rows = []
+        for i in range(n):
+            matches = i % 2 == 0
+            base = 0.01 + rng.uniform(-0.002, 0.002)
+            rows.append({"return": (base + effect) if matches else base,
+                         "hold_sec": 100.0 if matches else 5000.0,
+                         "size_usd": 0.25 if matches else 2.0,
+                         "ticks_1h": 50 if matches else 1})
+        return rows
+
+    def test_a_claim_with_no_real_effect_is_refuted(self):
+        from .theorems import Theorem
+
+        result = Theorem("flat", "no effect",
+                         lambda t: t["hold_sec"] <= 1000).evaluate(
+                             self._trades(effect=0.0))
+        self.assertEqual(result["status"], "REFUTED")
+
+    def test_a_real_effect_is_supported_on_held_out_data(self):
+        from .theorems import Theorem
+
+        result = Theorem("real", "short holds pay",
+                         lambda t: t["hold_sec"] <= 1000).evaluate(
+                             self._trades(effect=0.05))
+        self.assertEqual(result["status"], "SUPPORTED")
+        self.assertLess(result["p_value"], 0.05)
+
+    def test_too_few_trades_is_untestable_not_refuted(self):
+        """Refuting an untested claim is as wrong as supporting it."""
+        from .theorems import Theorem
+
+        result = Theorem("thin", "x", lambda t: True).evaluate(
+            self._trades(n=8))
+        self.assertEqual(result["status"], "PROPOSED")
+        self.assertIn("UNTESTABLE", result["verdict"])
+
+    def test_an_effect_that_reverses_out_of_sample_is_refuted(self):
+        """Fitting noise produces exactly this, and it must not pass."""
+        from .theorems import Theorem
+
+        rows = []
+        for i in range(60):
+            matches = i % 2 == 0
+            # Effect is positive in the fit window and negative after it.
+            first_half = i < 36
+            value = 0.05 if (matches and first_half) else (
+                -0.05 if matches else 0.0)
+            rows.append({"return": value, "hold_sec": 100.0 if matches else 5000.0})
+        result = Theorem("flip", "reverses",
+                         lambda t: t["hold_sec"] <= 1000).evaluate(rows)
+        self.assertEqual(result["status"], "REFUTED")
+        self.assertFalse(result["same_direction"])
+
+    def test_the_standing_assumptions_are_stated_falsifiably(self):
+        """Every inherited threshold should be checkable, not assumed."""
+        from .theorems import standing_theorems
+
+        names = {t.name for t in standing_theorems()}
+        self.assertIn("fee_floor", names)
+        self.assertIn("short_hold", names)
+        self.assertIn("dense_feed", names)

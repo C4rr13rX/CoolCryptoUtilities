@@ -297,6 +297,31 @@ def build_prompt(config: AgentConfig) -> str:
     except Exception:
         pass
 
+    # Game theory and theorem status. The agent is told who it is playing and
+    # which of its inherited assumptions survive testing, so it stops
+    # optimising entries against opponents that are taking the difference.
+    try:
+        from .gametheory import full_game_analysis, game_summary
+        from .mathaudit import _outcomes, recorded_actions
+        from .theorems import evaluate_all, theorem_summary, trades_with_features
+
+        actions = recorded_actions(86400 * 7)
+        returns = _outcomes(actions)
+        analysis = full_game_analysis(returns, actions, config.clip_usd or 0.75)
+        parts += ["", "## GAME THEORY -- who we are playing"]
+        parts += ["  " + line for line in game_summary(analysis)]
+
+        report = evaluate_all(trades_with_features())
+        parts += ["", "## THEOREMS -- what survives testing"]
+        parts += ["  " + line for line in theorem_summary(report)[:14]]
+        parts.append(
+            "A REFUTED theorem is an assumption this system still acts on and "
+            "should not. Propose new ones in new_theorems below; each is fitted "
+            "on old trades and judged only on trades it never saw, so a claim "
+            "that works on its own window is not a discovery.")
+    except Exception:
+        pass
+
     parts += [
         "",
         "## THIS PASS",
@@ -317,6 +342,13 @@ def build_prompt(config: AgentConfig) -> str:
             "retire_constraints": [0],
             "data_requests": ["download2000 | make2000index | make_assignments"],
             "watch_symbols": ["SYM-USDC to start watching"],
+            "new_theorems": [{"name": "short_name",
+                              "statement": "when CONDITION holds, return "
+                                           "differs from baseline",
+                              "feature": "hold_sec|size_usd|ticks_1h|return",
+                              "operator": "<=|>=",
+                              "threshold": 0.0,
+                              "rationale": "the numbers that suggest it"}],
         }, indent=2),
         "",
         "Rules that are not negotiable:",
@@ -397,6 +429,32 @@ def _record_decision(run: AgentRun, decision: Dict[str, Any],
             trigger=str(spec.get("trigger") or "")[:2000],
             action=str(spec.get("action") or "")[:2000],
             status=LossRecovery.Status.PROPOSED)
+
+    # A theorem the agent proposed. Stored as a Constraint so it lives on the
+    # same ladder as everything else -- PROPOSED until a hold-out test
+    # supports it, never in force merely because it was written down.
+    for spec in (decision.get("new_theorems") or [])[:5]:
+        feature = str(spec.get("feature") or "").strip()
+        operator = str(spec.get("operator") or "<=").strip()
+        # Only features we can actually evaluate, and only comparisons the
+        # tester understands: an unparseable theorem cannot be falsified, and
+        # an unfalsifiable claim is the thing this whole layer exists to stop.
+        if feature not in {"hold_sec", "size_usd", "ticks_1h", "return"}:
+            continue
+        if operator not in {"<=", ">="}:
+            continue
+        try:
+            threshold = float(spec.get("threshold"))
+        except (TypeError, ValueError):
+            continue
+        Constraint.objects.create(
+            kind=Constraint.Kind.TIMING,
+            status=Constraint.Status.PROPOSED,
+            rule=f"THEOREM {spec.get('name') or 'unnamed'}: "
+                 f"{spec.get('statement') or ''} "
+                 f"[{feature} {operator} {threshold}]",
+            rationale=str(spec.get("rationale") or "")[:2000],
+            source_run=run)
 
     for cid in (decision.get("retire_constraints") or [])[:20]:
         Constraint.objects.filter(pk=cid).update(
