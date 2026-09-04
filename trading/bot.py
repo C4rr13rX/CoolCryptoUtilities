@@ -99,6 +99,14 @@ WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
 }
 
 
+class _InsufficientHistory(RuntimeError):
+    """Not enough buffered samples yet to fill the model's window.
+
+    Distinct from a genuine failure: the answer is to wait for more ticks,
+    not to log an error or fall back to a neutral prediction forever.
+    """
+
+
 class TradingBot:
     """
     High-level orchestrator that ties together the market stream, the training
@@ -194,6 +202,8 @@ class TradingBot:
         self._last_windows: Dict[str, Dict[str, np.ndarray]] = {}
         self._model_input_order: Optional[List[str]] = None
         self._predict_fn: Optional[Callable[..., Any]] = None
+        #: One-shot so a filling buffer logs once, not once per tick.
+        self._short_window_logged: bool = False
         self._active_model_ref: Optional[tf.keras.Model] = None
         self._asset_vocab_limit: Optional[int] = None
         focus_chain_list_raw = os.getenv("LIVE_FOCUS_CHAINS", "")
@@ -4261,6 +4271,9 @@ class TradingBot:
                 self._equilibrium_last_adjust = now
 
             self._buffer.append(sample)
+            # The model's window, which _ensure_model_bindings may have grown
+            # since this bot was constructed. Checking the old value admitted
+            # ticks the model could not consume.
             if len(self._buffer) < self.window_size:
                 return
 
@@ -4353,10 +4366,34 @@ class TradingBot:
             current_price_safe = float(sample.get("price") or 0.0) or None
             preds = None  # ensure binding exists for the non-TF code paths
             if tf_ok and model is not None:
-                inputs = self._prepare_inputs(window_slice)
                 try:
+                    inputs = self._prepare_inputs(window_slice)
+                except _InsufficientHistory as exc:
+                    # Not an error: the model's window grew and the buffer has
+                    # not caught up. Left OUTSIDE the try below on the first
+                    # write, this escaped _handle_sample entirely and killed
+                    # the market-stream callback -- taking the ghost lane with
+                    # it, so NOTHING traded while history refilled.
+                    inputs = None
+                    pred_summary = self._neutral_pred_summary(
+                        current_price=current_price_safe)
+                    if not self._short_window_logged:
+                        log_message(
+                            "trading",
+                            f"holding predictions until the buffer fills: {exc}",
+                            severity="info",
+                        )
+                        self._short_window_logged = True
+                else:
+                    self._short_window_logged = False
+
+                try:
+                    if inputs is None:
+                        raise _InsufficientHistory("buffer still filling")
                     preds = self._invoke_model(inputs)
                     pred_summary = self._summarise_predictions(preds, current_price=current_price_safe)
+                except _InsufficientHistory:
+                    pred_summary = self._neutral_pred_summary(current_price=current_price_safe)
                 except Exception as exc:
                     # TF was supposed to be ok but the predict call
                     # itself blew up — fall through to neutral.
@@ -4509,6 +4546,22 @@ class TradingBot:
                 asyncio.create_task(self._handle_sample(next_sample))
 
     def _prepare_inputs(self, window: List[Dict[str, Any]]) -> Dict[str, np.ndarray]:
+        # A SHORT WINDOW IS NOT A RESHAPE ERROR, IT IS NOT ENOUGH HISTORY YET.
+        #
+        # window_size is adopted from the model at binding time, so it can grow
+        # (20 -> 60) after the buffer has already passed the older, smaller
+        # admission check in _handle_sample. The slice then yields fewer rows
+        # than the reshape demands and raises
+        #     cannot reshape array of size 42 into shape (1,60,2)
+        # out of the market-stream callback -- which killed the whole tick,
+        # including the ghost lane, and stopped entries entirely.
+        #
+        # Raising a named error lets the caller treat it as "wait for more
+        # history", which is what it actually is.
+        if len(window) < self.window_size:
+            raise _InsufficientHistory(
+                f"have {len(window)} samples, model needs {self.window_size}")
+
         prices = np.array([float(row.get("price", 0.0)) for row in window], dtype=np.float32)
         volumes = np.array([float(row.get("volume", 0.0)) for row in window], dtype=np.float32)
         price_vol = np.stack([prices, volumes], axis=-1).reshape(1, self.window_size, 2)
