@@ -484,10 +484,48 @@ class StrategyLedger:
         if not ent.get("live_approved"):
             return
         live = ent["live"]
+        # Consecutive losses only matter if we are DOWN on the money.
+        #
+        # A streak is not a verdict. A strategy can lose four small trades,
+        # win one larger one and still be ahead; demoting it there discards a
+        # winner for the shape of its variance rather than its result.
+        #
+        # Measured 2026-09-03: atf_static was demoted for "2 consecutive live
+        # losses" while STRATEGY_DEMOTE_MAX_LIVE_LOSSES was set to 2 in .env.
+        # Both losses were the CBETH exits that sold only 0.000162 and
+        # 0.000111 CBETH against roughly 0.00026 held -- our own exit-sizing
+        # bug booking losses the market never produced. That demotion left
+        # EVERY strategy in the ledger at live_approved=False, so nothing
+        # could trade at all, and the rapid-swap cadence never returned.
+        #
+        # So the streak still guards against a run of real losses, but it
+        # cannot fire while the strategy is net positive on live money.
+        # Profit is the thing we are here for; the streak is only a symptom.
         max_losses = _env_int("STRATEGY_DEMOTE_MAX_LIVE_LOSSES", 4)
-        if int(live.get("consecutive_losses", 0)) >= max_losses:
-            self._demote_locked(sid, f"{live['consecutive_losses']} consecutive live losses")
-            return
+        streak = int(live.get("consecutive_losses", 0))
+        if streak >= max_losses:
+            net_live = float(live.get("total_profit", 0.0))
+            if net_live > 0.0:
+                # Imported here: this module is loaded by tooling that does
+                # not always have services on the path, and a logging import
+                # must never be what stops a strategy trading.
+                try:
+                    from services.logging_utils import log_message
+
+                    log_message(
+                        "strategy-ledger",
+                        f"{sid}: {streak} consecutive live losses but net "
+                        f"{net_live:+.6f} -- keeping it live, the account grew",
+                        severity="info",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                self._demote_locked(
+                    sid,
+                    f"{streak} consecutive live losses with net {net_live:+.6f}",
+                )
+                return
 
         # Live profitability is the metric that decides, above all others.
         #
