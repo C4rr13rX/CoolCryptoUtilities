@@ -233,9 +233,21 @@ def test_no_truncated_transaction_hashes_in_the_source():
     Scoped to prefixes of 8+ hex digits, which is how this repo abbreviates a
     hash. Shorter elisions are addresses -- the 0xEeee...EEeE native sentinel,
     or a wallet in a sample log line -- and those are not being pinned here.
+
+    The stub-token family is an address too: the eight dead contracts
+    recorded in services/token_address_book.py are written
+    ``0xb2000000000000000000...`` and ``0xB2000000...`` because a run of
+    zeros is the whole point of naming them. A zero-padded address is not an
+    abbreviated hash -- there is nothing to recover -- so a prefix that is a
+    short marker followed by nothing but zeros is exempt.
+
+    That cannot hide a real elision. This repo abbreviates a hash by its
+    leading bytes (``0x5a19c505``, ``0x6a644ba16d92``), which are
+    high-entropy hex and never a lone marker trailed by zeros.
     """
     offenders: list[str] = []
     trunc = re.compile(r"0x[0-9a-fA-F]{8,20}(?:…|\.\.\.)")
+    padded_address = re.compile(r"[0-9a-fA-F]{0,4}0{4,}\Z")
     for path in list(_ROOT.glob("*.py")) + [
         p for d in ("services", "trading", "tests", "scripts")
         for p in (_ROOT / d).rglob("*.py")
@@ -243,6 +255,9 @@ def test_no_truncated_transaction_hashes_in_the_source():
         if path.name == Path(__file__).name:
             continue
         for i, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-            if trunc.search(line):
+            for hit in trunc.findall(line):
+                hex_body = hit[2:].rstrip(".…")
+                if padded_address.fullmatch(hex_body):
+                    continue
                 offenders.append(f"{path.relative_to(_ROOT)}:{i}: {line.strip()}")
     assert not offenders, "truncated tx hashes are unverifiable:\n" + "\n".join(offenders)

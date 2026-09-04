@@ -28,6 +28,37 @@ The threshold is a t-statistic, not a raw total, because a symbol can be
 down simply for having traded often. t < -1.7 with n >= MIN_SAMPLES is
 roughly p < 0.05 one-tailed -- evidence that the mean is genuinely negative
 rather than a losing streak.
+
+JUDGED ON RETURN, NOT ON DOLLARS. The t-test used to run on ``net_profit``
+in quote units, which measures position SIZE as much as it measures edge.
+The ghost book is sized as a share of the stable leg, so the notional
+behind these rows is not constant -- measured 2026-09-04 over 143 closed
+round trips, the notional within a single symbol ranged $0.0211..$3.0439
+for BASECAT (144x) and $0.0119..$2.7908 for CBXRP (234x). A t-statistic
+over dollars drawn from a 144x size range has variance driven by sizing
+policy rather than by the symbol, which is precisely the "wrong units
+across a boundary" failure this repo keeps shipping. ``net_profit /
+notional`` is size-invariant and is what the next trade will actually
+experience.
+
+AND AGAINST COST, NOT AGAINST ZERO. "Does this symbol make money?" is the
+wrong null hypothesis; a symbol that returns +0.1% per round trip against a
+0.65% round-trip cost is a loser. The test is therefore whether the mean
+return clears ``ROUND_TRIP_COST``, measured as the median ``fee_cost /
+notional`` actually paid over the same book (0.650%).
+
+Both corrections were validated before shipping and neither changes today's
+verdicts: on the current book the dollar rule and the return-vs-cost rule
+select the SAME two symbols (BASECAT-USDC, CBXRP-USDC), and the same 60/40
+out-of-sample split improves the untouched holdout by +0.0650 under either.
+The change removes an invalid statistic without moving the ban list -- it
+matters as soon as sizing changes, which it does every time the wallet
+rotates or the live clip differs from the ghost clip (they differ 4x today).
+
+Rows below ``MIN_NOTIONAL`` are dropped rather than divided through. Dust
+closes make the denominator meaningless: the book holds an OPENHUMAN-USDC
+round trip with a notional of 1.2e-14 whose -6.5e-12 reads as a -54%
+return, which would dominate any mean it entered.
 """
 
 from __future__ import annotations
@@ -57,6 +88,17 @@ MAX_T = float(os.getenv("SYMBOL_EDGE_MAX_T", "-1.7"))
 #: by a trade at a time, so recomputing per tick would cost a query for an
 #: answer that cannot have moved.
 CACHE_SEC = float(os.getenv("SYMBOL_EDGE_CACHE_SEC", "300"))
+
+#: What one round trip costs, as a fraction of notional. The null hypothesis
+#: is "this symbol clears its own costs", not "this symbol is above zero".
+#: 0.0065 is the fee rate both books charge and the measured median of
+#: ``fee_cost / notional`` over the 143 closed round trips on 2026-09-04.
+ROUND_TRIP_COST = float(os.getenv("SYMBOL_EDGE_ROUND_TRIP_COST", "0.0065"))
+
+#: Smallest notional whose return is meaningful. Below this the division
+#: amplifies rounding into a double-digit "return" -- see the module
+#: docstring for the 1.2e-14 round trip that reads as -54%.
+MIN_NOTIONAL = float(os.getenv("SYMBOL_EDGE_MIN_NOTIONAL", "0.05"))
 
 #: Symbols never banned regardless of record -- the stable legs a round trip
 #: has to route through. Banning one would not avoid a bad trade, it would
@@ -89,7 +131,12 @@ def _t_statistic(values: List[float]) -> float:
 
 
 def _load_book(limit: int = 500) -> Dict[str, List[float]]:
-    """Closed ghost round trips per symbol, newest first.
+    """Closed round trips per symbol as RETURNS, newest first.
+
+    Each value is ``net_profit / notional`` where notional is
+    ``entry_price * quantity`` -- a unitless fraction of the position, not a
+    quote-currency amount. See the module docstring for why the dollar
+    amount is the wrong quantity to test.
 
     Reads trade_outcomes, not trading_ops: trading_ops is an append-only event
     log that keeps pre-fix artifacts forever (a single 2026-09-04 row carries
@@ -103,18 +150,24 @@ def _load_book(limit: int = 500) -> Dict[str, List[float]]:
         return book
     try:
         rows = conn.execute(
-            "SELECT symbol, net_profit FROM trade_outcomes "
+            "SELECT symbol, net_profit, entry_price, quantity FROM trade_outcomes "
             "WHERE status = 'closed' AND net_profit IS NOT NULL "
             "ORDER BY ts DESC LIMIT ?",
             (int(limit),),
         )
-        for symbol, net in rows:
+        for symbol, net, entry_price, quantity in rows:
             if not symbol:
                 continue
             try:
-                book.setdefault(str(symbol).upper(), []).append(float(net))
-            except (TypeError, ValueError):
+                notional = float(entry_price) * float(quantity)
+                if not (notional >= MIN_NOTIONAL):   # also rejects NaN
+                    continue
+                ret = float(net) / notional
+            except (TypeError, ValueError, ZeroDivisionError):
                 continue
+            if ret != ret or ret in (float("inf"), float("-inf")):
+                continue
+            book.setdefault(str(symbol).upper(), []).append(ret)
     except Exception:  # noqa: BLE001
         return {}
     finally:
@@ -133,14 +186,19 @@ def _rebuild(now: float) -> None:
         if len(values) < MIN_SAMPLES:
             continue
         mean = statistics.mean(values)
-        if mean >= 0.0:
-            continue                    # only losers are candidates
-        t = _t_statistic(values)
+        if mean >= ROUND_TRIP_COST:
+            continue        # clears its own costs -- not a candidate
+        # Test the EXCESS return over what the round trip costs, so the null
+        # hypothesis is "this symbol pays for its own trading" rather than
+        # "this symbol is above zero".
+        excess = [value - ROUND_TRIP_COST for value in values]
+        t = _t_statistic(excess)
         if t < MAX_T:
             verdicts[symbol] = (
                 t,
-                f"{len(values)} closed round trips at mean {mean:+.5f} "
-                f"(t={t:+.2f}, total {sum(values):+.4f})",
+                f"{len(values)} closed round trips at mean return "
+                f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+                f"(t={t:+.2f} on excess return)",
             )
     if verdicts != {k: v for k, v in _cache.items()}:
         for symbol, (t, detail) in sorted(verdicts.items()):
