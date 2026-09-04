@@ -232,6 +232,9 @@ class BusScheduler:
         self._metrics_collector = MetricsCollector(self.db)
         self._prefill_enabled = bool(prefill and not _is_test_env())
         self._pending_retries: Deque[Dict[str, Any]] = deque(maxlen=32)
+        #: The most recent forward plan, for diagnostics and for the bot to
+        #: consult. None until build_swap_schedule has run.
+        self.last_schedule: Optional[Any] = None
 
     def _dust_micro_context(self, portfolio: Any, chain_name: str,
                             live_trading: bool) -> Optional[Dict[str, Any]]:
@@ -1004,6 +1007,59 @@ class BusScheduler:
         state.cached_signals = signals
         state.forecast_signature = signature_key
         return self._apply_opportunity_bias(state.symbol, signals)
+
+    def build_swap_schedule(
+        self,
+        *,
+        capital_usd: float,
+        clip_usd: float,
+        prices: Optional[Dict[str, float]] = None,
+    ) -> Any:
+        """A forward plan of swaps, built from forecasts that HAVE NOT resolved.
+
+        This is the piece the scheduler was named for and did not have.
+        ``evaluate`` asks the solver "which directive is best on this tick",
+        one symbol at a time; every ``pending_predictions`` entry -- the
+        model's actual opinion about the future -- was only ever read once its
+        ``resolve_ts`` had passed, and then only to score accuracy.
+
+        Here those same unresolved forecasts become candidate legs, and the
+        schedule-level constraints the per-tick path never had to think about
+        are applied: one wallet's worth of capital across all legs, one leg
+        per symbol, and a cost floor per leg.
+
+        Returns a Schedule. It does not execute anything -- the bot's existing
+        entry path, with every guard it already has, remains the only thing
+        that touches money.
+        """
+        from trading.swap_schedule import build_schedule, predictions_to_candidates, recalculate
+
+        candidates: List[Dict[str, Any]] = []
+        for symbol, state in self.routes.items():
+            candidates.extend(
+                predictions_to_candidates(symbol, state.pending_predictions)
+            )
+
+        # The cost a leg has to clear. Same components the live lane pays:
+        # the DEX fee plus the round-trip gas, as a fraction of notional.
+        gas_rate = float(self.gas_roundtrip_fee)
+        cost_rate = float(self.fee_buffer) * 2.0 + gas_rate
+
+        schedule = build_schedule(
+            candidates,
+            capital_usd=float(capital_usd),
+            clip_usd=float(clip_usd),
+            roundtrip_cost_rate=cost_rate,
+        )
+
+        # Recalculate immediately against the freshest prices: a forecast made
+        # a few minutes ago may already have been refuted, and scheduling
+        # around a dead prediction is worse than not scheduling at all.
+        if prices:
+            schedule, _ = recalculate(schedule, prices)
+
+        self.last_schedule = schedule
+        return schedule
 
     def _queue_predictions(self, state: RouteState, signals: List[HorizonSignal]) -> None:
         if not signals or not state.samples:
