@@ -603,6 +603,51 @@ class TradingBot:
     def _token_key(self, chain: str, symbol: str) -> Tuple[str, str]:
         return (chain.lower(), symbol.upper())
 
+    def _holding_value_usd(self, chain: str, token: str,
+                           raw_balance: int, pos: dict) -> Optional[float]:
+        """USD value of a raw on-chain balance, or None when it cannot be priced.
+
+        None is not zero. An unpriceable holding must be treated as a REAL
+        position and keep its block: releasing something merely because we
+        failed to value it would let the bot double-buy a symbol it holds,
+        which is the exact failure the phantom check exists to prevent.
+
+        Decimals come from ``token_balance_raw`` -- the same reading adoption
+        uses -- because a wrong decimals is a 10^12 error, not a rounding one.
+        """
+        try:
+            # The resolved CONTRACT, not the ticker. 131 of 408 base symbols
+            # map to more than one contract, so a ticker lookup here could
+            # price a different token than the one whose balance was read.
+            reading = self._new_swapper().token_balance_raw(chain, str(token))
+        except Exception:                    # noqa: BLE001 - unreadable, not zero
+            return None
+        if not reading:
+            return None
+
+        try:
+            decimals = int(reading[1])
+        except (TypeError, ValueError, IndexError):
+            return None
+        if not 0 <= decimals <= 36:          # the guard's own sanity range
+            return None
+
+        try:
+            quantity = float(Decimal(raw_balance).scaleb(-decimals))
+        except Exception:                    # noqa: BLE001
+            return None
+
+        # The position's own marks. Adoption values at price-or-basis; here the
+        # position is the only record of what it was entered at.
+        for key in ("last_price", "entry_price", "basis_price"):
+            try:
+                price = float(pos.get(key) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(price) and price > 0.0:
+                return quantity * price
+        return None                          # no usable mark: unpriceable
+
     def _position_is_real_on_chain(self, chain: str, symbol: str,
                                    pos: dict) -> bool:
         """Does the wallet actually hold what this position claims?
@@ -729,7 +774,35 @@ class TradingBot:
 
             balance = int(raw, 16)
             if balance > 0:
-                return True
+                # A non-zero balance is not automatically a position. ADOPTION
+                # skips any holding worth <= _exit_dust_sweep_usd() ($0.50)
+                # because it cannot pay for the swap that would clear it. This
+                # check used to keep any balance > 0, so the two rules
+                # disagreed about the same dust: not worth adopting, yet real
+                # enough to block. Every pass re-ran the argument -- measured
+                # 2026-09-04, CBBTC-USDC went adopted -> dropped-phantom ->
+                # adopted three times in an hour (13 adoptions against 11 drops
+                # in 24h) while entry-refused-duplicate ran at 35/hour, the
+                # single most common thing the pipeline did.
+                #
+                # Both rules now ask one question at one threshold. Dust blocks
+                # nothing, which is correct: a holding too small to sell is a
+                # residue, not a position.
+                worth = self._holding_value_usd(chain, token, balance, pos)
+                if worth is None or worth > self._exit_dust_sweep_usd():
+                    return True      # real, or unpriceable -- keep the block
+
+                log_message(
+                    "trading",
+                    f"DUST POSITION: {symbol} on {chain} claims size "
+                    f"{pos.get('size')} but the wallet holds ${worth:.4f} of "
+                    f"{token}, at or under the "
+                    f"${self._exit_dust_sweep_usd():.2f} floor adoption also "
+                    f"skips -- releasing it so entries are not blocked by a "
+                    f"residue neither rule will trade",
+                    severity="warning",
+                )
+                return False
 
             log_message(
                 "trading",
@@ -4529,7 +4602,36 @@ class TradingBot:
             # brain can learn from them. Blocking ghost during reflex
             # turns the bot into a passive observer and prevents any
             # supervised binding from ever forming on volatile bars.
-            if self.live_trading_enabled:
+            # ... but a reflex must never disarm the STOP on money already at
+            # risk. Returning here skips the whole held-position branch ~800
+            # lines below, which is where take-profit, stop-loss and the timed
+            # exit are evaluated -- so during exactly the volatility spike the
+            # reflex fired on, an open live position could not be closed.
+            #
+            # This is the third time this shape has cost money in this repo: a
+            # guard written against ENTRIES that also swallows the EXIT. See
+            # "a refused entry swallowed the stop" (72 of 73 samples evaluated
+            # no trigger, and the one stop that did fire realised -18.4%) and
+            # the pos_is_live/live_trading_enabled bug that left a demoted bot
+            # unable to sell what it had bought for 18 straight refusals.
+            #
+            # Measured 2026-09-04 07:05 over one hour: 25 reflex blocks across
+            # 7 symbols, 6 of them on symbols carrying a live position --
+            # CBETH-USDC 3 and CBBTC-USDC 3 -- every one a tick on which the
+            # stop-loss was unreachable.
+            #
+            # Only a LIVE holding is let through, and letting it through opens
+            # no new risk: an entry arriving on a live-held slot is refused
+            # unconditionally by the ``entry-refused-live-held`` branch below
+            # (whoever is asking, live or ghost, same strategy or not), so the
+            # only decision this sample can still reach is the exit. A ghost
+            # holding, or no holding at all, still short-circuits exactly as
+            # before -- there the reflex is doing its real job of not opening
+            # new positions into a spike.
+            pos_is_live_holding = (
+                isinstance(pos, dict) and str(pos.get("mode") or "") == "live"
+            )
+            if self.live_trading_enabled and not pos_is_live_holding:
                 decision.update(
                     {
                         "status": "reflex-blocked",

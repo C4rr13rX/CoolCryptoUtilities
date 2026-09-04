@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import builtins
+import contextlib
+import io
 import os
 import time
 import json
@@ -111,6 +114,37 @@ def model_defs_available() -> bool:
     return _get_model_defs() is not None
 
 
+@contextlib.contextmanager
+def _utf8_text_io():
+    """Force text-mode ``open`` to UTF-8 for the duration of the block.
+
+    Applies to READS as well as writes. Keras serialises the model config and
+    the TextVectorization vocabularies as text; on a cp1252 box the save fails
+    on U+2192 and the LOAD fails symmetrically with "'charmap' codec can't
+    decode byte 0x8f". A model that saves but cannot be read back is deleted
+    as corrupt and rebuilt every cycle, which is the same starvation loop as
+    never saving at all -- so both directions must be pinned.
+
+    Restores the originals in a finally, including on exception, so a failed
+    save cannot leave the process with a patched ``open``.
+    """
+    real_open = io.open
+    real_builtin_open = builtins.open
+
+    def utf8_open(file, mode="r", buffering=-1, encoding=None, *args, **kwargs):
+        if encoding is None and "b" not in str(mode):
+            encoding = "utf-8"
+        return real_open(file, mode, buffering, encoding, *args, **kwargs)
+
+    io.open = utf8_open
+    builtins.open = utf8_open
+    try:
+        yield
+    finally:
+        io.open = real_open
+        builtins.open = real_builtin_open
+
+
 def _save_model_atomically(model, path: Path, **kwargs) -> None:
     """Write a ``.keras`` artifact so no reader can ever see it half-written.
 
@@ -150,7 +184,34 @@ def _save_model_atomically(model, path: Path, **kwargs) -> None:
     tmp = path.with_name(f"{path.stem}.tmp-{os.getpid()}-{int(time.time() * 1000)}{path.suffix}")
     try:
         try:
-            model.save(tmp, **kwargs)
+            # SAVE IN UTF-8 REGARDLESS OF THE MACHINE'S LOCALE.
+            #
+            # Keras serialises config.json through Python's default text
+            # encoding. On this box that is cp1252 (Windows, no PYTHONUTF8),
+            # which cannot represent U+2192 -- and a layer/metric name
+            # carrying "->" as an arrow is enough to abort the write. Measured
+            # 2026-09-04: every cycle logged "no active model found; building
+            # a fresh baseline", then died with
+            #     UnicodeEncodeError: 'charmap' codec can't encode character
+            #     '→' in position 878
+            # after writing 49,033 bytes. models/active_model.keras DID NOT
+            # EXIST AT ALL. No model ever persisted, so the confusion report
+            # could never be regenerated, so the live-readiness gate went on
+            # quoting a 10-hour-old recall of 0.0765 and refused every live
+            # trade -- while the CPU burned rebuilding a model that was thrown
+            # away seconds later.
+            #
+            # Forcing UTF-8 for the duration of the write fixes the whole
+            # class, not the one character: any non-cp1252 codepoint in any
+            # name would have done the same thing, and hunting them
+            # individually would leave the next one to find in production.
+            # PYTHONUTF8 is read by the interpreter at startup, so setting it
+            # here would do nothing -- verified on this box: after
+            # os.environ["PYTHONUTF8"]="1", io.text_encoding(None) still
+            # answered "locale" and writing U+2192 still raised. The default
+            # has to be changed on the call Keras actually makes.
+            with _utf8_text_io():
+                model.save(tmp, **kwargs)
         except BaseException as exc:
             # Serialisation failing halfway is the shape this bug actually
             # takes: the temp file reaches 48,725 bytes -- byte-for-byte the
@@ -653,13 +714,28 @@ class TrainingPipeline:
         self._last_confusion_summary: Dict[str, Any] = {}
         self._last_transition_plan: Dict[str, Any] = {}
         self._last_confusion_refresh: float = 0.0
-        self._load_cached_confusion_report()
         self._last_candidate_feedback: Dict[str, Any] = {}
         self._active_approval_margin = float(os.getenv("ACTIVE_APPROVAL_MARGIN", "0.01"))
         self._active_fpr_buffer = float(os.getenv("ACTIVE_APPROVAL_FPR_BUFFER", "0.02"))
         self._thr_precision_weight = float(os.getenv("THR_PRECISION_WEIGHT", "1.0"))
         self._thr_recall_weight = float(os.getenv("THR_RECALL_WEIGHT", "1.0"))
         self._pos_weight_multiplier = float(os.getenv("POS_WEIGHT_MULTIPLIER", "1.0"))
+
+        # LOADED LAST, ON PURPOSE.
+        #
+        # This is not merely reading a file: it summarises the report, adjusts
+        # the horizon bias, builds the transition plan and persists a live
+        # readiness snapshot -- a path that touches most of the attributes
+        # above. Run from the middle of __init__ it raised AttributeError on
+        # whichever attribute had not been assigned yet, one at a time:
+        # _last_candidate_feedback first, then _pos_weight_multiplier behind
+        # it. Each failure was swallowed as "no cached report", so the
+        # pipeline started with an empty confusion report and the live gate
+        # judged on nothing.
+        #
+        # Construction has to finish building the object before running
+        # anything that uses it.
+        self._load_cached_confusion_report()
 
     # ------------------------------------------------------------------
     # Public API
@@ -698,7 +774,8 @@ class TrainingPipeline:
         if not path.exists():
             return None
         try:
-            self._active_model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+            with _utf8_text_io():
+                self._active_model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
             return self._active_model
         except Exception as exc:
             # Deleting on ANY load failure is what turned a transient read into
@@ -732,6 +809,25 @@ class TrainingPipeline:
     def ensure_active_model(self) -> tf.keras.Model:
         model = self.load_active_model()
         if model is not None:
+            # A MODEL LOADED FROM DISK MUST STILL FIT TODAY'S DATA.
+            #
+            # This early return skipped the asset-vocabulary check that the
+            # candidate path (_build_candidate_model) has always run, so an
+            # artifact written when the universe held one asset kept being
+            # served after the universe grew. Measured 2026-09-04:
+            # asset_embedding carried input_dim=1 while asset_id_input fed ids
+            # 1..6, and every predict() died with
+            #     indices[0,0] = 2 is not in [0, 1)
+            # _evaluate_candidate catches that and returns {}, so there were no
+            # confusion matrices, so prime_confusion_windows returned False and
+            # the report could never be rebuilt -- leaving the live-readiness
+            # gate quoting a recall of 0.0765 measured at 00:11 and refusing
+            # every live trade for the following ten hours.
+            #
+            # The growth machinery already existed and was correct; it was
+            # simply never reached from the path that actually serves the
+            # model. One line of ordering, ten hours of no live trading.
+            model = self._ensure_asset_embedding_capacity(model)
             return self._ensure_vectorizers_ready(model)
         print("[training] no active model found; building a fresh baseline.")
         loader_vocab = int(self.data_loader.asset_vocab_size)
@@ -835,7 +931,8 @@ class TrainingPipeline:
     def _load_active_clone(self) -> tf.keras.Model:
         path = self.model_dir / "active_model.keras"
         if path.exists():
-            model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+            with _utf8_text_io():
+                model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
         else:
             base = self.ensure_active_model()
             model = tf.keras.models.clone_model(base)
@@ -879,7 +976,8 @@ class TrainingPipeline:
         path = self.model_dir / "active_model.keras"
         _save_model_atomically(upgraded, path, include_optimizer=False)
         self._active_model = upgraded
-        reloaded = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+        with _utf8_text_io():
+            reloaded = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
         return reloaded
 
     def _rebuild_model_with_asset_vocab(self, asset_vocab_size: int, source_model: tf.keras.Model) -> tf.keras.Model:
@@ -1916,7 +2014,8 @@ class TrainingPipeline:
         if shadow_required > 0 and not challenger_path.exists():
             # New challenger entering shadow period — save but don't promote yet
             try:
-                model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+                with _utf8_text_io():
+                    model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
                 _save_model_atomically(model, challenger_path, include_optimizer=False)
                 challenger_meta = {
                     "version": f"challenger-{int(time.time())}",
@@ -1947,7 +2046,8 @@ class TrainingPipeline:
             f"promoting candidate {path.name} (score={score:.3f}) to active deployment.",
             details={"active_version": version},
         )
-        model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+        with _utf8_text_io():
+            model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
         model.save(versioned_path, include_optimizer=False)
         try:
             shutil.copy2(versioned_path, tmp_path)
@@ -4688,6 +4788,39 @@ class TrainingPipeline:
         ghost_check = self._ghost_validation_for_live()
         wallet_state = self._wallet_state()
 
+        # ASK WHETHER THE NUMBERS ARE STILL TRUE BEFORE GATING ON THEM.
+        #
+        # This report decides whether live trading is allowed. It is loaded
+        # from data/reports/confusion_matrices.json at startup and was, until
+        # now, never recomputed: ``ensure_confusion_fresh`` existed with the
+        # correct staleness rule and had ZERO CALLERS, so nothing ever invoked
+        # it. Measured 2026-09-04, the file was 10.3 hours old and the gate
+        # published byte-identical metrics at 06:54, 07:32, 09:07 and 09:59 --
+        # precision 0.5283018867924528, recall 0.07650273224043716, samples
+        # 713, repeated to sixteen digits across three hours. Live trading was
+        # refused for "insufficient_accuracy" the whole time, on a measurement
+        # taken at 00:11 the night before, while ghost went on earning a fresh
+        # record (27 -> 155 samples, win rate 0.59 -> 0.75) that the gate never
+        # looked at.
+        #
+        # A stale metric is not a conservative one. It is a claim about the
+        # present made from the past, and it was blocking on evidence that had
+        # already stopped being evidence.
+        #
+        # Failure to refresh leaves the cached report in place rather than
+        # emptying it: the lock is deliberately non-blocking, so "another
+        # thread is training right now" is a normal outcome, not an error, and
+        # it must not flip the gate to the no_confusion_data path.
+        try:
+            self.ensure_confusion_fresh()
+        except Exception as exc:  # noqa: BLE001 - the gate must not crash the tick
+            log_message(
+                "training",
+                f"confusion refresh raised before the live readiness check: "
+                f"{exc!r}; judging on the cached report, which may be stale",
+                severity="error",
+            )
+
         report = self._last_confusion_report or {}
         if report and (not isinstance(self._last_confusion_summary, dict) or not self._last_confusion_summary.get("horizons")):
             self._last_confusion_summary = self._summarize_confusion_report(report)
@@ -4771,6 +4904,11 @@ class TrainingPipeline:
                 }
             )
             return report_fb
+        # How old the evidence is, published with the verdict. A gate that
+        # refuses on a ten-hour-old measurement should say so in the same
+        # breath, so staleness is readable without diffing 16-digit floats.
+        confusion_age_sec = max(0.0, time.time() - float(self._last_confusion_refresh or 0.0))
+
         anchor_label, anchor = self._select_confusion_anchor(report)
         if anchor is None:
             return {"ready": False, "reason": "no_confusion_data"}
@@ -4811,6 +4949,9 @@ class TrainingPipeline:
             "false_positive_rate": false_positive_rate,
             "lift": lift,
             "dominant": self._last_confusion_summary.get("dominant"),
+            "confusion_age_sec": round(confusion_age_sec, 1),
+            "confusion_stale": confusion_age_sec > float(
+                os.getenv("CONFUSION_REFRESH_MAX_AGE", "900") or 900.0),
             "mini_ready": mini_ready,
             "mini_reason": mini_reason,
             "mini_precision": mini_precision,
