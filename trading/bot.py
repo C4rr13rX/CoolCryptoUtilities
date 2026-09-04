@@ -143,6 +143,8 @@ class TradingBot:
         self.sim_native_balances: Dict[str, float] = {}
         self._sim_initial_pool: float = 0.0
         self._insufficient_quote_last_ts: float = 0.0
+        #: symbol -> last time _adopt_orphaned_live_holding paid for a chain read
+        self._orphan_adoption_checked_at: Dict[str, float] = {}
         self.ghost_session_id: int = 1
         self.active_exposure: Dict[str, float] = {}
         self.graph = NeuroGraph()
@@ -519,6 +521,13 @@ class TradingBot:
             self._last_quote_topup_signature = None
         if not hasattr(self, "_last_quote_topup_ts"):
             self._last_quote_topup_ts = 0.0
+        if not hasattr(self, "_orphan_adoption_checked_at") or not isinstance(
+            self._orphan_adoption_checked_at, dict
+        ):
+            # A bot restored from an orchestrator snapshot taken before this
+            # existed still has to look for unbooked holdings; without the
+            # recreation it raises on its first sample instead.
+            self._orphan_adoption_checked_at = {}
         queue_max = int(os.getenv("STREAM_QUEUE_MAX", "8"))
         if not hasattr(self, "_pending_queue") or not isinstance(self._pending_queue, deque):
             self._pending_queue = deque(maxlen=queue_max)
@@ -881,6 +890,321 @@ class TradingBot:
         except (TypeError, ValueError):
             return 0.50
         return value if math.isfinite(value) and value >= 0.0 else 0.50
+
+    #: How often one symbol may pay for the chain read that looks for an
+    #: unbooked live holding. The condition it detects is created by a settled
+    #: swap, so it cannot appear more than once between entries; a per-symbol
+    #: five-minute floor keeps a quiet stream from billing an RPC per tick.
+    ORPHAN_ADOPTION_INTERVAL_SEC = 300.0
+
+    def _adopt_orphaned_live_holding(
+        self,
+        symbol: str,
+        *,
+        chain: str,
+        price: float,
+    ) -> Optional[Dict[str, Any]]:
+        """Book a live position for tokens the wallet holds and the book does not.
+
+        A settled buy that leaves no position is not a trade, it is a donation:
+        every exit in this bot is driven off ``self.positions[symbol]``, so a
+        holding with no row is never offered to the take-profit, the stop, or
+        the timed exit. Nothing will ever try to sell it.
+
+        Measured 2026-09-04, on-chain balanceOf against the persisted book:
+
+            BSTONK  360.2642432254   1 settled buy,  0.75 USDC   no position
+            CBBTC     0.0000370900   4 settled buys, 3.00 USDC   no position
+
+        3.75 USDC of a 17.45 USDC book -- 21% of it -- stranded behind five
+        settled swaps, against a stable leg of 13.6963. That is what "13 buys
+        against 4 sells" looks like from the wallet's side.
+
+        Two mechanisms put them there, and both are fixed elsewhere in this
+        file: a live-approved entry releasing the live position it landed on
+        (see ``entry_refused_by_live_slot``), and a live position closed by
+        simulation when the bot-level live flag flapped. Neither fix returns
+        the tokens already outside the book. This does.
+
+        Nothing here is invented. The size is the chain's, read now. The basis
+        is the USDC those settled entries actually spent divided by the base
+        they actually recorded receiving -- for CBBTC, 3.00 / 3.709e-05 =
+        80884.34, against a cbBTC print of 81099.62, and the four recorded
+        sizes sum to 3.709e-05 which is the on-chain balance to the last raw
+        unit. ``entry_ts`` is the OLDEST unmatched buy, so the max-hold clock
+        counts from when the money actually left.
+
+        A NEW trade_id is minted rather than the old one reused. The annulled
+        exits those positions were fictionally closed by carry
+        ``remaining_size: 0.0``, and ``_load_state`` drops any position whose
+        newest outcome says that -- adopting under the old id would book a
+        position that disappears on the next restart. The ids and the 66-char
+        hashes it was reconstructed from travel on the position and on the
+        trading_ops row, so the basis stays checkable against the chain.
+
+        Returns the position it booked, or None when there is nothing to adopt.
+        """
+        if not self.live_trading_enabled or self._live_trades_dry_run():
+            return None
+        if isinstance(self.positions.get(symbol), dict):
+            return None
+        now = time.time()
+        if now - self._orphan_adoption_checked_at.get(symbol, 0.0) < self.ORPHAN_ADOPTION_INTERVAL_SEC:
+            return None
+        self._orphan_adoption_checked_at[symbol] = now
+
+        # Filtered in SQL by symbol AND status, so the row cap bounds the
+        # matching rows and not the window they were drawn from -- the mistake
+        # in 27bff7e, where a 500-row cap over ALL statuses silently truncated
+        # a 48h window to its newest 20%.
+        try:
+            rows = self.db.fetch_trades(
+                limit=500,
+                symbol=symbol,
+                statuses=["live-entry", "live-exit"],
+            )
+        except Exception:
+            return None
+        if not rows:
+            return None
+
+        unmatched: List[Dict[str, Any]] = []
+        for row in rows:                       # newest first
+            if str(row.get("status") or "") == "live-exit":
+                break                          # a settled sell closes everything older
+            details = row.get("details") or {}
+            if not isinstance(details, dict):
+                continue
+            tx_hash = str(details.get("tx_hash") or "")
+            if not tx_hash or not details.get("executed"):
+                continue
+            unmatched.append(details)
+        if not unmatched:
+            return None
+
+        base_recorded = sum(float(d.get("size") or 0.0) for d in unmatched)
+        quote_spent = sum(float(d.get("quote_spent") or 0.0) for d in unmatched)
+        if not (base_recorded > 0.0 and quote_spent > 0.0):
+            return None
+        basis = quote_spent / base_recorded
+        if not math.isfinite(basis) or basis <= 0.0:
+            return None
+
+        newest = unmatched[0]
+        oldest = unmatched[-1]
+
+        # The contract the money actually went into, taken from the settled
+        # swap rather than looked up by ticker: 131 of 408 base symbols map to
+        # more than one contract, and adopting the wrong one would aim an exit
+        # at an asset we do not hold.
+        base_address = ""
+        try:
+            settled = self.db.fetch_trades(
+                limit=200, symbol=symbol, statuses=["live-swap-settled"]
+            )
+            wanted = str(newest.get("trade_id") or "")
+            for row in settled:
+                details = row.get("details") or {}
+                if isinstance(details, dict) and str(details.get("trade_id") or "") == wanted:
+                    base_address = str(details.get("buy") or "")
+                    break
+        except Exception:
+            base_address = ""
+        _, swap_token = self._resolve_live_trade_asset(chain, symbol, base_address or None)
+        if not swap_token:
+            return None
+        # An explicit address WINS over every symbol lookup in
+        # ``_resolve_live_trade_asset``, which means it also skips the chain
+        # interrogation ``_resolve_token_address`` performs. Adopting a stub
+        # would book a position whose exit can never fill -- BASECAT's two
+        # settled buys are still unsellable -- so ask the chain here.
+        if not self._verified_address(chain, symbol, str(swap_token), "orphan_adoption"):
+            return None
+
+        if self._bridge is None:
+            self._bridge = self._init_bridge()
+        if self._bridge is None:
+            return None
+        try:
+            reading = self._new_swapper().token_balance_raw(chain, str(swap_token))
+        except Exception as exc:  # noqa: BLE001 - an unreadable balance is not a crash
+            log_message(
+                "live-swap",
+                f"orphan balance read raised for {symbol} ({swap_token}): {exc!r}",
+                severity="error",
+            )
+            return None
+        if not reading:
+            return None
+        onchain_raw = int(reading[0])
+        decimals = int(reading[1])
+        if onchain_raw <= 0:
+            return None
+        held = float(Decimal(onchain_raw).scaleb(-decimals))
+
+        # Dust is not a position. Below the sweep floor the holding cannot pay
+        # for the swap that would clear it, so booking it would only produce an
+        # exit that can never fill -- which is the no_tx_hash retry loop that
+        # ended the one burst of rapid trading this system has produced.
+        mark = float(price) if math.isfinite(price) and price > 0.0 else basis
+        if held * mark <= self._exit_dust_sweep_usd():
+            return None
+
+        # THE COST MUST COVER THE SIZE THE POSITION CLAIMS.
+        #
+        # The exit books ``gross_profit = quote_received - quote_spent *
+        # (base_sold / held_size)``. Size comes from the chain and cost comes
+        # from the entry rows, and those two do not have to agree: the wallet
+        # can hold more of a token than the unmatched entries account for,
+        # because an older buy was only partly sold. Measured on this wallet
+        # 2026-09-04 -- 3.040902389960829 AERO on chain against 1.494620938
+        # recorded by the one unmatched entry, which spent 0.750000 USDC:
+        #
+        #   3.0409 sold at 0.5008 = 1.5229 received, minus 0.75 "spent"
+        #   = +0.7729 gross -- a 103% win on a position that has not moved.
+        #
+        # That is a fabricated record of exactly the kind this repo has already
+        # shipped four of. The 1.546 AERO the entries do not account for was
+        # bought earlier at a price nothing here measured, so the only honest
+        # statement about it is the basis we CAN prove, applied to the whole
+        # holding: cost = basis * held. When the chain and the entries agree
+        # -- BSTONK 360.264243225393, CBBTC 3.709e-05, both exact -- this is
+        # identical to the recorded spend and changes nothing. When they do
+        # not, the extrapolated part is named on the position and the basis is
+        # flagged estimated, because it is.
+        unaccounted = max(0.0, held - base_recorded)
+        cost_for_held = basis * held
+        basis_estimated = unaccounted > base_recorded * 0.01
+        if basis_estimated:
+            log_message(
+                "live-swap",
+                "adopting %s at an EXTRAPOLATED basis: chain holds %.18f but "
+                "the unmatched entries account for only %.18f (%.18f bought at "
+                "a price no row here measured); costing the whole holding at "
+                "the measured %.12g rather than at the %.6f USDC recorded"
+                % (symbol, held, base_recorded, unaccounted, basis, quote_spent),
+                severity="warning",
+            )
+
+        trade_id = f"{self.ghost_session_id}:{symbol}:{uuid.uuid4().hex}"
+        source_trade_ids = [str(d.get("trade_id") or "") for d in unmatched]
+        source_tx_hashes = [str(d.get("tx_hash") or "") for d in unmatched]
+        entry_ts = float(oldest.get("entry_ts") or oldest.get("timestamp") or now)
+        route_val = newest.get("route")
+        route = [str(t).upper() for t in route_val if t] if isinstance(route_val, list) else symbol.split("-")
+        position = {
+            "mode": "live",
+            "strategy_id": str(newest.get("strategy_id") or ""),
+            "entry_price": basis,
+            "size": held,
+            "ts": entry_ts,
+            "entry_ts": entry_ts,
+            "trade_id": trade_id,
+            "route": route,
+            "bus_index": 0,
+            "target_price": float(newest.get("target_price") or 0.0) or None,
+            "brain_snapshot": {},
+            "expected_margin": 0.0,
+            "expected_margin_after_fees": 0.0,
+            "entry_confidence": 0.5,
+            "direction_prob": 0.5,
+            # Scaled to the size the position claims; see the comment above.
+            "quote_spent": cost_for_held,
+            "gas_spent_native": sum(float(d.get("gas_spent_native") or 0.0) for d in unmatched),
+            "entry_tx_hash": str(newest.get("tx_hash") or ""),
+            "fill_source": "onchain_balance_adoption",
+            # The basis is measured (spent USDC over received base), not a feed
+            # price -- so it is estimated only where it had to be extrapolated
+            # over base the entries do not account for.
+            "basis_estimated": basis_estimated,
+            "adopted": True,
+            "adopted_ts": now,
+            "adopted_from_trade_ids": source_trade_ids,
+            "adopted_from_tx_hashes": source_tx_hashes,
+            "adopted_recorded_size": base_recorded,
+            "adopted_recorded_quote_spent": quote_spent,
+            "adopted_unaccounted_base": unaccounted,
+            "base_symbol": route[0] if route else symbol.split("-")[0],
+            "quote_symbol": route[-1] if route else "USDC",
+            "base_token_address": str(swap_token or ""),
+            "quote_token_address": "",
+            "trigger_state": {"high_watermark": basis},
+            "exit_sequence": 0,
+            "fingerprint": [],
+        }
+        self._claim_position_symbol(symbol)
+        self.positions[symbol] = position
+        self._save_state()
+
+        log_message(
+            "live-swap",
+            "ADOPTED unbooked live holding %s: %.18f held on chain (%s), basis "
+            "%.12g from %.6f USDC over %.18f recorded base across %d settled "
+            "buy(s) %s"
+            % (
+                symbol,
+                held,
+                swap_token,
+                basis,
+                quote_spent,
+                base_recorded,
+                len(unmatched),
+                ", ".join(h for h in source_tx_hashes if h),
+            ),
+            severity="warning",
+        )
+        try:
+            self.metrics.feedback(
+                "live_trading",
+                severity=FeedbackSeverity.WARNING,
+                label="orphaned_live_holding_adopted",
+                details={
+                    "symbol": symbol,
+                    "held": held,
+                    "onchain_raw": onchain_raw,
+                    "decimals": decimals,
+                    "basis": basis,
+                    "quote_spent": cost_for_held,
+                    "recorded_quote_spent": quote_spent,
+                    "recorded_size": base_recorded,
+                    "unaccounted_base": unaccounted,
+                    "basis_estimated": basis_estimated,
+                    "trade_id": trade_id,
+                    "source_tx_hashes": source_tx_hashes,
+                },
+            )
+        except Exception:
+            pass
+        try:
+            self.db.log_trade(
+                wallet="live",
+                chain=chain,
+                symbol=symbol,
+                action="enter",
+                status="live-position-adopted",
+                details={
+                    "symbol": symbol,
+                    "reason": "onchain_holding_had_no_position",
+                    "size": held,
+                    "onchain_raw": onchain_raw,
+                    "decimals": decimals,
+                    "entry_price": basis,
+                    "quote_spent": cost_for_held,
+                    "recorded_quote_spent": quote_spent,
+                    "recorded_size": base_recorded,
+                    "unaccounted_base": unaccounted,
+                    "basis_estimated": basis_estimated,
+                    "entry_ts": entry_ts,
+                    "trade_id": trade_id,
+                    "strategy_id": str(newest.get("strategy_id") or ""),
+                    "base_token_address": str(swap_token or ""),
+                    "adopted_from_trade_ids": source_trade_ids,
+                    "adopted_from_tx_hashes": source_tx_hashes,
+                },
+            )
+        except Exception:
+            pass
+        return position
 
     def _size_live_exit(
         self,
@@ -3718,6 +4042,15 @@ class TradingBot:
         quote_token = route[-1]
         chain_name = str(sample.get("chain", self.primary_chain)).lower() or self.primary_chain
         pos = self.positions.get(symbol)
+        if pos is None:
+            # Before anything decides to open a position in this symbol, find
+            # out whether the wallet is already holding one that the book lost.
+            # "Before opening any new position, check how many are already open
+            # and unexited" -- and an unbooked holding is unexited by
+            # construction, because every exit path starts from this dict.
+            pos = self._adopt_orphaned_live_holding(
+                symbol, chain=chain_name, price=price
+            )
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
         fees = 0.0015 + 0.005
         brain_payload = {}
@@ -4222,13 +4555,17 @@ class TradingBot:
         # ran the same gauntlet and were simply luckier.
         #
         # Scope: the bracket outranks the directive only when that directive is
-        # going to be REFUSED anyway -- a non-live-approved entry landing on a
-        # live-held slot, which is the whole 298-row entry-refused-live-held
-        # population and every one of the skipped BSTONK evaluations. A
-        # live-approved entry still displaces whatever it lands on (the release
-        # path pinned by tests/test_entry_never_clobbers_a_position.py); taking
-        # the bracket first there would defer real trades to close simulated
-        # ones, which is the opposite of what this lane needs.
+        # going to be REFUSED anyway -- ANY entry landing on a live-held slot,
+        # which is the whole 298-row entry-refused-live-held population and
+        # every one of the skipped BSTONK evaluations. A live-approved entry
+        # still displaces a GHOST position (the release path pinned by
+        # tests/test_entry_never_clobbers_a_position.py); taking the bracket
+        # first there would defer real trades to close simulated ones, which is
+        # the opposite of what this lane needs.
+        #
+        # Until 2026-09-04 the exclusion was `and not entry_is_live`, so a
+        # live-approved entry landing on a LIVE slot took the entry path and
+        # released the position holding the tokens. See the refusal below.
         #
         # The trigger state is computed for every held position regardless, so
         # high_watermark and the armed flags keep advancing on refused ticks
@@ -4257,12 +4594,37 @@ class TradingBot:
             self.live_trading_enabled and self._strategy_live_approved(directive)
         )
 
+        # A LIVE slot refuses EVERY incoming entry, live-approved or not.
+        #
+        # ``entry_is_live`` used to be an exemption here and at the refusal
+        # site below, on the reading that a live entry displacing a live
+        # position "cannot happen". It happened four times on 2026-09-03, all
+        # atf_static onto its own live slot, and every one abandoned tokens the
+        # wallet still holds -- position-released rows carrying
+        # ``released_mode: "live"``:
+        #
+        #   15:38:02  CBETH   released 2:CBETH-USDC:bfa397e6  (0.00011175)
+        #   16:24:26  CBBTC   released 2:CBBTC-USDC:c9d8cee9  (0.00000928)
+        #   16:38:22  CBBTC   released 2:CBBTC-USDC:c83106b5  (0.00000927)
+        #   16:40:45  CBBTC   released 2:CBBTC-USDC:12cd624b  (0.00000926)
+        #
+        # Each release was immediately followed by another 0.75 USDC buy of the
+        # same token, so the wallet ended 2026-09-03 holding 0.0000370900 CBBTC
+        # (3.008 USD at the 81099.62 cbBTC print) against FOUR settled buys and
+        # zero sells, with no position in the book pointing at any of it. That
+        # is the mechanism behind "11 buys against 4 sells": the release does
+        # not just lose an observation, it converts the stable leg into tokens
+        # nothing will ever try to sell.
+        #
+        # The same-strategy case has been refused since c6dfa38, but that guard
+        # keys on ``strategy_id`` -- it does not fire for a second live-approved
+        # strategy, nor for a directive carrying no strategy_id at all. The slot
+        # mode is the property that matters, so test the slot.
         entry_refused_by_live_slot = bool(
             directive is not None
             and directive.action == "enter"
             and pos is not None
             and str(pos.get("mode") or "") == "live"
-            and not entry_is_live
         )
 
         # A strategy re-signalling the symbol it ALREADY HOLDS is not a new
@@ -4639,11 +5001,27 @@ class TradingBot:
             #
             # Refused rather than released, because the live position is the
             # only record of tokens we actually own.
-            # ``entry_is_live`` is computed once above the directive dispatch
-            # and reused here; see the comment there.
-            if pos is not None and str(pos.get("mode") or "") == "live" and not entry_is_live:
+            #
+            # There is a THIRD direction, and it is the one that actually ran:
+            #
+            #   live entry over a LIVE position -> the first position's tokens
+            #       are abandoned and the entry immediately buys more of the
+            #       same token. Four times on 2026-09-03; see the
+            #       ``entry_refused_by_live_slot`` comment above for the rows.
+            #
+            # It was exempted here by ``and not entry_is_live`` on the reading
+            # that ``_release_position_for_entry`` could never see a live
+            # position -- an invariant that function still asserts in its own
+            # docstring while the database records four violations. The slot
+            # mode is what decides, so the exemption is gone: a live-held slot
+            # is not somewhere a new entry may be opened, whoever is asking.
+            # ``entry_refused_by_live_slot``, computed once above the directive
+            # dispatch, is the same predicate and now routes these ticks to the
+            # protective bracket instead of the entry path.
+            if pos is not None and str(pos.get("mode") or "") == "live":
                 held = {
                     "symbol": symbol,
+                    "incoming_entry_is_live": bool(entry_is_live),
                     "held_trade_id": str(pos.get("trade_id") or ""),
                     "held_strategy_id": str(pos.get("strategy_id") or ""),
                     "held_size": float(pos.get("size") or 0.0),
@@ -4661,13 +5039,16 @@ class TradingBot:
                         **held,
                     }
                 )
-                # Logged so the skipped ghost observation is visible. Without a
-                # row this is indistinguishable from the lane never having
-                # wanted the trade, which is the gap that hid every other
-                # refusal on this path.
+                # Logged so the skipped observation is visible. Without a row
+                # this is indistinguishable from the lane never having wanted
+                # the trade, which is the gap that hid every other refusal on
+                # this path. ``wallet`` names the entry that was refused, not
+                # the position that survived -- a hardcoded "ghost" here would
+                # have made the four live-over-live releases invisible in a
+                # wallet='live' query, which is how they went unnoticed.
                 try:
                     self.db.log_trade(
-                        wallet="ghost",
+                        wallet="live" if entry_is_live else "ghost",
                         chain=chain_name,
                         symbol=symbol,
                         action="hold",
@@ -5158,13 +5539,70 @@ class TradingBot:
                     basis_estimated = True
                 else:
                     basis_estimated = False
-                self._release_position_for_entry(
+                slot_free = self._release_position_for_entry(
                     symbol,
                     chain=chain_name,
                     incoming_mode="live",
                     incoming_strategy=str(getattr(directive, "strategy_id", "") or "") if directive else "",
                     incoming_trade_id=trade_id,
                 )
+                if not slot_free:
+                    # The slot holds a LIVE position and the swap has already
+                    # settled, so there are now two real fills and one slot.
+                    # Overwriting abandons the older tokens (the 2026-09-03
+                    # failure); returning abandons the newer ones. Neither is
+                    # acceptable, so both fills are carried by the surviving
+                    # position: the size is the sum, the basis is the
+                    # size-weighted average of the two, and the cost fields add
+                    # up. entry_ts and trade_id stay with the OLDER fill so the
+                    # max-hold clock keeps running from when the money first
+                    # left, and so the outcome ties to an entry that exists.
+                    #
+                    # Unreachable from the entry path now that a live-held slot
+                    # refuses every entry above; kept because "the caller cannot
+                    # produce it" is the assumption this whole change is about.
+                    held_pos = self.positions[symbol]
+                    prior_size = float(held_pos.get("size") or 0.0)
+                    merged_size = prior_size + float(base_received)
+                    if merged_size > 0.0:
+                        held_pos["entry_price"] = (
+                            prior_size * float(held_pos.get("entry_price") or 0.0)
+                            + float(base_received) * float(executed_entry_price)
+                        ) / merged_size
+                    held_pos["size"] = merged_size
+                    held_pos["quote_spent"] = float(held_pos.get("quote_spent") or 0.0) + float(quote_spent)
+                    held_pos["gas_spent_native"] = float(
+                        held_pos.get("gas_spent_native") or 0.0
+                    ) + float(gas_spent_native)
+                    merged_hashes = list(held_pos.get("merged_entry_tx_hashes") or [])
+                    merged_hashes.append(str(entry_tx_hash or ""))
+                    held_pos["merged_entry_tx_hashes"] = merged_hashes
+                    self._claim_position_symbol(symbol)
+                    decision.update(
+                        {
+                            "action": "enter",
+                            "status": "live-entry-merged",
+                            "reason": "merged_into_surviving_live_position",
+                            "size": merged_size,
+                            "entry_price": float(held_pos.get("entry_price") or 0.0),
+                            "trade_id": str(held_pos.get("trade_id") or ""),
+                            "merged_trade_id": trade_id,
+                            "tx_hash": entry_tx_hash,
+                            "wallet": "live",
+                        }
+                    )
+                    try:
+                        self.db.log_trade(
+                            wallet="live",
+                            chain=chain_name,
+                            symbol=symbol,
+                            action="enter",
+                            status="live-entry-merged",
+                            details=decision,
+                        )
+                    except Exception:
+                        pass
+                    return decision
                 self._claim_position_symbol(symbol)
                 self.positions[symbol] = {
                     "mode": "live",
@@ -5308,13 +5746,25 @@ class TradingBot:
                 return decision
 
             # ghost / paper entry
-            self._release_position_for_entry(
+            if not self._release_position_for_entry(
                 symbol,
                 chain=chain_name,
                 incoming_mode="ghost",
                 incoming_strategy=str(getattr(directive, "strategy_id", "") or "") if directive else "",
                 incoming_trade_id=trade_id,
-            )
+            ):
+                # A live-held slot. Nothing has been spent on this simulated
+                # entry, so abandoning it costs one observation; overwriting
+                # costs the tokens. The refusal above the swap already covers
+                # this, and logs it as entry-refused-live-held.
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-live-held",
+                        "reason": "symbol_held_by_live_position",
+                    }
+                )
+                return decision
             self._claim_position_symbol(symbol)
             self.positions[symbol] = {
                 "mode": "ghost",
@@ -5561,6 +6011,82 @@ class TradingBot:
             # proceeds and the feed price stood in. Defined here so the ghost
             # branch, which never reaches that check, still reports it.
             exit_proceeds_estimated = False
+
+            # A LIVE position must never be closed by simulation.
+            #
+            # The comment above says positions close in the mode they were
+            # opened in, and the ghost direction of that rule is enforced --
+            # ``pos_is_live`` keeps a ghost position off the live swap path.
+            # The LIVE direction was not. ``pos_is_live`` is
+            # ``pos_mode == "live" AND self.live_trading_enabled``, so the
+            # moment that bot-level flag went false, every position holding
+            # real tokens fell through to the ``else`` branch below and was
+            # marked out against the feed price: no swap, no tx hash, no
+            # proceeds -- and the resulting fiction was booked as a completed
+            # trade.
+            #
+            # It was booked in the LIVE ledger, too. ``record()`` is called
+            # with ``mode=pos_mode`` while the database row is written with
+            # ``wallet="live" if pos_is_live else "ghost"``, so one simulated
+            # exit produced a row that says ghost and a ledger entry that says
+            # live. Measured against the chain on 2026-09-03 (eth_getLogs over
+            # every ERC-20 Transfer touching
+            # 0x291c854811e92906a658Fb94Aa511bF919f968ad), four of atf_static's
+            # seven "live" outcomes have no settling transfer at all:
+            #
+            #   17:40:03 CBETH  -0.000005   sold 0.00000023 -- no transfer
+            #   19:12:15 BSTONK -0.142865   sold 360.264243 -- no transfer;
+            #                               the wallet still holds all 360.264
+            #   20:03:27 CBBTC  +0.000267   sold 0.00000928 -- no transfer
+            #   20:38:53 CBETH  -0.003011   sold 0.00015239 -- no transfer, and
+            #                               the wallet had held only 0.00000037
+            #                               since 16:46, so it sold tokens that
+            #                               did not exist
+            #
+            # The BSTONK line alone is -0.142865 against +0.011281 of wins: it
+            # is 102% of the entire live P/L that demoted the only strategy
+            # that has ever spent real money, and it is the tail_risk 0.1429
+            # and profit_factor 0.152 that the live gate refuses on. The
+            # position it "stopped out" is still open on chain.
+            #
+            # So: refuse. Hold the position, say why, and close it for real
+            # when live execution is armed again. An unclosed position is
+            # visible; a fictional close is not.
+            if pos_mode == "live" and not pos_is_live:
+                decision.update(
+                    {
+                        "action": "exit",
+                        "status": "live-exit-blocked",
+                        "reason": "live_position_cannot_exit_in_simulation",
+                        "exit_reason": reason,
+                        "size": exit_size,
+                        "trade_id": pos.get("trade_id"),
+                        "wallet": "live",
+                        "session_id": self.ghost_session_id,
+                        "executed": False,
+                    }
+                )
+                self.metrics.feedback(
+                    "live_trading",
+                    severity=FeedbackSeverity.CRITICAL,
+                    label="live_exit_would_be_simulated",
+                    details={
+                        "symbol": symbol,
+                        "size": exit_size,
+                        "held": held_size,
+                        "reason": reason,
+                        "live_trading_enabled": bool(self.live_trading_enabled),
+                    },
+                )
+                log_message(
+                    "live-swap",
+                    "REFUSING to simulate an exit for the LIVE position %s "
+                    "(%.18f held, reason %s): live execution is not armed, and "
+                    "a marked-out close would book a loss the chain never saw"
+                    % (symbol, float(held_size), reason or "-"),
+                    severity="error",
+                )
+                return decision
 
             if pos_is_live:
                 entry_ts_gate = float(pos.get("entry_ts", pos.get("ts", sample_ts)))
@@ -7823,7 +8349,7 @@ class TradingBot:
         incoming_mode: str,
         incoming_strategy: str,
         incoming_trade_id: str,
-    ) -> None:
+    ) -> bool:
         """Drop the open position a new entry is about to take the slot of.
 
         Called immediately before each write to ``self.positions[symbol]``, and
@@ -7843,15 +8369,89 @@ class TradingBot:
         had ever been open. A released position leaves a row naming what was
         abandoned and what took its place.
 
-        A live position is never released here -- ``_interpret_predictions``
-        refuses a non-live entry before reaching this point, and a live entry
-        replacing a live position on the same symbol would strand the first
-        one's tokens. That case is asserted against in the tests rather than
-        handled, because the entry path cannot produce it.
+        Returns True when the slot is free for the caller to write, False when
+        the release was REFUSED and the caller must not overwrite.
+
+        A live position is never released here. That used to be a claim about
+        the callers -- "``_interpret_predictions`` refuses a non-live entry
+        before reaching this point, and the entry path cannot produce" a live
+        entry over a live position, "asserted against in the tests rather than
+        handled". The database disagreed: four rows on 2026-09-03 carry
+        ``released_mode: "live"`` (CBETH 15:38:02, CBBTC 16:24:26, 16:38:22 and
+        16:40:45), each abandoning tokens the wallet still holds. An invariant
+        asserted about a caller is not enforced; this one is now enforced where
+        it can actually be violated.
+
+        The refusal is loud and it is a measurement, not a guess: the caller's
+        entry has already swapped by the time it gets here, so a silent refusal
+        would strand the NEW fill instead of the old one. The live caller
+        merges into the surviving position; the ghost caller abandons its
+        simulated entry, which costs nothing.
         """
         pos = self.positions.get(symbol)
         if not isinstance(pos, dict):
-            return
+            return True
+        if str(pos.get("mode") or "") == "live":
+            log_message(
+                "position-released",
+                "REFUSING to release the LIVE position %s (%s, %.18f held, "
+                "entry tx %s) for an incoming %s entry by %s: the position is "
+                "the only record of tokens the wallet actually owns"
+                % (
+                    symbol,
+                    str(pos.get("trade_id") or "?"),
+                    float(pos.get("size") or 0.0),
+                    str(pos.get("entry_tx_hash") or pos.get("tx_hash") or "-"),
+                    incoming_mode,
+                    incoming_strategy or "unclassified",
+                ),
+                severity="error",
+            )
+            try:
+                self.metrics.feedback(
+                    "live_trading",
+                    severity=FeedbackSeverity.CRITICAL,
+                    label="live_position_release_refused",
+                    details={
+                        "symbol": symbol,
+                        "held_trade_id": str(pos.get("trade_id") or ""),
+                        "held_strategy_id": str(pos.get("strategy_id") or ""),
+                        "held_size": float(pos.get("size") or 0.0),
+                        "held_entry_tx_hash": str(
+                            pos.get("entry_tx_hash") or pos.get("tx_hash") or ""
+                        ),
+                        "incoming_mode": incoming_mode,
+                        "incoming_strategy_id": incoming_strategy,
+                        "incoming_trade_id": incoming_trade_id,
+                    },
+                )
+            except Exception:
+                pass
+            try:
+                self.db.log_trade(
+                    wallet="live",
+                    chain=chain,
+                    symbol=symbol,
+                    action="hold",
+                    status="live-position-release-refused",
+                    details={
+                        "symbol": symbol,
+                        "held_trade_id": str(pos.get("trade_id") or ""),
+                        "held_strategy_id": str(pos.get("strategy_id") or ""),
+                        "held_size": float(pos.get("size") or 0.0),
+                        "held_entry_price": float(pos.get("entry_price") or 0.0),
+                        "held_entry_tx_hash": str(
+                            pos.get("entry_tx_hash") or pos.get("tx_hash") or ""
+                        ),
+                        "incoming_mode": incoming_mode,
+                        "incoming_strategy_id": incoming_strategy,
+                        "incoming_trade_id": incoming_trade_id,
+                        "reason": "live_position_is_the_only_record_of_real_tokens",
+                    },
+                )
+            except Exception:
+                pass
+            return False
         released = {
             "symbol": symbol,
             "released_mode": str(pos.get("mode") or ""),
@@ -7887,6 +8487,7 @@ class TradingBot:
             )
         except Exception:
             pass
+        return True
 
     def _save_state(self) -> None:
         try:
