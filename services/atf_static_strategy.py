@@ -21,6 +21,12 @@ LATEST_KEY = "atf_static_strategy:latest"
 PENDING_BUS_KEY = "atf_static_strategy:pending_bus_actions"
 FEEDBACK_KEY = "atf_static_strategy:feedback"
 GHOST_POSITIONS_KEY = "atf_static_strategy:ghost_positions"
+try:
+    from services.symbol_edge_gate import refusal_reason as _symbol_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
+    def _symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
+        return None
+
 SOURCE = "c0d3rv2_atf_static"
 
 #: Ledger identity for trades this module opens and closes ITSELF.
@@ -487,6 +493,7 @@ def _run_ghost_quote_scout(
     events: List[Dict[str, Any]] = []
     skipped_unpriced: List[str] = []
     skipped_sparse_feed: List[str] = []
+    skipped_negative_edge: List[str] = []
 
     for symbol, pos in list(positions.items()):
         if not isinstance(pos, dict):
@@ -639,6 +646,32 @@ def _run_ghost_quote_scout(
         if not _feed_is_dense_enough(db, symbol, chain):
             skipped_sparse_feed.append(symbol)
             continue
+        # SYMBOLS THE BOOK HAS PROVEN WE LOSE ON.
+        #
+        # This scout writes `ghost-entry` rows directly and never passes
+        # through trading/bot.py, so the gate wired into the bot's entry path
+        # does not see it. Measured 2026-09-04 14:16, minutes after that gate
+        # went live: BASECAT-USDC -- 37 closed round trips at mean -0.0517,
+        # t=-3.30 -- was entered from HERE while the bot was correctly
+        # refusing it. One rule, two entry paths, and only one of them was
+        # holding the line.
+        edge_refusal = _symbol_edge_refusal(symbol)
+        if edge_refusal:
+            skipped_negative_edge.append(symbol)
+            db.log_trade(
+                wallet="ghost",
+                chain=chain,
+                symbol=symbol,
+                action="hold",
+                status="entry-refused-symbol-edge",
+                details={
+                    "symbol": symbol,
+                    "reason": "symbol_has_a_measured_negative_edge",
+                    "detail": edge_refusal,
+                    "strategy_id": SCOUT_STRATEGY_ID,
+                },
+            )
+            continue
         target_return = max(min_profit, _float(sig.get("expected_return"), 0.0))
         position = {
             "source": SOURCE,
@@ -707,12 +740,30 @@ def _run_ghost_quote_scout(
             )
         except Exception:
             pass
+    if skipped_negative_edge:
+        # Reported for the same reason the sparse-feed refusal is: a silent
+        # refusal is indistinguishable from the scout never having found the
+        # candidate, and that silence is what let BASECAT keep being entered
+        # from this path while the bot's own gate refused it.
+        try:
+            from services.logging_utils import log_message
+
+            log_message(
+                "atf-static",
+                "refused %d candidate(s) with a measured negative edge: %s"
+                % (len(skipped_negative_edge),
+                   ", ".join(sorted(set(skipped_negative_edge))[:8])),
+                severity="warning",
+            )
+        except Exception:
+            pass
     return {
         "enabled": True,
         "open": len(positions),
         "events": events,
         "skipped_unpriced": sorted(set(skipped_unpriced)),
         "skipped_sparse_feed": sorted(set(skipped_sparse_feed)),
+        "skipped_negative_edge": sorted(set(skipped_negative_edge)),
     }
 
 
