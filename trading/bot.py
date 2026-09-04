@@ -34,6 +34,12 @@ from trading.brain_bridge import (
 )
 from services.cli_utils import from_base_units, to_base_units
 from services.logging_utils import log_message
+
+try:
+    from services.symbol_edge_gate import refusal_reason as symbol_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop trading
+    def symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
+        return None
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
@@ -155,6 +161,11 @@ class TradingBot:
         self._orphan_adoption_checked_at: Dict[str, float] = {}
         #: symbol -> last time _drop_phantom_live_position paid for a chain read
         self._phantom_position_checked_at: Dict[str, float] = {}
+        #: symbol -> tx_hash of a settled buy whose receipt could not be read.
+        #: Set by _unmatched_live_entry_details, consumed by the entry gate:
+        #: money that has demonstrably left the wallet and that we cannot
+        #: measure must block a second buy, never release one.
+        self._unreconciled_settled_buy: Dict[str, str] = {}
         self.ghost_session_id: int = 1
         self.active_exposure: Dict[str, float] = {}
         self.graph = NeuroGraph()
@@ -540,6 +551,10 @@ class TradingBot:
             # existed still has to look for unbooked holdings; without the
             # recreation it raises on its first sample instead.
             self._orphan_adoption_checked_at = {}
+        if not hasattr(self, "_unreconciled_settled_buy") or not isinstance(
+            self._unreconciled_settled_buy, dict
+        ):
+            self._unreconciled_settled_buy = {}
         queue_max = int(os.getenv("STREAM_QUEUE_MAX", "8"))
         if not hasattr(self, "_pending_queue") or not isinstance(self._pending_queue, deque):
             self._pending_queue = deque(maxlen=queue_max)
@@ -1345,6 +1360,182 @@ class TradingBot:
     #: five-minute floor keeps a quiet stream from billing an RPC per tick.
     ORPHAN_ADOPTION_INTERVAL_SEC = 300.0
 
+    def _unmatched_live_entry_details(
+        self, symbol: str, *, chain: str
+    ) -> List[Dict[str, Any]]:
+        """Every live BUY the wallet has not sold out of, newest first.
+
+        THE SETTLED SWAP IS THE RECORD, NOT THE BOOKING ROW.
+
+        A live entry writes two rows, and they are minutes apart:
+
+            live-swap-settled   written the instant the chain confirms, by the
+                                swapper, carrying the 66-char tx_hash
+            live-entry          written after the wallet resync and the
+                                receipt read, by the booking path, carrying
+                                ``size`` and ``quote_spent``
+
+        Measured 2026-09-04 on CBBTC-USDC, tx
+        0xabcace1328c0463fc8b0f234c10cb56b59157ac794f638d20e2069f416410174:
+        settled 13:06:16, booked 13:10:58 -- **4m42s** in which real money is
+        gone and nothing durable points at it.
+
+        Every recovery path in this file used to reconstruct the wallet's
+        unmatched buys from the BOOKING rows alone, so a buy that settles and
+        is never booked is invisible to all of them. That is not theoretical:
+
+            12:53:04  0xf1c6c076d50e94640396f8c2c8f12babf980faedb95b7ed84a2b5f22fe98a813
+                      OUT 0.874616 USDC, IN 1095 raw cbBTC   -- never booked,
+                      production restarted 12:56:01 inside the window
+            13:06:16  0xabcace1328c0463fc8b0f234c10cb56b59157ac794f638d20e2069f416410174
+                      OUT 0.874616 USDC, IN 1094 raw cbBTC   -- booked 13:10:58
+
+        balanceOf confirmed 2189 raw = 1095 + 1094: BOTH buys held, nothing
+        sold, 1.749232 USDC spent against a book that recorded one 0.874616
+        position. The bot bought the same symbol twice 13 minutes apart
+        because the slot looked empty, and ``_size_live_exit`` would then have
+        sold only the 1094 the book knew about and stranded the other 1095
+        ($0.875, six times the entire live P/L) behind a settled sell that
+        makes it permanently unrecoverable.
+
+        So: walk the SETTLED rows, stop at the newest settled sell (it closed
+        everything older), and for each settled buy prefer the booking row's
+        measured ``size``/``quote_spent`` when it exists. When it does not,
+        read the buy's own receipt -- the same ``_read_receipt_fill`` the
+        booking path would have used, against the same transaction.
+
+        A receipt that cannot be read is recorded in
+        ``_unreconciled_settled_buy`` and the buy is DROPPED from the result:
+        a basis computed over a buy whose fill nobody could measure is a
+        fabricated number, and this repo has shipped four of those. The entry
+        gate refuses the symbol while that flag stands, so the failure mode is
+        a skipped opportunity and never a second buy.
+        """
+        try:
+            booking_rows = self.db.fetch_trades(
+                limit=500, symbol=symbol, statuses=["live-entry", "live-exit"]
+            )
+        except Exception:
+            booking_rows = []
+        booked: Dict[str, Dict[str, Any]] = {}
+        for row in booking_rows:                   # newest first
+            if str(row.get("status") or "") == "live-exit":
+                break                              # a settled sell closes everything older
+            details = row.get("details") or {}
+            if not isinstance(details, dict):
+                continue
+            tx_hash = str(details.get("tx_hash") or "").lower()
+            if not tx_hash or not details.get("executed"):
+                continue
+            booked.setdefault(tx_hash, details)
+
+        try:
+            settled_rows = self.db.fetch_trades(
+                limit=500, symbol=symbol, statuses=["live-swap-settled"]
+            )
+        except Exception:
+            settled_rows = []
+
+        unmatched: List[Dict[str, Any]] = []
+        unreadable = ""
+        swapper: Any = None
+        for row in settled_rows:                   # newest first
+            details = row.get("details") or {}
+            if not isinstance(details, dict):
+                continue
+            purpose = str(details.get("purpose") or "")
+            if purpose == "live_exit":
+                break                              # a settled sell closes everything older
+            if purpose != "live_entry":
+                continue
+            # ``confirmed``/``ok`` are the settled row's own booleans; the
+            # booking row's ``executed`` never appears on it. Verified by
+            # reading the stored JSON: confirmed=True <bool>, ok=True <bool>,
+            # executed absent. Filtering on ``executed`` here -- as the
+            # booking scan does -- would reject every settled row there is.
+            tx_hash = str(details.get("tx_hash") or "")
+            if not tx_hash or details.get("confirmed") is not True or not details.get("ok"):
+                continue
+            booked_details = booked.get(tx_hash.lower())
+            if booked_details is not None:
+                unmatched.append(booked_details)
+                continue
+
+            # Settled but never booked. The receipt is the only place the fill
+            # still exists, and it is per-transaction, so it cannot be confused
+            # by a sibling bot's swap the way a wallet delta can.
+            if swapper is None:
+                if self._bridge is None:
+                    self._bridge = self._init_bridge()
+                if self._bridge is None:
+                    unreadable = tx_hash
+                    break
+                try:
+                    swapper = self._new_swapper()
+                except Exception as exc:  # noqa: BLE001
+                    log_message(
+                        "live-swap",
+                        f"cannot build a swapper to recover settled buy {tx_hash}: {exc!r}",
+                        severity="error",
+                    )
+                    unreadable = tx_hash
+                    break
+            fill = self._read_receipt_fill(
+                swapper,
+                chain=chain,
+                tx_hash=tx_hash,
+                sell=str(details.get("sell") or ""),
+                buy=str(details.get("buy") or ""),
+                leg="unbooked-entry",
+            )
+            bought = float(getattr(fill, "bought", 0.0) or 0.0) if fill is not None else 0.0
+            sold = float(getattr(fill, "sold", 0.0) or 0.0) if fill is not None else 0.0
+            if fill is None or not getattr(fill, "ok", False) or bought <= 0.0 or sold <= 0.0:
+                log_message(
+                    "live-swap",
+                    "SETTLED BUY %s for %s CANNOT BE MEASURED (%s); refusing to "
+                    "guess its fill, and refusing new entries on this symbol "
+                    "until it can be read -- the money is already gone."
+                    % (
+                        tx_hash,
+                        symbol,
+                        getattr(fill, "reason", "no_fill") if fill is not None else "no_fill",
+                    ),
+                    severity="error",
+                )
+                unreadable = tx_hash
+                continue
+            log_message(
+                "live-swap",
+                "RECOVERED unbooked settled buy %s for %s from its receipt: "
+                "spent %.6f, received %.18f (the live-entry row was never "
+                "written -- see _unmatched_live_entry_details)"
+                % (tx_hash, symbol, sold, bought),
+                severity="warning",
+            )
+            unmatched.append(
+                {
+                    "tx_hash": tx_hash,
+                    "executed": True,
+                    "size": bought,
+                    "quote_spent": sold,
+                    "gas_spent_native": float(getattr(fill, "gas_native", 0.0) or 0.0),
+                    "strategy_id": str(details.get("strategy_id") or ""),
+                    "trade_id": str(details.get("trade_id") or ""),
+                    "entry_ts": float(row.get("ts") or time.time()),
+                    "timestamp": float(row.get("ts") or time.time()),
+                    "route": [s for s in str(symbol).split("-") if s],
+                    "target_price": 0.0,
+                    "recovered_from_settled_swap": True,
+                }
+            )
+
+        if unreadable:
+            self._unreconciled_settled_buy[symbol] = unreadable
+        else:
+            self._unreconciled_settled_buy.pop(symbol, None)
+        return unmatched
+
     def _adopt_orphaned_live_holding(
         self,
         symbol: str,
@@ -1401,32 +1592,12 @@ class TradingBot:
             return None
         self._orphan_adoption_checked_at[symbol] = now
 
-        # Filtered in SQL by symbol AND status, so the row cap bounds the
-        # matching rows and not the window they were drawn from -- the mistake
-        # in 27bff7e, where a 500-row cap over ALL statuses silently truncated
-        # a 48h window to its newest 20%.
-        try:
-            rows = self.db.fetch_trades(
-                limit=500,
-                symbol=symbol,
-                statuses=["live-entry", "live-exit"],
-            )
-        except Exception:
-            return None
-        if not rows:
-            return None
-
-        unmatched: List[Dict[str, Any]] = []
-        for row in rows:                       # newest first
-            if str(row.get("status") or "") == "live-exit":
-                break                          # a settled sell closes everything older
-            details = row.get("details") or {}
-            if not isinstance(details, dict):
-                continue
-            tx_hash = str(details.get("tx_hash") or "")
-            if not tx_hash or not details.get("executed"):
-                continue
-            unmatched.append(details)
+        # Driven by the SETTLED swaps, not by the booking rows: a buy that
+        # settled and was never booked is exactly the holding this function
+        # exists to rescue, and scanning ``live-entry`` alone could not see
+        # one. See _unmatched_live_entry_details for the two CBBTC buys that
+        # proved it.
+        unmatched = self._unmatched_live_entry_details(symbol, chain=chain)
         if not unmatched:
             return None
 
@@ -1694,6 +1865,229 @@ class TradingBot:
         except Exception:
             pass
         return position
+
+    def _reconcile_live_position_against_settled(
+        self,
+        symbol: str,
+        *,
+        chain: str,
+        pos: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Grow a live position to cover settled buys it does not account for.
+
+        ``_adopt_orphaned_live_holding`` only runs when the slot is EMPTY, so
+        it cannot help a position that exists and is simply too small. That is
+        the other half of the same failure, and it is the half that costs
+        money.
+
+        Measured 2026-09-04 on CBBTC-USDC. Two settled buys, 0.874616 USDC
+        each; the first was never booked (see
+        ``_unmatched_live_entry_details``), so the position read:
+
+            size          1.094e-05      chain balanceOf   2.189e-05
+            quote_spent   0.874616       actually spent    1.749232
+
+        Both downstream consumers then get the wrong answer, and which one
+        fires depends only on the dust floor:
+
+          * ``_size_live_exit`` sizes the sell as ``min(position_size,
+            onchain)`` = 1094 raw and leaves 1095 raw behind. The residual is
+            worth $0.875 against an EXIT_DUST_SWEEP_USD of $0.50, so it is NOT
+            swept -- and the exit then writes ``remaining_size: 0.0`` and drops
+            the position, after which the settled sell makes the leftover
+            invisible to every recovery path there is. $0.875 stranded: 5% of
+            the book, and six times the entire live P/L of +0.1423.
+
+          * Had the floor been higher, the sweep would have sold all 2189 raw
+            for ~1.749 USDC while ``allocation_ratio = min(1.0, base_sold /
+            held_size)`` capped the cost at the recorded 0.874616 -- booking
+            **+0.874 gross, a fabricated 100% win** on a round trip that
+            actually broke even. The adoption path was hardened against
+            exactly this ("a fabricated record of exactly the kind this repo
+            has already shipped four of"); the ordinary exit path was not.
+
+        Both disappear if the book simply agrees with the chain before the
+        exit reads it. Costs are summed from the buys' own receipts, never
+        extrapolated: ``quote_spent`` is what those transactions really paid.
+
+        Called from ``_interpret_predictions`` before the entry gate and the
+        exit sizing -- both read ``pos`` from that one binding, so one call
+        covers both.
+        """
+        if not isinstance(pos, dict) or str(pos.get("mode") or "") != "live":
+            return pos
+        if not self.live_trading_enabled or self._live_trades_dry_run():
+            return pos
+
+        accounted = {
+            str(h or "").lower()
+            for h in [pos.get("entry_tx_hash")]
+            + list(pos.get("adopted_from_tx_hashes") or [])
+            + list(pos.get("reconciled_from_tx_hashes") or [])
+            if str(h or "")
+        }
+        unmatched = self._unmatched_live_entry_details(symbol, chain=chain)
+        missing = [
+            d
+            for d in unmatched
+            if str(d.get("tx_hash") or "").lower() not in accounted
+        ]
+        if not missing:
+            return pos
+
+        extra_base = sum(float(d.get("size") or 0.0) for d in missing)
+        extra_quote = sum(float(d.get("quote_spent") or 0.0) for d in missing)
+        extra_gas = sum(float(d.get("gas_spent_native") or 0.0) for d in missing)
+        if not (extra_base > 0.0 and extra_quote > 0.0):
+            return pos
+
+        old_size = float(pos.get("size") or 0.0)
+        old_spent = float(pos.get("quote_spent") or 0.0)
+        new_size = old_size + extra_base
+        new_spent = old_spent + extra_quote
+
+        # THE CHAIN IS THE CEILING. Receipts prove what each buy delivered,
+        # but not that we still hold it -- a sell this book never saw would
+        # make the sum an overstatement, and a position claiming more than the
+        # wallet has produces an exit that cannot fill. Fail closed: leave the
+        # position alone and say so, rather than inflate it.
+        held = self._onchain_base_held(symbol, chain=chain, pos=pos)
+        if held is None:
+            log_message(
+                "live-swap",
+                "cannot reconcile %s: %d settled buy(s) unaccounted for but the "
+                "on-chain balance is unreadable; leaving the position at %.18f"
+                % (symbol, len(missing), old_size),
+                severity="error",
+            )
+            return pos
+        if new_size > held * 1.01:
+            log_message(
+                "live-swap",
+                "REFUSING to reconcile %s: settled buys account for %.18f but "
+                "the chain holds only %.18f -- a sell this book never saw must "
+                "have happened, and a position larger than the wallet cannot "
+                "exit. Leaving it at %.18f."
+                % (symbol, new_size, held, old_size),
+                severity="error",
+            )
+            return pos
+
+        pos["size"] = new_size
+        pos["quote_spent"] = new_spent
+        pos["gas_spent_native"] = float(pos.get("gas_spent_native") or 0.0) + extra_gas
+        pos["reconciled_from_tx_hashes"] = sorted(
+            accounted | {str(d.get("tx_hash") or "").lower() for d in missing}
+        )
+        pos["reconciled_ts"] = time.time()
+        # The oldest unaccounted buy is when that money actually left, so the
+        # max-hold clock must count from it rather than from the newer entry
+        # the book happened to record.
+        oldest_ts = min(
+            [float(d.get("entry_ts") or d.get("timestamp") or 0.0) for d in missing]
+            + [float(pos.get("entry_ts") or pos.get("ts") or 0.0)]
+        )
+        if oldest_ts > 0.0:
+            pos["entry_ts"] = oldest_ts
+            pos["ts"] = oldest_ts
+        if new_size > 0.0:
+            pos["entry_price"] = new_spent / new_size
+        self._claim_position_symbol(symbol)
+        self.positions[symbol] = pos
+        self._save_state()
+
+        hashes = ", ".join(str(d.get("tx_hash") or "") for d in missing)
+        log_message(
+            "live-swap",
+            "RECONCILED %s against the chain: %d settled buy(s) the position "
+            "did not account for (%s). size %.18f -> %.18f (chain holds "
+            "%.18f), quote_spent %.6f -> %.6f, entry_price -> %.12g"
+            % (
+                symbol,
+                len(missing),
+                hashes,
+                old_size,
+                new_size,
+                held,
+                old_spent,
+                new_spent,
+                pos["entry_price"],
+            ),
+            severity="warning",
+        )
+        try:
+            self.metrics.feedback(
+                "live_trading",
+                severity=FeedbackSeverity.WARNING,
+                label="live_position_reconciled_against_settled",
+                details={
+                    "symbol": symbol,
+                    "missing_buys": len(missing),
+                    "tx_hashes": [str(d.get("tx_hash") or "") for d in missing],
+                    "size_before": old_size,
+                    "size_after": new_size,
+                    "onchain_held": held,
+                    "quote_spent_before": old_spent,
+                    "quote_spent_after": new_spent,
+                },
+            )
+        except Exception:
+            pass
+        try:
+            self.db.log_trade(
+                wallet="live",
+                chain=chain,
+                symbol=symbol,
+                action="repair",
+                status="live-position-reconciled",
+                details={
+                    "symbol": symbol,
+                    "reason": "settled_buys_not_accounted_by_position",
+                    "tx_hashes": [str(d.get("tx_hash") or "") for d in missing],
+                    "size_before": old_size,
+                    "size_after": new_size,
+                    "onchain_held": held,
+                    "quote_spent_before": old_spent,
+                    "quote_spent_after": new_spent,
+                    "entry_price": float(pos["entry_price"]),
+                    "trade_id": str(pos.get("trade_id") or ""),
+                    "strategy_id": str(pos.get("strategy_id") or ""),
+                },
+            )
+        except Exception:
+            pass
+        return pos
+
+    def _onchain_base_held(
+        self, symbol: str, *, chain: str, pos: Optional[Dict[str, Any]] = None
+    ) -> Optional[float]:
+        """Human-units balance of the position's base token. None = unreadable.
+
+        Resolves by the CONTRACT the position was opened at when it carries
+        one. Resolving by ticker instead is what made adoption and the phantom
+        drop disagree about the same symbol -- 13 adoptions against 11 drops in
+        24h -- because 131 of 408 base symbols map to more than one contract.
+        """
+        address = str((pos or {}).get("base_token_address") or "") or None
+        _, swap_token = self._resolve_live_trade_asset(chain, symbol, address)
+        if not swap_token:
+            return None
+        if self._bridge is None:
+            self._bridge = self._init_bridge()
+        if self._bridge is None:
+            return None
+        try:
+            reading = self._new_swapper().token_balance_raw(chain, str(swap_token))
+        except Exception as exc:  # noqa: BLE001 - an unreadable balance is not a crash
+            log_message(
+                "live-swap",
+                f"balance read raised for {symbol} ({swap_token}): {exc!r}",
+                severity="error",
+            )
+            return None
+        if not reading:
+            return None
+        return float(Decimal(int(reading[0])).scaleb(-int(reading[1])))
 
     def _size_live_exit(
         self,
@@ -4715,6 +5109,18 @@ class TradingBot:
             pos = self._adopt_orphaned_live_holding(
                 symbol, chain=chain_name, price=price
             )
+        else:
+            # ...and when the slot is FULL, that a live position accounts for
+            # every settled buy behind it. Adoption cannot help here -- it
+            # returns early on a non-empty slot -- and an under-counting
+            # position is what strands capital: the exit sizes the sell from
+            # `size`, so base the book never learned about is left behind and
+            # then hidden forever by the settled sell. Runs before the entry
+            # predicates AND before the exit sizing, both of which read this
+            # one binding of `pos`.
+            pos = self._reconcile_live_position_against_settled(
+                symbol, chain=chain_name, pos=pos
+            )
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
         fees = 0.0015 + 0.005
         brain_payload = {}
@@ -6007,6 +6413,50 @@ class TradingBot:
                 except Exception:
                     pass
                 return decision
+            # SYMBOLS THE BOOK HAS PROVEN WE LOSE ON.
+            #
+            # Applied to GHOST AS WELL AS LIVE, unlike the swap guard below.
+            # The evidence this gate is built from is the ghost book, and
+            # BASECAT-USDC alone accounts for 37 closed round trips at a mean
+            # of -0.0517 (t=-3.30, total -1.91) -- it is simultaneously the
+            # most-traded symbol in the book and its largest destroyer of
+            # capital. Letting ghost keep trading it would go on generating
+            # the losses this rule exists to stop, and every one of those
+            # trades also consumes a position slot that a tradeable symbol
+            # could have used.
+            #
+            # Bans only, never promotes: see services/symbol_edge_gate.py for
+            # why a positive t of the same strength is not acted on. Validated
+            # out of sample -- a ban list fitted to the first 60% of the book
+            # improved the untouched remaining 40% by +0.0316 and never made
+            # it worse.
+            edge_refusal = symbol_edge_refusal(symbol)
+            if edge_refusal:
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-symbol-edge",
+                        "reason": f"symbol_edge:{edge_refusal}",
+                    }
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live" if self.live_trading_enabled else "ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-symbol-edge",
+                        details={
+                            "symbol": symbol,
+                            "reason": "symbol_has_a_measured_negative_edge",
+                            "detail": edge_refusal,
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
             await self._run_wallet_sync(reason="pre-enter")
             # Skip swap_validator for ghost mode. Its liquidity check
             # uses per-tick avg_volume_usd from market_samples; on a
@@ -6206,6 +6656,57 @@ class TradingBot:
                         "base_symbol": base_balance_symbol,
                         "quote_symbol": quote_balance_symbol,
                     },
+                )
+                live_approved = False
+
+            # A SETTLED BUY WE CANNOT MEASURE MUST NOT RELEASE A SECOND ONE.
+            #
+            # ``_unmatched_live_entry_details`` sets this when a settled
+            # ``live_entry`` swap has no booking row AND its receipt could not
+            # be read: the money is provably gone -- the swap confirmed -- but
+            # how much base it bought is unknown, so neither adoption nor
+            # reconciliation can put it in the book. The slot therefore looks
+            # empty for a reason that is an RPC outage, not an absence of
+            # holdings, and buying again is how CBBTC came to hold two
+            # unsold 0.874616 USDC buys 13 minutes apart on 2026-09-04.
+            #
+            # Fail CLOSED, and downgrade rather than return: the ghost lane
+            # still records the observation (the token_unresolved block above
+            # exists for exactly that lesson), so the cost is a skipped live
+            # opportunity and never a double buy.
+            unreconciled_tx = str(self._unreconciled_settled_buy.get(symbol) or "")
+            if live_approved and not self._live_trades_dry_run() and unreconciled_tx:
+                log_message(
+                    "live-swap",
+                    "REFUSING a live entry on %s: settled buy %s cannot be "
+                    "measured, so the wallet may already hold this symbol. "
+                    "Downgrading to ghost until its receipt can be read."
+                    % (symbol, unreconciled_tx),
+                    severity="error",
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="live-entry-blocked",
+                        details={
+                            "symbol": symbol,
+                            "reason": "unreconciled_settled_buy",
+                            "unreconciled_tx_hash": unreconciled_tx,
+                            "trade_id": trade_id,
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                            "executed": False,
+                        },
+                    )
+                except Exception:
+                    pass
+                self.metrics.feedback(
+                    "live_trading",
+                    severity=FeedbackSeverity.WARNING,
+                    label="entry_blocked_unreconciled_settled_buy",
+                    details={"symbol": symbol, "tx_hash": unreconciled_tx},
                 )
                 live_approved = False
 
