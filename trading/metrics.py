@@ -369,6 +369,8 @@ class MetricsCollector:
         open_entries: Dict[str, List[Dict[str, Any]]] = {}
         keyed_entries: Dict[str, Dict[str, Any]] = {}
         performances: List[TradePerformance] = []
+        # Ghost-exit rows refused below because a real buy stands behind them.
+        real_money_exits: List[str] = []
         for row in rows:
             status = row.get("status")
             details = row.get("details") or {}
@@ -388,6 +390,49 @@ class MetricsCollector:
                     keyed_entries[str(trade_id)] = entry
                 open_entries.setdefault(symbol, []).append(entry)
             elif status == "ghost-exit":
+                # A round trip whose ENTRY was paid for on chain is not ghost
+                # evidence, whatever status the row carries.
+                #
+                # ``entry_tx_hash`` is only ever set by the two paths that
+                # spend real money -- the live entry in ``trading/bot.py`` and
+                # ``_adopt_onchain_holding`` -- so its presence means tokens
+                # were actually bought. When such a position is then marked out
+                # against the feed instead of sold, the row records a profit
+                # for a sale that never happened, and the position stays in the
+                # wallet.
+                #
+                # Measured 2026-09-04, four such rows exist, all written in one
+                # window on 09-03 before ``live_position_cannot_exit_in_simulation``
+                # closed the writer (23593e2, 182bd8a). Each carries
+                # ``fill_source="simulated"`` and an EMPTY ``tx_hash``:
+                #
+                #   09-03 17:40:18Z  CBETH-USDC   -0.000005
+                #   09-03 19:12:16Z  BSTONK-USDC  -0.142865
+                #   09-03 20:03:37Z  CBBTC-USDC   +0.000267
+                #   09-03 20:38:54Z  CBETH-USDC   -0.003011
+                #
+                # The BSTONK line is the whole of atf_static's tail. Its entry
+                # 0xcd6fb05c92af5077f9be707727c1d57e0ac1dfedd54d9f87e860376b96ea560b
+                # bought 360.264243225392976659 BSTONK for 0.750000 USDC, and
+                # ``balanceOf`` on base still returns exactly
+                # 360264243225392976659 -- not one wei was sold. Scored as a
+                # ghost trade it puts atf_static's ES95 at 0.10213 against a
+                # 0.10 guardrail; without it the same 26 real ghost round trips
+                # read 0.01723. The gate was refusing live trading on a loss
+                # that never occurred.
+                #
+                # The same four were annulled in ``trade_outcomes`` by
+                # scripts/annul_unsettled_live_exits.py, but that book is not
+                # this one: the live gate reads ``trading_ops`` through here, so
+                # the correction never reached it. This is the reader-side half.
+                #
+                # The rule is profit-blind -- it drops one WIN and three losses
+                # -- and it keys on a fact about the chain, not on the outcome.
+                if len(str(details.get("entry_tx_hash") or "")) == 66:
+                    real_money_exits.append(
+                        "%s %+.6f" % (symbol, float(details.get("profit") or 0.0))
+                    )
+                    continue
                 entry: Optional[Dict[str, Any]] = None
                 trade_id = details.get("trade_id")
                 if trade_id and str(trade_id) in keyed_entries:
@@ -453,6 +498,17 @@ class MetricsCollector:
                         ),
                     )
                 )
+        if real_money_exits:
+            # Say it out loud. A silently shorter book is how a correction gets
+            # mistaken for a measurement.
+            log_message(
+                "metrics",
+                "ghost_trade_snapshot refused %d exit row(s) whose ENTRY settled "
+                "on chain -- a real buy marked out against the feed is not a "
+                "ghost trade, and the position may still be held: %s"
+                % (len(real_money_exits), ", ".join(real_money_exits)),
+                severity="warning",
+            )
         if strategy_id is not None:
             wanted = str(strategy_id).strip()
             performances = [t for t in performances if t.strategy_id == wanted]
