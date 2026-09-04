@@ -447,6 +447,9 @@ class StrategyLedger:
                 float(stats.get("max_drawdown", 0.0)),
                 stats["peak_profit"] - stats["total_profit"],
             )
+            # The drawdown brake's reference tracks the same running maximum,
+            # but scoped to the current licence -- see _dd_ref and the brake.
+            stats["dd_ref"] = max(self._dd_ref(stats), stats["total_profit"])
             if confidence is not None:
                 alpha = 0.1
                 prev = float(stats.get("conf_ema", 0.0))
@@ -468,6 +471,41 @@ class StrategyLedger:
         # must not be re-litigated against a fresh ghost book.
         if ent.get("graduation_blocked") or sid in _ghost_only_ids():
             return
+        # A LIVE demotion is not undone by ghost evidence the strategy already
+        # had when it was demoted.
+        #
+        # This branch is the whole reason the graduation link kept reporting
+        # "no strategy approved for live" while `demotions` climbed. Measured
+        # 2026-09-04 on the real ledger, replaying the shipped code against a
+        # copy of data/strategy_ledger.json:
+        #
+        #   start    approved=False demotions=5  reason="live drawdown: +0.1423 from peak +0.2221"
+        #   +ghost   approved=True  demotions=5  reason="live drawdown: +0.1423 from peak +0.2221"
+        #   +live-L  approved=False demotions=6  reason="live drawdown: +0.1223 from peak +0.2221"
+        #   +ghost   approved=True  demotions=6  ...
+        #
+        # ONE ghost outcome flipped live approval back on, because this method
+        # only ever consulted `graduation_blocked`, and a ghost record never
+        # runs the demotion check at all (record() gates it on mode == "live").
+        # The entry then simultaneously said "demoted for live drawdown" and
+        # "approved to spend real money". That is the thrash engine behind
+        # atf_static's five demotions, and every cycle of it re-funded a
+        # strategy whose LIVE book is 2W/7L: 9 live round trips, net +0.1423,
+        # of which +0.2420 is a single BSTONK exit. The other eight sum to
+        # -0.0997 and lose -0.0503 GROSS, before a penny of fees.
+        #
+        # It also made _maybe_rearm_locked dead code. That method was added to
+        # break the demotion lockout, but _evaluate_demotion_locked only calls
+        # it when the strategy is NOT approved -- and record() runs graduation
+        # first, which had already re-approved it. Written, shipped, never once
+        # executed for any strategy whose ghost book still cleared the bar.
+        #
+        # So graduation now owns exactly one question: has a strategy that has
+        # NEVER been demoted earned its first licence? Everything after a
+        # demotion goes through the re-arm rule, which judges fresh evidence.
+        if ent.get("demote_reason"):
+            self._maybe_rearm_locked(sid)
+            return
         ghost = ent["ghost"]
         trades = int(ghost.get("trades", 0))
         wins = int(ghost.get("wins", 0))
@@ -482,7 +520,11 @@ class StrategyLedger:
     def _evaluate_demotion_locked(self, sid: str) -> None:
         ent = self._entry(sid)
         if not ent.get("live_approved"):
-            self._maybe_rearm_locked(sid)
+            # Re-arming is owned by _evaluate_graduation_locked, which runs
+            # first on every record() and for BOTH modes. Calling it again here
+            # would only ever re-ask a question already answered this call, and
+            # having two owners is how the rule came to be unreachable in the
+            # first place.
             return
         live = ent["live"]
         # Consecutive losses only matter if we are DOWN on the money.
@@ -591,8 +633,24 @@ class StrategyLedger:
         # consecutive losses (2) and net P/L (from trade 3) both still fire, and
         # they are the rules that enforce "live P/L must never be negative".
         # This one only ever spoke about strategies that are still up.
+        #
+        # The peak it measures against is `dd_ref`, not `peak_profit`, and the
+        # two are deliberately different quantities. `peak_profit` is "the most
+        # this strategy has ever been up on real money" and must never be
+        # rewritten -- dashboards and the lifetime registry read it that way.
+        # `dd_ref` is "the peak reached under the CURRENT licence to trade", and
+        # it is re-based when a demoted strategy earns its licence back.
+        #
+        # Without that separation the brake is a ratchet with no exit. Once
+        # current < peak * (1 - max_dd) the strategy is demoted, so it makes no
+        # further live trades, so `current` can never climb back over the bar,
+        # so it is demoted forever -- and the peak that convicts it may have
+        # been set under a licence it no longer holds. Measured on the real
+        # ledger: peak +0.2221, current +0.1423, bar +0.1666. Re-arming without
+        # re-basing simply re-demoted it on the next live outcome (+0.1223 vs
+        # the same frozen +0.2221), which is the loop this brake was in.
         min_dd_sample = _env_int("STRATEGY_DEMOTE_MIN_DRAWDOWN_TRADES", 8)
-        peak = float(live.get("peak_profit", 0.0))
+        peak = self._dd_ref(live)
         current = float(live.get("total_profit", 0.0))
         max_dd = _env_float("STRATEGY_DEMOTE_MAX_LIVE_DRAWDOWN", 0.5)
         if live_trades >= min_dd_sample and peak > 0 and current < peak * (1.0 - max_dd):
@@ -600,6 +658,18 @@ class StrategyLedger:
                 sid,
                 f"live drawdown: {current:+.4f} from peak {peak:+.4f}",
             )
+
+    @staticmethod
+    def _dd_ref(live: Dict[str, Any]) -> float:
+        """The drawdown brake's reference peak for the current licence.
+
+        Falls back to ``peak_profit`` when absent, so a ledger written before
+        this field existed is judged exactly as it was before.
+        """
+        ref = live.get("dd_ref")
+        if ref is None:
+            return float(live.get("peak_profit", 0.0) or 0.0)
+        return float(ref)
 
     def _maybe_rearm_locked(self, sid: str) -> None:
         """Let a demoted strategy back in once the money says it recovered.
@@ -612,9 +682,31 @@ class StrategyLedger:
         production produced six swaps instead of the twenty-plus the same
         machinery managed the previous afternoon.
 
-        Re-arming is deliberately stricter than staying live: the account must
-        be net POSITIVE (not merely break-even), the losing streak must be
-        broken, and a strategy blocked permanently is never reconsidered.
+        Re-arming needs FRESH ghost evidence, gathered since the demotion, plus
+        a live record that is still net positive. A strategy blocked
+        permanently is never reconsidered.
+
+        The freshness requirement is the point, and it was missing. The old
+        rule was "net live P/L > 0, no losing streak, >= 3 live trades", and
+        every one of those was satisfied the instant a strategy was demoted:
+
+          * `net > 0` -- true by construction for the drawdown brake, which
+            only ever fires on strategies that are STILL UP.
+          * `streak == 0` -- `_demote_locked` zeroes `consecutive_losses` on
+            its last line, so "the losing streak must be broken" was true of
+            every freshly demoted strategy. The check could not discriminate.
+          * `trades >= 3` -- unchanged by a demotion.
+
+        So the rule read "re-arm immediately", and the only thing keeping it
+        from firing was that it was unreachable (see
+        _evaluate_graduation_locked). Making it reachable without fixing it
+        would have converted a lockout into an unconditional pardon.
+
+        Fresh ghost evidence is what a demotion is actually asking for. The
+        strategy stops spending real money and keeps proving itself in ghost;
+        when it has re-earned a full graduation-grade book AFTER the demotion,
+        it trades again. `ghost_at_demotion` was already being snapshotted for
+        exactly this and was read by nothing -- this is its reader.
         """
         ent = self._entry(sid)
         if ent.get("graduation_blocked"):
@@ -624,22 +716,53 @@ class StrategyLedger:
 
         live = ent.get("live") or {}
         net = float(live.get("total_profit", 0.0))
-        streak = int(live.get("consecutive_losses", 0))
         trades = int(live.get("trades", 0))
         min_sample = _env_int("STRATEGY_REARM_MIN_LIVE_TRADES", 3)
+        if trades >= min_sample and net <= 0.0:
+            return                      # it lost real money; ghost cannot excuse that
 
-        if net > 0.0 and streak == 0 and trades >= min_sample:
+        ghost = ent.get("ghost") or {}
+        at = ent.get("ghost_at_demotion")
+        if not isinstance(at, dict):
+            # Demoted before the snapshot existed, or by a hand-edit. Fail
+            # CLOSED: baseline from here so the fresh window starts now, rather
+            # than counting a pre-demotion book as evidence of recovery.
+            at = dict(ghost)
+            ent["ghost_at_demotion"] = at
+
+        fresh_trades = int(ghost.get("trades", 0)) - int(at.get("trades", 0))
+        fresh_wins = int(ghost.get("wins", 0)) - int(at.get("wins", 0))
+        fresh_profit = float(ghost.get("total_profit", 0.0)) - float(
+            at.get("total_profit", 0.0)
+        )
+        min_trades = _env_int("STRATEGY_GRADUATION_MIN_TRADES", 20)
+        min_winrate = _env_float("STRATEGY_GRADUATION_MIN_WINRATE", 0.55)
+        min_profit = _env_float("STRATEGY_GRADUATION_MIN_PROFIT", 0.0)
+
+        if (
+            fresh_trades >= min_trades
+            and (fresh_wins / max(fresh_trades, 1)) >= min_winrate
+            and fresh_profit > min_profit
+        ):
             ent["live_approved"] = True
             ent["demote_reason"] = None
             ent["rearmed_ts"] = time.time()
             ent["rearms"] = int(ent.get("rearms", 0)) + 1
+            # New licence, new drawdown reference. The peak that convicted it
+            # belonged to the previous licence; carrying it forward re-demotes
+            # the strategy on its first live outcome. `peak_profit` is left
+            # alone -- it means "the most this has ever been up", and that is
+            # still true.
+            ent["live"]["dd_ref"] = float(ent["live"].get("total_profit", 0.0))
+            ent["ghost_at_demotion"] = dict(ghost)
             try:
                 from services.logging_utils import log_message
 
                 log_message(
                     "strategy-ledger",
-                    f"{sid}: re-armed for live -- net {net:+.6f} over {trades} "
-                    f"live trades with no active losing streak",
+                    f"{sid}: re-armed for live -- {fresh_wins}/{fresh_trades} "
+                    f"fresh ghost trades since the demotion for "
+                    f"{fresh_profit:+.6f}, live net {net:+.6f} over {trades}",
                     severity="info",
                 )
             except Exception:  # noqa: BLE001

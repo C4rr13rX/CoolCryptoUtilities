@@ -142,38 +142,83 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
         self.assertEqual(int(ent["ghost"].get("trades") or 0), 30,
                          "the proving-ground record must survive a demotion")
 
-    def test_a_recovered_strategy_is_re_armed(self):
+    # Re-arming is evaluated by _evaluate_graduation_locked, which record()
+    # runs first and for BOTH modes. It used to be evaluated by
+    # _evaluate_demotion_locked, which record() only runs for live outcomes --
+    # and which never reached the re-arm branch, because graduation had already
+    # re-approved the strategy on its stale ghost book. These call the owner.
+
+    def test_stale_ghost_evidence_does_not_re_arm(self):
+        """The evidence that existed BEFORE the demotion is not recovery.
+
+        This is the defect the whole class exists for, measured 2026-09-04 by
+        replaying the shipped code against a copy of the real ledger: a single
+        ghost outcome flipped atf_static from demoted to live_approved while
+        its demote_reason still read "live drawdown: +0.1423 from peak
+        +0.2221". The entry simultaneously claimed it had been pulled off real
+        money and was cleared to spend it. Five demotions on the real record
+        are that cycle, and the live book it kept re-funding is 2W/7L.
+        """
         led, sid, ent = self._demoted()
-        ent["live"].update({"trades": 6, "consecutive_losses": 0,
-                            "total_profit": 0.2221})
-        led._evaluate_demotion_locked(sid)
+        ent["live"].update({"trades": 6, "total_profit": 0.2221})
+        # A full, passing ghost book -- but all of it predates the demotion.
+        led._evaluate_graduation_locked(sid)
+        self.assertFalse(led._entry(sid)["live_approved"],
+                         "a demotion must not be undone by evidence it already had")
+        # And one fresh ghost trade is not a re-earned book either.
+        ent["ghost"].update({"trades": 31, "wins": 21, "total_profit": 0.91})
+        led._evaluate_graduation_locked(sid)
+        self.assertFalse(led._entry(sid)["live_approved"])
+
+    def test_a_recovered_strategy_is_re_armed(self):
+        """Fresh ghost evidence, gathered since the demotion, brings it back."""
+        led, sid, ent = self._demoted()
+        ent["live"].update({"trades": 6, "total_profit": 0.2221})
+        # A full graduation-grade book earned AFTER the demotion: the snapshot
+        # taken at demotion time was 30 trades / 20 wins / +0.9.
+        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        led._evaluate_graduation_locked(sid)
         self.assertTrue(led._entry(sid)["live_approved"],
-                        "net positive with no active streak must trade again")
+                        "a re-earned ghost book must trade again")
         self.assertIsNone(led._entry(sid).get("demote_reason"))
+
+    def test_re_arming_rebases_the_drawdown_brake(self):
+        """The peak that convicted it belonged to the licence it lost.
+
+        Carrying it forward re-demoted the strategy on its very first live
+        outcome, which is how the brake became a ratchet with no exit: demoted
+        means no live trades, no live trades means the total can never climb
+        back over the bar, so the demotion is permanent.
+        """
+        led, sid, ent = self._demoted()
+        ent["live"].update({"trades": 6, "total_profit": 0.14, "peak_profit": 0.2221})
+        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        led._evaluate_graduation_locked(sid)
+        live = led._entry(sid)["live"]
+        self.assertAlmostEqual(
+            led._dd_ref(live), 0.14, places=9,
+            msg="the brake must measure from the new licence")
+        self.assertAlmostEqual(
+            float(live["peak_profit"]), 0.2221, places=9,
+            msg="peak_profit means 'the most it has ever been up'")
 
     def test_a_still_losing_strategy_stays_demoted(self):
         led, sid, ent = self._demoted()
-        ent["live"].update({"trades": 6, "consecutive_losses": 0,
-                            "total_profit": -0.30})
-        led._evaluate_demotion_locked(sid)
-        self.assertFalse(led._entry(sid)["live_approved"])
-
-    def test_an_active_losing_streak_blocks_re_arming(self):
-        """Recovering P/L while still losing in a row is not recovered."""
-        led, sid, ent = self._demoted()
-        ent["live"].update({"trades": 6, "consecutive_losses": 2,
-                            "total_profit": 0.05})
-        led._evaluate_demotion_locked(sid)
-        self.assertFalse(led._entry(sid)["live_approved"])
+        ent["live"].update({"trades": 6, "total_profit": -0.30})
+        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        led._evaluate_graduation_locked(sid)
+        self.assertFalse(led._entry(sid)["live_approved"],
+                         "ghost cannot excuse a live record that lost real money")
 
     def test_a_permanent_block_is_never_re_armed(self):
         led = StrategyLedger(self.path)
         sid = "bad"
         ent = led._entry(sid)
         ent["live_approved"] = True
+        ent["ghost"].update({"trades": 30, "wins": 20, "total_profit": 0.9})
         led._demote_locked(sid, "fabricated record", permanent=True)
-        ent["live"].update({"trades": 9, "consecutive_losses": 0,
-                            "total_profit": 5.0})
-        led._evaluate_demotion_locked(sid)
+        ent["live"].update({"trades": 9, "total_profit": 5.0})
+        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        led._evaluate_graduation_locked(sid)
         self.assertFalse(led._entry(sid)["live_approved"],
                          "a permanent block is a decision, not a bad stretch")

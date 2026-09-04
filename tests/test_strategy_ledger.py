@@ -45,7 +45,7 @@ def test_unprofitable_never_graduates(ledger):
     assert not ledger.is_live_approved("volume_spike")
 
 
-def test_live_loss_streak_demotes_and_resets_ghost(ledger):
+def test_live_loss_streak_demotes_and_snapshots_ghost(ledger):
     for _ in range(5):
         ledger.record("rsi_reversal", profit=1.0, mode="ghost")
     assert ledger.is_live_approved("rsi_reversal")
@@ -54,7 +54,19 @@ def test_live_loss_streak_demotes_and_resets_ghost(ledger):
     assert not ledger.is_live_approved("rsi_reversal")
     stats = ledger.stats("rsi_reversal")
     assert stats["demotions"] == 1
-    assert stats["ghost"]["trades"] == 0  # must re-prove from scratch
+    # The ghost book SURVIVES a demotion, and is snapshotted rather than wiped.
+    #
+    # This assertion used to read `ghost["trades"] == 0` -- "must re-prove from
+    # scratch" -- and had been failing since _demote_locked stopped wiping the
+    # record, because wiping it made demotion permanent within a session: the
+    # strategy faced a 20-trade bar from zero and nothing could trade meanwhile.
+    #
+    # "Re-prove from scratch" is still enforced, but by measuring the ghost book
+    # against the snapshot instead of by destroying it. Re-arming needs a full
+    # graduation-grade book gathered AFTER `ghost_at_demotion`, so the evidence
+    # has to be fresh without the history being thrown away.
+    assert stats["ghost"]["trades"] == 5
+    assert stats["ghost_at_demotion"]["trades"] == 5
 
 
 def test_manual_demote(ledger):
