@@ -39,6 +39,29 @@ still open on chain.
 The rule pinned here: when a live-opened position cannot be closed on chain,
 the exit is REFUSED and the position survives. An unclosed position is visible
 in the book; a fictional close is not.
+
+AMENDED 2026-09-04. The rule above is right; the implementation that carried it
+was not. ``pos_is_live`` answered "can this close on chain?" with "is the bot
+armed?", and those are different questions -- a disarmed bot with a signing
+bridge and a resolved token can close on chain perfectly well. Because the bot
+never re-arms itself once demoted, the refusal became permanent: atf_static
+bought CBETH live at 00:17:32
+(0x4ca1a606eb33ef24df951f15177532a2d9803554082ddb4c8677cc5d9bbc7e2d, settled on
+base), its live record then flipped to ``live_approved: false`` /
+``halt_live: 1.0``, and from 00:55:31 to 01:07:05 the exit was refused eighteen
+times running with ``live_position_cannot_exit_in_simulation`` while the tokens
+sat in the wallet. A position that cannot be closed is not a held trade, it is
+a donation.
+
+So ``pos_is_live`` is now ``pos_mode == "live"`` alone, and a disarmed bot takes
+the same live swap path an armed one does -- disarming stops TAKING risk, not
+shedding it. Entries are unaffected: they gate on ``entry_is_live`` /
+``entry_spends_real_money``, both still
+``live_trading_enabled AND _strategy_live_approved(directive)``.
+
+Every safety assertion below is unchanged. What changed is where a disarmed bot
+STOPS: at the live swap, not at a mark-out. When that swap cannot happen the
+outcome is the same as before -- nothing booked, position survives.
 """
 
 from __future__ import annotations
@@ -245,17 +268,17 @@ def test_a_live_position_is_not_marked_out_at_a_loss() -> None:
     decision = _tick(bot, price=ENTRY_PRICE * 0.80)
 
     assert decision["status"] == "live-exit-blocked"
-    assert decision["reason"] == "live_position_cannot_exit_in_simulation"
     assert decision["executed"] is False
+    # It stopped at the SWAP, not at a mark-out. `bridge_unavailable` is the
+    # live path failing to sign in a test process -- past this guard entirely.
+    assert decision["reason"] != "live_position_cannot_exit_in_simulation"
     # Nothing was booked anywhere.
     assert bot.db.outcomes == [], "a simulated close of a live position wrote an outcome"
     assert bot.strategy_ledger.recorded == [], "a fiction reached the ledger"
     assert bot.total_trades == 0
     # The position survives -- it is the only record that the tokens are held.
     assert bot.positions[SYMBOL]["size"] == pytest.approx(LIVE_SIZE)
-    events = bot.metrics.by_label("live_exit_would_be_simulated")
-    assert events, "the refusal must be visible, not silent"
-    assert events[0]["details"]["live_trading_enabled"] is False
+    assert bot.metrics.by_label("live_exit_would_be_simulated") == []
 
 
 def test_a_live_position_is_not_marked_out_at_a_profit_either() -> None:
@@ -269,10 +292,65 @@ def test_a_live_position_is_not_marked_out_at_a_profit_either() -> None:
     decision = _tick(bot, price=TARGET_PRICE * 1.05)
 
     assert decision["status"] == "live-exit-blocked"
-    assert decision["reason"] == "live_position_cannot_exit_in_simulation"
+    assert decision["reason"] != "live_position_cannot_exit_in_simulation"
     assert bot.db.outcomes == []
     assert bot.strategy_ledger.recorded == []
     assert bot.positions[SYMBOL]["size"] == pytest.approx(LIVE_SIZE)
+
+
+def test_a_disarmed_bot_takes_the_same_exit_path_as_an_armed_one() -> None:
+    """The orphan fix, stated directly.
+
+    Eighteen consecutive refusals on a live CBETH position between 00:55:31 and
+    01:07:05 on 2026-09-04 were all the bot flag, not the chain. Disarming stops
+    opening risk; it must not strand tokens already bought.
+    """
+    armed = _bot(live_trading_enabled=True)
+    armed.positions[SYMBOL] = _position("live")
+    disarmed = _bot(live_trading_enabled=False)
+    disarmed.positions[SYMBOL] = _position("live")
+
+    armed_decision = _tick(armed, price=TARGET_PRICE * 1.05)
+    disarmed_decision = _tick(disarmed, price=TARGET_PRICE * 1.05)
+
+    assert disarmed_decision["status"] == armed_decision["status"]
+    assert disarmed_decision["reason"] == armed_decision["reason"]
+    assert disarmed_decision["wallet"] == "live"
+
+
+def test_a_disarmed_bot_still_cannot_open_with_real_money() -> None:
+    """The half that must NOT move: exits re-armed, entries did not.
+
+    ``entry_is_live`` / ``entry_spends_real_money`` still require
+    ``live_trading_enabled``, so with no position held a disarmed bot's entry
+    is a ghost entry -- it books no live wallet and no live ledger row.
+    """
+    bot = _bot(live_trading_enabled=False, wallet_base=0.0)
+    assert bot.positions == {}
+
+    directive = TradeDirective(
+        action="enter",
+        symbol=SYMBOL,
+        base_token="BASECAT",
+        quote_token="USDC",
+        size=10.0,
+        target_price=TARGET_PRICE,
+        horizon="5m",
+        confidence=0.9,
+        expected_return=0.05,
+        reason="test",
+        strategy_id="atf_static",
+        token_address=BASECAT,
+    )
+    _tick(bot, price=ENTRY_PRICE, directive=directive)
+
+    live_records = [
+        kwargs for _args, kwargs in bot.strategy_ledger.recorded
+        if str(kwargs.get("mode", "")).lower() == "live"
+    ]
+    assert live_records == [], "a disarmed bot opened a LIVE position"
+    for pos in bot.positions.values():
+        assert pos.get("mode") != "live", "a disarmed bot booked a live position"
 
 
 def test_the_refused_exit_never_reaches_the_live_ledger() -> None:

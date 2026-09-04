@@ -4155,7 +4155,45 @@ class TradingBot:
             except Exception:
                 pass
         gas_required = self._estimate_gas_cost(chain_name, route)
-        use_sim = not self.live_trading_enabled
+        # Whether the HELD position is simulated is a property of the position,
+        # not of the bot -- and NOT of whether live trading is currently armed.
+        #
+        # ``pos_is_live`` used to be ``pos_mode == "live" AND
+        # self.live_trading_enabled``. The guard further down correctly refuses
+        # to mark out a live position against the feed price when the bot is
+        # disarmed, but with that AND in place the position could then never be
+        # closed at all: it is live, the bot is not, so every exit attempt hit
+        # `live-exit-blocked` and the tokens stayed in the wallet forever.
+        #
+        # Measured 2026-09-04: atf_static held CBETH bought live at 00:17:32
+        # (0x4ca1a606eb33ef24df951f15177532a2d9803554082ddb4c8677cc5d9bbc7e2d,
+        # settled on base). Its own live record then hit `live_approved: false`
+        # / `halt_live: 1.0` / `live_blocked_reason: ghost_validation_block`,
+        # which disarms the bot -- and from 00:55:31 to 01:07:05 the exit was
+        # refused eighteen times in a row with
+        # `reason=live_position_cannot_exit_in_simulation`. That is the "buys
+        # outrun sells" failure at its source: the entry settles, the halt
+        # arrives, and the round trip can never complete.
+        #
+        # Disarming exists to stop TAKING risk. Selling a position already
+        # opened is shedding risk, so it stays armed. Entries are gated
+        # separately and are untouched by this: ``entry_is_live`` and
+        # ``entry_spends_real_money`` are both
+        # ``live_trading_enabled AND _strategy_live_approved(directive)``, so a
+        # disarmed bot still cannot open anything with real money.
+        pos_mode = (
+            str(pos.get("mode") or ("live" if self.live_trading_enabled else "ghost"))
+            if pos is not None
+            else ""
+        )
+        pos_is_live = pos_mode == "live"
+        # A live position must read the real wallet even when the bot is
+        # disarmed: `if not use_sim` below is what resolves ``base_swap_token``,
+        # and without it the live exit path at ``pos_is_live and
+        # base_swap_token`` is unreachable and the sell is sized from a cache
+        # with no row. When no live position is held this is unchanged, so
+        # ghost entries are still sized against the virtual bankroll.
+        use_sim = not self.live_trading_enabled and not pos_is_live
         base_balance_symbol = base_token
         quote_balance_symbol = quote_token
         base_swap_token: Optional[str] = None
@@ -4179,15 +4217,6 @@ class TradingBot:
             quote_balance_symbol, quote_swap_token = self._resolve_live_trade_asset(
                 chain_name, quote_token, quote_address_hint or None
             )
-        # Whether the HELD position is simulated is a property of the position,
-        # not of the bot. Same rule the exit itself uses at ``pos_is_live``
-        # below; computed here because the exit is sized before it gets there.
-        pos_mode = (
-            str(pos.get("mode") or ("live" if self.live_trading_enabled else "ghost"))
-            if pos is not None
-            else ""
-        )
-        pos_is_live = pos_mode == "live" and self.live_trading_enabled
         if use_sim:
             available_quote = self._get_quote_balance(chain_name, quote_token)
             native_balance = max(
@@ -6053,10 +6082,20 @@ class TradingBot:
             # and profit_factor 0.152 that the live gate refuses on. The
             # position it "stopped out" is still open on chain.
             #
-            # So: refuse. Hold the position, say why, and close it for real
-            # when live execution is armed again. An unclosed position is
-            # visible; a fictional close is not.
-            if pos_mode == "live" and not pos_is_live:
+            # Refusing was right, but refusing was ALSO all it did, and a bot
+            # that has been disarmed never re-arms itself -- so the refusal
+            # became permanent. Measured 2026-09-04: eighteen consecutive
+            # `live_position_cannot_exit_in_simulation` refusals on CBETH-USDC
+            # between 00:55:31 and 01:07:05, on a position bought live at
+            # 00:17:32. A position that cannot be closed is not a held trade,
+            # it is a donation, and it is why buys outrun sells.
+            #
+            # So ``pos_is_live`` no longer consults the bot flag (see where it
+            # is bound), and the live branch below carries the real refusals --
+            # dry run, unresolved token. This stays as the assertion of the
+            # invariant it discovered: if a live position ever reaches the
+            # simulated close again, refuse rather than book the fiction.
+            if pos_mode == "live" and not pos_is_live:  # pragma: no cover - invariant
                 decision.update(
                     {
                         "action": "exit",
