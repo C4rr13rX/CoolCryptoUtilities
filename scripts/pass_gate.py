@@ -67,6 +67,7 @@ GATE_TESTS = (
     "test_token_resolution_unblocks_live.py",
     "test_money_path_records_tx_hash.py",
     "test_boundary_contracts.py",
+    "test_phantom_position_never_blocks.py",
 )
 
 

@@ -601,6 +601,60 @@ class TradingBot:
     def _token_key(self, chain: str, symbol: str) -> Tuple[str, str]:
         return (chain.lower(), symbol.upper())
 
+    def _position_is_real_on_chain(self, chain: str, symbol: str,
+                                   pos: dict) -> bool:
+        """Does the wallet actually hold what this position claims?
+
+        A live position blocks every further entry on its symbol. When the
+        record is wrong, that block is permanent and silent: measured
+        2026-09-04, GRASS-USDC refused 26 entries in one hour and CBETH-USDC
+        refused 6 more, while the wallet held ZERO CBETH and the held record
+        carried an empty tx_hash -- a position that was written but never
+        bought. Ghosts kept trading (24 entries in six hours) and live entries
+        were exactly zero, so the pipeline looked alive while nothing reached
+        the chain.
+
+        A position with no tokens behind it is not a position. Checking the
+        balance costs one RPC call against a block that otherwise lasts
+        forever.
+
+        Fails OPEN on an unreadable RPC: an outage must not release a real
+        position and let the bot double-buy a symbol it already holds.
+        """
+        try:
+            token = self._resolve_token_address(chain, str(symbol).split("-")[0])
+            if not token:
+                return True          # cannot check; keep the block
+
+            from services.token_contract_guard import _rpc
+
+            data = "0x70a08231" + "0" * 24 + str(token)[2:].lower()
+            raw, reachable = _rpc(chain, "eth_call",
+                                  [{"to": token, "data": data}, "latest"])
+            if not reachable or raw is None:
+                return True          # outage: keep the block, do not double-buy
+
+            balance = int(raw, 16) if isinstance(raw, str) else 0
+            if balance > 0:
+                return True
+
+            log_message(
+                "trading",
+                f"PHANTOM POSITION: {symbol} on {chain} claims size "
+                f"{pos.get('size')} tx_hash={pos.get('tx_hash') or '(none)'} "
+                f"but the wallet holds 0 -- releasing it so entries can resume",
+                severity="error",
+            )
+            return False
+        except Exception as exc:  # noqa: BLE001
+            log_message(
+                "trading",
+                f"could not verify position {symbol} on {chain}: {exc}; "
+                f"keeping the block",
+                severity="warning",
+            )
+            return True
+
     def _verified_address(
         self, chain: str, symbol: str, address: str, source: str
     ) -> Optional[str]:
@@ -4373,7 +4427,32 @@ class TradingBot:
         # GHOST_MIN_TRADE_USD remains the fallback for a bot with no transition
         # plan loaded (a pure sim run, a test), where there is no live clip to
         # copy and _live_clip_usd() returns 0.0.
-        if entry_will_be_simulated and pos is None and price > 0.0:
+        #
+        # Gated on "is this an entry", NOT on ``pos is None``. That distinction
+        # is the whole of tests/test_live_clip_matches_the_plan.py, and it was
+        # measured again on this very floor 2026-09-04 06:23, six minutes after
+        # this code was deployed. The first ghost entry it saw::
+        #
+        #     ghost-exit        AERO-USDC ema_cross@1w
+        #     position-released AERO-USDC slot_taken_by_new_entry
+        #     ghost-entry       AERO-USDC atf_static size 0.06688686540614187
+        #                       @ 0.516 = $0.034514
+        #
+        # $0.034514, not $0.75 -- because the slot was still held when the entry
+        # was evaluated, so `pos is None` was False and the floor was skipped.
+        # At that notional the fixed $0.00431933 of gas is 12.5% of the trade.
+        #
+        # The exit path does NOT need this to stay `pos is None`: the fallback
+        # that keeps a held position evaluable is a separate later branch
+        # (``if trade_size <= 0.0 and pos is not None``) and only fires when
+        # trade_size is zero. An `exit` directive, or no directive at all (the
+        # protective bracket), still takes neither branch here.
+        simulated_entry = bool(
+            entry_will_be_simulated
+            and directive is not None
+            and getattr(directive, "action", "") == "enter"
+        )
+        if simulated_entry and price > 0.0:
             sim_clip_usd = self._live_clip_usd()
             if sim_clip_usd <= 0.0:
                 sim_clip_usd = float(os.getenv("GHOST_MIN_TRADE_USD", "2.0"))
@@ -4553,19 +4632,9 @@ class TradingBot:
                     )
                     decision.update({"status": "hold-gas", "reason": "insufficient_gas"})
                     return decision
-        # Which purse bounds this cannot depend on whether the slot was already
-        # occupied. An entry that takes a held slot releases it and spends from
-        # exactly the same purse as one that finds it empty -- and gating on
-        # `pos is None` is how MIN_DIRECTIVE_NOTIONAL_USD came to be skipped 85
-        # times out of 85 (see tests/test_live_clip_matches_the_plan.py): the
-        # ghost lane holds most of the ticking symbols for hours, so the
-        # empty-slot condition is the rare one, not the common one. The predicate
-        # is therefore "is this an entry", not "is this slot free".
-        simulated_entry = bool(
-            entry_will_be_simulated
-            and directive is not None
-            and getattr(directive, "action", "") == "enter"
-        )
+        # ``simulated_entry`` (above the clip floor) is the same predicate here:
+        # which purse bounds an entry cannot depend on whether the slot it takes
+        # was already occupied, for exactly the reason the floor cannot.
         if trade_size > 0.0 and price > 0.0:
             max_affordable = max(0.0, self._sizing_quote(
                 chain_name,
@@ -5192,6 +5261,22 @@ class TradingBot:
             # ``entry_refused_by_live_slot``, computed once above the directive
             # dispatch, is the same predicate and now routes these ticks to the
             # protective bracket instead of the entry path.
+            if (pos is not None and str(pos.get("mode") or "") == "live"
+                    and not self._position_is_real_on_chain(chain, symbol, pos)):
+                # The record claims a live position the wallet does not hold.
+                #
+                # Verification must CHANGE the in-memory state, not just report
+                # on it. A check that logs "phantom" and leaves the record in
+                # place re-runs on every directive and blocks the symbol
+                # forever anyway -- which is exactly what 26 GRASS-USDC
+                # refusals in one hour looked like. So drop it from the live
+                # book here, and persist so a restart does not resurrect it.
+                # self.positions is the live book and is in-memory only, so
+                # removing it here IS the persistence: the next directive for
+                # this symbol finds nothing held and is allowed through.
+                self.positions.pop(symbol, None)
+                pos = None
+
             if pos is not None and str(pos.get("mode") or "") == "live":
                 held = {
                     "symbol": symbol,
