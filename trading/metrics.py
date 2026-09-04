@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import statistics
 import time
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 
 from db import TradingDatabase, get_db
+from services.logging_utils import log_message
 
 
 class MetricStage:
@@ -288,14 +290,58 @@ class MetricsCollector:
         actually produced. Pairing still runs over ALL rows first: an exit
         recovers its strategy from its own entry, so filtering the rows before
         pairing would orphan every bot-written exit and silently drop it.
+
+        ``limit`` counts trading_ops ROWS, not paired trades, and when a
+        ``lookback_sec`` window is given the window -- not the row cap -- is
+        what defines the book. Letting a row cap bound a time-bounded window
+        truncates it at the OLD end (``fetch_trades`` is ORDER BY ts DESC), and
+        because pairing is causal that does not shrink the book evenly: it
+        keeps the newest entries, whose exits have not happened yet, and cuts
+        the older entries that the exits inside the window need to pair
+        against. Every one of those exits is then dropped as an orphan.
+
+        Measured 2026-09-03 on the live 48h ghost book -- 1196 rows, 1062
+        entries against 134 exits, 302 entries in one hour alone -- the newest
+        500 rows covered only ~6 hours:
+
+            limit=500     atf_static  7 paired, net -0.16220 | pooled  28, -0.01032
+            limit>=1500   atf_static 36 paired, net +0.53014 | pooled 134, +0.68025
+
+        The 500-row book is the one the live gate was reading. It reported
+        ``insufficient_samples`` for atf_static and ``negative_margin`` for the
+        pooled book -- i.e. ``ghost_validation_block``, the reason live trading
+        was shut -- off a sample that excluded 80% of the completed round trips
+        and flipped the sign of the P&L on both.
+
+        So the cap is raised to cover the window, and a book that still hits it
+        says so instead of quietly reporting a truncated record as the whole
+        one. ``GHOST_SNAPSHOT_MAX_ROWS`` bounds the memory; at the measured
+        rate (~1200 rows/48h) the default is ~40x headroom.
         """
         since_ts = time.time() - lookback_sec if lookback_sec else None
+        effective_limit = int(limit)
+        if since_ts is not None:
+            try:
+                window_cap = int(os.getenv("GHOST_SNAPSHOT_MAX_ROWS", "50000"))
+            except (TypeError, ValueError):
+                window_cap = 50000
+            effective_limit = max(effective_limit, max(1, window_cap))
         rows = self.db.fetch_trades(
-            limit=limit,
+            limit=effective_limit,
             statuses=["ghost-entry", "ghost-exit", "ghost"],
             wallets=["ghost"],
             since_ts=since_ts,
         )
+        if since_ts is not None and len(rows) >= effective_limit:
+            # Truncated after all. Say it: a silently short book is exactly the
+            # failure this cap raise exists to stop.
+            log_message(
+                "metrics",
+                "ghost_trade_snapshot hit its row cap (%d rows, window %ss) -- "
+                "the book is TRUNCATED and every statistic built on it is short"
+                % (len(rows), lookback_sec),
+                severity="warning",
+            )
         # fetch_trades returns ORDER BY ts DESC, but pairing is causal: an exit
         # can only be matched against an entry already seen. Iterating
         # newest-first meant every exit arrived BEFORE its own entry, so the
