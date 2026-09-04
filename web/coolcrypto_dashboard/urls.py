@@ -27,6 +27,7 @@ urlpatterns = [
     path("api/wizard-chat/", include("wizard_chat.urls")),
     path("api/model-control/", include("modelcontrol.urls")),
     path("api/trading-agent/", include("tradingagent.urls")),
+    path("api/payouts/", include("payouts.urls")),
     # Hard fallback for investigations list/create in case include isn't picked up.
     path("api/investigations/projects/", investigations_views.ProjectListView.as_view()),
     path("api/investigations/projects", investigations_views.ProjectListView.as_view()),

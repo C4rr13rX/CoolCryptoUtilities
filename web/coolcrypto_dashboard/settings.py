@@ -130,6 +130,7 @@ INSTALLED_APPS = [
     "wizard_chat.apps.WizardChatConfig",
     "modelcontrol.apps.ModelControlConfig",
     "tradingagent.apps.TradingAgentConfig",
+    "payouts.apps.PayoutsConfig",
 ]
 
 MIDDLEWARE = [
