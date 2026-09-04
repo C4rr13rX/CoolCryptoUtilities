@@ -75,18 +75,107 @@ def _bool_env(name: str, default: str = "0") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _sane_native_usd(holding: Dict[str, Any], chain: str, db: Any) -> float:
-    """Persisted USD value, cross-checked against the price table.
+#: How old a reference price may be and still be trusted to overrule a
+#: reported valuation. The consensus price batch refreshes hourly but has been
+#: measured 8.2h stale; a day is loose enough to survive that and tight enough
+#: that a dead feed stops correcting rather than correcting to a dead number.
+_VALUATION_REF_MAX_AGE_SEC = float(os.getenv("WALLET_VALUATION_REF_MAX_AGE_SEC", "86400"))
+
+#: Fractional disagreement between the reported and reference valuation that
+#: counts as a bug rather than as two feeds differing.
+_VALUATION_TOLERANCE = 0.5
+
+
+def _reference_price_usd(symbol: str, chain: str, db: Any) -> Optional[float]:
+    """USD per whole token from the most authoritative source we have.
+
+    Sources, in order, each bounded by ``_VALUATION_REF_MAX_AGE_SEC``:
+
+      1. the ``prices`` table under chain ``global`` -- the consensus feed the
+         rest of the stack prices against. Measured: it stores ``usd`` as TEXT
+         ('0.999773'), so it needs a float() and cannot be compared raw;
+      2. the ``market_stream`` tick feed for ``<SYMBOL>-USDC`` on this chain,
+         which is the only source that covers what the bot actually trades --
+         ``aero``, ``cbeth`` and ``op`` all return None from the price table.
+         Taken as the MEDIAN of recent ticks, never the newest one: this feed
+         interleaves sources and a source publishing a different denomination
+         makes consecutive ticks alternate between right and wrong, so a single
+         lookup is a coin flip (see ``TradingDatabase.recent_market_prices``);
+      3. $1.00 for a known stablecoin, which is a definition rather than a
+         quote and so is only reached when nothing else answered.
+
+    Returns None when no source answered. A missing reference must leave the
+    reported value alone -- inventing one is the failure this guards against.
+    """
+    symbol = str(symbol or "").upper()
+    if not symbol:
+        return None
+    now = time.time()
+
+    try:
+        row = db.fetch_price("global", symbol.lower())
+        if row:
+            usd = float(row["usd"] if "usd" in row.keys() else 0.0)
+            ts = float(row["ts"] if "ts" in row.keys() else now)
+            if usd > 0 and (now - ts) <= _VALUATION_REF_MAX_AGE_SEC:
+                return usd
+    except Exception:  # noqa: BLE001 -- a broken price table must not raise here
+        pass
+
+    try:
+        ticks = db.recent_market_prices(
+            f"{symbol}-USDC",
+            str(chain or "").lower(),
+            since_ts=now - _VALUATION_REF_MAX_AGE_SEC,
+            limit=25,
+        )
+        prices = sorted(float(p) for p, _ts in (ticks or []) if float(p) > 0)
+        if prices:
+            mid = len(prices) // 2
+            median = prices[mid] if len(prices) % 2 else (prices[mid - 1] + prices[mid]) / 2.0
+            if median > 0:
+                return median
+    except Exception:  # noqa: BLE001
+        pass
+
+    if symbol in _STABLE_USD:
+        return 1.0
+    return None
+
+
+def _sane_holding_usd(holding: Dict[str, Any], chain: str, db: Any) -> float:
+    """Persisted USD value, cross-checked against a reference price.
 
     A native holding was written at $0.1428 for 0.00285556 ETH -- an implied
     $50.00/ETH against a real $2,499.61, exactly 1/50th. The wallet then read
     as gas-starved and the live gate blocked on ``native_gas_starved`` while
     the wallet actually held $7.14 of ETH.
 
-    A wrong VALUATION is worse than a missing one: it silently gates real
-    trading on a number nobody checked. So for native tokens the stored price
-    table (updated from live feeds) is the reference, and a reported value that
-    disagrees by more than 50% is replaced by quantity x reference price.
+    That check was applied to NATIVE symbols only, and everything else was
+    returned verbatim on the assumption that "USDC is its own reference".
+    Measured 2026-09-04 on this wallet, through ``scan_wallet_holdings``:
+
+        ETH   qty=0.002773371878944287  usd=6.938      -> $2501.65  ok
+        USDC  qty=18.190627             usd=3.687393   -> $0.2027   WRONG
+        AERO  qty=1.5462814519601997    usd=0.0        -> $0.00     WRONG
+
+    18.19 USDC was carried at $3.69. ``_fill_usd_prices`` only backfills
+    holdings reported at zero, so a wrong-but-nonzero number sails through it,
+    and the stale $3.687393 is a value the balance was actually worth two
+    refreshes ago -- it is frozen, not scaled, so no unit conversion explains
+    it and nothing downstream could detect it.
+
+    That single number sizes real trades. ``pipeline._wallet_state`` sums
+    ``usd_amount`` over stable symbols into ``stable_usd``, from which
+    ``deployable_stable`` and the live clip are derived, and compares it to
+    MIN_LIVE_CAPITAL_USD; the live gate reported deployable_stable_usd
+    $3.687393 against a wallet holding $18.19. AERO at $0.00 is the same bug
+    facing the other way: ``generate_pairs_from_holdings`` drops any holding
+    under MIN_HOLDING_USD, so a token the bot is HOLDING loses its stream.
+
+    So the cross-check covers every symbol, not just the native leg. The
+    reference is whatever ``_reference_price_usd`` can corroborate; without one
+    the reported value stands, because a missing reference is not evidence.
     """
     reported = 0.0
     try:
@@ -94,7 +183,7 @@ def _sane_native_usd(holding: Dict[str, Any], chain: str, db: Any) -> float:
     except (TypeError, ValueError):
         reported = 0.0
     symbol = str(holding.get("symbol") or "").upper()
-    if symbol not in NATIVE_SYMBOLS:
+    if not symbol:
         return reported
     try:
         quantity = float(holding.get("quantity", 0.0) or 0.0)
@@ -102,22 +191,16 @@ def _sane_native_usd(holding: Dict[str, Any], chain: str, db: Any) -> float:
         return reported
     if quantity <= 0:
         return reported
-    reference = 0.0
-    try:
-        row = db.fetch_price("global", symbol.lower())
-        if row:
-            reference = float(row["usd"] if "usd" in row.keys() else 0.0)
-    except Exception:
-        reference = 0.0
-    if reference <= 0:
+    reference = _reference_price_usd(symbol, chain, db)
+    if reference is None or reference <= 0:
         return reported
     expected = quantity * reference
     if expected <= 0:
         return reported
-    if reported <= 0 or abs(reported - expected) / expected > 0.5:
+    if reported <= 0 or abs(reported - expected) / expected > _VALUATION_TOLERANCE:
         log_message(
             "wallet-bootstrap",
-            "corrected %s valuation: reported $%.4f vs %.8f x $%.2f = $%.4f"
+            "corrected %s valuation: reported $%.4f vs %.8f x $%.8f = $%.4f"
             % (symbol, reported, quantity, reference, expected),
             severity="warning",
         )
@@ -306,7 +389,7 @@ def _persist_balances(wallet_info: Dict[str, Any], chain: str = "base") -> None:
         for h in wallet_info.get("holdings", []):
             token_addr = (h.get("address") or "native").lower()
             decimals = known_token_decimals(chain, token_addr, h.get("symbol")) or 18
-            usd_value = _sane_native_usd(h, chain, db)
+            usd_value = _sane_holding_usd(h, chain, db)
             entries.append({
                 "wallet": "guardian",
                 "chain": chain.lower(),
@@ -403,6 +486,27 @@ def scan_wallet_holdings(
     # fallback runs unconditionally so it ALSO fixes future cache-priced
     # rows that drift to zero.
     holdings, total_usd = _fill_usd_prices(holdings)
+
+    # `_fill_usd_prices` only touches holdings reported at ZERO, so a
+    # wrong-but-nonzero valuation passes through it untouched -- 18.190627 USDC
+    # was carried at $3.687393 for exactly that reason. Cross-check every
+    # holding against a reference price here, at the one point all four
+    # consumers of this result share: `total_usd` gates MIN_PORTFOLIO_USD
+    # below, `holdings` feeds both `generate_pairs_from_holdings` calls (whose
+    # MIN_HOLDING_USD floor drops a $0.00-valued token the wallet is holding),
+    # and `_persist_balances` writes `usd_amount` into the balances table that
+    # `pipeline._wallet_state` turns into `stable_usd` and the live clip.
+    try:
+        from db import get_db
+
+        _db = get_db()
+        total_usd = 0.0
+        for h in holdings:
+            h["usd"] = _sane_holding_usd(h, chain, _db)
+            total_usd += float(h.get("usd") or 0.0)
+    except Exception as exc:  # noqa: BLE001 -- valuation must never break the scan
+        log_message("wallet-bootstrap", f"valuation cross-check skipped: {exc}", severity="warning")
+
     # native_usd is computed from a single native row above, so re-derive
     # it from the now-priced holdings to keep them consistent.
     native_usd = 0.0

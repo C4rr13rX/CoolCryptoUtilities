@@ -4000,6 +4000,36 @@ class TrainingPipeline:
             trades = []
         summary = metrics.aggregate_trade_metrics(trades)
         profit_dist = distribution_report([t.profit for t in trades])
+        # The tail is measured over RETURNS, not dollars.
+        #
+        # `ghost_tail_guardrail()` is a fraction by construction: it is
+        # `ghost_stop_loss_pct() * (1 + slack)`, capped at 0.25, and every line
+        # of its reasoning is a percentage -- "ES95 converges on the stop
+        # level", "SOL's -22.2% was 2.78x its stop". Its calibration note
+        # records ES95 = 0.08336 against a tail of three stop-outs at -8.52% /
+        # -8.39% / -8.10%, whose mean is 0.0834: when the guard was derived,
+        # `profit` WAS a fraction.
+        #
+        # It is not any more. Measured 2026-09-04 against the recorded prices,
+        # `profit` tracks (exit - entry) x quantity in USD:
+        #
+        #     BSTONK-USDC  profit +0.343743  (x-e)*q +0.356721  return +0.1787
+        #     CP-USDC      profit -0.024563  (x-e)*q -0.019355  return -0.1415
+        #
+        # so the gate was comparing $0.1633 against 0.10 -- dollars against a
+        # percentage. The number it produces is not a risk measure at all: it
+        # rises with the clip size, so funding the bot more would "increase"
+        # its tail risk while the stop it is supposed to police never moved.
+        #
+        # Both prices are recorded on every one of the 144 ghost exits in the
+        # window, so the return is available for the whole book. A trade that
+        # did not record one contributes None and is EXCLUDED rather than
+        # counted as a 0.0 return, which would dilute the tail toward "safe" --
+        # the one direction a risk gate must never fail in.
+        tail_returns = [t.return_pct for t in trades if t.return_pct is not None]
+        tail_samples = len(tail_returns)
+        tail_coverage = (tail_samples / len(trades)) if trades else 0.0
+        return_dist = distribution_report(tail_returns)
         tail_guard = ghost_tail_guardrail()
         drawdown_guard = float(os.getenv("GHOST_MAX_DRAWDOWN", "0"))
         loss_rate_guard = float(os.getenv("GHOST_MAX_LOSS_RATE", "0.6"))
@@ -4014,7 +4044,12 @@ class TrainingPipeline:
         avg_profit = float(summary.get("avg_profit", 0.0))
         total_net_profit = float(sum(float(getattr(t, "profit", 0.0)) for t in trades))
         profit_factor = float(summary.get("profit_factor", 1.0))
-        tail_risk = abs(profit_dist.get("expected_shortfall_95", 0.0))
+        tail_risk = abs(return_dist.get("expected_shortfall_95", 0.0))
+        # A book that recorded no prices cannot be judged against a stop. That
+        # is "unmeasured", not "safe": say so and keep the gate shut rather
+        # than clearing it on an empty distribution, which reads as 0.0.
+        tail_unmeasurable = bool(trades) and tail_samples == 0
+        tail_risk_usd = abs(profit_dist.get("expected_shortfall_95", 0.0))
         symbol_counts = Counter([str(t.symbol or "UNKNOWN").upper() for t in trades])
         dominant_share = float(max(symbol_counts.values()) / max(1, len(trades))) if symbol_counts else 0.0
         now_ts = time.time()
@@ -4160,6 +4195,7 @@ class TrainingPipeline:
                 and total_net_profit > 0.0
                 and profit_factor >= min_profit_factor
                 and tail_risk <= tail_guard
+                and not tail_unmeasurable
                 and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
                 and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
                 and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
@@ -4182,6 +4218,7 @@ class TrainingPipeline:
             and total_net_profit > 0.0
             and profit_factor >= min_profit_factor
             and tail_risk <= tail_guard
+            and not tail_unmeasurable
             and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
             and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
             and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
@@ -4261,6 +4298,7 @@ class TrainingPipeline:
             and profit_factor >= expectancy_min_profit_factor
             and payoff_ratio >= expectancy_min_payoff
             and tail_risk <= tail_guard
+            and not tail_unmeasurable
             and (drawdown_guard <= 0 or max_drawdown <= drawdown_guard)
             and (loss_rate_guard <= 0 or loss_rate <= loss_rate_guard)
             and (loss_streak_guard <= 0 or effective_loss_streak <= loss_streak_guard)
@@ -4291,6 +4329,8 @@ class TrainingPipeline:
                 reason = "non_positive_net_profit"
             elif profit_factor < min_profit_factor:
                 reason = "weak_profit_factor"
+            elif tail_unmeasurable:
+                reason = "tail_unmeasurable"
             elif tail_risk > tail_guard:
                 reason = "tail_risk"
             elif drawdown_guard > 0 and max_drawdown > drawdown_guard:
@@ -4321,8 +4361,18 @@ class TrainingPipeline:
             "wilson_z": wilson_z,
             "avg_profit": avg_profit,
             "total_net_profit": total_net_profit,
+            # ES95 of the RETURN distribution -- a fraction, the same unit as
+            # the guardrail it is compared against.
             "tail_risk": tail_risk,
             "tail_guardrail": tail_guard,
+            # The dollar tail is still worth reporting -- it is what a bad run
+            # actually costs -- but it is NOT what the guardrail bounds, and
+            # keeping it under its own key is what stops the two being mixed
+            # up again.
+            "tail_risk_usd": tail_risk_usd,
+            "tail_samples": tail_samples,
+            "tail_coverage": tail_coverage,
+            "tail_unmeasurable": tail_unmeasurable,
             # Published so a tail block can be read as "the stop is breaching"
             # rather than "the number is over a constant".
             "tail_stop_loss": ghost_stop_loss_pct(),

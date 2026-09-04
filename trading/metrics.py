@@ -55,6 +55,13 @@ class TradePerformance:
     #: not attribute one -- an unattributed trade belongs to no strategy's
     #: record and must never be counted toward one.
     strategy_id: str = ""
+    #: Fractional return, ``exit_price / entry_price - 1``. ``profit`` is in
+    #: USD and therefore scales with the clip; a risk limit expressed as a
+    #: percentage of the position -- a stop-loss -- can only be compared
+    #: against a percentage. None means the round trip did not record a usable
+    #: entry price, which is NOT the same as a zero return and must never be
+    #: averaged in as one.
+    return_pct: Optional[float] = None
 
     @property
     def duration(self) -> float:
@@ -435,6 +442,14 @@ class MetricsCollector:
                         strategy_id=(
                             self._row_strategy_id(details)
                             or str(entry.get("strategy_id") or "")
+                        ),
+                        # Both prices are already in hand here, so the return
+                        # costs nothing to carry and is the only form in which
+                        # a tail can be compared against a stop-loss.
+                        return_pct=(
+                            (exit_price / entry_price - 1.0)
+                            if entry_price > 0 and exit_price > 0
+                            else None
                         ),
                     )
                 )

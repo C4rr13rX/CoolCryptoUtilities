@@ -36,7 +36,21 @@ from trading.metrics import MetricsCollector, TradePerformance
 from trading.pipeline import TrainingPipeline
 
 
-def _trade(profit: float, *, symbol: str = "AAA-USDC", strategy_id: str = "s") -> TradePerformance:
+def _trade(
+    profit: float,
+    *,
+    symbol: str = "AAA-USDC",
+    strategy_id: str = "s",
+    return_pct: float | None = None,
+) -> TradePerformance:
+    """A stand-in round trip.
+
+    ``return_pct`` defaults to ``profit``, i.e. these fixtures are read as
+    returns on a $1 notional. A real ghost trade always records one -- 144 of
+    144 exits in the live 48h window carry both prices -- and the tail gate
+    refuses to clear a book whose tail it cannot measure, so a fixture without
+    a return is not a faithful stand-in for a trade.
+    """
     return TradePerformance(
         symbol=symbol,
         entry_ts=0.0,
@@ -47,6 +61,7 @@ def _trade(profit: float, *, symbol: str = "AAA-USDC", strategy_id: str = "s") -
         reason="target_hit",
         route=[],
         strategy_id=strategy_id,
+        return_pct=profit if return_pct is None else return_pct,
     )
 
 
