@@ -1350,6 +1350,50 @@ class TradingBot:
             return self.sim_quote_balances.get(key, 0.0)
         return self.portfolio.get_quantity(symbol, chain=chain)
 
+    def _sizing_quote(
+        self, chain: str, symbol: str, wallet_quote: float, *, simulated: bool
+    ) -> float:
+        """The balance an entry of this kind may be sized against.
+
+        A simulated entry spends ``sim_quote_balances``; a live one spends the
+        wallet. Sizing either against the other prices a game nobody plays --
+        see ``_simulated_quote_purse`` for the measurement.
+
+        Never lowers a simulated entry below what the wallet would have allowed,
+        so a large real balance cannot be made a liability by this call.
+        """
+        try:
+            wallet = max(0.0, float(wallet_quote))
+        except (TypeError, ValueError):
+            wallet = 0.0
+        if not simulated:
+            return wallet
+        return max(wallet, self._simulated_quote_purse(chain, symbol))
+
+    def _simulated_quote_purse(self, chain: str, symbol: str) -> float:
+        """The virtual bankroll a SIMULATED entry spends from.
+
+        ``_get_quote_balance`` above is gated on the bot-level
+        ``live_trading_enabled`` flag, so on a live-armed bot it returns the
+        real wallet even for an entry that will only ever be simulated. That is
+        the same bot-level/entry-level confusion that ``entry_will_be_simulated``
+        was introduced to fix in ``_evaluate_symbol``; this is the purse side of
+        it, and it answers per-entry rather than per-bot.
+
+        Measured 2026-09-04 with the bot live-armed: ``sim_quote_balances``
+        held 100.71569451706375 base:USDC while the wallet held 18.1906, and
+        every ghost entry was sized 18.1906 * max_trade_share(0.05) =
+        0.90953135 -- which is exactly the notional of the CBBTC-USDC and
+        BASECAT-USDC ghost positions in the book. GHOST_MIN_TRADE_USD=2.00 had
+        already raised those entries to $2.00 one hundred and eighty lines
+        earlier; the wallet cap silently put them back.
+        """
+        key = self._token_key(chain, symbol)
+        try:
+            return max(0.0, float(self.sim_quote_balances.get(key, 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
     def _adjust_quote_balance(self, chain: str, symbol: str, delta: float) -> None:
         if self.live_trading_enabled:
             return
@@ -4305,9 +4349,35 @@ class TradingBot:
         entry_will_be_simulated = not (
             self.live_trading_enabled and self._strategy_live_approved(directive)
         )
+        #
+        # And the size the live lane would use is the CLIP THE PLAN AUTHORISED,
+        # not a separate env constant that happens to be in the same ballpark.
+        # ``GHOST_MIN_TRADE_USD`` is 2.00 while ``_live_clip_usd()`` returns
+        # 0.75 (recommended_live_usd, measured 2026-09-04), and the difference
+        # is not cosmetic -- gas is a FIXED $0.00431933 per round trip on base,
+        # so the move a round trip must make to break even is
+        #
+        #     $0.75 -> 0.65% + 0.576% = 1.226%
+        #     $2.00 -> 0.65% + 0.216% = 0.866%
+        #
+        # A ghost book run at $2.00 while the money is spent at $0.75 prices a
+        # 1.4x cheaper game than the live lane plays, which is the same
+        # mismatch, in the same direction, as the one the gas charge above was
+        # written to close.
+        #
+        # So the simulation takes the live lane's own floor -- ``live_clip_floor``
+        # below applies _live_clip_usd() to an entry that spends real money in
+        # exactly this shape (raise to the clip, never past it), and the two
+        # lanes now differ in nothing but whose purse bounds them.
+        #
+        # GHOST_MIN_TRADE_USD remains the fallback for a bot with no transition
+        # plan loaded (a pure sim run, a test), where there is no live clip to
+        # copy and _live_clip_usd() returns 0.0.
         if entry_will_be_simulated and pos is None and price > 0.0:
-            min_trade_usd = float(os.getenv("GHOST_MIN_TRADE_USD", "2.0"))
-            floor_size = min_trade_usd / price
+            sim_clip_usd = self._live_clip_usd()
+            if sim_clip_usd <= 0.0:
+                sim_clip_usd = float(os.getenv("GHOST_MIN_TRADE_USD", "2.0"))
+            floor_size = sim_clip_usd / price if sim_clip_usd > 0.0 else 0.0
             if trade_size < floor_size:
                 trade_size = floor_size
         elif pos is None and price > 0.0 and trade_size <= 0.0:
@@ -4484,7 +4554,12 @@ class TradingBot:
                     decision.update({"status": "hold-gas", "reason": "insufficient_gas"})
                     return decision
         if trade_size > 0.0 and price > 0.0:
-            max_affordable = max(0.0, available_quote / price)
+            max_affordable = max(0.0, self._sizing_quote(
+                chain_name,
+                quote_token,
+                available_quote,
+                simulated=entry_will_be_simulated and pos is None,
+            ) / price)
             trade_size = min(trade_size, max_affordable * self.max_trade_share)
         adjustments = self._get_pair_adjustment(symbol)
         trade_size *= float(max(0.1, min(3.0, adjustments.get("size_multiplier", 1.0))))
@@ -5194,8 +5269,19 @@ class TradingBot:
                     except Exception:
                         pass
                 return decision
-            if price > 0.0 and available_quote > 0.0:
-                trade_size = min(trade_size, max(0.0, available_quote / price))
+            # Same purse question as the cap above: a simulated entry may not be
+            # shrunk to what the real wallet holds. This one is not binding at
+            # today's balances ($2.00 of a $18.19 wallet), but it is the second
+            # of the two places that undo GHOST_MIN_TRADE_USD, and leaving it on
+            # the old contract is how the first one came back.
+            sizing_quote_entry = self._sizing_quote(
+                chain_name,
+                quote_token,
+                available_quote,
+                simulated=entry_will_be_simulated and pos is None,
+            )
+            if price > 0.0 and sizing_quote_entry > 0.0:
+                trade_size = min(trade_size, max(0.0, sizing_quote_entry / price))
             if trade_size <= 0.0:
                 self._tune_allocation(symbol, positive=False, negative=True)
                 # Say so. This is the last unnamed exit on the live path.
