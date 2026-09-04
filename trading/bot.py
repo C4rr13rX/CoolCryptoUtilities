@@ -3978,7 +3978,35 @@ class TradingBot:
         self._wallet_sync_last_reason = reason
 
     def _ensure_model_bindings(self, model: tf.keras.Model) -> None:
-        if self._active_model_ref is model and self._model_input_order is not None:
+        # REBIND WHEN THE MODEL'S SHAPE CHANGES, NOT ONLY WHEN THE OBJECT DOES.
+        #
+        # The identity check alone is not enough. The pipeline rebuilds the
+        # model in place when the asset vocabulary grows
+        # (_ensure_asset_embedding_capacity), and a bot still holding the old
+        # object keeps calling a concrete function traced against the old
+        # embedding. The tick then dies inside the traced graph, every
+        # prediction falls back to a neutral pred_summary, nothing clears the
+        # entry threshold, and the lane goes quiet while looking healthy --
+        # measured 2026-09-04, 26 consecutive neutral ticks and zero ghost
+        # entries after the vocabulary went 1 -> 7.
+        #
+        # The embedding size is part of the signature the trace depends on, so
+        # it has to be part of the decision to keep that trace.
+        vocab_now: Optional[int] = None
+        for layer_name in ("asset_embedding", "asset_embedding_1"):
+            try:
+                layer = model.get_layer(layer_name)
+            except Exception:  # noqa: BLE001 - a model without one is fine
+                continue
+            if hasattr(layer, "input_dim"):
+                vocab_now = int(layer.input_dim)
+                break
+
+        if (
+            self._active_model_ref is model
+            and self._model_input_order is not None
+            and (vocab_now is None or vocab_now == self._asset_vocab_limit)
+        ):
             return
 
         self._model_input_order = [tensor.name.split(":")[0] for tensor in model.inputs]
