@@ -69,6 +69,25 @@ def _env_float(name: str, default: float) -> float:
     return value if math.isfinite(value) else default
 
 
+def _max_credible_return() -> float:
+    """The largest forecast worth planning around, as a fraction.
+
+    Calibrated from measurement rather than taste: over 140 closed round
+    trips the |gross move| distribution runs median 1.60%, p90 14.2%,
+    p99 161%, max 174%. The default 2.0 (200%) sits above the observed
+    maximum, so a real outlier is still schedulable and only impossible
+    numbers are refused.
+    """
+    return _env_float("SCHEDULE_MAX_CREDIBLE_RETURN", 2.0)
+
+
+try:
+    from services.symbol_edge_gate import refusal_reason as _symbol_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop planning
+    def _symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
+        return None
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -169,6 +188,29 @@ def predictions_to_candidates(
             continue
         if predicted <= min_return:
             continue                      # not worth planning around
+
+        # A FORECAST BIGGER THAN ANYTHING THAT HAS EVER HAPPENED IS A BUG.
+        #
+        # Observed in production 2026-09-04 16:42, the scheduler planned a leg
+        # on "BASECAT-USDC@3d +500.0%". Against 140 closed round trips the
+        # actual distribution of |gross move| as a fraction of notional is
+        # median 1.60%, p90 14.2%, p99 161%, max 174% -- so +500% is three
+        # times the largest move this system has ever seen.
+        #
+        # Such a number is a broken model output, not an opportunity, and
+        # planning around it would size real capital against a fantasy AND
+        # crowd out legs whose forecasts are merely true. The ceiling sits
+        # above the observed maximum so a genuine outlier still passes.
+        if predicted > _max_credible_return():
+            continue
+
+        # Symbols the book has proven we lose on are not planned around
+        # either. The gate refuses them at entry, so a leg scheduled on one
+        # can only ever be refused later -- it would hold capital in the plan
+        # and buy nothing. BASECAT-USDC, the symbol in that same +500% leg,
+        # is exactly this case: 37 closed round trips at mean -0.0517.
+        if _symbol_edge_refusal(str(symbol)):
+            continue
         out.append({
             "symbol": symbol,
             "label": str(entry.get("label") or ""),

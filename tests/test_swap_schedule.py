@@ -50,6 +50,32 @@ class TestPredictionsToCandidates:
             "AERO-USDC", [_pending("1h", 3600, -0.02)], now=NOW)
         assert out == []
 
+    def test_an_impossible_forecast_is_refused(self):
+        """+500% is three times the largest move ever observed here."""
+        assert predictions_to_candidates(
+            "AERO-USDC", [_pending("3d", 259200, 5.0)], now=NOW) == []
+
+    def test_a_large_but_observed_move_still_schedules(self):
+        """The ceiling sits above the max, so real outliers pass."""
+        out = predictions_to_candidates(
+            "AERO-USDC", [_pending("1d", 86400, 1.74)], now=NOW)
+        assert len(out) == 1
+
+    def test_banned_symbols_are_not_planned_around(self):
+        """A leg on a symbol the entry gate refuses holds capital and buys
+        nothing."""
+        import trading.swap_schedule as mod
+
+        original = mod._symbol_edge_refusal
+        mod._symbol_edge_refusal = lambda sym: "measured negative edge" if sym == "BAD-USDC" else None
+        try:
+            assert predictions_to_candidates(
+                "BAD-USDC", [_pending("1h", 3600, 0.05)], now=NOW) == []
+            assert len(predictions_to_candidates(
+                "GOOD-USDC", [_pending("1h", 3600, 0.05)], now=NOW)) == 1
+        finally:
+            mod._symbol_edge_refusal = original
+
     def test_unusable_rows_are_skipped_not_crashed(self):
         rows = [None, {}, {"resolve_ts": "x"}, _pending("1h", 3600, 0.03, 0.0)]
         assert predictions_to_candidates("A-USDC", rows, now=NOW) == []
