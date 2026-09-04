@@ -2972,8 +2972,12 @@ class TradingBot:
             native_usd = 0.0
             try:
                 for chain, balance in self.portfolio.native_balances.items():
-                    price_row = self.db.fetch_price(chain, NATIVE_SYMBOL.get(chain, chain.upper()))
-                    price = float(price_row.get("usd")) if price_row and price_row.get("usd") else FALLBACK_NATIVE_PRICE
+                    # ``price_row.get`` raised AttributeError on the sqlite3.Row
+                    # and the outer except zeroed native_usd entirely, so live
+                    # equity omitted the gas token.
+                    price = self._lookup_usd_price(chain, NATIVE_SYMBOL.get(chain, chain.upper()))
+                    if price <= 0.0:
+                        price = FALLBACK_NATIVE_PRICE
                     native_usd += balance * price
             except Exception:
                 native_usd = 0.0
@@ -7492,7 +7496,10 @@ class TradingBot:
         if quote_u in self.stable_tokens:
             quote_usd_price = 1.0
         elif quote_u == native_symbol or quote_u == "WETH":
-            quote_usd_price = self._estimate_native_price(chain, [quote_token, "USDC"], price, quote_token)
+            # ``price`` here prices the traded SYMBOL, not the quote token, so
+            # it must not be offered as the native price. 0.0 sends this to
+            # the price book, which now resolves.
+            quote_usd_price = self._estimate_native_price(chain, [quote_token, "USDC"], 0.0, quote_token)
         else:
             return result  # don't attempt exotic auto-swaps
 
@@ -7543,33 +7550,99 @@ class TradingBot:
         hops = max(0, len(route) - 1)
         return base_cost + hops * hop_cost
 
+    @staticmethod
+    def _price_row_usd(row: Any) -> float:
+        """USD out of a price row, or 0.0.
+
+        ``db.fetch_price`` returns a ``sqlite3.Row``, which has no ``.get``
+        and stores ``usd`` as TEXT. Callers that did ``row.get("usd")`` raised
+        AttributeError into a bare ``except``, so the lookup silently never
+        happened -- see ``_estimate_native_price``.
+        """
+        if not row:
+            return 0.0
+        try:
+            if hasattr(row, "keys"):
+                if "usd" not in row.keys():
+                    return 0.0
+                candidate = row["usd"]
+            else:
+                candidate = row.get("usd")
+        except Exception:
+            return 0.0
+        if candidate is None:
+            return 0.0
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            return 0.0
+        if value != value or value in (float("inf"), float("-inf")) or value <= 0.0:
+            return 0.0
+        return value
+
+    def _lookup_usd_price(self, chain: str, token: str) -> float:
+        """Price a token in USD, per-chain first then the ``global`` book.
+
+        Every row in ``prices`` is written under chain ``global`` (measured
+        2026-09-04: 37 rows, all ``global``), so a per-chain-only lookup finds
+        nothing and reports failure. ``services/wallet_bootstrap.py`` already
+        reads ``fetch_price("global", ...)``; this agrees with it.
+        """
+        token_u = str(token or "").upper()
+        if not token_u:
+            return 0.0
+        for lookup_chain in (str(chain or "").lower(), "global"):
+            if not lookup_chain:
+                continue
+            try:
+                row = self.db.fetch_price(lookup_chain, token_u)
+            except Exception:
+                continue
+            value = self._price_row_usd(row)
+            if value > 0.0:
+                return value
+        return 0.0
+
     def _estimate_native_price(self, chain: str, route: List[str], price: float, symbol: str) -> float:
         chain_l = chain.lower()
         native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
-        price_candidate = float(price or 0.0)
         route_upper = [token.upper() for token in route]
+        # ``price`` is the price of the pair being traded. It is the NATIVE
+        # price only when native is what the route is selling into a stable.
+        # The old test -- native anywhere in the route -- was never satisfied
+        # by a real route, and worse, ``price_candidate`` was seeded from
+        # ``price`` and leaked through the failed lookup below: on
+        # 2026-09-04 a CBBTC-USDC exit charged 5.11e-06 ETH of gas at the
+        # CBBTC price ($80,884) instead of the ETH price ($2,499), booking a
+        # $0.4136 fee on a $3.00 trade and a fake -$0.4177 loss.
         if (
-            price_candidate > 0.0
-            and native_symbol in route_upper
+            float(price or 0.0) > 0.0
+            and route_upper
+            and route_upper[0] == native_symbol
             and route_upper[-1] in self.stable_tokens
         ):
-            return price_candidate
-        try:
-            row = self.db.fetch_price(chain, native_symbol)
-            if row:
-                candidate = row.get("usd")
-                if candidate is not None:
-                    price_candidate = float(candidate)
-        except Exception:
-            pass
+            return float(price)
+        price_candidate = self._lookup_usd_price(chain_l, native_symbol)
+        if price_candidate <= 0.0:
+            wrapped = WRAPPED_NATIVE_SYMBOL.get(chain_l)
+            if wrapped:
+                price_candidate = self._lookup_usd_price(chain_l, wrapped)
         if price_candidate <= 0.0:
             env_key = f"FALLBACK_NATIVE_PRICE_{chain_l.upper()}"
-            fallback_raw = os.getenv(env_key) or os.getenv("FALLBACK_NATIVE_PRICE")
-            try:
-                fallback_val = float(fallback_raw) if fallback_raw else FALLBACK_NATIVE_PRICE
-            except Exception:
-                fallback_val = FALLBACK_NATIVE_PRICE
-            price_candidate = fallback_val
+            fallback_raw = os.getenv(env_key)
+            eth_like = native_symbol in {"ETH", "WETH"} or symbol.upper().endswith("WETH")
+            if not fallback_raw and eth_like:
+                # FALLBACK_NATIVE_PRICE is an ETH-shaped number (1800.0). It was
+                # unreachable while price_candidate was seeded from the traded
+                # pair; now that it IS reachable, do not hand it to MATIC/BNB.
+                fallback_raw = os.getenv("FALLBACK_NATIVE_PRICE")
+                if not fallback_raw:
+                    price_candidate = FALLBACK_NATIVE_PRICE
+            if fallback_raw:
+                try:
+                    price_candidate = float(fallback_raw)
+                except (TypeError, ValueError):
+                    price_candidate = FALLBACK_NATIVE_PRICE if eth_like else 0.0
         if price_candidate <= 0.0:
             if native_symbol in {"ETH", "WETH"} or symbol.upper().endswith("WETH"):
                 return 1800.0
@@ -7584,21 +7657,14 @@ class TradingBot:
         native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
         if symbol_u == native_symbol:
             return self._estimate_native_price(chain, route, price, symbol)
-        if route:
-            base = route[0].upper()
-            if symbol_u == base:
-                return float(price or 0.0)
-            if len(route) > 1 and symbol_u == route[1].upper():
-                return float(price or 0.0)
-        try:
-            row = self.db.fetch_price(chain, symbol_u)
-            if row:
-                candidate = row.get("usd")
-                if candidate is not None:
-                    return float(candidate)
-        except Exception:
-            pass
-        return 0.0
+        route_upper = [token.upper() for token in route]
+        # ``price`` prices the FIRST leg of the route against the stable it
+        # ends in. route[1] is an intermediate hop (typically WETH) and is a
+        # different asset entirely -- pricing it at ``price`` is how a
+        # $2,499 token gets valued at $80,884.
+        if route_upper and route_upper[-1] in self.stable_tokens and symbol_u == route_upper[0]:
+            return float(price or 0.0)
+        return self._lookup_usd_price(chain_l, symbol_u)
 
     def _plan_gas_replenishment(
         self,

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -73,10 +74,34 @@ class _Stub:
         return _noop
 
 
+#: The real ``db.fetch_price`` hands back a ``sqlite3.Row`` whose ``usd``
+#: column is TEXT, and every row lives under chain ``global``. A fake that
+#: returns a dict (or None, as the bare _Stub did) is less capable than the
+#: class: the bot read ``row.get("usd")``, sqlite3.Row raised AttributeError
+#: into a bare except, and gas was priced at the traded pair's price instead
+#: of ETH's. Build a genuine Row so that contract is under test.
+NATIVE_USD = 2498.77748000803
+
+
+def _price_row(usd: float) -> sqlite3.Row:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE prices (chain TEXT, token TEXT, usd TEXT, source TEXT, ts REAL)")
+    conn.execute("INSERT INTO prices VALUES (?,?,?,?,?)",
+                 ("global", "eth", str(usd), "consensus", time.time()))
+    return conn.execute("SELECT * FROM prices").fetchone()
+
+
 class _DB(_Stub):
     def __init__(self):
         self.logged: list = []
         self.outcomes: list = []
+
+    def fetch_price(self, chain, token):
+        # Mirrors production: nothing is stored per-chain, only under "global".
+        if str(chain).lower() == "global" and str(token).lower() in {"eth", "weth"}:
+            return _price_row(NATIVE_USD)
+        return None
 
     def log_trade(self, **kwargs):
         self.logged.append(kwargs)
@@ -308,9 +333,19 @@ def test_the_sibling_bots_purchase_does_not_become_our_loss():
     assert outcome["wallet"] == "live"
     assert outcome["quantity"] == pytest.approx(1.546280953235675, rel=1e-9)
     assert outcome["gross_profit"] == pytest.approx(0.0, abs=1e-9)
-    # The only cost of a flat round trip is the gas the receipt reported.
-    assert outcome["fee_cost"] == pytest.approx(8.5771473e-07, rel=1e-3)
-    assert outcome["net_profit"] == pytest.approx(-8.5771473e-07, rel=1e-3)
+    # The only cost of a flat round trip is the gas the receipt reported,
+    # valued in ETH -- 2 x 8.84178633624e-07 ETH at NATIVE_USD.
+    #
+    # This previously asserted 8.5771473e-07, which is that same gas priced at
+    # AERO's 0.4850 instead of ETH's: the assertion looked like "fee == gas"
+    # only because 0.485 happens to halve it back. The same defect charged a
+    # CBBTC-USDC exit 5.11e-06 ETH of gas at $80,884 on 2026-09-04, booking a
+    # $0.4136 fee on a $3.00 trade.
+    expected_fee = 2 * 8.84178633624e-07 * NATIVE_USD
+    assert outcome["fee_cost"] == pytest.approx(expected_fee, rel=1e-6)
+    assert outcome["net_profit"] == pytest.approx(-expected_fee, rel=1e-6)
+    # ...and gas is a few tenths of a cent, not a seventh of the position.
+    assert outcome["fee_cost"] < 0.01
 
 
 def test_a_losing_round_trip_is_recorded_as_a_loss():
