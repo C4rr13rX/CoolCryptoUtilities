@@ -4219,16 +4219,39 @@ class TrainingPipeline:
             os.getenv("GHOST_EXPECTANCY_MIN_PROFIT_FACTOR", "1.5")
         )
         expectancy_min_payoff = float(os.getenv("GHOST_EXPECTANCY_MIN_PAYOFF", "2.0"))
-        expectancy_fee_rate = float(os.getenv("GHOST_EXPECTANCY_FEE_RATE", "0.0065"))
+        # A safety haircut in USD PER TRADE, not a rate.
+        #
+        # This subtraction used to be ``avg_profit - GHOST_EXPECTANCY_FEE_RATE``,
+        # which is dimensionally invalid: avg_profit is USD per trade and the
+        # fee rate is a dimensionless fraction (0.0065 = 0.65%). Subtracting one
+        # from the other charges a FLAT $0.0065 against every trade regardless
+        # of how large that trade was.
+        #
+        # It was also a double charge. TradePerformance.profit is read from the
+        # fill's "profit" field, which is already gross_profit - fee_cost;
+        # verified 2026-09-03 on 100 consecutive trade_fills rows, where
+        # profit == gross_profit - fee_cost held to within 1e-12 on all 100.
+        # The 0.65% round trip is therefore already inside every number here.
+        #
+        # The flat charge falls hardest exactly where this repo trades. On the
+        # 22-trade pooled book the measured avg_profit is -$0.002545/trade and
+        # the gate reported net_expectancy -$0.009045 -- the entire difference
+        # is the phantom fee. On a $0.15 clip a flat $0.0065 is a 4.3% per-trade
+        # hurdle, so a small-clip, high-frequency lane like money_button can
+        # never show positive expectancy no matter how well it trades.
+        #
+        # Fees are already paid, so the default extra haircut is zero. Anyone
+        # wanting a margin of safety now states it in the same units as the
+        # thing it is subtracted from.
+        expectancy_margin_usd = float(os.getenv("GHOST_EXPECTANCY_MARGIN_USD", "0.0"))
         _trade_profits = [float(getattr(t, "profit", 0.0)) for t in trades]
         _wins_p = [p for p in _trade_profits if p > 0]
         _losses_p = [p for p in _trade_profits if p <= 0]
         avg_win = float(sum(_wins_p) / len(_wins_p)) if _wins_p else 0.0
         avg_loss = float(sum(_losses_p) / len(_losses_p)) if _losses_p else 0.0
         payoff_ratio = (avg_win / abs(avg_loss)) if avg_loss < 0 else 0.0
-        # Expectancy net of fees, per trade -- the number that decides whether
-        # this makes money when it is real.
-        net_expectancy = avg_profit - expectancy_fee_rate
+        # Expectancy per trade, already net of fees, in USD.
+        net_expectancy = avg_profit - expectancy_margin_usd
         expectancy_ready = bool(
             expectancy_enabled
             and len(trades) >= expectancy_min_trades

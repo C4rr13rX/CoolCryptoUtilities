@@ -2354,8 +2354,19 @@ class TradingBot:
                 gross_loss = abs(sum(losses_list))
                 payoff = (avg_win / avg_loss) if avg_loss > 0 else 0.0
                 profit_factor = (sum(wins_list) / gross_loss) if gross_loss > 0 else 0.0
-                fee_rate = float(os.getenv("GHOST_EXPECTANCY_FEE_RATE", "0.0065"))
-                net_expectancy = (ghost_profit / max(1, ghost_count)) - fee_rate
+                # USD per trade, not a rate -- see the note in
+                # pipeline.py:_ghost_validation. ``t.profit`` is already
+                # gross_profit - fee_cost, so subtracting a 0.0065 FRACTION
+                # from a USD average both mixed units and charged the round
+                # trip twice, as a flat $0.0065 on every trade whatever its
+                # size. Both gates must agree or a strategy passes one and
+                # fails the other on the same book.
+                expectancy_margin_usd = float(
+                    os.getenv("GHOST_EXPECTANCY_MARGIN_USD", "0.0")
+                )
+                net_expectancy = (
+                    ghost_profit / max(1, ghost_count)
+                ) - expectancy_margin_usd
                 expectancy_ok = (
                     (os.getenv("LIVE_PROMOTION_EXPECTANCY_PATH", "1") or "1").lower()
                     in {"1", "true", "yes", "on"}

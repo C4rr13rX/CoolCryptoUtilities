@@ -75,8 +75,8 @@ GATE_MAP = [
              "MIN_GHOST_WIN_RATE", "0.55", "trading/pipeline.py:_ghost_validation"),
             ("win_rate_lb >= min", "reason=fast_track path",
              "GHOST_FAST_TRACK_MIN_WIN_RATE_LB", "= min_win_rate", "trading/pipeline.py:_ghost_validation"),
-            ("net expectancy > 0 after fees", "reason=positive_expectancy path",
-             "GHOST_EXPECTANCY_FEE_RATE", "0.0065", "trading/pipeline.py:_ghost_validation"),
+            ("net expectancy > 0 (profit is already post-fee)", "reason=positive_expectancy path",
+             "GHOST_EXPECTANCY_MARGIN_USD", "0.0 (USD/trade)", "trading/pipeline.py:_ghost_validation"),
             ("profit_factor >= min", "expectancy path bar (HIGHER than win-rate path)",
              "GHOST_EXPECTANCY_MIN_PROFIT_FACTOR", "1.5", "trading/pipeline.py:_ghost_validation"),
             ("payoff_ratio >= min", "expectancy path bar",
@@ -220,7 +220,7 @@ def print_live():
     row("payoff_ratio", "%.3f" % pr, ">= 2.0", pr >= 2.0)
 
     ne = float(g.get("net_expectancy", 0.0))
-    row("net_expectancy (post-fee)", "%+.5f" % ne, "> 0", ne > 0)
+    row("net_expectancy (USD/trade, post-fee)", "%+.5f" % ne, "> 0", ne > 0)
 
     lr = float(g.get("loss_rate", 0.0))
     lrg = float(g.get("loss_rate_guardrail", 0.6))

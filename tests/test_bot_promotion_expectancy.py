@@ -24,9 +24,13 @@ import unittest
 
 
 def _expectancy_ok(profits, *, required_trades=40, required_profit=0.5,
-                   min_payoff=2.0, min_profit_factor=1.5, fee_rate=0.0065,
+                   min_payoff=2.0, min_profit_factor=1.5, margin_usd=0.0,
                    enabled=True):
-    """Mirror of the expectancy path in _maybe_transition_to_live."""
+    """Mirror of the expectancy path in _maybe_transition_to_live.
+
+    ``profits`` are USD per trade and are ALREADY net of fees, so the haircut
+    subtracted here is a USD margin of safety (default none), not a rate.
+    """
     count = len(profits)
     total = sum(profits)
     if count < required_trades or total < required_profit:
@@ -40,7 +44,7 @@ def _expectancy_ok(profits, *, required_trades=40, required_profit=0.5,
     gross_loss = abs(sum(losses))
     payoff = (avg_win / avg_loss) if avg_loss > 0 else 0.0
     profit_factor = (sum(wins) / gross_loss) if gross_loss > 0 else 0.0
-    net_expectancy = (total / max(1, count)) - fee_rate
+    net_expectancy = (total / max(1, count)) - margin_usd
     return bool(enabled and payoff >= min_payoff
                 and profit_factor >= min_profit_factor
                 and net_expectancy > 0.0)
@@ -63,10 +67,42 @@ class PromotionExpectancyTest(unittest.TestCase):
         profits = [0.011] * 42 + [-0.010] * 39
         self.assertFalse(_expectancy_ok(profits))
 
-    def test_negative_expectancy_after_fees_does_not_qualify(self):
-        """Gross-profitable but fee-negative is not tradeable."""
-        profits = [0.010] * 45 + [-0.002] * 40
+    def test_negative_expectancy_does_not_qualify(self):
+        """A book that does not make money is not tradeable.
+
+        ``profits`` are already net of fees, so a negative average IS the
+        after-fee answer; there is no second fee to apply.
+        """
+        profits = [0.010] * 40 + [-0.020] * 45
+        self.assertLess(sum(profits) / len(profits), 0.0)
         self.assertFalse(_expectancy_ok(profits))
+
+    def test_explicit_usd_margin_can_still_reject_a_thin_book(self):
+        """The haircut survives, in USD -- the units it is subtracted in.
+
+        These 81 trades average +$0.0186/trade and pass with no margin. A
+        margin of $0.05/trade is larger than the edge, so it rejects.
+        """
+        profits = _observed()
+        self.assertTrue(_expectancy_ok(profits, margin_usd=0.0))
+        self.assertFalse(_expectancy_ok(profits, margin_usd=0.05))
+
+    def test_flat_fee_no_longer_punishes_a_small_clip_strategy(self):
+        """The bug this file used to mirror.
+
+        A small-clip lane that wins $0.004 and loses $0.001 is genuinely
+        profitable, but the old code subtracted a flat 0.0065 -- larger than
+        the entire per-trade edge -- and rejected it forever.
+        """
+        profits = [0.004] * 200 + [-0.001] * 130
+        avg = sum(profits) / len(profits)
+        self.assertGreater(avg, 0.0)
+        self.assertLess(avg, 0.0065)          # the old flat charge exceeded it
+        self.assertTrue(
+            _expectancy_ok(profits, required_trades=40, required_profit=0.5)
+        )
+        # Reproduce the old formula to show it rejected the same book.
+        self.assertLess(avg - 0.0065, 0.0)
 
     def test_too_few_trades_does_not_qualify(self):
         self.assertFalse(_expectancy_ok(_observed()[:10]))
