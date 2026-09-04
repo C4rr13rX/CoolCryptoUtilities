@@ -1065,6 +1065,12 @@ class BusScheduler:
         if not signals or not state.samples:
             return
         current_ts, current_price, _ = state.samples[-1]
+        # How much history the fit actually saw. A forecast projected far
+        # beyond its own evidence window is reporting that window's noise,
+        # compounded -- the swap scheduler refuses those, and cannot tell
+        # without being told the span.
+        window = list(state.samples)[-120:]
+        fit_window_sec = float(window[-1][0] - window[0][0]) if len(window) > 1 else 0.0
         for signal in signals:
             state.pending_predictions.append(
                 {
@@ -1072,6 +1078,8 @@ class BusScheduler:
                     "resolve_ts": current_ts + signal.seconds,
                     "predicted_return": signal.expected_return,
                     "start_price": current_price,
+                    "fit_window_sec": fit_window_sec,
+                    "zscore": float(getattr(signal, "zscore", 0.0) or 0.0),
                 }
             )
 

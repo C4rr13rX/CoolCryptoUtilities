@@ -50,15 +50,52 @@ class TestPredictionsToCandidates:
             "AERO-USDC", [_pending("1h", 3600, -0.02)], now=NOW)
         assert out == []
 
-    def test_an_impossible_forecast_is_refused(self):
-        """+500% is three times the largest move ever observed here."""
-        assert predictions_to_candidates(
-            "AERO-USDC", [_pending("3d", 259200, 5.0)], now=NOW) == []
+    def test_a_large_forecast_is_not_refused_for_being_large(self):
+        """A 300% opportunity is the thing worth acting on, not a bug.
 
-    def test_a_large_but_observed_move_still_schedules(self):
-        """The ceiling sits above the max, so real outliers pass."""
+        An earlier version capped forecasts at 200% because nothing bigger
+        had been observed, which would have refused exactly the trades most
+        worth taking.
+        """
+        for predicted in (1.74, 3.0, 4.99):
+            out = predictions_to_candidates(
+                "AERO-USDC",
+                [{**_pending("1d", 86400, predicted), "fit_window_sec": 7200.0}],
+                now=NOW)
+            assert len(out) == 1, f"{predicted:+.2%} should schedule"
+
+    def test_the_clamp_constant_is_refused(self):
+        """+/-5.0 exactly is np.clip's output, not a prediction.
+
+        The forecast is exp(intercept + slope*minutes) on log price, so it
+        compounds with the horizon; a 0.05%/min drift reaches +7000% over
+        three days and is truncated to exactly 5.0.
+        """
+        for predicted in (5.0, -5.0):
+            assert predictions_to_candidates(
+                "AERO-USDC",
+                [{**_pending("3d", 259200, predicted), "fit_window_sec": 7200.0}],
+                now=NOW) == []
+
+    def test_extrapolation_far_beyond_the_fit_window_is_refused(self):
+        """Three days projected from two hours is 36x -- the window's noise."""
+        assert predictions_to_candidates(
+            "AERO-USDC",
+            [{**_pending("3d", 259200, 0.05), "fit_window_sec": 7200.0}],
+            now=NOW) == []
+
+    def test_a_proportionate_projection_is_kept(self):
+        """Three days from a twelve-hour window is 6x, which the fit supports."""
         out = predictions_to_candidates(
-            "AERO-USDC", [_pending("1d", 86400, 1.74)], now=NOW)
+            "AERO-USDC",
+            [{**_pending("3d", 259200, 0.05), "fit_window_sec": 43200.0}],
+            now=NOW)
+        assert len(out) == 1
+
+    def test_a_row_without_a_fit_window_is_not_judged_on_one(self):
+        """Absence of the field is not evidence of over-extrapolation."""
+        out = predictions_to_candidates(
+            "AERO-USDC", [_pending("3d", 259200, 0.05)], now=NOW)
         assert len(out) == 1
 
     def test_banned_symbols_are_not_planned_around(self):

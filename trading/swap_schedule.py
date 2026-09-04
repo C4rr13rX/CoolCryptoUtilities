@@ -69,16 +69,43 @@ def _env_float(name: str, default: float) -> float:
     return value if math.isfinite(value) else default
 
 
-def _max_credible_return() -> float:
-    """The largest forecast worth planning around, as a fraction.
+#: The clamp inside BusScheduler._build_signals:
+#:     expected_return = float(np.clip(expected_return, -5.0, 5.0))
+#: A forecast landing on exactly this value did not predict +500% -- the
+#: extrapolation overflowed and was truncated.
+_FORECAST_CLAMP = 5.0
 
-    Calibrated from measurement rather than taste: over 140 closed round
-    trips the |gross move| distribution runs median 1.60%, p90 14.2%,
-    p99 161%, max 174%. The default 2.0 (200%) sits above the observed
-    maximum, so a real outlier is still schedulable and only impossible
-    numbers are refused.
+
+def _is_clamped(predicted: float) -> bool:
+    """Did this forecast hit the clamp rather than predict anything?
+
+    The forecast is exp(intercept + slope * future_minutes) fitted on log
+    price, so it compounds with the horizon. A slope of 0.05% per minute --
+    ordinary noise on a thin token -- extrapolates to +7000% over three days
+    and is cut to exactly 5.0. Observed in production 2026-09-04 16:42 as
+    "BASECAT-USDC@3d +500.0%".
+
+    This is NOT a size test. A large forecast is allowed to be large; the
+    system should act on a genuine 300% opportunity. What is refused is the
+    specific value that means the arithmetic ran off the end.
     """
-    return _env_float("SCHEDULE_MAX_CREDIBLE_RETURN", 2.0)
+    return abs(abs(float(predicted)) - _FORECAST_CLAMP) < 1e-9
+
+
+def _max_extrapolation_ratio() -> float:
+    """How far past its own evidence a forecast may be projected.
+
+    The fit is a straight line through a window of recent log prices,
+    extended `future_minutes` forward. Projecting 4320 minutes (3d) from a
+    60-minute window is a 72x extrapolation: the fit has no information at
+    that range, and whatever slope the last hour happened to have is simply
+    compounded until it dominates.
+
+    24x is one day of projection per hour of evidence. Beyond that the
+    number reflects the window's noise rather than the market's direction.
+    Set SCHEDULE_MAX_EXTRAPOLATION=0 to disable.
+    """
+    return _env_float("SCHEDULE_MAX_EXTRAPOLATION", 24.0)
 
 
 try:
@@ -189,20 +216,34 @@ def predictions_to_candidates(
         if predicted <= min_return:
             continue                      # not worth planning around
 
-        # A FORECAST BIGGER THAN ANYTHING THAT HAS EVER HAPPENED IS A BUG.
+        # REFUSE THE ARTIFACT, NOT THE OPPORTUNITY.
         #
-        # Observed in production 2026-09-04 16:42, the scheduler planned a leg
-        # on "BASECAT-USDC@3d +500.0%". Against 140 closed round trips the
-        # actual distribution of |gross move| as a fraction of notional is
-        # median 1.60%, p90 14.2%, p99 161%, max 174% -- so +500% is three
-        # times the largest move this system has ever seen.
+        # An earlier version of this capped forecasts at 200% on the grounds
+        # that nothing bigger had ever been observed. That was wrong: it would
+        # have refused a genuine 300% opportunity for being unprecedented,
+        # which is precisely the thing worth acting on.
         #
-        # Such a number is a broken model output, not an opportunity, and
-        # planning around it would size real capital against a fantasy AND
-        # crowd out legs whose forecasts are merely true. The ceiling sits
-        # above the observed maximum so a genuine outlier still passes.
-        if predicted > _max_credible_return():
+        # What actually went wrong in production is narrower. The forecast is
+        # exp(intercept + slope * future_minutes) fitted on log price, so it
+        # compounds with the horizon, and _build_signals clamps the result to
+        # +/-5.0. "BASECAT-USDC@3d +500.0%" was not a prediction of +500% --
+        # it was the clamp constant, reached because a 0.05%/minute drift
+        # compounds to +7000% over three days.
+        #
+        # So the test is whether the number MEANS anything, not whether it is
+        # big:
+        if _is_clamped(predicted):
             continue
+
+        # ...and whether the fit had any information at that range. A straight
+        # line through the last hour, projected three days forward, is a 72x
+        # extrapolation: it reports the window's noise, compounded.
+        max_ratio = _max_extrapolation_ratio()
+        if max_ratio > 0:
+            horizon_sec = max(0.0, resolve_ts - moment)
+            window_sec = float(entry.get("fit_window_sec") or 0.0)
+            if window_sec > 0 and horizon_sec / window_sec > max_ratio:
+                continue
 
         # Symbols the book has proven we lose on are not planned around
         # either. The gate refuses them at entry, so a leg scheduled on one
