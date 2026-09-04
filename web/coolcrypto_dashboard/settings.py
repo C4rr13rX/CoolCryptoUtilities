@@ -129,6 +129,7 @@ INSTALLED_APPS = [
     "delegation.apps.DelegationConfig",
     "wizard_chat.apps.WizardChatConfig",
     "modelcontrol.apps.ModelControlConfig",
+    "tradingagent.apps.TradingAgentConfig",
 ]
 
 MIDDLEWARE = [
