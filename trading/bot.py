@@ -247,9 +247,26 @@ class TradingBot:
         self.scenario_reactor = ScenarioReactor()
         self.arb_cell = VolatilityArbCell()
         self.event_engine = make_default_engine(self._on_reflex_block)
+        #: The deadline IN FORCE FOR THE SAMPLE BEING INTERPRETED. Derived once
+        #: per sample in ``_update_brain_state`` from the two stores below, so
+        #: ``_interpret_predictions`` can keep reading one scalar. 0.0 == open.
         self._reflex_blocked_until: float = 0.0
         self._reflex_block_reason: Optional[str] = None
+        #: Portfolio-wide reflexes (drawdown) -- these really do apply to every
+        #: symbol, because the equity they measure is shared.
+        self._reflex_global_until: float = 0.0
+        self._reflex_global_reason: Optional[str] = None
+        #: Per-symbol reflexes (volatility). A spike in BSTONK says nothing
+        #: about AERO, and blacking out the whole book on one memecoin's tick
+        #: cost 23.6% of all decisions -- see ``_update_brain_state``.
+        self._reflex_symbol_until: Dict[str, float] = {}
+        self._reflex_symbol_reason: Dict[str, str] = {}
         self._volatility_avg: float = 0.0
+        #: Per-symbol EWMA of SCALE-FREE (return) volatility. The absolute
+        #: price-diff average it replaces for reflex purposes ranked symbols by
+        #: price, not by risk.
+        self._volatility_rel_avg: Dict[str, float] = {}
+        self._volatility_rel_n: Dict[str, int] = {}
         self._peak_equity: float = 0.0
         self._last_windows: Dict[str, Dict[str, np.ndarray]] = {}
         self._model_input_order: Optional[List[str]] = None
@@ -1453,9 +1470,16 @@ class TradingBot:
         a skipped opportunity and never a second buy.
         """
         try:
+            # `or []` because a reader that RETURNS None is the same situation
+            # as one that raises -- the book told us nothing -- and both must
+            # fail closed to "no bookings" rather than crash the reconciliation
+            # that every live entry and every exit now runs through. Not
+            # hypothetical: 38 money-path tests fail with
+            # `TypeError: 'NoneType' object is not iterable` here, because
+            # their DB fakes spell "no rows" as None.
             booking_rows = self.db.fetch_trades(
                 limit=500, symbol=symbol, statuses=["live-entry", "live-exit"]
-            )
+            ) or []
         except Exception:
             booking_rows = []
         booked: Dict[str, Dict[str, Any]] = {}
@@ -1473,7 +1497,7 @@ class TradingBot:
         try:
             settled_rows = self.db.fetch_trades(
                 limit=500, symbol=symbol, statuses=["live-swap-settled"]
-            )
+            ) or []
         except Exception:
             settled_rows = []
 
@@ -1686,7 +1710,7 @@ class TradingBot:
         try:
             settled = self.db.fetch_trades(
                 limit=200, symbol=symbol, statuses=["live-swap-settled"]
-            )
+            ) or []
             for row in settled:
                 details = row.get("details") or {}
                 if not isinstance(details, dict):
@@ -2614,13 +2638,29 @@ class TradingBot:
     def _on_reflex_block(self, context: Dict[str, float]) -> None:
         cooldown = float(context.get("cooldown", 60.0))
         reason = str(context.get("reflex_rule") or context.get("reason") or "reflex")
-        self._reflex_blocked_until = time.time() + cooldown
+        until = time.time() + cooldown
+        # A reflex blocks only what it actually measured. ``volatility_ceiling``
+        # measures ONE symbol's own return dispersion, so it blocks that symbol;
+        # ``stop_loss_reflex`` measures portfolio drawdown, which is shared, so
+        # it blocks everything. Before this split both were global and the
+        # volatility rule -- firing on whichever coin had the largest price --
+        # blacked out 23.6% of all decisions across the whole book.
+        symbol = str(context.get("symbol") or "")
+        if reason == "volatility_ceiling" and symbol:
+            self._reflex_symbol_until[symbol] = until
+            self._reflex_symbol_reason[symbol] = reason
+        else:
+            self._reflex_global_until = until
+            self._reflex_global_reason = reason
+        self._reflex_blocked_until = until
         self._reflex_block_reason = reason
         details = {
             "reason": reason,
             "cooldown": cooldown,
+            "scope": symbol if (reason == "volatility_ceiling" and symbol) else "portfolio",
             "drawdown": context.get("drawdown"),
             "volatility": context.get("volatility"),
+            "volatility_rel": context.get("volatility_rel"),
         }
         if hasattr(self, "metrics"):
             try:
@@ -2731,6 +2771,46 @@ class TradingBot:
             volatility = float(np.std(np.diff(history_prices[-min(20, history_prices.size):])))
         alpha = 0.05
         self._volatility_avg = (1 - alpha) * self._volatility_avg + alpha * volatility
+        # ``volatility`` above is in QUOTE-CURRENCY UNITS -- the std of raw
+        # price differences. Measured over 6h of market_stream on 2026-09-04 it
+        # spans seven orders of magnitude: CBBTC 16.5 (because a bitcoin costs
+        # $79,698), CBZEC 0.243, AERO 0.000136, GRASS 0.0. It ranks symbols by
+        # PRICE, not by risk, and it must not be compared across them.
+        #
+        # It was, and by a single GLOBAL average at that. The reflex fired on
+        # whichever symbol was most expensive -- replayed over the same 6h, 49
+        # of 61 triggers were CBBTC and 9 were CBZEC -- and the block it set
+        # was global too, so the calm majors were the ones blacked out:
+        # AERO 30 of its 79 decisions, COMP 15 of 63, CBETH 13 of 55,
+        # CBBTC 23 of 72. 103 of 437 decisions in six hours, 23.6%, refused
+        # with reason ``reflex:volatility_ceiling`` -- on the very symbols the
+        # live lane trades, for the sole reason that bitcoin has a big number
+        # in front of it.
+        #
+        # So the reflex gets its own SCALE-FREE measure: the std of relative
+        # (per-tick return) changes, which is a fraction and therefore
+        # comparable, averaged PER SYMBOL against itself. Replayed with the
+        # same rule shape the blocked share falls 23.6% -> 2.2% and lands on
+        # MEME, BSTONK, LITESLA and BASECAT -- the symbols that actually move,
+        # and the two whose live round trips were stopped out at a loss.
+        #
+        # ``volatility`` itself is left exactly as it was: the graph node, the
+        # pattern-memory fingerprint, the scenario reactor and the snapshot
+        # payload all consume it in absolute units and are not being retuned.
+        volatility_rel = 0.0
+        if history_prices.size > 3:
+            window = history_prices[-min(20, history_prices.size):]
+            base = np.maximum(np.abs(window[:-1]), 1e-12)
+            volatility_rel = float(np.std(np.diff(window) / base))
+        if not math.isfinite(volatility_rel):
+            volatility_rel = 0.0
+        prev_rel = self._volatility_rel_avg.get(symbol)
+        self._volatility_rel_avg[symbol] = (
+            volatility_rel
+            if prev_rel is None
+            else (1 - alpha) * prev_rel + alpha * volatility_rel
+        )
+        self._volatility_rel_n[symbol] = self._volatility_rel_n.get(symbol, 0) + 1
         self.graph.upsert_node(symbol, "asset", price, ts, volume=volume, volatility=volatility)
         prev_price = self._prev_prices.get(symbol)
         if prev_price is not None:
@@ -2806,12 +2886,23 @@ class TradingBot:
             "equity": equity,
             "volatility": volatility,
             "volatility_avg": self._volatility_avg,
+            "volatility_rel": volatility_rel,
+            "volatility_rel_avg": float(self._volatility_rel_avg.get(symbol, 0.0)),
+            "volatility_rel_samples": float(self._volatility_rel_n.get(symbol, 0)),
+            "symbol": symbol,
+            # Cooldowns are counted per (rule, scope), so a spike in one
+            # memecoin cannot suppress spike DETECTION in another.
+            "reflex_scope": symbol,
             "pnl": self.total_profit,
             "cooldown": max(30.0, 60.0 * (1.0 + min(1.0, abs(drawdown)))),
         }
-        if self._reflex_blocked_until and time.time() >= self._reflex_blocked_until:
-            self._reflex_block_reason = None
-            self._reflex_blocked_until = 0.0
+        now_wall = time.time()
+        if self._reflex_global_until and now_wall >= self._reflex_global_until:
+            self._reflex_global_reason = None
+            self._reflex_global_until = 0.0
+        for stale in [s for s, until in self._reflex_symbol_until.items() if now_wall >= until]:
+            self._reflex_symbol_until.pop(stale, None)
+            self._reflex_symbol_reason.pop(stale, None)
         reflex_triggered: List[str] = []
         try:
             reflex_triggered = self.event_engine.process(context, ts)
@@ -2824,10 +2915,29 @@ class TradingBot:
                         "reflex",
                         severity=FeedbackSeverity.WARNING,
                         label=f"trigger_{rule}",
-                        details={"drawdown": drawdown, "volatility": volatility},
+                        details={
+                            "drawdown": drawdown,
+                            "volatility": volatility,
+                            "volatility_rel": volatility_rel,
+                            "symbol": symbol,
+                        },
                     )
                 except Exception:
                     pass
+        # Collapse the two stores into the one scalar ``_interpret_predictions``
+        # reads. It is resolved HERE, for THIS symbol, and _handle_sample runs
+        # one sample at a time behind ``_processing_sample`` and calls
+        # _update_brain_state (line ~4840) then _interpret_predictions (~4902)
+        # within the same await, so the scalar always describes the sample being
+        # interpreted. Tests that set ``bot._reflex_blocked_until = 0.0`` and
+        # call _interpret_predictions directly are unaffected.
+        symbol_until = float(self._reflex_symbol_until.get(symbol, 0.0))
+        if symbol_until >= self._reflex_global_until:
+            self._reflex_blocked_until = symbol_until
+            self._reflex_block_reason = self._reflex_symbol_reason.get(symbol)
+        else:
+            self._reflex_blocked_until = self._reflex_global_until
+            self._reflex_block_reason = self._reflex_global_reason
         reflex_active = time.time() < self._reflex_blocked_until
         threshold_scale = 1.0
         if swarm_bias > 0:
