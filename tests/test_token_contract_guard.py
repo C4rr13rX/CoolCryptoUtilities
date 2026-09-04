@@ -70,6 +70,45 @@ class TokenContractGuardTest(unittest.TestCase):
             ok, _ = guard.verify("base", ADDR)
         self.assertFalse(ok)
 
+    # ------------------------------------------------- the false positive --
+
+    def test_a_minimal_proxy_token_is_allowed(self):
+        """An EIP-1167 clone is 45 bytes and is a real token.
+
+        MIN_CONTRACT_CODE_BYTES defaulted to 64, so every proxy token was
+        refused on its size before anything asked it a question. Measured on
+        base 2026-09-03, TIBBIR 0xa4a2e2ca3fbfe21aed83471d28b6f65a233c6e00:
+
+            code        0x363d3d373d3d3d363d73766e0671bbbf59370c35a8882366a
+                        2085b46eb7b5af43d82803e903d91602b57fd5bf3   (45 bytes)
+            decimals    18
+            totalSupply 999904783434367999458008098
+
+        refused as ``code_45_bytes``. The size check is a fast fail for "no
+        contract here"; the behavioural gates are what decide.
+        """
+        with mock.patch.object(
+            guard, "_rpc",
+            _fake_chain(code_bytes=45, decimals=18,
+                        supply=999904783434367999458008098),
+        ):
+            ok, reason = guard.verify("base", ADDR)
+        self.assertTrue(ok, reason)
+        self.assertIn("ok_code_45", reason)
+
+    def test_a_small_blob_that_answers_nothing_is_still_refused(self):
+        """Lowering the size floor must not let a non-token through.
+
+        The behavioural gates are strictly stronger than the size check: code
+        too small to be a token cannot answer decimals() either.
+        """
+        with mock.patch.object(
+            guard, "_rpc", _fake_chain(code_bytes=45, decimals=None)
+        ):
+            ok, reason = guard.verify("base", ADDR)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "decimals_unanswered")
+
     def test_a_contract_that_is_not_a_token_is_refused(self):
         """Plenty of code, but decimals() does not answer."""
         with mock.patch.object(guard, "_rpc",

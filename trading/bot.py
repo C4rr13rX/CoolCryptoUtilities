@@ -4114,15 +4114,97 @@ class TradingBot:
             except Exception:
                 protective = None
 
+        # Computed ONCE and reused by the entry path below (the release/assign
+        # site). It used to be evaluated a second time down there against the
+        # same directive; two copies of the predicate that decides whether real
+        # money moves is one edit away from disagreeing.
+        entry_is_live = bool(
+            self.live_trading_enabled and self._strategy_live_approved(directive)
+        )
+
         entry_refused_by_live_slot = bool(
             directive is not None
             and directive.action == "enter"
             and pos is not None
             and str(pos.get("mode") or "") == "live"
-            and not (
-                self.live_trading_enabled and self._strategy_live_approved(directive)
-            )
+            and not entry_is_live
         )
+
+        # A strategy re-signalling the symbol it ALREADY HOLDS is not a new
+        # trade. It was treated as one: the entry path assigns
+        # ``self.positions[symbol]`` and ``_release_position_for_entry``
+        # abandons whatever was there, so the open position died with no exit,
+        # no outcome and no ledger row.
+        #
+        # Measured 2026-09-03 over 6h of trading_ops:
+        #
+        #   554 ghost entries, 29 ghost exits, 523 position-released
+        #   499 of the 523 (95.4%) were a strategy clobbering ITS OWN position
+        #       on the SAME symbol -- rsi_reversal@12h did it 140 times
+        #   median hold before abandonment: 20.0s  (p90 167s)
+        #
+        # So ~95% of every ghost trade the bot opened was destroyed ~20 seconds
+        # in, before a take-profit, a stop or a timed exit could resolve it.
+        # That is the whole of link 5: ``StrategyLedger.record`` is only ever
+        # called from the exit path, graduation needs 20 ghost trades from ONE
+        # strategy, and the lanes were each booking well under one an hour
+        # while opening ~90. money_button has 1 ghost trade in its lifetime.
+        #
+        # A duplicate entry now yields to the position it would have replaced:
+        # the sample falls through to the held-position branch, so the bracket,
+        # the target and the timed exit all get evaluated on it (the same
+        # lesson as the BSTONK stop above) and the trade is allowed to finish.
+        #
+        # EXCEPTION -- a ghost position being upgraded to live by the same
+        # strategy is a real state change and still displaces. Refusing it
+        # would mean a strategy that graduates can never take the live entry
+        # for any symbol its own ghost lane happens to be holding, which is
+        # link 6 and was 7 of the 9 live-capable symbols on 2026-09-02.
+        held_strategy_id = str((pos or {}).get("strategy_id") or "")
+        incoming_strategy_id = (
+            str(getattr(directive, "strategy_id", "") or "") if directive is not None else ""
+        )
+        entry_duplicates_held_position = bool(
+            directive is not None
+            and directive.action == "enter"
+            and pos is not None
+            and incoming_strategy_id
+            and incoming_strategy_id == held_strategy_id
+            and not (entry_is_live and str(pos.get("mode") or "") != "live")
+        )
+        if entry_duplicates_held_position:
+            # Logged for the same reason the live-held refusal is: an unlogged
+            # refusal is indistinguishable from the lane never having wanted
+            # the trade, and that silence is what hid this for weeks.
+            try:
+                self.db.log_trade(
+                    wallet=str(pos.get("mode") or "ghost"),
+                    chain=chain_name,
+                    symbol=symbol,
+                    action="hold",
+                    status="entry-refused-duplicate",
+                    details={
+                        "symbol": symbol,
+                        "reason": "symbol_already_held_by_same_strategy",
+                        "strategy_id": incoming_strategy_id,
+                        "held_mode": str(pos.get("mode") or ""),
+                        "held_trade_id": str(pos.get("trade_id") or ""),
+                        "held_entry_price": float(pos.get("entry_price") or 0.0),
+                        "held_entry_ts": float(
+                            pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0
+                        ),
+                        "held_secs": max(
+                            0.0,
+                            float(sample_ts)
+                            - float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0),
+                        ),
+                        "incoming_trade_id": str(
+                            getattr(directive, "trade_id", "") or ""
+                        ),
+                    },
+                )
+            except Exception:
+                pass
 
         if (
             protective is not None
@@ -4131,7 +4213,7 @@ class TradingBot:
         ):
             should_exit = True
             reason = protective.reason
-        elif directive and directive.action == "enter":
+        elif directive and directive.action == "enter" and not entry_duplicates_held_position:
             should_enter = True
             reason = directive.reason
         elif directive and directive.action == "exit":
@@ -4422,9 +4504,8 @@ class TradingBot:
             #
             # Refused rather than released, because the live position is the
             # only record of tokens we actually own.
-            entry_is_live = bool(
-                self.live_trading_enabled and self._strategy_live_approved(directive)
-            )
+            # ``entry_is_live`` is computed once above the directive dispatch
+            # and reused here; see the comment there.
             if pos is not None and str(pos.get("mode") or "") == "live" and not entry_is_live:
                 held = {
                     "symbol": symbol,

@@ -49,10 +49,31 @@ import time
 import urllib.request
 from typing import Dict, Optional, Tuple
 
-#: Below this there is not enough code to implement transfer(). Real ERC-20s
-#: compile to hundreds of bytes; the measured stubs were 1. Configurable, but
-#: it is only the first of four gates, not the whole test.
-MIN_CONTRACT_CODE_BYTES = int(os.getenv("MIN_CONTRACT_CODE_BYTES", "64"))
+#: A FAST FAIL for "there is no contract here", not a judgement about the
+#: token. The measured stubs were 1 byte and an undeployed address is 0.
+#:
+#: This defaulted to 64 and that was wrong. A token behind an EIP-1167 minimal
+#: proxy deploys exactly 45 bytes -- the clone -- and every call delegates to
+#: the implementation. Measured on base 2026-09-03::
+#:
+#:     TIBBIR 0xa4a2e2ca3fbfe21aed83471d28b6f65a233c6e00
+#:     code       0x363d3d373d3d3d363d73766e0671bbbf59370c35a8882366a2085b46eb7b5af43d82803e903d91602b57fd5bf3
+#:     decimals   18
+#:     totalSupply 999904783434367999458008098
+#:
+#: 45 bytes, refused as ``code_45_bytes``, and a real tradeable ERC-20 with a
+#: billion units of supply. Other clone factories (Solady, clones-with-
+#: immutable-args) land in the same 45-62 byte band, so this was not one
+#: token. It never cost money because the guard only gates swaps and nothing
+#: had traded TIBBIR -- but it silently shrinks the tradeable universe, and
+#: wiring this guard into the address-book WRITER would have made the refusal
+#: permanent for every proxy token discovery ever finds.
+#:
+#: The behavioural gates below -- decimals(), totalSupply(), balanceOf() -- are
+#: what actually decide, and a proxy answers all three through its delegate. A
+#: blob too small to be a token cannot answer them either, so lowering this
+#: costs nothing: it only stops the size check from pre-empting the real test.
+MIN_CONTRACT_CODE_BYTES = int(os.getenv("MIN_CONTRACT_CODE_BYTES", "2"))
 
 #: Re-verify a previously-good token after this long, so a token that is
 #: rugged or self-destructs mid-run stops being trusted on stale evidence.

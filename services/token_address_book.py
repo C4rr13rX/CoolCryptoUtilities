@@ -90,12 +90,88 @@ def _gecko_token_id_to_address(token_id: str) -> Optional[str]:
     return raw if is_token_address(raw) else None
 
 
+def _verify_on_chain(chain: str, pairs: list) -> list:
+    """Drop mappings the chain says are not tradeable ERC-20s.
+
+    ``is_token_address`` only checks the SHAPE of the string. Eight addresses
+    of the form ``0xb2000000000000000000...`` passed it and sat in the book for
+    BASECAT, BLUECHIP, NVDAC, BASEJUICE, AAPL, GOOGLC, METAC and RAWR; $1.50
+    was spent buying into one across two settled swaps that can never be sold
+    back. They were purged 2026-09-03 17:04:25 -- and BASECAT was written back
+    by ``record_many`` at 17:20:41, sixteen minutes later, because the writer
+    never asked the chain anything. Re-measured against base at 20:39::
+
+        BASECAT 0xb2000000000000000000004c27f6523082f41d01  code_1_bytes  REFUSED
+        BSTONK  0x0f61edbfe6cd86024c0f210c0695b08df55fdfc9  3545 bytes    ok
+        AERO    0x940181a94a35a4569e4529a3cdfb74e38fd98631  4736 bytes    ok
+
+    ``token_contract_guard.verify`` already gates the swap (trading/bot.py),
+    so no money could reach the stub -- but the book is also what the resolver,
+    the feed and the strategy census read, so a symbol that can never be exited
+    kept generating ghost signals. money_button fired 22 of its 49 candidates
+    on BASECAT.
+
+    Runs OUTSIDE ``file_lock``: this does network I/O, and holding a
+    cross-process lock across an RPC round trip would stall every other writer.
+    The guard fails OPEN on an unreachable RPC (returns True, uncached) and
+    caches refusals permanently, so an outage cannot starve address learning
+    and a known stub costs nothing after the first check.
+    """
+    if os.getenv("TOKEN_BOOK_VERIFY_ON_WRITE", "1").strip().lower() not in {
+        "1", "true", "yes", "on"
+    }:
+        return pairs
+    try:
+        from services.token_contract_guard import verify
+    except Exception:  # noqa: BLE001 - never let the guard break discovery
+        return pairs
+    kept = []
+    for sym, addr in pairs:
+        try:
+            ok, reason = verify(chain, addr)
+        except Exception:  # noqa: BLE001
+            ok, reason = True, "guard_raised"
+        if ok:
+            kept.append((sym, addr))
+        else:
+            print(
+                f"[token-book] refused {sym} -> {addr} on {chain}: {reason}"
+            )
+    return kept
+
+
+def _unknown_pairs(chain_l: str, pairs: list) -> list:
+    """The subset of ``pairs`` the book does not already hold, lock-free.
+
+    Only these need verifying: an unchanged mapping is skipped by the writers
+    below anyway, so re-interrogating it would be pure latency. The read is
+    racy by design -- the authoritative skip happens again under the lock, and
+    the only cost of losing the race is one cached guard lookup.
+    """
+    raw, ok = read_json(BOOK_PATH, default=None)
+    if not ok or not isinstance(raw, dict):
+        return list(pairs)
+    chain_book = raw.get(chain_l)
+    if not isinstance(chain_book, dict):
+        return list(pairs)
+    out = []
+    for sym, addr in pairs:
+        prior = chain_book.get(sym)
+        if isinstance(prior, dict) and str(prior.get("address", "")).lower() == addr.lower():
+            continue
+        out.append((sym, addr))
+    return out
+
+
 def record(chain: str, symbol: str, address: str, *, source: str = "discovery") -> bool:
     """Learn one symbol -> address mapping. False if it was not usable or not stored."""
     chain_l = _normalise_chain(chain)
     sym = _normalise_symbol(symbol)
     addr = str(address or "").strip()
     if not chain_l or not sym or not is_token_address(addr):
+        return False
+    # Ask the chain before the lock; see _verify_on_chain.
+    if _unknown_pairs(chain_l, [(sym, addr)]) and not _verify_on_chain(chain_l, [(sym, addr)]):
         return False
     with file_lock(BOOK_PATH):
         raw, ok = read_json(BOOK_PATH, default=None)
@@ -123,6 +199,16 @@ def record_many(chain: str, mapping: Dict[str, str], *, source: str = "discovery
     pairs = [(s, a) for s, a in pairs if s and is_token_address(a)]
     chain_l = _normalise_chain(chain)
     if not chain_l or not pairs:
+        return 0
+    # Ask the chain before the lock, and only about mappings that would
+    # actually be written; see _verify_on_chain.
+    unknown = _unknown_pairs(chain_l, pairs)
+    if unknown:
+        allowed = {(s, a.lower()) for s, a in _verify_on_chain(chain_l, unknown)}
+        refused = {(s, a.lower()) for s, a in unknown} - allowed
+        if refused:
+            pairs = [(s, a) for s, a in pairs if (s, a.lower()) not in refused]
+    if not pairs:
         return 0
     with file_lock(BOOK_PATH):
         raw, ok = read_json(BOOK_PATH, default=None)
