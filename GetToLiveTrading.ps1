@@ -959,11 +959,11 @@ while ($true) {
     # objective with a deadline gives it one, and makes a missed goal
     # visible instead of blurred into "still working on it".
     $sprintGoal = if ($state -and $state.live_trades -ge $MinLiveTrades -and $state.profit_factor -lt $MinProfitFactor) {
-        "Raise money_button's live profit factor above $MinProfitFactor within this pass. It has $($state.live_trades) live trades at PF $($state.profit_factor). Find the losing pattern in the closed trades and fix the entry or exit rule that causes it."
+        "Get back to RAPID PROFITABLE SWAPPING. Seven swaps settled in 26 minutes on 2026-09-03 12:20-12:46, and that cadence is the target. Right now $($state.live_trades) live trades sit at PF $($state.profit_factor), so the round trips are losing. Find why a trip returns less than it cost -- exits that do not fully close, fills measured from a stale balance, slippage left at the 1 percent default -- and fix it at the mechanism. Prove it with consecutive round trips that each return more than they cost, and paste the tx hashes."
     } elseif ($state -and $state.live_rows -ge 1) {
-        "Get money_button to $MinLiveTrades profitable live trades. $($state.live_trades) settled so far, P/L $($state.live_pl). Keep them coming and keep them small."
+        "Get back to RAPID PROFITABLE SWAPPING and keep it running. $($state.live_trades) trades settled so far, P/L $($state.live_pl). The target cadence is seven settled swaps in 26 minutes, measured on 2026-09-03 12:20-12:46. Keep the clips small, make every position fully close before opening another, and prove each round trip returns more than it cost."
     } elseif ($state -and $state.live_attempts -gt 0) {
-        "Turn a blocked live entry into a SETTLED one within this pass. $($state.live_attempts) live attempts exist and NONE settled. Take one blocked attempt, find the exact gate that stopped it, and get a real transaction hash on Base -- dust-sized is fine."
+        "Get ONE full round trip to settle and come back profitable. $($state.live_attempts) live attempts exist and NONE settled. Take one blocked attempt, find the exact gate that stopped it, buy and then FULLY sell, and paste both transaction hashes with the USDC in and out. Dust-sized is fine -- a closed loop matters more than the size."
     } else {
         "Get ONE real money_button trade onto the chain within this pass, and paste its transaction hash. Smallest amount that can settle."
     }
