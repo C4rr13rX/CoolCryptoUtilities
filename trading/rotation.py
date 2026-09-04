@@ -3,9 +3,9 @@ layer above the per-pair bots.
 
 Each TradingBot is bound to one pair; its BusScheduler only ever re-enters the
 same token after an exit. The PortfolioRotator sits above all bots: when any
-bot closes a position at a profit (sell high), the rotator collects the
-freshest buy-low candidates from EVERY other streamed pair and runs the same
-CDCL SAT/UNSAT machinery with portfolio clauses:
+bot CLOSES A POSITION -- win or lose -- the rotator collects the freshest
+buy-low candidates from EVERY other streamed pair and runs the same CDCL
+SAT/UNSAT machinery with portfolio clauses:
 
   - gas affordability on the chain (global clause, reused from the solver)
   - expected return must clear round-trip fees × a safety factor
@@ -122,11 +122,26 @@ class PortfolioRotator:
         freed_quote: float,
         profit: float,
     ) -> Optional[Dict[str, Any]]:
-        """Called by a bot right after a profitable exit closes.
+        """Called by a bot right after an exit closes, win or lose.
 
         Returns a summary of the scheduled rotation, or None on UNSAT/skip.
+
+        ``profit`` is reported for the record and for the caller's own
+        bookkeeping; it is deliberately NOT a condition. A losing exit frees
+        exactly the same capital as a winning one, and "is there a better
+        place for this money than the stablecoin" does not depend on how the
+        last trade went. Requiring profit blocked rotation on 51% of closed
+        round trips (measured 2026-09-04: 70 of 137 were not profitable),
+        leaving that capital parked in USDC until some later entry happened to
+        find it.
+
+        The safety this looked like it was providing comes from the clauses
+        instead, and they run on every rotation: rotation_fee_safety (the
+        candidate must clear fees by a 2x multiple), rotation_freshness (the
+        candidate must be newer than its TTL), and rotation_no_open_position
+        (never double up on a symbol already held).
         """
-        if not self.enabled() or profit <= 0:
+        if not self.enabled():
             return None
         now = time.time()
         ttl = _env_float("ROTATION_CANDIDATE_TTL_S", 180.0)

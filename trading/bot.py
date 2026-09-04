@@ -8266,7 +8266,27 @@ class TradingBot:
             # let the portfolio rotator pick the next buy-low across all
             # streamed pairs (SAT) or park in stable (UNSAT). Runs after
             # the stable-bank skim so savings are never re-risked.
-            if economic_profit > 0 and self.rotator is not None:
+            # ROTATE ON EVERY EXIT, NOT ONLY THE PROFITABLE ONES.
+            #
+            # `economic_profit > 0` here blocked rotation on 51% of closed
+            # round trips (measured: 70 of 137 were not profitable). A losing
+            # exit frees exactly the same capital as a winning one, and the
+            # question the rotator answers -- "is there a better place for
+            # this money than the stablecoin" -- does not depend on how the
+            # last trade went. Parking in USDC after a loss is a mood, not a
+            # policy.
+            #
+            # Safety is not weakened by dropping the condition, because it was
+            # never what provided it: PortfolioRotator's own CDCL clauses
+            # already require the candidate to clear fees by a 2x safety
+            # multiple (rotation_fee_safety), to be fresher than its TTL
+            # (rotation_freshness), and to not double up on a symbol already
+            # held (rotation_no_open_position). Those run on every rotation
+            # and are the actual guard.
+            #
+            # The stable-bank skim still runs first, so realised savings are
+            # never re-risked -- only the freed working capital rotates.
+            if self.rotator is not None:
                 try:
                     freed_quote = quote_received if quote_received > 0 else exit_size * price
                     self.rotator.on_exit(
