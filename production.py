@@ -116,6 +116,12 @@ class ProductionManager:
         self._task_threads: Dict[str, threading.Thread] = {}
         self._task_thread_start: Dict[str, float] = {}
         self._last_atf_static_refresh_ts = 0.0
+        # The refresh now has two concurrent callers -- the startup thread and
+        # the scheduler/cycle loop -- and its throttle is a check-then-set. A
+        # non-blocking lock is the right shape here: a second caller arriving
+        # mid-refresh should SKIP, not queue up another serial run of 45s
+        # subprocess quote probes behind the first.
+        self._atf_static_refresh_lock = threading.Lock()
         # Delegation — offload tasks to remote Revenir service hosts
         self._delegation_enabled = os.getenv("DELEGATION_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
         self._delegation_client: Optional[DelegationClient] = None
@@ -174,12 +180,26 @@ class ProductionManager:
                 log_message("production", f"delegation client failed to start: {exc}", severity="warning")
                 self._delegation_client = None
         self._wallet_bootstrap = self._try_wallet_bootstrap()
-        # Publish ATF static candidates before startup prewarm/supervisor build
-        # so ghost slots see the freshest buy-low candidates immediately.
-        try:
-            self._task_atf_static_strategy()
-        except Exception as exc:
-            log_message("production", f"startup ATF static refresh failed: {exc}", severity="warning")
+        # Publish ATF static candidates so ghost slots see fresh buy-low
+        # candidates -- but OFF this thread.
+        #
+        # No market stream exists until `supervisor.build()` below returns, so
+        # anything ahead of it is a hole in the feed. This refresh runs one
+        # `main.py --action swap_quote` SUBPROCESS per candidate with a 45s
+        # timeout each (`services/atf_static_strategy._quote_probe`), serially.
+        # py-spy caught the bootstrap thread parked in exactly that on
+        # 2026-09-04 at 01:28:52, two minutes after start with zero ticks and
+        # zero trading_ops written; the same phase took 00:39:39-00:44:10 on the
+        # previous boot. It is bounded per probe and unbounded in aggregate.
+        #
+        # Nothing below needs its result. It is a registered scheduler task
+        # (`Task("atf_static_strategy", ..., interval_sec=600)`) and runs again
+        # on the cycle loop, and `build()` reads `latest_signals` with an
+        # ATF_STATIC_SIGNAL_MAX_AGE_SEC=1800 window, so the previous run's
+        # signals still prioritise pairs on this pass. The task's own throttle
+        # (`_last_atf_static_refresh_ts`) is set before the probes start, so the
+        # scheduler will not duplicate the work this thread is doing.
+        self._start_atf_static_refresh_async()
         self._startup_prewarm = {"skipped": True, "reason": "deferred_after_start"}
         self._startup_prewarm_reported = False
         self.supervisor.build()
@@ -616,6 +636,27 @@ class ProductionManager:
         if self._download_supervisor:
             self._download_supervisor.run_cycle()
 
+    def _start_atf_static_refresh_async(self) -> "threading.Thread":
+        """Kick the ATF refresh off the caller's thread and return at once.
+
+        Used from `start()`, where the caller is the bootstrap thread and every
+        second it spends is a hole in `market_stream` -- no stream exists until
+        `supervisor.build()` returns.
+        """
+        def _run() -> None:
+            try:
+                self._task_atf_static_strategy()
+            except Exception as exc:
+                log_message(
+                    "production",
+                    f"startup ATF static refresh failed: {exc}",
+                    severity="warning",
+                )
+
+        thread = threading.Thread(target=_run, name="atf-static-startup", daemon=True)
+        thread.start()
+        return thread
+
     def _task_atf_static_strategy(self) -> None:
         if os.getenv("ATF_STATIC_AUTORUN_ENABLED", "1").lower() not in {"1", "true", "yes", "on"}:
             return
@@ -627,7 +668,18 @@ class ProductionManager:
         now = time.time()
         if now - float(self._last_atf_static_refresh_ts or 0.0) < interval:
             return
-        self._last_atf_static_refresh_ts = now
+        # Two callers now: the startup thread and the scheduler/cycle loop. A
+        # second one arriving mid-refresh skips rather than queueing another
+        # serial run of 45s-per-candidate subprocess quote probes.
+        if not self._atf_static_refresh_lock.acquire(blocking=False):
+            return
+        try:
+            self._last_atf_static_refresh_ts = now
+            self._run_atf_static_refresh()
+        finally:
+            self._atf_static_refresh_lock.release()
+
+    def _run_atf_static_refresh(self) -> None:
         try:
             from services.atf_static_strategy import build_static_strategy_signals
             result = build_static_strategy_signals(
