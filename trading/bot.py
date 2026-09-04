@@ -1272,6 +1272,47 @@ class TradingBot:
             return 180.0
         return value if math.isfinite(value) and value >= 0.0 else 180.0
 
+    def _dark_feed_abandon_sec(self) -> float:
+        """How long a symbol may go unpriced before its ghost position is dropped.
+
+        EVERY exit rule in this bot is sample-driven. ``_handle_sample`` is the
+        only caller of ``_interpret_predictions``, and it passes ONE sample for
+        ONE symbol, so the stop-loss, the profit target, the timed exit, the
+        confidence drop and even the ``MAX_HOLD_FORCE_SECONDS`` escape hatch are
+        all reachable only on a tick for that symbol. A position whose feed goes
+        dark is therefore not "held" -- it is unreachable by every rule that
+        could end it, and it keeps its slot forever.
+
+        Measured 2026-09-04 on the persisted book: 4 of 13 open ghost positions
+        sat on symbols with no tick in the last 15 minutes --
+
+            HIGH-USDC     11.5 DAYS held, strategy_id empty
+            VIRTUAL-USDC  39.0 hours   obv_accumulation@5d
+            ARB-USDC      14.4 hours   obv_accumulation@1d
+            PEPE-USDC      2.9 hours   money_button
+
+        -- while only 5 of the 14 symbols with a live feed were free to enter.
+        ``entry-refused-duplicate`` was the single most common thing the
+        pipeline did (468 in 24h), because the slots were held by positions that
+        could never close. That is the drought underneath link 5: graduation
+        needs 20 COMPLETED ghost trades and the book was full of trades that
+        structurally could not complete.
+
+        Defaults to 3600s, chosen from the measured gap distribution rather than
+        picked: over 6h of ``market_stream``, inter-tick gaps run p50 42s,
+        p90 406s, p99 3604s. 3600s sits AT the p99, so an ordinary slow patch is
+        never reaped, while every symbol currently carrying a feed is under 7
+        minutes dark and every stranded one is hours or days past it.
+
+        Set GHOST_DARK_FEED_ABANDON_SEC=0 to disable the sweep entirely.
+        """
+        raw = os.getenv("GHOST_DARK_FEED_ABANDON_SEC", "3600")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 3600.0
+        return value if math.isfinite(value) and value >= 0.0 else 3600.0
+
     def _exit_dust_sweep_usd(self) -> float:
         """Residual value below which an exit sells the whole balance instead.
 
@@ -4232,6 +4273,19 @@ class TradingBot:
             if signature == self._last_sample_signature:
                 return
             self._last_sample_signature = signature
+
+            # This bot only ever learns that a symbol is ALIVE here, and only
+            # for the symbol in hand. Recorded before anything can return early,
+            # so the darkness sweep below is reading a complete picture of what
+            # has ticked rather than only what survived the gates further down.
+            self._note_symbol_tick(sample.get("symbol", ""), sample_ts)
+            # ...and the sweep runs on ANY symbol's tick, deliberately. A
+            # position on a dead feed is unreachable from its own symbol by
+            # construction, so something else has to be what notices.
+            try:
+                self._abandon_dark_feed_positions(now)
+            except Exception as exc:      # never let the sweep stop a tick
+                print(f"[dark-feed-sweep] failed: {exc}")
 
             # Live-tick → brain push.  Runs BEFORE the TF gate so the
             # brain keeps learning from live market data even when TF
@@ -9350,6 +9404,191 @@ class TradingBot:
         sym = str(symbol or "").strip()
         if sym:
             self._owned_symbols.add(sym)
+
+    @property
+    def _last_tick_ts(self) -> Dict[str, float]:
+        """Per-symbol timestamp of the most recent sample this bot has seen.
+
+        Same construction as ``_owned_symbols`` and for the same reason: stored
+        in ``__dict__`` rather than as a class attribute so the bots in the pool
+        do not share one map, and lazily created so a bot built through
+        ``__new__`` (the live-refusal tests do this) cannot raise AttributeError
+        out of the sample path.
+        """
+        seen = self.__dict__.get("_last_tick_ts_map")
+        if not isinstance(seen, dict):
+            seen = {}
+            self.__dict__["_last_tick_ts_map"] = seen
+        return seen
+
+    def _note_symbol_tick(self, symbol: str, ts: float) -> None:
+        """Record that ``symbol`` was priced at ``ts``. Cheap; runs every tick."""
+        sym = str(symbol or "").strip()
+        if not sym:
+            return
+        try:
+            when = float(ts)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(when) or when <= 0.0:
+            return
+        seen = self._last_tick_ts
+        if when > seen.get(sym, 0.0):
+            seen[sym] = when
+
+    def _abandon_dark_feed_positions(self, now: float) -> int:
+        """Drop ghost positions whose symbol has stopped being priced.
+
+        The position is ABANDONED, not closed -- the same choice
+        ``_release_position_for_entry`` makes, for a sharper version of the same
+        reason. Closing it would mean marking out against a price from an hour
+        or eleven days ago, and a stale-entry repricing is exactly the artifact
+        ``StrategyLedger._is_implausible`` exists to reject: AERO-USDC once
+        booked +161% that way. One lost observation is honest; a fabricated
+        outcome in the book that gates real money is not. So this frees the slot
+        and records what it dropped, and adds nothing to any strategy's record.
+
+        A LIVE position is never abandoned here, whatever its feed does. It is
+        the only record of tokens the wallet actually holds, and un-booking it
+        because a price stopped arriving would strand real capital with nothing
+        pointing at it. A missing price is not evidence the tokens are gone --
+        that question is ``_drop_phantom_live_position``'s, and it asks the
+        chain rather than the feed. Fail CLOSED: the dark live position is
+        reported loudly and kept.
+
+        Returns the number of positions dropped.
+        """
+        dark_after = self._dark_feed_abandon_sec()
+        if dark_after <= 0.0:
+            return 0
+
+        # FAIL SAFE ACROSS A RESTART. The tick map starts empty, so on a fresh
+        # process every symbol looks infinitely dark and a naive sweep would
+        # abandon the entire book on the first sample. Nothing is reaped until
+        # this bot has been watching the stream for a full darkness window, and
+        # that same instant is the floor for "last seen" below -- so a symbol is
+        # only ever convicted on silence THIS PROCESS actually observed.
+        started = self.__dict__.get("_dark_feed_watch_since")
+        if started is None:
+            started = now
+            self.__dict__["_dark_feed_watch_since"] = started
+        if now - started < dark_after:
+            return 0
+
+        # The sweep walks the whole book on a path that runs per tick, so it is
+        # throttled: once a minute is far finer than the hour it measures, and
+        # it bounds the logging a permanently dark symbol would otherwise emit.
+        next_sweep = self.__dict__.get("_dark_feed_next_sweep", 0.0)
+        if now < next_sweep:
+            return 0
+        self.__dict__["_dark_feed_next_sweep"] = now + 60.0
+
+        seen = self._last_tick_ts
+        # Positions do not record a chain (measured: `chain` is absent from
+        # every row in the persisted book), and it is only used for logging
+        # here. `getattr` because __init__ is what sets primary_chain and not
+        # every construction path runs it -- same reason _owned_symbols is lazy.
+        chain = str(getattr(self, "primary_chain", PRIMARY_CHAIN))
+        dropped: List[Tuple[str, bool]] = []
+        for symbol, pos in list(self.positions.items()):
+            if not isinstance(pos, dict):
+                continue
+            entry_ts = float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0)
+            last_seen = max(float(seen.get(symbol, 0.0)), entry_ts, float(started))
+            silent_for = now - last_seen
+            if silent_for < dark_after:
+                continue
+
+            if str(pos.get("mode") or "") == "live":
+                log_message(
+                    "position-dark-feed",
+                    "LIVE position %s has had no price for %.1f min but is being "
+                    "KEPT: it is the only record of tokens the wallet holds, and "
+                    "a missing price is not evidence they are gone"
+                    % (symbol, silent_for / 60.0),
+                    severity="error",
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live",
+                        chain=chain,
+                        symbol=symbol,
+                        action="hold",
+                        status="live-position-dark-feed",
+                        details={
+                            "symbol": symbol,
+                            "reason": "live_position_kept_despite_dark_feed",
+                            "held_strategy_id": str(pos.get("strategy_id") or ""),
+                            "held_trade_id": str(pos.get("trade_id") or ""),
+                            "silent_sec": round(silent_for, 1),
+                            "dark_after_sec": dark_after,
+                        },
+                    )
+                except Exception:
+                    pass
+                continue
+
+            abandoned = {
+                "symbol": symbol,
+                "released_mode": str(pos.get("mode") or ""),
+                "released_strategy_id": str(pos.get("strategy_id") or ""),
+                "released_trade_id": str(pos.get("trade_id") or ""),
+                "released_size": float(pos.get("size") or 0.0),
+                "released_entry_price": float(pos.get("entry_price") or 0.0),
+                "released_entry_ts": entry_ts,
+                "silent_sec": round(silent_for, 1),
+                "held_sec": round(now - entry_ts, 1) if entry_ts > 0.0 else None,
+                "dark_after_sec": dark_after,
+                "reason": "feed_went_dark_no_exit_rule_can_reach_it",
+            }
+            # Ownership is borrowed for this save only -- see below.
+            was_owned = symbol in self._owned_symbols
+            self._claim_position_symbol(symbol)
+            self.positions.pop(symbol, None)
+            dropped.append((symbol, was_owned))
+            log_message(
+                "position-dark-feed",
+                "%s: abandoned ghost position %s (%s) after %.1f min with no "
+                "price -- every exit rule is sample-driven, so nothing could "
+                "ever close it; the slot is now free"
+                % (
+                    symbol,
+                    abandoned["released_trade_id"] or "?",
+                    abandoned["released_strategy_id"] or "unclassified",
+                    silent_for / 60.0,
+                ),
+                severity="warning",
+            )
+            try:
+                self.db.log_trade(
+                    wallet="ghost",
+                    chain=chain,
+                    symbol=symbol,
+                    action="hold",
+                    status="position-abandoned-dark-feed",
+                    details=abandoned,
+                )
+            except Exception:
+                pass
+
+        if not dropped:
+            return 0
+
+        # Persist the removals, THEN hand back any ownership we borrowed.
+        #
+        # `_save_state` deletes a symbol from the shared book only when this bot
+        # owns it, so a reap has to claim first. But the claim must not outlive
+        # the save: the deletion is expressed as "owned AND absent from my
+        # payload", which stays true forever once claimed, so a permanent claim
+        # would make this bot delete that symbol on EVERY subsequent save --
+        # including one where another bot in the pool had legitimately reopened
+        # the position. That is precisely the shared-book clobber the ownership
+        # rule was introduced to stop, so borrowing it back is not tidiness.
+        self._save_state()
+        for symbol, was_owned in dropped:
+            if not was_owned:
+                self._owned_symbols.discard(symbol)
+        return len(dropped)
 
     def _release_position_for_entry(
         self,
