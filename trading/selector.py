@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import threading
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import os
@@ -361,13 +363,111 @@ def _ohlcv_exists(symbol: str, chain: str, data_root: Optional[Path] = None) -> 
     return False
 
 
-def _ensure_ohlcv(chain: str, symbol: str, data_root: Optional[Path] = None) -> bool:
+#: Wall-clock budget for OHLCV *backfill* inside one selection pass.
+#:
+#: Backfill is the last unbounded blocking call left on the bootstrap thread.
+#: Two earlier passes fixed one venue at a time -- the news harvest inside
+#: `_run_download` (2026-09-02) and Binance's HTTP 451 (2026-09-03) -- and the
+#: stall simply moved to the next venue. Measured 2026-09-04 with py-spy against
+#: production pid 416880, fourteen minutes after start with zero market_stream
+#: rows written, the MainThread was parked in
+#:
+#:     select_pairs -> try_add_candidate -> _ensure_ohlcv -> download_pair
+#:       -> download_pair_coinbase -> requests.get(api.exchange.coinbase.com)
+#:
+#: A direct timing of that call: MOONBASE-USDC (absent from Coinbase) costs
+#: 0.9s, but CBETH-USDC costs **77.6s** -- 90 days of 5-minute candles is 13645
+#: rows, paginated 300 at a time, 46 serial requests with a 0.35s delay between
+#: them. `try_add_candidate` runs that once per candidate lacking candles, and
+#: `_run_download` on the same path waits up to DOWNLOAD_SUBPROCESS_TIMEOUT_SEC
+#: (300s) more. No market stream exists until `build()` returns, so every one of
+#: those seconds is a hole in the feed.
+#:
+#: So the budget is set at the mechanism rather than per venue: past the
+#: deadline `_ensure_ohlcv` performs NO network I/O at all and hands the symbol
+#: to a background thread, which fills the candles for the next pass.
+_OHLCV_BACKFILL_BUDGET_SEC = float(os.getenv("OHLCV_BACKFILL_BUDGET_SEC", "25"))
+
+#: Symbols whose backfill was deferred past the budget, and the worker draining
+#: them. Guarded by `_OHLCV_DEFER_LOCK`; entries are (chain, symbol, data_root).
+_OHLCV_DEFERRED: "OrderedDict[Tuple[str, str], Optional[Path]]" = OrderedDict()
+_OHLCV_DEFER_LOCK = threading.Lock()
+_OHLCV_DEFER_THREAD: Optional[threading.Thread] = None
+
+
+def _defer_ohlcv_backfill(chain: str, symbol: str, data_root: Optional[Path]) -> None:
+    """Queue a missing backfill for a background thread and return immediately.
+
+    The pair is not selected on this pass -- it has no candles, and that gate is
+    unchanged. It joins on a later pass once the worker has filled them, which
+    is strictly sooner than today, where the pass that would have picked it also
+    holds every market stream dark while it downloads.
+    """
+    global _OHLCV_DEFER_THREAD
+    key = (chain.lower(), symbol.upper())
+    with _OHLCV_DEFER_LOCK:
+        if key in _OHLCV_DEFERRED:
+            return
+        _OHLCV_DEFERRED[key] = data_root
+        alive = _OHLCV_DEFER_THREAD is not None and _OHLCV_DEFER_THREAD.is_alive()
+        if not alive:
+            _OHLCV_DEFER_THREAD = threading.Thread(
+                target=_drain_ohlcv_backfill,
+                name="ohlcv-backfill",
+                daemon=True,
+            )
+            _OHLCV_DEFER_THREAD.start()
+    log_message(
+        "pair-select",
+        f"deferred OHLCV backfill for {symbol.upper()} (selection budget spent)",
+        details={"chain": chain, "budget_sec": _OHLCV_BACKFILL_BUDGET_SEC},
+    )
+
+
+def _drain_ohlcv_backfill() -> None:
+    """Backfill deferred symbols one at a time, off the selection thread."""
+    while True:
+        with _OHLCV_DEFER_LOCK:
+            if not _OHLCV_DEFERRED:
+                return
+            (chain, symbol), data_root = _OHLCV_DEFERRED.popitem(last=False)
+        try:
+            # No deadline here: this thread owns nothing latency-critical.
+            _ensure_ohlcv(chain, symbol, data_root=data_root, deadline=None)
+        except Exception as exc:  # pragma: no cover - best effort
+            log_message(
+                "pair-select",
+                f"background OHLCV backfill failed for {symbol}: {exc}",
+                severity="warning",
+            )
+
+
+def _ensure_ohlcv(
+    chain: str,
+    symbol: str,
+    data_root: Optional[Path] = None,
+    *,
+    deadline: Optional[float] = None,
+) -> bool:
+    """Does this pair have candles, downloading them if there is time to.
+
+    ``deadline`` is a ``time.monotonic()`` reading, or None for "no budget".
+    None is the default so the background worker and every existing caller keep
+    the old unbounded behaviour; only the two call sites inside
+    ``_select_for_chain`` -- the ones on the thread the feed waits on -- pass one.
+    """
     if _ohlcv_exists(symbol, chain, data_root=data_root):
         try:
             _db.set_control_flag(f"ohlcv_ready::{chain.lower()}::{symbol.upper()}", "1")
         except Exception:
             pass
         return True
+    # Past the budget nothing below this line may run: `_run_download` waits on a
+    # subprocess for up to 300s and the CEX fallback measured 77.6s for a single
+    # pair. Hand it to the background worker instead.
+    if deadline is not None and time.monotonic() >= deadline:
+        _defer_ohlcv_backfill(chain, symbol, data_root)
+        return False
     # Avoid runaway downloads; only allow a short lookback window for new pairs
     os.environ.setdefault("HISTORICAL_WINDOW_DAYS", "30")
     os.environ.setdefault("HISTORICAL_TRIM", "1")
@@ -568,6 +668,17 @@ def select_pairs(
         if ch not in chain_order:
             chain_order.append(ch)
 
+    # ONE backfill budget for the whole call, deliberately not per chain and not
+    # per candidate. A chain that finds nothing falls through to the next, and
+    # `_chain_priority` yields eight of them here (base, arbitrum, optimism,
+    # polygon, bsc, ethereum, avalanche, zksync) -- a per-chain budget is an
+    # eight-times-larger budget, and a per-candidate one is unbounded again.
+    ohlcv_deadline = (
+        time.monotonic() + _OHLCV_BACKFILL_BUDGET_SEC
+        if _OHLCV_BACKFILL_BUDGET_SEC > 0
+        else None
+    )
+
     def _select_for_chain(chain: str) -> List[PairCandidate]:
         chain_dir = data_dir / chain
         candidates = analyse_historical_pairs(data_dir=chain_dir)
@@ -626,7 +737,7 @@ def select_pairs(
                 return
             if not _has_streaming_feed(cand.symbol, chain=chain):
                 return
-            if not _ensure_ohlcv(chain, cand.symbol, data_root=data_dir):
+            if not _ensure_ohlcv(chain, cand.symbol, data_root=data_dir, deadline=ohlcv_deadline):
                 return
             picked.append(cand)
             seen_tokens.add(token_key)
@@ -691,7 +802,7 @@ def select_pairs(
                 continue
             if not _has_streaming_feed(cand.symbol, chain=chain):
                 continue
-            if not _ensure_ohlcv(chain, cand.symbol, data_root=data_dir):
+            if not _ensure_ohlcv(chain, cand.symbol, data_root=data_dir, deadline=ohlcv_deadline):
                 continue
             seen_tokens.add(token_key)
             picked.append(cand)
