@@ -26,6 +26,16 @@ try:
 except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
     def _symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
         return None
+try:
+    from services.symbol_motion_gate import refusal_reason as _symbol_motion_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
+    def _symbol_motion_refusal(_symbol: str):  # type: ignore[misc]
+        return None
+try:
+    from services.strategy_edge_gate import refusal_reason as _strategy_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
+    def _strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
+        return None
 
 SOURCE = "c0d3rv2_atf_static"
 
@@ -615,6 +625,40 @@ def _run_ghost_quote_scout(
         positions.pop(symbol, None)
 
     open_count = len(positions)
+    # THIS SCOUT ITSELF, IF THE BOOK HAS CONDEMNED IT.
+    #
+    # Checked ONCE here rather than per symbol: every row this loop writes
+    # carries SCOUT_STRATEGY_ID, so the verdict cannot differ between symbols
+    # and re-asking inside the loop would only cost a cache lookup per
+    # candidate.
+    #
+    # Placed AFTER the exit pass above and before the entry loop below, which
+    # is the whole point: a condemned strategy must still be able to close
+    # what it already holds. Gating exits would strand every open position and
+    # recreate the disarming bug that left a demoted bot unable to sell what
+    # it had bought.
+    #
+    # Entries only, and evidence is the reason. This scout took 352 of the
+    # book's 458 ghost trades (77%) while containing zero swap calls -- it is
+    # a simulator that can never place a live trade, and every entry it takes
+    # is evidence denied to a strategy that could. See
+    # services/strategy_edge_gate.py.
+    scout_refusal = _strategy_edge_refusal(SCOUT_STRATEGY_ID)
+    if scout_refusal:
+        db.log_trade(
+            wallet="ghost",
+            chain=chain,
+            symbol="ATF-STATIC",
+            action="hold",
+            status="entry-refused-strategy-edge",
+            details={
+                "reason": "strategy_cannot_pay_its_round_trip",
+                "detail": scout_refusal,
+                "strategy_id": SCOUT_STRATEGY_ID,
+                "candidates_skipped": len(signals),
+            },
+        )
+        signals = []
     for sig in signals:
         symbol = str(sig.get("symbol") or "").upper()
         if not symbol or symbol in positions:

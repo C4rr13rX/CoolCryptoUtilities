@@ -41,6 +41,16 @@ try:
 except Exception:  # noqa: BLE001 - a missing gate must not stop trading
     def symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
         return None
+try:
+    from services.strategy_edge_gate import refusal_reason as strategy_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop trading
+    def strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
+        return None
+try:
+    from services.symbol_motion_gate import refusal_reason as symbol_motion_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop trading
+    def symbol_motion_refusal(_symbol: str):  # type: ignore[misc]
+        return None
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
@@ -7303,6 +7313,101 @@ class TradingBot:
                             "symbol": symbol,
                             "reason": "symbol_has_a_measured_negative_edge",
                             "detail": edge_refusal,
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
+            # STRATEGIES THE BOOK HAS PROVEN CANNOT PAY THEIR OWN ROUND TRIP.
+            #
+            # The gate above judges WHAT is traded; this judges HOW. A symbol
+            # can be perfectly tradable while one strategy's way of trading it
+            # loses money every time -- obv_accumulation@1w is 9 closed round
+            # trips at a mean return of -1.668% against a 0.650% cost
+            # (t=-8.39), spread across symbols that other strategies profit on.
+            #
+            # Applied to ghost as well as live, and for the sharper of the two
+            # reasons the symbol gate gives: every ghost trade a losing
+            # strategy takes is EVIDENCE SPENT. Measured 2026-09-05, the 31
+            # non-ATF strategies share 106 ghost trades -- 3.4 each against a
+            # graduation bar of 25 -- so an entry handed to a strategy the book
+            # has already condemned is an entry the strategies that clear their
+            # costs never get. This gate does not lower that bar; it stops the
+            # budget being spent proving what is already proven.
+            #
+            # Bans only, never promotes. Validated walk-forward over 67
+            # attributed round trips: at the 70% split it turns a LOSING
+            # holdout (-5.595%) positive (+3.607%) by refusing five trades, and
+            # no split was ever made worse. See services/strategy_edge_gate.py.
+            strategy_id_for_gate = str(getattr(directive, "strategy_id", "") or "")
+            strategy_refusal = strategy_edge_refusal(strategy_id_for_gate)
+            if strategy_refusal:
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-strategy-edge",
+                        "reason": f"strategy_edge:{strategy_refusal}",
+                    }
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live" if self.live_trading_enabled else "ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-strategy-edge",
+                        details={
+                            "symbol": symbol,
+                            "reason": "strategy_cannot_pay_its_round_trip",
+                            "detail": strategy_refusal,
+                            "strategy_id": strategy_id_for_gate,
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
+            # SYMBOLS THAT CANNOT MOVE FAR ENOUGH TO PAY FOR THE ROUND TRIP.
+            #
+            # The gate above needs closed round trips, so a symbol has to cost
+            # real money before it can be judged. This asks the same question
+            # of the FEED, where the answer is available before the first trade.
+            #
+            # Measured over 7 days of market_stream as the share of 15-minute
+            # windows -- the hold the stale clock now enforces -- whose high
+            # clears a 0.65% round trip: CBBTC-USDC 0.7%, CBETH-USDC 1.3%,
+            # XCHAT/CBHYPE/GRASS 0.0%. Four of the eleven settled live round
+            # trips were on CBBTC and CBETH for a combined -0.050241 against a
+            # lifetime net of +0.110050. The instrument never moved enough to
+            # pay the toll, so no entry rule and no model could have made those
+            # trades work.
+            #
+            # See services/symbol_motion_gate.py for why this bans and never
+            # promotes: BASECAT clears its cost in 54.7% of windows and is
+            # still the book's largest destroyer of capital. Motion is not
+            # edge, and a symbol has to pass both gates.
+            motion_refusal = symbol_motion_refusal(symbol)
+            if motion_refusal:
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-symbol-motion",
+                        "reason": f"symbol_motion:{motion_refusal}",
+                    }
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live" if self.live_trading_enabled else "ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-symbol-motion",
+                        details={
+                            "symbol": symbol,
+                            "reason": "symbol_cannot_cover_a_round_trip",
+                            "detail": motion_refusal,
                             "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
                         },
                     )
