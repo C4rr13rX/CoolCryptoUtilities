@@ -1664,6 +1664,44 @@ class TradingBot:
         except Exception:
             return 75
 
+    def _roundtrip_fee_rate(self, *, notional_hint: Optional[float] = None) -> float:
+        """Round-trip cost as a FRACTION of notional, for a given trade size.
+
+        Measured from this account's settled receipts rather than assumed:
+
+            fee = ROUNDTRIP_FEE_FIXED_USD + ROUNDTRIP_FEE_RATE * notional
+
+        Returned as a rate because that is what the callers multiply by, but
+        the rate now DEPENDS on size -- which is the whole point. A $0.75
+        trade and a $3.00 trade do not pay the same percentage, because the
+        fixed part does not shrink.
+
+        With no size to go on, falls back to the rate at the current live
+        clip, which is the size a real trade would actually be.
+        """
+        try:
+            fixed = float(os.getenv("ROUNDTRIP_FEE_FIXED_USD", "0.004047"))
+            rate = float(os.getenv("ROUNDTRIP_FEE_RATE", "0.003187"))
+        except (TypeError, ValueError):
+            fixed, rate = 0.004047, 0.003187
+
+        notional = notional_hint
+        if notional is None or not (notional > 0):
+            try:
+                notional = float(self._live_clip_usd() or 0.0)
+            except Exception:  # noqa: BLE001
+                notional = 0.0
+        if not (notional > 0):
+            notional = float(os.getenv("GHOST_MIN_TRADE_USD", "0.75"))
+
+        total = fixed + rate * float(notional)
+        effective = total / max(float(notional), 1e-9)
+
+        # Never report a cost lower than the pure rate: a very large notional
+        # would otherwise amortise the fixed part toward zero and imply a
+        # trade could be nearly free, which no DEX offers.
+        return max(effective, rate)
+
     def _ghost_min_life_sec(self) -> float:
         """How long a ghost position holds its slot against a displacing entry.
 
@@ -5265,6 +5303,7 @@ class TradingBot:
             # construction, so something else has to be what notices.
             try:
                 self._abandon_dark_feed_positions(now)
+                self._exit_dark_live_positions(now)
             except Exception as exc:      # never let the sweep stop a tick
                 print(f"[dark-feed-sweep] failed: {exc}")
 
@@ -5706,7 +5745,30 @@ class TradingBot:
                 symbol, chain=chain_name, pos=pos
             )
         stable_target = next((tok for tok in route if tok.upper() in self.stable_tokens), "USDC")
-        fees = 0.0015 + 0.005
+        # THE COST A ROUND TRIP ACTUALLY PAYS, MEASURED FROM RECEIPTS.
+        #
+        # This was `0.0015 + 0.005` -- a flat 0.65% rate, hardcoded, with no
+        # fixed component at all. Fitted against the 9 live round trips this
+        # account has settled on chain, the truth is
+        #
+        #     fee = $0.004047 + 0.3187% of notional
+        #
+        # which is a different SHAPE, not merely a different number. At the
+        # $0.75 clip the old constant understates the real cost by 32%
+        # ($0.00487 booked against $0.00644 paid); at $3.00 it OVERSTATES it
+        # by 30%. The two models cross near $1.30, so the constant is wrong in
+        # both directions depending on size, and the ghost book -- which is
+        # what graduation reads -- has been scoring every simulated trade
+        # against a cost that does not exist at the size it trades.
+        #
+        # Blended, live pays 0.753% against the 0.650% ghost assumed: every
+        # ghost trade was 14% too cheap, and the error is largest exactly
+        # where the marginal trade lives.
+        #
+        # Keeping the fixed and rate parts separate is the point. A single
+        # percentage cannot express "gas costs the same whether you trade
+        # $0.75 or $3.00", and that is the whole reason clip size matters.
+        fees = self._roundtrip_fee_rate(notional_hint=None)
         brain_payload = {}
         if brain:
             brain_payload = {
@@ -10689,6 +10751,135 @@ class TradingBot:
         with _SYMBOL_LAST_TICK_LOCK:
             if when > _SYMBOL_LAST_TICK_TS.get(sym, 0.0):
                 _SYMBOL_LAST_TICK_TS[sym] = when
+
+    def _exit_dark_live_positions(self, now: float) -> int:
+        """Sell a LIVE position whose feed has gone dark.
+
+        A live position is never abandoned -- it is the only record of tokens
+        the wallet holds, so un-booking it would strand real capital. That is
+        right, and ``_abandon_dark_feed_positions`` correctly refuses to touch
+        it. But refusing to abandon is not the same as being able to EXIT, and
+        the two got conflated: every exit rule in this bot is sample-driven
+        (``_handle_sample`` is the only caller of ``_interpret_predictions``,
+        and it passes one sample for one symbol), so a live position whose
+        feed stops ticking becomes unreachable by the stop, the target, the
+        timed exit and even MAX_HOLD_FORCE_SECONDS. It is held forever, and it
+        holds its symbol against every further entry.
+
+        Measured 2026-09-05: atf_static -- the ONLY live-approved strategy --
+        sat on CBXRP-USDC silent for 4175s and CBBTC-USDC silent for 6889s,
+        logging ``live_position_kept_despite_dark_feed`` 18 times in six
+        hours. Live entries: zero in 13.2 hours. The feed itself was healthy
+        (130 ticks/10m across 40 symbols) and nothing was blocking; the one
+        strategy able to spend was simply stuck holding two tokens it had no
+        path to sell.
+
+        So this runs on ANY tick, like the ghost sweep beside it, and issues a
+        real market sell. It does not abandon and it does not mark out against
+        a stale price -- it asks the chain what the position is worth now and
+        sells it, which is the one action a dark feed cannot prevent.
+
+        Returns the number of positions exited.
+        """
+        dark_after = self._dark_live_exit_sec()
+        if dark_after <= 0.0:
+            return 0
+
+        # Same restart guard as the ghost sweep: the tick map starts empty, so
+        # on a fresh process every symbol looks infinitely dark. Nothing is
+        # touched until this bot has watched the stream for a full window.
+        started = self.__dict__.get("_dark_live_watch_since")
+        if started is None:
+            self._dark_live_watch_since = now
+            return 0
+        if now - float(started) < dark_after:
+            return 0
+
+        exited = 0
+        for symbol, pos in list(self.positions.items()):
+            if not isinstance(pos, dict):
+                continue
+            if str(pos.get("mode") or "") != "live":
+                continue
+
+            last_tick = float(_SYMBOL_LAST_TICK_TS.get(symbol, 0.0) or 0.0)
+            # A symbol never seen this process is judged from when watching
+            # began, not from epoch -- silence we did not observe is not
+            # evidence.
+            reference = max(last_tick, float(started))
+            silent = now - reference
+            if silent < dark_after:
+                continue
+
+            log_message(
+                "live-swap",
+                f"DARK LIVE POSITION: {symbol} silent {silent:.0f}s (limit "
+                f"{dark_after:.0f}s) -- every exit rule is sample-driven, so "
+                f"this position can never close on its own and is blocking "
+                f"every further entry on the symbol. Selling at the chain "
+                f"price.",
+                severity="warning",
+            )
+            try:
+                self._queue_forced_live_exit(symbol, pos, reason="dark_feed")
+                exited += 1
+            except Exception as exc:  # noqa: BLE001 - never break the tick
+                log_message(
+                    "live-swap",
+                    f"forced dark-feed exit for {symbol} raised: {exc!r}",
+                    severity="error",
+                )
+        return exited
+
+    def _dark_live_exit_sec(self) -> float:
+        """How long a LIVE position may go unpriced before it is force-sold.
+
+        Longer than the ghost equivalent on purpose: abandoning a simulated
+        position costs an observation, while selling a real one costs gas and
+        gives up whatever the position might still do. 3600s is the same
+        window the existing ``live_position_kept_despite_dark_feed`` warning
+        already uses to decide a live feed has gone dark, so this acts exactly
+        when that warning starts firing rather than inventing a new threshold.
+        """
+        try:
+            return max(0.0, float(os.getenv("DARK_LIVE_EXIT_SEC", "3600")))
+        except (TypeError, ValueError):
+            return 3600.0
+
+    def _queue_forced_live_exit(self, symbol: str, pos: dict, *, reason: str) -> None:
+        """Put a market sell for a stuck live position on the execution queue.
+
+        Queued rather than executed inline because this runs from the sweep on
+        an arbitrary symbol's tick, and the swap path expects to own the tick
+        it runs on. The queue is drained by the same worker that handles every
+        other decision, so the sell goes through the ordinary execution path
+        with every guard it carries.
+        """
+        chain = str(pos.get("chain") or self.primary_chain)
+        decision = {
+            "action": "exit",
+            "status": "live-exit-forced-dark-feed",
+            "symbol": symbol,
+            "chain": chain,
+            "wallet": "live",
+            "reason": f"forced_exit:{reason}",
+            "size": float(pos.get("size") or 0.0),
+            "trade_id": pos.get("trade_id"),
+            "strategy_id": str(pos.get("strategy_id") or ""),
+            "entry_price": float(pos.get("entry_price") or 0.0),
+            "forced": True,
+            # No price is quoted here on purpose: the executor reads the chain
+            # for the sell, and a price from a dark feed is exactly the stale
+            # number this whole sweep exists to avoid trusting.
+        }
+        self.queue.append(decision)
+        try:
+            self.db.log_trade(
+                wallet="live", chain=chain, symbol=symbol, action="exit",
+                status="live-exit-forced-dark-feed", details=decision,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _abandon_dark_feed_positions(self, now: float) -> int:
         """Drop ghost positions whose symbol has stopped being priced.
