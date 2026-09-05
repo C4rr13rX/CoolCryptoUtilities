@@ -268,6 +268,28 @@ if ($agentProc) {
     }
 }
 
+# -- 6b. strategy evolution ------------------------------------------------
+#
+# Searches for new trading rules and publishes what survives a holdout across
+# multiple seeds. Hourly, because the book grows by a trade at a time and a
+# rule that clears the bar on 156 round trips may not clear it on 300.
+
+Write-Host ""
+Write-Host "Checking strategy evolution..."
+$evolveProc = Find-PythonProcess "evolve_strategies"
+if ($evolveProc) {
+    Write-Host "  already running -- pid=$($evolveProc.ProcessId)"
+} else {
+    Start-Process -FilePath $python `
+        -ArgumentList "-X","utf8","$webRoot\manage.py","evolve_strategies","--loop" `
+        -WorkingDirectory $webRoot `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $logsDir "evolve.log") `
+        -RedirectStandardError  (Join-Path $logsDir "evolve.err.log")
+    Start-Sleep -Seconds 2
+    Write-Host "  started"
+}
+
 # -- 7. continuous refinement loop + console ------------------------------
 #
 # The loop that keeps fixing the pipeline, and the window that shows what it

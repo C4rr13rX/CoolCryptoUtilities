@@ -9,86 +9,30 @@
         "value": 0.5353010908629542
       }
     ],
-    "lineage": "alpha",
+    "lineage": "beta",
     "holdout_t": 2.862,
     "holdout_selected": 10,
     "holdout_mean_excess": 0.09985,
     "fit_t": 1.26,
     "detail": "selected 10 at mean excess +0.09985 vs -0.02064 for the other 50 (t=+2.86)",
-    "found_at": 1788621113.8304796
+    "found_at": 1788621402.2364187
   },
   {
-    "id": "notional_usd < 1.99994 AND hurst > 0.521123",
-    "rule": "notional_usd < 1.99994 AND hurst > 0.521123",
+    "id": "hurst > 0.521123",
+    "rule": "hurst > 0.521123",
     "conditions": [
-      {
-        "feature": "notional_usd",
-        "op": "<",
-        "value": 1.9999400000000003
-      },
       {
         "feature": "hurst",
         "op": ">",
         "value": 0.5211225421354218
       }
     ],
-    "lineage": "alpha",
-    "holdout_t": 2.697,
-    "holdout_selected": 17,
-    "holdout_mean_excess": 0.054302,
-    "fit_t": 1.47,
-    "detail": "selected 17 at mean excess +0.05430 vs -0.02225 for the other 43 (t=+2.70)",
-    "found_at": 1788621113.8300905
-  },
-  {
-    "id": "hurst > 0.535301 AND chaos_character != mean-reverting",
-    "rule": "hurst > 0.535301 AND chaos_character != mean-reverting",
-    "conditions": [
-      {
-        "feature": "hurst",
-        "op": ">",
-        "value": 0.5353010908629542
-      },
-      {
-        "feature": "chaos_character",
-        "op": "!=",
-        "value": "mean-reverting"
-      }
-    ],
-    "lineage": "gamma",
-    "holdout_t": 2.427,
-    "holdout_selected": 9,
-    "holdout_mean_excess": 0.09619,
-    "fit_t": 1.29,
-    "detail": "selected 9 at mean excess +0.09619 vs -0.01763 for the other 51 (t=+2.43)",
-    "found_at": 1788621113.8363485
-  },
-  {
-    "id": "notional_usd < 1.99994 AND hurst > 0.521123 AND return_autocorrelation > -0.0766249",
-    "rule": "notional_usd < 1.99994 AND hurst > 0.521123 AND return_autocorrelation > -0.0766249",
-    "conditions": [
-      {
-        "feature": "notional_usd",
-        "op": "<",
-        "value": 1.9999400000000003
-      },
-      {
-        "feature": "hurst",
-        "op": ">",
-        "value": 0.5211225421354218
-      },
-      {
-        "feature": "return_autocorrelation",
-        "op": ">",
-        "value": -0.07662488759544281
-      }
-    ],
-    "lineage": "alpha",
-    "holdout_t": 2.281,
-    "holdout_selected": 16,
-    "holdout_mean_excess": 0.049396,
-    "fit_t": 1.481,
-    "detail": "selected 16 at mean excess +0.04940 vs -0.01873 for the other 44 (t=+2.28)",
-    "found_at": 1788621113.8323934
+    "lineage": "alpha'",
+    "holdout_t": 2.759,
+    "holdout_selected": 19,
+    "holdout_mean_excess": 0.048522,
+    "fit_t": 0.608,
+    "detail": "selected 19 at mean excess +0.04852 vs -0.02331 for the other 41 (t=+2.76)",
+    "found_at": 1788621402.2411842
   }
 ]
