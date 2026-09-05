@@ -351,7 +351,31 @@ def build_prompt(config: AgentConfig) -> str:
         parts += ["", "## GAME THEORY -- who we are playing"]
         parts += ["  " + line for line in game_summary(analysis)]
 
-        report = evaluate_all(trades_with_features())
+        # HYPOTHESES FROM WHAT WE REFUSED, not only from what we traded.
+        #
+        # The closed-trade sample is selected by the very gates being
+        # evaluated, so it can say how good the accepted trades were and
+        # nothing about whether the gates are right -- the refused trades are
+        # absent from it by construction. The refusal census is the other half
+        # of that record, and it is where a guard that costs money would show
+        # up.
+        generated = []
+        try:
+            from .features import closed_round_trips
+            from .hypotheses import as_theorems, generate, refusal_census
+
+            proposals = generate(closed_round_trips(), refusal_census())
+            generated = as_theorems(proposals)
+            flagged = [p for p in proposals
+                       if "refusing profitable" in str(p.get("suspicion") or "")]
+            if flagged:
+                parts += ["", "## GUARDS THAT MAY BE COSTING US"]
+                for proposal in flagged[:4]:
+                    parts.append("  " + proposal["statement"][:220])
+        except Exception:  # noqa: BLE001 - a generator failure is not fatal
+            generated = []
+
+        report = evaluate_all(trades_with_features(), extra=generated)
         parts += ["", "## THEOREMS -- what survives testing"]
         parts += ["  " + line for line in theorem_summary(report)[:14]]
         parts.append(
