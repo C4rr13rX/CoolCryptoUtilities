@@ -180,6 +180,15 @@ def long_horizon_at_capacity(positions: dict, incoming_strategy_id: str) -> bool
     return held >= cap
 
 
+#: Horizon labels as seconds, for checking a forecast against the window in
+#: which prediction is actually possible.
+_HORIZON_SECONDS = {
+    "5m": 300.0, "10m": 600.0, "15m": 900.0, "30m": 1800.0,
+    "1h": 3600.0, "5h": 18000.0, "12h": 43200.0,
+    "1d": 86400.0, "3d": 259200.0, "5d": 432000.0, "1w": 604800.0,
+}
+
+
 class _InsufficientHistory(RuntimeError):
     """Not enough buffered samples yet to fill the model's window.
 
@@ -1701,6 +1710,104 @@ class TradingBot:
         # would otherwise amortise the fixed part toward zero and imply a
         # trade could be nearly free, which no DEX offers.
         return max(effective, rate)
+
+    def _lattice_refusal(self, symbol: str, directive: Any,
+                         sample: Dict[str, Any]) -> Optional[str]:
+        """Why the model lattice refuses this entry, or None to allow it.
+
+        Returns a short reason naming the layer that failed, so a refusal is
+        legible in the log rather than being an anonymous block.
+
+        FAILS OPEN by design. Every path that cannot reach an answer -- the
+        module missing, too short a window, an exception -- returns None and
+        lets the existing guards decide. This layer only ever ADDS a reason to
+        refuse; it must never become the reason nothing trades.
+        """
+        if not self._lattice_enabled():
+            return None
+
+        try:
+            action = str(getattr(directive, "action", "") or "")
+            if action != "enter":
+                return None                # exits are not forecasts
+
+            expected = float(getattr(directive, "expected_return", 0.0) or 0.0)
+            if expected <= 0:
+                return None                # nothing to judge
+
+            horizon_label = str(getattr(directive, "horizon", "") or "")
+            horizon_sec = _HORIZON_SECONDS.get(horizon_label, 0.0)
+            if horizon_sec <= 0:
+                return None                # no stated horizon to check
+
+            history = list(self._buffer)[-400:]
+            prices = [float(row.get("price") or 0.0) for row in history]
+            prices = [p for p in prices if p > 0]
+            if len(prices) < 64:
+                return None                # unmeasurable; the guards below apply
+
+            import sys
+
+            web = str(Path(__file__).resolve().parents[1] / "web")
+            if web not in sys.path:
+                sys.path.insert(0, web)
+            from tradingagent.lattice import evaluate_signal
+
+            notional = float(getattr(directive, "size", 0.0) or 0.0) * \
+                float(sample.get("price") or 0.0)
+            if notional <= 0:
+                notional = float(self._live_clip_usd() or 0.75)
+
+            result = evaluate_signal(
+                symbol=symbol,
+                prices=prices,
+                bar_sec=self._median_tick_gap_sec(history),
+                proposed_horizon_sec=horizon_sec,
+                expected_return=expected,
+                round_trip_cost=self._roundtrip_fee_rate(notional_hint=notional),
+                notional_usd=notional,
+            )
+            if result.get("passed"):
+                return None
+            return f"{result.get('stopped_at')}: {result.get('reason')}"[:220]
+        except Exception:  # noqa: BLE001 - never block a trade on this
+            return None
+
+    def _lattice_enabled(self) -> bool:
+        return (os.getenv("LATTICE_GATE_ENABLED", "1") or "0").lower() in {
+            "1", "true", "yes", "on"}
+
+    @staticmethod
+    def _median_tick_gap_sec(history: List[Dict[str, Any]]) -> float:
+        """Seconds between ticks, measured rather than assumed.
+
+        The chaos layer converts a divergence rate per BAR into a horizon in
+        SECONDS, so a wrong bar length scales the answer by exactly that
+        factor. Assuming 300s on a feed that ticks every 30 would overstate
+        every usable horizon tenfold.
+        """
+        stamps = [float(row.get("ts") or 0.0) for row in history]
+        stamps = [t for t in stamps if t > 0]
+        if len(stamps) < 4:
+            return 300.0
+        span = stamps[-1] - stamps[0]
+        if span <= 0:
+            return 300.0
+        # SPAN OVER COUNT, NOT THE MEDIAN GAP.
+        #
+        # The median is the obvious choice and it is wrong here, because the
+        # gap distribution is bimodal: the feed writes bursts of ticks about a
+        # second apart, then waits minutes. Measured on AERO-USDC over 300
+        # samples spanning 12.1 hours -- median gap 2.9s, p75 66s, p90 365s,
+        # mean 146s. The median lands inside a burst and describes how fast
+        # rows are WRITTEN, not how often the price is SAMPLED.
+        #
+        # That distinction is not cosmetic. The chaos layer converts a
+        # divergence rate per bar into a horizon in seconds, so a 3s bar made
+        # every usable horizon ~7 seconds -- shorter than any real forecast --
+        # and the gate refused every entry on every symbol at every horizon.
+        # A check that stops all trading is worse than the gap it closes.
+        return float(min(max(span / max(len(stamps) - 1, 1), 1.0), 3600.0))
 
     def _ghost_min_life_sec(self) -> float:
         """How long a ghost position holds its slot against a displacing entry.
@@ -7196,6 +7303,54 @@ class TradingBot:
                             "symbol": symbol,
                             "reason": "symbol_has_a_measured_negative_edge",
                             "detail": edge_refusal,
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
+            # EVERY LAYER, OR NO TRADE.
+            #
+            # The six mathematical views in web/tradingagent/lattice.py are a
+            # chain of necessary conditions, not a committee: chaos says how
+            # far ahead prediction is possible, calculus which way it is
+            # moving, statistics whether that is distinguishable from noise,
+            # probability whether it clears cost, game theory whether someone
+            # faster takes it first, algebra whether the arithmetic closes.
+            #
+            # Any single failure is fatal regardless of how strong the others
+            # look. The specific thing this catches, which nothing else here
+            # does, is a forecast aimed past the horizon where prediction is
+            # possible at all -- the failure that produced a +500% clamp
+            # artifact and made bus_schedule the worst performer in the book
+            # at a mean of -0.0226 per round trip.
+            #
+            # Fails OPEN. An unavailable lattice, a short window, or a raised
+            # exception all let the trade through to the guards below rather
+            # than blocking it: those guards were the whole defence until
+            # today and remain sufficient on their own. A new check that can
+            # silently stop all trading is worse than the gap it closes.
+            lattice_refusal = self._lattice_refusal(symbol, directive, sample)
+            if lattice_refusal:
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-lattice",
+                        "reason": f"lattice:{lattice_refusal}",
+                    }
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live" if self.live_trading_enabled else "ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-lattice",
+                        details={
+                            "symbol": symbol,
+                            "reason": "failed_a_necessary_condition",
+                            "detail": lattice_refusal,
                             "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
                         },
                     )
