@@ -92,6 +92,21 @@ def _is_clamped(predicted: float) -> bool:
     return abs(abs(float(predicted)) - _FORECAST_CLAMP) < 1e-9
 
 
+def _require_proven_horizon() -> bool:
+    """Whether a horizon must have a measured hit rate before it is traded."""
+    return (os.getenv("SCHEDULE_REQUIRE_PROVEN_HORIZON", "1") or "0").lower() in {
+        "1", "true", "yes", "on"}
+
+
+def _min_hit_rate() -> float:
+    """Directional accuracy a horizon needs before it may be planned around.
+
+    0.55 rather than 0.50: a coin flip loses the round-trip cost every time,
+    so break-even needs an edge over chance, not merely chance.
+    """
+    return _env_float("SCHEDULE_MIN_HIT_RATE", 0.55)
+
+
 def _max_extrapolation_ratio() -> float:
     """How far past its own evidence a forecast may be projected.
 
@@ -164,6 +179,54 @@ class ScheduledLeg:
         if self.invalidate_above > 0 and price >= self.invalidate_above:
             return True
         return False
+
+
+#: Legs already acted on, so a rebuild cannot offer them again.
+#:
+#: A LEG IS AN INTENTION TO TRADE ONCE. Removing it from schedule.legs when it
+#: executes is not enough: the next replan reads the SAME unresolved forecast
+#: out of pending_predictions and builds the same leg back. Measured over the
+#: first evening this ran, 60 executions came from 18 distinct legs -- every
+#: one fired 3.3 times on average, and CRUX-USDC:15m fired eight times. Each
+#: repeat paid a full round-trip cost (~0.65%) to re-enter a position the plan
+#: had already taken, which is why bus_schedule is the worst performer in the
+#: book at a mean of -0.0226 per round trip.
+#:
+#: Keyed by leg_id, which already encodes (symbol, horizon, resolve_ts), so a
+#: genuinely NEW forecast for the same symbol and horizon -- a different
+#: resolve_ts -- is a different leg and is still schedulable.
+_EXECUTED_LEG_IDS: Dict[str, float] = {}
+
+#: How long an executed leg is remembered. Longer than the longest horizon a
+#: forecast can carry, so a leg cannot be re-offered while its own prediction
+#: is still outstanding.
+_EXECUTED_TTL_SEC = 7 * 24 * 3600.0
+
+
+def mark_leg_executed(leg_id: str, *, now: Optional[float] = None) -> None:
+    """Record that a leg has been acted on. Called by whatever executes it."""
+    if not leg_id:
+        return
+    moment = float(now if now is not None else time.time())
+    _EXECUTED_LEG_IDS[str(leg_id)] = moment
+    # Bounded: drop entries older than any live forecast could be.
+    if len(_EXECUTED_LEG_IDS) > 512:
+        cutoff = moment - _EXECUTED_TTL_SEC
+        for key in [k for k, v in _EXECUTED_LEG_IDS.items() if v < cutoff]:
+            _EXECUTED_LEG_IDS.pop(key, None)
+
+
+def leg_already_executed(leg_id: str, *, now: Optional[float] = None) -> bool:
+    if not leg_id:
+        return False
+    stamp = _EXECUTED_LEG_IDS.get(str(leg_id))
+    if stamp is None:
+        return False
+    moment = float(now if now is not None else time.time())
+    if moment - stamp > _EXECUTED_TTL_SEC:
+        _EXECUTED_LEG_IDS.pop(str(leg_id), None)
+        return False
+    return True
 
 
 @dataclass
@@ -243,6 +306,36 @@ def predictions_to_candidates(
             horizon_sec = max(0.0, resolve_ts - moment)
             window_sec = float(entry.get("fit_window_sec") or 0.0)
             if window_sec > 0 and horizon_sec / window_sec > max_ratio:
+                continue
+
+        # A FORECAST MUST HAVE EARNED THE RIGHT TO SPEND MONEY.
+        #
+        # Measured over this scheduler's first evening, its four completed
+        # round trips realised -0.085%, -1.689%, +0.245% and -0.005% against
+        # forecasts of +0.75% to +1.53%. One of four moved the predicted
+        # direction; the mean realised move was -0.383%. Every one of those
+        # trades paid a ~0.65% round trip to act on a number with no
+        # demonstrated relationship to what happened next, and bus_schedule
+        # became the worst performer in the book at a mean of -0.0226.
+        #
+        # The horizon's own record answers whether it may be traded. A
+        # forecast that is directionally right less than MIN_HIT_RATE of the
+        # time is not a signal, however confident its magnitude looks.
+        #
+        # An UNMEASURED horizon is refused too, and that is the deliberate
+        # part: "we have not established this works" is not a licence, and
+        # the cost of waiting is an opportunity while the cost of being wrong
+        # is the round trip. Ghost trading keeps generating the evidence
+        # either way -- this gate governs what may be PLANNED, and the
+        # ordinary per-tick path still trades and still learns.
+        hit_rate = entry.get("hit_rate")
+        if _require_proven_horizon():
+            if hit_rate is None:
+                continue
+            try:
+                if float(hit_rate) < _min_hit_rate():
+                    continue
+            except (TypeError, ValueError):
                 continue
 
         # Symbols the book has proven we lose on are not planned around
@@ -348,6 +441,17 @@ def build_schedule(
             })
             continue
 
+        leg_id = f"{cand.get('symbol')}:{cand.get('label')}:{int(cand.get('resolve_ts') or 0)}"
+        if leg_already_executed(leg_id, now=moment):
+            # Already traded on this exact forecast. Rebuilding it would
+            # re-enter the same position and pay the round trip again.
+            schedule.rejected.append({
+                "symbol": cand.get("symbol"),
+                "label": cand.get("label"),
+                "reason": "this forecast has already been traded once",
+            })
+            continue
+
         # One leg per symbol. Two forecasts for the same token at different
         # horizons are the same bet, not two.
         if any(leg.symbol == cand.get("symbol") for leg in schedule.legs):
@@ -380,7 +484,7 @@ def build_schedule(
             strategy_id=str(cand.get("strategy_id") or ""),
             confidence=float(cand.get("confidence") or 0.0),
             invalidate_below=invalidate_below,
-            leg_id=f"{cand.get('symbol')}:{cand.get('label')}:{int(resolve_ts)}",
+            leg_id=leg_id,
         )
         schedule.legs.append(leg)
         committed += notional

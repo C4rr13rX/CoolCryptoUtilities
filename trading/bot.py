@@ -1452,6 +1452,13 @@ class TradingBot:
                 schedule.legs.remove(leg)
             except ValueError:
                 pass
+            # Removing it from THIS plan is not enough -- the next replan reads
+            # the same unresolved forecast and builds the same leg again.
+            try:
+                from trading.swap_schedule import mark_leg_executed
+                mark_leg_executed(leg.leg_id, now=now)
+            except Exception:  # noqa: BLE001 - never block a trade on bookkeeping
+                pass
 
             base_token = symbol.split("-")[0]
             quote_token = symbol.split("-")[-1] if "-" in symbol else "USDC"

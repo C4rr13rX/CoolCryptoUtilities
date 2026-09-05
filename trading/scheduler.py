@@ -60,6 +60,9 @@ def _is_test_env() -> bool:
 class HorizonAccuracyTracker:
     def __init__(self, horizons: Sequence[Tuple[str, int]], window: int = 256) -> None:
         self.window = max(16, int(window))
+        #: Resolved forecasts needed before a hit rate means anything. Below
+        #: this a run of luck is indistinguishable from skill.
+        self.min_hit_samples = max(1, int(os.getenv("HORIZON_MIN_HIT_SAMPLES", "20")))
         self._history: Dict[str, Deque[Dict[str, float]]] = {
             label: deque(maxlen=self.window) for label, _ in horizons
         }
@@ -71,8 +74,35 @@ class HorizonAccuracyTracker:
             {
                 "error": error,
                 "realized": realized_return,
+                # Did it get the DIRECTION right? MAE alone cannot answer the
+                # only question a trade cares about. A horizon can have a
+                # respectable MAE while being a coin flip on sign, and a coin
+                # flip loses the round-trip cost every time it is traded.
+                "predicted": float(predicted_return),
+                "hit": 1.0 if (predicted_return > 0) == (realized_return > 0) else 0.0,
             }
         )
+
+    def hit_rate(self, label: str) -> Optional[float]:
+        """Fraction of forecasts at this horizon that got the sign right.
+
+        None when there is not enough history to say. None is not 0.5 -- "we
+        have not measured this" and "this is a coin flip" call for different
+        actions, and only one of them is safe to trade on.
+        """
+        bucket = self._history.get(label)
+        if not bucket:
+            return None
+        hits = [entry.get("hit") for entry in bucket if entry.get("hit") is not None]
+        if len(hits) < self.min_hit_samples:
+            return None
+        return float(sum(hits) / len(hits))
+
+    def hit_samples(self, label: str) -> int:
+        bucket = self._history.get(label)
+        if not bucket:
+            return 0
+        return sum(1 for entry in bucket if entry.get("hit") is not None)
 
     def mae(self, label: str) -> float:
         bucket = self._history.get(label)
@@ -1080,6 +1110,11 @@ class BusScheduler:
                     "start_price": current_price,
                     "fit_window_sec": fit_window_sec,
                     "zscore": float(getattr(signal, "zscore", 0.0) or 0.0),
+                    # How often THIS horizon has been directionally right.
+                    # None means not yet measurable, which the scheduler
+                    # treats as "not tradeable yet" rather than as neutral.
+                    "hit_rate": self.accuracy.hit_rate(signal.label),
+                    "hit_samples": self.accuracy.hit_samples(signal.label),
                 }
             )
 

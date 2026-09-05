@@ -22,13 +22,34 @@ from trading.swap_schedule import (
 NOW = 1_788_540_000.0
 
 
-def _pending(label, seconds_ahead, predicted, start_price=100.0):
+def _pending(label, seconds_ahead, predicted, start_price=100.0, hit_rate=0.70):
+    """A prediction row.
+
+    hit_rate defaults to a PROVEN horizon so the existing tests exercise what
+    they were written for; the gate itself is tested explicitly below.
+    """
     return {
         "label": label,
         "resolve_ts": NOW + seconds_ahead,
         "predicted_return": predicted,
         "start_price": start_price,
+        "hit_rate": hit_rate,
     }
+
+
+@pytest.fixture(autouse=True)
+def _clear_executed_legs():
+    """Executed-leg memory is module state and must not leak between tests.
+
+    It is deliberately process-wide in production -- a replan must not be able
+    to re-offer a leg the bot already traded -- so the tests have to clear it
+    rather than the module avoiding it.
+    """
+    import trading.swap_schedule as mod
+
+    mod._EXECUTED_LEG_IDS.clear()
+    yield
+    mod._EXECUTED_LEG_IDS.clear()
 
 
 class TestPredictionsToCandidates:
@@ -112,6 +133,58 @@ class TestPredictionsToCandidates:
                 "GOOD-USDC", [_pending("1h", 3600, 0.05)], now=NOW)) == 1
         finally:
             mod._symbol_edge_refusal = original
+
+    def test_an_unproven_horizon_may_not_spend_money(self):
+        """The four trades that lost money came from horizons with no record.
+
+        "We have not established this works" is not a licence to trade.
+        """
+        row = _pending("15m", 900, 0.015)
+        row.pop("hit_rate")
+        assert predictions_to_candidates("CRUX-USDC", [row], now=NOW) == []
+
+    def test_a_coin_flip_horizon_is_refused(self):
+        """50% directional accuracy loses the round-trip cost every time."""
+        assert predictions_to_candidates(
+            "CRUX-USDC", [_pending("15m", 900, 0.015, hit_rate=0.50)], now=NOW) == []
+
+    def test_a_proven_horizon_is_allowed(self):
+        assert len(predictions_to_candidates(
+            "CRUX-USDC", [_pending("15m", 900, 0.015, hit_rate=0.72)], now=NOW)) == 1
+
+    def test_the_same_forecast_is_traded_at_most_once(self):
+        """A leg removed from the plan came straight back on the next replan.
+
+        Measured: 60 executions from 18 distinct legs, one firing eight
+        times, each repeat paying a full round trip.
+        """
+        import trading.swap_schedule as mod
+
+        cands = predictions_to_candidates(
+            "CRUX-USDC", [_pending("15m", 900, 0.015)], now=NOW)
+        first = build_schedule(cands, capital_usd=18.0, clip_usd=0.75,
+                               roundtrip_cost_rate=0.0065, now=NOW)
+        assert len(first.legs) == 1
+
+        mod.mark_leg_executed(first.legs[0].leg_id, now=NOW)
+        again = build_schedule(cands, capital_usd=18.0, clip_usd=0.75,
+                               roundtrip_cost_rate=0.0065, now=NOW)
+        assert again.legs == []
+        assert any("already been traded" in r["reason"] for r in again.rejected)
+
+    def test_a_new_forecast_on_the_same_symbol_still_schedules(self):
+        """Execute-once must not become never-again for that symbol."""
+        import trading.swap_schedule as mod
+
+        first = build_schedule(
+            predictions_to_candidates("CRUX-USDC", [_pending("15m", 900, 0.015)], now=NOW),
+            capital_usd=18.0, clip_usd=0.75, roundtrip_cost_rate=0.0065, now=NOW)
+        mod.mark_leg_executed(first.legs[0].leg_id, now=NOW)
+
+        later = build_schedule(
+            predictions_to_candidates("CRUX-USDC", [_pending("15m", 1800, 0.015)], now=NOW),
+            capital_usd=18.0, clip_usd=0.75, roundtrip_cost_rate=0.0065, now=NOW)
+        assert len(later.legs) == 1
 
     def test_unusable_rows_are_skipped_not_crashed(self):
         rows = [None, {}, {"resolve_ts": "x"}, _pending("1h", 3600, 0.03, 0.0)]
