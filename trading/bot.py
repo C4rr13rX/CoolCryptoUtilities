@@ -10944,6 +10944,23 @@ class TradingBot:
             )
             try:
                 self._queue_forced_live_exit(symbol, pos, reason="dark_feed")
+                # DO NOT LEAVE THE FREED CAPITAL SITTING IN THE STABLE.
+                #
+                # A forced exit realises whatever the position had lost, and
+                # parking the proceeds in USDC means the next thing that
+                # happens to that money is nothing. The point of closing a
+                # stuck position is to get the capital somewhere it can work,
+                # not merely to stop it being stuck.
+                #
+                # The PortfolioRotator already answers exactly this question
+                # -- it shops every streamed pair's freshest buy-low
+                # candidate and runs them through the same CDCL clauses that
+                # govern any other rotation: expected return must clear the
+                # round trip by a safety multiple, the candidate must be
+                # fresher than its TTL, and the target must not already be
+                # held. If nothing clears those, it stays in stable, which is
+                # the correct answer rather than a failure.
+                self._rotate_out_of_stuck_position(symbol, pos)
                 exited += 1
             except Exception as exc:  # noqa: BLE001 - never break the tick
                 log_message(
@@ -10993,14 +11010,74 @@ class TradingBot:
         except (TypeError, ValueError):
             return 600.0
 
+    def _rotate_out_of_stuck_position(self, symbol: str, pos: dict) -> None:
+        """Aim the proceeds of a forced exit at something better than stable.
+
+        Called right after a stuck position is queued for sale. The rotator
+        decides whether any candidate is worth entering; this only asks the
+        question, and asking it is the whole difference between "we stopped
+        losing on that symbol" and "we moved the money somewhere it can earn".
+
+        Never raises and never blocks the exit: the sell is already queued and
+        must go through regardless of whether a destination is found.
+        """
+        rotator = getattr(self, "rotator", None)
+        if rotator is None:
+            return
+
+        try:
+            size = float(pos.get("size") or 0.0)
+            price = float(pos.get("last_price") or pos.get("entry_price") or 0.0)
+            freed = size * price if (size > 0 and price > 0) else 0.0
+            if freed <= 0:
+                return
+
+            rotator.on_exit(
+                self,
+                symbol=symbol,
+                chain=str(pos.get("chain") or self.primary_chain),
+                freed_quote=freed,
+                # The realised result of the position being closed. Reported
+                # for the record; the rotator does not gate on it, because a
+                # losing exit frees exactly the same capital as a winning one.
+                profit=0.0,
+            )
+        except Exception as exc:  # noqa: BLE001 - a missed rotation is not a crash
+            log_message(
+                "rotation",
+                f"could not rotate out of the stuck position {symbol}: {exc!r}",
+                severity="warning",
+            )
+
     def _queue_forced_live_exit(self, symbol: str, pos: dict, *, reason: str) -> None:
         """Put a market sell for a stuck live position on the execution queue.
 
         Queued rather than executed inline because this runs from the sweep on
         an arbitrary symbol's tick, and the swap path expects to own the tick
-        it runs on. The queue is drained by the same worker that handles every
-        other decision, so the sell goes through the ordinary execution path
-        with every guard it carries.
+        it runs on.
+
+        WARNING -- THIS DOES NOT YET SELL. This docstring used to claim the
+        queue was "drained by the same worker that handles every other decision,
+        so the sell goes through the ordinary execution path with every guard it
+        carries". That is false, and it is why the row appears in trading_ops
+        while the tokens stay in the wallet. Traced 2026-09-05:
+
+            self.queue            -> GhostTradingSupervisor._drain_trades
+            _drain_trades         -> _handle_trade
+            _handle_trade         -> print() + profit_equilibrium.record()
+
+        There is no swap on that path. The real live exit runs INSIDE
+        ``_interpret_predictions`` (``asyncio.to_thread(swapper.swap, ...)``,
+        with `_size_live_exit` rendering the amount at the token's own decimals
+        and a residual check afterwards), and it is reachable only from a
+        sample -- exactly what a dark feed denies.
+
+        The structural fix for the stuck positions is in ``reconcile_pairs``: a
+        held symbol is now always given a BOT rather than a data-only stream, so
+        the ordinary guarded exit path can reach it. This sweep remains the
+        backstop for when even that fails, and wiring it to a real sell -- which
+        means reusing the sizing and residual checks above, not a second bespoke
+        swap call -- is unfinished work rather than a working feature.
         """
         chain = str(pos.get("chain") or self.primary_chain)
         decision = {
