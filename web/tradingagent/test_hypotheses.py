@@ -87,6 +87,61 @@ class GenerationTests(SimpleTestCase):
         assert evidence["n_elsewhere"] > 0
 
 
+class ConfoundingTests(SimpleTestCase):
+    """Some guards fire BECAUSE a symbol is doing well.
+
+    The correlation is real and the causal reading is backwards, and a
+    generator that cannot tell those apart will eventually talk someone into
+    deleting a guard that was working.
+    """
+
+    def test_a_selection_confounded_guard_gets_no_verdict(self):
+        """entry-refused-live-held nearly cost us a working guard.
+
+        It was flagged as "guarding symbols that perform BETTER" (+0.03817
+        against +0.02149) and was one step from being acted on. But it fires
+        only when a LIVE position is already open, and live positions exist on
+        our better symbols because those are the ones that graduated. Removing
+        it would let the bot double-buy a token it already owns.
+        """
+        proposals = generate(
+            _rows({"GOOD-USDC": [0.05] * (MIN_COMPARISON + 4),
+                   "MEH-USDC": [-0.01] * (MIN_COMPARISON + 4)}),
+            _census(MIN_REFUSALS + 10, {"GOOD-USDC": 30},
+                    key="entry-refused-live-held"))
+        assert len(proposals) == 1
+        assert proposals[0]["confounded"] is True
+        assert proposals[0]["testable"] is False
+        # Case-insensitive: the statement capitalises ALREADY for emphasis,
+        # and a test that pins exact casing is testing prose rather than
+        # behaviour. That mistake has now been made twice in this file.
+        assert "already being traded" in proposals[0]["statement"].lower()
+
+    def test_the_numbers_are_still_reported(self):
+        """Refuse the verdict, not the evidence.
+
+        A reader should still see what provoked the question -- the finding
+        is real even though the conclusion does not follow.
+        """
+        proposals = generate(
+            _rows({"GOOD-USDC": [0.05] * (MIN_COMPARISON + 4),
+                   "MEH-USDC": [-0.01] * (MIN_COMPARISON + 4)}),
+            _census(MIN_REFUSALS + 10, {"GOOD-USDC": 30},
+                    key="entry-refused-duplicate"))
+        evidence = proposals[0]["evidence"]
+        assert evidence["mean_return_on_guarded"] > evidence["mean_return_elsewhere"]
+
+    def test_an_unconfounded_guard_is_still_judged(self):
+        """The exemption must not become a blanket amnesty."""
+        proposals = generate(
+            _rows({"GOOD-USDC": [0.05] * (MIN_COMPARISON + 4),
+                   "MEH-USDC": [-0.01] * (MIN_COMPARISON + 4)}),
+            _census(MIN_REFUSALS + 10, {"GOOD-USDC": 30},
+                    key="guard-blocked-live"))
+        assert proposals[0]["testable"] is True
+        assert "refusing profitable" in proposals[0]["suspicion"]
+
+
 class TheoremWrappingTests(SimpleTestCase):
     def test_only_testable_proposals_become_theorems(self):
         """Untestable ones are worth REPORTING and not worth testing."""

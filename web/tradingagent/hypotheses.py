@@ -51,6 +51,37 @@ DB = ROOT / "storage" / "trading_cache.db"
 #: stating. Below this the sample cannot distinguish a rule from a run of luck.
 MIN_REFUSALS = 12
 
+#: Refusals whose direction is REVERSED by construction, and which therefore
+#: cannot be judged by comparing returns.
+#:
+#: These fire BECAUSE a symbol is already being traded successfully, so the
+#: symbols they guard look profitable no matter how good or bad the rule is.
+#: The correlation is real and the causal reading is backwards.
+#:
+#: Found the hard way, 2026-09-05: the generator flagged
+#: entry-refused-live-held as "guarding symbols that perform BETTER"
+#: (+0.03817 against +0.02149) and it was one step from being acted on. But
+#: that guard refuses an entry only when a LIVE position is ALREADY OPEN on
+#: the symbol -- and live positions exist on our better symbols, because
+#: those are the ones that graduated. The guard does not select profitable
+#: symbols; their profitability is why they are held. Removing it would let
+#: the bot double-buy a token it already owns, which is precisely the failure
+#: it was written to stop.
+#:
+#: A hypothesis generator that cannot tell "this rule picks winners" from
+#: "this rule fires on winners" will eventually talk someone into deleting a
+#: guard that was working.
+CONFOUNDED_BY_SELECTION = {
+    # Fires only when a live position is already open: selection is the cause,
+    # not the effect.
+    "entry-refused-live-held",
+    # Fires when the same strategy already holds the symbol -- same shape.
+    "entry-refused-duplicate",
+    # Fires when another strategy holds the slot; the slot is occupied
+    # BECAUSE something found the symbol worth trading.
+    "entry-refused-slot-busy",
+}
+
 #: Closed trades needed on the other side of the comparison.
 MIN_COMPARISON = 12
 
@@ -168,6 +199,30 @@ def generate(rows: Sequence[Dict[str, Any]],
         mean_refused = statistics.mean(refused_returns)
         mean_others = statistics.mean(others)
         direction = "worse" if mean_refused < mean_others else "BETTER"
+
+        # A refusal that fires BECAUSE the symbol is already being traded
+        # cannot be judged this way: the comparison is confounded by the
+        # selection that produced it. Report the numbers, refuse the verdict.
+        if bucket["reason"] in CONFOUNDED_BY_SELECTION:
+            proposals.append({
+                "id": f"confounded:{key}",
+                "statement": (
+                    f"{key} fired {count} times on {', '.join(hot_names)}, "
+                    f"which returned {mean_refused:+.5f} against "
+                    f"{mean_others:+.5f} elsewhere -- but this rule fires "
+                    f"only when the symbol is ALREADY being traded, so it "
+                    f"appears on our better symbols by construction. The "
+                    f"comparison cannot say whether the rule is right."),
+                "testable": False,
+                "confounded": True,
+                "evidence": {
+                    "count": count, "symbols": hot_names,
+                    "mean_return_on_guarded": round(mean_refused, 6),
+                    "mean_return_elsewhere": round(mean_others, 6),
+                    "examples": bucket["examples"],
+                },
+            })
+            continue
 
         proposals.append({
             "id": key,
