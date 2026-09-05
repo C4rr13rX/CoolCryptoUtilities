@@ -2476,6 +2476,43 @@ class TradingBot:
             return None
         return float(Decimal(int(reading[0])).scaleb(-int(reading[1])))
 
+    def _claims_on_token(self, token: str, *, exclude_symbol: str) -> float:
+        """Human units of ``token`` that OTHER open live positions claim.
+
+        The exit sweep below may only sell what nothing else is holding, and
+        "nothing else" has to be read from the SHARED book: GhostSupervisor
+        runs one bot per symbol against one position map, so another bot's
+        position in the same base token is visible here as a row this bot does
+        not own. Two symbols can also share a base -- AERO-USDC and AERO-USDT
+        are one AERO balance -- so a ticker match counts as a claim even when
+        the row carries no contract.
+
+        Deliberately OVER-counts when it cannot tell: every ambiguous row adds
+        to the reserve, which can only make this exit sell less. Selling too
+        little strands dust that a later sweep can still reach; selling too
+        much spends another position's tokens, and that is unrecoverable.
+        """
+        want = str(token or "").strip().lower()
+        if not want:
+            return 0.0
+        # `getattr` for the same reason the dark-feed sweep uses it: __init__ is
+        # what sets `positions`, and not every construction path runs it. An
+        # exit must never crash because the book is not there.
+        book = getattr(self, "positions", None) or {}
+        mine = book.get(str(exclude_symbol)) or {}
+        mine_base = str((mine or {}).get("base_symbol") or "").strip().upper()
+        total = 0.0
+        for sym, pos in list(book.items()):
+            if str(sym) == str(exclude_symbol) or not isinstance(pos, dict):
+                continue
+            if str(pos.get("mode") or "") != "live":
+                continue          # a ghost position holds no tokens to protect
+            addr = str(pos.get("base_token_address") or "").strip().lower()
+            base = str(pos.get("base_symbol") or "").strip().upper()
+            if addr == want or (mine_base and base and base == mine_base):
+                total += max(0.0, float(pos.get("size") or 0.0))
+        return total
+
     def _size_live_exit(
         self,
         swapper: Any,
@@ -2485,6 +2522,8 @@ class TradingBot:
         symbol: str,
         position_size: float,
         price: float,
+        held_size: Optional[float] = None,
+        sweep_unclaimed: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Size a live exit from the chain, in raw base units. None = unreadable.
 
@@ -2551,11 +2590,65 @@ class TradingBot:
         exit_raw = max(0, min(want_raw, onchain_raw))
         residual_raw = onchain_raw - exit_raw
         swept = False
-        if residual_raw > 0 and math.isfinite(price) and price > 0.0:
-            residual_usd = float(Decimal(residual_raw).scaleb(-decimals)) * float(price)
+
+        # SELL WHAT NOTHING ELSE CLAIMS.
+        #
+        # `min(want_raw, onchain_raw)` alone strands every token the wallet
+        # holds above what the book recorded, and the reconciler cannot get it
+        # back: it rebuilds unmatched buys from the ops log and STOPS AT THE
+        # NEWEST SETTLED SELL, on the assumption that the sell closed
+        # everything older. That assumption is false precisely BECAUSE the
+        # clamp exists -- a clamped sell leaves residue, and the stop-at-sell
+        # rule then makes the residue permanently invisible. The two defects
+        # compound into capital nothing can ever reach.
+        #
+        # Measured 2026-09-04 on AERO-USDC. The five settled AERO txs on this
+        # wallet net to exactly the booked 1.498535132128053 (each exit did
+        # sell its whole position -- receipts confirm the round trips close to
+        # zero), yet balanceOf reports 3.044816584088252614. The extra
+        # 1.546281451960 AERO (~$0.77 at 0.4992, five times the entire live
+        # P/L of +0.1423) predates every AERO row in trading_ops, so no
+        # unmatched-buy row explains it and no recovery path can see it. The
+        # dust sweep does not reach it either: $0.77 is far above
+        # EXIT_DUST_SWEEP_USD.
+        #
+        # What is safe to add to this sell is the balance no OTHER position
+        # claims, and not the part of THIS position we are deliberately
+        # keeping -- a directive may ask for a partial exit
+        # (`exit_target = min(held_size, directive.size)` at the call site), so
+        # `position_size` is not always the whole position.
+        #
+        # Off by default: the dust sweeper passes the full chain holding
+        # already, and the post-exit probe passes position_size=0.0 purely to
+        # re-read the balance. Only the live exit opts in.
+        unclaimed_raw = 0
+        reserve_raw = 0
+        if sweep_unclaimed:
+            full = float(held_size if held_size is not None else position_size)
+            own_kept = max(0.0, full - float(position_size))
+            others = self._claims_on_token(token, exclude_symbol=symbol)
+            try:
+                reserve_raw = to_base_units(str(own_kept + others), decimals)
+            except Exception:
+                reserve_raw = onchain_raw       # unreadable reserve: keep it all
+            reserve_raw = max(0, min(reserve_raw, onchain_raw))
+            unclaimed_raw = max(0, residual_raw - reserve_raw)
+            if unclaimed_raw > 0:
+                exit_raw += unclaimed_raw
+                residual_raw = onchain_raw - exit_raw
+
+        # The dust sweep may not spend the reserve either. It decides in USD,
+        # and a reserved holding is routinely worth less than the floor -- half
+        # of the AERO position is $0.374 against a $0.50 default -- so without
+        # this bound the sweep would hand another open position's tokens, or
+        # the half a partial exit meant to keep, straight to the same swap.
+        # A reserve a later line can sell is not a reserve.
+        if residual_raw > reserve_raw and math.isfinite(price) and price > 0.0:
+            sweepable_raw = residual_raw - reserve_raw
+            residual_usd = float(Decimal(sweepable_raw).scaleb(-decimals)) * float(price)
             if residual_usd <= self._exit_dust_sweep_usd():
-                exit_raw = onchain_raw
-                residual_raw = 0
+                exit_raw += sweepable_raw
+                residual_raw = onchain_raw - exit_raw
                 swept = True
         return {
             "amount": from_base_units(exit_raw, decimals),
@@ -2565,6 +2658,7 @@ class TradingBot:
             "onchain_human": float(Decimal(onchain_raw).scaleb(-decimals)),
             "exit_human": float(Decimal(exit_raw).scaleb(-decimals)),
             "swept": swept,
+            "unclaimed_raw": int(unclaimed_raw),
         }
 
     def _resolve_live_trade_asset(
@@ -7953,6 +8047,11 @@ class TradingBot:
                         symbol=symbol,
                         position_size=exit_target,
                         price=float(price),
+                        # `held_size`, not `exit_target`: a directive may have
+                        # cut this to a partial exit just above, and the part
+                        # we are keeping must stay reserved.
+                        held_size=held_size,
+                        sweep_unclaimed=True,
                     )
                     if live_exit_sizing is None:
                         # Not "nothing to sell" -- nobody could say. Selling a
