@@ -68,6 +68,21 @@ GATE_TESTS = (
     "test_money_path_records_tx_hash.py",
     "test_boundary_contracts.py",
     "test_phantom_position_never_blocks.py",
+    # An entry that never resolves holds its symbol slot against every further
+    # entry, which is how this pipeline goes dark for hours at a time. Both
+    # halves of that are money path.
+    "test_a_position_that_went_nowhere_still_exits.py",
+    "test_a_symbol_must_be_able_to_pay_its_round_trip.py",
+    # Base has no second route to fall through to, so one 429 on an allowance
+    # read cancels the whole swap and the position stays held. Money path.
+    "test_a_rate_limited_rpc_does_not_cancel_a_swap.py",
+    # A forced close that sells half leaves the slot busy and the clock
+    # running, so the same half-exit fires again on half the position.
+    "test_a_forced_exit_is_not_downgraded_to_a_harvest.py",
+    # The other half of that failure: an ordinary harvest sizing an exit to
+    # 57% of a $1.50 clip leaves $0.65 of dust, which is below the notional
+    # floor the ENTRY gate enforces and holds the symbol slot for an hour.
+    "test_a_harvest_does_not_strand_a_position_we_would_refuse_to_open.py",
 )
 
 

@@ -27,6 +27,7 @@ from trading.scheduler import BusScheduler, TradeDirective
 from trading.equilibrium import EquilibriumTracker
 from trading.metrics import FeedbackSeverity, MetricStage, MetricsCollector
 from trading.swap_validator import SwapValidator
+from trading.triggers import exit_target_size, is_protective_exit
 from trading.opportunity import OpportunityTracker
 from trading.brain_bridge import (
     get_bridge as _brain_bridge,
@@ -6497,10 +6498,37 @@ class TradingBot:
                 decision["live_clip_raised_from_usd"] = float(trade_size * price)
                 trade_size = clip_units
 
-        min_margin_required = max(fees * 1.5, MIN_NET_MARGIN)
-        min_margin_required = max(0.0, min_margin_required + float(adjustments.get("margin_offset", 0.0)))
         trade_notional_usd = max(trade_size, 0.0) * max(price, 1e-9)
-        expected_profit_units = max(0.0, margin - fees) * trade_notional_usd
+        # THE FEE THE GATE CHARGES MUST BE THE FEE THIS TRADE PAYS.
+        #
+        # `fees` above is priced at the live clip (notional_hint=None), which is
+        # the right default at line 5909 because no size exists yet. By HERE the
+        # size is known, and the round-trip rate is a function of it -- the
+        # fixed $0.004047 does not shrink with the trade. Charging the clip rate
+        # to a trade that is not clip-sized understates the cost of every
+        # smaller trade and overstates it for every larger one, which is the
+        # same wrong-in-both-directions shape the flat 0.65% constant had.
+        #
+        # Measured 2026-09-05 against the 13 live round trips this account has
+        # settled on chain. The clip rate is 0.589%; the size-aware rate each
+        # trade actually owed ranged 0.454%..1.600%, and ELEVEN of the thirteen
+        # were under-charged. The two smallest -- CBETH at $0.3158 and $0.4438
+        # notional -- were billed 0.589% against a true 1.600% and 1.231%, and
+        # both lost (-0.00544, and the $0.44 one only won on a 3.4% move). The
+        # two that were over-charged were the largest ($1.75 and $3.00) and had
+        # to clear edge they did not owe.
+        #
+        # So this is not a tightening or a loosening. It bills each trade its
+        # own cost: the bar rises for the small trades that have been bleeding
+        # and falls for the large ones that were being refused for it.
+        entry_fees = fees
+        if trade_notional_usd > 0.0:
+            entry_fees = self._roundtrip_fee_rate(notional_hint=trade_notional_usd)
+            decision["entry_fee_rate"] = float(entry_fees)
+            decision["entry_fee_rate_at_clip"] = float(fees)
+        min_margin_required = max(entry_fees * 1.5, MIN_NET_MARGIN)
+        min_margin_required = max(0.0, min_margin_required + float(adjustments.get("margin_offset", 0.0)))
+        expected_profit_units = max(0.0, margin - entry_fees) * trade_notional_usd
         if trade_size <= 0.0 and pos is not None:
             # Position is held -- floor trade_size off the held size so
             # exit logic still gets a chance to evaluate. Without this
@@ -6904,8 +6932,11 @@ class TradingBot:
                 reason = directive.reason
         elif pos is None:
             enter_threshold = max(0.5, min(0.99, enter_threshold + float(adjustments.get("enter_offset", 0.0))))
-            min_margin_gate = max(min_margin_required, fees)
-            net_margin_after_fees = margin - fees
+            # Size-aware, for the reason documented where entry_fees is set:
+            # this branch is the ENTRY decision, so it must be charged the rate
+            # for the notional it is about to spend, not the rate at the clip.
+            min_margin_gate = max(min_margin_required, entry_fees)
+            net_margin_after_fees = margin - entry_fees
             if (
                 direction_prob >= enter_threshold
                 and exit_conf_val >= enter_threshold
@@ -7007,6 +7038,15 @@ class TradingBot:
             pnl_pct_held = ((price - entry_price_held) / entry_price_held) if entry_price_held > 0 else 0.0
             min_hold = float(os.getenv("MIN_HOLD_SECONDS", "300"))
             stop_loss_pct = float(os.getenv("GHOST_STOP_LOSS_PCT", "0.02"))
+            # Rule 4's clock. GHOST_NEG_EXIT_SECONDS is the name it had while
+            # it only covered strict losers; it still wins when set so an
+            # existing deployment keeps the timing it was tuned to.
+            stale_exit_secs = float(
+                os.getenv(
+                    "GHOST_NEG_EXIT_SECONDS",
+                    os.getenv("GHOST_STALE_EXIT_SECONDS", "900"),
+                )
+            )
             model_neutral = abs(direction_prob - 0.5) < 0.02 and abs(exit_conf_val - 0.5) < 0.02
             exit_threshold = max(0.05, min(enter_threshold * 0.95, exit_threshold + float(adjustments.get("exit_offset", 0.0))))
             # An exit on "the model isn't excited" only makes sense when the
@@ -7077,7 +7117,59 @@ class TradingBot:
             # and is NOT closed here -- deliberately, and for the same reason
             # the stop-loss above ignores it: an unknown cost basis is not
             # evidence of a loss. Those are released by the max-hold eviction.
-            elif pnl_pct_held < 0 and held_secs > float(os.getenv("GHOST_NEG_EXIT_SECONDS", str(60 * 45))):
+            #
+            # ...AND A POSITION THAT WENT NOWHERE IS THE SAME STALE POSITION.
+            #
+            # `pnl_pct_held < 0` is strictly negative, and every rule above it
+            # needs the position to have MOVED: to its target, to the stop, or
+            # far enough up to arm break-even/profit-lock/trailing. So a
+            # position sitting between 0 and its cost satisfied nothing at all
+            # and had no exit on any clock. Measured on the live book
+            # 2026-09-05 16:10, with all three slots in exactly that state:
+            #
+            #   COMP-USDC   ghost  held 35.6m  realised +0.000%  target +1.97%
+            #   CBBTC-USDC  ghost  held 22.0m  realised +0.077%  target +9.99%
+            #   AERO-USDC   live   held 22.1m  realised -0.418%  target +4.57%
+            #
+            # A +9.99% target is not reachable in the tens of minutes this
+            # pipeline trades on, so CBBTC's only remaining exit was the 2%
+            # stop -- and while it waited, its slot refused every further entry
+            # on the symbol. Over the hour to 16:10 that produced 7 entries and
+            # ZERO exits, with 37 of 64 refusals being `entry-refused-duplicate`
+            # and `entry-refused-slot-busy` against these same three symbols,
+            # and six hours earlier in the day with no entry and no exit at all.
+            #
+            # The test is therefore the position's own COST, not the sign of
+            # its P/L: after the clock, a position that has not cleared the
+            # round trip it would have to pay is not working, whether it is
+            # down 1.5% or flat. `fees` is the size-aware round-trip rate
+            # (0.5885% at the current $1.50 clip), the same fraction the
+            # take-profit two rules up already requires price to clear, so
+            # both ends of the bracket now measure against one cost basis.
+            #
+            # A winner is untouched: 2% clears 0.59% and is left to its target,
+            # its trailing stop or its profit lock (pinned by
+            # test_a_stale_WINNER_is_not_closed_by_the_timed_exit).
+            #
+            # LIVE positions are unchanged in cost terms: "timed-exit" is not
+            # in the protective set at the live-exit margin gate below, so a
+            # forced close at a nothing-move is still refused there as
+            # `hold-negative` (see test_a_close_must_cover_its_own_gas.py).
+            # Widening this rule proposes more live exits; it books none that
+            # the gate would not already have allowed.
+            #
+            # The clock is renamed to say what it now measures, and the old
+            # name still overrides it so an operator's existing setting keeps
+            # working. The default drops 2700s -> 900s because 45 minutes is
+            # not the horizon this pipeline is for: the mandate is round trips
+            # in single-digit to tens of minutes, and a slot held 45 minutes
+            # for a move that never came is 45 minutes the symbol is switched
+            # off.
+            elif (
+                entry_price_held > 0
+                and pnl_pct_held < fees
+                and held_secs > stale_exit_secs
+            ):
                 should_exit = True
                 reason = "timed-exit"
 
@@ -8156,7 +8248,11 @@ class TradingBot:
                     "target_price": directive.target_price if directive else None,
                     "brain_snapshot": brain_payload,
                     "expected_margin": margin,
-                    "expected_margin_after_fees": margin - fees,
+                    # The rate the GATE charged this trade, not the clip rate:
+                    # the exit path reads this back as `predicted_margin`, and
+                    # a position recorded against a cost its entry was never
+                    # judged on cannot tell the exit whether it is on plan.
+                    "expected_margin_after_fees": margin - entry_fees,
                     "entry_confidence": exit_conf_val,
                     "direction_prob": direction_prob,
                     "quote_spent": quote_spent,
@@ -8318,7 +8414,8 @@ class TradingBot:
                 "target_price": directive.target_price if directive else None,
                 "brain_snapshot": brain_payload,
                 "expected_margin": margin,
-                "expected_margin_after_fees": margin - fees,
+                # Size-aware, same reason as the live entry record above.
+                "expected_margin_after_fees": margin - entry_fees,
                 "entry_confidence": exit_conf_val,
                 "direction_prob": direction_prob,
                 "trigger_state": {"high_watermark": price},
@@ -8424,8 +8521,48 @@ class TradingBot:
             await self._run_wallet_sync(reason="pre-exit")
             held_size = float(pos["size"])
             exit_target = held_size
-            if directive and directive.action == "exit" and directive.size > 0:
-                exit_target = min(exit_target, float(directive.size))
+            # A BRACKET EXIT CLOSES THE POSITION. A directive's size is one
+            # strategy's opinion about how much to harvest; a stop, a lock or
+            # the operator's hold clock is a decision to be OUT, and half a
+            # position is not out.
+            #
+            # These are the same reasons that already bypass the live cost gate
+            # (``protective_exit`` below, plus ``forced_by_age``), so the set is
+            # not new -- only its effect on sizing is.
+            #
+            # Measured 2026-09-05 on the live AERO-USDC position. It had been
+            # held 66 minutes, past MAX_HOLD_FORCE_SECONDS=2700, and the forced
+            # exit ran -- but the sample also carried an unrelated exit
+            # directive from rsi_reversal@5d ("RSI 74 overbought, harvesting
+            # 5.24%") sized 1.4924427506920144 against a position of
+            # 2.879009029542749509. The clamp took the smaller number, so the
+            # hold clock's close was quietly downgraded to selling 51.8%. Had
+            # it settled, the slot would still have been busy, the clock would
+            # still have been running, and the next sample would have forced
+            # the same half-exit again on a position half the size.
+            # Rule 2 inside that helper is the other half of this failure, and
+            # it is the half that was still live at 14:18 today: the same
+            # rsi_reversal harvest sold 57% of the replacement position and
+            # stranded $0.6476 of AERO, which is below the
+            # MIN_DIRECTIVE_NOTIONAL_USD=0.75 the entry gate enforces, cannot
+            # clear its own $0.006110 round trip, and held the symbol slot for
+            # 66 minutes against every further entry. A harvest may take profit
+            # off the table; it may not leave behind a position this bot would
+            # have refused to open.
+            exit_target = exit_target_size(
+                reason,
+                held_size=held_size,
+                directive_size=(
+                    float(directive.size)
+                    if directive is not None and directive.action == "exit"
+                    else None
+                ),
+                price=float(price),
+                live=bool(pos_is_live),
+                dust_floor_usd=float(
+                    os.getenv("MIN_DIRECTIVE_NOTIONAL_USD", "0.0") or 0.0
+                ),
+            )
 
             # A LIVE exit is sized by the chain, never by the balances cache.
             #
@@ -8652,9 +8789,7 @@ class TradingBot:
                 est_gas_usd = self._roundtrip_gas_usd(chain_name)
                 est_fee_cost = max(est_notional * fees, 0.0) + max(est_gas_usd, 0.0)
                 est_profit = est_gross_profit - est_fee_cost
-                protective_exit = str(reason or "").startswith(
-                    ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
-                )
+                protective_exit = is_protective_exit(reason)
                 # A hold clock decides whether to LOOK for an exit. It must not
                 # decide whether an exit is worth what it costs.
                 #
@@ -8954,11 +9089,30 @@ class TradingBot:
                     )
 
                 if base_sold <= 0.0 or quote_received <= 0.0:
+                    # SAY WHY. The swapper already knows -- it returns
+                    # ``SwapOutcome.reason`` ("approval_failed",
+                    # "all_routes_failed", "preflight_failed", ...) -- and this
+                    # branch used to throw that away and record the blanket
+                    # "no_fill_detected" with a fill_reason of "no_tx_hash",
+                    # which says only that the thing that did not happen did
+                    # not happen. The AERO-USDC exit at 2026-09-05 12:38:13
+                    # recorded exactly that; the actual cause was a single
+                    # `429 Too Many Requests` on an allowance read, visible
+                    # only in stdout and only if you knew to look for it.
+                    #
+                    # A live position that will not sell is the most expensive
+                    # state this system has, so its failure must name itself in
+                    # the row that records it.
+                    swap_reason = str(getattr(swap_outcome, "reason", "") or "")
+                    swap_broadcast = bool(getattr(swap_outcome, "broadcast", False))
                     decision.update(
                         {
                             "action": "exit",
                             "status": "live-exit-failed",
-                            "reason": "no_fill_detected",
+                            "reason": f"no_fill_detected:{swap_reason}" if swap_reason
+                                      else "no_fill_detected",
+                            "swap_reason": swap_reason,
+                            "swap_broadcast": swap_broadcast,
                             "trade_id": pos.get("trade_id"),
                             "wallet": "live",
                             "session_id": self.ghost_session_id,
@@ -8972,11 +9126,26 @@ class TradingBot:
                             "fill_reason": getattr(exit_receipt_fill, "reason", "no_tx_hash"),
                         }
                     )
+                    log_message(
+                        "live-swap",
+                        "LIVE EXIT DID NOT SELL %s: swap reason %r, broadcast=%s, "
+                        "tx=%r, route=%r -- the position is still held and still "
+                        "blocks every entry on this symbol"
+                        % (symbol, swap_reason or "(none)", swap_broadcast,
+                           exit_tx_hash or "(none)", exit_tx_route or "(none)"),
+                        severity="error",
+                    )
                     self.metrics.feedback(
                         "live_trading",
                         severity=FeedbackSeverity.CRITICAL,
                         label="exit_failed",
-                        details={"symbol": symbol, "quote_received": quote_received, "base_sold": base_sold},
+                        details={
+                            "symbol": symbol,
+                            "quote_received": quote_received,
+                            "base_sold": base_sold,
+                            "swap_reason": swap_reason,
+                            "swap_broadcast": swap_broadcast,
+                        },
                     )
                     return decision
 
@@ -9076,14 +9245,40 @@ class TradingBot:
                     },
                 })
                 return decision
-            protective_exit = str(reason or "").startswith(
-                ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
-            )
+            protective_exit = is_protective_exit(reason)
+            # THE STALE CLOCK IS A VERDICT, NOT A MARGINAL EXIT.
+            #
+            # This gate exists to stop a simulated `confidence_drop` or
+            # `negative_margin` churning the ghost book with sub-fee round
+            # trips it would not really have taken, and it releases anything
+            # older than `max_hold_sec` because a position has to resolve
+            # eventually. "timed-exit" now IS that eventual resolution -- rule 4
+            # only produces it once the clock has run out AND the position has
+            # failed to cover its own round trip -- so refusing it here just
+            # deferred the same close to the 3600s release, 45 minutes later.
+            #
+            # It did worse than defer it on a FLAT position. Measured on the
+            # book 2026-09-05 16:10: COMP-USDC sat at exactly +0.000% for 35.6
+            # minutes and CBBTC-USDC at +0.077% for 22, and before rule 4 was
+            # widened no rule proposed an exit for either, so neither ever
+            # reached this gate to be released by it. They were cleared, if at
+            # all, by the cross-strategy eviction -- which frees the slot while
+            # booking nothing, and an entry that leaves no outcome is the
+            # evidence leak graduation starves on.
+            #
+            # Letting it through does not invent a loss. It books the loss the
+            # simulation already incurred, at the moment it was incurred rather
+            # than 45 minutes of drift later, and a ghost book that refuses to
+            # record its bad round trips reads better than the live wallet it
+            # is supposed to predict. Protective exits pass here for the same
+            # reason they bypass the live gate above.
+            stale_verdict = str(reason or "").startswith("timed-exit")
             if (
                 (not pos_is_live)
                 and economic_profit <= 0
                 and (sample_ts - pos.get("entry_ts", pos.get("ts", sample_ts))) < max_hold_sec
                 and not protective_exit
+                and not stale_verdict
             ):
                 # A proposed exit is not a completed outcome. It must not
                 # increment trades, losses, strategy learning, or P&L.
