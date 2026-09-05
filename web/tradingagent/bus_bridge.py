@@ -175,6 +175,93 @@ def conflicts_for(symbols: List[str], window_sec: float = 86400
             if c["symbol"].upper() in wanted}
 
 
+def moonlight_window(commitment: Dict[str, Any],
+                     *, round_trip_sec: float = 300.0) -> Dict[str, Any]:
+    """The slack inside a commitment -- time that is free to earn in.
+
+    A commitment is a DEADLINE, not a prohibition. The teenager who has to be
+    home by curfew is not thereby forbidden to leave; they are forbidden to be
+    late. The hours in between are theirs, and what they earn in them is
+    theirs too.
+
+    That is the difference between this and treating a scheduled position as
+    a blocker. A 3-day horizon does not mean the capital is busy for three
+    days -- it means it must be back in three days. If a round trip resolves
+    in ten minutes, that window holds roughly 430 of them, and refusing all
+    of them to protect a deadline three days out is not prudence, it is
+    leaving the whole night unused.
+
+    Returns how many round trips fit, and how much slack is left after
+    reserving one full trip as the margin for getting home.
+    """
+    due_in = commitment.get("due_in_sec")
+    if due_in is None:
+        # No deadline recorded means no window can be computed. Silence is not
+        # permission: treat it as fully committed until it exits.
+        return {"trips": 0, "slack_sec": 0.0, "reason":
+                f"{commitment.get('symbol')} has no recorded horizon, so no "
+                f"return window can be measured"}
+
+    due_in = float(due_in)
+    trip = max(60.0, float(round_trip_sec))
+
+    # RESERVE THE TRIP HOME. Never plan into the last round trip's worth of
+    # time -- being late is the one failure that is not recoverable, because
+    # the scheduler is sizing its next leg against capital it expects back.
+    usable = due_in - trip
+    if usable <= 0:
+        return {"trips": 0, "slack_sec": 0.0, "reason":
+                f"{commitment.get('symbol')} is due back in {due_in / 60:.1f} "
+                f"min, which is inside the {trip / 60:.1f} min a round trip "
+                f"needs -- there is no night left to go out in"}
+
+    trips = int(usable // trip)
+    return {
+        "trips": trips,
+        "slack_sec": round(usable, 1),
+        "reason": (
+            f"{commitment.get('symbol')} is due back in {due_in / 60:.1f} min. "
+            f"After reserving {trip / 60:.1f} min to get home, {usable / 60:.1f} "
+            f"min are free -- about {trips} round trip(s) of earning inside a "
+            f"commitment that is not otherwise doing anything."),
+    }
+
+
+def compounding_plan(realised_profit_usd: float, clip_usd: float,
+                     *, reinvest_fraction: float = 0.5) -> Dict[str, Any]:
+    """What the earnings should become: a bigger operation, not a bigger spend.
+
+    The soda money does not get spent on sodas. It buys a second cooler, then
+    a van. Profit that is simply re-risked at the same clip grows nothing --
+    the operation stays the size it was and only the variance grows.
+
+    So realised profit raises the CLIP, which is the size of the next trade,
+    and does so on the half that is kept working while the other half stays
+    banked. That is the difference between a business that compounds and one
+    that merely churns.
+    """
+    profit = float(realised_profit_usd or 0.0)
+    clip = max(0.01, float(clip_usd or 0.0))
+
+    if profit <= 0:
+        return {"new_clip_usd": clip, "reinvested_usd": 0.0,
+                "reason": "nothing realised yet; the operation stays its "
+                          "current size"}
+
+    reinvest = profit * max(0.0, min(1.0, float(reinvest_fraction)))
+    new_clip = clip + reinvest
+    return {
+        "new_clip_usd": round(new_clip, 6),
+        "reinvested_usd": round(reinvest, 6),
+        "banked_usd": round(profit - reinvest, 6),
+        "reason": (
+            f"${profit:.4f} realised: ${reinvest:.4f} back into the clip "
+            f"(${clip:.4f} -> ${new_clip:.4f}), ${profit - reinvest:.4f} "
+            f"banked. The next trade is bigger because the last one worked, "
+            f"which is the only way small money becomes large money."),
+    }
+
+
 def return_plan(commitment: Dict[str, Any], clip_usd: float) -> Dict[str, Any]:
     """What it would take to get this capital back on the bus in time.
 
@@ -242,4 +329,9 @@ def bus_briefing(clip_usd: float = 0.0, window_sec: float = 86400) -> List[str]:
     for commitment in commitments[:8]:
         plan = return_plan(commitment, clip_usd)
         lines.append("  " + plan["detail"])
+        # ...and what the commitment leaves FREE. A deadline three days out is
+        # not three days of idleness; it is three days minus one trip home.
+        window = moonlight_window(commitment)
+        if window.get("trips", 0) > 0:
+            lines.append("    " + window["reason"])
     return lines
