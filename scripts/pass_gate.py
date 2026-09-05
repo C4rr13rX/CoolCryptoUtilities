@@ -83,6 +83,12 @@ GATE_TESTS = (
     # 57% of a $1.50 clip leaves $0.65 of dust, which is below the notional
     # floor the ENTRY gate enforces and holds the symbol slot for an hour.
     "test_a_harvest_does_not_strand_a_position_we_would_refuse_to_open.py",
+    # The guard that decides whether a stop can be enforced at all. It has
+    # produced the two largest single losses in the book when it was wrong --
+    # BSTONK -18.40% and BPAD -16.66%, the latter -$0.25493 in 34 minutes,
+    # larger on its own than the entire live net. Money path by any reading,
+    # and it was not in this list while it was failing.
+    "test_a_stop_must_survive_one_tick.py",
 )
 
 

@@ -580,6 +580,11 @@ class SwapValidator:
         median_gap = float(np.median(gaps)) if gaps.size else 0.0
         returns = np.diff(prices) / prices[:-1]
         adjacent = np.isfinite(returns)
+        # EVERY move the feed reported, before the gap clause runs. The
+        # dispersion below must not see these -- a fourteen-hour hole is not
+        # one tick's move -- but the stop-enforceability clause must, and it is
+        # the only consumer. See the jump statistics at the end of this method.
+        spanning = returns[np.isfinite(returns)]
         if median_gap > 0 and self.volatility_max_gap_factor > 0:
             # A fourteen-hour hole between two prints is not one tick's move.
             adjacent &= gaps <= median_gap * self.volatility_max_gap_factor
@@ -658,11 +663,51 @@ class SwapValidator:
         #
         # Computed here rather than in a second pass so it can never be read
         # off a different series than the volatility it accompanies -- same
-        # window, same outlier filter, same gap filter, same returns.
-        magnitudes = np.abs(returns)
+        # window, same outlier filter, same returns.
+        #
+        # ACROSS THE GAPS, NOT WITHIN THEM. This is the one statistic that must
+        # NOT use the gap-filtered series, and reading it off `returns` is what
+        # let BPAD-USDC through on 2026-09-05. The gap clause is right for the
+        # dispersion above -- a hole is not one tick's move -- but the question
+        # here is "how far can price run between two consecutive LOOKS", and a
+        # hole is precisely such an interval. Discarding gap-spanning returns
+        # removes exactly the intervals the stop has to survive, so the guard
+        # was measuring the intra-burst jitter and calling it the tail.
+        #
+        # BPAD-USDC ticks in bursts: median gap 5.7s, so `max_gap_factor * 4`
+        # discarded every return spanning more than 22.8s -- 37 of its 88
+        # returns, 42% of the series. What survived read p99 0.859%, inside the
+        # 1.5% budget, and the guard allowed a live entry at 13:48:02. The
+        # gap-inclusive tail of the SAME window is 183.488%. Forty-seven
+        # seconds after entry the feed printed -61.36%, then went silent for 28
+        # minutes; the position was booked out at -16.66% for -$0.25493, which
+        # is larger than the entire live book's net and is what demoted
+        # atf_static off live trading the same afternoon.
+        #
+        # The dropped returns are not counted as contamination either --
+        # `vol_contamination` is scored on the outlier filter alone -- so 42%
+        # of the series vanished with nothing objecting.
+        #
+        # Scored over the live feed on 2026-09-05, this changes the verdict for
+        # exactly the pairs it should. The three that produced live WINS are
+        # untouched: AERO 0.246% -> 0.455%, CBBTC 0.000% -> 0.123%, CBETH
+        # 0.000% -> 0.000%, all far inside the 1.5% budget, and COMP, CBXRP and
+        # CBADA stay open too. The pairs that flip to refused are BPAD (183%,
+        # -$0.25493), BSTONK (1.073% -> 11.180%) and BASECAT (1.327% ->
+        # 4.326%) -- which are the two the comment above already claims are
+        # refused for realising -18.40% and for being the unsellable stub. The
+        # filtered statistic had quietly stopped doing what this clause says it
+        # does; this restores it.
+        magnitudes = np.abs(spanning) if spanning.size else np.abs(returns)
         diag["vol_jump_p50"] = float(np.quantile(magnitudes, 0.50))
         diag["vol_jump_p99"] = float(np.quantile(magnitudes, 0.99))
         diag["vol_jump_max"] = float(magnitudes.max())
+        # The gap-filtered tail, kept for diagnostics so the two readings can be
+        # compared in the metrics rather than only in this comment.
+        adjacent_magnitudes = np.abs(returns)
+        diag["vol_adjacent_jump_p99"] = float(
+            np.quantile(adjacent_magnitudes, 0.99)
+        )
         return float(np.std(returns) * np.sqrt(max(steps, 1.0))), True, diag
 
     def plan_transition(

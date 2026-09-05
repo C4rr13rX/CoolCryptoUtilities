@@ -194,15 +194,19 @@ def test_the_budget_tracks_the_stop_the_exit_path_enforces(monkeypatch) -> None:
     assert decision.reason.startswith("stop_loss:")
 
 
-def test_the_tail_is_read_off_the_filtered_series() -> None:
+def test_the_tail_is_read_off_the_outlier_filtered_series() -> None:
     """A denomination artifact must not be reported as a tick jump.
 
     SPACEX-USDC carries two assets under one ticker, eleven orders of
     magnitude apart. If the jump statistic were computed before the outlier
-    and gap filters, that pair alone would produce a 1.29e11 "tick move" and
-    this clause would inherit the exact bug the volatility clause was fixed
-    for. Same window, same filters, same returns -- so a contaminated feed is
-    refused as *unmeasurable*, never as a measured tail.
+    filter, that pair alone would produce a 1.29e11 "tick move" and this
+    clause would inherit the exact bug the volatility clause was fixed for.
+    Same window, same outlier filter -- so a contaminated feed is refused as
+    *unmeasurable*, never as a measured tail.
+
+    The GAP filter is deliberately not applied to this statistic; see
+    ``test_a_jump_across_a_feed_gap_still_counts_against_the_stop`` for why a
+    move across a hole is the one thing the stop must be judged against.
     """
     real = [(i * 95.0, 1.5e-09 * (1.001 if i % 2 else 0.999)) for i in range(1, 40)]
     impostor = [(0.0, 524.37)]
@@ -219,3 +223,62 @@ def test_the_tail_is_read_off_the_filtered_series() -> None:
     # measured "jump" and the pair is not refused on a number no market made.
     assert metrics["vol_jump_max"] < 0.01
     assert "stop_unenforceable" not in reasons
+
+
+def test_a_jump_across_a_feed_gap_still_counts_against_the_stop() -> None:
+    """BPAD-USDC: the gap filter hid the only move that mattered.
+
+    A pair that ticks in bursts has a small median gap, so ``max_gap_factor``
+    discards every return that spans a quiet stretch -- which is precisely
+    where a thin book runs away. Measured on the live feed for the 7200s
+    before the 2026-09-05 13:48:02 live entry: median gap 5.7s, so the clause
+    dropped 37 of 88 returns (42% of the series), and what survived read
+    p99 0.859% -- inside the 1.5% budget, so the guard allowed the entry.
+    The gap-inclusive tail of that same window is 183.488%.
+
+    Forty-seven seconds after entry the feed printed -61.36%, then went dark
+    for 28 minutes. The position was booked out at -16.66% for -$0.25493 --
+    larger than the entire live book's net (-$0.13496), and the loss that
+    demoted atf_static off live trading that afternoon.
+
+    The dropped returns are not counted as contamination either, so 42% of
+    the series vanished with nothing objecting.
+    """
+    # BPAD's shape: bursts of prints 2s apart separated by quiet holes, where
+    # every real move happens across a hole and nothing inside a burst comes
+    # near the stop. The whole span stays inside the guard's 7200s lookback,
+    # and the steps alternate sign so the price never leaves its own scale.
+    points = []
+    price = 1.0
+    age = 0.0
+    for burst in range(11):
+        if burst:
+            # The move that matters, taken across the hole that precedes it.
+            price *= 0.91 if burst % 2 else 1.0989
+        for _ in range(4):
+            price *= 1.0002
+            points.append((age, price))
+            age += 2.0
+        age += 300.0               # the hole
+
+    _v, (allowed, metrics, reasons) = _validate(_feed(points))
+
+    # The window really did hold the whole series -- if the lookback clipped
+    # it, the jumps would be absent for a reason this test is not about.
+    assert metrics["vol_window_samples"] == float(len(points))
+
+    # The gap clause really is discarding a large share of the series...
+    assert metrics["vol_dropped_gaps"] >= 10
+
+    # ...and every 9% step lives in what it discarded, so the old statistic --
+    # still reported, as vol_adjacent_jump_p99 -- cannot see any of them.
+    assert metrics["vol_adjacent_jump_p99"] < metrics["stop_jump_budget"]
+
+    # The statistic the clause actually reads does see it, and refuses.
+    assert metrics["vol_jump_p99"] >= metrics["stop_jump_budget"]
+    assert "stop_unenforceable" in reasons
+    assert allowed is False
+
+    # Refused for the RIGHT reason: the dispersion bound is not what objected.
+    assert metrics["volatility"] <= _v.max_volatility
+    assert "volatility" not in reasons
