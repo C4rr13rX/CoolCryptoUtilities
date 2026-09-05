@@ -246,6 +246,42 @@ class Lineage:
         return self.generations_without_gain >= STALE_GENERATIONS
 
 
+def publish(result: Dict[str, Any], *, min_t: float = 2.0) -> Dict[str, Any]:
+    """Write the survivors where the strategy registry can pick them up.
+
+    A rule only becomes tradeable by passing through here, and only if it
+    cleared ``min_t`` on data it was never fitted to. Publishing is
+    deliberately a separate step from searching: a search that automatically
+    armed whatever it found would put every random fluctuation in front of
+    real money.
+
+    Rules already published are replaced by name, so a rule that stops
+    clearing the bar disappears rather than lingering on an old statistic.
+    """
+    import json
+    from pathlib import Path
+
+    if not result.get("ok"):
+        return {"published": 0, "reason": result.get("reason", "search failed")}
+
+    keep = [s for s in (result.get("survivors") or [])
+            if float(s.get("holdout_t") or 0.0) >= min_t]
+
+    path = Path(__file__).resolve().parents[2] / "data" / "discovered_rules.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(keep, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        return {"published": 0, "reason": f"{type(exc).__name__}: {exc}"}
+
+    return {
+        "published": len(keep),
+        "path": str(path),
+        "rules": [{"rule": r["rule"], "holdout_t": r["holdout_t"],
+                   "mean_excess": r.get("holdout_mean_excess")} for r in keep],
+    }
+
+
 def evolve(rows: Sequence[Dict[str, Any]], *, cost: float = 0.0065,
            generations: int = 12, population: int = 24,
            seed: int = 20260905,
@@ -403,13 +439,30 @@ def evolve(rows: Sequence[Dict[str, Any]], *, cost: float = 0.0065,
             t, n, detail = _score(genome, holdout_rows, cost)
             if t is None or t <= 1.7:
                 continue
+            # The mean excess the selected group actually earned, which is
+            # what a strategy sizes against. A t-statistic says a difference
+            # exists; it does not say how big.
+            inside = [float(r["return"]) - cost for r in holdout_rows
+                      if genome.selects(r) is True
+                      and isinstance(r.get("return"), (int, float))]
+            mean_excess = statistics.mean(inside) if inside else 0.0
+
             survivors.append({
+                "id": description,
                 "rule": description,
+                # Machine-readable, so the strategy layer never has to parse
+                # the description back into predicates.
+                "conditions": [
+                    {"feature": c.feature, "op": c.op, "value": c.value}
+                    for c in genome.conditions
+                ],
                 "lineage": genome.lineage,
                 "holdout_t": round(t, 3),
                 "holdout_selected": n,
+                "holdout_mean_excess": round(mean_excess, 6),
                 "fit_t": None if genome.fit_score is None else round(genome.fit_score, 3),
                 "detail": detail,
+                "found_at": time.time(),
             })
 
     survivors.sort(key=lambda s: s["holdout_t"], reverse=True)

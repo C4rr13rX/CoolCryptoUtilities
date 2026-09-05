@@ -85,4 +85,19 @@ def build_default_registry() -> StrategyRegistry:
     # projection is meaningless, and the resulting variants would be a
     # different strategy wearing the same name while reporting into ledger
     # ids that imply it is this one.
-    return StrategyRegistry(base + swept + [MoneyButtonStrategy()])
+    # Rules the genetic search found and the holdout confirmed. Loaded from
+    # data/discovered_rules.json, which only publish() writes and only for
+    # rules that cleared their bar on data they were never fitted to.
+    #
+    # An empty list is the normal state before anything has been discovered,
+    # so this is safe to call unconditionally. A discovered rule gets no
+    # special standing: it graduates through the same ledger, on the same
+    # evidence, and is demoted by the same rules as anything hand-written.
+    try:
+        from trading.strategies.discovered import build_discovered_strategies
+
+        discovered = build_discovered_strategies()
+    except Exception:  # noqa: BLE001 - a bad rules file must not break trading
+        discovered = []
+
+    return StrategyRegistry(base + swept + [MoneyButtonStrategy()] + discovered)
