@@ -93,6 +93,54 @@ class TestGating:
         assert self._rule().evaluate(object(), _Ctx()) is None
 
 
+class TestCandidateProduction:
+    def test_a_satisfied_rule_produces_an_entry(self, monkeypatch):
+        """The end of the chain: search -> publish -> registry -> directive.
+
+        The state must carry base_token and quote_token. make_candidate
+        refuses any pair not quoted in a stable, and a fake state missing
+        those fields returns None for a reason that has nothing to do with
+        the rule -- which is how an earlier version of this test passed while
+        proving nothing.
+        """
+        record = {
+            "id": "hurst-rule", "rule": "hurst > 0.5",
+            "conditions": [{"feature": "hurst", "op": ">", "value": 0.5}],
+            "holdout_t": 2.5, "holdout_mean_excess": 0.05,
+        }
+        monkeypatch.setattr(mod, "_live_features",
+                            lambda state, ctx: {"hurst": 0.72})
+
+        class _State:
+            symbol = "BSTONK-USDC"
+            base_token = "BSTONK"
+            quote_token = "USDC"
+            samples = [(float(i), 1.0 + i * 0.001, 1.0) for i in range(120)]
+
+        candidate = DiscoveredRuleStrategy(record).evaluate(_State(), _Ctx())
+        assert candidate is not None, "a satisfied rule produced no candidate"
+        assert candidate["directive"].action == "enter"
+        assert candidate["directive"].size > 0
+
+    def test_a_non_stable_pair_is_refused(self, monkeypatch):
+        """Base/base pairs carry a token ratio, not a USD price."""
+        record = {
+            "id": "hurst-rule", "rule": "hurst > 0.5",
+            "conditions": [{"feature": "hurst", "op": ">", "value": 0.5}],
+            "holdout_t": 2.5, "holdout_mean_excess": 0.05,
+        }
+        monkeypatch.setattr(mod, "_live_features",
+                            lambda state, ctx: {"hurst": 0.72})
+
+        class _State:
+            symbol = "CBETH-CBBTC"
+            base_token = "CBETH"
+            quote_token = "CBBTC"
+            samples = [(float(i), 1.0 + i * 0.001, 1.0) for i in range(120)]
+
+        assert DiscoveredRuleStrategy(record).evaluate(_State(), _Ctx()) is None
+
+
 class TestLoading:
     def test_rules_below_the_bar_are_never_loaded(self, tmp_path, monkeypatch):
         path = tmp_path / "discovered_rules.json"
