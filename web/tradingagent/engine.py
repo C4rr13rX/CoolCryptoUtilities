@@ -405,6 +405,52 @@ def build_prompt(config: AgentConfig) -> str:
 
 # ------------------------------------------------------------------ act ---
 
+#: How the CLIs say "you have run out". Matched case-insensitively against
+#: stdout and stderr together, because neither guarantees which stream the
+#: message lands on, nor an exit code that separates it from a crash.
+_QUOTA_MARKERS = (
+    "usage limit reached",
+    "rate limit",
+    "quota exceeded",
+    "quota exhausted",
+    "too many requests",
+    "429",
+    "resets at",
+    "upgrade to increase your usage limit",
+    "insufficient_quota",
+)
+
+
+def _parse_reset_epoch(text: str) -> Optional[float]:
+    """When the quota comes back, if the message says so.
+
+    Returns None when it does not. None means "we do not know", and the
+    caller must back off on a fixed schedule rather than guessing a time --
+    a wrong reset time either wastes the window or hammers a closed door.
+    """
+    import re
+
+    # Claude reports a unix timestamp in its rate-limit payload.
+    # Case-insensitive and underscore-optional: the callers lowercase before
+    # calling, but a function that only works when its caller remembers to is
+    # a trap for the next one. "resets_at", "resetsAt" and "RESETS AT" are
+    # all the same fact.
+    match = re.search(r'"?resets?[_ ]?at"?\s*[:=]?\s*"?(\d{10,13})',
+                      text, re.IGNORECASE)
+    if match:
+        try:
+            value = float(match.group(1))
+        except (TypeError, ValueError):
+            return None
+        if value > 1e12:                  # milliseconds
+            value /= 1000.0
+        # Sanity: a reset more than a day out is a parse error, not a wait.
+        now = time.time()
+        if now < value < now + 86400:
+            return value
+    return None
+
+
 def _decide(prompt: str, agent: str, timeout: int = 900) -> Dict[str, Any]:
     """Ask the LLM. Returns the parsed decision, or an error."""
     import shutil
@@ -425,6 +471,26 @@ def _decide(prompt: str, agent: str, timeout: int = 900) -> Dict[str, Any]:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
     text = (out.stdout or "").strip()
+
+    # A QUOTA WALL IS NOT A FAILED PASS.
+    #
+    # When the model session runs out, the CLI exits with a message rather
+    # than a decision. Treated as an ordinary error the worker retries on its
+    # normal interval, so every cycle until the quota resets spends a process
+    # spawn and produces nothing -- and the run rows read as a string of
+    # failures rather than as "waiting", which is a different fact.
+    #
+    # Detected from the combined output because the CLIs word it differently
+    # and neither guarantees an exit code that distinguishes it from a crash.
+    combined = f"{text}\n{out.stderr or ''}".lower()
+    if any(marker in combined for marker in _QUOTA_MARKERS):
+        return {
+            "error": "quota exhausted",
+            "quota_exhausted": True,
+            "resets_at": _parse_reset_epoch(combined),
+            "raw": combined[:400],
+        }
+
     if not text:
         return {"error": (out.stderr or "no output").strip()[:400]}
 
@@ -546,7 +612,20 @@ def run_once(config: Optional[AgentConfig] = None) -> AgentRun:
         if decision.get("error"):
             run.status = AgentRun.Status.FAILED
             run.report = str(decision.get("error"))[:4000]
-            run.observations = {"raw": decision.get("raw", "")}
+            # Carry the quota facts onto the run so the worker can act on
+            # them. A run that hit the wall is a different fact from one that
+            # crashed, and the worker cannot tell them apart from a status
+            # alone -- it would retry a spent session every cycle until the
+            # window reopened, spawning a process each time for nothing.
+            observations = {"raw": decision.get("raw", "")}
+            if decision.get("quota_exhausted"):
+                observations["quota_exhausted"] = True
+                observations["resets_at"] = decision.get("resets_at")
+                # Attributes rather than only the JSON blob: the worker reads
+                # these directly, and an in-memory attribute survives without
+                # a schema migration.
+                run.resets_at = decision.get("resets_at")
+            run.observations = observations
             run.finished_at = timezone.now()
             run.save()
             return run
