@@ -59,6 +59,38 @@ Rows below ``MIN_NOTIONAL`` are dropped rather than divided through. Dust
 closes make the denominator meaningless: the book holds an OPENHUMAN-USDC
 round trip with a notional of 1.2e-14 whose -6.5e-12 reads as a -54%
 return, which would dominate any mean it entered.
+
+A SECOND, DISTRIBUTION-FREE TEST, because the t-statistic divides by the
+dispersion it is trying to see through. A symbol that loses steadily AND
+erratically carries its own denominator upward and escapes. Measured
+2026-09-05 over 163 closed round trips:
+
+    COMP-USDC   16 trades   mean return -4.333%   t=-1.44   NOT banned
+                            1 of 16 round trips cleared the 0.650% cost
+
+-1.24 of realised loss, second only to BASECAT, sitting inside a threshold
+meant to catch exactly that. So the mean-vs-cost question is asked a second
+way, with no variance in the denominator: of ``n`` round trips, how many
+cleared the round-trip cost? Under "this symbol pays for its own trading"
+that count is Binomial(n, 0.5), and COMP's 1-of-16 is p=0.0003.
+
+SUBORDINATE TO THE MEAN, AND THAT ORDERING IS THE WHOLE SAFETY ARGUMENT. A
+sign test alone would ban this book's best symbol. AERO-USDC clears cost on
+only 3 of 38 round trips (p=0.0000) and is +2.350% per trade and +1.97 in
+total -- it pays through rare large wins, which is a payoff shape, not a
+defect. CBBTC-USDC is the same at 1 of 10. The sign test is therefore only
+ever reached for symbols the ``mean >= ROUND_TRIP_COST`` check has ALREADY
+found to be losing on average; it decides how confident we are that a
+loser is a loser, and it can never overturn a positive mean.
+
+VALIDATED OUT OF SAMPLE on the same 60/40 split as the rule above, on the
+untouched holdout:
+
+    t-test only          bans BASECAT, CBXRP        +1.2030 -> +1.3038
+    t-test + sign test   bans BASECAT, CBXRP, COMP  +1.2030 -> +1.3983
+
+Nearly double the improvement, and the only symbol it adds is the one the
+t-test was demonstrably missing.
 """
 
 from __future__ import annotations
@@ -83,6 +115,11 @@ MIN_SAMPLES = int(os.getenv("SYMBOL_EDGE_MIN_SAMPLES", "5"))
 #: How negative the t-statistic must be. -1.7 is ~p<0.05 one-tailed at these
 #: sample sizes.
 MAX_T = float(os.getenv("SYMBOL_EDGE_MAX_T", "-1.7"))
+
+#: How unlikely the count of cost-clearing round trips must be under a fair
+#: coin before the sign test bans. Same 0.05 the t-threshold approximates, so
+#: the two tests are asking at the same confidence, not at two different ones.
+SIGN_MAX_P = float(os.getenv("SYMBOL_EDGE_SIGN_MAX_P", "0.05"))
 
 #: How long a verdict is reused before the book is re-read. The book changes
 #: by a trade at a time, so recomputing per tick would cost a query for an
@@ -128,6 +165,25 @@ def _t_statistic(values: List[float]) -> float:
     if stdev <= 0.0:
         return 0.0
     return mean / (stdev / math.sqrt(len(values)))
+
+
+def _sign_test_p(values: List[float], threshold: float) -> float:
+    """P(at most this many of n round trips clear ``threshold``), fair coin.
+
+    One-tailed, exact, and with no dispersion in it anywhere -- that is the
+    entire point. Ties (a return exactly at cost) count as NOT clearing, so
+    the frozen-price rows that close at precisely -fee cannot be read as
+    evidence in the symbol's favour.
+
+    Returns 1.0 when there is nothing to test, which reads as "no evidence"
+    and bans nothing.
+    """
+    n = len(values)
+    if n < 2:
+        return 1.0
+    wins = sum(1 for value in values if value > threshold)
+    # sum_{i<=wins} C(n,i) * 0.5^n
+    return math.fsum(math.comb(n, i) for i in range(wins + 1)) * (0.5 ** n)
 
 
 def _load_book(limit: int = 500) -> Dict[str, List[float]]:
@@ -187,7 +243,12 @@ def _rebuild(now: float) -> None:
             continue
         mean = statistics.mean(values)
         if mean >= ROUND_TRIP_COST:
-            continue        # clears its own costs -- not a candidate
+            # Clears its own costs -- not a candidate, and NEITHER test below
+            # runs. This is what keeps the sign test off AERO-USDC (3 of 38
+            # round trips clear cost, p=0.0000, +2.350% per trade) and off
+            # CBBTC-USDC (1 of 10). A payoff carried by rare large wins is a
+            # shape, not a defect; see the module docstring.
+            continue
         # Test the EXCESS return over what the round trip costs, so the null
         # hypothesis is "this symbol pays for its own trading" rather than
         # "this symbol is above zero".
@@ -199,6 +260,20 @@ def _rebuild(now: float) -> None:
                 f"{len(values)} closed round trips at mean return "
                 f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
                 f"(t={t:+.2f} on excess return)",
+            )
+            continue
+        # The mean is below cost but the dispersion swallowed the t. Ask the
+        # same question without a denominator: how many round trips actually
+        # cleared the cost? COMP-USDC is 1 of 16 at t=-1.44.
+        sign_p = _sign_test_p(values, ROUND_TRIP_COST)
+        if sign_p < SIGN_MAX_P:
+            wins = sum(1 for value in values if value > ROUND_TRIP_COST)
+            verdicts[symbol] = (
+                t,
+                f"{len(values)} closed round trips at mean return "
+                f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+                f"-- only {wins} cleared it (sign test p={sign_p:.4f}, "
+                f"t={t:+.2f} did not fire)",
             )
     if verdicts != {k: v for k, v in _cache.items()}:
         for symbol, (t, detail) in sorted(verdicts.items()):

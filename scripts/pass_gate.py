@@ -89,6 +89,12 @@ GATE_TESTS = (
     # larger on its own than the entire live net. Money path by any reading,
     # and it was not in this list while it was failing.
     "test_a_stop_must_survive_one_tick.py",
+    # The other half of the same money question: which symbols may be entered
+    # at all. The ban list is what stops the book's proven destroyers from
+    # being traded again, and its safety property -- that a symbol paid by
+    # rare large wins is never mistaken for a loser -- protects AERO-USDC,
+    # the largest positive line in the book (+1.97 over 38 round trips).
+    "test_a_steady_loser_is_not_saved_by_its_variance.py",
 )
 
 
