@@ -600,6 +600,34 @@ class CodeGraphDataView(LoginRequiredMixin, View):
         return JsonResponse(payload, status=200)
 
 
+class ProfitLogicAuditView(LoginRequiredMixin, View):
+    """Does the money path's LOGIC keep an edge or give it away?
+
+    Sits beside the code graph because it answers the same kind of question
+    about the same code: the graph shows what calls what, this shows whether
+    the arithmetic along those calls can make money.
+
+    It reports on the CODE, never on whether the system is profitable --
+    whether an edge exists is a question for measurement, and no amount of
+    reading can answer it.
+    """
+
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        try:
+            from services.profit_logic_audit import audit
+
+            return JsonResponse(audit(), status=200)
+        except Exception as exc:  # noqa: BLE001
+            # A broken auditor must not take the panel down with it.
+            return JsonResponse(
+                {"verdict": "UNAVAILABLE",
+                 "summary": f"{type(exc).__name__}: {exc}",
+                 "findings": [], "counts": {"total": 0}},
+                status=200)
+
+
 class CodeGraphRepositoryView(LoginRequiredMixin, View):
     login_url = "core:index"
 
