@@ -85,10 +85,28 @@ function Wait-Port($port, $name, $maxSeconds = 60) {
 
 Write-Host "[1/5] Brain substrate"
 $brainStarter = "$brainProject\start_node.ps1"
+# A PROCESS IS NOT A SERVICE. The check used to be "does a process named
+# w1z4rd_node exist", which a process that started and never bound :8090
+# passes forever -- so the launcher saw "already running", skipped it, and
+# the brain stayed unreachable indefinitely. Observed 2026-09-05: PID 1276
+# alive since 08:38 with nothing listening on 8090 and /health actively
+# refusing the connection, across several launcher runs that each reported
+# it healthy.
+#
+# The port is what callers actually need, so the port is what is checked. A
+# process that is up but not serving is treated as down and restarted --
+# after being stopped, because two of them would fight over the port.
 $brainProc = Find-Process "w1z4rd_node"
-if ($brainProc) {
+$brainListening = $null -ne (Get-NetTCPConnection -LocalPort $brainPort -State Listen -ErrorAction SilentlyContinue)
+if ($brainProc -and -not $brainListening) {
+    Write-Host "  pid=$($brainProc.Id) is running but NOT listening on :$brainPort -- restarting it"
+    Stop-Process -Id $brainProc.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $brainProc = $null
+}
+if ($brainProc -and $brainListening) {
     $rssGb = [math]::Round($brainProc.WorkingSet64 / 1GB, 2)
-    Write-Host "  already running -- pid=$($brainProc.Id) RSS=${rssGb}GB"
+    Write-Host "  already running -- pid=$($brainProc.Id) RSS=${rssGb}GB, serving :$brainPort"
 } elseif (Test-Path $brainStarter) {
     Write-Host "  starting via start_node.ps1 (background, non-blocking)..."
     Start-Process -FilePath "powershell.exe" `
@@ -239,8 +257,8 @@ if ($agentProc) {
             -ArgumentList "-X","utf8","$webRoot\manage.py","tradingagent_worker" `
             -WorkingDirectory $webRoot `
             -WindowStyle Hidden `
-            -RedirectStandardOutput "$logsDirgent_worker.log" `
-            -RedirectStandardError  "$logsDirgent_worker.err.log"
+            -RedirectStandardOutput (Join-Path $logsDir "agent_worker.log") `
+            -RedirectStandardError  (Join-Path $logsDir "agent_worker.err.log")
         Start-Sleep -Seconds 2
         $agentProc = Find-PythonProcess "tradingagent_worker"
         if ($agentProc) { Write-Host "  started -- pid=$($agentProc.ProcessId)" }

@@ -52,18 +52,21 @@ def _processes() -> Dict[str, bool]:
     A dark pipeline is the highest-priority bug there is, so this is checked
     first and reported first.
     """
+    # Matched against the command line, so these are the strings that
+    # actually appear there. "wizard" does not: the brain substrate is
+    # w1z4rd_node.exe, and looking for the English spelling reported it DOWN
+    # while it was running.
     wanted = {
         "production": "start_production",
         "agent_worker": "tradingagent_worker",
         "web": "run_waitress",
-        "wizard_node": "wizard",
+        "wizard_node": "w1z4rd_node",
     }
     found = {name: False for name in wanted}
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process -Filter \"Name='python.exe' or "
-             "Name='pythonw.exe' or Name='node.exe'\" | "
+             "Get-CimInstance Win32_Process | "
              "Select-Object -ExpandProperty CommandLine"],
             capture_output=True, text=True, timeout=60).stdout or ""
     except Exception:  # noqa: BLE001 - cannot check is not the same as down
