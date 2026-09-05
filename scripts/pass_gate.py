@@ -95,6 +95,13 @@ GATE_TESTS = (
     # rare large wins is never mistaken for a loser -- protects AERO-USDC,
     # the largest positive line in the book (+1.97 over 38 round trips).
     "test_a_steady_loser_is_not_saved_by_its_variance.py",
+    # What the entry gate believes a trade is worth before it spends the money.
+    # It believed the strategy's own advertisement -- atf_static builds its
+    # target as price*1.05, so the gate asked "is 5% more than the cost?" and
+    # approved all 20 live entries ever taken. They delivered a median -0.25%
+    # gross. Every one was sized below the $3.25 clip at which that strategy
+    # breaks even, which is the whole of the -0.186371 book.
+    "test_an_entry_is_credited_with_what_it_delivered.py",
 )
 
 

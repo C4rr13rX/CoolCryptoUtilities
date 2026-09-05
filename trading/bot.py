@@ -67,6 +67,7 @@ from trading.constants import (
     GAS_PROFIT_BUFFER,
     FALLBACK_NATIVE_PRICE,
 )
+from trading.edge_estimate import estimate_gross_return
 from trading.micro_profit import evaluate_micro_profit, roundtrip_gas_usd
 from trading.brain import (
     NeuroGraph,
@@ -104,6 +105,20 @@ def _env_fraction(name: str, default: float, *, lo: float = 0.0, hi: float = 1.0
     if value != value:                                   # NaN
         return default
     return max(lo, min(hi, value))
+
+
+def _entry_profit_floor_ratio() -> float:
+    """How much of a round trip's cost its expected profit must be worth.
+
+    A RATE, not dollars, deliberately. The floor it replaces was a flat $0.02,
+    which demands 2.67% of a $0.75 clip and 0.33% of a $6.00 one -- so what the
+    gate required moved with the clip size for no reason anyone chose. Cost
+    already scales with notional and is subtracted in full before this applies;
+    what is left for a floor to absorb is estimation error, which scales with
+    the estimate. Bounded above at 1.0: a trade required to earn more than
+    twice its own cost is a gate that blocks everything.
+    """
+    return _env_fraction("ENTRY_MIN_PROFIT_COST_RATIO", 0.25, lo=0.0, hi=1.0)
 
 
 WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
@@ -1676,6 +1691,62 @@ class TradingBot:
             if cap is not None:
                 clip = min(clip, cap)
         return max(0.0, clip)
+
+    def _live_capital_cap_usd(self) -> float:
+        """Total USD the plan sanctions across ALL open live positions at once.
+
+        ``live_capital_cap_usd`` has been published by the capital plan the
+        whole time and was read at exactly one place -- ``_live_clip_usd``,
+        where it caps a SINGLE clip. Nothing ever compared it against the sum
+        of what is already deployed, so "cap live capital at $6.00" was in
+        force as "cap each entry at $6.00" and the book could hold any number
+        of them. It did not show while the clip was $0.75 and two positions
+        were $1.50 of a $18.19 wallet; at a clip sized to clear its own costs
+        it is the difference between risking $6.00 and risking the wallet.
+
+        Returns 0.0 when no plan is loaded, which disables the guard rather
+        than blocking every entry -- same convention as ``_live_clip_usd``.
+        """
+        plan = self._transition_plan if isinstance(self._transition_plan, dict) else {}
+        capital = plan.get("capital_plan")
+        if not isinstance(capital, dict):
+            return 0.0
+        try:
+            value = float(capital.get("live_capital_cap_usd"))
+        except (TypeError, ValueError):
+            return 0.0
+        return value if math.isfinite(value) and value > 0.0 else 0.0
+
+    def _live_deployed_usd(self, *, exclude_symbol: str = "") -> float:
+        """USD of entry cost currently held in live positions.
+
+        Measured at cost basis, not at market: the question this answers is
+        "how much of the sanctioned capital is already committed", and a
+        position that has moved against us has not released the capital it
+        spent. ``quote_spent`` is the money that actually left the wallet, so
+        it is preferred over size * entry_price where both exist.
+        """
+        total = 0.0
+        for symbol, pos in (self.positions or {}).items():
+            if not isinstance(pos, dict):
+                continue
+            if str(pos.get("mode") or "") != "live":
+                continue
+            if exclude_symbol and str(symbol) == str(exclude_symbol):
+                continue
+            spent = 0.0
+            try:
+                spent = float(pos.get("quote_spent") or 0.0)
+            except (TypeError, ValueError):
+                spent = 0.0
+            if spent <= 0.0:
+                try:
+                    spent = float(pos.get("size") or 0.0) * float(pos.get("entry_price") or 0.0)
+                except (TypeError, ValueError):
+                    spent = 0.0
+            if math.isfinite(spent) and spent > 0.0:
+                total += spent
+        return total
 
     def _live_trade_slippage_bps(self) -> int:
         raw = os.getenv("LIVE_TRADE_SLIPPAGE_BPS", os.getenv("SCHEDULER_SLIPPAGE_BPS", "75"))
@@ -6498,6 +6569,31 @@ class TradingBot:
                 decision["live_clip_raised_from_usd"] = float(trade_size * price)
                 trade_size = clip_units
 
+        # THE CAP ON LIVE CAPITAL HAD NEVER BEEN APPLIED TO LIVE CAPITAL.
+        #
+        # `live_capital_cap_usd` ($6.00) was read only inside _live_clip_usd(),
+        # where it bounds ONE clip. Nothing summed what was already deployed,
+        # so the plan's "cap live capital at $6.00" was enforced as "cap each
+        # entry at $6.00" and the book could open as many as the wallet funded.
+        # Invisible at a $0.75 clip; at a clip sized to clear its own costs it
+        # is the difference between risking the sanctioned $6.00 and risking
+        # the whole $18.19 stable balance.
+        #
+        # An add-on to a held symbol spends new money too, so the position
+        # being added to is excluded from the sum and its new total is what
+        # gets measured against the cap.
+        if entry_spends_real_money and price > 0.0:
+            capital_cap = self._live_capital_cap_usd()
+            if capital_cap > 0.0:
+                deployed = self._live_deployed_usd(exclude_symbol=symbol)
+                headroom_usd = max(0.0, capital_cap - deployed)
+                decision["live_capital_cap_usd"] = float(capital_cap)
+                decision["live_deployed_usd"] = float(deployed)
+                if trade_size * price > headroom_usd:
+                    decision["live_clip_capped_from_usd"] = float(trade_size * price)
+                    trade_size = headroom_usd / price
+                    decision["live_capital_headroom_usd"] = float(headroom_usd)
+
         trade_notional_usd = max(trade_size, 0.0) * max(price, 1e-9)
         # THE FEE THE GATE CHARGES MUST BE THE FEE THIS TRADE PAYS.
         #
@@ -7177,6 +7273,35 @@ class TradingBot:
             gross_return = max(0.0, margin)
             if directive is not None and price > 0.0 and directive.target_price > price:
                 gross_return = (float(directive.target_price) - price) / price
+            # THAT NUMBER IS AN ADVERTISEMENT, NOT A MEASUREMENT.
+            #
+            # atf_static builds target_price as price * 1.05, so the two lines
+            # above asked "is 5% more than the cost?" and answered yes for
+            # every symbol in every market. The target also OVERRODE `margin`,
+            # the brain's actual estimate, so a strategy could not fail this
+            # gate by being wrong -- only by advertising less. All 20 live
+            # entries ever taken were credited +5.0% to +6.1%; they delivered a
+            # median of -0.25% gross and a 27.8% net win rate.
+            #
+            # Real money is therefore gated on what the strategy has actually
+            # delivered (trimmed, from closed round trips), capped by its own
+            # claim -- so this can refuse an entry the old gate allowed and can
+            # never allow one it refused. See trading/edge_estimate.py for the
+            # per-strategy numbers and for why the trimmed mean rather than the
+            # mean or the median.
+            #
+            # The GHOST lane keeps the claim on purpose: a simulated entry is
+            # how a strategy earns the track record this reads, so gating it on
+            # one it does not have yet is a closed loop with no entrance. That
+            # is the shape that once refused 385 of 385 ghost entries.
+            if entry_spends_real_money:
+                edge = estimate_gross_return(
+                    self.db,
+                    getattr(directive, "strategy_id", "") if directive is not None else "",
+                    claimed_return=gross_return,
+                )
+                decision["edge_estimate"] = edge.to_dict()
+                gross_return = edge.value
             # The DOLLAR floor is a real-money argument; the RATE test is not.
             #
             # SMALL_PROFIT_FLOOR_USD ($0.02) exists because a real swap costs
@@ -7237,14 +7362,43 @@ class TradingBot:
                     micro_fixed_cost = max(micro_fixed_cost, float(micro_fixed_override))
                 except (TypeError, ValueError):
                     pass
+            # THE $0.02 FLOOR WAS REACHABLE ONLY ON THE FANTASY 5%.
+            #
+            # SMALL_PROFIT_FLOOR is a flat dollar amount, so what it demands as
+            # a RATE depends entirely on the clip: $0.02 on a $0.75 trade is
+            # 2.67% of notional, four times any edge this pipeline has ever
+            # measured. It never bound before because the gate credited every
+            # entry with 5% -- 5% of $0.75 is $0.0375, and the floor passed by
+            # $0.024 of pure fiction. Feed the same floor an honest edge and it
+            # refuses 20 of 20 live entries: a gate that blocks everything.
+            #
+            # Its stated argument is that a swap costs gas and fees that do not
+            # scale with size. That argument is now made explicitly and twice
+            # over -- `fees` carries the fixed $0.004047 amortised over this
+            # trade's own notional, and `micro_fixed_cost` charges measured
+            # gas on top. Both are subtracted before this floor is consulted,
+            # so a flat floor on top counts the fixed cost a third time.
+            #
+            # What remains for a floor to do is cover ESTIMATION ERROR, and
+            # that scales with the cost being estimated, not with a constant.
+            # So: the expected profit must be worth at least a quarter of what
+            # is being spent to obtain it. Measured atf_static edge 0.576% at a
+            # $6.00 clip nets $0.00707 against a $0.02749 round trip -- 26% of
+            # cost, which passes, thinly and correctly. The same trade at the
+            # $1.50 clip it has actually been taking nets -$0.00451 and is
+            # refused, as it should have been for all 18 settled round trips.
+            profit_floor_usd = 0.0
+            if entry_spends_real_money:
+                estimated_cost_usd = (
+                    max(0.0, fees) * max(0.0, trade_size * price) + micro_fixed_cost
+                )
+                profit_floor_usd = _entry_profit_floor_ratio() * estimated_cost_usd
             micro_profit = evaluate_micro_profit(
                 notional_usd=max(0.0, trade_size * price),
                 gross_return=gross_return,
                 variable_cost_rate=fees,
                 fixed_cost_usd=micro_fixed_cost,
-                minimum_net_profit_usd=(
-                    SMALL_PROFIT_FLOOR if entry_spends_real_money else 0.0
-                ),
+                minimum_net_profit_usd=profit_floor_usd,
             )
             decision["micro_profit"] = micro_profit.to_dict()
             if not micro_profit.viable:
