@@ -5277,6 +5277,30 @@ class TradingBot:
                 self._equilibrium_last_adjust = now
 
             self._buffer.append(sample)
+
+            # ALIVENESS IS RECORDED HERE, ABOVE EVERY EARLY RETURN.
+            #
+            # This is what the comment below the window gate already claimed
+            # ("recorded before anything can return early") and it was not
+            # true: the window gate returns first, and so does the duplicate
+            # signature check. A bot only reported its symbol alive once its
+            # model buffer was FULL.
+            #
+            # That inverts the meaning of the shared tick map at the worst
+            # moment. `reconcile_pairs` adds a bot for a held symbol precisely
+            # so the position can be closed; that bot then starts with an empty
+            # buffer and stays silent in the map for a full window -- at
+            # CBBTC-USDC's measured 50 ticks/h against a 60-step window, over an
+            # hour. For that whole hour every bot in the pool reads the symbol
+            # it just added as DARK, which is the same false reading the shared
+            # map was introduced to end (18 of 25 abandonments on 2026-09-04
+            # were of symbols that had ticked within 3.2 minutes).
+            #
+            # A tick arriving IS the symbol being alive. Whether this bot can
+            # yet form a prediction from it is a separate question, and the
+            # window gate below still answers that one.
+            self._note_symbol_tick(sample.get("symbol", ""), now)
+
             # The model's window, which _ensure_model_bindings may have grown
             # since this bot was constructed. Checking the old value admitted
             # ticks the model could not consume.
@@ -5293,14 +5317,10 @@ class TradingBot:
                 return
             self._last_sample_signature = signature
 
-            # This bot only ever learns that a symbol is ALIVE here, and only
-            # for the symbol in hand. Recorded before anything can return early,
-            # so the darkness sweep below is reading a complete picture of what
-            # has ticked rather than only what survived the gates further down.
-            self._note_symbol_tick(sample.get("symbol", ""), sample_ts)
-            # ...and the sweep runs on ANY symbol's tick, deliberately. A
-            # position on a dead feed is unreachable from its own symbol by
-            # construction, so something else has to be what notices.
+            # The tick was recorded above the window gate -- see there for why.
+            # The sweep runs on ANY symbol's tick, deliberately: a position on a
+            # dead feed is unreachable from its own symbol by construction, so
+            # something else has to be what notices.
             try:
                 self._abandon_dark_feed_positions(now)
                 self._exit_dark_live_positions(now)
@@ -6683,9 +6703,55 @@ class TradingBot:
             # producing genuine cross-horizon variety instead of one signal looping.
             # Take-profit and stop-loss still close early (handled below/elsewhere);
             # this only suppresses flat strategy-emitted exits.
+            # THE LABEL IS A LOOKBACK, NOT A HOLD.
+            #
+            # This table read "@1w" as "hold for a week". That is a misreading
+            # of what the label means. HORIZON_SPECS in
+            # trading/strategies/horizons.py defines each variant as
+            # (label, bar_seconds, window_bars):
+            #
+            #     @5h   =  5m bars over   6h of history
+            #     @12h  = 15m bars over  16h
+            #     @1d   = 30m bars over  32h
+            #     @1w   =  4h bars over 240h
+            #
+            # So "@5h" is a FAST strategy reading five-minute candles, and it
+            # was forbidden to exit for a full hour -- twelve of its own bars.
+            #
+            # The consequence was structural, not cosmetic. MAX_HOLD_SECONDS
+            # is 3600 and the dark-feed sweep abandons an unpriced ghost after
+            # that same hour, while abandonment books NO outcome. Every
+            # variant was therefore reaped before its own exit rule was
+            # legally allowed to fire. Measured over the 7 days to 2026-09-05:
+            # the long-horizon variants took 688 entries and closed 73 (11%)
+            # against 31% for everything else -- 53% of all entries producing
+            # 27% of all closes.
+            #
+            # Graduation needs 20 COMPLETED trades, so only a strategy able to
+            # close could ever build a record. That is the whole reason
+            # atf_static holds the sole live approval: not merit, but that it
+            # carries no @suffix and so was the only entrant permitted to
+            # finish the race.
+            #
+            # Three of its own bars is the rule now -- long enough that a
+            # signal is not churned out inside the candle it was read from,
+            # short enough that every variant resolves well inside the timed
+            # exit and books a real outcome.
+            _HORIZON_BAR_SEC = {
+                "5h": 300.0, "12h": 900.0, "1d": 1800.0,
+                "3d": 3600.0, "5d": 7200.0, "1w": 14400.0,
+            }
+            try:
+                _bars = float(os.getenv("HORIZON_MIN_HOLD_BARS", "3"))
+            except (TypeError, ValueError):
+                _bars = 3.0
+            try:
+                _cap = float(os.getenv("HORIZON_MAX_MIN_HOLD_SEC", "900"))
+            except (TypeError, ValueError):
+                _cap = 900.0
             _HOLD_BY_HORIZON = {
-                "5h": 3600.0, "12h": 7200.0, "1d": 14400.0,
-                "3d": 43200.0, "5d": 86400.0, "1w": 172800.0,
+                _label: min(_bar * _bars, _cap)
+                for _label, _bar in _HORIZON_BAR_SEC.items()
             }
             _pos_sid = str((pos or {}).get("strategy_id") or "")
             _pos_horizon = _pos_sid.split("@")[-1] if "@" in _pos_sid else ""
@@ -10787,13 +10853,53 @@ class TradingBot:
 
         # Same restart guard as the ghost sweep: the tick map starts empty, so
         # on a fresh process every symbol looks infinitely dark. Nothing is
-        # touched until this bot has watched the stream for a full window.
+        # touched until this bot has watched the stream long enough for a live
+        # symbol to have proved itself with a tick.
+        #
+        # That window used to be `dark_after` (3600s) for every position, and
+        # THAT is why this sweep has never fired once since it was written:
+        # measured 2026-09-05 over 24h of trading_ops, the pipeline's longest
+        # unbroken stretch of activity was 36.6 minutes and the median gap
+        # between restarts was under 10. A guard that needs 60 consecutive
+        # minutes on one bot instance, in a process that is recycled every ~10,
+        # is not conservative -- it is unreachable, and it left atf_static (the
+        # only live-approved strategy) holding CBBTC-USDC for 19.8h and
+        # CBXRP-USDC for 19.1h with 100 `entry-refused-duplicate` rows behind
+        # them and zero live trades on the day.
+        #
+        # So the window now depends on WHICH evidence convicts the position:
+        #
+        #  * A position younger than `dark_after` is convicted only by silence
+        #    THIS PROCESS observed, so it still waits out the full window. That
+        #    is the original rule and it is unchanged.
+        #
+        #  * A position OLDER than `dark_after` carries its own evidence. Its
+        #    `entry_ts` is persisted and survives the restart, so the fact that
+        #    it predates this process by hours is not an artifact of the empty
+        #    tick map. All this process has to add is that the symbol is not
+        #    ticking NOW -- and one settle window with no tick says that, for a
+        #    symbol whose p90 inter-tick gap is 406s. It waits `settle`, not an
+        #    hour.
+        #
+        # A healthy symbol is untouched by both branches: if a bot is running
+        # exit rules on it, `_note_symbol_tick` puts it in the shared map within
+        # seconds and `last_tick >= started` clears it below, however old the
+        # position is. Age alone never sells anything -- age only shortens how
+        # long we wait to believe the silence.
         started = self.__dict__.get("_dark_live_watch_since")
         if started is None:
             self._dark_live_watch_since = now
             return 0
-        if now - float(started) < dark_after:
+        started = float(started)
+        watched = now - started
+        settle = self._dark_live_restart_settle_sec()
+        if watched < min(settle, dark_after):
             return 0
+
+        # Snapshot once, under the lock: the map is shared across the pool, so
+        # another bot's stream callback can mutate it mid-sweep.
+        with _SYMBOL_LAST_TICK_LOCK:
+            seen = dict(_SYMBOL_LAST_TICK_TS)
 
         exited = 0
         for symbol, pos in list(self.positions.items()):
@@ -10802,14 +10908,30 @@ class TradingBot:
             if str(pos.get("mode") or "") != "live":
                 continue
 
-            last_tick = float(_SYMBOL_LAST_TICK_TS.get(symbol, 0.0) or 0.0)
-            # A symbol never seen this process is judged from when watching
-            # began, not from epoch -- silence we did not observe is not
-            # evidence.
-            reference = max(last_tick, float(started))
-            silent = now - reference
-            if silent < dark_after:
-                continue
+            last_tick = float(seen.get(symbol, 0.0) or 0.0)
+            entry_ts = float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0)
+            age = now - entry_ts if entry_ts > 0.0 else 0.0
+
+            # Has the symbol ticked at all since this bot started watching? That
+            # is the one question the tick map can answer honestly across a
+            # restart; `last_tick` from a previous process is not evidence
+            # about this one.
+            ticked_since_start = last_tick >= started
+            if ticked_since_start:
+                # It is alive and reachable -- the ordinary sample-driven exit
+                # rules own it. Only judge it dark once it has gone quiet for a
+                # full window on a feed we are actually watching.
+                if now - last_tick < dark_after:
+                    continue
+                silent = now - last_tick
+            else:
+                required_watch = settle if age > dark_after else dark_after
+                if watched < required_watch:
+                    continue
+                # True silence, not silence-since-boot: the position has had no
+                # price since at least its own entry, so report the honest
+                # number rather than the age of this process.
+                silent = now - max(last_tick, entry_ts) if entry_ts > 0.0 else watched
 
             log_message(
                 "live-swap",
@@ -10845,6 +10967,31 @@ class TradingBot:
             return max(0.0, float(os.getenv("DARK_LIVE_EXIT_SEC", "3600")))
         except (TypeError, ValueError):
             return 3600.0
+
+    def _dark_live_restart_settle_sec(self) -> float:
+        """How long a fresh bot watches before it trusts the tick map at all.
+
+        The restart guard's ONLY job is to give a live symbol a chance to prove
+        itself with a tick, because the shared map starts empty and a naive
+        sweep would otherwise convict the whole book on the first sample. That
+        job does not take an hour: measured over 6h of ``market_stream``,
+        inter-tick gaps run p50 42s, p90 406s, p99 3604s, so a symbol that any
+        bot is actually streaming reappears well inside 600s.
+
+        Deliberately NOT the same number as ``_dark_live_exit_sec``. Tying the
+        two together is what made the sweep unreachable -- the exit threshold
+        wants the p99 gap so an ordinary slow patch is never force-sold, while
+        the restart guard only wants "long enough to see a tick". Conflating
+        them meant the process had to survive an hour to act, and it does not.
+
+        Only ever shortens the wait for a position already older than the
+        darkness window; a young position still waits out the full window
+        regardless of this value.
+        """
+        try:
+            return max(0.0, float(os.getenv("DARK_LIVE_RESTART_SETTLE_SEC", "600")))
+        except (TypeError, ValueError):
+            return 600.0
 
     def _queue_forced_live_exit(self, symbol: str, pos: dict, *, reason: str) -> None:
         """Put a market sell for a stuck live position on the execution queue.
