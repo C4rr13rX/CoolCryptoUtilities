@@ -44,6 +44,30 @@ def _horizon_seconds(label: str) -> Optional[int]:
     return HORIZON_SECONDS.get(str(label or "").strip().lower())
 
 
+def _position_book(conn) -> Optional[set]:
+    """Symbols the bot actually holds, or None if the book cannot be read.
+
+    None is not "empty". An unreadable book must not be taken as proof that
+    nothing is held -- that would let the agent open a position on a symbol it
+    is already carrying. Only a book that parses is allowed to filter.
+    """
+    try:
+        row = conn.execute(
+            "SELECT value FROM kv_store WHERE key = 'state'").fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        state = json.loads(row[0])
+    except Exception:  # noqa: BLE001
+        return None
+    positions = state.get("positions")
+    if not isinstance(positions, dict):
+        return None
+    return {str(sym) for sym in positions}
+
+
 def scheduled_commitments(window_sec: float = 86400) -> List[Dict[str, Any]]:
     """Positions the scheduler has opened and is still expecting to resolve.
 
@@ -87,6 +111,41 @@ def scheduled_commitments(window_sec: float = 86400) -> List[Dict[str, Any]]:
                 }
             else:
                 entries.pop(symbol, None)
+
+        # AN ENTRY IS ALSO CLEARED BY THINGS THAT ARE NOT AN EXIT.
+        #
+        # Reconstructing "still open" from entry-minus-exit rows misses every
+        # other way a position leaves the book, and those are the MAJORITY:
+        # the dark-feed sweep abandons a position without booking an exit (466
+        # abandonments in 24h, by design -- marking out against an 11-day-old
+        # price would fabricate the outcome), and slot releases and phantom
+        # drops do the same.
+        #
+        # Measured 2026-09-05: trading_ops showed 1130 of 1745 entries with no
+        # matching exit, and 26 symbols "held" for 218-344 hours, while the
+        # persisted position book held ZERO positions. The agent believed it
+        # was carrying PEPE 487 minutes past a 30-minute horizon and spent
+        # every one of 33 runs sweeping positions that did not exist -- so it
+        # considered only PEPE and CBZEC and never looked at a new token,
+        # while WALDO, ZZZ, KEYCAT, JACKET and CRUX all appeared on the feed.
+        for release_status in ("position-released", "position-abandoned-dark-feed",
+                               "live-position-dropped-phantom"):
+            for (symbol,) in conn.execute(
+                    "SELECT symbol FROM trading_ops WHERE ts > ? AND status = ?",
+                    (now - window_sec, release_status)):
+                entries.pop(str(symbol or ""), None)
+
+        # THE BOOK IS THE TRUTH; THE LOG IS A NARRATIVE OF IT.
+        #
+        # Even with every release status accounted for, a reconstruction can
+        # only ever be as complete as the list of statuses someone remembered
+        # to enumerate. The persisted book is what the bot actually holds, so
+        # anything absent from it is not a commitment however its log rows
+        # read. Used as a FILTER rather than a source, because the book
+        # carries no horizon and this function's whole job is deadlines.
+        book = _position_book(conn)
+        if book is not None:
+            entries = {sym: rec for sym, rec in entries.items() if sym in book}
 
         for record in entries.values():
             horizon_sec = record.get("horizon_sec")
