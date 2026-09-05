@@ -284,6 +284,18 @@ class AgentConfig(models.Model):
 
     enabled = models.BooleanField(
         default=False, help_text="Master switch. Off means the agent does nothing.")
+    #: Whether the launcher starts the worker when the machine boots.
+    #:
+    #: Separate from `enabled` on purpose. `enabled` is "should the agent act
+    #: on this pass"; this is "should the worker process exist at all". Left
+    #: on by default because the failure mode of an agent that quietly did
+    #: not start is a day with no trades, which is exactly what this stack
+    #: exists to prevent -- and the launcher treats an unreadable setting as
+    #: yes for the same reason.
+    start_at_boot = models.BooleanField(
+        default=True,
+        help_text="Start the agent worker automatically when the machine "
+                  "boots. Turn off to start it by hand instead.")
     #: Ghost is the default and the only safe starting point. Real money is
     #: unlocked by measured results, never by configuration alone.
     tier = models.CharField(max_length=16, choices=RiskTier.choices,

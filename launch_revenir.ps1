@@ -213,6 +213,82 @@ if ($evolutionProc) {
     Write-Host "  WARN: evolution service or supervisor script is missing"
 }
 
+# -- 6. trading agent worker ----------------------------------------------
+#
+# The reading agent that hunts trades. Governed by its own start_at_boot
+# setting so it can be left off deliberately rather than by accident: the
+# launcher asks the database, and only skips when the answer is an explicit
+# no. An unreadable setting starts it -- a pipeline that is silently not
+# trading is the failure this whole stack exists to avoid.
+
+Write-Host ""
+Write-Host "Checking trading agent worker..."
+$agentProc = Find-PythonProcess "tradingagent_worker"
+if ($agentProc) {
+    Write-Host "  already running -- pid=$($agentProc.ProcessId)"
+} else {
+    $startAgent = $true
+    try {
+        $answer = & $python "$webRoot\manage.py" shell -c "from tradingagent.models import AgentConfig; c=AgentConfig.load(); print('YES' if getattr(c,'start_at_boot',True) else 'NO')" 2>$null
+        if ($answer -match 'NO') { $startAgent = $false }
+    } catch {
+        Write-Host "  could not read start_at_boot; starting it (a dark agent is worse)"
+    }
+    if ($startAgent) {
+        Start-Process -FilePath $python `
+            -ArgumentList "-X","utf8","$webRoot\manage.py","tradingagent_worker" `
+            -WorkingDirectory $webRoot `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput "$logsDirgent_worker.log" `
+            -RedirectStandardError  "$logsDirgent_worker.err.log"
+        Start-Sleep -Seconds 2
+        $agentProc = Find-PythonProcess "tradingagent_worker"
+        if ($agentProc) { Write-Host "  started -- pid=$($agentProc.ProcessId)" }
+        else { Write-Host "  WARN: agent worker did not appear in the process list" }
+    } else {
+        Write-Host "  start_at_boot is off -- left stopped, by setting"
+    }
+}
+
+# -- 7. continuous refinement loop + console ------------------------------
+#
+# The loop that keeps fixing the pipeline, and the window that shows what it
+# is doing. The console is separate from the loop on purpose: closing the
+# window must not stop the work.
+
+Write-Host ""
+Write-Host "Checking continuous refinement loop..."
+$refineRoot = "D:\Projects\ContinuousRefinement"
+if (Test-Path "$refineRoot\scripts\loop.py") {
+    $loopProc = Find-PythonProcess "config.revenir.json"
+    if ($loopProc) {
+        Write-Host "  already running -- pid=$($loopProc.ProcessId)"
+    } else {
+        Start-Process -FilePath "python" `
+            -ArgumentList "scripts\loop.py","--config","config.revenir.json" `
+            -WorkingDirectory $refineRoot `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput "$refineRoot\data\revenir-stdout.log" `
+            -RedirectStandardError  "$refineRoot\data\revenir-stderr.log"
+        Start-Sleep -Seconds 2
+        Write-Host "  loop started"
+    }
+
+    # The console. pythonw so it owns a window rather than a console host.
+    $consoleUp = Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.CommandLine -like "*console.py*revenir*" }
+    if ($consoleUp) {
+        Write-Host "  console already open -- pid=$($consoleUp.ProcessId)"
+    } else {
+        Start-Process -FilePath "pythonw" `
+            -ArgumentList "scripts\console.py","--config","config.revenir.json" `
+            -WorkingDirectory $refineRoot
+        Write-Host "  console opened"
+    }
+} else {
+    Write-Host "  WARN: ContinuousRefinement is not installed at $refineRoot"
+}
+
 # -- open the panel --------------------------------------------------------
 
 Write-Host ""
