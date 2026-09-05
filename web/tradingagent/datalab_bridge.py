@@ -22,6 +22,7 @@ cannot see.
 from __future__ import annotations
 
 import sys
+import json
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -47,6 +48,50 @@ MIN_JOB_INTERVAL_SEC = 900.0
 MAX_ADDS_PER_PASS = 8
 
 _last_job_at: Dict[str, float] = {}
+
+
+def _job_already_running(job_type: str) -> Optional[int]:
+    """PID of a job of this type already running, or None.
+
+    Reads the process table rather than any in-process bookkeeping, because
+    the thing that must not happen -- two copies competing for the same
+    upstream endpoints -- is a property of the machine, not of this worker.
+
+    Returns None when the table cannot be read: an unreadable process list is
+    not evidence that nothing is running, but refusing every job because a
+    query failed would be worse than the duplicate it is guarding against.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+             "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"],
+            capture_output=True, text=True, timeout=45).stdout or ""
+    except Exception:  # noqa: BLE001
+        return None
+    if not out.strip():
+        return None
+
+    try:
+        rows = json.loads(out)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(rows, dict):
+        rows = [rows]
+
+    needle = job_type.lower()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cmd = str(row.get("CommandLine") or "").lower()
+        if needle and needle in cmd:
+            try:
+                return int(row.get("ProcessId") or 0) or None
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 def available_jobs() -> Dict[str, str]:
@@ -80,6 +125,30 @@ def request_job(job_type: str, options: Optional[Dict[str, Any]] = None
         return {"ok": False, "reason": "rate_limited",
                 "detail": f"{job_type} ran {int(since)}s ago; "
                           f"minimum interval is {int(MIN_JOB_INTERVAL_SEC)}s"}
+
+    # IS ONE ALREADY RUNNING ON THE MACHINE?
+    #
+    # _last_job_at lives in this process's memory, and the runner's own
+    # status() only knows about jobs IT started. Neither survives a worker
+    # restart, and neither sees a job launched by anything else -- so the
+    # interval was enforced against a clock that resets and a registry that
+    # is not authoritative.
+    #
+    # Measured 2026-09-05: TWO download2000 processes were running at once,
+    # and the agent worker held 156 TCP connections (75 established to
+    # Cloudflare/AWS) for a task that runs once every 15 minutes. Those hit
+    # the SAME endpoints the live price feed polls, and the feed collapsed
+    # from 130 ticks per 10 minutes to zero, logging "network outage
+    # detected; pausing live connections" while all three endpoints were in
+    # fact reachable. No feed means no entries, no exits, and no live trades.
+    #
+    # The process table is the one source that is actually true.
+    running = _job_already_running(job_type)
+    if running:
+        return {"ok": False, "reason": "already_running",
+                "detail": f"{job_type} is already running as PID {running}; "
+                          f"a second copy would compete with the live price "
+                          f"feed for the same endpoints"}
 
     try:
         from services.data_lab import get_runner
