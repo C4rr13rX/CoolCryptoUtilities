@@ -113,8 +113,24 @@ def test_brain_entry_supports_separate_explore_and_live_floors(
     monkeypatch, confidence: float, floor: float | None, accepted: bool
 ) -> None:
     class Bridge:
-        def query_confidence(self, features: str):
+        # The entry path reads through predict_outcome (/brain/predict),
+        # which does NOT write to the substrate. It used to call
+        # query_confidence, which observes the features before integrating --
+        # so asking the brain a question changed it, and the same features
+        # queried eight times returned a confidence with a stdev (0.1232)
+        # larger than its mean (0.0743).
+        #
+        # A fake that answers only the method the code happens to call today
+        # will pass whichever one it calls tomorrow, which is how a test
+        # keeps passing while the money path changes underneath it. This one
+        # raises on the mutating call so that swap cannot go unnoticed again.
+        def predict_outcome(self, features: str):
             return "UP", confidence
+
+        def query_confidence(self, features: str):  # pragma: no cover
+            raise AssertionError(
+                "the entry path must not write to the brain to ask it a "
+                "question; use predict_outcome")
 
     bot = TradingBot.__new__(TradingBot)
     bot._brain_conf_ema = 0.0

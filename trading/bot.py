@@ -4825,7 +4825,28 @@ class TradingBot:
                 price=price, spread_bps=spread_bps,
                 momentum=momentum, confidence=confidence,
             )
-            answer, conf = _brain_bridge().query_confidence(feats)
+            # READ-ONLY. ``query_confidence`` observes the features into
+            # POOL_TEXT before integrating, so asking the brain a question
+            # CHANGES it -- and the answer to a repeated question changes with
+            # it. Measured 2026-09-05, the same features queried eight times
+            # returned confidence 0.0000, 0.0000, 0.3508, 0.0127, 0.1592,
+            # 0.0307, 0.0228, 0.0182: mean 0.0743 with a stdev of 0.1232,
+            # LARGER than the mean, and one call returned None outright.
+            #
+            # ``predict_outcome`` hits /brain/predict, which does not write.
+            # The same six queries through it returned 0.0085 every time --
+            # stdev exactly 0.0000.
+            #
+            # A trade sized off a number that will not reproduce is not sized
+            # off evidence, and a confidence EMA built from one cannot mean
+            # what the graduation gate reads it to mean. Training still writes
+            # to the substrate: that is _brain_record_exit's job, on a
+            # REALISED outcome, which is the only place a write belongs.
+            #
+            # services/ga_service.py and tools/c0d3rV2 already read through
+            # predict_outcome; the money path was the one caller still
+            # mutating the brain to ask it a question.
+            answer, conf = _brain_bridge().predict_outcome(feats)
         except Exception:
             return 0.0
         if not isinstance(decision.get("brain"), dict):
