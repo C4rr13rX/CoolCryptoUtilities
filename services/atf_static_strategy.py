@@ -864,6 +864,91 @@ def _run_ghost_quote_scout(
     }
 
 
+def _add_streamed_candidates(candidates: List[Any], *, max_positions: int) -> List[Any]:
+    """Append symbols we already stream and have already proven can pay.
+
+    ``select_candidates`` builds its list from DexScreener and Gecko NEW
+    POOLS. That is the right job for finding what just appeared, and it means
+    a symbol we have streamed for a week -- whose edge, motion and
+    stop-survivability are already measured -- can NEVER become a candidate,
+    because it is not new.
+
+    Measured 2026-09-06, one hour after production came back: 79% of ghost
+    candidates were offered on symbols the gates refuse, and eleven of the
+    thirteen symbols passing every gate had never been offered one. Two
+    entries in an hour against a feed carrying 774 ticks per ten minutes.
+
+    APPENDED, NEVER SUBSTITUTED. New-pool discovery keeps its slots; this only
+    fills the space underneath. The two answer different questions and a
+    pipeline that asks only the first keeps rediscovering the same
+    unprofitable memecoins while ignoring instruments it has a week of
+    evidence about.
+
+    A REAL ADDRESS OR NOTHING. The consumer needs ``candidate.address`` to
+    build a swap, and a fabricated one would produce a signal that cannot
+    execute -- or worse, one that executes against the wrong token. A symbol
+    the address book cannot resolve is skipped rather than guessed at; see
+    the ticker-squatting note in services/token_address_book.py for why
+    resolving by ticker is a safety failure rather than a convenience.
+
+    Best-effort throughout: a candidate source that raises would stop the
+    trading cycle, and having no suggestions is a normal state.
+    """
+    try:
+        from services.streamed_symbol_candidates import streamed_candidates
+        from services.token_address_book import lookup as _lookup_address
+        from tools.c0d3rV2.crypto_paper_trade import Candidate
+    except Exception:  # noqa: BLE001
+        return candidates
+
+    try:
+        already = {str(getattr(c, "symbol", "") or "").upper() for c in candidates}
+        added: List[Any] = []
+        for proposal in streamed_candidates(limit=max(1, int(max_positions)) * 4):
+            base = str(proposal.symbol or "").split("-")[0].upper()
+            if not base or base in already:
+                continue
+            address = _lookup_address("base", base)
+            if not address:
+                continue
+            already.add(base)
+            added.append(Candidate(
+                token=base,
+                symbol=base,
+                address=str(address),
+                # Empty rather than invented: the scout keys its dedupe on
+                # pair_address or address, and a fake pair would collide with
+                # a real one.
+                pair_address="",
+                dex="streamed",
+                url="",
+                price_usd=0.0,
+                liquidity_usd=0.0,
+                volume_m5=0.0,
+                volume_h1=0.0,
+                # The scout derives expected_return from price_change_m5, and
+                # the honest value here is zero: this proposal rests on how
+                # OFTEN the symbol clears its cost, not on a recent move. The
+                # target floor takes over from there.
+                price_change_m5=0.0,
+                price_change_h1=0.0,
+                buys_m5=0,
+                sells_m5=0,
+                buys_h1=0,
+                sells_h1=0,
+                fdv=0.0,
+                market_cap=0.0,
+                # Clear-rate as the score, so a symbol that pays more often is
+                # ranked above one that rarely does -- the same ordering the
+                # proposer already applied.
+                score=float(proposal.clear_rate),
+                rationale=proposal.rationale,
+            ))
+        return list(candidates) + added
+    except Exception:  # noqa: BLE001
+        return candidates
+
+
 def build_static_strategy_signals(
     *,
     budget_usd: float = 20.0,
@@ -915,6 +1000,7 @@ def build_static_strategy_signals(
     probe_amount = max(0.01, min(float(os.getenv("ATF_STATIC_QUOTE_PROBE_USD", "0.25")), per_position_usd))
 
     candidates = select_candidates(budget_usd=effective_budget, max_positions=max_positions)
+    candidates = _add_streamed_candidates(candidates, max_positions=max_positions)
     feedback = refresh_feedback_scores() if _bool_env("ATF_STATIC_FEEDBACK_ENABLED", "1") else {}
     signals: List[Dict[str, Any]] = []
     bus_actions: List[Dict[str, Any]] = []
