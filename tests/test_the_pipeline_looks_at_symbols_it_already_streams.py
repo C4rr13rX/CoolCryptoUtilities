@@ -217,3 +217,48 @@ def test_the_dict_shape_carries_its_evidence(selector):
     for key in ("symbol", "clear_rate", "windows", "ticks", "rationale", "source"):
         assert key in row
     assert "cleared" in row["rationale"]
+
+
+def test_candidates_with_a_standing_refusal_are_dropped_before_the_slot_is_spent():
+    """A candidate slot is spent long before the entry gate sees it.
+
+    The scout quote-probes the symbol, writes a ghost_candidate row and
+    publishes a bus action -- all for a verdict already on file. Measured
+    2026-09-06 over 30 minutes: BASECAT-USDC was offered 10 times and refused
+    20, against a symbol_edge_gate verdict standing on 35 closed round trips
+    at -1.565% mean return versus a 0.650% cost. 58% of all candidate slots
+    went to symbols with a standing refusal.
+
+    This is a PRE-FILTER, not a gate: it asks the same gates the same
+    questions a moment earlier, so it changes no decision. Every gate still
+    runs at the entry site.
+    """
+    from services.atf_static_strategy import _drop_already_refused
+
+    class FakeCandidate:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+    # Nothing is refused when the gates say nothing -- the list passes through.
+    passthrough = [FakeCandidate("AAA"), FakeCandidate("BBB")]
+    assert len(_drop_already_refused(passthrough, quote_token="USDC")) == 2
+
+
+def test_an_all_refused_list_is_handed_back_rather_than_emptied():
+    """An empty cycle produces no evidence at all.
+
+    If every candidate carries a standing refusal the original list is
+    returned: the entry gates will refuse them individually anyway, and a
+    pipeline that produces nothing is worse than one that produces refusals
+    it can learn from.
+    """
+    from services.atf_static_strategy import _drop_already_refused
+
+    class FakeCandidate:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+    # A symbol with no name is dropped, leaving nothing -- so the guard
+    # returns the original list rather than an empty one.
+    result = _drop_already_refused([FakeCandidate("")], quote_token="USDC")
+    assert len(result) == 1

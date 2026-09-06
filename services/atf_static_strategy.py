@@ -864,6 +864,66 @@ def _run_ghost_quote_scout(
     }
 
 
+def _drop_already_refused(candidates: List[Any], *, quote_token: str) -> List[Any]:
+    """Drop candidates the gates have already, standingly, refused.
+
+    The gates below run per ENTRY and they are correct, but a candidate slot
+    is spent long before the entry gate sees it: the scout quote-probes the
+    symbol, writes a ghost_candidate row, and publishes a bus action, all for
+    a verdict that was already on file.
+
+    Measured 2026-09-06 over 30 minutes: BASECAT-USDC was offered 10 times and
+    refused 20 times, against a symbol_edge_gate verdict standing on 35 closed
+    round trips at a mean return of -1.565% versus a 0.650% cost. **58% of all
+    candidate slots went to symbols with a standing refusal.** Discovery kept
+    proposing what the gates kept declining, and every one of those slots was
+    a slot an eligible symbol did not get.
+
+    This is a PRE-FILTER, not a new gate. It asks the same three gates the
+    same questions they would be asked a moment later, and refusing here
+    changes no decision -- it only stops the pipeline paying for the same
+    refusal twice. Every gate still runs at the entry site, so a symbol whose
+    verdict changes between here and there is still judged correctly.
+
+    Fails OPEN in every direction: a gate that cannot be imported, or that
+    raises, leaves the candidate in the list to be judged downstream as
+    before.
+    """
+    try:
+        from services.symbol_edge_gate import refusal_reason as _edge
+    except Exception:  # noqa: BLE001
+        def _edge(_symbol: str):  # type: ignore[misc]
+            return None
+    try:
+        from services.symbol_motion_gate import refusal_reason as _motion
+    except Exception:  # noqa: BLE001
+        def _motion(_symbol: str):  # type: ignore[misc]
+            return None
+    try:
+        from services.stop_survivability_gate import refusal_reason as _stop
+    except Exception:  # noqa: BLE001
+        def _stop(_symbol: str):  # type: ignore[misc]
+            return None
+
+    kept: List[Any] = []
+    for candidate in candidates:
+        try:
+            base = str(getattr(candidate, "symbol", "") or "").upper()
+            if not base:
+                continue
+            pair = f"{base}-{str(quote_token or 'USDC').upper()}"
+            if _edge(pair) or _motion(pair) or _stop(pair):
+                continue
+        except Exception:  # noqa: BLE001 - never drop on an error
+            kept.append(candidate)
+            continue
+        kept.append(candidate)
+    # If every candidate carries a standing refusal, hand back the original
+    # list rather than nothing: an empty cycle produces no evidence at all,
+    # and the entry gates will refuse them individually anyway.
+    return kept or list(candidates)
+
+
 def _add_streamed_candidates(candidates: List[Any], *, max_positions: int) -> List[Any]:
     """Append symbols we already stream and have already proven can pay.
 
@@ -1001,6 +1061,7 @@ def build_static_strategy_signals(
 
     candidates = select_candidates(budget_usd=effective_budget, max_positions=max_positions)
     candidates = _add_streamed_candidates(candidates, max_positions=max_positions)
+    candidates = _drop_already_refused(candidates, quote_token=quote_token)
     feedback = refresh_feedback_scores() if _bool_env("ATF_STATIC_FEEDBACK_ENABLED", "1") else {}
     signals: List[Dict[str, Any]] = []
     bus_actions: List[Dict[str, Any]] = []
