@@ -52,6 +52,13 @@ try:
 except Exception:  # noqa: BLE001 - a missing gate must not stop trading
     def symbol_motion_refusal(_symbol: str):  # type: ignore[misc]
         return None
+try:
+    from services.stop_survivability_gate import (
+        refusal_reason as stop_survivability_refusal,
+    )
+except Exception:  # noqa: BLE001 - a missing gate must not stop trading
+    def stop_survivability_refusal(_symbol: str):  # type: ignore[misc]
+        return None
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
@@ -7691,6 +7698,61 @@ class TradingBot:
                             "symbol": symbol,
                             "reason": "symbol_cannot_cover_a_round_trip",
                             "detail": motion_refusal,
+                            "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                return decision
+
+            # SYMBOLS WHOSE STOP CANNOT BE ENFORCED ON THEIR OWN FEED.
+            #
+            # The two gates above ask whether a symbol LOSES money and whether
+            # it can MOVE enough to pay for a round trip. Neither asks whether
+            # the stop that bounds the downside is enforceable, and that is
+            # what shut the live lane on 2026-09-06.
+            #
+            # The lane was frozen on ES95 tail risk 0.1241 against a 0.10
+            # guardrail, and the entire breach was ONE trade -- MOONBASE-USDC
+            # at -12.41%. Every other trade in the 48h window was under 3%;
+            # removing that single row drops ES95 to 0.0291. One position on
+            # one symbol was holding everything shut.
+            #
+            # The stop was not too wide: GHOST_STOP_LOSS_PCT is 0.02, and the
+            # exit reason records the REALISED loss, so "stop_loss:-0.1241"
+            # means the position was already down 12.41% when a tick finally
+            # arrived to test a 2% stop. Nor was the feed merely sparse --
+            # MOONBASE had 70 ticks in the hour before exit. Its p99
+            # single-tick jump is 99,381%, because the feed carries a
+            # denomination flip. No stop of any width binds against that.
+            #
+            # Measured over 7 days: AERO 0.76% and CBBTC 0.47% p99 jumps (a 2%
+            # stop holds), against MOONBASE 99,381%, VVV-WETH 237,706% and
+            # LIQUIDBGT 104,349,111%. The gate refuses 7 of 25 live symbols
+            # and leaves 18 tradeable, so it is a guard rather than a shutdown.
+            #
+            # Bans only, never promotes: a tight p99 jump does not make a
+            # symbol worth trading, it only makes its stop mean something.
+            stop_refusal = stop_survivability_refusal(symbol)
+            if stop_refusal:
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-stop-survivability",
+                        "reason": f"stop_survivability:{stop_refusal}",
+                    }
+                )
+                try:
+                    self.db.log_trade(
+                        wallet="live" if self.live_trading_enabled else "ghost",
+                        chain=chain_name,
+                        symbol=symbol,
+                        action="hold",
+                        status="entry-refused-stop-survivability",
+                        details={
+                            "symbol": symbol,
+                            "reason": "a_stop_cannot_bind_on_this_feed",
+                            "detail": stop_refusal,
                             "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
                         },
                     )

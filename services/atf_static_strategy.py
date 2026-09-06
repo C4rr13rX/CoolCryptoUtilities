@@ -32,6 +32,13 @@ except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
     def _symbol_motion_refusal(_symbol: str):  # type: ignore[misc]
         return None
 try:
+    from services.stop_survivability_gate import (
+        refusal_reason as _stop_survivability_refusal,
+    )
+except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
+    def _stop_survivability_refusal(_symbol: str):  # type: ignore[misc]
+        return None
+try:
     from services.strategy_edge_gate import refusal_reason as _strategy_edge_refusal
 except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
     def _strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
@@ -712,6 +719,52 @@ def _run_ghost_quote_scout(
                     "symbol": symbol,
                     "reason": "symbol_has_a_measured_negative_edge",
                     "detail": edge_refusal,
+                    "strategy_id": SCOUT_STRATEGY_ID,
+                },
+            )
+            continue
+        # ...and neither is a symbol that cannot move far enough to pay for the
+        # round trip. Same reasoning as the gate above and wired here for the
+        # same reason: this scout writes `ghost-entry` rows directly, so a gate
+        # that lives only in trading/bot.py does not see it.
+        motion_refusal = _symbol_motion_refusal(symbol)
+        if motion_refusal:
+            skipped_negative_edge.append(symbol)
+            db.log_trade(
+                wallet="ghost",
+                chain=chain,
+                symbol=symbol,
+                action="hold",
+                status="entry-refused-symbol-motion",
+                details={
+                    "symbol": symbol,
+                    "reason": "symbol_cannot_cover_a_round_trip",
+                    "detail": motion_refusal,
+                    "strategy_id": SCOUT_STRATEGY_ID,
+                },
+            )
+            continue
+        # ...and neither is a symbol whose stop cannot bind on its own feed.
+        #
+        # Wired here for the reason the two gates above are: this scout writes
+        # `ghost-entry` rows directly and never passes through trading/bot.py,
+        # so a gate that lives only there does not see it. MOONBASE-USDC --
+        # p99 single-tick jump 99,381% -- was entered from this path, lost
+        # 12.41% against a 2% stop, and single-handedly held ES95 tail risk
+        # above its guardrail, freezing the live lane.
+        stop_refusal = _stop_survivability_refusal(symbol)
+        if stop_refusal:
+            skipped_negative_edge.append(symbol)
+            db.log_trade(
+                wallet="ghost",
+                chain=chain,
+                symbol=symbol,
+                action="hold",
+                status="entry-refused-stop-survivability",
+                details={
+                    "symbol": symbol,
+                    "reason": "a_stop_cannot_bind_on_this_feed",
+                    "detail": stop_refusal,
                     "strategy_id": SCOUT_STRATEGY_ID,
                 },
             )
