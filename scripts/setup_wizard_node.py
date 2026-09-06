@@ -132,6 +132,29 @@ def _cargo_env(repo: Path) -> dict:
         if cargo_bin.exists():
             env["PATH"] = str(cargo_bin) + os.pathsep + env["PATH"]
     env["W1Z4RDV1510N_DATA_DIR"] = WIZARD_DATA_DIR
+
+    # How much of the brain stays in RAM.
+    #
+    # The tier orchestrator's built-in default is 1,000,000 terminals per
+    # pool, which was chosen for a machine with less headroom than this one.
+    # Measured 2026-09-06 against a brain holding 10.5M terminals, raising it
+    # to 6M moved every number that matters:
+    #
+    #     predict latency      203 ms  ->    75 ms
+    #     training throughput  7.5/min ->  30.1/min
+    #     a retrained bar      0.0002  ->  0.95 confidence
+    #
+    # The cost is ~306 MB of RAM per million terminals, so 6M is roughly
+    # 1.8 GB -- comfortable against the 13 GB free here and well clear of the
+    # node's own 6144 MB politeness floor.
+    #
+    # Why it belongs HERE rather than in a config file: the parameter can be
+    # patched on a live node through POST /brain/tier_orchestrator/params, but
+    # that override is runtime-only and a restart silently drops back to 1M.
+    # supervisor.toml has no env table, so the launcher is the only place the
+    # setting survives. Override by exporting W1Z4RD_TIER_TARGET_TERMS before
+    # calling this script; a machine with less RAM should lower it.
+    env.setdefault("W1Z4RD_TIER_TARGET_TERMS", "6000000")
     return env
 
 
