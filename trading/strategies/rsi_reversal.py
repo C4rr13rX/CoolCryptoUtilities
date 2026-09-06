@@ -9,7 +9,15 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from trading.strategies.base import Strategy, StrategyContext, env_float, rsi, sample_arrays
+from trading.strategies.base import (
+    Strategy,
+    StrategyContext,
+    env_float,
+    measured_exit_benefit,
+    rolling_mean,
+    rsi,
+    sample_arrays,
+)
 
 
 class RsiReversalStrategy(Strategy):
@@ -23,7 +31,7 @@ class RsiReversalStrategy(Strategy):
         overbought = env_float("RSI_OVERBOUGHT", 70.0, lo=55.0, hi=95.0)
         min_net = env_float("RSI_MIN_NET_RETURN", 0.004, lo=0.0, hi=0.1)
 
-        _, prices, _ = sample_arrays(state)
+        ts, prices, _ = sample_arrays(state)
         if prices.size < max(self.min_samples, 2 * (period + 1)) or ctx.last_price <= 0:
             return None
         value = rsi(prices, period)
@@ -55,8 +63,14 @@ class RsiReversalStrategy(Strategy):
             )
 
         if value >= overbought and ctx.available_base > 0:
-            expected = (ctx.last_price - mean) / ctx.last_price
-            if expected - ctx.fee_rate < min_net:
+            # The extension is what the price IS, not what it will do. See
+            # `measured_exit_benefit`: passing it as expected_return overstates
+            # the realised benefit ~34x and clears the fee at no horizon.
+            extension = (ctx.last_price - mean) / ctx.last_price
+            expected = measured_exit_benefit(
+                ts, prices, rolling_mean(prices, 4 * period)
+            )
+            if expected is None or expected - ctx.fee_rate < min_net:
                 return None
             confidence = min(0.85, 0.5 + (value - overbought) / 100.0)
             return self.make_candidate(
@@ -66,7 +80,8 @@ class RsiReversalStrategy(Strategy):
                 target_price=ctx.last_price,
                 confidence=confidence,
                 direction_prob=confidence,
-                reason=f"RSI {value:.0f} overbought, harvesting {expected:.2%}",
-                extra_meta={"rsi": value},
+                reason=f"RSI {value:.0f} overbought, measured reversion {expected:.2%}",
+                extra_meta={"rsi": value, "extension": extension,
+                            "measured_benefit": expected},
             )
         return None

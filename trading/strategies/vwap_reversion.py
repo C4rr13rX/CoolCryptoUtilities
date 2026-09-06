@@ -9,7 +9,14 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from trading.strategies.base import Strategy, StrategyContext, env_float, sample_arrays
+from trading.strategies.base import (
+    Strategy,
+    StrategyContext,
+    env_float,
+    measured_exit_benefit,
+    rolling_vwap,
+    sample_arrays,
+)
 
 
 class VwapReversionStrategy(Strategy):
@@ -57,8 +64,16 @@ class VwapReversionStrategy(Strategy):
             )
 
         if dev >= dev_entry and ctx.available_base > 0:
-            expected = (ctx.last_price - vwap) / ctx.last_price
-            if expected - ctx.fee_rate < min_net:
+            # Distance above VWAP is extension, not forecast -- see
+            # `measured_exit_benefit`. Calibrated over the untruncated window
+            # so the trailing VWAP has history behind it.
+            extension = (ctx.last_price - vwap) / ctx.last_price
+            full_ts, full_prices, full_volumes = sample_arrays(state)
+            expected = measured_exit_benefit(
+                full_ts, full_prices,
+                rolling_vwap(full_prices, full_volumes, prices.size),
+            )
+            if expected is None or expected - ctx.fee_rate < min_net:
                 return None
             confidence = min(0.85, 0.5 + abs(dev) * 10.0)
             return self.make_candidate(
@@ -68,7 +83,8 @@ class VwapReversionStrategy(Strategy):
                 target_price=ctx.last_price,
                 confidence=confidence,
                 direction_prob=confidence,
-                reason=f"{dev:.2%} above VWAP, harvesting {expected:.2%}",
-                extra_meta={"vwap": vwap, "deviation": dev},
+                reason=f"{dev:.2%} above VWAP, measured reversion {expected:.2%}",
+                extra_meta={"vwap": vwap, "deviation": dev, "extension": extension,
+                            "measured_benefit": expected},
             )
         return None

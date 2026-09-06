@@ -11,7 +11,15 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from trading.strategies.base import Strategy, StrategyContext, ema, env_float, sample_arrays
+from trading.strategies.base import (
+    Strategy,
+    StrategyContext,
+    ema,
+    env_float,
+    measured_exit_benefit,
+    rolling_min,
+    sample_arrays,
+)
 
 
 class MacdMomentumStrategy(Strategy):
@@ -25,7 +33,7 @@ class MacdMomentumStrategy(Strategy):
         sig_span = int(env_float("MACD_SIGNAL", 9, lo=3, hi=32))
         min_net = env_float("MACD_MIN_NET_RETURN", 0.004, lo=0.0, hi=0.1)
 
-        _, prices, _ = sample_arrays(state)
+        ts, prices, _ = sample_arrays(state)
         if prices.size < max(self.min_samples, slow + sig_span) or ctx.last_price <= 0:
             return None
         macd = ema(prices, fast) - ema(prices, slow)
@@ -59,8 +67,11 @@ class MacdMomentumStrategy(Strategy):
         # Bearish inflection with position: harvest.
         if h_prev >= 0.0 > h_now and ctx.available_base > 0:
             recent_low = float(np.min(prices[-slow:]))
-            expected = (ctx.last_price - recent_low) / max(ctx.last_price, 1e-12) * 0.5
-            if expected - ctx.fee_rate < min_net:
+            # Half the distance to the recent low is an arbitrary haircut on an
+            # extension, not a forecast -- see `measured_exit_benefit`.
+            extension = (ctx.last_price - recent_low) / max(ctx.last_price, 1e-12) * 0.5
+            expected = measured_exit_benefit(ts, prices, rolling_min(prices, slow))
+            if expected is None or expected - ctx.fee_rate < min_net:
                 return None
             confidence = min(0.85, 0.55 + min(0.25, abs(rel) * 400.0))
             return self.make_candidate(
@@ -70,7 +81,9 @@ class MacdMomentumStrategy(Strategy):
                 target_price=ctx.last_price,
                 confidence=confidence,
                 direction_prob=confidence,
-                reason=f"MACD histogram bearish flip, harvesting ({rel:+.4%})",
-                extra_meta={"macd": float(macd[-1]), "histogram": h_now},
+                reason=(f"MACD histogram bearish flip ({rel:+.4%}), "
+                        f"measured reversion {expected:.2%}"),
+                extra_meta={"macd": float(macd[-1]), "histogram": h_now,
+                            "extension": extension, "measured_benefit": expected},
             )
         return None

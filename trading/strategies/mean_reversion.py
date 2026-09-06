@@ -15,6 +15,8 @@ from trading.strategies.base import (
     StrategyContext,
     env_float,
     log_slope_per_min,
+    measured_exit_benefit,
+    rolling_mean,
     sample_arrays,
 )
 
@@ -59,9 +61,16 @@ class MeanReversionStrategy(Strategy):
             )
 
         if z >= z_entry and ctx.available_base > 0:
-            # Price stretched above the mean: lock the extension in now.
-            expected = (ctx.last_price - mean) / ctx.last_price
-            if expected - ctx.fee_rate < min_net:
+            # "Lock the extension in" is the confusion `measured_exit_benefit`
+            # documents: the extension is where price sits, not where it goes.
+            # Calibrated over the untruncated window so there is history behind
+            # the trailing mean the truncated one only has at its last bar.
+            extension = (ctx.last_price - mean) / ctx.last_price
+            full_ts, full_prices, _ = sample_arrays(state)
+            expected = measured_exit_benefit(
+                full_ts, full_prices, rolling_mean(full_prices, prices.size)
+            )
+            if expected is None or expected - ctx.fee_rate < min_net:
                 return None
             confidence = min(0.9, 0.5 + abs(z) * 0.08)
             return self.make_candidate(
@@ -71,7 +80,8 @@ class MeanReversionStrategy(Strategy):
                 target_price=ctx.last_price,
                 confidence=confidence,
                 direction_prob=confidence,
-                reason=f"z={z:.2f} above mean, harvesting extension {expected:.2%}",
-                extra_meta={"zscore": float(z)},
+                reason=f"z={z:.2f} above mean, measured reversion {expected:.2%}",
+                extra_meta={"zscore": float(z), "extension": extension,
+                            "measured_benefit": expected},
             )
         return None

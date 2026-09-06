@@ -104,6 +104,152 @@ def rsi(prices: np.ndarray, period: int = 14) -> float:
     return 100.0 - 100.0 / (1.0 + rs)
 
 
+def rolling_mean(values: np.ndarray, window: int) -> np.ndarray:
+    """Trailing mean over `window` bars; NaN until the window is full."""
+    w = max(int(window), 1)
+    out = np.full(values.size, np.nan, dtype=np.float64)
+    if values.size < w:
+        return out
+    cs = np.concatenate(([0.0], np.cumsum(values, dtype=np.float64)))
+    out[w - 1:] = (cs[w:] - cs[:-w]) / float(w)
+    return out
+
+
+def rolling_median(values: np.ndarray, window: int) -> np.ndarray:
+    """Trailing median over `window` bars; NaN until the window is full."""
+    w = max(int(window), 1)
+    out = np.full(values.size, np.nan, dtype=np.float64)
+    if values.size < w:
+        return out
+    view = np.lib.stride_tricks.sliding_window_view(values, w)
+    out[w - 1:] = np.median(view, axis=1)
+    return out
+
+
+def rolling_min(values: np.ndarray, window: int) -> np.ndarray:
+    """Trailing minimum over `window` bars; NaN until the window is full."""
+    w = max(int(window), 1)
+    out = np.full(values.size, np.nan, dtype=np.float64)
+    if values.size < w:
+        return out
+    view = np.lib.stride_tricks.sliding_window_view(values, w)
+    out[w - 1:] = np.min(view, axis=1)
+    return out
+
+
+def rolling_vwap(prices: np.ndarray, volumes: np.ndarray, window: int) -> np.ndarray:
+    """Trailing VWAP over `window` bars; NaN where the window carries no volume."""
+    w = max(int(window), 1)
+    out = np.full(prices.size, np.nan, dtype=np.float64)
+    if prices.size < w or volumes.size != prices.size:
+        return out
+    cs_pv = np.concatenate(([0.0], np.cumsum(prices * volumes, dtype=np.float64)))
+    cs_v = np.concatenate(([0.0], np.cumsum(volumes, dtype=np.float64)))
+    num = cs_pv[w:] - cs_pv[:-w]
+    den = cs_v[w:] - cs_v[:-w]
+    with np.errstate(all="ignore"):
+        out[w - 1:] = np.where(den > 0, num / den, np.nan)
+    return out
+
+
+def exit_benefit_horizon_sec() -> float:
+    """How long "not exiting now" actually lasts.
+
+    A position that is not closed by a signal is closed by the stale clock at
+    ``GHOST_STALE_EXIT_SECONDS``, so that is the window over which the benefit
+    of exiting now has to be measured.
+    """
+    return env_float("STRATEGY_EXIT_BENEFIT_HORIZON_SEC",
+                     env_float("GHOST_STALE_EXIT_SECONDS", 900.0, lo=60.0, hi=6 * 3600.0),
+                     lo=60.0, hi=6 * 3600.0)
+
+
+def measured_exit_benefit(
+    ts: np.ndarray,
+    prices: np.ndarray,
+    reference: np.ndarray,
+    *,
+    horizon_sec: Optional[float] = None,
+    min_comparable: int = 12,
+    comparable_frac: float = 0.8,
+) -> Optional[float]:
+    """What exiting at this much extension has ACTUALLY been worth on this series.
+
+    Every reversion exit in this package computed its ``expected_return`` as
+    the distance between the price and some reference -- the rolling mean, the
+    VWAP, the window median, the recent low -- and handed that number to the
+    CDCL ``return_above_fees`` clause as the benefit of exiting now. Distance
+    from a reference is a measure of EXTENSION. It is not a forecast, and on
+    this feed it does not behave like one.
+
+    Measured 2026-09-05 over 14 days of ``market_stream``, 2585 firings of the
+    RSI-overbought exit across 18 symbols (feed-contaminated symbols excluded):
+
+        claimed benefit (mean extension)        +5.40%
+        realised benefit at  300s               -0.04%   t=-0.40
+        realised benefit at  900s               +0.16%   t=+1.50
+        realised benefit at 1800s               -0.25%   t=-1.88
+        exit leg cost                            0.32%
+
+    The claim overstates the best realised horizon by ~34x, clears the fee at
+    no horizon, and price falls after the signal only 41-47% of the time. On
+    AERO-USDC -- the only symbol the live strategy is permitted to trade -- the
+    realised benefit over 240 firings is -0.09%: exiting is worse than holding
+    before paying anything to do it.
+
+    It cost real money. atf_static's live exit at 2026-09-05 16:52 recorded
+    reason "RSI 74 overbought, harvesting 8.22%" and realised -1.35% for
+    -0.023520, one of the two trades that make its permitted book negative and
+    hold it demoted off live trading.
+
+    This is the exit-side twin of the entry defect fixed in e07583e, where the
+    gate took its expected return from the strategy's own ``target_price`` and
+    so approved all 20 live entries ever taken. Same shape: a number the
+    strategy invented, checked against a cost that is real.
+
+    So the claim is replaced by a measurement taken from the same window the
+    strategy is already looking at: of the earlier bars that were at least this
+    extended, what did the price do over the next ``horizon_sec``? The mean of
+    that, sign-flipped, is the benefit of exiting -- floored at zero, because a
+    signal whose comparable history went UP has no benefit to offer, not a
+    negative one to subtract.
+
+    Returns None when fewer than ``min_comparable`` earlier bars are that
+    extended. An unmeasurable benefit is not claimed: this repo already treats
+    an unmeasurable COST defaulted to zero as a defect, and the optimistic
+    default is the same error with the sign reversed. The position keeps its
+    stop, its take-profit and its max-hold either way -- only the reversion
+    signal abstains.
+    """
+    n = int(prices.size)
+    if n < 4 or int(ts.size) != n or int(reference.size) != n:
+        return None
+    horizon = float(horizon_sec) if horizon_sec is not None else exit_benefit_horizon_sec()
+    if not math.isfinite(horizon) or horizon <= 0:
+        return None
+    with np.errstate(all="ignore"):
+        ext = np.where(prices > 0, (prices - reference) / prices, np.nan)
+    ext_now = float(ext[-1]) if math.isfinite(float(ext[-1])) else float("nan")
+    if not math.isfinite(ext_now) or ext_now <= 0.0:
+        return None
+    # First bar at least `horizon` later than each bar. `ts` is oldest-first.
+    fwd_idx = np.searchsorted(ts, ts + horizon, side="left")
+    fwd = np.full(n, np.nan, dtype=np.float64)
+    have = np.nonzero(fwd_idx < n)[0]
+    if have.size:
+        base = prices[have]
+        with np.errstate(all="ignore"):
+            fwd[have] = np.where(base > 0, prices[fwd_idx[have]] / base - 1.0, np.nan)
+    comparable = np.isfinite(ext) & np.isfinite(fwd) & (ext >= ext_now * float(comparable_frac))
+    comparable[-1] = False  # the bar being judged is not evidence about itself
+    if int(np.count_nonzero(comparable)) < max(int(min_comparable), 1):
+        return None
+    benefit = -float(np.mean(fwd[comparable]))
+    if not math.isfinite(benefit):
+        return None
+    return max(0.0, benefit)
+
+
 def log_slope_per_min(ts: np.ndarray, prices: np.ndarray) -> float:
     """OLS slope of log-price per minute; 0.0 when degenerate."""
     if prices.size < 4:

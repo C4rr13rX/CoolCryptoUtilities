@@ -11,7 +11,14 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from trading.strategies.base import Strategy, StrategyContext, env_float, sample_arrays
+from trading.strategies.base import (
+    Strategy,
+    StrategyContext,
+    env_float,
+    measured_exit_benefit,
+    rolling_median,
+    sample_arrays,
+)
 
 
 def _stochastic(prices: np.ndarray, period: int, smooth: int) -> tuple[np.ndarray, np.ndarray]:
@@ -41,7 +48,7 @@ class StochasticReversalStrategy(Strategy):
         overbought = env_float("STOCH_OVERBOUGHT", 80.0, lo=60.0, hi=95.0)
         min_net = env_float("STOCH_MIN_NET_RETURN", 0.004, lo=0.0, hi=0.1)
 
-        _, prices, _ = sample_arrays(state)
+        ts, prices, _ = sample_arrays(state)
         if prices.size < max(self.min_samples, period + smooth + 2) or ctx.last_price <= 0:
             return None
         k, d = _stochastic(prices, period, smooth)
@@ -72,8 +79,15 @@ class StochasticReversalStrategy(Strategy):
         # Bearish cross in the overbought zone with a position: harvest.
         if k_prev >= d_prev and k_now < d_now and k_now > overbought - 10.0 and ctx.available_base > 0:
             mid = float(np.median(prices[-period * 2:]))
-            expected = (ctx.last_price - mid) / max(ctx.last_price, 1e-12)
-            if expected - ctx.fee_rate < min_net:
+            # Distance above the window median is extension, not forecast; see
+            # `measured_exit_benefit`. This exit spent real money on that
+            # confusion (live AERO 2026-09-03 23:59, "harvesting 4.61%",
+            # realised -0.14%).
+            extension = (ctx.last_price - mid) / max(ctx.last_price, 1e-12)
+            expected = measured_exit_benefit(
+                ts, prices, rolling_median(prices, period * 2)
+            )
+            if expected is None or expected - ctx.fee_rate < min_net:
                 return None
             confidence = min(0.85, 0.55 + max(0.0, k_now - overbought) / 100.0 + 0.05)
             return self.make_candidate(
@@ -83,7 +97,9 @@ class StochasticReversalStrategy(Strategy):
                 target_price=ctx.last_price,
                 confidence=confidence,
                 direction_prob=confidence,
-                reason=f"stochastic bearish cross %K {k_now:.0f} overbought, harvesting {expected:.2%}",
-                extra_meta={"k": k_now, "d": d_now},
+                reason=(f"stochastic bearish cross %K {k_now:.0f} overbought, "
+                        f"measured reversion {expected:.2%}"),
+                extra_meta={"k": k_now, "d": d_now, "extension": extension,
+                            "measured_benefit": expected},
             )
         return None

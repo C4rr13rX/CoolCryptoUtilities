@@ -95,11 +95,29 @@ class TestMeanReversion:
         assert cand["meta"]["strategy"] == "mean_reversion"
 
     def test_stretch_above_mean_exits_when_holding(self, monkeypatch):
+        # The stretch must have a history of being GIVEN BACK. Distance above
+        # the mean is extension, not forecast: see `measured_exit_benefit` and
+        # test_an_exit_is_credited_with_what_it_delivered.
         monkeypatch.setenv("MEAN_REVERSION_Z_ENTRY", "1.5")
-        prices = [100.0] * 60 + list(np.linspace(100, 103.5, 10)) + [103.5, 103.52]
+        prices = []
+        for _ in range(20):
+            prices.extend(list(np.linspace(100, 106, 10)) + list(np.linspace(106, 100, 8)))
+        prices.extend(list(np.linspace(100, 106, 10)))
         state = make_state(prices)
         cand = MeanReversionStrategy().evaluate(state, make_ctx(state, base=5.0))
         assert cand is not None and cand["directive"].action == "exit"
+
+    def test_a_stretch_that_never_reverted_does_not_exit(self, monkeypatch):
+        """A one-way ramp offers nothing to harvest, however stretched it is.
+
+        This series used to fire an exit claiming the whole extension as its
+        expected return. Nothing in it has ever come back, so there is no
+        measured benefit to set against the fee.
+        """
+        monkeypatch.setenv("MEAN_REVERSION_Z_ENTRY", "1.5")
+        prices = [100.0] * 60 + list(np.linspace(100, 103.5, 10)) + [103.5, 103.52]
+        state = make_state(prices)
+        assert MeanReversionStrategy().evaluate(state, make_ctx(state, base=5.0)) is None
 
     def test_freefall_is_rejected_by_knife_guard(self, monkeypatch):
         monkeypatch.setenv("MEAN_REVERSION_Z_ENTRY", "1.0")
@@ -150,10 +168,27 @@ class TestRsiReversal:
         assert cand["meta"]["rsi"] <= 30.0
 
     def test_overbought_exits_when_holding(self):
-        prices = [95.0] * 40 + list(np.linspace(95, 102.5, 16))
+        # Overbought AND a history of handing the extension back. The second
+        # half is what makes the exit worth its fee -- see
+        # `measured_exit_benefit`.
+        prices = []
+        for _ in range(6):
+            prices.extend(list(np.linspace(95, 102.5, 16)) + list(np.linspace(102.5, 95, 10)))
+        prices.extend(list(np.linspace(95, 102.5, 16)))
         state = make_state(prices)
         cand = RsiReversalStrategy().evaluate(state, make_ctx(state, base=5.0))
         assert cand is not None and cand["directive"].action == "exit"
+
+    def test_a_relentless_rally_does_not_exit(self):
+        """Overbought on a series that has only ever risen is not a harvest.
+
+        The live shape it cost money on: atf_static exited AERO-USDC at
+        2026-09-05 16:52 for "RSI 74 overbought, harvesting 8.22%" and realised
+        -1.35%, one of the two trades holding it demoted off live trading.
+        """
+        prices = [95.0] * 40 + list(np.linspace(95, 102.5, 16))
+        state = make_state(prices)
+        assert RsiReversalStrategy().evaluate(state, make_ctx(state, base=5.0)) is None
 
 
 class TestBollingerSqueeze:

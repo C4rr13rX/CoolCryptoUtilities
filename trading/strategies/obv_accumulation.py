@@ -12,7 +12,14 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from trading.strategies.base import Strategy, StrategyContext, env_float, sample_arrays
+from trading.strategies.base import (
+    Strategy,
+    StrategyContext,
+    env_float,
+    measured_exit_benefit,
+    rolling_min,
+    sample_arrays,
+)
 
 
 class ObvAccumulationStrategy(Strategy):
@@ -25,7 +32,7 @@ class ObvAccumulationStrategy(Strategy):
         div_floor = env_float("OBV_DIVERGENCE_FLOOR", 0.15, lo=0.02, hi=1.0)
         min_net = env_float("OBV_MIN_NET_RETURN", 0.004, lo=0.0, hi=0.1)
 
-        _, prices, volumes = sample_arrays(state)
+        ts, prices, volumes = sample_arrays(state)
         if prices.size < max(self.min_samples, window + 2) or ctx.last_price <= 0:
             return None
         if volumes.size != prices.size or float(np.sum(volumes[-window:])) <= 0:
@@ -67,8 +74,11 @@ class ObvAccumulationStrategy(Strategy):
         # Distribution: volume flowing out while price is still elevated.
         if divergence <= -div_floor and obv_slope < 0 and ctx.available_base > 0:
             recent_low = float(np.min(p_seg))
-            expected = (ctx.last_price - recent_low) / max(ctx.last_price, 1e-12) * 0.5
-            if expected - ctx.fee_rate < min_net:
+            # Half the distance to the window low is an extension with a
+            # haircut, not a forecast -- see `measured_exit_benefit`.
+            extension = (ctx.last_price - recent_low) / max(ctx.last_price, 1e-12) * 0.5
+            expected = measured_exit_benefit(ts, prices, rolling_min(prices, window))
+            if expected is None or expected - ctx.fee_rate < min_net:
                 return None
             confidence = min(0.85, 0.55 + min(0.25, abs(divergence) * 0.4))
             return self.make_candidate(
@@ -78,7 +88,9 @@ class ObvAccumulationStrategy(Strategy):
                 target_price=ctx.last_price,
                 confidence=confidence,
                 direction_prob=confidence,
-                reason=f"OBV distribution divergence {divergence:+.2f}, harvesting",
-                extra_meta={"obv_slope": obv_slope, "price_slope": price_slope},
+                reason=(f"OBV distribution divergence {divergence:+.2f}, "
+                        f"measured reversion {expected:.2%}"),
+                extra_meta={"obv_slope": obv_slope, "price_slope": price_slope,
+                            "extension": extension, "measured_benefit": expected},
             )
         return None

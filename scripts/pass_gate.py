@@ -102,6 +102,13 @@ GATE_TESTS = (
     # gross. Every one was sized below the $3.25 clip at which that strategy
     # breaks even, which is the whole of the -0.186371 book.
     "test_an_entry_is_credited_with_what_it_delivered.py",
+    # The exit side of the same question. Every reversion exit passed the
+    # distance between the price and its reference to the fee check as the
+    # benefit of exiting. Measured over 2585 firings, that claim averages
+    # +5.40% and delivers +0.16% at best against a 0.32% leg. It booked the
+    # live AERO exit at 16:52 -- "harvesting 8.22%", realised -1.35% -- one of
+    # the two trades that hold atf_static demoted off real money.
+    "test_an_exit_is_credited_with_what_it_delivered.py",
 )
 
 
