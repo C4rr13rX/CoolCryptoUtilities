@@ -1,0 +1,8 @@
+{"Rules":[
+ {"ID":"abort-incomplete-multipart","Status":"Enabled","Filter":{"Prefix":""},
+  "AbortIncompleteMultipartUpload":{"DaysAfterInitiation":7}},
+ {"ID":"market-data-tiering","Status":"Enabled","Filter":{"Prefix":"market/"},
+  "Transitions":[{"Days":30,"StorageClass":"STANDARD_IA"},{"Days":120,"StorageClass":"GLACIER_IR"}]},
+ {"ID":"news-tiering","Status":"Enabled","Filter":{"Prefix":"news/"},
+  "Transitions":[{"Days":30,"StorageClass":"STANDARD_IA"},{"Days":120,"StorageClass":"GLACIER_IR"}]}
+]}
