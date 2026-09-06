@@ -4885,11 +4885,27 @@ class TradingBot:
 
         Hard gate: when the brain's reported confidence is below
         ``BRAIN_CONFIDENCE_FLOOR`` (default 0.5), treat the answer as
-        no-signal. The accuracy probe on 2026-06-20 showed the brain's
-        calibration is sharp (0.935 mean conf when right, 0.124 when
-        wrong) — so anything below the floor is signalling "I don't
-        know" and should not drag the EMA down or contribute to sizing.
-        Above the floor, behave as before: store conf + update EMA.
+        no-signal — do not size on it and do not let it move the EMA.
+
+        THE FLOOR IS LOAD-BEARING; DO NOT LOWER IT. Measured 2026-09-05 on
+        the first brain training run that ever finished (598 pairs, 200
+        held-out queries), the brain scores 0.515 exact-bucket accuracy
+        against a 0.605 majority-class baseline — it is WORSE than always
+        answering "flat", which it does for 73.5% of queries. Its mean
+        confidence is 0.278, and ``_maybe_promote_to_live`` grants live
+        trading when ``_brain_conf_ema >= 0.20``. So this floor is the only
+        thing between a below-baseline brain and a live promotion: lower it
+        and those 0.278 readings stop being abstentions, the EMA climbs past
+        the graduation bar, and the brain starts spending real money.
+        tests/test_the_brain_must_beat_always_saying_flat.py pins this.
+
+        An earlier revision of this docstring cited a 2026-06-20 probe
+        claiming calibration was sharp — 0.935 mean confidence when right
+        against 0.124 when wrong, a separation of 0.811. The measured
+        separation is **0.0284** (0.2918 right, 0.2634 wrong), 3.5% of that
+        claim. Confidence does not currently sort this brain's good calls
+        from its bad ones at any threshold, so nothing should reason about
+        the brain "knowing when it knows".
         """
         try:
             feats = _brain_features_text(
