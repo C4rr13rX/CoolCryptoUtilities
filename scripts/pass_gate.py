@@ -109,6 +109,14 @@ GATE_TESTS = (
     # live AERO exit at 16:52 -- "harvesting 8.22%", realised -1.35% -- one of
     # the two trades that hold atf_static demoted off real money.
     "test_an_exit_is_credited_with_what_it_delivered.py",
+    # Upstream of every other entry on this list. On 2026-09-06 the live
+    # readiness check ran a full dataset rebuild synchronously on the asyncio
+    # loop that polls prices, so the feed served 0 ticks across 32 symbols for
+    # 26 minutes at a stretch, on a 900s timer. No guard below matters when no
+    # price arrives to guard: a dark feed is indistinguishable from being
+    # switched off, and it starves the ghost evidence that is the only way to
+    # graduate a replacement for the demoted live strategy.
+    "test_a_confusion_refresh_does_not_freeze_the_feed.py",
 )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import builtins
 import contextlib
 import io
@@ -638,6 +639,10 @@ class TrainingPipeline:
         self._prune_rejected_artifacts()
         self.promotion_threshold = promotion_threshold
         self._train_lock = threading.Lock()
+        self._confusion_refresh_lock = threading.Lock()
+        self._confusion_refresh_thread: Optional[threading.Thread] = None
+        self._confusion_refresh_last_dispatch = 0.0
+        self._confusion_refresh_min_gap = float(os.getenv("CONFUSION_REFRESH_MIN_GAP", "30"))
 
         self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", os.getenv("MIN_GHOST_TRADES_OVERRIDE", "25")))
         self.max_false_positive_rate = float(
@@ -5679,6 +5684,71 @@ class TrainingPipeline:
     def prime_confusion_windows(self, *, min_samples: int = 128, force: bool = False) -> bool:
         if self._last_confusion_report and not force:
             return True
+        # This rebuilds the entire dataset and runs a TF evaluation -- minutes
+        # of CPU with the GIL held. _maybe_transition_to_live reaches it from
+        # _handle_sample, which runs ON the asyncio event loop that also polls
+        # every price endpoint, so a refresh froze the whole market feed for as
+        # long as it took: 0 ticks across 32 symbols for 22 minutes, on a 900s
+        # timer, while the stream logged "REST network outage detected" and
+        # blamed the network for timeouts it had caused itself.
+        #
+        # Off the loop the work is unchanged. On the loop it is handed to a
+        # worker and this returns False -- "not refreshed right now" -- which
+        # both callers already handle: live_readiness_report judges on the
+        # cached report (documented there as the normal outcome when another
+        # thread holds the train lock) and selector.py skips its re-read until
+        # the next cycle.
+        if self._offload_confusion_refresh(min_samples=min_samples, force=force):
+            return False
+        return self._prime_confusion_windows_blocking(min_samples=min_samples, force=force)
+
+    def _offload_confusion_refresh(self, *, min_samples: int, force: bool) -> bool:
+        """Run the refresh on a worker when the caller is an event loop thread.
+
+        Returns True when the work was handed off (so the caller must not block).
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        now = time.time()
+        with self._confusion_refresh_lock:
+            existing = self._confusion_refresh_thread
+            if existing is not None and existing.is_alive():
+                # Single-flight: ensure_confusion_fresh re-asks on every sample
+                # until _persist_confusion_report stamps a new timestamp, and
+                # one thread per tick would be a fork bomb against _train_lock.
+                return True
+            if now - self._confusion_refresh_last_dispatch < self._confusion_refresh_min_gap:
+                # Single-flight alone is not enough. A refresh that loses the
+                # race for _train_lock returns in microseconds without stamping
+                # a new timestamp, so the next sample would find no live thread
+                # and spawn another -- and _handle_sample runs per sample across
+                # 32 symbols. That is thread churn measured in hundreds per
+                # minute, all of it failing at the same lock. Space the attempts.
+                return True
+            self._confusion_refresh_last_dispatch = now
+
+            def _runner() -> None:
+                try:
+                    self._prime_confusion_windows_blocking(min_samples=min_samples, force=force)
+                except Exception as exc:  # noqa: BLE001 - a worker must not die silently
+                    try:
+                        log_message(
+                            "training",
+                            f"background confusion refresh failed: {exc!r}; "
+                            f"the cached report stands until the next attempt",
+                            severity="error",
+                        )
+                    except Exception:
+                        pass
+
+            thread = threading.Thread(target=_runner, name="confusion-refresh", daemon=True)
+            self._confusion_refresh_thread = thread
+            thread.start()
+        return True
+
+    def _prime_confusion_windows_blocking(self, *, min_samples: int = 128, force: bool = False) -> bool:
         lease = None
         if GuardianLease is not None:
             lease = GuardianLease("training-pipeline", timeout=0.5, poll_interval=0.1)
