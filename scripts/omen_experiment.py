@@ -48,7 +48,8 @@ if str(ROOT) not in sys.path:
 
 from trading.omen_brain import (  # noqa: E402
     COLLECTIONS, LOOKBACK_BARS, OMEN_ACTIONS, OMEN_CREST, OMEN_LABELS,
-    OMEN_MURK, OMEN_TROUGH, ROUND_TRIP_COST, OmenBrain, build_collections,
+    OMEN_MURK, OMEN_TROUGH, PREDICT_COLLECTIONS, ROUND_TRIP_COST, OmenBrain,
+    build_collections, collection_distinctness, discriminating_collections,
     label_omen, label_regime, omen_threshold,
 )
 
@@ -161,6 +162,17 @@ def main() -> int:
     parser.add_argument("--endpoint", default=None)
     parser.add_argument("--chain", default="base")
     parser.add_argument("--report-dir", default="data/brain_experiments")
+    parser.add_argument("--skip-train", action="store_true",
+                        help="re-measure an already-trained fabric; the "
+                             "sample split is deterministic in --seed so the "
+                             "recall set is the same one it was taught")
+    parser.add_argument("--query-collections", default=None,
+                        help="comma-separated override of the collections a "
+                             "PREDICTION fires (default: measured)")
+    parser.add_argument("--guess-regime", action="store_true",
+                        help="let stage 1 guess the regime instead of "
+                             "computing it -- the pre-2026-09-07 behaviour, "
+                             "kept so the fix stays falsifiable")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -205,22 +217,58 @@ def main() -> int:
     print(f"balanced train   : {len(balanced)} samples, "
           f"{dict(Counter(s['label'] for s in balanced))}")
 
+    # 0 -- THE DILUTION LAW. Which collections can discriminate at all on
+    # THIS corpus, measured rather than inherited. A query fires the sharp
+    # ones only; see the table above PREDICT_COLLECTIONS in trading/omen_brain.
+    frame_sets = [s["frames"] for s in balanced]
+    distinctness = collection_distinctness(frame_sets)
+    measured_query = discriminating_collections(frame_sets)
+    print("0. DISTINCTNESS  : " + " ".join(
+        f"{name}={distinctness[name]:.3f}"
+        for name in sorted(distinctness, key=lambda k: -distinctness[k])))
+    print(f"   measured query: {measured_query}   default: {PREDICT_COLLECTIONS}")
+    query = (tuple(n.strip() for n in args.query_collections.split(","))
+             if args.query_collections else None)
+    if query:
+        print(f"   OVERRIDE      : {query}")
+
+    # Frame collisions cap recall no matter how good the substrate is: two
+    # identical frame tuples carrying different labels cannot both be
+    # reproduced. Reported so a recall number is never blamed on the brain
+    # when it belongs to the corpus.
+    keyed: Dict[tuple, set] = {}
+    for sample in balanced:
+        keyed.setdefault(tuple(sorted(sample["frames"].items())), set()).add(
+            sample["label"])
+    conflicts = sum(1 for labels in keyed.values() if len(labels) > 1)
+    print(f"   collisions    : {len(balanced) - len(keyed)} duplicate tuples, "
+          f"{conflicts} with conflicting labels "
+          f"(recall ceiling {1.0 - conflicts / max(1, len(balanced)):.1%})")
+
     started = time.time()
-    for count, sample in enumerate(balanced, 1):
-        brain.train(sample["frames"], sample["label"], sample["regime"])
-        if count % 250 == 0:
-            rate = count / max(1e-9, time.time() - started)
-            print(f"  trained {count}/{len(balanced)} ({rate:.1f}/s, "
-                  f"{brain.failed_pairs} failed)")
-    train_secs = time.time() - started
-    print(f"trained {brain.trained_pairs} pairs, {brain.failed_pairs} failed, "
-          f"in {train_secs / 60:.1f} min")
+    if args.skip_train:
+        print("skipping training -- re-measuring the fabric already on the node")
+        train_secs = 0.0
+    else:
+        for count, sample in enumerate(balanced, 1):
+            brain.train(sample["frames"], sample["label"], sample["regime"])
+            if count % 250 == 0:
+                rate = count / max(1e-9, time.time() - started)
+                print(f"  trained {count}/{len(balanced)} ({rate:.1f}/s, "
+                      f"{brain.failed_pairs} failed)")
+        train_secs = time.time() - started
+        print(f"trained {brain.trained_pairs} pairs, {brain.failed_pairs} failed, "
+              f"in {train_secs / 60:.1f} min")
 
     def predict(sample):
         return brain.predict(
             sample["frames"], symbol=symbol, chain=args.chain,
             as_of_ts=sample["ts"], price=sample["price"],
-            horizon_bars=args.horizon, bar_seconds=cadence)
+            horizon_bars=args.horizon, bar_seconds=cadence,
+            # The regime is arithmetic here: we hold the bars. --guess-regime
+            # restores the old chain so the two can be compared in one run.
+            regime=None if args.guess_regime else sample["regime"],
+            query_collections=query)
 
     # 1 -- TRAIN RECALL. Does it reproduce what it was taught?
     recall_set = rng.sample(balanced, min(args.recall_sample, len(balanced)))
@@ -243,9 +291,11 @@ def main() -> int:
     garbage_conf: List[float] = []
     garbage_actionable = 0
     for frames in garbage_frames(rng, args.garbage):
+        # No regime is supplied: noise has no bars to compute one from, and
+        # this is the one caller that genuinely cannot.
         omen = brain.predict(frames, symbol="garbage", chain=args.chain,
                              as_of_ts=0, price=1.0, horizon_bars=args.horizon,
-                             bar_seconds=cadence)
+                             bar_seconds=cadence, query_collections=query)
         garbage_labels.append(f"{omen.omen}/{omen.verdict}")
         garbage_conf.append(omen.confidence)
         if omen.is_actionable:
@@ -319,6 +369,13 @@ def main() -> int:
         "test_window": [test_start, test_stop],
         "trained_pairs": brain.trained_pairs, "failed_pairs": brain.failed_pairs,
         "train_seconds": round(train_secs, 1),
+        "skipped_training": bool(args.skip_train),
+        "collection_distinctness": distinctness,
+        "measured_query_collections": list(measured_query),
+        "query_collections": list(query or PREDICT_COLLECTIONS),
+        "regime_source": "stage1_guess" if args.guess_regime else "computed",
+        "conflicting_frame_tuples": conflicts,
+        "recall_ceiling": 1.0 - conflicts / max(1, len(balanced)),
         "train_recall": recall, "recall_sample": len(recall_set),
         "recall_misses": recall_misses,
         "garbage_distinct": len(set(garbage_labels)),

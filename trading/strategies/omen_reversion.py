@@ -35,7 +35,7 @@ import numpy as np
 
 from trading.omen_brain import (
     LOOKBACK_BARS, OMEN_CREST, OMEN_TROUGH, Omen, OmenBrain, build_collections,
-    omen_threshold,
+    label_regime, omen_threshold,
 )
 from trading.strategies.base import Strategy, StrategyContext, env_float, sample_arrays
 
@@ -177,7 +177,11 @@ class OmenReversionStrategy(Strategy):
                     frames, symbol=symbol, chain=chain,
                     as_of_ts=int(bars[index]["timestamp"]), price=price,
                     horizon_bars=HORIZON_BARS, bar_seconds=BAR_SECONDS,
-                    confidence_floor=CONFIDENCE_FLOOR)
+                    confidence_floor=CONFIDENCE_FLOOR,
+                    # We hold the bars the frames were built from, so the
+                    # regime is arithmetic here. Letting stage 1 guess it
+                    # instead measured 86.0% train recall against 90.7%.
+                    regime=label_regime(bars, index))
                 with self._lock:
                     self._cache[symbol] = (time.time(), omen)
             except Exception:

@@ -189,6 +189,103 @@ REGIME_TOKENS: Tuple[str, ...] = ("bullrun", "bearrun", "chop", "squeeze")
 STAGE1_COLLECTIONS: Tuple[str, ...] = ("geometry", "temporal", "flow", "volatility")
 
 
+# --- what a QUERY is allowed to fire --------------------------------------
+# Training binds every collection. A *query* must not, and this is the single
+# biggest lever on train recall that has been measured here.
+#
+# THE DILUTION LAW, measured 2026-09-07 against a fabric trained on 2725
+# AERO-USDC pairs (read-only probe, same samples every row, n=200):
+#
+#   query streams                       distinct frames / 2725   recall
+#   temporal + geometry + cross         2725 / 2627 / 709        96.0%
+#   ... + flow                          282                      92.5%
+#   ... + volatility                    166                      91.0%
+#   ... + horizon + instrument          1 / 1                    91.0%
+#   all seven                                                    91.5%
+#   ... + regime frame (TRUE token)     4                        93.5%
+#   ... + regime frame (stage-1 guess)  4                        90.5%
+#
+# A stream whose frame is shared by many training samples votes for the label
+# *distribution* over all of them; a stream unique to one sample votes for one
+# label. Fire enough of the former and they out-vote the latter. The ordering
+# is monotone in distinctness, which is why the default below is DERIVED from
+# a distinctness ratio rather than hand-picked -- see
+# ``discriminating_collections``, which the experiment runs and reports so the
+# next fabric re-measures this instead of inheriting our list.
+#
+# Note this is a PREDICT-side rule only. ``train`` still binds all of them:
+# the information stays in the fabric, and a multi-symbol corpus makes
+# ``instrument`` discriminating rather than constant.
+
+#: Minimum ``distinct frames / samples`` for a collection to be worth firing
+#: in a query. 0.20 is the empty band in the measured table above: ``cross``
+#: sits at 0.26 and helps, ``flow`` at 0.10 and hurts.
+MIN_QUERY_DISTINCTNESS = float(os.getenv("OMEN_MIN_QUERY_DISTINCTNESS", "0.20"))
+
+
+def _names_from_env(env_name: str, default: Tuple[str, ...]) -> Tuple[str, ...]:
+    raw = os.getenv(env_name)
+    if not raw:
+        return default
+    picked = tuple(
+        name for name in (part.strip() for part in raw.split(","))
+        if name in COLLECTIONS_BY_NAME
+    )
+    return picked or default
+
+
+#: The collections a prediction fires. Derived from the table above; override
+#: with ``OMEN_PREDICT_COLLECTIONS=temporal,geometry,cross``.
+PREDICT_COLLECTIONS: Tuple[str, ...] = _names_from_env(
+    "OMEN_PREDICT_COLLECTIONS", ("temporal", "geometry", "cross"))
+
+#: Whether a query also fires the stage-1 regime frame. Off by default: it is
+#: the LOWEST-distinctness stream in the whole design (4 values over 2725
+#: samples) and it cost 5.5 points of recall on the production path. Training
+#: is unaffected -- stage 2 still binds it.
+PREDICT_INCLUDE_REGIME = os.getenv("OMEN_PREDICT_INCLUDE_REGIME", "0") not in (
+    "0", "", "false", "False", "no")
+
+
+def collection_distinctness(
+    frame_sets: Sequence[Mapping[str, str]],
+) -> Dict[str, float]:
+    """``distinct frames / samples`` per collection over a training set.
+
+    The number the dilution law is stated in. A collection at 1.0 names every
+    sample uniquely; one at ``1/n`` is a constant and carries nothing.
+    """
+    total = len(frame_sets)
+    if total <= 0:
+        return {}
+    out: Dict[str, float] = {}
+    for collection in COLLECTIONS:
+        seen = {frames[collection.name] for frames in frame_sets
+                if collection.name in frames}
+        out[collection.name] = len(seen) / total
+    return out
+
+
+def discriminating_collections(
+    frame_sets: Sequence[Mapping[str, str]],
+    minimum: float = MIN_QUERY_DISTINCTNESS,
+) -> Tuple[str, ...]:
+    """Which collections a query should fire, measured from the corpus.
+
+    Returned in ``COLLECTIONS`` order so the choice is reproducible. Falls
+    back to the single most discriminating collection rather than an empty
+    query, because a query with no streams cannot answer at all.
+    """
+    scores = collection_distinctness(frame_sets)
+    picked = tuple(c.name for c in COLLECTIONS
+                   if scores.get(c.name, 0.0) >= minimum)
+    if picked:
+        return picked
+    if not scores:
+        return PREDICT_COLLECTIONS
+    return (max(scores, key=lambda name: scores[name]),)
+
+
 # --- bucketing ------------------------------------------------------------
 # Coarse buckets cap recall by collision -- the 2026-07 corpus run measured a
 # per-feature-majority ceiling well below 1.0 before the buckets were made
@@ -776,8 +873,24 @@ class OmenBrain:
         confidence_floor: float = 0.0,
         cost: float = ROUND_TRIP_COST,
         multiple: float = COST_MULTIPLE,
+        regime: Optional[str] = None,
+        query_collections: Optional[Sequence[str]] = None,
     ) -> Omen:
-        """Chained read-only prediction. Always returns a valid ``Omen``."""
+        """Read-only prediction. Always returns a valid ``Omen``.
+
+        ``regime`` is the caller's own ``label_regime(bars, index)``. Supply
+        it whenever the bars are in hand -- which is everywhere the frames
+        were built from, since they need the same window. The regime is a
+        *deterministic causal function of the past*, so asking the brain to
+        guess it is asking a 73.3%-accurate classifier for a number already
+        on the caller's desk. Measured: the production path scored 86.0%
+        train recall feeding stage 1's guess into stage 2, 90.7% feeding the
+        computed one, and 96.0% firing only the discriminating collections.
+
+        Omitting ``regime`` falls back to the stage-1 probe so a caller with
+        frames but no bars still gets a regime *reported* -- it is never fed
+        back into the stage-2 query unless ``PREDICT_INCLUDE_REGIME`` is set.
+        """
         threshold = omen_threshold(cost, multiple)
         hold = lambda reason, **extra: _hold_omen(  # noqa: E731 - local alias
             reason, symbol=symbol, chain=chain, as_of_ts=as_of_ts, price=price,
@@ -788,14 +901,29 @@ class OmenBrain:
             return hold("transport_error",
                         support={"reason": "node lacks /brain/predict/multi"})
 
-        # Stage 1 -- integrate the market-shape pools into a regime.
-        regime_answer, regime_confidence = self._predict(
-            self._streams(frames, STAGE1_COLLECTIONS), REGIME_POOL)
-        regime = parse_regime(regime_answer)
+        regime_answer: Optional[str] = None
+        regime_confidence = 0.0
+        if regime is not None and regime in REGIME_TOKENS:
+            # Computed, not guessed. Full confidence because it is arithmetic.
+            regime_answer, regime_confidence = regime_frame(regime), 1.0
+        else:
+            # Stage 1 -- integrate the market-shape pools into a regime. Kept
+            # for callers that hold frames without bars; its answer is
+            # REPORTED, and only fed back into stage 2 behind the env flag.
+            regime_answer, regime_confidence = self._predict(
+                self._streams(frames, STAGE1_COLLECTIONS), REGIME_POOL)
+            regime = parse_regime(regime_answer)
 
-        # Stage 2 -- every collection PLUS the predicted regime.
-        stage2 = self._streams(frames)
-        if regime is not None:
+        # Stage 2 -- the discriminating collections only. See the dilution
+        # law above ``PREDICT_COLLECTIONS``: every extra low-distinctness
+        # stream measurably out-votes the sharp ones.
+        names = list(query_collections if query_collections is not None
+                     else PREDICT_COLLECTIONS)
+        stage2 = self._streams(frames, names)
+        if not stage2:  # an unknown override must not silence the brain
+            stage2 = self._streams(frames)
+            names = [c.name for c in COLLECTIONS]
+        if PREDICT_INCLUDE_REGIME and regime is not None:
             stage2.append({"pool_id": REGIME_POOL,
                            "frame": _b64url(regime_frame(regime))})
         answer, confidence = self._predict(stage2, OMEN_POOL)
@@ -812,6 +940,10 @@ class OmenBrain:
             "recent_window": len(self._recent_answers),
             "stage1_answer": regime_answer,
             "collections_fired": len(stage2),
+            "query_collections": names,
+            # Whether the regime was arithmetic or a guess. A held-out number
+            # read without this line is not comparable to one read with it.
+            "regime_source": "computed" if regime_confidence >= 1.0 else "stage1",
         }
 
         if self._degenerate():
