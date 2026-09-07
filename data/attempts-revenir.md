@@ -1048,3 +1048,53 @@ result, pick a different one.
   whether the exit loop runs over it at all. Establish that first; a loop that
   is not iterating its own open positions would explain both leaks and would
   outrank everything above.
+
+- 2026-09-07 Gale (pass 93). Hypothesis: entry-refused-stop-survivability was
+  100% of refusals (7-8/h, no other reason in the hour) not because the symbols
+  are dangerous but because the gate is measuring the wrong quantity.
+  CONFIRMED, and the mechanism is a missing column.
+  services/stop_survivability_gate._tick_jumps ran
+  "SELECT price FROM market_stream ... ORDER BY ts" -- it never selected ts --
+  so consecutive ROWS were scored as consecutive TICKS however far apart in
+  time. Measured over the 7-day window, max gap between stored rows:
+  AAVE-USDC 111156s (30.9h), VIRTUAL-USDC 115584s (32.1h), LFG-USDC 183319s
+  (50.9h), CLANKER-USDC 72723s, SPACEX-USDC 71687s. So the p99 "single-tick
+  jump" a 2% stop was being asked to survive was a multi-DAY return.
+  RESULT, as numbers: p99 all-pairs vs p99 pairs<=120s apart -- AAVE 4.81% ->
+  0.25%, VIRTUAL-USDC 4.50% -> 0.52%, MORPHO-WETH 5.26% -> 0.00%, CLANKER
+  46.11% -> 0.51%, SPACEX 91.67% -> 0.00%, LFG 44.21% -> 2.68%, against a
+  4.00% ceiling (2% stop x 2.0). Refused/allowed of 209 symbols by gap cap:
+  unbounded 46/163, 900s 35/174, 300s 24/185, 120s 17/192, 60s 6/203. Shipped
+  120s as STOP_SURVIVE_MAX_TICK_GAP_SEC: per-symbol MEDIAN gaps on every
+  judgeable symbol are 1-65s so the body of the distribution is kept, the p90
+  tail (90-1800s) that is our own outages is dropped, and it sits below the
+  shortest holding period we trade. 46 of 46 judgeable symbols banned -> 17.
+  THE GUARD IS NOT SWITCHED OFF: MOONBASE-USDC 27.78%, OMARCHY-USDC 17.55% and
+  BSTONK-USDC 5.03% -- the three symbols the module's own docstring is written
+  about -- are all still refused, as are the contaminated pairs JITOSOL-CBBTC
+  715127%, EURC-WETH 238626%, VVV-WETH 227177%. Nine became POSITIVELY allowed
+  on a measured p99 rather than by abstention. Commit e9d4787, 6 new tests, 3
+  of them fail against the old module (proved by stashing it), the other 3
+  pass both ways on purpose.
+  ALSO FIXED, and it is why nobody caught the above sooner: the pass gate was
+  reporting 346 passed / 0 failed while SEVEN tests were red on main in the two
+  files that pin graduation itself. Both files are now IN GATE_TESTS (369 ->
+  375 passed). One of the seven was a real defect -- trading/pipeline.py read
+  self._last_confusion_refresh bare, and an AttributeError on that TELEMETRY
+  field takes down the whole live_readiness_report, which is what arms live.
+  The other five were fixtures that stopped exercising graduation when
+  dcb7517 made the bar read ghost["tradeable"]: a record() with no symbol can
+  never graduate, and every graduation test recorded without one. Commit
+  99f9824, 4 new tests. Both production callers DO pass a symbol
+  (services/atf_static_strategy.py:139, trading/bot.py:9845), verified.
+  ACTION TAKEN: restarted production (pid 13252 started 05:27, so it held the
+  OLD gate and the fix was inert until reload). 0 open positions at the time;
+  scripts/main_keeper.py relaunches main.py within 60s with -X utf8.
+  next: the gate fix widens the funnel but does not by itself place a trade --
+  the ONLY strategy with a live execution branch still has to clear the
+  per-strategy bar. Whoever takes the next pass should measure the refusal
+  census AFTER the restart's 13-minute boot rather than assuming, and if
+  stop_survivability is no longer top the next question is Hollow's: whether
+  atf_static_scout's censored 62-0 book is real once the out-of-horizon
+  stale_underwater losses are counted. Do NOT retune the 120s cap without
+  re-running the sensitivity sweep -- it is in the module docstring.
