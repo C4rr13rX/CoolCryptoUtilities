@@ -166,6 +166,82 @@ def _bool_env(name: str, default: str = "0") -> bool:
     return (os.getenv(name, default) or default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _stale_underwater_sec(max_hold_sec: float) -> float:
+    """How long a losing position may be carried before it is closed anyway.
+
+    THE BACKSTOP MUST FIRE WHERE ITS OUTCOME STILL COUNTS AS EVIDENCE.
+
+    ``stale_underwater`` is the ONLY exit reason this module can reach with a
+    losing position that never hit its stop: ``target_hit`` requires clearing
+    the round trip and ``max_hold`` requires ``profit > cost_rate``, so both
+    are winners by construction. Every slow loss the scout takes is therefore
+    labelled here or nowhere.
+
+    That bucket used to fire at ``max(2 * max_hold_sec, 4h)`` -- 14400s at the
+    shipped defaults. ``trading.strategies.ledger._max_evidence_hold_sec()``
+    returns ``MAX_HOLD_SECONDS * STRATEGY_MAX_EVIDENCE_HOLD_MULTIPLE``, which
+    is 3600 * 4 = 14400s at the shipped defaults. The same number. The exit
+    that realises a slow loss fired exactly AT the horizon past which
+    graduation refuses to count the round trip, and because the scout only
+    evaluates positions on a tick, the exit always landed a few minutes the
+    wrong side of it.
+
+    Measured 2026-09-07 over every ``ghost-exit`` row in ``trading_ops``,
+    filtered to live-tradeable symbols and split on
+    ``_exceeds_evidence_horizon``:
+
+        dropped as out-of-horizon      3 rows   0 wins   3 losses   -0.0706
+        exit reasons                   stale_underwater x3
+        ages                           4.07h, 4.09h, 4.10h  (horizon 4.00h)
+
+    Every live-tradeable round trip the horizon filter has ever dropped is a
+    loss, and all of them are this bucket. The filter is not sampling the book,
+    it is deleting one tail of it. Downstream, ``atf_static_scout``'s
+    graduation record reads 62 trades / 62 wins / 0 losses / +0.2708 and clears
+    the 20-trip, 55%, net-positive bar outright -- on a book whose losses are
+    structurally invisible. It is the only strategy in the population that
+    clears that bar.
+
+    So the bound is clamped to a fraction of the horizon the ledger actually
+    grades on, imported rather than restated so the two cannot drift apart --
+    the same reason ``_max_evidence_hold_sec`` derives itself from
+    ``MAX_HOLD_SECONDS``. At the defaults this moves the backstop from 14400s
+    to 10800s, leaving a full hour of tick lag before the outcome stops
+    counting; the observed lag is 4-6 minutes.
+
+    ``max_hold_sec`` and the return value are SECONDS.
+    ``ATF_STATIC_STALE_HORIZON_MARGIN`` is a dimensionless fraction in (0, 1).
+    A tighter ``ATF_STATIC_MAX_UNDERWATER_SEC`` is still honoured: the clamp
+    only ever lowers the bound, never raises it.
+    """
+    bound = max(
+        max_hold_sec * 2.0,
+        _float_env("ATF_STATIC_MAX_UNDERWATER_SEC", 4.0 * 3600.0),
+    )
+    try:
+        from trading.strategies.ledger import _max_evidence_hold_sec
+
+        horizon = float(_max_evidence_hold_sec())
+    except Exception:  # noqa: BLE001
+        # The ledger is imported lazily throughout this module because a
+        # bookkeeping import must never be what stops a position closing.
+        return bound
+    # A multiple of zero or less disables the horizon check entirely, and then
+    # there is nothing to stay inside of.
+    if horizon <= 0.0:
+        return bound
+    margin = _float_env("ATF_STATIC_STALE_HORIZON_MARGIN", 0.75)
+    if not 0.0 < margin < 1.0:
+        margin = 0.75
+    bound = min(bound, horizon * margin)
+    # The backstop is what happens AFTER the hold timer declines to close a
+    # loser, so the clamp must never pull it in front of that timer. Only a
+    # pathological horizon (STRATEGY_MAX_EVIDENCE_HOLD_MULTIPLE below ~1.33)
+    # can push it that far; there the bound degrades to the hold timer itself,
+    # which is the ATF_STATIC_HOLD_FORCES_EXIT behaviour and is safe.
+    return max(bound, max_hold_sec)
+
+
 def _feed_price(db: Any, symbol: str, chain: str, max_age_sec: float) -> Optional[float]:
     """Representative streamed price for ``symbol``, or None if the feed is silent.
 
@@ -841,11 +917,13 @@ def _run_ghost_quote_scout(
                 # Bound how long a losing position may be carried, so a dead
                 # token cannot occupy a slot indefinitely. Beyond this it is
                 # closed as a stop even if the stop threshold was never hit.
-                stale_sec = max(
-                    max_hold_sec * 2.0,
-                    _float_env("ATF_STATIC_MAX_UNDERWATER_SEC", 4.0 * 3600.0),
-                )
-                if age >= stale_sec:
+                #
+                # The bound is clamped to stay inside the ledger's evidence
+                # horizon. Every slow loss this module realises is labelled
+                # here, and before the clamp this fired at the same 14400s the
+                # horizon rejected, so all three such rows ever recorded were
+                # dropped from the graduation book. See _stale_underwater_sec.
+                if age >= _stale_underwater_sec(max_hold_sec):
                     reason = "stale_underwater"
         if not reason:
             pos["last_price"] = mark
