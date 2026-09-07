@@ -60,6 +60,31 @@ FAILS OPEN. A symbol with too few ticks to measure is ALLOWED here, because
 thin feeds -- symbol_motion_gate and the ATF scout's `_feed_is_dense_enough`
 already refuse those, and stacking a third refusal on the same condition would
 make a quiet feed look like three independent problems.
+
+UNMEASURABLE IS NOT THE SAME AS UNOBSERVED
+------------------------------------------
+That abstention was applied to the whole verdict rather than to the estimate,
+and it swallowed the symbol this module's own table names as failing. OMARCHY
+carries 154 ticks against a ``MIN_TICKS`` of 200, so the gate returned no
+verdict at all on a feed it had already watched jump 17.55% -- 8.8x the stop --
+six separate times. Measured 2026-09-06 on the 5-day ghost book, priced at the
+$6 live clip and restricted to round trips the live lane's 45-minute force exit
+could reproduce:
+
+    tradeable, hold <= 45m          30 trades   net -0.4656   PF 0.765
+      of which OMARCHY-USDC          3 trades   net -1.5030   PF 0.069
+    the same book without OMARCHY   27 trades   net +1.0374
+
+Three trades on one abstained-on symbol were the whole loss, and two of them
+realised -14.94% and -11.19% inside 1.0 and 3.1 MINUTES against a 2% stop.
+
+A percentile needs samples. An observed breach does not: watching the price
+jump past the ceiling twice is direct evidence that a stop cannot bind there,
+not an inference from a thin sample. So the sample floor now governs only how
+few observations may carry a ban -- below ``MIN_TICKS`` the gate still refuses
+a symbol that has breached the ceiling at least ``MIN_BREACHES`` times, and a
+single stray print still cannot ban anything. Symbols at or above ``MIN_TICKS``
+are judged exactly as before.
 """
 from __future__ import annotations
 
@@ -78,8 +103,15 @@ except Exception:  # noqa: BLE001 - logging must never block a trade
 
 DB_PATH = Path(__file__).resolve().parents[1] / "storage" / "trading_cache.db"
 
-#: Ticks needed before a p99 means anything. Below this the gate abstains.
+#: Ticks needed before a p99 means anything on its own. Below this the gate
+#: abstains UNLESS it has directly observed ``MIN_BREACHES`` jumps past the
+#: ceiling -- see "unmeasurable is not the same as unobserved" above.
 MIN_TICKS = int(os.getenv("STOP_SURVIVE_MIN_TICKS", "200"))
+
+#: How many observed jumps past the ceiling can carry a ban on a feed too thin
+#: for a percentile. Two, not one: a single bad print is a print, and this repo
+#: has shipped enough denomination flips to know one of them proves nothing.
+MIN_BREACHES = max(2, int(os.getenv("STOP_SURVIVE_MIN_BREACHES", "2")))
 
 #: How far back to read the feed.
 WINDOW_SEC = float(os.getenv("STOP_SURVIVE_WINDOW_SEC", str(7 * 86400)))
@@ -178,19 +210,24 @@ def _rebuild(now: float) -> None:
             if symbol.upper() in NEVER_BAN:
                 continue
             jumps = _tick_jumps(conn, symbol, since)
-            if len(jumps) < MIN_TICKS:
-                # Not enough evidence to judge. Abstain -- see the module
+            if not jumps:
+                continue
+            breaches = sum(1 for jump in jumps if jump > ceiling)
+            if len(jumps) < MIN_TICKS and breaches < MIN_BREACHES:
+                # Too thin to estimate a percentile AND nothing directly
+                # observed past the ceiling. Abstain -- see the module
                 # docstring on why this gate does not police thin feeds.
                 continue
             p99 = _percentile(jumps, 0.99)
             if p99 <= ceiling:
                 continue
+            thin = " (thin feed; %d observed breaches)" % breaches if len(jumps) < MIN_TICKS else ""
             verdicts[symbol.upper()] = (
                 p99,
                 f"p99 single-tick jump {p99 * 100:.2f}% over {len(jumps)} "
                 f"ticks exceeds {ceiling * 100:.2f}% "
                 f"({STOP_PCT * 100:.2f}% stop x {MAX_JUMP_RATIO:.1f}); "
-                f"a stop cannot bind on this feed",
+                f"a stop cannot bind on this feed{thin}",
             )
     except Exception:  # noqa: BLE001
         _cache_built_at = now

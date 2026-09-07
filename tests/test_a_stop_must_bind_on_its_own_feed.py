@@ -129,8 +129,16 @@ def test_too_few_ticks_is_not_a_verdict(gate):
     A thin feed is already refused by symbol_motion_gate and the scout's
     own density check. Stacking a third refusal on the same condition would
     make one quiet feed look like three independent problems.
+
+    This case used to pass a CONTAMINATED thin feed -- a 1000x flip over five
+    ticks -- and assert it was allowed. That assertion was the bug, not the
+    guard: a flip is two observed breaches, and see
+    ``test_a_thin_feed_cannot_hide_an_unenforceable_stop.py`` for the
+    OMARCHY-USDC round trips it cost. The intent survives unchanged and is
+    now pinned on a feed that is thin and QUIET, which is the only thing
+    "unmeasurable" can honestly mean.
     """
-    module = gate({"NEW-USDC": _contaminated(n=5)}, min_ticks=200)
+    module = gate({"NEW-USDC": _calm(n=5)}, min_ticks=200)
     assert module.refusal_reason("NEW-USDC") is None
 
 
