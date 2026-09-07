@@ -95,13 +95,14 @@ t-test was demonstrably missing.
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import sqlite3
 import statistics
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from services.logging_utils import log_message
 
@@ -145,6 +146,13 @@ NEVER_BAN = {s.strip().upper() for s in
              if s.strip()}
 
 _cache: Dict[str, Tuple[float, str]] = {}
+#: Verdicts keyed on ``(strategy_id, symbol)``. Separate from ``_cache``
+#: because the two answer different questions and only one of them is what a
+#: dashboard means by "banned symbols".
+_pair_cache: Dict[Tuple[str, str], Tuple[float, str]] = {}
+#: Pairs already logged, so a rebuild every CACHE_SEC does not re-announce a
+#: standing verdict 288 times a day.
+_pair_seen: set = set()
 _cache_built_at: float = 0.0
 
 
@@ -186,8 +194,29 @@ def _sign_test_p(values: List[float], threshold: float) -> float:
     return math.fsum(math.comb(n, i) for i in range(wins + 1)) * (0.5 ** n)
 
 
-def _load_book(limit: int = 500) -> Dict[str, List[float]]:
-    """Closed round trips per symbol as RETURNS, newest first.
+def _strategy_of(details: Any) -> str:
+    """The executor that placed this round trip, or "" if the row cannot say.
+
+    An unattributable row is deliberately dropped from the per-executor book
+    rather than pooled into it. The book predates the split of
+    ``atf_static_scout`` out of ``atf_static``, so a row with no
+    ``strategy_id`` could belong to either -- and the whole point of the
+    per-executor verdict is that those two have opposite records on the same
+    symbol.
+    """
+    if not details:
+        return ""
+    try:
+        parsed = json.loads(details) if isinstance(details, (str, bytes)) else details
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+    return str(parsed.get("strategy_id") or "").strip()
+
+
+def _load_book(limit: int = 500) -> Tuple[Dict[str, List[float]], Dict[Tuple[str, str], List[float]]]:
+    """Closed round trips as RETURNS, newest first -- pooled and per executor.
 
     Each value is ``net_profit / notional`` where notional is
     ``entry_price * quantity`` -- a unitless fraction of the position, not a
@@ -198,20 +227,40 @@ def _load_book(limit: int = 500) -> Dict[str, List[float]]:
     log that keeps pre-fix artifacts forever (a single 2026-09-04 row carries
     a -0.4177 that the receipt puts at -0.0169), and judging symbols on it
     would ban whichever symbol happened to be traded during an old bug.
+
+    The second return value keys on ``(strategy_id, symbol)``. Books written
+    before ``details`` existed, or by a caller that does not record a
+    ``strategy_id``, contribute only to the pooled book -- so the per-executor
+    verdict is empty rather than wrong when the column is missing.
     """
     book: Dict[str, List[float]] = {}
+    pairs: Dict[Tuple[str, str], List[float]] = {}
     try:
         conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     except Exception:  # noqa: BLE001 - no book is not a reason to block trading
-        return book
+        return book, pairs
     try:
-        rows = conn.execute(
-            "SELECT symbol, net_profit, entry_price, quantity FROM trade_outcomes "
-            "WHERE status = 'closed' AND net_profit IS NOT NULL "
-            "ORDER BY ts DESC LIMIT ?",
-            (int(limit),),
-        )
-        for symbol, net, entry_price, quantity in rows:
+        try:
+            rows = list(conn.execute(
+                "SELECT symbol, net_profit, entry_price, quantity, details FROM trade_outcomes "
+                "WHERE status = 'closed' AND net_profit IS NOT NULL "
+                "ORDER BY ts DESC LIMIT ?",
+                (int(limit),),
+            ))
+        except sqlite3.OperationalError:
+            # No `details` column: an older schema, or a test book. Pooled
+            # verdicts still work; the per-executor one simply has nothing to
+            # attribute, which is the fail-open direction.
+            rows = [
+                row + (None,)
+                for row in conn.execute(
+                    "SELECT symbol, net_profit, entry_price, quantity FROM trade_outcomes "
+                    "WHERE status = 'closed' AND net_profit IS NOT NULL "
+                    "ORDER BY ts DESC LIMIT ?",
+                    (int(limit),),
+                )
+            ]
+        for symbol, net, entry_price, quantity, details in rows:
             if not symbol:
                 continue
             try:
@@ -223,58 +272,126 @@ def _load_book(limit: int = 500) -> Dict[str, List[float]]:
                 continue
             if ret != ret or ret in (float("inf"), float("-inf")):
                 continue
-            book.setdefault(str(symbol).upper(), []).append(ret)
+            key = str(symbol).upper()
+            book.setdefault(key, []).append(ret)
+            strategy = _strategy_of(details)
+            if strategy:
+                pairs.setdefault((strategy, key), []).append(ret)
     except Exception:  # noqa: BLE001
-        return {}
+        return {}, {}
     finally:
         conn.close()
-    return book
+    return book, pairs
+
+
+def _verdict(values: List[float]) -> Optional[Tuple[float, str]]:
+    """Ban this book of returns, or None to allow it.
+
+    The whole decision, in one place, so the pooled verdict and the
+    per-executor one are the SAME test on different slices. Two copies of a
+    two-stage statistic would drift apart on the next tuning pass, and the
+    safety argument in the module docstring -- that the sign test is only ever
+    reached for a book the mean has already found to be losing -- is a
+    property of the ORDER these run in.
+    """
+    if len(values) < MIN_SAMPLES:
+        return None
+    mean = statistics.mean(values)
+    if mean >= ROUND_TRIP_COST:
+        # Clears its own costs -- not a candidate, and NEITHER test below
+        # runs. This is what keeps the sign test off AERO-USDC (3 of 38
+        # round trips clear cost, p=0.0000, +2.350% per trade) and off
+        # CBBTC-USDC (1 of 10). A payoff carried by rare large wins is a
+        # shape, not a defect; see the module docstring.
+        return None
+    # Test the EXCESS return over what the round trip costs, so the null
+    # hypothesis is "this symbol pays for its own trading" rather than
+    # "this symbol is above zero".
+    excess = [value - ROUND_TRIP_COST for value in values]
+    t = _t_statistic(excess)
+    if t < MAX_T:
+        return (
+            t,
+            f"{len(values)} closed round trips at mean return "
+            f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+            f"(t={t:+.2f} on excess return)",
+        )
+    # The mean is below cost but the dispersion swallowed the t. Ask the
+    # same question without a denominator: how many round trips actually
+    # cleared the cost? COMP-USDC is 1 of 16 at t=-1.44.
+    sign_p = _sign_test_p(values, ROUND_TRIP_COST)
+    if sign_p < SIGN_MAX_P:
+        wins = sum(1 for value in values if value > ROUND_TRIP_COST)
+        return (
+            t,
+            f"{len(values)} closed round trips at mean return "
+            f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+            f"-- only {wins} cleared it (sign test p={sign_p:.4f}, "
+            f"t={t:+.2f} did not fire)",
+        )
+    return None
+
+
+def _never_ban(symbol: str) -> bool:
+    return symbol.split("-")[0] in NEVER_BAN or symbol in NEVER_BAN
 
 
 def _rebuild(now: float) -> None:
     global _cache_built_at
-    book = _load_book()
+    book, pair_book = _load_book()
     verdicts: Dict[str, Tuple[float, str]] = {}
     for symbol, values in book.items():
-        base = symbol.split("-")[0]
-        if base in NEVER_BAN or symbol in NEVER_BAN:
+        if _never_ban(symbol):
             continue
-        if len(values) < MIN_SAMPLES:
+        found = _verdict(values)
+        if found is not None:
+            verdicts[symbol] = found
+
+    # THE SAME QUESTION, ASKED OF THE EXECUTOR THAT WILL ACTUALLY PLACE IT.
+    #
+    # The pooled book answers "does this SYMBOL pay?", and that is not the
+    # question at an entry site: a directive is always (strategy, symbol).
+    # Measured 2026-09-07 over the 191-row book, the two answers disagree on
+    # exactly the symbol the live lane is aimed at most:
+    #
+    #     AERO-USDC   pooled       n=46  mean +1.805%   ALLOW (clears cost)
+    #     AERO-USDC   atf_static   n=17  mean -0.992%   t=-6.24   BAN
+    #     CBBTC-USDC  atf_static   n= 6  mean -1.077%   t=-4.73   BAN
+    #
+    # The pooled mean is carried by 18 rows from a DIFFERENT executor at
+    # +5.736%. ``atf_static`` is the only strategy with a live branch at all,
+    # and AERO is 6 of the 9 round trips in its post-demotion re-arm window
+    # (2 wins, -0.2232) -- so the gate that exists to stop us re-trading a
+    # proven loser was routing the live lane straight back into one, and the
+    # evidence window that has to fill before real money moves was 67%
+    # composed of it.
+    #
+    # This is the entry-side twin of the graduation fix in
+    # ``trading/strategies/ledger.py``: evidence must be counted, and refused,
+    # at the granularity the trade is actually placed at.
+    #
+    # BANS ONLY, exactly as the pooled rule does. A strategy that looks GOOD
+    # on a symbol the pool has banned is still refused -- the pooled verdict
+    # is checked first and never overturned, because a positive record on a
+    # slice is the noise-fitting this module's docstring refuses to act on.
+    _pair_cache.clear()
+    for (strategy, symbol), values in pair_book.items():
+        if _never_ban(symbol) or symbol in verdicts:
             continue
-        mean = statistics.mean(values)
-        if mean >= ROUND_TRIP_COST:
-            # Clears its own costs -- not a candidate, and NEITHER test below
-            # runs. This is what keeps the sign test off AERO-USDC (3 of 38
-            # round trips clear cost, p=0.0000, +2.350% per trade) and off
-            # CBBTC-USDC (1 of 10). A payoff carried by rare large wins is a
-            # shape, not a defect; see the module docstring.
-            continue
-        # Test the EXCESS return over what the round trip costs, so the null
-        # hypothesis is "this symbol pays for its own trading" rather than
-        # "this symbol is above zero".
-        excess = [value - ROUND_TRIP_COST for value in values]
-        t = _t_statistic(excess)
-        if t < MAX_T:
-            verdicts[symbol] = (
-                t,
-                f"{len(values)} closed round trips at mean return "
-                f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
-                f"(t={t:+.2f} on excess return)",
+        found = _verdict(values)
+        if found is not None:
+            t, detail = found
+            _pair_cache[(strategy, symbol)] = (t, f"{strategy}: {detail}")
+
+    for key, (_t, detail) in sorted(_pair_cache.items()):
+        if key not in _pair_seen:
+            log_message(
+                "trading",
+                f"SYMBOL EDGE GATE: refusing {key[0]} on {key[1]} -- {detail}",
+                severity="warning",
             )
-            continue
-        # The mean is below cost but the dispersion swallowed the t. Ask the
-        # same question without a denominator: how many round trips actually
-        # cleared the cost? COMP-USDC is 1 of 16 at t=-1.44.
-        sign_p = _sign_test_p(values, ROUND_TRIP_COST)
-        if sign_p < SIGN_MAX_P:
-            wins = sum(1 for value in values if value > ROUND_TRIP_COST)
-            verdicts[symbol] = (
-                t,
-                f"{len(values)} closed round trips at mean return "
-                f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
-                f"-- only {wins} cleared it (sign test p={sign_p:.4f}, "
-                f"t={t:+.2f} did not fire)",
-            )
+            _pair_seen.add(key)
+
     if verdicts != {k: v for k, v in _cache.items()}:
         for symbol, (t, detail) in sorted(verdicts.items()):
             if symbol not in _cache:
@@ -288,8 +405,15 @@ def _rebuild(now: float) -> None:
     _cache_built_at = now
 
 
-def refusal_reason(symbol: str) -> Optional[str]:
+def refusal_reason(symbol: str, strategy_id: Optional[str] = None) -> Optional[str]:
     """Why this symbol should not be traded, or None to allow it.
+
+    ``strategy_id`` names the executor about to place the trade. Passing it
+    asks the strictly HARDER question -- a symbol is refused if the pooled
+    book condemns it OR if this executor's own record on it does -- so a call
+    site that omits it can only ever be more permissive, never less. It is
+    optional because one caller (``trading/swap_schedule.py``) plans around
+    symbols with no strategy in hand at all.
 
     Fails OPEN: any error reading the book allows the trade. A gate that
     cannot read its evidence has no evidence to refuse on, and blocking every
@@ -300,8 +424,15 @@ def refusal_reason(symbol: str) -> Optional[str]:
         now = time.time()
         if now - _cache_built_at > CACHE_SEC:
             _rebuild(now)
-        verdict = _cache.get(str(symbol or "").upper())
-        return verdict[1] if verdict else None
+        key = str(symbol or "").upper()
+        verdict = _cache.get(key)
+        if verdict:
+            return verdict[1]
+        strategy = str(strategy_id or "").strip()
+        if not strategy:
+            return None
+        pair_verdict = _pair_cache.get((strategy, key))
+        return pair_verdict[1] if pair_verdict else None
     except Exception:  # noqa: BLE001
         return None
 
@@ -315,3 +446,18 @@ def banned_symbols() -> Dict[str, str]:
     except Exception:  # noqa: BLE001
         return {}
     return {symbol: detail for symbol, (_, detail) in _cache.items()}
+
+
+def banned_pairs() -> Dict[Tuple[str, str], str]:
+    """Per-executor verdicts, for diagnostics and dashboards.
+
+    Keyed ``(strategy_id, symbol)``. These are symbols the pooled book still
+    allows -- a symbol banned outright never reaches this map.
+    """
+    try:
+        now = time.time()
+        if now - _cache_built_at > CACHE_SEC:
+            _rebuild(now)
+    except Exception:  # noqa: BLE001
+        return {}
+    return {key: detail for key, (_, detail) in _pair_cache.items()}

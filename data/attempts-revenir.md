@@ -306,3 +306,51 @@ result, pick a different one.
   direction_prob over a few hundred post-boot snapshots before trusting the
   10.0%; if it settles well under Bay's predicted 50%, the residual is the
   graph_confidence damping path, not the calibration offset.
+
+2026-09-07 02:4x | Lark |
+  hypothesis: the re-arm window cannot fill because the entry gate keeps
+  routing the only live-capable strategy into the symbols it is provably
+  worst at -- the entry-side twin of Echo's dcb7517 |
+  did: censused trade_outcomes by (strategy_id, symbol) and replayed
+  services/symbol_edge_gate.py's own two-stage statistic over both slices.
+  result:
+      AERO-USDC   pooled       n=46  mean +1.805%   ALLOW (clears the cost)
+      AERO-USDC   atf_static   n=17  mean -0.992%   t=-6.24   BAN
+      CBBTC-USDC  atf_static   n= 6  mean -1.077%   t=-4.73   BAN
+  The pooled mean is carried by 18 rows from a DIFFERENT executor at
+  +5.736%. A directive is always (strategy, symbol); the pooled book answers
+  a question no entry site asks. 26 of atf_static's 33 closed round trips sit
+  on those two pairs -- 5 wins (19.2%), net -0.502008 -- and 6 of the 9 rows
+  in its post-demotion re-arm window are AERO (2 wins, -0.223201). So 67% of
+  the evidence that has to turn positive before real money moves was being
+  drawn from a pair with t=-6.24 against it.
+  SHIPPED: symbol_edge_gate also judges (strategy, symbol) on the IDENTICAL
+  statistic, factored into one `_verdict()` so the two can never drift. Bans
+  only; the pooled verdict is checked first and is never overturned by a good
+  slice. No threshold changed, and the pooled ban list is byte-identical
+  (BASECAT, CBETH, CBXRP, COMP). Wired at BOTH entry paths -- trading/bot.py
+  and the ATF scout -- because one rule with two entry paths has burned this
+  repo before.
+  NOT a gate that refuses everything: 73.4% of atf_static's 244 candidate
+  rows in 24h are still eligible across 46 symbols, and VIRTUAL-USDC (49
+  rows, the largest single source) is untouched. The new rule refuses 18.4%.
+  Validated out of sample on the 92 attributed rows, fitted on the first 55
+  and applied to the untouched 37: holdout net +0.2177 -> +0.2400 (+0.0223),
+  and it removed no winning round trip. The full-book split cannot test it --
+  strategy_id only appears on recent rows, so the first 60% is unattributed.
+  10 tests, verified failing against the pooled-only gate in-process by
+  blanking the per-executor book after reload (no source edit, no window for
+  a concurrent agent). Gate 284 passed / 0 failed.
+  profit_logic_audit: NO KNOWN LOSING SHAPES.
+  Honest limit: what REMAINS of atf_static's book after the rule is 7 trades
+  at +0.880675, but that is dominated by BSTONK, which is
+  stop_is_unenforceable -- Echo's dcb7517 already refuses to count it. This
+  does not hand the strategy an edge; it stops the sample being poisoned.
+  next: production PID 3144 booted 01:42 and this is inert until it
+  restarts, along with dcb7517. After the restart the number to watch is the
+  (strategy,symbol) composition of new ghost entries -- AERO should stop
+  appearing under atf_static while VIRTUAL/CBZEC take those slots. Bigger
+  open question nobody has taken: atf_static_scout holds 233 ghost trades at
+  79% and is permanently barred because its executor has no live branch,
+  while atf_static -- which does -- has 48. The evidence and the capability
+  are in different strategies.

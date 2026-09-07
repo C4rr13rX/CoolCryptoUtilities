@@ -103,6 +103,13 @@ GATE_TESTS = (
     # rare large wins is never mistaken for a loser -- protects AERO-USDC,
     # the largest positive line in the book (+1.97 over 38 round trips).
     "test_a_steady_loser_is_not_saved_by_its_variance.py",
+    # ...and who is entering it. That ban list pooled every executor into one
+    # verdict per symbol, so AERO-USDC read +1.805% over 46 round trips and
+    # was ALLOWED while atf_static -- the only strategy with a live branch --
+    # was -0.992% over its own 17 (t=-6.24). 26 of atf_static's 33 closed
+    # round trips are on the two pairs this now refuses, carrying -0.502008
+    # of realised loss, and 6 of the 9 rows in its re-arm window.
+    "test_a_symbol_that_pays_for_one_executor_can_ruin_another.py",
     # What the entry gate believes a trade is worth before it spends the money.
     # It believed the strategy's own advertisement -- atf_static builds its
     # target as price*1.05, so the gate asked "is 5% more than the cost?" and

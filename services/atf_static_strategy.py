@@ -24,7 +24,7 @@ GHOST_POSITIONS_KEY = "atf_static_strategy:ghost_positions"
 try:
     from services.symbol_edge_gate import refusal_reason as _symbol_edge_refusal
 except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
-    def _symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
+    def _symbol_edge_refusal(_symbol: str, _strategy_id=None):  # type: ignore[misc]
         return None
 try:
     from services.symbol_motion_gate import refusal_reason as _symbol_motion_refusal
@@ -968,7 +968,12 @@ def _run_ghost_quote_scout(
         # t=-3.30 -- was entered from HERE while the bot was correctly
         # refusing it. One rule, two entry paths, and only one of them was
         # holding the line.
-        edge_refusal = _symbol_edge_refusal(symbol)
+        # Asked of (SCOUT_STRATEGY_ID, symbol), not of the symbol alone: the
+        # pooled book mixes this scout's simulated round trips with the bot's
+        # real ones, and on AERO-USDC those two records have opposite signs
+        # (+5.736% over 18 unattributed/scout rows against -0.992% over
+        # atf_static's 17). Each executor is now judged on its own.
+        edge_refusal = _symbol_edge_refusal(symbol, SCOUT_STRATEGY_ID)
         if edge_refusal:
             skipped_negative_edge.append(symbol)
             db.log_trade(

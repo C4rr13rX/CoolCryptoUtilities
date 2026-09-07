@@ -40,7 +40,7 @@ from services.logging_utils import log_message
 try:
     from services.symbol_edge_gate import refusal_reason as symbol_edge_refusal
 except Exception:  # noqa: BLE001 - a missing gate must not stop trading
-    def symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
+    def symbol_edge_refusal(_symbol: str, _strategy_id=None):  # type: ignore[misc]
         return None
 try:
     from services.strategy_edge_gate import refusal_reason as strategy_edge_refusal
@@ -7696,7 +7696,17 @@ class TradingBot:
             # out of sample -- a ban list fitted to the first 60% of the book
             # improved the untouched remaining 40% by +0.0316 and never made
             # it worse.
-            edge_refusal = symbol_edge_refusal(symbol)
+            #
+            # ASKED OF (STRATEGY, SYMBOL), NOT OF THE SYMBOL ALONE. A
+            # directive is always a pair, and the pooled book answers for a
+            # symbol across every executor that ever touched it. Measured
+            # 2026-09-07: AERO-USDC pools to +1.805% over 46 round trips and
+            # is ALLOWED, while `atf_static` -- the only strategy with a live
+            # branch -- is -0.992% over its own 17 (t=-6.24). Passing the id
+            # can only tighten this gate; see services/symbol_edge_gate.py.
+            edge_refusal = symbol_edge_refusal(
+                symbol, str(getattr(directive, "strategy_id", "") or "") or None
+            )
             if edge_refusal:
                 decision.update(
                     {
