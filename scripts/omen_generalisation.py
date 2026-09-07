@@ -554,12 +554,22 @@ def main() -> int:
                       f"{every:>+9.4%} {per_trade - every:>+8.4%} "
                       f"{(seq_total / seq_trades if seq_trades else 0.0):>+9.4%} "
                       f"{won:>3}/{len(rows_out):<3}", flush=True)
-                if tail_rows and not shuffle:
+                if tail_rows:
                     # GROSS forward return by score quantile, cost NOT
                     # subtracted: the question this answers is whether the
                     # score ranks the size of the move, and subtracting a
                     # constant from every row cannot change a ranking.
-                    print("           tail  " + "  ".join(
+                    #
+                    # Printed for the SHUFFLED control too. A tail is a
+                    # selection, and on a fat-tailed return distribution a
+                    # selection of 1% has a wide sampling error -- a lift that
+                    # the control reproduces is sampling noise wearing the
+                    # shape of a finding. This crew has already been fooled by
+                    # exactly that class of number, so the control has to be
+                    # visible on the same screen, not inferred from the EDGE
+                    # column beside it.
+                    print(f"     {'tail-SHUF' if shuffle else 'tail     '}  "
+                          + "  ".join(
                         f"top{q:.0%}:{v['mean_forward']:+.4%}"
                         f"/{v['clearing_cost']:.0%}pay(n={v['bars']})"
                         for q, v in tail_rows.items()), flush=True)

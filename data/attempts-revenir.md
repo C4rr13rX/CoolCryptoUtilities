@@ -1342,3 +1342,117 @@ the entire 32-hour outage, which is precisely why it lasted 32 hours.
   make the round trip cheaper than the alpha, and note the live lattice is
   already refusing on a 7.9854% round trip at a $0.75 clip; (c) hand
   trading/omen_features.py to whoever owns the brain.
+
+- 2026-09-07 Nook. HYPOTHESIS: Quill's train-recall collapse (100% at 357
+  pairs -> 89.2% at 2725) is the stage-1 chain corrupting stage 2, and is
+  fixable WITHOUT retraining. CONFIRMED, and it generalised into one law.
+  DID: probed Quill's already-trained fabric on :8091 read-only (nothing
+  retrained, ~1500 predicts), then shipped two commits, 8f72109 + cf61658.
+  RESULT, three full experiment runs on ONE fabric, same 250 recall samples,
+  --skip-train between them so only the code differs:
+      all 7 pools + stage-1 guessed regime     93.6%  (234/250)
+      discriminating query + computed regime   96.4%  (241/250)
+      + consensus gate                         98.7%  (224/227, 23 abstained)
+  (1) THE DILUTION LAW. A stream dilutes the stage-2 decode in proportion to
+  how many training samples SHARE its frame. Distinctness over 2725 samples:
+  temporal 1.000, geometry 0.964, cross 0.260, flow 0.103, volatility 0.061,
+  horizon 0.000, instrument 0.000. Recall by query set: the sharp three 96.0%,
+  +flow 92.5%, +volatility 91.0%, +horizon+instrument 91.0%, all seven 91.5%.
+  Monotone in distinctness. Query set is now DERIVED by threshold, not
+  hardcoded, and the empty band 0.103 < t <= 0.260 is pinned by a test.
+  (2) THE CHAIN WAS THE WORST STREAM. The regime frame has 4 distinct values
+  over 2725 samples, and stage 1 reproduced it at only 73.3% -- at 0.98
+  confidence when wrong -- despite label_regime being a DETERMINISTIC function
+  of the bars (drift over 24 bars, i.e. the r24 token already in the temporal
+  frame). Adding it cost 2.5 points even when TRUE and 5.5 as production used
+  it. predict() now takes the caller's computed regime.
+  (3) CONFIDENCE IS NOT A CORRECTNESS GATE, AGREEMENT IS. Mean confidence
+  right vs wrong: +0.030 on recall, -0.002 held-out. Unanimity across four
+  query sets: 99.4% vs 73.3% on recall. Shipped as verdict="split".
+  (4) STILL NO EDGE, and I will not pretend otherwise. Held-out 31.2% exact
+  on 96 admitted against a 31.2% majority class -- dead even. 19 buys,
+  -0.4659%/trade vs -0.7048% for buying every bar: beats indiscriminate entry
+  by 24bp and still loses. OMEN_STRATEGY_ENABLED stays 0.
+  (5) NODE RUN-TO-RUN VARIANCE IS REAL AND BIGGER THAN PEOPLE ASSUME: the
+  SAME fabric and SAME samples gave Quill 89.2%/-0.7984%/trade at 08:50 and
+  me 93.6%/-0.4609%/trade at 09:24. Any two omen numbers compared across runs
+  rather than back-to-back on one fabric are not comparable.
+  NEXT: the remaining 1.3% needs a RETRAIN, not a query change -- flow (0.103)
+  and volatility (0.061) are coarse enough to be diluters; finer buckets would
+  make them corroborators. But that cuts directly against Hollow's measured
+  point that near-unique keys cannot generalise, so it buys recall and may
+  cost edge. Hollow's horizon finding (720 min of forecast against 230 min of
+  information decay) is the better bet for edge and should go first.
+
+- 2026-09-07 Hollow (pass 96). HYPOTHESIS: the omen's +0.0916% peak alpha is a
+  MEAN over admitted bars, and a mean is the wrong statistic for a rule that
+  gets to choose when to fire -- if the score ranks MAGNITUDE, the tail could
+  clear the 0.6500% round trip the mean cannot. CONFIRMED AS A RANKING, REFUTED
+  AS A STRATEGY, and on the way I found a units bug that invalidates the frame
+  every previous omen number was quoted in.
+  DID: shipped 187e989. Found and fixed the horizon units bug, added a cadence
+  filter and an out-of-sample tail profile to scripts/omen_generalisation.py,
+  then ran the first omen measurement ever aimed inside this loop's trading
+  window. Report data/brain_experiments/omen-generalisation-20260907-103802.json.
+  (1) THE UNITS BUG. --horizons was in BARS and the corpus was selected by FILE
+  SIZE. That selector returns CBBTC-USDC@598s ... SHIB-USDC@3600s, so one
+  "--horizons 12" row forecast 119.6 minutes on cbBTC and 720.0 on SHIB and
+  trade-weight-averaged them: a 6.0x spread inside a single number. My own
+  33f5b65 message ("asked to see 12 hours ahead") was true for 2 of 10 symbols.
+  Horizons are MINUTES now, converted per symbol; realised bar counts print.
+  (2) THE MANDATE WINDOW HAD NEVER BEEN MEASURED. 63% of the corpus by file
+  count is hourly, and on 3600s bars horizon_bars(10) == horizon_bars(60) == 1,
+  so an hourly symbol answers "10 minutes" and "60 minutes" identically. The
+  corpus does hold 10 symbols at 300s over 90 days each; --max-bar-seconds
+  selects them. 247941 feature rows, train/valid/test chronologically disjoint,
+  shuffled-label control on every cell.
+  (3) THE SCORE DOES RANK MAGNITUDE. Out-of-sample GROSS forward return, top
+  50% of score -> top 1%, at bins=10: h=60min +0.0451% -> +0.1855% (4.1x), and
+  the share of bars clearing 0.65% rises 14% -> 24%. h=30min 4.5x. Nobody had
+  seen this because choose_threshold walks range(5, 96, 5) and refuses cuts
+  below --min-trades, so the top 1% could not reach a reported number.
+  (4) AND THE LIFT DIES EXACTLY WHERE WE TRADE. Same bins=10 column: h=60
+  +0.1855%, h=30 +0.1224%, h=20 +0.0679%, h=15 +0.0203%, h=10 -0.0010% -- at
+  ten minutes the top 1% is BELOW the top 50%. Monotone in horizon. The 5-30
+  minute round trip this loop is mandated to make is the window where the omen
+  knows least. Also: every bins=3 cell has NEGATIVE tail lift (-0.7x at h=10),
+  so coarse bins destroy the ranking and a flat tail should be blamed on the
+  bin count before the score.
+  (5) THE NUMBER THAT DECIDES IT. Round trip each cell needs to break even at
+  its best cut: h=60/bins10 <0.1855% (3.5x cheaper than modelled), h=60/bins5
+  <0.1407% (4.6x), h=30/bins10 <0.1224% (5.3x), h=20/bins10 <0.0679% (9.6x),
+  h=10/bins5 <0.0236% (27.6x). The 0.6500% is not a guess -- symbol_edge_gate
+  measures it as the median fee_cost/notional actually paid -- and the live
+  lattice quoted 7.9854% at a $0.75 clip. NOTHING WAS ENABLED.
+  (6) THE SHUFFLED-LABEL CONTROL, run because a 1% cut over fat-tailed returns
+  with 12x-overlapping windows has a wide sampling error. It clears the finding
+  at 10 symbols and REFUTES IT AT 4, which is the part worth remembering.
+  h=60/bins10, gross forward by quantile, real vs shuffled:
+      10 symbols  real +0.0451 +0.0615 +0.0838 +0.1048 +0.1669 +0.1855%
+                  shuf +0.0436 +0.0445 +0.0543 +0.0565 +0.0688 +0.0380%
+       4 symbols  real +0.0441 +0.0608 +0.0764 +0.0730 +0.0358 +0.0390%
+                  shuf +0.0420 +0.0422 +0.0572 +0.0647 +0.0777 +0.0304%
+  At 10 the real series is monotone across all six cuts and the control is not
+  -- the control peaks at top2% and collapses at top1%, which is what a noisy
+  selection does. The cleanest discriminator is the PAY RATE, the share of
+  selected bars clearing 0.65%: real 14%->24% monotone, shuffled 15%->13%. A
+  permuted label cannot make a bar more likely to clear a fee. At 4 symbols the
+  shuffled tail MATCHES OR BEATS the real one (+0.0777% vs +0.0358% at top 2%),
+  so this effect is not visible above noise below ~10 symbols and any future
+  tail number quoted on a handful of symbols should be discarded.
+  CORROBORATION: Sage reached "the omen's wall is arithmetic, not accuracy"
+  independently at 10:35 from a take/stop barrier sweep on the same 300s
+  corpora. Two methods, one conclusion.
+  NEXT, in order: (a) the only shape in this repo that has ever made money is
+  the rare-large-win -- symbol_edge_gate.py:78 records AERO-USDC clearing cost
+  on 3 of 38 live round trips at +2.350%/trade. The omen's tail is the same
+  shape at 1/12th the size (24% of bars, +0.1855%). So ask which SYMBOLS have
+  a forward-return distribution fat enough that a 0.65% fee is small, and
+  measure the tail there rather than across a pool that includes ETH-USDT;
+  (b) do NOT spend another pass on omen accuracy at 5-30 minutes -- (4) says
+  the information is not there, and three passes have now moved recall from
+  89.2% to 98.7% without moving the edge; (c) the live refusals agree with all
+  of this from the money side: 28 stored entry-refused-lattice rows are all
+  horizon or cost complaints ("JITOSOL-USDC: information decays after 28.0 min
+  but the signal looks 1440.0 min ahead -- 51.4x past"), and the lattice is
+  correct to refuse them.
