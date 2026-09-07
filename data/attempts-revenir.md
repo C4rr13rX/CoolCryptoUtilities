@@ -699,3 +699,55 @@ result, pick a different one.
   re-censusthe same join in 2h: the number to watch is ghost candidates whose
   symbol has no tick inside the hour, which was 53.7% and should be ~0%, and
   whether ghost entries/h moves off 1.
+
+2026-09-07 05:30 | Zephyr | hypothesis: the feed is not rate limited by the
+  APIs -- it is starved by this process, and the tick loss is what keeps ghost
+  round trips below the re-arm bar |
+  did: the pass header said the feed was dark (2 ticks/10m, newest 592s ago).
+  It was boot: prod 16392 booted 04:46:54 and the stream loop started 05:03:34,
+  a 12.8 min gap, then 157 ticks/10m. Not a fault, so I asked why the steady
+  state is 265 ticks/h across 12 symbols against the 700-800/10m this used to
+  run. market-stream already reports its OWN event-loop lag on every REST
+  timeout. Over one system.log: n=1203, p50 16.1s, p90 47.7s, p99 103.7s,
+  max 246.8s, against a 10s fetch budget, 31077 total lag-seconds. Then the
+  outcome census over the 6h to 05:13:
+      flow samples published        1185
+      ticks dropped (no price)      1251
+      REST timeouts, local_stall    1230
+      upstream HTTP 429                7
+  The feed loses 51% of its ticks and 1230 of those failures are OURS. The
+  standing instruction's premise -- "the feed is being rate-limited: 483
+  cooldowns and 199 HTTP 429s" -- is wrong by two orders of magnitude now;
+  do not tune a poll interval on it. Mechanism: `_fetch_rest_price` already
+  separates a slow endpoint from a stall in the loop its own timeout is timed
+  on, and returns "local_stall" for the second. `_poll_rest_data` then
+  `continue`d past it -- its comment reads "this endpoint was never really
+  asked" -- and nothing asked it. At REST_CONSENSUS_PARALLEL=3 all three
+  endpoints of a batch share one stall and time out together, and
+  REST_CONSENSUS_BATCHES=3 spends the poll, so the tick is dropped. That is
+  also why a stall reads as "2+ CDNs failed in the same second".
+  result: SHIPPED d24eede + pushed + restarted (prod 13252/21308, 05:27:28,
+  carrying it plus Dune's 5a3ddaa/d432ab6). A batch lost ENTIRELY to our own
+  stall is re-asked, bounded by FEED_LOCAL_STALL_RETRIES=2 and by the end of
+  the poll window. One real answer from ANY endpoint -- a price, an HTTP
+  status, a DNS failure -- returns immediately, so a struggling upstream is
+  never re-asked; that guard is its own test. Gate 308 passed / 0 failed (was
+  296, +12 new); profit_logic_audit NO KNOWN LOSING SHAPES. The regression
+  test is proven, not assumed: at retries=0 the helper is byte-equivalent to
+  the original single asyncio.gather and the test fails with
+  ['local_stall','local_stall','local_stall'] and no price.
+  next: read the AFTER with the same four greps over a 6h window and compare
+  against 1185/1251/1230/7; the new INFO line "re-asked a REST batch our own
+  loop stall had lost" counts recoveries directly. This does NOT fix the stall
+  itself, only its cost. WHAT BLOCKS THE LOOP is the next job and it is bigger
+  than one pass: bucketing every log line by minute and splitting on minutes
+  with >=30s of reported lag, the subsystems that run hot are metrics 3.46x,
+  token-guard 3.65x, trading 3.33x, strategy-ledger 2.80x, pair-select 2.52x
+  lines/min versus quiet minutes -- the decision cycle and the stream share a
+  loop, and a cycle starves the tape it will read next. There is no py-spy in
+  the venv; install one before guessing. Two smaller things I did not take:
+  `ghost_trade_snapshot refused 4 exit row(s)` logs the SAME four rows 10-20
+  times a minute forever, and `training: No module named 'tensorflow'` fires
+  a few times an hour in prod while `.venv` imports TF 2.20.0 fine in 60s --
+  so the confusion refresh is "judging on the cached report, which may be
+  stale" and the model precision gate may be reading a stale number.
