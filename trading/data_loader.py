@@ -44,6 +44,17 @@ HORIZON_WINDOWS_SEC: Tuple[int, ...] = (
     180 * 24 * 60 * 60,
 )
 
+#: The exact values ``trading/bot.py::_prepare_inputs`` feeds to
+#: ``gas_fee_input`` and ``tax_rate_input`` on every live tick. They are
+#: fractions of notional, and their sum -- 0.0065 -- is the measured round
+#: trip that ``services/strategy_edge_gate.py`` tests against.
+#:
+#: Training MUST feed the model the same two numbers it will be served. When
+#: it did not, ``net_margin`` was trained as ``mu - 0.4977`` (median) and
+#: served as ``price_mu - 0.0065``; see the comment where they are used.
+_LIVE_GAS_FEE_INPUT = 0.0015
+_LIVE_TAX_RATE_INPUT = 0.005
+
 _NEWS_DNS_ERROR_HINTS = (
     "name resolution",
     "temporary failure in name resolution",
@@ -160,9 +171,21 @@ class HistoricalDataLoader:
         self._dataset_meta_cache: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
         self._disk_cache_enabled = os.getenv("DATASET_DISK_CACHE", "1").lower() in {"1", "true", "yes", "on"}
         self._disk_cache_dir = Path(os.getenv("DATASET_CACHE_DIR", "data/cache/datasets")).expanduser()
-        self._disk_cache_version = 1
+        #: BUMP THIS WHENEVER A TARGET OR AN INPUT CHANGES SHAPE OR MEANING.
+        #:
+        #: ``cache_key`` is (window_size, sent_seq_len, tech_count, focus_key,
+        #: selected_key, file_signature) -- it describes the SOURCE BARS and
+        #: nothing about how they are turned into labels. A persisted .npz
+        #: therefore survives any change to the label arithmetic, so a fix to
+        #: the targets ships inert until the underlying files happen to change.
+        #:
+        #: 2 = price_dir is sign(mu) rather than (mu - volume_scaled_cost > 0),
+        #:     and gas_fee_input/tax_rate_input are the fractional round trip
+        #:     the live path sends rather than numbers built from net_volume.
+        self._disk_cache_version = 2
         if self._disk_cache_enabled:
             self._disk_cache_dir.mkdir(parents=True, exist_ok=True)
+            self._evict_stale_disk_cache()
         self._tech_pca_components: Optional[np.ndarray] = None
         self._tech_pca_mean: Optional[np.ndarray] = None
         self._headline_digest: Optional[str] = None
@@ -192,6 +215,54 @@ class HistoricalDataLoader:
         self._synthetic_files: Dict[str, Path] = {}
         self._news_token_cache: OrderedDict[str, set[str]] = OrderedDict()
         self._news_token_cache_limit = max(256, int(os.getenv("NEWS_TOKEN_CACHE_LIMIT", "2048")))
+
+    def _evict_stale_disk_cache(self) -> None:
+        """Delete persisted datasets built by an older label schema.
+
+        Bumping ``_disk_cache_version`` already makes them unreadable -- but
+        unreadable is not the same as gone. At the time this was written the
+        directory held 2,072 files and **6.6 GB** of datasets that no version
+        of the code would ever open again, and this machine has already lost a
+        20-hour run to a full disk.
+
+        Best-effort in every direction: a file that cannot be read or removed
+        is skipped, because a stale cache is a disk-space problem and losing a
+        training cycle over it would be worse.
+        """
+        removed = 0
+        reclaimed = 0
+        try:
+            meta_paths = sorted(self._disk_cache_dir.glob("*.meta.json"))
+        except OSError:
+            return
+        for meta_path in meta_paths:
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                version = int(meta.get("version", 0))
+            except Exception:  # noqa: BLE001 - unreadable meta is itself stale
+                version = -1
+            if version == self._disk_cache_version:
+                continue
+            payload = meta_path.with_suffix("")          # <digest>.meta
+            payload = payload.with_suffix(".npz")        # <digest>.npz
+            for path in (payload, meta_path):
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                try:
+                    path.unlink()
+                except OSError:
+                    continue
+                removed += 1
+                reclaimed += size
+        if removed:
+            log_message(
+                "data_loader",
+                f"evicted {removed} dataset cache files from an older label "
+                f"schema, reclaiming {reclaimed / 1e9:.2f} GB",
+                severity="info",
+            )
 
     def _disk_cache_path(self, cache_key: Tuple[Any, ...]) -> Path:
         digest = hashlib.sha1(repr(cache_key).encode("utf-8")).hexdigest()
@@ -883,8 +954,57 @@ class HistoricalDataLoader:
                 ts = timestamps[end - 1]
                 hour = (ts // 3600) % 24
                 dow = (ts // 86400) % 7
-                gas_val = 0.001 + abs(float(vol_slice[-1])) * 1e-5
-                tax_val = 0.005 + abs(float(vol_slice[-1])) * 5e-5
+                # A COST IS A FRACTION OF NOTIONAL, NOT A COUNT OF TOKENS.
+                #
+                # These used to be built from the bar's traded volume:
+                #     gas = 0.001 + |net_volume| * 1e-5
+                #     tax = 0.005 + |net_volume| * 5e-5
+                # ``net_volume`` is a raw traded quantity -- median 125,401
+                # across the 268,977 bars in data/historical_ohlcv, max 17.7M --
+                # so gas+tax came out with a median of 0.4977 and a maximum of
+                # 172,480,147, while the thing they are subtracted from,
+                # ``mu``, is a LOG RETURN with p99 |mu| = 0.0347.
+                #
+                # Everything downstream is derived from that subtraction, so
+                # the units error collapsed three of the model's four heads
+                # (measured over 66,370 sampled windows):
+                #
+                #   price_dir  = (net_margin > 0)      0.84% positive, against
+                #                                      an actual up-move rate
+                #                                      of 48.20%. The direction
+                #                                      head was trained on a
+                #                                      label that is false, and
+                #                                      that is why
+                #                                      direction_prob sat at a
+                #                                      median of 0.1471 with
+                #                                      0 of 569 evaluations
+                #                                      reaching the 0.58 entry
+                #                                      bar.
+                #   exit_conf  = sigmoid(|net_margin| * 10)   median 0.9932,
+                #                                      47% of samples pinned
+                #                                      above 0.999 -- saturated,
+                #                                      so it carried no signal.
+                #   net_margin target                  median -0.4979, while
+                #                                      the SERVED net_margin is
+                #                                      price_mu - 0.0065. Train
+                #                                      and serve were two
+                #                                      different quantities
+                #                                      wearing one name.
+                #
+                # It also leaked the volume channel into the labels, so the
+                # model's targets moved with liquidity rather than with price.
+                #
+                # These are now the same fractional round-trip cost the live
+                # path sends: trading/bot.py::_prepare_inputs feeds
+                # gas_fee_input=0.0015 and tax_rate_input=0.005 on every tick,
+                # and their sum, 0.0065, is the measured round trip that
+                # services/strategy_edge_gate.py and services/symbol_edge_gate.py
+                # already test against. Train and serve now agree by
+                # construction; tests/test_the_direction_head_is_not_trained_on
+                # _an_always_false_label.py asserts it against the real
+                # _prepare_inputs rather than against these constants.
+                gas_val = _LIVE_GAS_FEE_INPUT
+                tax_val = _LIVE_TAX_RATE_INPUT
 
                 news_text = self._build_news_text(
                     pair_symbol=pair_label_upper,
@@ -967,7 +1087,33 @@ class HistoricalDataLoader:
 
         mu_arr = np.array(target_mu, dtype=np.float32).reshape(-1, 1)
         net_margin = mu_arr - (gas_arr + tax_arr)
-        dir_arr = (net_margin > 0).astype(np.float32)
+        # price_dir ANSWERS THE QUESTION ITS CONSUMER ASKS: "does price go UP".
+        #
+        # Not "does the move clear the round trip". Every downstream reader
+        # treats 0.5 as the neutral point of a direction probability --
+        # ``enter_threshold`` 0.58, ``momentum = direction_prob - 0.5`` handed
+        # to the risk layer, SCHEDULER_MIN_DIRECTION_PROB 0.6, and
+        # MONEY_BUTTON_MIN_DIR_PROB which services/env_loader.py pins to
+        # exactly 0.50 "so the neutral case PASSES". A label of "beats cost"
+        # has a base rate of 16.75% on this corpus, so a calibrated model
+        # would centre near 0.17 and every one of those 0.5-neutral consumers
+        # would read a perfectly balanced market as bearish.
+        #
+        # Measured over 66,370 sampled windows:
+        #     (net_margin > 0), as it was          0.84% positive
+        #     (mu > round_trip_cost)              16.75% positive
+        #     (mu > 0), what the consumer means   48.20% positive
+        #
+        # The cost still has a home: it is exactly what ``net_margin`` and
+        # ``net_pnl`` are trained on, one head down. Direction and
+        # profitability are two questions and the model has a head for each.
+        #
+        # 0.482 also clears TRAIN_POSITIVE_FLOOR (0.15), which the collapsed
+        # label had been failing on every cycle -- trading/pipeline.py:1840
+        # silently RELAXES the ghost-trade minimum for promotion whenever
+        # positive_ratio is under that floor, so the broken label had been
+        # lowering a promotion bar as a side effect.
+        dir_arr = (mu_arr > 0).astype(np.float32)
         log_var_arr = np.log1p(np.abs(mu_arr))
         exit_conf = 1.0 / (1.0 + np.exp(-np.abs(net_margin) * 10.0))
 
