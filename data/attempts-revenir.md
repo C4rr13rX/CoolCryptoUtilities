@@ -997,3 +997,54 @@ result, pick a different one.
   own tests red, and the gate did not notice because it runs a curated subset
   rather than tests/. A gate that cannot see the promotion tests is not a
   gate, and every pass since 02:03 has been signed off by it.
+
+- 2026-09-07 Hollow (pass 93). Hypothesis: atf_static_scout's 62-trade/62-win/
+  0-loss live-tradeable record -- the ONLY record in the population that clears
+  the 20-trip/55%/net-positive graduation bar -- is a censored book rather than
+  an edge. CONFIRMED, with the mechanism. Censused every ghost-exit row in
+  trading_ops filtered to live-tradeable symbols and split on
+  _exceeds_evidence_horizon: rows dropped as out-of-horizon = 3, of which
+  0 wins and 3 losses, net -0.0706, ALL of them exit reason stale_underwater,
+  ages 4.07h/4.09h/4.10h against a 4.00h horizon. Every live-tradeable round
+  trip the horizon filter has ever dropped is a loss. Cause is two constants
+  colliding: services/atf_static_strategy reached stale_underwater at
+  max(2*max_hold_sec, ATF_STATIC_MAX_UNDERWATER_SEC) = 14400s, and
+  _max_evidence_hold_sec() returns MAX_HOLD_SECONDS *
+  STRATEGY_MAX_EVIDENCE_HOLD_MULTIPLE = 3600*4 = 14400s -- the same number --
+  and the scout only evaluates on a tick, so the exit always landed 4-6 min the
+  wrong side. stale_underwater is the ONLY reason that module can reach with a
+  loss that never hit its stop (target_hit requires clearing the round trip,
+  max_hold requires profit > cost_rate, so both are winners BY CONSTRUCTION),
+  so the book kept every winner and deleted every slow loser. The scout's 6
+  recorded stop_losses are dropped separately and CORRECTLY -- all six are
+  BASECAT/BSTONK/BPAD/MOONBASE, genuinely untradeable. RESULT: shipped
+  _stale_underwater_sec, which clamps the bound to a fraction of the horizon
+  imported from the ledger rather than restated, so the two cannot drift.
+  Bound moves 14400s -> 10800s: an hour of tick-lag headroom against the 4-6
+  min observed, and a losing position's slot occupancy capped at 3h not 4h.
+  Commit 6e8cf93, pushed. Gate 369 passed / 0 failed (was 255),
+  profit_logic_audit NO KNOWN LOSING SHAPES, 8 new tests failing 14 ways
+  against the old max(...) bound.
+  NO LIVE TRADE THIS PASS, and the mechanical reason is not a gate. Measured
+  approved_ids() == [] i.e. nothing is armed at all. The scout clears the bar
+  but is barred by _ghost_only_ids() because no live branch exists for it --
+  that bar is CORRECT, not a bug. atf_static owns the live branch and its
+  honest tradeable record is 174 trips / 44.8% / +0.0674, which is +$0.00039
+  per round trip: a coin flip that pays for itself and nothing more. The 55%
+  bar is refusing it correctly. Do NOT lower that bar to force a trade.
+  next: TWO open-position leaks found while measuring, both in the scout's
+  exit loop, neither fixed. Reconstructed 7 open scout positions from
+  trading_ops and probed each with _corroborated_price at its REAL entry
+  price. (a) TYBG 44.2h, BASECAT 64.6h, CBXRP 64.2h, BSTONK 13.0h all
+  corroborate to None -- feed dark, so the loop takes `if mark is None:
+  continue` and holds them forever; the stale bound is UNREACHABLE for a
+  dark-feed symbol and the slot never frees. The existing entry-corroboration
+  branch already has the right precedent: pop the position WITHOUT recording
+  an outcome, so no fiction is booked. (b) the sharper one: CBETH-USDC is
+  72.95h old with a LIVE corroborated mark of 2835.41 against an entry of
+  2874.44, i.e. -1.36% and not near any stop. It should have closed as
+  stale_underwater at 4h and did not. Mechanism NOT established -- I did not
+  determine whether the scout's persisted position dict even contains it, or
+  whether the exit loop runs over it at all. Establish that first; a loop that
+  is not iterating its own open positions would explain both leaks and would
+  outrank everything above.
