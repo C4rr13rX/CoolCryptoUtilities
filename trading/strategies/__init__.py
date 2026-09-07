@@ -19,6 +19,7 @@ from trading.strategies.macd_momentum import MacdMomentumStrategy
 from trading.strategies.mean_reversion import MeanReversionStrategy
 from trading.strategies.momentum_breakout import MomentumBreakoutStrategy
 from trading.strategies.money_button import MoneyButtonStrategy
+from trading.strategies.omen_reversion import OmenReversionStrategy
 from trading.strategies.obv_accumulation import ObvAccumulationStrategy
 from trading.strategies.rsi_reversal import RsiReversalStrategy
 from trading.strategies.stochastic_reversal import StochasticReversalStrategy
@@ -49,6 +50,7 @@ __all__ = [
     "ObvAccumulationStrategy",
     "DustMicroSwingStrategy",
     "MoneyButtonStrategy",
+    "OmenReversionStrategy",
 ]
 
 
@@ -72,6 +74,12 @@ def build_default_registry() -> StrategyRegistry:
         ObvAccumulationStrategy(),
         DustMicroSwingStrategy(),
         GenomeChampionStrategy(),
+        # The wizard brain's buy-low omen. Registered so it is visible on the
+        # population page and carries its own ghost ledger from the first
+        # tick; it emits nothing until OMEN_STRATEGY_ENABLED=1 and the omen
+        # node answers, so registering it cannot change any other strategy's
+        # behaviour.
+        OmenReversionStrategy(),
     ]
     # Multi-timescale sweep: the full-window strategies also hunt at 5h..1w
     # horizons off resampled stored history, so every time bucket the user

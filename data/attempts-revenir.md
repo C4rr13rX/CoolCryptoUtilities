@@ -1098,3 +1098,62 @@ result, pick a different one.
   atf_static_scout's censored 62-0 book is real once the out-of-horizon
   stale_underwater losses are counted. Do NOT retune the 120s cap without
   re-running the sensitivity sweep -- it is in the module docstring.
+
+- 2026-09-07 Quill (pass 94). USER PRIORITY, not a hypothesis of mine: "get
+  the crypto wizard brain to predict .omens to buy low and sell high at a
+  later date with as much accuracy as possible and use it in a strategy...
+  the main point is that we get it to produce perfectly first", plus the
+  08:13 note that the node can be configured as specialized collections that
+  fire together, a neuron pool for temporal mutations, and chained pools
+  integrating into one output with a specific schema.
+  FIRST THING MEASURED, and it is a finding on its own: the wizard node on
+  :8090 is HALF DEAD. GET /brain/health returns 200 and GET /brain/stats
+  answers (521224 concepts, 10725783 terminals), but every brain POST hangs
+  -- /brain/observe, /brain/predict and /brain/predict/multi all timed out at
+  20s and again at 60s. The brain mutex is held. It FAILS OPEN so it has not
+  blocked a trade (bot.py's regime nudge is try/except'd and skipped on the
+  event loop entirely), but the brain has been contributing exactly zero to
+  direction_prob for at least 32h. Hollow took the unblock; I stayed off it.
+  WHAT I BUILT INSTEAD OF WAITING: brains/market_predictor_v2.identity.toml
+  already described the user's architecture and had never been deployed. I
+  started a SECOND node on :8091 with its own brain dir, so nothing here can
+  touch the fabric production reads. It comes up with pool_count=12 -- 11
+  specialized pools: ohlcv_geometry(1), temporal_returns(2) which IS the
+  temporal-mutation pool, volume_flow(3), volatility_range(4),
+  market_regime(5), cross_market(6), news_entities(7), news_state(8),
+  forecast_horizon(9), instrument_context(10), future_outcome(11) as the
+  Action pool. /brain/consolidate/multi and /brain/predict/multi both answer
+  200 on that binary (probed before trusting -- the 2026-07-08 incident was a
+  stale exe silently lacking the learning surface), so the collections really
+  do fire together in one moment rather than being flattened into one frame.
+  trading/omen_brain.py CHAINS them: stage 1 binds geometry+temporal+flow+
+  volatility to a regime token in pool 5; stage 2 binds all seven collections
+  PLUS that regime frame to the omen token in pool 11; at inference stage 1's
+  PREDICTED regime is what stage 2 receives.
+  THE LABEL SET IS THE POINT. Five byte-disjoint omens -- trough (buy low),
+  crest (sell high), climb, slide, murk -- and every boundary is drawn at
+  ROUND_TRIP_COST x OMEN_COST_MULTIPLE (0.65% x 1.5 = 0.975%), imported from
+  services.symbol_edge_gate so it cannot drift from what the books charge. A
+  +0.30% forward move on a 0.65% round trip is a LOSS; a threshold at zero
+  would label it a buy and teach the substrate to lose money on every
+  recurrence. That is pinned by a test, and proved non-vacuous: with
+  OMEN_COST_MULTIPLE=0 three tests go red.
+  RESULT AS A NUMBER, smoke run (357 balanced pairs, AERO-USDC hourly,
+  horizon 12 bars): TRAIN RECALL 100.0% (60/60). That is the user's "produce
+  perfectly" bar and it is MET. Held-out on that tiny run was 15.8% exact
+  against a 44.2% majority class -- worse than majority, on 400 training
+  samples across a regime change -- but the money line was the interesting
+  one: 14 buy omens, 78.6% paid, +0.9067% per trade net of the 0.65% round
+  trip, against +0.4063% per trade for buying EVERY bar in the same window.
+  NOT YET GOOD, and this is why the strategy ships switched off: the garbage
+  control gave 12 of 20 pure-noise frames an actionable omen at confidence
+  floor 0. A brain that answers noise confidently is the exact shape that
+  produced a fake "78% directional accuracy" in 2026-08 (it was the market's
+  own down-drift, inverted). OMEN_STRATEGY_ENABLED defaults to 0 and
+  OMEN_CONFIDENCE_FLOOR is unset until a run names it.
+  next: the confidence floor must be READ OFF the sweep the experiment now
+  prints (real vs garbage confidence percentiles, and per-trade P/L at floors
+  0.0-0.5) rather than guessed; then re-run on a window where buying every
+  bar LOSES, because the smoke window was up 69.2% of the time and any
+  long-only rule looks good there. Do NOT enable the strategy on the smoke
+  numbers -- n=14 buy omens.
