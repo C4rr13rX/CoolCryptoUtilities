@@ -51,11 +51,19 @@ HORIZON_BARS = int(os.getenv("OMEN_HORIZON_BARS", "12"))
 #: not change meaningfully inside 30s, and refreshing per tick would put a
 #: node round trip on every sample.
 CACHE_SEC = float(os.getenv("OMEN_CACHE_SEC", "30"))
-#: Confidence a decoded omen must carry to be admitted. Calibrated from the
-#: measured gap between real and garbage frames in
-#: ``scripts/omen_experiment.py`` — see data/brain_experiments/. Default 0
-#: means "report what the brain said"; production sets it from the run.
-CONFIDENCE_FLOOR = float(os.getenv("OMEN_CONFIDENCE_FLOOR", "0.0"))
+#: Confidence a decoded omen must carry to be admitted. READ OFF a run, not
+#: guessed: omen-AERO-USDC-h12-20260907-085010 (2725 trained pairs) measured
+#: 40 pure-noise frames at confidence min 0.608 / max 0.675, and 500 real
+#: held-out frames at min 0.921 / max 0.995. The two distributions do not
+#: overlap, and 0.80 sits in the empty band between them -- it rejects every
+#: garbage frame and keeps every real one.
+#:
+#: It is therefore a NOISE filter, not a trade filter: the same run's sweep
+#: shows floors from 0.0 to 0.5 admitting all 115 buy omens identically, so
+#: this does not select trades and must not be mistaken for doing so. The
+#: first guess of 0.45 would have sat below every garbage frame and filtered
+#: nothing -- the same mistake the regime gate's first 0.15 margin made.
+CONFIDENCE_FLOOR = float(os.getenv("OMEN_CONFIDENCE_FLOOR", "0.80"))
 #: Master switch. Off until a run in data/brain_experiments/ shows the omen
 #: beating indiscriminate entry per trade, net of cost, on held-out bars.
 ENABLED = os.getenv("OMEN_STRATEGY_ENABLED", "0").strip().lower() in {

@@ -239,3 +239,37 @@ def test_status_names_why_it_is_silent():
     assert status["threshold_fraction"] > 0.0
     assert status["horizon_sec"] == HORIZON_BARS * BAR_SECONDS
     assert "last_reason" in status
+
+
+# --- the confidence floor is a measurement, not a guess -------------------
+
+#: The two distributions the floor separates, from
+#: data/brain_experiments/omen-AERO-USDC-h12-20260907-085010.json:
+#: 40 pure-noise frames and 500 real held-out frames, 2725 trained pairs.
+MEASURED_GARBAGE_MAX = 0.675
+MEASURED_REAL_MIN = 0.921
+
+
+def test_the_confidence_floor_sits_in_the_measured_gap():
+    """A floor outside the gap either passes noise or refuses real frames.
+
+    The 2026-08 regime gate shipped a floor of 0.45 picked by intuition and
+    it rejected a valid reading. This one is pinned to the numbers it was
+    read off, so moving it without re-measuring turns the test red.
+    """
+    assert MEASURED_GARBAGE_MAX < omen_reversion.CONFIDENCE_FLOOR < MEASURED_REAL_MIN, (
+        f"floor {omen_reversion.CONFIDENCE_FLOOR} is outside the measured "
+        f"gap ({MEASURED_GARBAGE_MAX}, {MEASURED_REAL_MIN}) -- re-run "
+        f"scripts/omen_experiment.py and read a new one off the report")
+
+
+def test_a_garbage_grade_confidence_is_refused_by_the_floor():
+    """Every noise frame in the run scored at or below MEASURED_GARBAGE_MAX."""
+    assert MEASURED_GARBAGE_MAX < omen_reversion.CONFIDENCE_FLOOR
+
+
+def test_a_real_grade_confidence_still_clears_the_floor():
+    """...and every real frame scored at or above MEASURED_REAL_MIN, so the
+    floor costs no genuine signal. A floor that filters trades as well as
+    noise would be doing two jobs and neither of them measurably."""
+    assert omen_reversion.CONFIDENCE_FLOOR < MEASURED_REAL_MIN

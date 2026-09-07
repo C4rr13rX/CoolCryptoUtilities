@@ -1199,3 +1199,54 @@ and it is one command, but it belongs to whoever owns the node this pass.
 read, so a blocked brain is visible on the page and cannot vote by silence.
 Do NOT grade node health on /health or /brain/stats: both were green through
 the entire 32-hour outage, which is precisely why it lasted 32 hours.
+
+- 2026-09-07 Quill (pass 94, SECOND ENTRY -- the full run, which CORRECTS the
+  smoke numbers above). 2725 balanced pairs, AERO-USDC hourly, horizon 12,
+  trained on a WIPED fabric, test window [21413, 21913) strictly after the
+  training window. Report:
+  data/brain_experiments/omen-AERO-USDC-h12-20260907-085010.json
+  THREE RESULTS, and the flattering one from the smoke run did not survive.
+  (1) TRAIN RECALL FELL WITH SCALE: 100.0% at 357 pairs -> 89.2% (223/250) at
+  2725. So the user's "produce perfectly" bar is met small and MISSED at
+  scale, and that is now the top question, ahead of any edge question. The
+  27 misses are not noise, they are OPPOSITE-CLASS confusions -- trough
+  decoded as crest, slide as climb, murk as trough/climb/crest -- i.e. the
+  fabric is not separating the classes, it is blending them. HYPOTHESIS for
+  the next pass, untested: my stage-1 chain is the suspect. Stage 1 binds
+  2725 different sample frames onto only FOUR regime tokens in pool 5, and
+  stage 2 then feeds that pool-5 frame back in as an input for every sample.
+  So every stage-2 binding shares one of just four near-constant input
+  frames, which is precisely the "dominant attractor" shape the 2026-07 run
+  found when 2 consolidation epochs collapsed predictions to one class. Test
+  it by training stage 2 WITHOUT the regime stream and comparing recall at
+  the same 2725 pairs; if recall returns to ~100% the chain needs many more
+  regime tokens (or a per-symbol regime alphabet), not removal.
+  (2) THE GARBAGE CONTROL IS SOLVED, and it gave a measured number. 40
+  pure-noise frames scored confidence min 0.608 / med 0.645 / p90 0.666 /
+  max 0.675. 500 real held-out frames scored min 0.921 / med 0.974 / p90
+  0.985 / max 0.995. THE DISTRIBUTIONS DO NOT OVERLAP. Empty band (0.675,
+  0.921); OMEN_CONFIDENCE_FLOOR now defaults to 0.80, which rejects 40 of 40
+  garbage frames and keeps 500 of 500 real ones. Pinned by a test that goes
+  red at 0.0 AND at 0.99, so the floor cannot be moved without re-measuring.
+  It is a NOISE filter and not a trade filter: the same run's sweep admits
+  all 115 buy omens identically at every floor from 0.0 to 0.5.
+  (3) NO EDGE, and it is worse than doing nothing. Held-out 26.6% exact
+  against a 31.2% majority class. Money, net of the 0.65% round trip: 115
+  buy omens, 29.6% paid, -0.7984% PER TRADE, against -0.7048% per trade for
+  buying EVERY bar in the same window. So the omen selection LOST 0.94bp per
+  trade relative to indiscriminate entry. This is the honest counterpart to
+  the smoke run's +0.9067% vs +0.4063%: that window was up 69.2% of the time
+  and this one is up 45.8%, and a long-only rule flatters itself in the
+  first. ALWAYS run both.
+  (4) COST, measured, matters for anyone scaling this: training throughput
+  collapses as the fabric grows -- 18.6/s at 250 pairs, 10.9 at 500, 6.2 at
+  1000, 4.5 at 1500, 3.5 at 2000, 3.1 at 2500. 2725 pairs took 15.5 min and
+  21.2M terminals. A 33-strategy sweep at this shape is not affordable;
+  whatever fixes recall has to fix this too.
+  SHIPPED: 71608ee (module, strategy, experiment, 39 tests) and the floor
+  commit after it. OMEN_STRATEGY_ENABLED stays 0 -- (3) is the reason, and I
+  will not enable a rule that is measurably worse than buying at random.
+  next, in this order: (a) the stage-1-attractor test in (1), because a
+  predictor that cannot reproduce its own training set cannot be judged on
+  held-out data at all; (b) only if recall returns, re-run (3) on BOTH an up
+  window and a down window before anyone argues about edge.
