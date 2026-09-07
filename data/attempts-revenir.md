@@ -822,3 +822,55 @@ result, pick a different one.
   the same fix one layer down and is the obvious follow-on. Do NOT re-audit
   the re-arm bar: it is measuring correctly, and Gale's 65d5374 (fee-burn
   exits) is the lever on the win-rate half.
+
+2026-09-07 06:2x | Zephyr | hypothesis: the reason no strategy is ARMED is not
+  a closed gate but that no strategy has an edge on any symbol the live lane
+  can actually trade -- and the ghost book hides that.
+  did: read data/strategy_ledger.json first: BOTH live-capable strategies
+  already CARRY a graduated_ts. atf_static grad 1788539648 dem 1788642158;
+  atf_static_scout grad 1788366844 dem 1788399285. So the brief's "0 carry
+  graduated_ts" is wrong -- they graduated and were DEMOTED, and re-arm needs
+  20 FRESH live-tradeable ghost round trips (_maybe_rearm_locked) of which
+  atf_static has 1 (the `tradeable` sub-counter was born 4h ago in dcb7517).
+  atf_static_scout is graduation_blocked=True by design (ghost-only executor,
+  hardcodes wallet="ghost"), so it is not a candidate however good its book.
+  Then replayed the 30d ghost book at the $6 live clip through
+  services/roundtrip_cost, split on ledger._live_tradeable.
+  result: SHIPPED bacfa0c + pushed. THE MEASUREMENT: 309 live-tradeable round
+  trips net +7.395, but the 19 held longer than 4h contribute +8.143 and the
+  290 held inside 4h net -0.748. atf_static tradeable: +1.0382 over 180 with
+  all holds, -0.9294 over 174 inside 4h. SIX rows flip the only live-capable
+  strategy's sign. Worst row CBBTC-USDC +22.20% held 30,617 MINUTES (21.3
+  days) against MAX_HOLD_SECONDS=3600 -- that one row IS atf_static/CBBTC's
+  entire +0.6705, which made it the top-ranked tradeable pair in the system;
+  without it the pair is -0.6384 over 40 and its median trade is -0.0211.
+  ROOT CAUSE, and it is this repo's recurring shape: ledger._is_implausible
+  bounds an outcome in DOLLARS ($2.00 absolute / 25x scale) and the artifact
+  is in TIME. $1.31 at the $6 clip sails under a $2 cap. record() now takes
+  held_sec and refuses past MAX_HOLD_SECONDS x
+  STRATEGY_MAX_EVIDENCE_HOLD_MULTIPLE(4); bar derived from the exit path's own
+  timer so the two cannot drift; both production writers feed it; unknown hold
+  fails OPEN. Refused AHEAD of the registry mirror. Gate 335/0,
+  profit_logic_audit NO KNOWN LOSING SHAPES, all 13 tests fail against old.
+  NEGATIVE RESULT, do not repeat: I also replayed force-closing every ghost
+  round trip at 10/15/20/30/45/60 min against market_stream ticks. SHORTENING
+  THE HOLD LOSES MONEY -- atf_static 10m -2.417, 20m +1.631, 30m +4.806, 60m
+  +5.029, actual (median 52m) +6.823; scout 10m +4.135 vs 60m +9.150. Cutting
+  ATF_STATIC_GHOST_MAX_HOLD_SEC to chase the "tens of minutes" target is
+  wrong on the numbers. Also checked and DISPROVED: the 172 ghost-exit rows
+  reading age 0.0 are not instant round trips, they simply lack the `age_sec`
+  key (a different exit path); entry_ts/exit_ts give the real hold. And the
+  same-strategy self-clobber is FIXED -- 702 `position-released` /
+  slot_taken_by_new_entry rows in 7d, but 0 in the last 24h.
+  next: the honest read of the AFTER number is that NO strategy has a proven
+  edge on any live-tradeable symbol -- the whole tradeable book is -0.748 over
+  290 in-horizon round trips, and no (strategy, symbol) pair with n>=8 has
+  t > +1.2. So do NOT keep asking which gate is shut. The next question is
+  question (3): the funnel. atf_static offered 108 ghost candidates in 24h and
+  got 7 entries; 46 of the 108 (43%) died on slot occupancy alone -- 29
+  entry-refused-duplicate (it holds the symbol itself, median 8.4 min) and 17
+  entry-refused-slot-busy (another strategy holds it). The position book is
+  keyed by SYMBOL, so two strategies simulating one symbol is impossible even
+  though simulation costs nothing. Keying the ghost book by (strategy, symbol)
+  is the unlock and is already noted as a ~33-site change. That is the
+  shortest path to enough tradeable evidence to judge anything.
