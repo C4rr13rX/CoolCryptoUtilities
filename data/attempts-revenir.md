@@ -984,3 +984,16 @@ result, pick a different one.
   (b) stop routing underwater exits into a separate bucket from max_hold, so
   win rates across strategies become comparable and the scout's record can be
   read at all.
+  ALSO FOUND, NOT FIXED, AND IT OUTRANKS EVERYTHING ABOVE: the pass gate is
+  blind to a live regression in the promotion logic. scripts/pass_gate.py
+  --check reports 335 passed / 0 failed while 7 tests are RED on main, in the
+  two files that test graduation itself -- tests/test_strategy_ledger.py (3)
+  and tests/test_readiness_report.py (4). Proved not mine by stashing all
+  seven of my files and re-running: still 3 failed / 9 passed. Same root cause
+  as the counter above: test_graduates_on_profitable_ghost_record asserts
+  is_live_approved("mean_reversion") after 5 profitable ghost trades and gets
+  False, because graduation now reads ghost.tradeable and those trades are not
+  on live-tradeable symbols. dcb7517 changed the promotion rule and left its
+  own tests red, and the gate did not notice because it runs a curated subset
+  rather than tests/. A gate that cannot see the promotion tests is not a
+  gate, and every pass since 02:03 has been signed off by it.
