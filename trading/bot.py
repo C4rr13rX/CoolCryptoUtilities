@@ -1777,12 +1777,6 @@ class TradingBot:
         With no size to go on, falls back to the rate at the current live
         clip, which is the size a real trade would actually be.
         """
-        try:
-            fixed = float(os.getenv("ROUNDTRIP_FEE_FIXED_USD", "0.004047"))
-            rate = float(os.getenv("ROUNDTRIP_FEE_RATE", "0.003187"))
-        except (TypeError, ValueError):
-            fixed, rate = 0.004047, 0.003187
-
         notional = notional_hint
         if notional is None or not (notional > 0):
             try:
@@ -1792,13 +1786,13 @@ class TradingBot:
         if not (notional > 0):
             notional = float(os.getenv("GHOST_MIN_TRADE_USD", "0.75"))
 
-        total = fixed + rate * float(notional)
-        effective = total / max(float(notional), 1e-9)
+        # The arithmetic lives in ONE place. This lane and the ghost scout both
+        # price round trips, and when each carried its own copy of the formula
+        # they disagreed silently -- the scout charged no fee at all. See
+        # services/roundtrip_cost.py.
+        from services.roundtrip_cost import roundtrip_cost_rate
 
-        # Never report a cost lower than the pure rate: a very large notional
-        # would otherwise amortise the fixed part toward zero and imply a
-        # trade could be nearly free, which no DEX offers.
-        return max(effective, rate)
+        return roundtrip_cost_rate(notional)
 
     def _lattice_refusal(self, symbol: str, directive: Any,
                          sample: Dict[str, Any]) -> Optional[str]:
@@ -11683,15 +11677,60 @@ class TradingBot:
 
         Longer than the ghost equivalent on purpose: abandoning a simulated
         position costs an observation, while selling a real one costs gas and
-        gives up whatever the position might still do. 3600s is the same
-        window the existing ``live_position_kept_despite_dark_feed`` warning
-        already uses to decide a live feed has gone dark, so this acts exactly
-        when that warning starts firing rather than inventing a new threshold.
+        gives up whatever the position might still do.
+
+        This was 3600s, borrowed from the ``live_position_kept_despite_dark_feed``
+        warning so the sweep would act exactly when that warning fired rather
+        than inventing a threshold. Borrowing it was the mistake: that warning
+        answers "is this feed dead?", and the question here is the different
+        and much sharper "can the stop still be enforced?". A window tuned to
+        the p99 inter-tick gap is tuned to never sell early, which is not the
+        cost that matters.
+
+        BPAD-USDC, 2026-09-05, is the whole argument. Live entry 17:48:02; last
+        price 17:48:49; next price 18:16:47 -- 1678s of silence, comfortably
+        inside the 3600s window, so the sweep never looked at it. The stop is
+        1.5%. The first tick after the hole arrived at -19.21% and the position
+        closed at -0.2549 on a $1.50 clip. That single trade is larger than the
+        entire live book: 18 round trips netted -0.1864, and without it they
+        net +0.0686. The feed was not down -- 16 ticks across ten other symbols
+        landed inside that hole -- so this was lost coverage on one symbol, and
+        the position was reachable for sale the whole time.
+
+        The window is calibrated against what silence actually costs. Over 7d
+        of ``market_stream`` restricted to the symbols we have traded (24,053
+        inter-tick gaps, 11 symbols), the absolute move across a gap of at
+        least T, and the expected loss avoided by force-selling at T net of
+        the measured 0.555% round-trip fee:
+
+            T       p90 |move|   E[saved net of fee]
+            300s        3.39%          -0.12%
+            450s        4.15%          -0.01%
+            900s        6.16%          +0.26%
+            1800s       8.47%          +0.85%
+            3600s      15.55%          +1.88%
+
+        Force-selling only pays for itself past ~450s -- below that the fee
+        exceeds the loss avoided, and dumping on every slow patch would be its
+        own bug. Above it the case only strengthens, so the threshold wants to
+        be as close to that break-even as the other constraints allow.
+
+        900s is that point. It is the shortest window that is both clearly
+        positive-EV and still above ``_dark_live_restart_settle_sec`` (600s),
+        which must stay strictly below it -- collapsing the two is what made
+        this sweep unreachable in the first place, and the invariant is pinned
+        by test_the_settle_window_is_not_the_darkness_window.
+
+        It is also the only value consistent with the mandate. Round trips are
+        meant to resolve in single-digit to tens of minutes. A position that
+        has been unpriced for fifteen of them has spent its entire intended
+        holding period with no risk control on it; at 3600s it spends four such
+        periods, which is how a 1.5% stop realises -19%.
         """
         try:
-            return max(0.0, float(os.getenv("DARK_LIVE_EXIT_SEC", "3600")))
+            return max(0.0, float(os.getenv("DARK_LIVE_EXIT_SEC", "900")))
         except (TypeError, ValueError):
-            return 3600.0
+            return 900.0
 
     def _dark_live_restart_settle_sec(self) -> float:
         """How long a fresh bot watches before it trusts the tick map at all.

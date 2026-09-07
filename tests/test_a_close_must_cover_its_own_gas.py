@@ -50,6 +50,7 @@ wins" depends on the stop being unconditional.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from unittest import mock
 
@@ -507,6 +508,13 @@ def test_a_ghost_round_trip_is_charged_the_gas_a_live_one_pays() -> None:
     trip cost $0.0049 where the real one cost $0.0049 of spread plus $0.0043
     of gas. atf_static graduated on the cheap book and returned gross
     +0.008680 against gas -0.028603.
+
+    The 0.0065 flat rate was itself then replaced by the measured, SIZE-DEPENDENT
+    model in services/roundtrip_cost.py -- ``fixed + rate * notional`` -- because
+    the fixed part does not shrink with the clip. This test kept asserting the
+    flat rate it had already replaced and so failed against its own code; it now
+    pins the model the bot actually charges, with the constants written out
+    independently so "whatever the code computes" cannot satisfy it.
     """
     bot = _bot()
     bot.positions[SYMBOL] = _position("ghost", held_sec=4749.0)
@@ -516,9 +524,20 @@ def test_a_ghost_round_trip_is_charged_the_gas_a_live_one_pays() -> None:
     assert bot.db.outcomes, "the ghost exit booked nothing"
     booked = bot.db.outcomes[-1]
     notional = float(booked["quantity"]) * float(booked["entry_price"])
-    expected = notional * 0.0065 + MEASURED_GAS_USD
 
+    # The simulated clip a ghost round trip is priced at, and the measured cost
+    # of one at that size -- spelled out here rather than imported, so a change
+    # to either constant has to be made deliberately in two places.
+    ghost_clip = float(os.getenv("GHOST_MIN_TRADE_USD", "0.75"))
+    fee_rate = (0.004047 + 0.003187 * ghost_clip) / ghost_clip
+    assert bot._roundtrip_fee_rate(notional_hint=None) == pytest.approx(
+        fee_rate, rel=1e-9
+    ), "the bot and this test disagree about what a round trip costs"
+
+    expected = notional * fee_rate + MEASURED_GAS_USD
     assert booked["fee_cost"] == pytest.approx(expected, rel=1e-6)
+    # The teeth: gas is really in there, not just the spread.
+    assert booked["fee_cost"] > notional * fee_rate
     # And the accounting still closes: net = gross - fee, or
     # `validate_outcome_math` would have refused the row.
     assert float(booked["net_profit"]) == pytest.approx(

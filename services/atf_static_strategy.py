@@ -44,6 +44,28 @@ except Exception:  # noqa: BLE001 - a missing gate must not stop the scout
     def _strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
         return None
 
+try:
+    from services.roundtrip_cost import (
+        ghost_clip_usd as _ghost_clip_usd,
+        net_profit_usd as _net_profit_usd,
+        roundtrip_cost_rate as _roundtrip_cost_rate,
+        roundtrip_cost_usd as _roundtrip_cost_usd,
+    )
+except Exception:  # noqa: BLE001 - never let a costing import stop the scout
+    def _ghost_clip_usd() -> float:  # type: ignore[misc]
+        return 2.0
+
+    def _roundtrip_cost_usd(notional: float | None = None) -> float:  # type: ignore[misc]
+        return 0.004047 + 0.003187 * float(notional or 2.0)
+
+    def _roundtrip_cost_rate(notional: float | None = None) -> float:  # type: ignore[misc]
+        n = float(notional or 2.0)
+        return max(_roundtrip_cost_usd(n) / n, 0.003187)
+
+    def _net_profit_usd(return_pct: float, notional: float | None = None) -> float:  # type: ignore[misc]
+        n = float(notional or 2.0)
+        return float(return_pct) * n - _roundtrip_cost_usd(n)
+
 SOURCE = "c0d3rv2_atf_static"
 
 #: Ledger identity for trades this module opens and closes ITSELF.
@@ -177,6 +199,118 @@ def _feed_price(db: Any, symbol: str, chain: str, max_age_sec: float) -> Optiona
     return (prices[mid - 1] + prices[mid]) / 2.0
 
 
+def _symbol_specific_hole(
+    db: Any,
+    symbol: str,
+    chain: str,
+    stamps: List[float],
+    max_hole: float,
+) -> float:
+    """Longest stretch this symbol was silent *while the feed was up*, seconds.
+
+    Every gap in ``stamps`` is re-measured against the rest of the feed. Time
+    inside a gap when nothing ticked anywhere is a pipeline outage and is not
+    charged to the symbol; time when other symbols were ticking normally is
+    lost coverage and is.
+
+    Feed liveness is bucketed at ``ATF_STATIC_FEED_LIVE_BUCKET_SEC`` (60s by
+    default) and the answer is the longest RUN of consecutive live buckets in
+    which this symbol produced nothing. Bucketing keeps the measure stable
+    against the feed's own jitter -- a one-tick blip does not make the feed
+    "up", and a two-second lull does not make it "down".
+
+    Fails CLOSED on any error: returns the raw gap, so a database that cannot
+    answer leaves the original guard exactly as strict as it was.
+    """
+    raw = 0.0
+    for index in range(len(stamps) - 1):
+        raw = max(raw, stamps[index + 1] - stamps[index])
+    if raw <= max_hole:
+        return raw
+    bucket = max(1.0, _float_env("ATF_STATIC_FEED_LIVE_BUCKET_SEC", 60.0))
+    worst = 0.0
+    try:
+        for index in range(len(stamps) - 1):
+            start, end = stamps[index], stamps[index + 1]
+            if end - start <= max_hole:
+                continue
+            others = db.feed_tick_times(
+                chain, since_ts=start, until_ts=end, exclude_symbol=symbol
+            )
+            if not others:
+                continue        # nothing ticked anywhere: an outage, not a hole
+            live = sorted({int((tick - start) // bucket) for tick in others})
+            run_start = previous = live[0]
+            for slot in live[1:]:
+                if slot != previous + 1:
+                    worst = max(worst, (previous - run_start + 1) * bucket)
+                    run_start = slot
+                previous = slot
+            worst = max(worst, (previous - run_start + 1) * bucket)
+    except Exception:  # noqa: BLE001 - cannot check is not the same as safe
+        return raw
+    return worst
+
+
+def _feed_coverage_ratio(
+    db: Any,
+    symbol: str,
+    chain: str,
+    stamps: List[float],
+    window: float,
+) -> Optional[float]:
+    """Share of the feed's LIVE minutes in which this symbol also ticked.
+
+    The question every other test here is trying to ask, asked directly. A
+    stop can only fire on a tick, so what matters is how often we get to look
+    at the symbol -- not the typical spacing between looks, and not the single
+    worst gap.
+
+    Both of the existing measures are defeated by the same shape, a symbol
+    that ticks in bursts. BPAD-USDC at its 2026-09-05 17:48:02 live entry:
+
+        22 ticks in the trailing hour, median gap 1.3s        -> passes
+        max gap 2864s                                          -> escalates
+        longest consecutive live-bucket run inside it: 300s    -> passes
+
+    Twenty of those 22 ticks were one 90-second burst. The median describes
+    the burst, not the coverage. And ``_symbol_specific_hole`` scores the
+    escalation by the longest run of CONSECUTIVE live buckets, which needs the
+    rest of the feed to be continuously up -- it never is here. During BPAD's
+    2864s of silence the feed delivered 426 ticks, but they landed in only 12
+    of the 47 minutes, so the longest unbroken run was 300s and a 47-minute
+    symbol blackout scored as five. The entry was allowed. The position then
+    went 1678s unpriced, and the first tick after the hole fired the stop at
+    -19.21% against a 1.5% stop, closing -0.2549 on a $1.50 clip -- larger
+    than the entire live book, which was -0.1864 over 18 round trips and
+    +0.0686 without it.
+
+    Counting TOTAL live minutes rather than consecutive ones is what fixes
+    this: 12 of 47, and the ratio is scored against the feed's own liveness so
+    a pipeline outage cancels from both sides. If nothing ticked anywhere,
+    those minutes are in neither total and the symbol is not charged for them
+    -- the property ``_symbol_specific_hole`` was written to protect, kept.
+
+    Returns None when the feed's liveness cannot be established, which the
+    caller treats as "no opinion" rather than as a refusal.
+    """
+    if not stamps:
+        return None
+    start = _now() - window
+    bucket = max(1.0, _float_env("ATF_STATIC_FEED_LIVE_BUCKET_SEC", 60.0))
+    try:
+        others = db.feed_tick_times(
+            chain, since_ts=start, until_ts=_now(), exclude_symbol=symbol
+        )
+    except Exception:  # noqa: BLE001 - cannot measure is not the same as sparse
+        return None
+    mine = {int((tick - start) // bucket) for tick in stamps if tick >= start}
+    live = {int((tick - start) // bucket) for tick in (others or [])} | mine
+    if not live:
+        return None
+    return len(mine) / len(live)
+
+
 def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
     """Can a stop-loss actually be enforced on this symbol?
 
@@ -242,9 +376,41 @@ def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
     # a worse one. 1200s clears that jitter while still catching the holes
     # that actually breached the stop (BASEJUICE 1788s, and the hold-time
     # holes that produced all three breaches).
+    # A HOLE ONLY INDICTS THE SYMBOL IF THE FEED WAS UP DURING IT.
+    #
+    # This test read the raw gap, so a single pipeline-wide outage was charged
+    # against every symbol separately. Measured 2026-09-05 09:30, the largest
+    # 1h gap for nine unrelated symbols:
+    #
+    #   AERO-USDC    2347s  08:32:34 -> 09:11:42
+    #   CBETH-USDC   2421s  08:31:20 -> 09:11:42
+    #   CBBTC-USDC   1387s  08:49:20 -> 09:12:27
+    #   CBDOGE-USDC  1384s  08:48:38 -> 09:11:42
+    #   BSTONK-USDC  1489s  08:46:53 -> 09:11:42
+    #   CBXRP-USDC   1488s  08:46:53 -> 09:11:41
+    #   BASECAT-USDC 1389s  08:48:32 -> 09:11:42
+    #   COMP-USDC    1410s  08:48:50 -> 09:12:20
+    #   DAI-USDC     2407s  08:32:35 -> 09:12:42
+    #
+    # Every one ends within a second of 09:11:42, across the production restart
+    # at 09:00:03. It is ONE outage, not nine coverage failures -- and these are
+    # the densest feeds we have (AERO 4.7s median, CBBTC 2.6s, CBETH 1.8s).
+    #
+    # Charging it per symbol refused 32 of 36 symbols; the only four that passed
+    # were ones whose history was too short to contain the outage. Because the
+    # window is an hour long, every restart then blocked EVERY entry for the
+    # following hour -- a self-inflicted trading blackout, and the mechanical
+    # reason the day booked zero live trades.
+    #
+    # So measure the hole over the time the feed was actually UP. If other
+    # symbols were ticking while this one was silent, that is exactly the lost
+    # coverage the guard was written to catch and it still refuses. If nothing
+    # ticked anywhere, no stop could have been enforced on any symbol and the
+    # gap is evidence about the pipeline, not about this symbol.
     max_hole = _float_env("ATF_STATIC_MAX_TICK_HOLE_SEC", 1200.0)
     if max_hole > 0.0 and gaps[-1] > max_hole:
-        return False
+        if _symbol_specific_hole(db, symbol, chain, stamps, max_hole) > max_hole:
+            return False
     # The feed must also be live NOW, not merely dense in aggregate: a window
     # that ended twenty minutes ago describes a feed that has already stopped.
     # Budgeted separately so disabling the hole check does not also disable
@@ -252,6 +418,47 @@ def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
     max_stale = _float_env("ATF_STATIC_MAX_FEED_STALENESS_SEC", 1200.0)
     if max_stale > 0.0 and stamps and (_now() - stamps[-1]) > max_stale:
         return False
+    # HOW OFTEN DO WE GET TO LOOK AT THIS SYMBOL AT ALL?
+    #
+    # The three tests above are all defeated by a bursty feed -- see
+    # ``_feed_coverage_ratio`` for the BPAD-USDC entry that passed every one
+    # of them on 22 ticks that were really one 90-second burst, then lost
+    # -0.2549 through a 1678s hole. This asks the question directly.
+    #
+    # Calibrated on the book rather than chosen. Coverage measured at the
+    # entry instant of all 18 live round trips, sorted:
+    #
+    #   21.6% -0.01688   25.7% -0.02514   27.3% -0.25493   27.8% -0.02142
+    #   ------------------------------- 30% -------------------------------
+    #   34.1% -0.00544   38.5% +0.24203   45.2% -0.02790   45.2% -0.02352
+    #   47.2% -0.01908   50.0% -0.00308   51.2% +0.01039   56.0% -0.01318
+    #   60.0% -0.00190   60.0% +0.00211   60.6% -0.00492   63.0% -0.03324
+    #   81.0% +0.00187   81.0% +0.00784
+    #
+    # Every trade below 30% lost money, four for four, and they carry -0.3184
+    # of the book's -0.1864. The threshold sits in the empty band between
+    # 27.8% and 34.1% -- the widest gap in the distribution -- rather than on
+    # a value tuned to a P/L outcome. Cutting at 35% or 40% instead would book
+    # a better or worse backtest purely by including or excluding BSTONK's
+    # +0.242 at 38.5%, which is fitting to one trade.
+    #
+    # Honest limit: n=18, and the size of the improvement rests on two tail
+    # trades. The SIGN is what this rests on -- 4 of 4 below the line lost --
+    # together with the mechanism, which is not statistical. A stop fires on a
+    # tick; a symbol we see in a fifth of the live minutes has no enforceable
+    # stop, and the 7d measurement across 24,053 inter-tick gaps on traded
+    # symbols shows the p90 move reaching 6.16% by 900s of silence against a
+    # 1.5% stop.
+    #
+    # Fails OPEN, unlike the tests above. If the feed's own liveness cannot be
+    # read, the other three checks have already passed and this leaves the
+    # gate exactly as strict as it was before -- a measurement failure must
+    # not become a silent trading blackout.
+    min_coverage = _float_env("ATF_STATIC_MIN_FEED_COVERAGE", 0.30)
+    if min_coverage > 0.0:
+        coverage = _feed_coverage_ratio(db, symbol, chain, stamps, window)
+        if coverage is not None and coverage < min_coverage:
+            return False
     return True
 
 
@@ -561,9 +768,18 @@ def _run_ghost_quote_scout(
             continue
         age = now - _float(pos.get("entry_ts"), now)
         profit = (mark / entry) - 1.0
+        # What this round trip costs, as a fraction of the clip it is priced
+        # at. Every "is this position worth closing" test below compares
+        # against THIS, never against zero -- a position marked out at a return
+        # smaller than one round trip is not a winner, it is a fee.
+        clip_usd = _ghost_clip_usd()
+        cost_rate = _roundtrip_cost_rate(clip_usd)
         target_return = _float(pos.get("target_return"), _float((sig or {}).get("expected_return"), 0.0))
         reason = ""
-        if profit >= max(min_profit, target_return):
+        # ``cost_rate`` joins the floor so a mis-set ATF_STATIC_GHOST_MIN_EXIT_PROFIT
+        # cannot book a "target_hit" that loses money. At the defaults
+        # (min_profit 0.005 vs cost 0.0039 on a $6 clip) it changes nothing.
+        if profit >= max(min_profit, target_return, cost_rate):
             reason = "target_hit"
         elif profit <= -stop_loss:
             reason = "stop_loss"
@@ -585,8 +801,26 @@ def _run_ghost_quote_scout(
             # running until it either recovers past the profit floor or hits
             # its stop. ATF_STATIC_HOLD_FORCES_EXIT=1 restores the old
             # unconditional behaviour.
+            #
+            # And "winner" means AFTER the round trip, not above zero.
+            #
+            # This test read ``profit > 0.0``, which is a gross return compared
+            # against nothing. Measured 2026-09-06 over the 5-day ghost book,
+            # 83 exits closed on this timer and 47 of them (56.6%) marked out
+            # inside one round trip -- CBXRP at +0.045%, AERO at +0.004%,
+            # CBBTC at +0.333%, every one of them booked as a "win" and every
+            # one of them a guaranteed loss once the 0.386% round trip on a $6
+            # clip is charged. Across all 242 trades, 80 exits (33.1%) closed
+            # inside the cost: +0.0597 of gross return between them, -$1.4951
+            # net. That is the whole of the difference between a book that
+            # earns and one that pays fees to stand still.
+            #
+            # A position between zero and the cost is NOT closed here. It falls
+            # through to the stale bound below exactly as a losing one does, so
+            # it is still capped -- it just is not crystallised at a price that
+            # cannot pay for the crystallising.
             hold_forces_exit = _bool_env("ATF_STATIC_HOLD_FORCES_EXIT", "0")
-            if hold_forces_exit or profit > 0.0:
+            if hold_forces_exit or profit > cost_rate:
                 reason = "max_hold"
             else:
                 # Bound how long a losing position may be carried, so a dead
@@ -603,6 +837,19 @@ def _run_ghost_quote_scout(
             pos["last_seen_ts"] = now
             continue
         entry_ts = _float(pos.get("entry_ts"), now - age)
+        # ``profit`` is USD, net of the round trip -- the same unit and the same
+        # cost model trading/bot.py records, because the live gate and the
+        # strategy ledger sum both writers into ONE number.
+        #
+        # This module used to write the bare fraction here. Measured 2026-09-06,
+        # 104 of the 242 trades in the 5-day ghost book were scout rows, so 43%
+        # of the book the live gate reads was fractions added to dollars, and
+        # none of those 104 had ever been charged a fee. See
+        # services/roundtrip_cost.py for the measurement.
+        #
+        # ``profit_unit`` is written so a reader can tell a corrected row from a
+        # legacy one by fact rather than by guessing from its magnitude.
+        profit_usd = _net_profit_usd(profit, clip_usd)
         details = {
             "source": SOURCE,
             "strategy_id": SCOUT_STRATEGY_ID,
@@ -610,7 +857,11 @@ def _run_ghost_quote_scout(
             "chain": chain,
             "entry_price": entry,
             "exit_price": mark,
-            "profit": profit,
+            "profit": profit_usd,
+            "profit_unit": "usd",
+            "return_pct": profit,
+            "clip_usd": clip_usd,
+            "roundtrip_cost_usd": _roundtrip_cost_usd(clip_usd),
             "age_sec": age,
             "reason": reason,
             # The risk layer reads exits through MetricsCollector, which keys on
@@ -627,8 +878,19 @@ def _run_ghost_quote_scout(
             "signal": sig,
         }
         db.log_trade(wallet="ghost", chain=chain, symbol=symbol, action="exit", status="ghost-exit", details=details)
-        _record_ghost_outcome(SCOUT_STRATEGY_ID, profit, symbol=symbol)
-        events.append({"symbol": symbol, "action": "exit", "profit": profit, "reason": reason})
+        # The ledger is USD too: trading/bot.py records ``economic_profit``
+        # here, and graduation scores the two writers against one threshold.
+        _record_ghost_outcome(SCOUT_STRATEGY_ID, profit_usd, symbol=symbol)
+        # Both, named. An event feed that says "profit" without saying which
+        # unit is how the ghost book came to add percentages to dollars.
+        events.append({
+            "symbol": symbol,
+            "action": "exit",
+            "profit": profit_usd,
+            "profit_unit": "usd",
+            "return_pct": profit,
+            "reason": reason,
+        })
         positions.pop(symbol, None)
 
     open_count = len(positions)

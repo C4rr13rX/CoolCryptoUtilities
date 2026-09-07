@@ -68,6 +68,57 @@ class TradePerformance:
         return max(0.0, self.exit_ts - self.entry_ts)
 
 
+#: Strategy ids whose ghost-exit rows recorded ``profit`` as a bare FRACTION
+#: before services/roundtrip_cost.py landed. Rows written since carry
+#: ``profit_unit: "usd"`` and are trusted as-is; rows without it are converted
+#: from their own recorded prices.
+_FRACTIONAL_PROFIT_STRATEGIES = frozenset({"atf_static_scout"})
+
+
+def _profit_usd(
+    details: Dict[str, Any],
+    strategy_id: str,
+    return_pct: Optional[float],
+) -> float:
+    """``profit`` in USD, converting rows that recorded a fraction.
+
+    ``services/atf_static_strategy.py`` wrote ``(mark/entry) - 1`` into
+    ``details["profit"]`` -- the column ``trading/bot.py`` writes USD into. The
+    live gate, the strategy ledger and graduation all sum the two writers into
+    one number, so the book was 43% fractions added to 57% dollars (measured
+    2026-09-06: 104 of 242 paired round trips over the 5-day window, and
+    104/104 of them had ``profit`` exactly equal to their own return).
+
+    The writer is fixed, but the gate reads a FIVE-DAY window, so every legacy
+    row stays in the book it judges until it ages out. Converting here is what
+    makes the correction reach the number the gate actually reads, rather than
+    leaving the book mixed for another five days.
+
+    The test is a FACT about the row -- its strategy id and the absence of the
+    unit marker -- not a guess from the magnitude. A fraction and a small dollar
+    amount are indistinguishable by size, which is exactly why this went
+    unnoticed: a 0.4% return and 40 cents both read as "0.004".
+    """
+    raw = details.get("profit")
+    try:
+        value = float(raw or 0.0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if str(details.get("profit_unit") or "").lower() == "usd":
+        return value
+    if strategy_id not in _FRACTIONAL_PROFIT_STRATEGIES:
+        return value
+    # A legacy scout row. Prefer the return the row's own prices imply; fall
+    # back to the stored fraction only when the prices are missing.
+    fraction = return_pct if return_pct is not None else value
+    try:
+        from services.roundtrip_cost import net_profit_usd
+
+        return float(net_profit_usd(float(fraction)))
+    except Exception:  # noqa: BLE001 - a costing failure must not empty the book
+        return value
+
+
 def _safe_array(values: Iterable[Any]) -> np.ndarray:
     arr = np.asarray(list(values), dtype=np.float64).flatten()
     if arr.size == 0:
@@ -465,12 +516,21 @@ class MetricsCollector:
                     details.get("entry_price") or entry.get("entry_price") or 0.0
                 )
                 exit_price = float(details.get("exit_price") or 0.0)
+                row_strategy = (
+                    self._row_strategy_id(details)
+                    or str(entry.get("strategy_id") or "")
+                )
+                row_return = (
+                    (exit_price / entry_price - 1.0)
+                    if entry_price > 0 and exit_price > 0
+                    else None
+                )
                 performances.append(
                     TradePerformance(
                         symbol=symbol,
                         entry_ts=float(own_entry_ts or entry.get("entry_ts") or ts),
                         exit_ts=float(details.get("exit_ts") or details.get("timestamp") or ts),
-                        profit=float(details.get("profit") or 0.0),
+                        profit=_profit_usd(details, row_strategy, row_return),
                         expected_delta=float(entry.get("expected_delta", 0.0)),
                         realized_delta=exit_price - entry_price,
                         # atf_static writes "reason"; trading/bot.py writes
@@ -484,18 +544,11 @@ class MetricsCollector:
                             or "unspecified"
                         ),
                         route=entry.get("route") or [],
-                        strategy_id=(
-                            self._row_strategy_id(details)
-                            or str(entry.get("strategy_id") or "")
-                        ),
+                        strategy_id=row_strategy,
                         # Both prices are already in hand here, so the return
                         # costs nothing to carry and is the only form in which
                         # a tail can be compared against a stop-loss.
-                        return_pct=(
-                            (exit_price / entry_price - 1.0)
-                            if entry_price > 0 and exit_price > 0
-                            else None
-                        ),
+                        return_pct=row_return,
                     )
                 )
         if real_money_exits:
