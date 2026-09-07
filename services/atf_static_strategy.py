@@ -1419,6 +1419,119 @@ def _add_streamed_candidates(candidates: List[Any], *, max_positions: int) -> Li
         return candidates
 
 
+#: A candidate already on the stream watchlist must have ticked this recently
+#: to be offered again.
+#:
+#: One hour, NOT the 600s ``streamed_symbol_candidates`` uses, and the
+#: difference is deliberate. That module is picking the symbols most worth
+#: trading right now, so it wants the hottest feed. This one is deciding
+#: whether a symbol is DEAD, which is a far stronger claim and needs a far
+#: wider margin. The production census separates the two cleanly with room to
+#: spare: the dead symbols were last priced 31.0h, 30.9h, 6.3h and 1.7h ago,
+#: while the slow-but-live ones were at 26, 26, 26 and 35 minutes. A 600s line
+#: would have called those four dead and starved the funnel further; an hour
+#: sits in the gap and touches only what is unambiguously silent.
+UNSTREAMABLE_FRESH_SEC = float(os.getenv("ATF_STATIC_CANDIDATE_FRESH_SEC", "3600"))
+
+
+def _drop_unstreamable(
+    candidates: List[Any],
+    *,
+    quote_token: str,
+    protected: Optional[set] = None,
+    now: Optional[float] = None,
+) -> List[Any]:
+    """Drop candidates the price feed has already failed to carry.
+
+    Every entry rule and every exit rule hangs off a market sample. A candidate
+    on a symbol with no tick cannot be entered, cannot be priced and cannot be
+    stopped -- it dies silently, ABOVE the gates, so it does not even leave a
+    refusal row explaining itself. It is the most expensive kind of wasted
+    slot: invisible.
+
+    Measured 2026-09-07 over the two hours to 05:10, from ``trading_ops``:
+
+        48 ghost candidates emitted, 2 ghost entries
+        VIRTUAL-USDC   17 candidates   last tick 31.0h ago
+        AIXBT-USDC      4 candidates   last tick 30.9h ago
+        TBTC-USDC       1 candidate    last tick  6.3h ago
+
+    22 of the 48 (45.8%) were offered on symbols the stream had not priced in
+    over a day. None appears anywhere in the refusal census, because none
+    reached a gate. Of the 35 symbols on ``watchlists.stream``, 25 (71.4%) had
+    produced no tick in the last hour and 8 had never produced one at all --
+    and ``build_static_strategy_signals`` re-prepends every offered candidate
+    to the FRONT of that list each cycle, so the dead ones kept their place
+    ahead of the ten symbols that were actually ticking.
+
+    THE RULE, and why it is not simply "must be fresh":
+
+      * held or protected -> kept, always. Dropping a candidate takes its
+        stream watchlist entry with it, and a held position with no feed is
+        never closed. Same reason as ``_drop_already_refused``.
+      * ticked inside ``UNSTREAMABLE_FRESH_SEC`` (one hour) -> kept. A slow
+        feed is not a dead one: CBZEC, FOLD, U1 and OPENAI were last priced
+        26-35 minutes ago in the same census and all four are tradeable. The
+        threshold sits in the gap between those and the 1.7h-31h symbols so it
+        can only touch what is unambiguously silent.
+      * NOT on the stream watchlist -> kept. A new pool has never had a chance
+        to stream, and putting it on the watchlist is precisely how it gets
+        one. Refusing here would switch new-pool discovery off entirely.
+      * on the watchlist AND not fresh -> DROPPED. It has had at least a full
+        cycle subscribed and the streamer still cannot price it.
+
+    That third clause is what keeps this a liveness filter rather than a ban on
+    anything new. The watchlist is the record of "we already asked for this
+    one"; a symbol that is on it and silent has been asked and did not answer.
+
+    Fails OPEN: an unreadable feed, a missing watchlist or any exception leaves
+    the list exactly as it arrived, to be judged downstream as before.
+    """
+    if not candidates:
+        return candidates
+    stamp = float(now if now is not None else time.time())
+    quote = str(quote_token or "USDC").upper()
+    keep_always = {str(p or "").strip().upper() for p in (protected or set())}
+    try:
+        subscribed = {
+            str(s or "").strip().upper()
+            for s in (load_watchlists().get("stream") or [])
+        }
+    except Exception:  # noqa: BLE001 - no watchlist means nothing is proven dead
+        return candidates
+    try:
+        import sqlite3
+
+        db_path = REPO_ROOT / "storage" / "trading_cache.db"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            fresh = {
+                str(row[0] or "").strip().upper()
+                for row in conn.execute(
+                    "SELECT DISTINCT symbol FROM market_stream WHERE ts > ?",
+                    (stamp - UNSTREAMABLE_FRESH_SEC,),
+                )
+                if row and row[0]
+            }
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 - an unreadable feed is not evidence
+        return candidates
+
+    kept: List[Any] = []
+    for candidate in candidates:
+        try:
+            base = str(getattr(candidate, "symbol", "") or "").upper()
+            if not base:
+                continue
+            pair = f"{base}-{quote}"
+            if pair in keep_always or pair in fresh or pair not in subscribed:
+                kept.append(candidate)
+        except Exception:  # noqa: BLE001 - never drop on an error
+            kept.append(candidate)
+    return kept
+
+
 def build_static_strategy_signals(
     *,
     budget_usd: float = 20.0,
@@ -1471,6 +1584,19 @@ def build_static_strategy_signals(
 
     candidates = select_candidates(budget_usd=effective_budget, max_positions=max_positions)
     candidates = _add_streamed_candidates(candidates, max_positions=max_positions)
+    # Read ONCE and share with both filters below: it is a book load, and both
+    # of them need the same answer to the same question -- which pairs must
+    # never lose their stream entry because something is holding them.
+    scout_held = _scout_held_pairs(db)
+    # Liveness BEFORE the standing-refusal filter, deliberately. A symbol the
+    # feed cannot price never reaches a gate, so it has no standing refusal to
+    # be caught by; asking the gates first would let it through and spend the
+    # slot anyway. See _drop_unstreamable for the census.
+    candidates = _drop_unstreamable(
+        candidates,
+        quote_token=quote_token,
+        protected=scout_held,
+    )
     candidates = _drop_already_refused(
         candidates,
         quote_token=quote_token,
@@ -1481,7 +1607,7 @@ def build_static_strategy_signals(
         strategy_id=SIGNAL_STRATEGY_ID,
         # Never drop a symbol the scout is holding: the drop takes its price
         # feed with it and the exit path needs a tick.
-        protected=_scout_held_pairs(db),
+        protected=scout_held,
     )
     # Read ONCE per cycle, not per candidate: the book does not move while we
     # iterate, and load_state() is not free.
